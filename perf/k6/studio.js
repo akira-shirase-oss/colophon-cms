@@ -1,7 +1,8 @@
 // Load scenario for the Studio's static files (step 1.3): colophon-server serving the built
 // single-page app at /studio. Half the requests load a page (the root or a deep route, both
 // answered with the app's fallback page), half load a content-hashed asset found in that page.
-// Same SCENARIO, TOTAL, VUS, RATE, DURATION and P99_MS settings as health.js.
+// Same SCENARIO, TOTAL, VUS, RATE, DURATION and P99_MS settings as health.js; scripts/load.sh
+// gives this endpoint RATE 5000.
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
