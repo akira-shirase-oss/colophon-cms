@@ -1,0 +1,250 @@
+# 17 · verification (`tests/`)
+
+> The fault, load, security and contract matrices, plus the release evidence bundle. Proof is the product's identity,
+> so it has its own module.
+
+| | |
+|---|---|
+| Milestones | All (each milestone's proof gate lives here) |
+| Proposed owner | Shared: the maintainer owns the requirement matrix; Claude builds the harnesses |
+| Depends on | every module; `proptest`, `insta`, `testcontainers`, `cargo-nextest`, Vitest, Playwright, k6 |
+| Used by | CI, release decisions, the README and docs (published evidence) |
+| Spec | §26–§31, §36 |
+
+## Why it exists
+
+Colophon's claims (crash-proof, time travel, verified delivery) are only as good as the tests behind them. The spec
+defines a full matrix of fault, load and workflow cases. This module turns them into runnable suites with stored
+results, and defines which failures block a release whatever the latency charts say.
+
+## End goal
+
+A machine-readable requirements matrix links each requirement to its tests, the last result and the raw artifacts.
+CI gates block on correctness failures, and every release ships an evidence bundle. Test count is diagnostic, never a
+quality claim (spec §30).
+
+## Responsibilities
+
+- The test layers and CI tiers.
+- The F, L and X case suites.
+- Security negative tests.
+- Benchmarks and reporting rules.
+- The requirements matrix.
+- Stop conditions.
+
+## Not its job
+
+- The deterministic simulator itself ([sim](10-sim.md)), although its results feed the matrix.
+- Production monitoring ([operations](18-operations.md)).
+
+## Breakdown
+
+### Test layers (spec §30)
+
+| Layer | What it covers |
+|---|---|
+| Domain unit + property tests | Legal and illegal transitions with a fake clock; idempotency, authorization and generation invariants over random sequences |
+| Database integration | Real PostgreSQL 18 and the cache in containers, with migrations |
+| HTTP in-process | `oneshot` tests for every route and error |
+| Contract | CLI and SDK examples against the same API; OpenAPI compatibility |
+| Browser | Studio keyboard flows, conflicts, upload, preview, receipts (Playwright) |
+| Simulation | Seeded runs, mutation checks, differential tests ([sim](10-sim.md)) |
+| Crash loop | Real processes killed at random against Postgres |
+| Security negatives | Spec §27 families (below) |
+| Fuzzing | URL parsers, schema validation, rich-text decoding, pagination cursors, state transitions |
+| Load | k6 arrival-rate scenarios with thresholds and a non-zero exit on failure |
+
+### Fault-injection suite (spec §30)
+
+| ID | Injected fault | Required invariant |
+|---|---|---|
+| F01 | Kill server before content commit | No success acknowledgment for an uncommitted revision |
+| F02 | Kill after commit, before response | Idempotent retry returns the same logical operation and durable result |
+| F03 | Kill worker after purge/send, before recording | Reconcile or safely retry; no duplicated business effect claimed impossible |
+| F04 | Two editors save the same base revision | One conflicts; neither silently loses an accepted edit |
+| F05 | Old delivery runs after a newer release | Generation check blocks regression and records superseded work |
+| F06 | Collection filter gains a new matching article | Listing cache invalidates even though the old response did not reference the new entry |
+| F07 | Entry unpublished while old caches exist | Origin denies revoked content; purge/evidence tracked; remaining exposure visible |
+| F08 | Cache eviction/failover/restart | No loss of content, jobs, sessions or hard budget accounting |
+| F09 | Outbox/disk budget exhausted | New durable work fails before acceptance, or enters an explicit documented degraded state |
+| F10 | Migration interrupted or schema edited concurrently | Checkpointed recovery or conflict; no mixed undocumented schema |
+| F11 | Model produces invalid or hostile output | No unsafe action; reviewer sees a rejected suggestion with safe diagnostics |
+| F12 | Duplicate/reordered external events | Authoritative reconciliation and exactly one logical effect (the spec's payment case is parked; applied to delivery and webhook receipts) |
+| F13 | Restore backup containing an old outbox | New recovery epoch; reconcile external effects before replay; no blind resend |
+| F14 | Deleted project appears in a restored backup | Deletion ledger reapplied before read APIs and caches are enabled |
+
+### Load-test cases (spec §29)
+
+| ID | Scenario | Expected evidence |
+|---|---|---|
+| L01 | One-user smoke, 5 min | Correct bodies, authorization, revisions and release IDs; no load before basic correctness |
+| L02 | Warm read baseline, 30 min | Meets the warm-origin gate; record hits, pools, CPU, RSS and plans |
+| L03 | Cold cache / 100% unique keys | Meets the cold-origin gate; no uncontrolled database amplification |
+| L04 | Hot-key stampede: 1,000 callers at expiry | Bounded regeneration and coalescing; no permission-crossing reuse |
+| L05 | Mixed reads, writes and publishing | Each operation class meets its target; content stays consistent |
+| L06 | Spike from 1× to 5× load for 2 min | Controlled 429/503, bounded queues; back to baseline within 2 min after load ends |
+| L07 | 24-hour soak at 50% baseline mixed load | Correct final state; quotas and retention enforced; memory, WAL and disk growth explained |
+| L08 | One noisy agent plus active editors | Agent throttled; editorial p95 ≤ 2× mixed-workload baseline; no cross-project starvation |
+| L09 | 10,000-record draft import | Resumable chunks, per-item outcomes, stable memory; no accidental publication |
+| L10 | CDN warm traffic + repeated publishes | Per-region latency and observed generation; detect stale refills and mixed-release pages |
+| L11 | Cache unavailable for 5 min | Rate-limited fallback, no lost accepted work, bounded origin pressure, correct recovery |
+| L12 | PostgreSQL slow/unavailable, worker kill | Writes fail honestly; no fake commit; jobs resume; cache policy stays explicit |
+| L13 | CDN purge 429/5xx and delayed site rebuild | Backoff and pending/uncertain delivery; no claim of global success |
+| L14 | Large media/decoder workload | Worker limits hold; content editing stays responsive |
+| L15 | Commerce concurrency and provider faults | **Parked** with commerce (D-006) |
+
+### Workflow cases that apply (spec §31)
+
+| ID | Scenario | Status |
+|---|---|---|
+| X06 | Locale fallback to an unpublished draft | Applies: denied; output holds only eligible published content |
+| X07 | Scheduled publication crosses a daylight-saving change or approval expires | Applies |
+| X08 | Slow older site build finishes after a new generation | Applies |
+| X09 | Clone production into staging | Applies to content: no production sessions, credentials or unintended scheduled dispatch |
+| X10 | 10,000 asset references across a template upgrade | Applies |
+| X11 | Cache and identity provider fail while editors are active | Applies |
+| X12 | Agent interrupted after half a bulk edit | Applies |
+| X13 | Paid download or preview after revocation | Preview part applies; paid downloads are parked |
+| X14 | Restore a backup predating a deletion and payment | Deletion part applies; payment part is parked |
+| X01–X05 | Commerce, subscriptions, leads | Parked or later (D-006) |
+
+### Security test families (spec §27)
+- **Identity and policy:**
+  - revoked session and expired token;
+  - wrong project or environment;
+  - hidden field;
+  - unauthorized publish or export;
+  - stale approval.
+- **Browser safety:**
+  - stored markup payloads and hostile links;
+  - preview-origin isolation;
+  - CSRF and unauthorized cross-origin calls;
+  - unsafe redirects.
+- **Network and asset abuse:**
+  - metadata-address access, DNS rebinding, IPv6 and mapped-address bypass, redirects to private hosts;
+  - decompression and pixel bombs;
+  - misleading file types.
+- **Cache isolation:**
+  - the same slug across projects;
+  - a private response is never reused publicly;
+  - locale and query-key collisions;
+  - a stale fill after publish;
+  - removal of prior public versions.
+- **Agent abuse:**
+  - prompt injection in content;
+  - tool-argument manipulation;
+  - cost overruns;
+  - a mass-deletion attempt;
+  - an altered approved changeset;
+  - an unsafe import.
+- **Supply chain:**
+  - a tampered artifact or unexpected publisher;
+  - a compromised test fixture;
+  - untrusted pull-request access to secrets;
+  - license-policy failure.
+
+Scanner reports never replace code review and adversarial permission testing.
+
+### Performance (spec §28)
+- **Reference profile:**
+
+  | Component | Size |
+  |---|---|
+  | API | 4 vCPU / 8 GiB |
+  | Worker | 2 vCPU / 4 GiB |
+  | PostgreSQL | 4 vCPU / 16 GiB, SSD with recorded IOPS |
+  | Cache | 1 GiB budget |
+  | Load generator | A separate host |
+
+- **Recorded with every run:** CPU model, region/RTT, OS, exact versions, build flags, pool limits, CDN plan, cache rules
+  and storage configuration.
+- **Dataset D1:**
+  - three isolated projects;
+  - 100,000 entries across ten collections per project;
+  - three revisions per entry, typically 6 KiB of content;
+  - 10,000 asset metadata records;
+  - realistic reference, locale and slug distributions.
+
+  A separate corpus holds maximum-size and invalid records. Seeds are fixed and the generator is exported.
+- **Targets:** listed in [END_GOAL.md](../END_GOAL.md#quality-bars). Cached, uncached, authenticated, write and
+  publication paths are reported separately.
+- The development machine (including the 32 GB Ubuntu Dell named in the spec) is for functional tests. It is not an
+  independent load generator plus benchmark host.
+
+### Reporting rules (spec §29)
+- Warm up for 5 minutes, then run three independent measured repetitions per baseline scenario.
+- Report per-run distributions; never average percentiles.
+- Show sample counts and windows for release-level p99.
+- **Separate:**
+  - successful latency;
+  - rejected requests;
+  - expected fault errors;
+  - unexpected errors.
+- Overload rejections stay visible.
+- A generator that misses its offered rate (dropped iterations) invalidates the run.
+- **Every report includes:**
+  - commit, fixtures and command;
+  - environment;
+  - raw results and traces;
+  - thresholds, exceptions and conclusions.
+
+### Stop conditions (spec §30)
+Any of the following blocks a release regardless of performance:
+- unexplained data loss;
+- cross-project exposure;
+- invalid authorization;
+- duplicate effects;
+- uncertainty relabelled as success.
+
+### CI tiers (spec §34)
+
+| Tier | Runs |
+|---|---|
+| Every pull request | Format, lint (`-D warnings`), type checks, unit and property tests, API/schema compatibility, relevant integration and browser tests, simulator seed budget, `cargo deny`, secret scan |
+| Main branch | Broader fault suites, crash loop, performance smoke, larger simulator sweep |
+| Release | Full load matrix, 24-hour soak, restore and upgrade drill, dependency and licence inventory, SBOM, signed artifacts, verified docs |
+
+### Requirements matrix
+- `tests/MATRIX.md` (human-readable) generated from `tests/matrix.yaml` (machine-readable).
+- It maps every requirement (spec §36 IDs plus Colophon invariants) to its tests, last result, commit and artifacts.
+- Unsupported configurations are listed explicitly, never silently skipped in the pass rate.
+
+## Invariants
+
+| ID | Invariant |
+|---|---|
+| V1 | No release ships with a stop condition open. |
+| V2 | Targets are revised openly, never quietly lowered to turn a failing run green. |
+| V3 | Every published number has its command, environment and raw data. |
+
+## Interfaces
+
+- Test suites under `tests/{contracts,faults,security,load,crash-loop,fixtures}`.
+- CI workflows; the evidence bundle attached to each release.
+
+## Failure modes
+
+| Situation | Behaviour |
+|---|---|
+| Flaky test | Quarantined with an issue and an owner; never silently retried into green |
+| Load generator saturated | Run invalid; re-run on a larger generator |
+| Stop condition found | Release blocked; fix plus regression test before retrying |
+
+## Tests and evidence
+
+This module *is* the evidence. Its own check is that the matrix has no requirement without a test, and no test result
+without an artifact.
+
+## Build order
+
+1. **P0:** CI pull-request tier.
+2. **P1–P2:** F01–F05.
+3. **P3:** F06–F08, L01–L04.
+4. **P4:** L14, X07, X13 (preview).
+5. **P5:** F11, L08, X12.
+6. **P6:** F09–F14, L05–L13, the 24-hour soak, the release tier, the complete matrix.
+
+## Open decisions
+
+- Where load tests run (cloud hosts sized to the reference profile).
+- The matrix file format, and whether results are published on the docs site.

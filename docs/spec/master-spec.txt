@@ -1,0 +1,1279 @@
+COMPLETE PRODUCT + ENGINEERING SPECIFICATION
+Rust + Svelte CMS
+One master document. The full product, end to end.
+Akira Shirase OSS  •  22 October 2026
+Use this document only. It replaces the earlier CMS blueprints; no other edition or companion specification is required to understand the defined product scope.
+The end goal
+A CMS that nontechnical editors can use visually, developers can operate from a terminal, and AI agents can use safely at scale. One Rust engine enforces shared content, permission, migration and publishing rules. Svelte powers the Studio, public website, documentation and reference storefronts.
+Product area
+Included in this specification
+Content and delivery
+Schemas, revisions, localization, approvals, scheduling, media, search, public/preview APIs, edge caching and verified publishing.
+Interfaces and AI
+Studio, CLI, TypeScript SDK, typed agent tools/MCP, AI suggestions, bulk work, permissions and budgets.
+Templates and commerce
+Blog, business forms/leads, knowledge base, physical/digital commerce, Stripe, stock, shipping/tax configuration, refunds, subscriptions and entitlements.
+Engineering and operations
+PostgreSQL/Redis contracts, deployment, security, load/failure tests, upgrades, backups, recovery, documentation and open-source maintenance.
+
+Architecture commitments
+Rust + Axum + Tokio + SQLx; SvelteKit + TypeScript; PostgreSQL; Redis; object storage; CDN. PostgreSQL owns durable state. Redis and edge caches accelerate eligible public reads. AI and payment providers never bypass the Rust authorization and transaction layer.
+How to interpret the plan
+The full scope is specified now. Work packages describe implementation order, not separate product versions or missing chapters. Requirements, operating defaults and performance targets are design commitments to implement and verify—not claims that a CMS, security audit or benchmark already exists.
+Provider credentials, merchant regions, actual capacity and the executable dependency lock are deployment/validation inputs. Explicit non-goals are listed separately. Software, schema and API version histories remain necessary for safe upgrades.
+
+Contents
+Click a section title to jump to it. Each chapter includes the operating and failure rules needed to implement its scope.
+01  Product scope and users
+4
+02  Final technology baseline
+5
+03  Architecture and repository
+6
+04  Onboarding and project lifecycle
+7
+05  Studio and nontechnical experience
+8
+06  Editorial workflow, localization and preview
+9
+07  Content model and database
+10
+08  Database invariants and transaction boundaries
+11
+09  CLI, API and developer experience
+12
+10  API resource and response contracts
+13
+11  CLI and agent operating contract
+14
+12  Schemas, migrations and importing
+15
+13  Identity, permissions and tenancy
+16
+14  Publishing and release consistency
+17
+15  Edge delivery and Redis
+18
+16  Durable work and integrations
+19
+17  AI assistance and agents at scale
+20
+18  Media, search and templates
+21
+19  Templates, business sites and the public presence
+22
+20  Commerce catalog, carts and checkout
+23
+21  Inventory, shipping and tax
+24
+
+Contents / continued
+Click a section title to jump to it. Each chapter includes the operating and failure rules needed to implement its scope.
+22  Payments, refunds and reconciliation
+25
+23  Subscriptions, memberships and private delivery
+26
+24  Forms, leads and transactional notifications
+27
+25  Integration, deployment and domain contracts
+28
+26  Security requirements
+29
+27  Security verification and privacy
+30
+28  Performance model and targets
+31
+29  Load-test cases
+32
+30  Correctness and fault-injection suite
+33
+31  Extended workflow and commerce verification
+34
+32  Deployment, observability and recovery
+35
+33  Operating budgets and incident runbooks
+36
+34  Development process and milestones
+37
+35  Open-source maintenance
+38
+36  Requirements, ownership and completion gates
+39
+37  End-state, moat and launch decision
+40
+38  Primary references — application stack
+41
+39  Primary references — safety and testing
+42
+40  Primary references — operations and ecosystem
+43
+41  Additional primary references and document stewardship
+44
+01 / Product scope and users
+One engine, three experiences
+User
+Primary job
+Success signal
+Nontechnical editor
+Write, improve, preview, approve and publish content.
+Publishes a valid article without opening a terminal or asking what cache invalidation means.
+Developer
+Define schemas, migrate safely, integrate APIs and operate installations.
+Sets up the blog from documentation, upgrades it and diagnoses a failed delivery.
+AI agent
+Discover permitted schemas, prepare bounded changes and report results.
+Completes an authorized task without bypassing review, leaking data or exhausting resources.
+
+Target audience and defined product boundary
+Acquire developers or small agencies maintaining content-heavy sites; invite their editors into the same projects. Support agent credentials from the beginning, but do not launch three unrelated go-to-market strategies. The reference installation serves one organization with isolated projects and environments. It can be self-hosted or managed for that organization; hostile-tenant open registration is not part of this specification.
+Included foundation: projects, basic roles, schema-driven collections, rich text, media images, drafts, revision comparison, preview, review, publish/unpublish, REST delivery, CLI, TypeScript SDK, audit history, durable publication jobs, edge caching and a first-party blog starter.
+Also included in this complete scope: business pages and lead forms; scheduled releases and localization; bounded agent workflows; physical and digital single-merchant commerce; subscriptions; shipping/tax configuration; returns and refunds. The detailed contracts appear in this same document. Each module has permissions, migrations, operating limits and failure tests.
+Explicit non-goals: arbitrary untrusted native plugins, CRDT live co-editing, GraphQL, active-active multi-region database writes, multi-seller marketplaces, usage-based billing and autonomous production repair. These are excluded product categories, not undefined parts of the promised CMS. The commerce scope provides configured merchant tax/shipping workflows, not a worldwide tax-law engine.
+A useful advantage must be demonstrated
+Strapi documents releases; Payload documents versions and restoration; Sanity documents CDN delivery. Do not market their absence as our advantage. [R27–R29]
+Our hypothesis is that reliable delivery evidence, safe agent operations and approachable tooling reduce setup and investigation work. Validate with comparable tasks, not a feature-count comparison. Templates, a CLI, Rust and an AI button are features; independently demonstrated reliability and trusted integrations may compound into an advantage.
+Product acceptance exercise
+Give a new developer the README and a nontechnical editor the Studio. Observe setup, drafting, correcting validation errors, reviewing an AI suggestion, publishing, and understanding a deliberately delayed website update. Record completion time and intervention needed. A polished interface that hides an unresolved publication is a failure.
+02 / Final technology baseline
+One frontend ecosystem; Rust business services
+Layer
+Selected technology
+Responsibility
+Server
+Rust stable + Axum + Tokio + Tower
+HTTP APIs, authorization, domain services and bounded async work. [R05, R06]
+Database access
+SQLx + reviewed SQL migrations
+PostgreSQL transactions, typed static queries and bounded pools. [R07]
+Authoritative data
+PostgreSQL 18, current tested minor
+Content, revisions, schemas, releases, sessions, jobs, commerce and audit. [R08]
+Acceleration
+Redis 8, pinned tested release
+Public revision/query cache and expendable rate counters; never the only record of important state. [R10, R11]
+Frontends
+SvelteKit + TypeScript + Vite
+Studio, marketing site and documentation; shared design tokens and API types. [R01, R02]
+Interface
+Tailwind CSS + shadcn-svelte / Bits UI
+Owned, accessible components; local overrides tracked for upstream fixes. [R04]
+Editor
+Tiptap core + ProseMirror
+Structured rich text and a small approved block set; custom Svelte controls. [R03]
+Docs
+mdsvex + Pagefind
+Versioned guides, examples and static search. [R30, R31]
+Identity
+OIDC; Keycloak reference integration
+Login/MFA delegated to an identity provider; sessions and CMS authority enforced by Rust/PostgreSQL. [R37]
+CLI and SDK
+Rust + Clap; generated TypeScript client
+Human-friendly commands, machine-readable output and REST parity.
+Files
+S3-compatible object storage
+Quarantined uploads, approved assets and versioned derivatives.
+Public delivery
+Cloudflare CDN adapter + origin cache policy
+Cache only approved public routes; targeted purge and sampled delivery checks. [R12]
+Observability
+tracing + OpenTelemetry-compatible export
+Request/release/job correlation, bounded logs and operational metrics. [R25]
+Verification
+Rust tests + proptest; Vitest/Playwright; k6
+Domain, UI, API, fault and traffic tests; CI thresholds. [R16, R17]
+
+Deployment decision
+Prerender the marketing and docs sites. Build Studio as a client-side SvelteKit application served as static assets, with /api routed to Rust on the same origin. This avoids a second backend framework. SPA startup has tradeoffs, so it is limited to the authenticated Studio; public SEO pages are prerendered. [R01, R02]
+Node.js remains build tooling, not the CMS business backend. Do not add SvelteKit server actions that directly query PostgreSQL. The first-party storefront prerenders public pages and enhances private cart/account flows in the browser. External consumer applications may use SSR, but all CMS and commerce authority remains behind Rust APIs. Static builds are promoted by the versioned deployment workflow.
+Pinning: commit Cargo.lock, rust-toolchain.toml, the package-manager lockfile and container digests. Freeze a tested compatibility set at M0 instead of assuming all newest versions work together. Redis licensing is addressed in section 35.
+03 / Architecture and repository
+Modular monolith with independently runnable workers
+Studio, CLI, SDK and agent adapters call the Rust management API. Thin HTTP handlers authenticate, validate requests and call the same domain services. The public delivery API is read-only and uses published projections only. Workers execute committed jobs; they cannot invent authorization or publication state.
+Svelte Studio / Rust CLI / TypeScript SDK / agents
+                         |
+                 Rust management API
+                         |
+       Domain rules + authorization + transactions
+                         |
+           PostgreSQL + durable event outbox
+                 |                    |
+          Publishing workers     Immutable revisions
+                 |                    |
+        CDN / site adapters      Public delivery API
+                 |                    |
+           Delivery evidence     Generation-keyed results
+
+Public read path: reader → CDN → Rust delivery API → Redis cache → PostgreSQL published projection on a miss. Arrows above show responsibilities, not mandatory microservices. Begin with one Rust workspace and one deployable service with a separate worker mode. Split management and public-read processes only when traffic tests justify independent scaling. Never hold a database transaction open while waiting for a model, object store, CDN or Stripe.
+Repository structure
+apps/{studio,web,docs}/        # SvelteKit frontends
+crates/{domain,api,db,worker,cli,delivery}/
+crates/{auth,media,ai,commerce}/
+packages/{sdk,ui,content-renderer}/
+schemas/                     # Versioned schema definitions
+migrations/                  # Core PostgreSQL migrations
+templates/{blog,business,commerce}/
+tests/{contracts,faults,security,load,fixtures}/
+deploy/                      # Compose, containers, runbooks
+docs/{adrs,threat-model,release-policy}/
+
+Ownership and isolation
+The domain crate owns invariants; adapters own external protocols. Keep domain independent of HTTP and database drivers. Tests supply clocks, model responses and fault-injecting adapters. Document every externally visible operation and who can authorize it.
+Run database and Redis on private networks. Deliver uploads from a separate asset origin, not the administration origin. Separate production and staging credentials, buckets and cache namespaces. Production can use managed infrastructure; the Rust requirement applies to our application code, not to rewriting PostgreSQL, Redis or a CDN.
+No premature dependency: reuse design lessons from Service Monitor and the future runner, but begin with a small PostgreSQL-backed job/outbox implementation. Our experimental JavaScript runtime is not a dependency of this product.
+04 / Onboarding and project lifecycle
+A complete setup path for operators and editors
+The installer must finish with a usable project, not a dashboard full of disconnected settings. The default distribution is self-hosted for one organization, with isolated projects and development/staging/production environments. It can also be run as a managed single-organization deployment. Open public registration and hostile-tenant shared hosting are not assumed.
+Operator setup
+	•	Start the Rust API and worker with PostgreSQL, Redis, object storage and an identity provider. The reference self-hosted sign-in integration uses Keycloak through OIDC; another conforming provider can replace it after contract tests. Keycloak is an infrastructure dependency, not a second CMS application backend. [R37]
+	•	Run a one-time, local bootstrap command to bind the first owner to an authenticated issuer/subject. Disable bootstrap permanently after completion. Do not select owners from an unverified email claim.
+	•	Configure canonical administration, content, asset and preview origins, TLS, secret references, backup destinations and quotas. cms doctor reports readiness per dependency; Redis may be degraded while authoritative writes remain available.
+	•	Create a project, choose locales and a template, review the installation plan, and create its schemas and seed drafts transactionally. Production fixtures must not contain invented customers or testimonial claims.
+	•	Invite an editor, run the first draft/preview/publish exercise, test a delivery failure, and run an export/restore drill. Commerce and external AI remain disabled until their own configuration checks succeed.
+Editor setup
+An invitation is single-use, expires after a configurable period (default 72 hours), and is bound to an authenticated verified identity. The editor sees the project name, role and capabilities before accepting. The initial screen offers Create article, Upload media and Ask AI; it does not expose database or cache configuration. No code is required for normal authoring.
+Lifecycle contract
+Operation
+Required behavior
+Rename project
+Change the display name; preserve stable IDs, keys and content history.
+Clone environment
+Copy allowed schemas and content; issue new namespaces. Never copy live payment keys, customer records, sessions, webhooks or sending authority implicitly.
+Archive project
+Block new writes and jobs; keep history and existing delivery behavior explicit. Archiving does not silently unpublish a live site.
+Delete project
+Require fresh owner authentication, impact preview and confirmation; revoke credentials, tombstone public data, purge caches, and track deletion completion.
+Export or leave
+Produce a manifest with content, schema hashes and allowed assets; retain access until the agreed deletion/export process finishes.
+
+Acceptance: a clean installation, owner recovery, expired invitation, environment clone and interrupted template installation all have reproducible tests. Restoring or cloning a project must not restart real payments or notifications.
+05 / Studio and nontechnical experience
+Make the normal path obvious
+The first visit offers an enabled template, a site name, language and brand settings. The Blog template is the first implementation exercise; the full template catalog is defined in this document. The blog template supplies posts, authors, categories, SEO fields and a usable sample website. Advanced schema settings stay under a developer area; the editor starts with Content, Media, Review and Publishing.
+Screen
+Required behavior
+Content list
+Search, draft/published filters, clear ownership, revision status and bounded bulk actions.
+Editor
+Title, readable content fields, rich text, media picker, accessible errors, autosave state and preview.
+AI panel
+Suggest a title, improve selected text or draft from a brief. Show the proposed diff and let the editor accept or reject it.
+Review
+Show exactly which revision and assets will be published, validation failures and required approvals.
+Publishing
+“Saved”, “Published in CMS”, “Website update pending”, “Verified at configured locations” or “Needs attention”.
+History
+Who changed what, human/agent attribution, revision comparison and restore-as-new-revision.
+
+Editorial safety and responsiveness
+Debounce autosave and send an expected revision. A concurrent save returns a conflict rather than silently overwriting another user. Keep an unsaved local recovery copy only with a clear expiry and consent policy; never imply server persistence before acknowledgment. Leave a page only after confirming unsaved changes or explicitly discarding them.
+Use plain error messages with a concrete next action. Do not expose internal job terminology when “Website update pending” is sufficient; preserve a technical detail drawer for developers. Do not hide failures behind an indefinitely spinning button.
+Rich text contract
+Store versioned Tiptap JSON, not executable HTML or Svelte components. Allow only approved nodes, marks, links and embeds; enforce size and nesting limits in Rust. Use shared renderer fixtures to verify Studio preview and the storefront agree. Server-side validation remains authoritative. Tiptap supports Svelte integration; advanced paid extensions are not assumed to be included in the OSS core. [R03]
+Accessibility and validation gate
+Target keyboard operation, meaningful focus states, labeled controls, screen-reader announcements, readable contrast, reduced motion and mobile review. Test with actual editors and assistive technology in addition to automated checks.
+First usability gate: five representative editors each attempt to draft, preview, accept one AI edit and publish. Proposed target: at least four complete the flow without developer intervention; record the failures and revise the design. This is an experiment, not a usability claim already achieved.
+06 / Editorial workflow, localization and preview
+One visible workflow for humans and agents
+Each localized entry has an immutable revision history. Draft, submitted, changes requested and approved are editorial states; publication is a separate state. Comments and review decisions refer to a revision, not just an entry ID. Publishing a revision does not discard a newer draft.
+Review and collaboration
+An author submits a changeset containing exact entry/revision/schema/asset hashes. A reviewer compares before/after, requests changes or approves that exact changeset. The default permits a single operator to review their own work, visibly recorded; projects may require a different reviewer. Agents cannot approve their own proposals. An edit, policy change or expired approval forces revalidation. Comments are escaped, permission-checked and retained in audit history.
+Concurrent editing uses optimistic revision checks, not silent last-write-wins. A conflict screen preserves the local proposed edit, shows the current server revision and offers explicit merge or discard. Same-document live cursors and CRDT co-editing are outside this defined product; safe multi-editor collaboration is covered by revisions, comments and conflict handling.
+Localization contract
+Concern
+Decision
+Identity
+One logical entry groups locale variants; each variant has its own slug, draft and publication history.
+Fallback
+Explicit project policy: none by default. A requested fallback uses only published revisions and labels the resolved locale.
+Required content
+Required fields are validated per locale; a missing translation never exposes an untranslated private draft.
+References
+Locale-specific references resolve within the pinned release and declared fallback policy.
+Translation AI
+Creates a proposed locale revision with source attribution; edits invalidate prior approval.
+
+Preview and site metadata
+The UI issues a short-lived capability scoped to project, environment, exact revision set and permitted asset IDs. Default expiry is 15 minutes; the preview server validates it on every protected fetch. Use a separate sandboxed preview origin, no-store, noindex and a restrictive referrer policy. Preview artifacts and private media must never enter public CDN routes, sitemaps or search indexes.
+Schemas include title, slug, description, canonical URL override, image alt text and social metadata. Normalize canonical origins against the verified site configuration. A slug change proposes a reviewed redirect; prevent cycles and collisions. Generate sitemaps and language alternates from a single published generation. Robots directives are not an authorization boundary.
+Scheduled publishing
+Store the chosen local time, IANA timezone, resolved UTC instant and approval hash. Ambiguous or nonexistent daylight-saving times require an explicit choice. At execution, recheck authority, approval, revision hashes and dependencies; edited content blocks rather than silently changing the scheduled release. A delayed schedule is labeled delayed. Cancellation prevents new dispatch but does not undo a release already committed.
+07 / Content model and database
+Typed rules over flexible content
+Use relational metadata plus JSONB content revisions. Do not create arbitrary SQL tables for each collection in the selected architecture. A versioned schema describes field IDs, types, validation, references, visibility and editable roles. Use a constrained, documented JSON Schema-compatible subset, not arbitrary user-executed validation code.
+Entity
+Important fields and constraints
+Project / environment
+Organization, project ID, environment ID; production and preview are separate namespaces.
+Schema version
+Collection ID, version, canonical definition, hash, lifecycle and migration reference.
+Entry
+Stable ID, project/environment, collection, current draft revision, archived flag.
+Content revision
+Immutable ID, schema version, structured data, author/agent, base revision, timestamp and hash.
+Reference / uniqueness
+Typed relation edges and normalized unique claims; project/locale scope enforced in PostgreSQL.
+Release / release item
+Immutable revision set, generation, approval binding, author and committed timestamp.
+Publication history
+Entry/revision with valid-from and valid-to generations; supports pinned-release reads.
+Destination delivery
+Release, destination, generation, attempts, evidence, verified-at and terminal/uncertain outcome.
+Job / outbox / inbox
+Durable accepted work, dispatch leases, deduplication keys and external event receipts.
+Asset / audit / credentials
+Asset lifecycle and references; append-only audit; hashed tokens and encrypted secret references.
+
+Validation and storage rules
+Validate field types, bounded strings, rich-text depth, references, locale, slug normalization and cross-field rules before a revision commits. Referential and uniqueness checks also need database enforcement; API prechecks alone race. Namespace slugs and unique claims by project, environment and locale.
+Implement first-class text, rich text, number, boolean, datetime, enum, image, reference and bounded lists. Posts/authors/categories provide the first fixtures. All enabled collections use the same bounded component/schema rules and renderer compatibility tests. Unrecognized fields fail validation by default, not silent data loss.
+Query design
+Support cursor pagination, selected fields, explicit indexed filters and stable sort keys. Parameterize values and allowlist column/filter names. Default page size 20, maximum 100; no unlimited expansion or raw SQL from agents. Create query-specific indexes after examining representative plans, including project/environment prefixes.
+A release changes publication pointers/history, not historical content bytes. Retain referenced revisions while a retained release, draft or audit contract depends on them. Schema and asset deletion must consider these references. Separate commerce state from editorial JSON; orders are not editable documents.
+08 / Database invariants and transaction boundaries
+Make correctness independent of the interface
+All entity IDs are opaque and scoped by organization, project and environment. A user-supplied ID alone never establishes authority. Every write carries an actor, request ID and the active authorization context. The primary database, not Redis, decides conflicting edits, publishing generations, quotas and financial state.
+Invariant
+Database and service enforcement
+Immutable revision
+Insert-only revisions; a composite foreign key binds every reference to the same project/environment. Restoring creates a new revision.
+Concurrent save
+Compare the entry's draft pointer to expected_revision; update the pointer and insert the revision in one transaction. A loser returns 409.
+Unique slug
+A normalized uniqueness record scoped to project, environment, collection and locale. Draft reservations and published routes have explicit lifetimes.
+Single release order
+Lock the environment generation row, check base generation, create release/items and advance the pointer with audit/outbox in one commit.
+Historical publication
+Half-open generation intervals cannot overlap for the same entry/locale. The public projection only includes schema-approved public fields.
+Idempotent mutation
+Unique actor/scope/key plus request hash; reserve and commit its result with the effect. A different payload conflicts.
+Worker ownership
+Lease owner, lease expiry and attempt generation are checked by a conditional update before accepting completion.
+Commerce uniqueness
+Unique merchant/provider/event receipt and order/fulfillment-action key; append-only money and inventory adjustments.
+
+Transaction choices
+Use short READ COMMITTED transactions with explicit row locking/conditional updates for identified resources. Multi-row invariants use deterministic lock ordering or SERIALIZABLE transactions with bounded whole-transaction retries. Never retry only the last statement of a transaction that failed serialization. Deadlocks and serialization conflicts are observable; after three internal retries, return a safe conflict/transient error rather than loop indefinitely. [R23]
+There is no database transaction across a model call, CDN purge, identity provider, object store or Stripe. Commit an intent/outbox first, execute externally, then persist evidence. For safety-critical actions, cancellation or permission revocation is rechecked before the next external attempt. A previously completed external action cannot be undone by rolling back local SQL.
+Retained authority
+Reserve pending-job and expensive-operation capacity before acceptance. Do not accept a job merely because it was placed in a process-local channel. RLS is defense in depth alongside application checks; use distinct migration, API, delivery and worker database roles, and test pooled transaction-context reset. Public delivery cannot query draft tables with elevated credentials. [R09]
+Migration and testing artifacts
+The repository must contain executable SQL migrations, generated OpenAPI schemas and fixture data derived from these contracts. They are implementation outputs, not evidence that this document already contains a running database. Required tests cover two concurrent saves, duplicate submission, cross-project references, generation conflicts, crashed workers and failed transaction commits.
+09 / CLI, API and developer experience
+The terminal is a first-class interface
+The following command names are proposed contracts, not a released executable. cms is a working CLI name.
+cms init my-site --template blog
+cms dev
+cms schema validate
+cms schema diff --env staging --json
+cms migrate plan --env staging --out plan.json
+cms migrate apply --plan plan.json --env staging
+cms content list posts --limit 20 --json
+cms content import posts --file drafts.jsonl --dry-run
+cms release create --from changeset.json --json
+cms release validate RELEASE_ID --json
+cms release publish RELEASE_ID --env production --dry-run
+cms release status RELEASE_ID --json
+cms doctor --json
+
+One API, no bypass
+CLI, SDK and Studio operations pass through the same authorization and transaction services. The normal CLI never requires a production database password. Bootstrap and infrastructure migrations are explicit administrative commands, separated from content editing.
+Publish stable /api/v1 management and /content/v1 read contracts. Export OpenAPI and generate the TypeScript client; test generated clients against the server in CI. Schema discovery returns only collections and fields the caller may access. Client validation improves feedback, but Rust revalidates every mutation.
+Predictable machine behavior
+--json writes a single versioned result to stdout; progress and diagnostics go to stderr. Never prompt in agent mode. Return stable exit categories: success, validation, denied, conflict, transient dependency failure and unexpected internal failure. An accepted asynchronous job returns its ID and polling location; that is not a successful publication.
+Mutations accept an idempotency key, operation scope, payload hash and expected revision. A matching replay returns the recorded result; a different payload with the same key conflicts. Retain ordinary keys at least seven days; critical business operations have longer durable uniqueness constraints independent of this retention.
+API conventions
+Use opaque identifiers, cursor pagination, request IDs, revision ETags and structured field errors. Return 401 for missing identity, 403 for denied action, 409 for conflicts, 422 for invalid content, 429 for throttling and 503 for dependency/capacity unavailability. Prevent identifier probing through a consistent resource-visibility policy.
+Document authentication, retry eligibility, limits, errors and examples. The website and docs must distinguish implemented features from the roadmap. Build code examples in CI so a release does not ship documentation for commands that no longer work.
+10 / API resource and response contracts
+A stable surface shared by Studio, CLI and agents
+All routes below are proposed implementation contracts. {P} means /api/v1/projects/{project}/environments/{environment}. Administrative access is denied by default. Published delivery, submitted public forms and provider callbacks use separate narrowly scoped policies; they do not inherit administrator capabilities.
+Route family
+Operations and guard
+/auth/*, /me
+OIDC login/callback/logout, session inspection and revocation; exact callback origins and CSRF protection.
+/api/v1/projects, /members, /invitations
+Project lifecycle and membership; owner-scoped administration.
+{P}/schemas, /migrations
+Discover, validate, plan, apply and inspect; apply requires an approved current plan and migration permission.
+{P}/collections/{collection}/entries
+List/create entries; get/update/archive by ID. Update requires expected revision.
+{P}/entries/{id}/revisions, /comments
+History, compare, restore-as-new-draft, revision-bound comments.
+{P}/changesets, /reviews, /releases
+Prepare, validate, request review, approve, publish, schedule, cancel, inspect and restore through new generation.
+{P}/assets, /upload-intents
+Create intent, complete verification, inspect, list references and request deletion.
+{P}/agents, /ai/tasks, /jobs
+Scoped credentials, proposals, bounded bulk work, status and authorized cancellation.
+{P}/destinations, /deliveries, /channels
+Configure/test integrations; inspect failures; safely retry or reconcile.
+{P}/forms, /leads, /commerce/*
+Permissioned form, catalog, order, stock, refund and subscription administration.
+/content/v1/{project}/{env}/*
+Read active generation or pinned published collections/entries; never editor projections.
+/store/v1/{project}/*
+Cart, checkout, customer account and entitlement operations; no shared caching.
+
+Requests and errors
+Mutations require Idempotency-Key for retriable creates and an expected revision/generation for conflicting writes. Use If-Match for single-resource updates; missing preconditions return 428, a stale revision returns 409 with a safe conflict description. Idempotency scope includes actor, operation and environment. Inputs use UTC RFC 3339 timestamps, integer minor currency units and bounded JSON; provider-specific currency precision is validated rather than assumed to be two decimals.
+A successful synchronous response contains data, request_id and the resulting revision. An asynchronous 202 contains operation_id, status: accepted and a polling URL; it never says published or paid. List responses contain next_cursor, applied filters and limits. Errors contain code, readable message, field paths, retryable and request_id; no stack or secret is exposed.
+Query and delivery limits
+Only documented filters, sorts and projections are allowed. Cursor ordering includes a stable ID tie-breaker; reject cursors from another project or query shape. Enforce page, expansion, size, runtime and cost limits. A pinned-release response includes its generation, ETag and resolved locale. Requesting a revoked or inaccessible historical item cannot bypass current revocation rules.
+Parity gate: the generated SDK, CLI and Studio must run the same create/conflict/review/publish scenario and produce equivalent durable records. Contract changes require compatibility tests and a documented deprecation window.
+11 / CLI and agent operating contract
+Useful commands without dangerous hidden defaults
+The CLI uses the Rust API for normal operations. Only installation/bootstrap/database administration commands can access infrastructure directly, and those require a distinct operator mode. Never infer production from the current directory: destructive or publishing commands require an explicit environment.
+cms init my-site --template blog
+cms login --profile staging
+cms doctor --env staging --json
+cms schema diff --env staging --json
+cms migrate plan --env staging --out plan.json
+cms migrate apply --env staging --plan plan.json
+cms content create posts --file article.json --json
+cms content import posts --file posts.jsonl --dry-run
+cms release validate RELEASE_ID --json
+cms release publish RELEASE_ID --env production --dry-run
+cms release publish RELEASE_ID --env production --approval ID
+cms release status RELEASE_ID --json
+cms jobs inspect JOB_ID --json
+cms integration test DESTINATION_ID --json
+cms module enable commerce --env staging --dry-run
+cms export --env production --out export-directory
+
+These commands describe the target executable; they have not been implemented by preparing this specification. cms dev may orchestrate local dependencies, but it must never discover and use production credentials silently.
+Deterministic behavior
+--json writes exactly one JSON result to stdout; logs/progress go to stderr. Long streams use an explicit --jsonl mode with one documented event per line. Agent mode is noninteractive and never waits for a hidden confirmation. Exit codes: 0 success, 2 usage/validation, 3 unauthorized, 4 conflict, 5 transient/unavailable and 6 internal failure. A 202 operation exits successfully with accepted; --wait --timeout reports the eventual state or a wait timeout without cancelling accepted work.
+--dry-run validates scope and presents a plan without external side effects. It is not a reservation or a guarantee that state will remain unchanged. Execute rechecks revisions, schema hashes, permissions and approval. Credentials come from a protected profile/keyring or explicit environment injection; token values never appear in process arguments or output.
+Agent interfaces
+Expose schema discovery, content query, draft create/update, changeset validation, review request, job status and release status as typed tools. Tool discovery filters by current authorization. The CLI and an MCP adapter call identical services; neither is a privileged alternate path. Remote MCP authentication uses the pinned protocol's authorization requirements with audience validation. Local stdio uses scoped credentials supplied by the operator. [R36]
+Bulk changes are resumable per item, bounded by the manifest's base revisions and input limits. A client retries the same logical operation key after transport loss; it does not generate a new key for every attempt. A kill switch revokes the account and prevents new work; already completed side effects remain auditable.
+12 / Schemas, migrations and importing
+Separate three kinds of change
+Core SQL migrations evolve our platform tables. Content-schema migrations evolve customer fields and records. Template upgrades evolve a starter's schemas, renderer and configuration. Treat these as separate versioned operations; a template installation is not permission to run arbitrary SQL.
+Migration lifecycle
+Plan → validate → estimate impact → rehearse on a restored staging copy → authorize → execute bounded batches → verify → finalize. A plan records the source schema hash, target hash, selected environment, expected revisions, operations, estimated affected count and approval identity.
+Adding an optional field can be additive. Renaming should preserve a stable field ID. Removing a field, narrowing a type or introducing a required field needs an explicit data transformation and compatibility plan. Never let an AI-produced migration silently remove production data.
+Execution rules
+Acquire a PostgreSQL migration lock, verify the plan is current, then use expand–backfill–contract. Short transactions, statement/lock timeouts, progress checkpoints and a stop/resume command are required. Large backfills must not hold the editorial service hostage. Some index operations cannot run inside a normal transactional migration; mark and test those steps explicitly.
+Preserve compatibility with the current and previous supported application version during a rolling update. Do not promise automatic down migrations for destructive changes. Prefer a tested forward fix; restore a backup only with explicit acknowledgment of the resulting data-loss window.
+Nontechnical schema editing
+The UI may propose safe field additions and show example data. Developer-controlled collections can be read-only in the schema designer. Both UI and CLI export/import the same schema format; one canonical deployed schema registry prevents Git and UI from becoming conflicting authorities.
+Import and exit paths
+Begin with JSONL content and asset manifests. Import uses a staging area, source-to-target ID map, idempotent batches, schema validation and a final report. Preserve relationships, slugs, authors and original timestamps where authorized. No partial import is silently published.
+The complete import contract accepts native JSONL and normalized Strapi, Sanity and Payload export manifests through adapters. Adapters must map source schemas, references, locales and assets into a dry-run plan; incompatible fields are reported rather than silently dropped. Native import is implemented before the source-specific adapters. Provide complete export of schemas, revisions permitted by retention, published content and asset references. Avoid making data lock-in the moat.
+Acceptance cases: interruption halfway through a backfill, stale migration plan, incompatible client, duplicate source IDs, broken references, corrupt assets, schema change during editing and restart during import. Each must produce resumable progress or an explicit failure without hidden publication.
+13 / Identity, permissions and tenancy
+The same policy applies to people and agents
+Principal
+Default authority
+Owner
+Configure the installation, identity providers and memberships; sensitive actions require fresh authentication.
+Developer
+Manage approved schemas and integrations; production migrations need separate permission.
+Editor
+Create and edit allowed collections; request review.
+Publisher
+Approve and publish allowed content; cannot automatically administer billing or credentials.
+Agent service account
+Explicit project/environment/collection/action scopes; draft-only by default, with expiry and quotas.
+Public reader
+Published public projections only; no implicit access to drafts or private assets.
+
+Authentication baseline
+Use a reviewed OIDC client implementation in Rust with Authorization Code + PKCE, state and nonce checks. Use Keycloak as the reference OIDC provider, with an adapter boundary for other tested providers, rather than inventing a password or cryptography system. [R37] An operator completes deployment/bootstrap; editors receive invitations and use a normal sign-in flow. A development-only bootstrap identity must not be available on public installations.
+Rust issues opaque, revocable sessions in Secure, HttpOnly cookies; persist session and membership authority in PostgreSQL. Apply SameSite, CSRF tokens and Origin checks to cookie-authenticated writes. CLI/agents use scoped machine credentials or a browser/device authorization flow; never put a broad administrator token in a template or frontend bundle.
+Authorization enforcement
+Check object ownership, project, environment, action and field policy on every read and mutation. Require explicit permission for publish, export, payment/refund, schema change and secret administration. A preview link is a short-lived, scoped capability, not a public cache key. Revocation must be checked before subsequent authorized operations.
+Use project/environment predicates in repositories, composite foreign keys where applicable and PostgreSQL row-level security as defense in depth. Application roles must not own tables or hold BYPASSRLS/superuser privileges; use forced policies where appropriate. Transaction-local context must be reset safely with pooling. PostgreSQL documents the owner and privileged-role bypasses. [R09]
+Security gates before shared hosting
+Cross-project API, search, export, media, cache and worker tests are mandatory. Include two projects with colliding slugs and entry IDs in fixtures. The single-organization product still needs these project boundaries. Hostile-tenant shared hosting is a separate deployment/security expansion, not an implied capability.
+AI cannot approve its own permission escalation. Approval binds to the exact change and environment, expires, and is invalidated by edits. Do not rely on a prompt such as “never publish without permission” as an authorization control.
+14 / Publishing and release consistency
+A publication has more than one state
+Editorial: draft → in review → approved. Approval binds to content, schema, asset and release hashes. New edits invalidate it.
+Content release: prepared → committed. In one PostgreSQL transaction, recheck authority and base generation; validate the chosen revisions; update publication history; advance the environment generation; record audit and outbox events. A commit is atomic inside this database, not across a CDN or website.
+Each destination: pending → dispatched → observed, or retrying / failed / uncertain / superseded. “Published in CMS” and “Verified on website” are separate UI labels. A CDN accepting a purge request is not proof that every edge location has served new content.
+Snapshot semantics
+Assign release identities as recovery epoch plus monotonically increasing generation per environment. Normal operation keeps one epoch; restore registers a new epoch before serving. The SDK pins both values across related reads so a restored generation cannot collide with old cache data. Publication-history intervals map each entry to the correct immutable revision at that generation. A batch of at most 100 changed entries commits together initially; large imports create drafts in chunks and use an explicitly reviewed publication plan.
+Two concurrent releases with the same base generation cannot both silently win. The second must rebase or conflict. Reference validation requires the intended published version of dependencies; no public entry may embed an unpublished private revision.
+From commit to evidence
+A worker computes affected content/listing tags, requests a bounded purge and runs the configured destination verification. Evidence includes release generation, response hash or marker, observation location, timestamp and errors. Website adapters also observe a deployed page marker; a fresh CMS API response does not prove a statically generated page rebuilt.
+A failed destination never rolls back already committed content automatically. Show partial success and offer an authorized retry or reconciliation. Retry the same desired generation; discard or supersede obsolete tasks so an old worker cannot overwrite a newer release.
+Rollback, unpublish and scheduling
+Rollback creates a new, higher generation referencing selected older revisions after current validation. Do not decrement generations or undo orders. Unpublish creates a tombstone and a cache-removal job; retain audit and report unresolved removal paths. Historical public URLs require the revocation rules in section 15.
+Scheduled release jobs persist intended time in UTC and revalidate authorization, revisions and dependencies when due. A missed schedule after downtime appears as delayed, not falsely on-time. Delivery checks are scoped observations, never a claim of universal global verification.
+15 / Edge delivery and Redis
+Three layers, three responsibilities
+Layer
+Data and contract
+PostgreSQL
+Authoritative revisions, publication generation, permissions, tombstones, jobs and commerce state.
+Redis
+Disposable, generation-keyed public content/query results; bounded TTL and memory. It is not the durable queue or correctness lock.
+CDN
+Approved public content/asset responses. Private/editorial requests bypass shared caching.
+
+Cache keys and defaults
+Include project, environment, recovery epoch, release generation, locale, schema/render version, normalized query and response representation. Restore changes the epoch and invalidates old live-discovery responses before serving; generations from different epochs are never interchangeable. Do not cache arbitrary unbounded query variants. Resolve the active generation from PostgreSQL on an origin miss; do not let a stale Redis pointer reintroduce an older publication.
+Proposed defaults: active-release metadata and live public queries have CDN shared TTL 30 seconds; generation-pinned public content 300 seconds; Redis public results 300 seconds with jitter. Browser freshness is zero with revalidation for content. These are policies to test, not a global 30-second consistency guarantee. Disable stale-on-error for content removal paths and never serve unauthorized data as a fallback.
+Signed preview, drafts, sessions, customer details, carts, checkout, order status and personalized responses use private/no-store behavior. Reject cache-key ambiguity and do not vary private data merely by a client-supplied header.
+Invalidation and dependencies
+Tag entry, collection, locale and known references. Include collection/listing dependencies even when a newly matching entry was absent from the old result. Begin conservatively with collection-level invalidation; optimize only after correctness tests. Cloudflare supports tag-based purging, subject to documented limits. A successful purge response and sampled reads remain different evidence. [R12]
+In-flight stale fills and multiple cache layers are explicit test cases. Generation keys prevent old content from poisoning a new-generation cache; TTL and targeted invalidation govern live generation discovery. The site adapter tracks its own Next.js/Astro/Svelte build or cache layer separately.
+Failure and removal policy
+A Redis outage bypasses to bounded PostgreSQL reads with request coalescing and admission limits, not unlimited database load. Cache misses must not trigger unbounded parallel regeneration. Redis replication is not our durable-write guarantee. [R11]
+Unpublishing marks the entry revoked for origin access, including historical generation URLs, then purges all known paths and derivatives. Report removal pending until configured checks pass; cached browser copies or previously downloaded public content cannot be recalled. Do not publish confidential material. A truly immediate revocation requirement needs an online authorization path and no shared public cache.
+16 / Durable work and integrations
+The PostgreSQL outbox is the delivery backbone
+Store publication changes and outgoing events in the same database transaction. Worker notifications may be accelerated with Redis, but workers can discover all pending work from PostgreSQL after Redis loss or process restart.
+Claim bounded batches with database row locks and leases. Record attempt generation, deadline, next attempt, status and a stable business idempotency key. A worker may finalize only its current lease/generation. Do not hold database locks across external calls. Renew a lease only while work is progressing and within the job deadline.
+Delivery contract
+At-least-once attempts with finite retries. The default external attempt deadline is 10 seconds; at most five attempts, with capped backoff and jitter, within a one-hour job lifetime. Adapter-specific policies may be stricter. Retry transient network errors, selected 5xx and throttling; respect bounded Retry-After. Authentication and invalid configuration errors are terminal until corrected.
+An external action may succeed before its response is lost. Reconcile uncertain outcomes using release IDs, provider operation IDs or read-back evidence before repeating non-idempotent work. A local transaction cannot promise exactly-once effects in another service.
+Resource and ordering controls
+Start with eight worker slots, no more than two per destination and one active publication stream per project/environment. Separate AI, publishing, image and commerce concurrency pools so expensive tasks cannot starve editorial saves. Apply queue admission limits and return a clear capacity error before accepting work that cannot be retained.
+Use stable event IDs and sequence/generation numbers for webhooks. Sign a timestamp and raw body, document verification and replay protection, rotate secrets, and deduplicate incoming events. Do not execute webhook-provided commands. Retain superseded delivery history but never dispatch an obsolete “make release X current” after release Y.
+Failure visibility
+Each job exposes pending/running/retrying/succeeded/failed/uncertain/cancelled/superseded states, sanitized evidence and a repair action. Cancellation stops new work; it does not reverse remote side effects. Manual retries remain permissioned and audited.
+First integration: the direct public content API plus a reference Svelte blog. Second integration: one framework-specific website adapter with release markers and retry/reconciliation tests. Cloudflare or Vercel credentials stay server-side and narrowly scoped. No GitHub/Vercel connection is required just to edit content.
+17 / AI assistance and agents at scale
+AI proposes; the platform enforces
+Expose a small tool set: discover schemas, query permitted content, create a draft, propose a changeset, validate, request review and inspect release status. The Rust CLI supplies these contracts through JSON. The complete system also includes an MCP adapter using the same authority rules; tool metadata never grants permission. Implement the CLI/API contract before its protocol adapter. [R36]
+Nontechnical AI workflow
+An editor describes a goal, selects source material and receives a structured draft or diff. Show which sources were supplied, which claims are unsupported, and what changed. Accepting a suggestion creates a normal revision. The AI must not invent client testimonials, prices, legal promises or measured business outcomes.
+Provide AI assistance as an optional module; manual editing must work when the model provider is down. Keep model keys on the server. Use a provider abstraction and record provider/model, prompt version, execution ID, tokens and estimated cost. Actual billing reconciliation is separate from estimates.
+Bounded agent operations
+Default service-account authority is draft-only. Enforce per-project request, token, cost, document and concurrency budgets. Bulk changes use a manifest of exact IDs/base revisions; initial chunks contain at most 100 records and 1 MiB of input. Return per-item outcomes and a resumable cursor. Do not pretend a multi-chunk operation is globally atomic.
+Authorize and reserve conservative per-request cost/token allowances in PostgreSQL before dispatch. Redis counters cannot bypass the configured admission budget. Estimated provider cost is not a guarantee of the final invoice; retain uncertain reservations until reconciled and alert on rate or billing discrepancies. On ambiguous provider timeout, preserve uncertainty and reconcile where possible. A timeout may still incur provider cost.
+Prompt-injection and action boundaries
+Treat retrieved content, media text and instructions inside documents as untrusted data. Do not allow content to modify system instructions, permissions, network destinations or secrets. Model output must match a validated typed action; recheck actor scope and approval before execution. Least privilege and review are part of the threat model, not a complete prompt-injection solution. [R15]
+Evaluation suite
+Maintain a versioned test set covering schema discovery, correct edits, missing facts, malicious instructions, stale revisions, cross-project access, bulk interruption and provider failures. Measure schema-valid output, task completion, unauthorized attempts, reviewer edit effort, latency and cost. Required gate: no unauthorized action executes; quality targets are set from human-reviewed baselines. Run repeated trials and record model versions rather than choosing a favorable single result.
+Autonomous publishing is opt-in, restricted to specific collections/actions/budgets and revocable. Production schema changes, refunds, credential changes and role escalation remain separate high-risk permissions.
+18 / Media, search and templates
+Assets have their own lifecycle
+Create an upload intent in Rust with project scope, type, size and expiry. Upload to a quarantine object key; inspect actual size, file signature and decoder output before marking the asset usable. A client-provided MIME type is not proof. Use random storage keys and a separate asset origin. [R14]
+Allowed asset classes: approved images up to 20 MiB; scanned PDF documents up to 50 MiB; private digital-download objects up to 200 MiB under a separate allowlist. Bound decoded pixels, nesting and processing time; use four image workers with process limits. Reject executable HTML, archives and untrusted SVG by default. Strip unnecessary metadata. Large video transcoding is outside this product. Public images and private paid downloads use separate storage paths, visibility policies and access tests.
+An entry cannot publish an unprocessed or quarantined asset. Track references from drafts and retained releases before garbage collection. An unreferenced upload can expire after 24 hours; published revisions pin required assets. Deletion is a staged, audited operation with object-store and CDN outcomes visible.
+Search without another infrastructure project
+Use PostgreSQL full-text search and approved indexes for editorial search. All results respect the same project, field and revision visibility. Avoid a separate search service until measured corpus size, latency or ranking requirements justify it. Public search is limited to published projections; docs search is a static Pagefind index. [R31]
+Templates are tested configurations
+Template
+Scope
+Implementation dependency
+Blog
+Posts, authors, categories, SEO, images, article/list pages and a content renderer.
+First end-to-end implementation slice.
+Business site
+Pages, approved sections, contact/lead forms, safe notification handling.
+After publishing and upgrades work.
+Commerce
+Physical/digital products, public catalog, checkout, orders, stock, refunds and payment diagnostics.
+Transaction and provider-contract gates.
+
+Each template has a version, compatible core range, schema manifest, renderer version, migrations, permissions, fixture data, tests and asset licenses. Installation shows the planned changes; updating does not overwrite customized customer content or components silently. Start with first-party modules compiled into the release; no untrusted native plugins in the server process.
+Docs and website
+Use the same Svelte design system for the public website and docs, but keep navigation appropriate for each. The website explains who the product serves, a working demo and honest capability status. Docs include editor guides, quickstart, CLI/API reference, operations, migration and security guidance. Test examples and link availability on release. No uncited speed claims or “secure by default” guarantee without defined evidence.
+19 / Templates, business sites and the public presence
+Ready-to-use products, not just attractive demo pages
+Each template installs a reviewed manifest of schemas, components, permissions, sample drafts, workflows, migrations and acceptance tests. It declares compatible core/renderer versions, licenses and requested capabilities. Installation previews changes and is idempotent. Upgrades preserve local edits or present explicit conflicts; never overwrite customer data to match a new demo.
+Template
+Complete included journey
+Blog / publication
+Authors, categories, localized articles, media, SEO, search, draft preview, editorial review, schedule, publish and versioned feeds/sitemaps.
+Business website
+Pages, bounded reusable sections, services, FAQs, contact/quote forms, consent text, lead inbox, assignment, export and delivery status.
+Commerce store
+Product/variant catalog, prices, stock, cart, Checkout, orders, delivery/entitlements, returns, refunds and reconciled payment state.
+Membership / gated content
+Plans, subscription Checkout, customer portal, private content, entitlement expiry and cancellation history.
+Documentation / knowledge base
+Navigation, article collections, version labels, search, code blocks and reviewed AI suggestions; private knowledge stays authenticated.
+
+Design system and controlled customization
+Use shared spacing, color, typography and accessibility tokens. Editors can alter approved theme settings and assemble approved section types; they cannot paste executable JavaScript or arbitrary Svelte into content. Developers can own component code in their repository and register a schema-compatible renderer. Validation must reject a content block unsupported by the selected renderer before publication.
+Public pages prerender from a generation-pinned manifest; client enhancement handles forms, carts and authenticated customer flows. A new published generation triggers a bounded build, verifies output, then atomically promotes the static artifact. Build failure preserves the previous site and exposes update pending. Dynamic content consumers can read the edge API directly. Neither approach allows an old build completion to replace a newer deployment.
+Website and documentation requirements
+The product website needs a clear audience statement, real demo, feature status, architecture overview, installation path, templates, security policy and contribution links. Publish benchmarks only with workload, source revision and raw evidence. A roadmap label must not imply a feature is available.
+Docs contain editor onboarding; developer quickstart; schema examples; CLI/API/SDK reference; migration guide; AI permissions; commerce setup; self-hosting; backup/restore; troubleshooting; upgrade notes and security reporting. Versioned product docs remain necessary even though this specification is one master document. Code examples and template installs run in CI, links are checked, and the docs disclose known limits.
+Enable/disable lifecycle
+Disabling a module blocks new actions, drains or cancels pending jobs by documented policy, and preserves records needed for existing orders, subscriptions and exports. Removing a module is not deletion permission. Show dependent templates, data and ongoing obligations before owner approval.
+20 / Commerce catalog, carts and checkout
+One merchant per store; content and money remain distinct
+The full commerce scope includes digital and physical products, product variants, stock reservations, shipping rules, tax configuration, one-time purchases, subscriptions, order management, refunds and entitlements. A merchant is associated with one Stripe account per environment. Marketplace payouts, split sellers and replacing a financial accounting system are outside this product.
+Product and price data
+A product has editorial descriptions plus separately permissioned commercial records. Variants own SKU, option values, delivery type, weight/dimensions if required, stock policy and active price records. Store money as integer minor units plus currency and use currency-specific validation. Prices are immutable records: changing a price creates a new record, not a rewrite of historic orders.
+Support explicitly configured currencies, one currency per cart, and separate checkout paths for recurring and one-time purchases. Mixed recurring/one-time carts are rejected with a clear message. A normal content editor or writing agent may change descriptions but cannot grant a discount, change price, alter stock or issue a refund without those specific permissions.
+Checkout lifecycle
+	•	The browser sends product/variant IDs, quantities, chosen currency, promotion code and permitted delivery selection. It never supplies an authoritative payable total.
+	•	Rust validates the current sellable catalog, quotas, allowed destination and eligible price. It creates an immutable quote revision and pending order, reserves relevant stock and discount capacity, and records a durable payment intent to create Checkout.
+	•	The worker creates a Stripe-hosted session using a stable business operation key, approved line items and shipping/tax settings. A lost response enters reconciliation; a second request must not blindly create another charge path.
+	•	The customer pays in the hosted interface. Shipping/address-dependent tax may be finalized there; reconcile resulting line items, discounts, shipping choice, currency and tax calculation against the authorized quote policy before confirming the final order snapshot.
+	•	A verified provider event and authoritative reconciliation update payment state. The redirect page only displays progress. Fulfillment is independently queued after the committed paid transition.
+Customer and order records
+Customer access uses an authenticated account or a high-entropy scoped order capability; an order number is not a credential. Public catalog, private order, payment, fulfillment and refund models are separate. Historical order lines snapshot description, price, tax, discounts, currency and delivery promise. Product edits never recalculate a completed purchase.
+Enablement checks
+The Studio provides a setup wizard for merchant identity, test/live credentials, webhook secret, prices/currency, refund policy, tax mode, allowed destinations and transactional messages. It performs test Checkout and callback reconciliation before enabling selling. A key alone never turns an unfinished integration live. Each optional capability is enabled only after its acceptance gate passes.
+21 / Inventory, shipping and tax
+Deterministic stock allocation under concurrent purchase
+Keep an append-only inventory movement ledger and transactionally maintained SKU/location balances in PostgreSQL. Track on_hand, reserved and allocated; available stock is on_hand - reserved - allocated. Never trust a Redis count or a storefront badge when accepting an order.
+Reserve every cart line in one short transaction with sorted SKU locks and conditional capacity checks. If any line lacks stock, roll back the reservation. A paid order converts its reservation to allocation; shipping reduces on-hand and allocation together. Cancellation releases a reservation/allocation according to fulfillment state. Restocking requires an explicit received-and-inspected return movement, not merely a refund event.
+Expiry and uncertain payment
+The reservation expiry is aligned with the Checkout session's recorded expiry plus a reconciliation grace period. Before releasing an expired reservation, inspect provider state and attempt to close an unpaid session where supported. If the provider is unavailable, mark uncertain and extend only within a bounded hold policy; surface manual action instead of infinite holds.
+A late paid result after stock was released must reacquire stock transactionally. If insufficient, the order becomes paid_unfulfillable, fulfillment is blocked and an authorized compensation/refund workflow starts. Never silently oversell or label a captured payment failed. Delayed payment methods for stock-limited items remain disabled unless this complete hold/late-success policy is exercised in tests.
+Shipping contract
+Operators configure allowed countries/regions, rate tables, pickup, free-shipping thresholds and delivery estimates. Quote rules include currency, tax treatment and validity. Start with configured rates and manually entered carrier tracking; an external rate adapter uses the same bounded quote contract. Address changes invalidate prior eligibility/quotes. Carrier purchase/label calls require idempotency or reconciliation before repeating.
+Fulfillment supports partial shipments per line, tracking events, cancellation before dispatch and return requests. Never infer physical delivery from payment success. Unknown carrier state remains unknown. A shipping notification fails independently of order/stock commits.
+Tax contract
+Use the configured Stripe Tax integration or an explicitly approved merchant rate adapter; do not implement worldwide tax-law inference in an LLM. Product tax codes, inclusive/exclusive price behavior, customer location and registration settings are explicit. Stripe's Checkout tax integration uses configured registrations and customer address data. [R33]
+Capture provider calculation references and amounts on the final order. If required location data, configuration or the tax calculation is unavailable, block checkout for that destination rather than charging zero silently. Tax-disabled mode is a merchant-approved configuration with an audit record, not a legal conclusion. Registration, filing, invoicing and local obligations require merchant review before enabling a region; the CMS does not promise universal compliance.
+Acceptance: concurrent last-item purchases, expired sessions, provider outage, late payment, partial shipping, returned stock, currency mismatch and changed shipping address are mandatory fixtures.
+22 / Payments, refunds and reconciliation
+Make every uncertain external effect inspectable
+Stripe calls use a server-side adapter with a pinned provider API contract. Credentials are project/environment-scoped and stored as encrypted secret references. The event endpoint verifies raw-body signatures and timestamp tolerance before processing; it acknowledges only after a unique provider-event receipt is committed. Delivery retries and event reordering are expected. [R13]
+Payment state versus order state
+Record
+Lifecycle requirement
+Payment attempt
+Created, session pending, requires action/processing, succeeded, failed, expired or uncertain. Match provider objects to merchant, order and allowed amount/currency.
+Order
+Pending payment, paid, fulfillment pending, partially fulfilled, completed or cancelled. Financial exceptions are visible independently.
+Refund
+Requested, approved, submitted, pending, succeeded, failed or uncertain; bound to the original payment and remaining refundable amount.
+Fulfillment
+Unique per order/line/action; digital grant or shipment cannot be duplicated by repeated webhooks.
+Dispute
+Record provider dispute state, evidence deadline and operator action; do not silently rewrite the original payment history.
+
+Out-of-order and duplicate events
+Deduplicate each event receipt, then reconcile the provider object's current state rather than assuming event arrival order. A newer failed renewal cannot be overwritten by an older paid-event snapshot. Maintain a durable operation ledger and provider IDs. Event IDs alone do not deduplicate separate events describing the same business action.
+Reconciliation runs on startup, after uncertainty, and periodically (default every 15 minutes for recent pending operations). It compares pending payments, refunds and subscription changes with the provider, applies legal state transitions and emits audit events. A provider timeout preserves its operation key and uncertainty; do not automatically retry with a new key after provider key retention expires.
+Refunds, returns and entitlements
+A refund needs a specific permission, fresh operator confirmation, reason and amount. Reserve refundable capacity transactionally so concurrent requests cannot exceed the remaining amount. Submit a stable provider request, release the reservation only after a reconciled failure, and update succeeded totals after confirmation. Stripe refunds may be pending or failed, so request acceptance is not final settlement. [R34]
+Return approval, received stock and refund settlement are independent. Partial refunds reference order lines and tax/shipping allocation; the original totals remain immutable. Revoke or adjust digital entitlements under the approved policy, with access changes logged. Already downloaded files cannot be recalled. Do not let an AI content agent initiate refunds or disputes through ordinary content tools.
+Required evidence
+Tests must cover invalid signature, duplicate delivery, lost acknowledgment, event reordering, wrong merchant/currency, price tampering, payment after expiry, refund provider failure, concurrent partial refunds, duplicate fulfillment and restore replay. High-volume tests use local mocks; provider test mode verifies contracts. Never load-test Stripe or execute real payments as a benchmark.
+23 / Subscriptions, memberships and private delivery
+Recurring payment is not permanent authorization
+Subscriptions extend the commerce module through explicit plan, price, billing-period and entitlement records. The target supports fixed recurring plans and scheduled plan changes, not usage-based metering or multi-seller billing. Use Stripe Checkout for acquisition and its customer portal for supported customer billing actions. [R32, R35]
+State and access policy
+Billing observation
+CMS entitlement policy
+Initial payment incomplete
+No paid access. A separately configured trial can grant limited, expiring access.
+Confirmed paid period
+Grant the plan's explicit entitlements until the recorded paid-through time.
+Cancellation at period end
+Continue already paid access until its end; do not promise renewal.
+Failed renewal
+Keep access only until paid-through plus the configured grace period (default zero); show past-due state and recovery action.
+Immediate termination/refund
+Apply the configured revocation policy after reconciliation; preserve billing history.
+Provider unavailable
+Do not invent a renewal. Existing committed entitlements continue only to their documented expiry.
+
+Change, trial and cancellation workflow
+Server-side actions validate the customer, selected plan, currency and permissible transition. Show a provider-generated change/price preview and require explicit confirmation before charging or changing a billing period. Record the requested operation and its effective time. Trials have a fixed end, allowed entitlements and conversion policy; no indefinite extension after errors.
+An authenticated customer can open a short-lived portal session issued by Rust for their own provider customer record. Never accept a browser-submitted provider customer ID as authority. Reconcile portal changes through verified events and readback; a portal return URL is not proof of cancellation or payment.
+Private content and digital assets
+Gate paid articles and downloads through current customer/project entitlement checks. Private responses are no-store; private content never enters public search, preview sitemaps or CDN shared caches. Downloads may use short-lived signed object URLs after access is checked; the configured lifetime bounds continuing access after revocation. Protected content requiring immediate revocation must be streamed through an authorization check instead of a reusable signed URL.
+Operator controls and acceptance
+The Studio shows current billing state, paid-through, entitlement expiry, pending changes and last reconciliation. Support staff can request resynchronization, not manually mark an unpaid subscription paid. Administrative grants are separate, expiring, justified and audited.
+Required tests: duplicate renewal, delayed success, failed renewal, cancel/resume race, trial expiry, upgrade/downgrade with stale preview, wrong customer portal request, provider outage across renewal, private-cache leakage and revocation while an asset URL is active. Provider event types and supported actions are contract-tested against the pinned Stripe API. [R32]
+24 / Forms, leads and transactional notifications
+Business templates must work after the page looks finished
+A form schema defines approved fields, required values, validation, consent text revision, destination and data retention. Public submissions are bound to a published form revision; unrecognized fields and oversized bodies are rejected. The frontend shows success only after the lead is committed, not after starting an email request.
+Submission and lead lifecycle
+Validate input, rate limits and abuse controls; create a lead plus notification outbox in one PostgreSQL transaction. A submission key prevents accidental retries from creating duplicate leads. Keep spam/quarantine status separate from accepted business status. The lead inbox supports assignment, notes, new/contacted/qualified/closed states, filtering and authorized export.
+Store source URL and approved campaign parameters, not unrestricted tracking payloads or secrets. Record consent wording/time separately from marketing permissions; a contact request does not automatically authorize unrelated campaigns. Use per-project retention and deletion controls. Lead bodies are private and excluded from public caches, model training and default diagnostic logs.
+Abuse and integration boundaries
+Use bounded fields, rate limits, honeypots and an optional challenge adapter. Do not send confirmation mail to arbitrary recipients without appropriate abuse limits. Store permitted attachment types only through the quarantine pipeline; no public arbitrary file relay. CRM/webhook export uses configured destinations, secret references and the same SSRF, signature and retry controls as publishing.
+Notification contract
+Concern
+Required behavior
+Commit
+Save the business event and outbox atomically; a provider outage must not lose a lead or order.
+Transport
+One email adapter plus signed HTTPS webhook; separate retry pools and explicit deadlines.
+Attempts
+At most five bounded attempts with jitter within 24 hours; transient-only retry, then failed/uncertain with an operator action.
+Identity
+Stable event and business IDs, payload version and occurred-at time; external duplicate delivery remains possible.
+Ordering
+Per-entity sequence; suppress or summarize obsolete queued messages instead of sending misleading current-state claims.
+Content
+Deterministic escaped templates, no header injection; secret-free errors and no broad administrator links in public email.
+
+User experience and tests
+The operator sees pending, sent, retrying, failed, suppressed and uncertain delivery. Delivery acceptance does not prove a human read the message. A channel test never creates a real order or publishes content. Templates include new lead, review requested, publication delayed, order confirmation, shipment and subscription status notices.
+Test a successful saved submission while email is down, repeated browser submission, escaped malicious content, exhausted queue, revoked CRM key, reordered delivery and project deletion. New leads are rejected before acceptance if durable capacity is unavailable; the interface preserves the entered form locally long enough to explain retry without claiming it was submitted.
+25 / Integration, deployment and domain contracts
+Every adapter reports what it can actually confirm
+The integration contract is validate_configuration, plan, execute, inspect, reconcile and revoke. A plan contains project, environment, generation, input digest, permissions, destinations and an execution budget. Adapter output separates request accepted, provider completed and observed result. Capabilities are advertised explicitly; lack of readback produces uncertain status rather than invented confirmation.
+Direct edge API and generated websites
+Direct consumers pin one generation across related reads. Generated websites build from a release manifest and include a machine-readable generation marker. Each deployment attempt records the source commit, schema/renderer hashes, CMS generation, provider deployment ID and eventual serving URL. Verify the marker after promotion; updating the CMS does not establish that a site has rebuilt.
+Serialize desired deployment promotion per destination. Stale workers may finish a build but cannot promote a generation older than the current desired one. Cancellation disables further promotion; if the provider already promoted, reconcile and either keep it or issue a new authorized rollback deployment. Never overwrite customer commits or force-push to a repository from an unreviewed agent task.
+GitHub and hosting integration
+Use a narrowly scoped repository application/token and an explicit branch policy. The installer previews files before creating a starter; writes go through a branch/PR unless the owner expressly authorizes direct delivery. Hosting adapters cover a static deployment artifact and one tested Vercel integration; other hosts implement the same interface. Infrastructure credentials stay server-side and separately revocable. Deployment webhooks use signed receipts and durable deduplication.
+Custom domains and origin binding
+Require domain ownership proof before routing a host to a project. Store canonical hostnames and environments; reject unknown Host values and do not derive tenant identity from untrusted forwarded headers. DNS/certificate provisioning is an asynchronous job with pending/ready/failed states. Cache namespace and TLS routing change together through a reviewed plan. Release a domain only after routes, certificates, caches and ownership tokens are removed, avoiding stale tenant mappings.
+Extension packaging
+First-party modules are compiled Rust components or isolated trusted workers with declared capabilities. A manifest declares core compatibility, schemas/migrations, permissions, events, health checks, resource budgets and uninstall policy. No arbitrary downloaded native code runs inside the privileged API process. Future external plugins must use an isolated, authenticated API/worker boundary; they do not receive production database credentials.
+Acceptance: expired credentials, lost deployment response, out-of-order builds, deleted branch, wrong domain proof, stale webhook, failed CDN purge, partial asset upload and adapter upgrade all produce observable states and a safe next action. A client must remain able to edit/export while a hosting integration is unavailable.
+26 / Security requirements
+A threat model, not a blanket security promise
+Map requirements and evidence to OWASP ASVS 5.0, targeting the relevant Level 2 controls before a public production release. Document exclusions and independent review; this document is not a certification. [R18]
+Threat or boundary
+Required control and proof
+Cross-project access
+Object/field authorization plus database constraints/RLS. Negative tests for APIs, workers, export, search and caches.
+Session theft / CSRF
+Secure HttpOnly cookies, expiry, revocation, CSRF tokens, Origin checks, narrowly scoped CORS and no secrets in URLs.
+SQL / command injection
+Parameterized queries, allowed filter identifiers, no shell interpolation or arbitrary agent SQL.
+Stored XSS
+Validate rich-text AST, sanitize rendered HTML/links, restrictive CSP, escaped fields and sandboxed cross-origin previews.
+SSRF
+Approved outbound destinations, validated DNS-to-connection binding, private/metadata IP blocking, redirect restrictions and egress controls. [R19]
+Malicious upload
+Quarantine, actual type/size checks, bounded decoding, scanning where appropriate and separate asset origin. [R14]
+Cache leakage / poisoning
+Public-only routes, canonical keys, namespace isolation, no shared cache for credentials, preview, customer or personalized content.
+Agent escalation
+Least-privilege service accounts, typed actions, budgets, exact-change approval and execution-time policy checks. [R15]
+Dependency compromise
+Locked dependencies, vulnerability/license scans, reviewed build scripts, pinned CI actions and signed release artifacts.
+Denial of service
+Body/query/depth limits, bounded queues, pool admission, per-project fairness, timeouts and deliberate overload responses.
+Secret exposure
+Environment/secret-store references, encryption at rest for stored credentials, rotation, log redaction and no key export to agents.
+Payment fraud / replay
+Server totals, verified durable webhook inbox, deduplicated fulfillment, provider reconciliation and restricted refunds. [R13]
+
+Conservative starting limits
+API bodies: 1 MiB, except separately streamed uploads. Rich-text depth: 16; relation expansion depth: 2. Query page maximum: 100. Database query deadline: 2 seconds for normal reads, with explicit longer budgets only for administrative jobs. API pool: 20 connections; worker pool: 10 on the reference profile. These are initial bounds to tune from evidence.
+Run as non-root, use read-only application filesystems where possible, restrict outbound destinations and do not publish database/Redis ports. Separate administration and public delivery credentials. Limit both structured application logs and container stdout retention. Safe Rust does not prevent authorization, logic, dependency or denial-of-service bugs.
+27 / Security verification and privacy
+Turn controls into release-blocking tests
+Test family
+Cases that must be demonstrated
+Identity and policy
+Revoked session, expired token, wrong project/environment, hidden field, unauthorized publish/export and stale approval.
+Browser safety
+Stored markup payloads, hostile links, preview-origin isolation, CSRF, unauthorized cross-origin calls and unsafe redirects.
+Network/asset abuse
+Metadata access, DNS rebinding, IPv6/mapped-address bypass, redirect-to-private host, decompression/pixel bombs and misleading file types.
+Cache isolation
+Same slug across projects, private response never reused publicly, locale/query-key collisions, stale fill after publish and removal of prior public versions.
+Agent abuse
+Prompt injection in content, tool argument manipulation, cost overruns, mass deletion attempt, altered approved changeset and unsafe import.
+Supply chain
+Tampered artifact, unexpected publisher, compromised test fixture, untrusted pull request access to secrets and license-policy failure.
+
+Security testing uses owned fixtures and authorized staging targets. Fuzz URL parsers, schema validation, rich-text decoding, pagination and state transitions. Run browser/API scanning against a seeded environment, triage findings and retest fixes. No automated scanner report substitutes for code review and adversarial testing of permissions.
+Data minimization
+Default logs contain identifiers, outcome, timing and sanitized error categories, not article bodies, model prompts, customer addresses or secrets. Per-project telemetry and AI prompt retention are opt-in with expiry and access control. Shared product learning uses only explicitly authorized, sanitized examples; do not train on private content by default.
+Retention baseline
+Keep live content and revisions pinned by active releases. Proposed default history: 90 days for unpinned content revisions and resolved delivery metadata; 30 days for terminal ordinary jobs; 90 days for audit; seven days of diagnostic logs with a byte cap. Commerce enablement requires an owner-approved financial-record retention setting for the configured merchant regions; raw card data is never stored. A legal hold blocks automated deletion for its exact scope and is reviewed periodically. At expiry, delete or redact the permitted data through a recorded job, preserving only required audit/financial metadata. Quotas and audit holds can change expiry; surface this clearly.
+Deletion records a durable tombstone, blocks new use, purges caches and deletes unreferenced media asynchronously. Backups expire under a documented schedule; restoring an old backup must reapply the deletion ledger before serving traffic. Removal from public delivery cannot recall prior downloads.
+Vulnerability handling
+Provide private security reporting, a supported-version table and advisories. Triage exploitable issues by severity, communicate mitigations and release fixed builds with reproducible regression tests. Publish response targets only when maintainers can meet them; do not claim round-the-clock incident response for a solo OSS project.
+28 / Performance model and targets
+Benchmark the architecture, not the language name
+Every number here is an initial acceptance target. No CMS performance measurements have been run for this blueprint. Report cached, uncached, authenticated, write and publication paths separately; a cached CDN request is not a database benchmark.
+Reproducible reference profile
+API: 4 vCPU / 8 GiB RAM. Worker: 2 vCPU / 4 GiB. PostgreSQL: 4 vCPU / 16 GiB with SSD and recorded IOPS. Redis: 1 GiB cache budget. Load generator: a separate host. Record CPU model, region/RTT, OS, exact versions, build flags, pool limits, CDN plan, cache rules and storage configuration. The Ubuntu Dell with 32 GB RAM is a development/functional-test machine, not an independent load generator plus production benchmark host.
+Dataset D1: three isolated projects, 100,000 total entries across ten collections per project, three revisions per entry, typical 6 KiB content, 10,000 asset metadata records and realistic reference/locale/slug distributions. A separate corpus includes maximum-size records and invalid data. Keep fixed seeds and export the dataset generator.
+Workload on the reference profile
+Proposed gate
+Warm public origin reads, 300 requests/s, 30 min
+p95 ≤150 ms; p99 ≤350 ms; unexpected failure rate <0.1%.
+Cold/cache-bypass origin reads, 100 requests/s
+p95 ≤300 ms; p99 ≤750 ms; bounded pools and no unbounded database queue.
+Draft writes, 20/s plus 100 reads/s
+p95 ≤300 ms; p99 ≤700 ms for committed saves; no lost accepted revision.
+Publish, 5 releases/s, ≤10 entries/release
+Database commit p95 ≤500 ms; downstream work measured separately.
+Warm CDN reads, 2,000/s total over 3 named probe regions
+Per-region p95 TTFB ≤150 ms and p99 ≤400 ms for ≤10 KiB payload; ≥95% hit rate on the defined hot-key workload.
+Healthy publishing to configured probe visibility
+p95 ≤10 s, p99 ≤30 s for direct edge-API visibility after commit, with observed generation and probe coverage recorded. Website build/promote visibility is a separate adapter-specific measurement.
+
+Non-negotiable correctness
+Zero unauthorized disclosures, duplicate logical releases, falsely acknowledged saves or duplicate fulfillment in the defined tests. Latency improvement cannot compensate for incorrect results. All default targets may be revised transparently after baseline measurements; never quietly lower them to label a failing run successful.
+Record frontend startup and editor interaction measurements separately, including bundle size, mobile network profile and input latency. Do not infer UI quality from backend request throughput.
+29 / Load-test cases
+Execute traffic as a controlled experiment
+Use k6 arrival-rate scenarios for specified offered throughput, with thresholds and non-zero CI exit on failure. Closed-loop concurrency tests are useful too, but must not hide lower offered load when requests slow. Record dropped iterations, achieved rate and generator saturation. [R16, R17]
+ID
+Scenario
+Expected evidence
+L01
+One-user smoke, 5 min
+Correct bodies, authorization, revisions and release IDs; no load before basic correctness.
+L02
+Warm read baseline, 30 min
+Meet section 28 warm-origin gates; record hits, pools, CPU, RSS and plans.
+L03
+Cold cache / 100% unique keys
+Meet cold-origin gate; no uncontrolled database amplification.
+L04
+Hot-key stampede: 1,000 callers at expiry
+Bounded regeneration and coalescing; no permission-crossing reuse.
+L05
+Mixed reads, writes and publishing
+Each operation class meets its target; content stays consistent.
+L06
+Spike from 1× to 5× load for 2 min
+Controlled 429/503, bounded queues; return to baseline within 2 min after load ends.
+L07
+24-hour soak at 50% baseline mixed load
+Correct final state; quotas/retention enforced; explain memory, WAL and disk growth.
+L08
+One noisy agent plus active editors
+Agent is throttled; editorial p95 ≤2× mixed-workload baseline, no cross-project starvation.
+L09
+10,000-record draft import
+Resumable chunks, per-item outcomes and stable memory; no accidental publication.
+L10
+CDN warm traffic + repeated publishes
+Per-region latency and observed release generation; detect stale refills and mixed-release pages.
+L11
+Redis unavailable for 5 min
+Rate-limited fallback, no lost accepted work, bounded origin pressure and correct recovery.
+L12
+PostgreSQL slow/unavailable, worker kill
+Writes fail honestly; no fake commit; jobs resume and cache policy stays explicit.
+L13
+CDN purge 429/5xx and delayed site rebuild
+Backoff and pending/uncertain delivery; no claim of global success.
+L14
+Large media/decoder workload
+Worker limits hold and content editing remains responsive.
+L15
+Commerce concurrency and provider faults
+Against mocks: unique fulfillment, authoritative totals and reconciled uncertain attempts.
+
+Test method and reporting
+Use staging only with approved spend/rate budgets. Warm up for five minutes, then run three independent measured repetitions per baseline scenario. Report per-run distributions rather than averaging percentiles. A release-level p99 needs enough publication samples; show sample count and window.
+Separate successful latency, rejected requests, expected fault errors and unexpected errors. Overload rejections are visible—not silently excluded from success charts. A generator that misses its offered rate fails the run's validity check. Do not benchmark external model or payment providers without their authorization.
+Every report includes commit, fixtures, command, environment, raw results, traces, thresholds, exceptions and conclusions. CI gets short smoke checks; dedicated staging runs the full matrix before release. An overnight soak is a gate, not proof of indefinite stability.
+30 / Correctness and fault-injection suite
+Prove the uncomfortable paths
+ID
+Injected fault
+Required invariant
+F01
+Kill server before content commit
+No success acknowledgment for an uncommitted revision.
+F02
+Kill after commit, before response
+Idempotent retry returns the same logical operation and durable result.
+F03
+Kill worker after purge/send, before recording
+Reconcile or safely retry; no duplicated business effect claimed impossible.
+F04
+Two editors save the same base revision
+One conflicts; neither silently loses an accepted edit.
+F05
+Old delivery runs after a newer release
+Generation check blocks regression and records superseded work.
+F06
+Collection filter gains a new matching article
+Listing cache invalidates even though the old response did not reference the new entry.
+F07
+Entry unpublished while old caches exist
+Origin denies revoked content; purge/evidence tracked; remaining cache exposure is visible.
+F08
+Redis eviction/failover/restart
+No loss of content, jobs, sessions, order state or hard budget accounting.
+F09
+Outbox/disk budget exhausted
+New operations needing durable work fail before acceptance, or enter an explicit documented degraded state.
+F10
+Migration interrupted or schema edited concurrently
+Checkpointed recovery or conflict; no mixed undocumented schema.
+F11
+Model produces invalid or hostile output
+No unsafe action; reviewer sees a rejected suggestion with safe diagnostics.
+F12
+Duplicate/reordered payment events
+Authoritative reconciliation and exactly one logical fulfillment record.
+F13
+Restore backup containing an old outbox
+New recovery epoch; reconcile external effects before replay; no blind resend.
+F14
+Deleted project appears in a restored backup
+Deletion ledger reapplied before read APIs/caches are enabled.
+
+Testing layers
+Pure Rust domain tests cover legal/illegal transitions with a fake clock. Property tests check idempotency, authorization and release-generation invariants across random sequences. Database integration tests run real PostgreSQL and Redis containers with migrations. Browser tests exercise Studio keyboard flows, conflicts, upload, preview and AI review. Contract tests run CLI and SDK examples against the same API.
+Fault tests use local provider/CDN/object-store adapters that can lose responses, delay, duplicate and reorder calls. Run process-kill and disk-pressure tests in disposable environments. Add network restrictions to security tests; application mocks do not prove deployment isolation.
+Release evidence bundle
+Keep a machine-readable matrix linking each requirement to its tests, last result and supporting artifacts. Store benchmark outputs, schema compatibility checks, upgrade/restore drills, dependency inventory and known limitations with the release. Test count is diagnostic information, not a quality claim by itself.
+Stop conditions: unexplained data loss, cross-project exposure, invalid authorization or duplicate fulfillment block release regardless of performance. External-service uncertainty must be preserved and actionable, not relabeled as success for a cleaner dashboard.
+31 / Extended workflow and commerce verification
+Exercise the full product, not only the blog path
+The original load and fault matrices remain mandatory. These additional cases cover the expanded contracts. Use seeded staging data, fake clocks, provider simulators and separate load generators; do not run destructive or high-volume cases against customer systems or payment providers.
+ID
+Scenario
+Required evidence
+X01
+100 simultaneous checkouts for the last unit
+At most one valid reservation/allocation; rejected attempts have no unintended paid fulfillment.
+X02
+Payment succeeds after reservation expiry
+Reacquire stock or mark paid-unfulfillable; no silent oversell and an audited compensation path.
+X03
+Concurrent partial refunds
+Reserved plus settled refunds cannot exceed the remaining captured amount; provider uncertainty remains visible.
+X04
+Provider down during renewal, then reordered events
+Access follows committed paid-through/grace policy; no fabricated paid renewal.
+X05
+Email/CRM unavailable during 1,000 valid lead submissions
+Durable acceptance, bounded outbox, visible delivery failures and no lost acknowledged leads.
+X06
+Locale fallback to an unpublished draft
+Denied; public output contains only eligible published locale content from the pinned release.
+X07
+Scheduled publication crosses a DST change or approval expires
+Explicit chosen instant; revalidation blocks stale approval; no duplicate scheduled effect.
+X08
+Slow older site build finishes after new generation
+Old build never becomes current without a new authorized rollback.
+X09
+Clone production into staging
+No production payment/email authority, customer sessions or unintended scheduled dispatch.
+X10
+10,000 asset references across template upgrade
+No referenced object deletion; customization conflicts shown and import/upgrade resumable.
+X11
+Redis and identity provider fail while editors are active
+No permission bypass; valid local sessions only continue per policy; new sign-in and unsupported work fail clearly.
+X12
+Agent interrupted after half a bulk edit
+Per-item outcomes, stable idempotency keys and original base revisions prevent duplicate/overwritten accepted edits.
+X13
+Paid download or preview after revocation
+Online access denied; remaining signed-link exposure is bounded and disclosed.
+X14
+Restore backup predating a deletion and payment
+Replay deletion ledger and reconcile external effects before serving or dispatching.
+
+Evidence and traffic profiles
+For X01 use 100 one-shot concurrent client attempts against a simulated payment provider; verify SQL state, not only HTTP codes. For X05 use a fixed five-minute offered rate and deliberately fail delivery workers; verify accepted IDs against durable lead records. For subscription, scheduling and retention cases, advance a fake clock rather than wait or change a production system clock.
+Record startup/shutdown, p95/p99 per operation class, rejected requests, pool/queue peaks, database conflicts, retained bytes, generation markers and every violated invariant. A test with dropped generator iterations does not demonstrate the intended offered rate. Correctness failures block release even when latency looks good.
+Traceability gate
+Every enabled template runs its full user journey in browser tests and the equivalent API/CLI flow. A release evidence bundle maps CMS requirements, L load cases, F crash cases and X workflow cases to commits, commands and raw artifacts. Known unsupported configurations are listed explicitly rather than silently skipped in the pass rate.
+32 / Deployment, observability and recovery
+Local simplicity; explicit production topology
+Local Compose runs PostgreSQL, Redis, a test object store and a reference identity-provider profile beside Rust API/worker and Svelte development servers. Production serves compiled Svelte assets, Rust services and private infrastructure. Use an external TLS proxy/CDN, non-root containers, resource limits and persistent managed or self-hosted storage. Kubernetes is not required for the first installation.
+Operational signals
+Correlate request_id, project, actor, revision, release, job, destination and deployment version. Expose HTTP error/latency, save conflicts, publish lag, queue age, failed/uncertain deliveries, cache hit ratio, database pools/locks, WAL size, Redis memory/eviction, model budget consumption and dropped logs. Export optional OpenTelemetry-compatible traces; public logs never reveal draft text or credentials. [R25]
+/livez means process responsiveness. /readyz reports whether this role can safely serve its required operations; Redis failure can be degraded rather than universally unready if bounded fallback is available. Database failure makes writes unavailable. Check the status page and service health from another failure domain. Service Monitor can supply that external view but is not the only way to deploy the CMS.
+Data protection and objectives
+Use encrypted daily base backups and continuous PostgreSQL WAL archiving for a proposed 15-minute recovery-point objective and one-hour recovery-time objective on the reference profile. Both require demonstrated restore drills. PostgreSQL documents PITR mechanics; a SQL dump alone is not that strategy. [R24]
+Version object-store assets and preserve a consistent backup manifest, schemas, migrations, encryption-key references and deletion ledger. Redis does not require restoration for correctness. Keep backup credentials separate, test access and restore on clean infrastructure, with outbound publishing/payments disabled until reconciliation.
+Upgrade runbook
+Read release notes and compatibility constraints → verify backup → rehearse on staging → apply additive schema → deploy compatible binaries → run smoke checks → backfill → remove old fields only after the support window. Roll back binaries only against a compatible schema. Otherwise restore or forward-fix with an explicit data-loss and reconciliation plan.
+Capacity, outages and cost
+Set project storage/revision/media quotas, queue caps and retention. Monitor free disk and WAL growth; reserve capacity before accepting large jobs. Keep cache reconstruction and diagnostics bounded. On provider outages, retain drafts, show pending publication and expose next actions. On a cold restart, do not replay all historic effects blindly.
+Record operating cost per deployment and per 1,000 defined operations. Hosting, CDN bandwidth, object storage, email, model usage and payment fees are distinct. Do not equate low Rust memory usage with a profitable service.
+33 / Operating budgets and incident runbooks
+The system must be maintainable without its original author
+All values below are proposed defaults, configurable through validated settings and measured in staging. Budgets constrain admission; they are not guarantees that arbitrary traffic fits a fixed machine. Monitoring and recovery operate independently of the production application where possible.
+Resource
+Default guard and behavior
+HTTP API
+1 MiB JSON input, page size at most 100, 2-second ordinary query budget; 429/503 before unbounded queues form.
+Jobs
+10,000 pending jobs/project and 1 GiB pending payload metadata/installation; stop accepting new expensive work before reserves are exhausted. Large bodies live in referenced object storage.
+Worker pools
+Eight publishing/delivery tasks total, two per destination; separately budget four image jobs and two AI jobs. Deployment-specific process limits are measured and pinned.
+Redis
+1 GiB reference cache budget with explicit eviction; cache loss triggers bounded origin fallback, never permission or billing bypass.
+Logs
+Seven days and 1 GiB combined diagnostics per installation, whichever comes first; 16 KiB record cap and visible dropped-record counters. Host/container logs are capped separately.
+Storage
+Warning at 70%, reject optional growth at 85%, block unsafe writes before 90% or the configured reserve; preserve room for final commits and recovery.
+
+Failure runbooks
+PostgreSQL unavailable: fail writes honestly, stop accepting durable jobs, keep only eligible previously public cache data within TTL, and publish role-specific degraded status. Restore connectivity and verify migrations/recovery before admitting traffic. Never acknowledge a write based on a local queue.
+Redis unavailable: disable the failed cache path, coalesce identical public reads and cap database fallback. Authorization, mutations and budget reservations continue through PostgreSQL if capacity permits. Rebuild keys gradually; never flush unrelated namespaces or replay business jobs because cache data vanished.
+Publishing/CDN backlog: inspect oldest due work, provider rate limits, generations and credentials. Retry only the current desired generation, coalesce obsolete work, and keep pending/uncertain evidence. Do not purge the entire zone as an automatic response to one failed update.
+Suspected credential leak: revoke the affected scoped principal, rotate related secrets, pause its new actions and preserve audit evidence. Investigate actions already executed; do not claim revocation undid external effects. Follow the private security-report process before public disclosure.
+Disk pressure or damaged storage: stop unsafe admission, preserve diagnostics and snapshots, and apply measured retention. Never delete database WAL or unfulfilled order state to create free space. Restore to a clean environment when needed; record the data gap and reconcile external effects.
+Restore and deletion ledger
+Keep an access-controlled off-host deletion ledger and backup manifest so post-backup deletions can be reapplied. Recovery is blocked from public serving if the required ledger interval cannot be reconstructed. Restore with outbound integrations disabled, verify schema/assets/permissions, assign a new recovery epoch, reconcile provider effects, and explicitly enable current jobs. A backup existing is not proof of a working restore.
+34 / Development process and milestones
+One full scope, implemented in dependency order
+Stage
+Working outcome
+Exit gate
+M0 — contracts and editor spike
+Monorepo, pinned stack, schema fixture, API error format and Svelte/Tiptap prototype.
+Custom blocks, paste, image flow, undo/redo and serialization pass on supported browsers.
+M1 — core authoring
+Auth, project boundary, schemas, localized PostgreSQL revisions, review-ready editor and CLI create/list.
+Human and CLI produce identical validated data; conflict and access tests pass.
+M2 — release engine
+Review binding, transactional publish, history, public delivery and durable outbox.
+Crash/retry tests preserve one logical release; SDK pins consistent reads.
+M3 — cache and evidence
+Redis, CDN adapter, dependency tags, destination status and reference blog.
+Publish and unpublish faults produce truthful states; no private-cache leakage.
+M4 — safe AI workflows
+Draft assistance, changesets, bulk jobs, scoped agents and budgets.
+Evaluation set passes authorization gates; humans can reject/edit every proposal.
+M5 — integrated operation
+Docs, website, packaging, imports, backups, upgrades and independent pilots.
+Core security/load matrix and restore drill pass; unfinished modules stay disabled.
+M6 — business and commerce modules
+Business forms, physical/digital commerce, subscriptions, shipping/tax configuration, refunds and entitlements.
+All defined commerce, lead and membership workflows pass transaction/security tests.
+M7 — complete product acceptance
+Cross-module scenarios, source import adapters, full template catalog, maintained docs and operating procedures.
+The requirements matrix is complete; independent users can install, operate, upgrade and recover.
+
+These stages are engineering work packages, not separate blueprint editions. Delivering M1 does not redefine the end goal or remove M6 requirements. Publish implemented status honestly and do not enable a module before its gates pass.
+Feature-development contract
+Write a small issue stating the user outcome, data invariant, failure case, permission and acceptance test. Record significant tradeoffs in an architecture decision record. Implement the smallest slice, test normal and failure paths, update docs/examples and show a reproducible demo. Merge only with CI green and human understanding of the generated code.
+Use AI to explore, explain and draft, but review every database migration, authentication change, publishing transition and provider adapter manually. Require a second reviewer for these areas when available; otherwise mark the review limitation and delay high-risk public release rather than claim independent approval.
+Repository gates
+Each pull request: format/lint/type checks, unit/property tests, API/schema compatibility, relevant integration/browser tests, secret and dependency scans. Main branch: broader fault and performance smoke suites. Release: full load matrix, restore/upgrade drill, dependency/license inventory, signed artifacts and verified docs.
+Do not use a calendar promise as a substitute for these gates. This CMS roadmap is separate from completing Service Monitor; it can reuse proven components later without becoming blocked on the custom runtime or workflow platform.
+35 / Open-source maintenance
+The product includes its upkeep
+Proposed project license: Apache-2.0 for core, CLI and SDK, subject to owner approval before public publication. Review contributed code, templates, fonts, media and dependencies separately. This is a proposed project policy, not legal clearance.
+Redis 8 offers AGPLv3, RSALv2 and SSPLv1 options; it is not the old BSD-only Redis. Keep a license inventory and review redistribution, modifications and hosting arrangements before shipping images. Do not describe the whole dependency bundle as uniformly permissive. A Redis-compatible adapter keeps future alternatives possible, but compatibility must be tested rather than assumed. [R10]
+Cadence
+Maintainer responsibility
+Every pull request
+Tests, formatting, dependency/license changes, docs and permission/migration review.
+Automated daily
+RustSec/OSV advisories, dependency updates and CI health; human triage by severity. [R20]
+Weekly
+Review bugs, security reports, stalled changes, upstream component fixes and community questions.
+Monthly
+Patch release when justified; upgrade tests, docs review and published known limitations.
+Quarterly
+Restore drill, performance rerun, threat-model review, supported-version review and maintainer-access audit.
+Every release
+Changelog, compatibility table, SBOM, checksums, signed provenance, upgrade/rollback guide and artifact verification. [R21]
+
+Governance and supply chain
+Create README, LICENSE, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, GOVERNANCE, CHANGELOG and CODEOWNERS. Document private reporting through repository security advisories; do not expose personal contact information by default. Contributors attest to rights to their changes through a documented DCO-style process.
+Protect release branches, require hardware-backed MFA for maintainers, minimize token scopes and isolate untrusted pull-request jobs from secrets. Pin third-party CI actions, use short-lived publishing credentials, scan images and verify signing identities. Use OpenSSF Scorecard as a diagnostic aid, not a certification. [R22]
+Compatibility and sustainability
+Version the software and schema contracts, not this plan into competing blueprints. Announce breaking changes explicitly; use semantic versioning and support the current stable minor plus the previous minor for a proposed 90-day transition, with a published security matrix. Never silently withdraw support or auto-run destructive upgrades. Keep a tested PostgreSQL/Redis/frontend/toolchain matrix.
+Reserve roughly one working day in five for maintenance once users depend on releases. Keep a backup maintainer/release-access recovery process as adoption grows. If capacity shrinks, reduce supported scope or announce maintenance mode and migration paths. Do not promise unlimited free support or 24/7 SLAs without staff and funding.
+36 / Requirements, ownership and completion gates
+One complete scope; staged implementation is only sequencing
+Each requirement must have an issue, accountable module, automated test and evidence link. The IDs below are stable references for the backlog; they are not a separate version of the product. A module is not described as delivered while its safety and operating gates are disabled or untested.
+Requirement
+Owning module
+Acceptance evidence
+CMS-01 Project setup and isolation
+auth / domain / studio
+Clean install, invite and cross-project denial.
+CMS-02 Schema and migration lifecycle
+domain / db / cli
+Validated plan, interrupted backfill and safe upgrade.
+CMS-03 Editorial workflow and localization
+domain / studio
+Draft conflict, review, locale fallback and timed publish.
+CMS-04 Developer and agent parity
+api / cli / sdk / ai
+Equivalent authorized operations and stable machine output.
+CMS-05 Publishing and delivery
+worker / delivery
+Atomic release, stale-worker prevention and inspected destination.
+CMS-06 Edge cache and revocation
+delivery / cache
+No private leak, stale-fill test and observable unpublish.
+CMS-07 Media, search and preview
+media / delivery / studio
+Quarantine, safe rendering and private preview exclusion.
+CMS-08 Templates and business workflows
+templates / forms
+Install/upgrade, saved lead during email failure.
+CMS-09 Commerce and subscriptions
+commerce
+Stock race, paid order, refunds, renewals and access expiry.
+CMS-10 AI safety and usefulness
+ai / policy
+Human-reviewed quality set, blocked escalation and bounded cost.
+CMS-11 Performance and resilience
+tests / operations
+Baselines, overload, 24-hour soak and fault matrix.
+CMS-12 Security, privacy and supply chain
+all modules
+Threat-model controls, scans, negative tests and review findings closed.
+CMS-13 Operations and OSS support
+deploy / maintainers
+Restore, upgrade, signed artifacts and published support policy.
+CMS-14 Website, docs and adoption
+web / docs / templates
+Tested quickstart and successful independent developer/editor trial.
+
+End-to-end release scenarios
+A human authors a localized article; an agent proposes a constrained edit; a reviewer approves the exact diff; publishing commits and updates a real site; a delayed cache is visible and safely reconciled. The same workflow can be inspected from Studio and CLI.
+A customer submits a lead while mail is unavailable; the lead survives and notifications recover. A customer buys the last physical item under concurrent demand; the order, stock and payment remain consistent. Digital fulfillment is deduplicated, a partial refund reconciles, and a subscription cancellation expires access on the configured boundary.
+An operator upgrades and restores onto clean infrastructure, reapplies deletions, reconciles external actions and resumes service without accidentally publishing, charging or notifying twice. The measured deployment withstands the documented load and failure scenarios with known limits disclosed.
+Definition of ready to build versus ready to rely on
+The specification is ready to guide implementation. Production reliance requires executed evidence, dependency locks, configured providers/regions, a completed security review appropriate to exposure and a tested support/restore process. These are acceptance gates for the defined design—not missing product specifications or promises that tests have already run.
+37 / End-state, moat and launch decision
+What a complete product means
+A developer installs a documented, versioned release. A business editor creates and previews an article, receives a reviewable AI suggestion and publishes it. The CMS records the release, updates appropriate public caches, shows destination evidence and preserves a safe recovery route. An agent can perform the same permitted operations at bounded scale through stable contracts. A maintainer can upgrade, back up, restore and diagnose the installation without relying on its original author.
+Commerce and other templates extend that foundation through tested modules; they do not redefine the correctness of content, authentication or publishing. The platform remains useful without AI and without our experimental runtime.
+What could become defensible
+Hypothesis
+Evidence to collect
+Easier adoption
+Independent developers install/integrate the blog with fewer manual steps and less assistance.
+Better editorial experience
+Editors complete real tasks with fewer errors and less developer intervention.
+Reliable publication
+Less investigation/recovery time across recorded cache, webhook and rebuild failures.
+Safe agent operation
+High useful task completion with no unauthorized executed actions and bounded cost/load.
+Efficient operation
+Reproducible performance/cost at the same workload and correctness contract.
+Trust and ecosystem
+Repeat use, successful upgrades, third-party contributions and maintained integrations.
+
+Treat each as a hypothesis. Rust, Redis, a CDN, a CLI and templates are not individually a moat. Do not frame existing CMS products as lacking features they already document. Compare the end-to-end job under realistic failures and count maintenance cost, not just happy-path speed. [R27–R29]
+Pilot and release gates
+Begin with one authorized internal noncritical content site. Then recruit three independent developer/editor pairs. Measure time to first useful preview, first successful publication, failure diagnosis, recovery, ongoing edits and willingness to keep using the system. Publish anonymized findings only with consent.
+Declare the defined product ready only when enabled modules satisfy their requirements matrix, load results are reproducible, limitations are visible, a clean restore works, and independent developers/editors can install, use and upgrade from the docs. Require an independent security review before production commerce or broad public exposure; testing this document is not that review.
+Deployment parameters and validation evidence
+The fixed architecture still needs an executable dependency lock, configured OIDC issuer, object-store bucket, CDN account/limits, merchant credentials, allowed shipping/tax regions and owner license approval. These are installation and validation inputs, not missing feature definitions. Deployment checks block capabilities with incomplete prerequisites rather than inventing account details, legal conclusions or capacity results.
+First CMS implementation task: prove one Svelte editor can save a validated PostgreSQL draft through Rust, with the CLI creating the same record, a deliberate conflict returning safely, and another project denied access. Then build publishing. This is the first useful slice—not a full CMS clone on day one.
+38 / Primary references — application stack
+Sources consulted 22 October 2026
+These sources support library capabilities and constraints. The architecture, limits, gates and product strategy in this document are proposed design choices. Pin versions and review their matching documentation before implementation.
+[R01] SvelteKit — Static site generation
+https://svelte.dev/docs/kit/adapter-static
+Static assets for marketing/docs and adapter deployment behavior.
+[R02] SvelteKit — Single-page applications
+https://svelte.dev/docs/kit/single-page-apps
+SPA tradeoffs and static fallback behavior; relevant to the authenticated Studio decision.
+[R03] Tiptap — Svelte integration and editor overview
+https://tiptap.dev/docs/editor/getting-started/install/svelte
+https://tiptap.dev/docs/editor/getting-started/overview
+Framework integration and the distinction between OSS core and optional paid extensions.
+[R04] shadcn-svelte — Introduction
+https://www.shadcn-svelte.com/docs
+Owned component code, Bits UI/Tailwind composition and upstream maintenance responsibilities.
+[R05] Axum — Crate documentation
+https://docs.rs/axum/latest/axum/
+HTTP routing and Tower middleware integration.
+[R06] Tokio — Tutorial
+https://tokio.rs/tokio/tutorial
+Async networking, task ownership and channels.
+[R07] SQLx — Crate documentation
+https://docs.rs/sqlx/latest/sqlx/
+Rust database integration; check feature/runtime compatibility for the pinned release.
+[R08] PostgreSQL — Versioning policy
+https://www.postgresql.org/support/versioning/
+Supported branches and patch/major upgrade policy; PostgreSQL 18 is the selected baseline.
+[R09] PostgreSQL — Row security policies
+https://www.postgresql.org/docs/current/ddl-rowsecurity.html
+Default deny, table-owner behavior and privileged-role bypasses.
+[R10] Redis — Licenses
+https://redis.io/legal/licenses/
+Redis 8 licensing options; requires a distribution-specific review.
+[R11] Redis — Replication
+https://redis.io/docs/latest/operate/oss_and_stack/management/replication/
+Asynchronous replication and the limits of durability/consistency claims.
+39 / Primary references — safety and testing
+[R12] Cloudflare — Purge by cache tags
+https://developers.cloudflare.com/cache/how-to/purge-cache/purge-by-tags/
+Targeted cache invalidation and linked plan/rate constraints.
+[R13] Stripe — Receive events in a webhook endpoint
+https://docs.stripe.com/webhooks
+Signature verification, retries, duplicate handling and event ordering.
+[R14] OWASP — File Upload Cheat Sheet
+https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+Type, storage, permission and resource-control considerations.
+[R15] OWASP — LLM Prompt Injection Prevention
+https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html
+Untrusted input, tool boundaries, least privilege and human review.
+[R16] Grafana k6 — Open and closed models
+https://grafana.com/docs/k6/latest/using-k6/scenarios/concepts/open-vs-closed/
+Offered load and coordinated-omission considerations.
+[R17] Grafana k6 — Thresholds
+https://grafana.com/docs/k6/latest/using-k6/thresholds/
+Machine-enforced pass/fail performance criteria.
+[R18] OWASP — Application Security Verification Standard
+https://owasp.org/projects/asvs
+ASVS 5.0 as a control-verification framework, not certification of this design.
+[R19] OWASP — SSRF Prevention Cheat Sheet
+https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+Network destination validation and defense in depth.
+[R20] RustSec — Advisory database and tools
+https://rustsec.org/
+Rust dependency advisories and audit tooling.
+[R21] SLSA — Specification v1.2
+https://slsa.dev/spec/v1.2/
+Supply-chain provenance requirements; no compliance level is claimed here.
+[R22] OpenSSF — Scorecard
+https://openssf.org/scorecard/
+Repository security-health checks for ongoing maintenance.
+40 / Primary references — operations and ecosystem
+[R23] PostgreSQL — Transaction isolation
+https://www.postgresql.org/docs/current/transaction-iso.html
+Companion reference for concurrency and transaction design; verify chosen isolation semantics in tests.
+[R24] PostgreSQL — Continuous archiving and point-in-time recovery
+https://www.postgresql.org/docs/current/continuous-archiving.html
+Backup/WAL recovery mechanics.
+[R25] OpenTelemetry — Context propagation
+https://opentelemetry.io/docs/concepts/context-propagation/
+Cross-service correlation for requests, jobs and external operations.
+[R26] Rust — Cargo manifest reference
+https://doc.rust-lang.org/cargo/reference/manifest.html
+Toolchain/rust-version and package metadata companion reference.
+[R27] Strapi — Releases
+https://docs.strapi.io/cms/features/releases
+Existing release-management capabilities; not a claim that our product is superior.
+[R28] Payload — Versions overview
+https://payloadcms.com/docs/versions/overview
+Existing version history, comparison and restoration capabilities.
+[R29] Sanity — API CDN
+https://www.sanity.io/docs/content-lake/api-cdn
+Existing cached content-delivery capabilities.
+[R30] Svelte CLI — mdsvex
+https://svelte.dev/docs/cli/mdsvex
+Markdown and Svelte documentation integration.
+[R31] Pagefind — Documentation
+https://pagefind.app/docs/
+Static documentation-search tooling.
+Source boundary
+The product requirements come from the current CMS discussion: Rust + Svelte, PostgreSQL + Redis, nontechnical Studio, developer/agent CLI, edge caching, templates and eventual Stripe integration. The architecture, operating limits, security tests and OSS policies are proposed implementation decisions, informed by these primary references. The expanded operating contracts are distinguished in the final reference section.
+No repository was created, no CMS code was deployed, no benchmark was executed and no security audit was performed by producing this specification. The document defines how those outcomes will be tested and evidenced. Review the threat model and compatibility matrix when the implementation, dependencies or deployment assumptions change.
+41 / Additional primary references and document stewardship
+Expanded contracts and their source boundary
+The agreed stack and product goals come from this conversation and the prior CMS blueprint. This master document preserves those decisions and adds explicit proposed contracts for onboarding, editorial workflows, API/CLI behavior, business forms, physical commerce, subscriptions, integrations and operations. Architecture choices and numeric targets are design requirements; sources document underlying provider behavior, not proof that our implementation works.
+[R32] Stripe — Subscription webhooks
+https://docs.stripe.com/billing/subscriptions/webhooks
+Asynchronous subscription events and billing-state integration. Checked 22 October 2026.
+[R33] Stripe — Tax with Checkout
+https://docs.stripe.com/tax/checkout/page
+Configured registrations and address-dependent tax behavior. Checked 22 October 2026; not legal or tax clearance.
+[R34] Stripe — Refunds
+https://docs.stripe.com/refunds
+Partial refunds and pending/failed outcomes. Checked 22 October 2026.
+[R35] Stripe — Customer management portal
+https://docs.stripe.com/customer-management
+Provider-hosted billing and subscription controls. Checked 22 October 2026.
+[R36] Model Context Protocol — Authorization
+https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization
+Pinned protocol edition for transport authentication; implementation must verify interoperability. Checked 22 October 2026.
+[R37] Keycloak — OpenID Connect integration
+https://www.keycloak.org/securing-apps/oidc-layers
+Reference self-hosted identity-provider endpoints and flows. Checked 22 October 2026.
+Keep one master document
+This file supersedes the earlier CMS blueprint downloads. Update requirements, decisions, tests and known limitations here; do not ask implementers to combine competing blueprints. Keep software, schema and API compatibility histories in the repository—removing those histories would make upgrades unsafe.
+A requirement change records the reason, affected invariants, migration/compatibility impact, owner and test changes. Implementation feedback may refine the design, but must not silently weaken authorization, data durability or measurement criteria. The document is not a repository, executed benchmark, certification, legal opinion or promise of worldwide payment support.
+Final scope: a Rust/Svelte content platform with human, developer and agent interfaces; PostgreSQL authority; Redis/edge acceleration; blog, business and commerce workflows; operational and security evidence; and maintained open-source delivery. Non-goals remain explicit rather than becoming unspecified obligations.

@@ -1,0 +1,149 @@
+<p align="center">
+  <img src="docs/brand/colophon-mark.svg" alt="Colophon mark: an octagonal C" width="88" height="94">
+</p>
+
+<h1 align="center">Colophon CMS</h1>
+
+<p align="center">
+  <strong>A Rust + Svelte content management system that can prove what it published, and survives being killed at any moment.</strong>
+</p>
+
+<p align="center">
+  <a href="https://404human.dev/colophon/">Build log</a> ·
+  <a href="docs/END_GOAL.md">End goal</a> ·
+  <a href="docs/SYSTEM_DESIGN.md">System design</a> ·
+  <a href="docs/ROADMAP.md">Roadmap</a> ·
+  <a href="docs/modules/README.md">Modules</a>
+</p>
+
+> **Status: design phase (October 2026).** There is no code yet. This repository holds the complete plan: what will be
+> built, how each part can fail, and how each part will be proven. Nothing here claims that a feature, benchmark or
+> security review already exists. Progress is logged step by step at **[404human.dev/colophon](https://404human.dev/colophon/)**.
+
+---
+
+## Why "Colophon"?
+
+In a book, the *colophon* is the note at the back that records how, when and by whom it was printed. Colophon does the
+same for a website: every publish becomes a numbered release, with a record of exactly what went live and where it was
+actually seen.
+
+Most content tools end a publish with a spinner and hope. Colophon ends it with a receipt.
+
+## The four promises
+
+| Promise | What you see | What makes it true |
+|---|---|---|
+| **Kill it at any moment, lose nothing** | No accepted edit disappears, no release runs twice, no reader sees half of one, even when the server or worker dies mid-publish | PostgreSQL transactions, a transactional outbox, idempotency keys, leased jobs, release generations |
+| **Every bug is a number you can replay** | Thousands of seeded simulation runs on every pull request, with injected crashes and network faults; a failure replays exactly from its seed | A deterministic simulator (`colophon-sim`) plus a real-process crash loop |
+| **Time travel** | Browse the whole site as it was at any release; rollback is just a new release pointing at older content | Immutable revisions and generation-based publication history |
+| **Receipts, not spinners** | *Saved → Published in CMS → Website update pending → Verified at configured locations*, or *Needs attention* with a safe next action | Per-destination delivery states with stored evidence |
+
+## How it works
+
+```mermaid
+flowchart LR
+  S["Editor saves<br/>(expected revision)"] --> R["Immutable revision"]
+  R --> C["Changeset<br/>approved by exact hash"]
+  C --> G["Release N+1<br/>one transaction"]
+  G --> O["Outbox row<br/>same transaction"]
+  O --> W["Worker<br/>purge, build, probe"]
+  W --> V["Evidence<br/>seen live at location X"]
+```
+
+- **PostgreSQL is the only source of truth.** The cache and the CDN make things fast and are allowed to forget
+  everything.
+- **No database transaction ever waits on the outside world.** Changes commit first; talking to the CDN or a site host
+  happens afterwards, from the outbox, and leaves evidence.
+- **Release numbers only go up.** A slow, stale worker can never put an older release back on the site.
+- **One API for everyone.** The Studio, the `colophon` CLI, the TypeScript SDK and AI agents all go through the same
+  Rust services and the same permission checks. Agents can draft and propose; they can never approve their own work.
+
+More: [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the structure, [SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) for the data
+model, flows, consistency guarantees, capacity model and failure handling.
+
+## Who it's for
+
+- **Editors** write, preview, review and publish in the Studio, without a terminal and without needing to know what a
+  cache is.
+- **Developers** define schemas, run migrations and operate the install from the CLI and a typed REST API.
+- **Scripts and agents** get scoped, budgeted tokens, stable JSON contracts and an MCP adapter.
+
+## Stack
+
+| Layer | Choice |
+|---|---|
+| Server | Rust (edition 2024): Axum, Tokio, Tower, SQLx; one binary with API and worker roles |
+| Data | PostgreSQL 18 (authoritative); Redis-compatible cache (disposable); S3-compatible object storage |
+| Frontends | SvelteKit + TypeScript: the Studio (single-page app), the reference blog (prerendered), the docs (mdsvex + Pagefind) |
+| Design system | Material Design 3 tokens on Bits UI primitives, with Tailwind CSS |
+| Editor | Tiptap / ProseMirror, stored as validated, versioned JSON, never HTML |
+| Identity | OIDC with Keycloak as the reference provider; sessions enforced by Rust and Postgres |
+| Delivery | Cloudflare CDN adapter: tag purge and evidence probes |
+| Verification | Unit and property tests, deterministic simulation, testcontainers, Vitest, Playwright, k6 |
+
+Exact versions are pinned at milestone P0.
+
+## Roadmap
+
+Each milestone is named after what it proves, and is done only when its proof gate passes with stored evidence.
+
+| | Milestone | Proof gate | Status |
+|---|---|---|---|
+| D | Design | Scope cut, plan written, every decision recorded | ✅ Done |
+| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | ⏭️ Next |
+| P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | Planned |
+| P2 | Publish exactly once | Crashed workers reconcile; stale deliveries are superseded | Planned |
+| P3 | Prove it reached the site | Cache and purge faults, no mixed releases; **first public demo** | Planned |
+| P4 | Time travel and media | Rollback, pinned reads, revocation, safe uploads | Planned |
+| P5 | Safe automation | Zero unauthorized agent actions; interrupted bulk jobs resume | Planned |
+| P6 | Operate it | Full fault and load matrix, 24-hour soak, restore drill; **v0.1** | Planned |
+
+Estimated at about 4–6 months to v0.1. Details: [ROADMAP.md](docs/ROADMAP.md).
+
+**Deliberately not in v0.1:** commerce, payments, subscriptions, shipping and tax, hosting integrations and custom
+domains ([parked](docs/modules/parked.md)). **Never:** untrusted native plugins, CRDT live co-editing, GraphQL,
+active-active multi-region writes.
+
+## Documentation
+
+| Document | Answers |
+|---|---|
+| [WHY.md](docs/WHY.md) | Why this project exists and what it optimizes for |
+| [END_GOAL.md](docs/END_GOAL.md) | What "done" means, the signature features, scope, quality bars |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, sources of truth, request paths, repository layout |
+| [SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) | Requirements, capacity, data model, flows, consistency, failures, scaling, trade-offs |
+| [ROADMAP.md](docs/ROADMAP.md) | Milestones P0–P6 with proof gates and estimates |
+| [modules/](docs/modules/README.md) | 19 module plans: purpose, design, invariants, failure modes, tests |
+| [DECISIONS.md](docs/DECISIONS.md) | Every deviation from the original spec, and the open questions |
+| [brand/](docs/brand/README.md) | The logo and how to use it |
+| [spec/](docs/spec/README.md) | The original 41-section master specification |
+| [AGENTS.md](AGENTS.md) | Rules for AI coding agents working in this repository |
+
+## Repository layout
+
+Today the repository holds only `docs/`. The target layout from P0 onwards:
+
+```text
+apps/       studio · web (reference blog) · docs
+crates/     colophon-domain · -db · -auth · -api · -delivery · -worker · -media · -automation · -sim · -cli · -server
+packages/   sdk · ui · content-renderer
+migrations/ schemas/ templates/blog/ tests/ deploy/ docs/
+```
+
+## Contributing
+
+Colophon is in its design phase. Issues with design feedback are welcome: a failure mode the plan misses, a guarantee
+that is stronger than it can actually be, a simpler way to prove something. Code contributions open after P0, when the
+workspace, CI and a `CONTRIBUTING.md` exist.
+
+## How this is built
+
+In the open, by one maintainer pairing with Claude Code, one tested checkpoint at a time. Risky code (database
+migrations, authentication, publishing transitions, provider adapters) gets a line-by-line human review. Every step,
+including the mistakes, is written up in the [build log](https://404human.dev/colophon/).
+
+## License
+
+Apache-2.0 is proposed for the core, CLI and SDK. The `LICENSE` file will be added once the maintainer confirms it,
+before any release.

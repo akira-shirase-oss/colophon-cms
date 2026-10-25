@@ -1,0 +1,77 @@
+# Colophon CMS: agent instructions
+
+**Status (2026-10-25): design phase.** Docs only. The next milestone is P0 (foundation), described in
+`docs/ROADMAP.md`.
+
+## Read first
+
+1. `docs/END_GOAL.md`: what done means and what is in or out of scope.
+2. `docs/ARCHITECTURE.md`: sources of truth, request paths, repository layout; `docs/SYSTEM_DESIGN.md` for flows,
+   consistency, capacity and failure handling.
+3. The module doc for the area you are touching, under `docs/modules/`.
+4. `docs/DECISIONS.md`: Colophon's deliberate deviations from the master specification.
+5. `docs/spec/master-spec.txt`: the full master specification (grep it; the `.docx` beside it is the original).
+
+When documents conflict, the order of authority is: `DECISIONS.md` > module docs > `ARCHITECTURE.md` /
+`END_GOAL.md` > master spec. If you change a design, update the module doc in the same change, and record any new
+deviation from the spec in `DECISIONS.md`.
+
+## What this project optimizes for
+
+**Proof over breadth.** The maintainer's goal is an open-source and portfolio project that is genuinely useful and not
+"AI jargon". A feature counts only when its failure behaviour is tested and its evidence is stored. Never trade a
+failing invariant for a new feature, and never relabel uncertainty as success to make a dashboard look clean.
+
+## Non-negotiable invariants (summary; full lists live in the module docs)
+
+1. **PostgreSQL is the only authority** for content, revisions, releases, permissions, jobs and budgets. Redis and the
+   CDN are disposable accelerators; losing them can never lose data or bypass a permission check.
+2. **No database transaction spans an external call** (model, CDN, object store, identity provider). Commit an intent
+   to the outbox, execute, store evidence, reconcile uncertainty.
+3. **Truthful states.** `202 accepted` is not "published"; an accepted purge is not "served"; unknown stays `uncertain`.
+4. **Bounded everything.** Every queue, channel, body, page, cache, retry loop and pool has a limit and a deadline.
+5. **One API, no bypass.** Studio, CLI, SDK and agents call the same Rust services with the same authorization.
+6. **Agents propose; the platform enforces.** Draft-only by default, exact-change approvals, budgets reserved in
+   Postgres, no self-approval.
+7. **Release generations only move forward.** Rollback is a new generation; a stale worker can never promote an older one.
+
+## Rust rules
+
+- On the maintainer's machine, use the `rust-mastery` skill: read `~/Desktop/Learning/rust-mastery/AGENT_PLAYBOOK.md`
+  and the chapters it routes to (07 and 12 are mandatory for async and service code).
+- Toolchain on this machine: Homebrew `cargo`/`rustc` 1.96.0 come first on `PATH` and **ignore
+  `rust-toolchain.toml`**. Until P0 fixes the `PATH` (or removes Homebrew Rust), run Cargo with the pinned rustup
+  toolchain's `bin` first on `PATH`, and check `rustc --version` before trusting a build.
+- `colophon-domain` must not depend on `tokio`, `axum`, `sqlx`, `reqwest` or any I/O crate. The build enforces the
+  architecture.
+- Typed errors (`thiserror`) in library crates; `anyhow` only in the two binaries. No `unwrap`/`expect` on external
+  input. Every I/O await has a deadline. No secrets, tokens, prompts or article bodies in logs.
+
+## Frontend rules
+
+- SvelteKit + TypeScript (strict). The Studio is a client-side app served as static assets by the Rust server on the
+  same origin. SvelteKit never queries PostgreSQL or holds CMS authority.
+- Rich text is stored as validated Tiptap JSON, never HTML. Rust revalidates every mutation.
+
+## Ownership (proposed 2026-10-25, not yet confirmed)
+
+- The maintainer writes `colophon-domain` and `colophon-db` (the invariants and transactions), with Claude pairing and
+  reviewing. Explain designs and trade-offs; don't silently generate this code.
+- Claude builds the Studio, scaffolding, the simulation harness, CI and docs; the maintainer reviews them.
+- Database migrations, authentication changes, publishing transitions and provider adapters always get a manual line-by-line
+  review (spec §34).
+
+## Working rules
+
+- Work in small slices. Each issue states the user outcome, the data invariant, the failure case, the permission, and
+  the acceptance test (spec §34).
+- Report exactly what ran and what passed. Never call something verified, benchmarked or secure without an executed run
+  and stored evidence.
+- The repository is `github.com/akira-shirase-oss/colophon-cms` (remote `git@github-learning:akira-shirase-oss/colophon-cms.git`).
+  Work happens on a branch and is merged into `main` when a piece is complete; the journey is recorded in the
+  build log at https://404human.dev/colophon/ (source: `akira-shirase-oss/minimal-portfolio`).
+
+## Verification commands
+
+Defined at P0. The expected gate is `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`,
+`cargo deny check`, the frontend lint/type-check/test commands, Playwright smoke tests, and a seeded simulation run.

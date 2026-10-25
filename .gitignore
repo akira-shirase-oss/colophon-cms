@@ -1,0 +1,19 @@
+# OS and editor files
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Rust (from P0)
+/target/
+
+# Node / SvelteKit (from P0)
+node_modules/
+.svelte-kit/
+build/
+dist/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
