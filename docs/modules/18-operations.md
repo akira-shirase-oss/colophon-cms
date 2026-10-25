@@ -7,7 +7,7 @@
 |---|---|
 | Milestones | P0 (local Compose stack), P3 (first deployment of the reference site), P6 (backups, restore drill, upgrades, runbooks, budgets) |
 | Proposed owner | Claude builds; the maintainer runs the drills |
-| Depends on | colophon-server, PostgreSQL 18, a Redis-compatible cache (O-002), S3-compatible storage, Keycloak, a CDN |
+| Depends on | colophon-server, PostgreSQL 18, a Redis-protocol cache (Valkey, D-015), S3-compatible storage (Garage locally, D-016), Keycloak, a CDN |
 | Used by | the maintainer, independent installers, contributors |
 | Spec | §04, §27, §32, §33 |
 
@@ -45,13 +45,15 @@ on clean infrastructure and an independent install, so operations are a module w
 ## Breakdown
 
 ### Local stack (spec §32)
-- `deploy/compose.yaml` runs:
+- `deploy/compose.yaml` runs (D-017; done in step 0.2 unless marked later):
   - PostgreSQL 18;
-  - Redis or Valkey;
-  - MinIO (a test object store);
-  - a Keycloak profile;
-  - `colophon-server` in the API and worker roles;
-  - the Studio's development server.
+  - Valkey, configured so it cannot persist anything and cannot grow without limit (D-015);
+  - Garage, a single-node S3-compatible test object store (D-016);
+  - Keycloak with the `colophon` development realm;
+  - `colophon-server` in the API and worker roles (later in P0);
+  - the Studio's development server (later in P0).
+- Every port is bound to `127.0.0.1`. `scripts/stack.sh up` starts the stack and proves each service from outside:
+  through its published port, including a request each one must refuse. CI runs it from a clean clone.
 - `colophon doctor --json` reports readiness per dependency. A cache outage shows as degraded while authoritative writes
   stay available (spec §04).
 
@@ -196,6 +198,5 @@ A backup existing is not proof of a working restore.
 
 ## Open decisions
 
-- **O-002:** Redis or Valkey.
 - **O-012:** hosting for the reference site.
 - Managed PostgreSQL or self-hosted for the reference deployment.

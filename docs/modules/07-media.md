@@ -54,7 +54,7 @@ release still references. Proven by L14, malicious-upload fixtures and X10.
 - **Rejected by default:** executable HTML, archives and untrusted SVG.
 
 ### Storage and origin
-- S3-compatible storage: MinIO locally, a managed bucket in production.
+- S3-compatible storage: Garage locally (D-016), a managed bucket in production. Only the S3 API is used, so the store can be swapped.
 - Assets are served from a separate asset origin, never the administration origin.
 - Public images and private objects use separate paths, visibility policies and access tests.
 - Production and staging use separate buckets.

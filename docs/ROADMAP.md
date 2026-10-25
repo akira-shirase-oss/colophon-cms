@@ -26,7 +26,7 @@ Total: about **4–6 months** to v0.1, with the first public demo around month 3
 - Cargo workspace with `colophon-domain`, `colophon-db`, `colophon-api`, `colophon-cli`, `colophon-server`; shared
   `[workspace.dependencies]` and `[workspace.lints]`.
 - Frontend workspace with `apps/studio`, `packages/ui`, `packages/content-renderer`.
-- `deploy/compose.yaml`: PostgreSQL 18, Redis or Valkey (O-002), MinIO, Keycloak.
+- `deploy/compose.yaml`: PostgreSQL 18, Valkey (D-015), Garage (D-016, replacing MinIO), Keycloak; started and checked by `scripts/stack.sh` (D-017).
 - API error envelope, request IDs, `/livez` and `/readyz`.
 - Tiptap spike: custom blocks, paste, image placeholder, undo/redo, JSON serialization; Rust validator for the allowed
   node set and depth ≤ 16; shared JSON fixtures used by both Rust and TypeScript.

@@ -42,6 +42,28 @@ jobs:
           RUSTDOCFLAGS: -D warnings
       - run: scripts/check-architecture.sh
 
+  stack:
+    name: scripts and local stack (shellcheck, compose up, prove each service)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ShellCheck
+        run: >-
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt
+          koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
+          scripts/*.sh
+      - name: Start the stack and run its checks
+        run: scripts/stack.sh up
+      - name: Service logs
+        if: failure()
+        run: docker compose -f deploy/compose.yaml logs --no-color --tail 200
+      - name: Tear down
+        if: always()
+        run: scripts/stack.sh reset
+
   supply-chain:
     name: supply chain (cargo-deny)
     runs-on: ubuntu-latest

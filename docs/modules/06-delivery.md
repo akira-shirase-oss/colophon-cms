@@ -7,7 +7,7 @@
 |---|---|
 | Milestones | P2 (public API from Postgres, pinned reads), P3 (cache, CDN, tags, probes, unpublish), P4 (time-travel support, preview, sitemaps, feeds) |
 | Proposed owner | Claude builds; publishing and revocation transitions get a manual review |
-| Depends on | domain (published view, publication history, delivery states), db (the delivery role and published projections), a Redis-compatible client (O-002), the shared HTTP client |
+| Depends on | domain (published view, publication history, delivery states), db (the delivery role and published projections), a Redis-protocol client (Valkey, D-015), the shared HTTP client |
 | Used by | readers via the CDN, sdk, web/blog template, worker (purge and probe jobs), studio (receipts) |
 | Spec | §06, §14, §15, §25 |
 
@@ -163,6 +163,5 @@ These are policies to test, not a global 30-second consistency guarantee.
 
 ## Open decisions
 
-- **O-002:** Redis or Valkey.
 - **O-012:** probe locations for v0.1.
 - How to implement single-flight coalescing across multiple API processes, if they are ever split.
