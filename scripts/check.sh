@@ -30,6 +30,13 @@ else
   echo "note: neither ShellCheck nor Docker is available here; CI runs ShellCheck" >&2
 fi
 
+# Frontend: types, unit tests and the Studio in Chromium. No stack needed.
+if command -v npm >/dev/null; then
+  scripts/frontend.sh
+else
+  echo "note: npm is not installed here; CI runs the frontend checks" >&2
+fi
+
 # The integration half of CI (D-018), whenever the local stack is up. QUICK=1 skips it.
 if [[ "${QUICK:-0}" == "1" ]]; then
   echo "note: QUICK=1, skipping the integration checks that CI runs" >&2

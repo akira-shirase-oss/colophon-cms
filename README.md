@@ -20,7 +20,9 @@
 > a five-crate Cargo workspace with no features yet, and CI that runs the same checks as `scripts/check.sh`. Step 0.2 is
 > done: a local stack (PostgreSQL, Valkey, Garage, Keycloak) that proves each service works, in CI as well. Step 0.3
 > is done: one error envelope, request IDs, honest health checks and `colophon doctor`, plus the testing rule every
-> feature now follows: regression tests, a separate testbed frontend, and million-request load tests.
+> feature now follows: regression tests, a separate testbed frontend, and million-request load tests. Step 0.4 is
+> done: the rich-text format (`colophon/rich-text` v1), 42 shared fixtures, and a Tiptap editor in the Studio that opens a
+> document only if it can give it back byte for byte.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
@@ -95,7 +97,7 @@ Each milestone is named after what it proves, and is done only when its proof ga
 | | Milestone | Proof gate | Status |
 |---|---|---|---|
 | D | Design | Scope cut, plan written, every decision recorded | ✅ Done |
-| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1–0.3 done) |
+| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1–0.4 done) |
 | P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | Planned |
 | P2 | Publish exactly once | Crashed workers reconcile; stale deliveries are superseded | Planned |
 | P3 | Prove it reached the site | Cache and purge faults, no mixed releases; **first public demo** | Planned |
@@ -136,11 +138,15 @@ crates/
   colophon-cli/      the `colophon` binary (`colophon doctor`)
   colophon-server/   the `colophon-server` binary: config, probes, graceful shutdown (--role api|worker|all)
 apps/
+  studio/            the Studio: today, the editor spike
   testbed/           a separate SvelteKit frontend that tests Colophon through its real HTTP API
+packages/
+  editor/            Tiptap configured to exactly the rich-text format, and the canonical conversion
+fixtures/            the shared rich-text fixtures: 12 valid documents, 30 that must be refused
 perf/                k6 scenarios, every load result, and per-machine baselines
 deploy/              compose.yaml: the local stack (PostgreSQL, Valkey, Garage, Keycloak); local.env
 scripts/             check.sh (everything CI runs), stack.sh, testbed.sh, load.sh, install-k6.sh, and the checks
-docs/                the plan
+docs/                the plan; docs/formats/ holds the stored formats
 ```
 
 The full target layout adds `apps/` (studio, web, docs), `packages/` (sdk, ui, content-renderer) and the remaining
@@ -156,7 +162,9 @@ Docker with Compose, Node 22.17+, and optionally [cargo-deny](https://github.com
 scripts/stack.sh up      # PostgreSQL, Valkey, Garage and Keycloak on 127.0.0.1, then 28 checks that each one works
 scripts/check.sh         # everything CI runs: fmt, clippy -D warnings, tests, docs, architecture rule, cargo-deny,
                          # ShellCheck, and with the stack up: outage tests, the testbed in Chromium, a load smoke run
+scripts/frontend.sh      # type checks, the editor's unit tests, and the Studio in Chromium
 scripts/testbed.sh       # the testbed's Playwright suite (or --dev to explore it by hand)
+npm run dev -w @colophon/studio   # the editor spike on http://127.0.0.1:58200
 scripts/load.sh throughput   # 1,000,000 requests against a release build; result saved to perf/results/
 ```
 
