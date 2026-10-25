@@ -24,7 +24,8 @@
         "http://localhost:58000/auth/callback",
         "http://localhost:58090/auth/callback",
         "http://localhost:58091/auth/callback",
-        "http://localhost:58092/auth/callback"
+        "http://localhost:58092/auth/callback",
+        "http://localhost:58093/auth/callback"
       ],
       "webOrigins": [],
       "attributes": {

@@ -1,0 +1,189 @@
+// The Studio's editor against a real server: autosave, the conflict screen when two people
+// edit one article (F04), going offline, and edits kept on the device across a reload.
+
+import AxeBuilder from '@axe-core/playwright';
+import { type Browser, expect, type Page, test } from '@playwright/test';
+
+async function signIn(page: Page) {
+	await page.goto('/studio/');
+	await page.getByTestId('sign-in').click();
+	await page.locator('#username').fill('dev-editor');
+	await page.locator('#password').fill('colophon-dev');
+	await page.locator('#kc-login').click();
+	await expect(page.getByTestId('signed-in')).toBeVisible();
+}
+
+/** A fresh project, created through the API as the signed-in page; its id. */
+async function newProject(page: Page): Promise<string> {
+	return page.evaluate(async (slug) => {
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const response = await fetch('/api/v1/projects', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+			body: JSON.stringify({ slug, name: 'Studio test' })
+		});
+		return ((await response.json()) as { data: { id: string } }).data.id;
+	}, `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`);
+}
+
+/** Creates an article through the Studio; returns the editor's path. */
+async function newArticle(page: Page, project: string, title: string): Promise<string> {
+	await page.goto(`/studio/projects/${project}`);
+	await page.getByLabel('New article title').fill(title);
+	await page.getByRole('button', { name: 'Create article' }).click();
+	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
+	return new URL(page.url()).pathname;
+}
+
+async function typeInBody(page: Page, text: string) {
+	await page.getByRole('textbox', { name: 'Article body' }).click();
+	await page.keyboard.press('End');
+	await page.keyboard.type(text);
+}
+
+const status = (page: Page) => page.getByTestId('save-status');
+
+/** Accessibility problems on the page, one line per rule and element, so a failure says what. */
+async function violations(page: Page): Promise<string[]> {
+	const results = await new AxeBuilder({ page }).analyze();
+	return results.violations.flatMap((violation) =>
+		violation.nodes.map((node) => `${violation.id}: ${node.target.join(' ')} (${node.failureSummary ?? ''})`)
+	);
+}
+
+async function editor(browser: Browser): Promise<Page> {
+	const page = await (await browser.newContext()).newPage();
+	await signIn(page);
+	return page;
+}
+
+test('an article autosaves as you type, and is there after a reload', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const path = await newArticle(page, project, 'Autosaved');
+
+	await typeInBody(page, 'Written in the Studio.');
+	await expect(status(page)).toHaveAttribute('data-status', 'saved');
+	await expect(page.getByTestId('history').locator('li')).toHaveCount(2);
+
+	await page.goto(path);
+	await expect(page.getByRole('textbox', { name: 'Article body' })).toContainText('Written in the Studio.');
+	await expect(status(page)).toHaveAttribute('data-status', 'saved');
+
+	expect(await violations(page)).toEqual([]);
+});
+
+test('two editors, one article: the later save opens the conflict screen, and keeping mine loses nothing', async ({ browser }) => {
+	const first = await editor(browser);
+	const project = await newProject(first);
+	const path = await newArticle(first, project, 'Shared');
+	const second = await editor(browser);
+	await second.goto(path);
+	await expect(status(second)).toHaveAttribute('data-status', 'saved');
+
+	await typeInBody(first, 'First editor was here.');
+	await expect(status(first)).toHaveAttribute('data-status', 'saved');
+
+	await typeInBody(second, 'Second editor too.');
+	await expect(status(second)).toHaveAttribute('data-status', 'conflict');
+	const conflict = second.getByTestId('conflict');
+	await expect(conflict.getByTestId('theirs')).toContainText('First editor was here.');
+	await expect(conflict.getByTestId('mine')).toContainText('Second editor too.');
+	expect(await violations(second)).toEqual([]);
+
+	await conflict.getByRole('button', { name: 'Keep my version' }).click();
+	await expect(status(second)).toHaveAttribute('data-status', 'saved');
+	await expect(second.getByTestId('conflict')).toHaveCount(0);
+	// Three revisions: the first, the first editor's, and the second's on top of it.
+	await expect(second.getByTestId('history').locator('li')).toHaveCount(3);
+});
+
+test('choosing their version discards mine and continues from theirs', async ({ browser }) => {
+	const first = await editor(browser);
+	const project = await newProject(first);
+	const path = await newArticle(first, project, 'Theirs wins');
+	const second = await editor(browser);
+	await second.goto(path);
+	await expect(status(second)).toHaveAttribute('data-status', 'saved');
+
+	await typeInBody(first, 'The version to keep.');
+	await expect(status(first)).toHaveAttribute('data-status', 'saved');
+	await typeInBody(second, 'A change to drop.');
+	await expect(status(second)).toHaveAttribute('data-status', 'conflict');
+
+	await second.getByRole('button', { name: 'Use their version' }).click();
+	await expect(status(second)).toHaveAttribute('data-status', 'saved');
+	const body = second.getByRole('textbox', { name: 'Article body' });
+	await expect(body).toContainText('The version to keep.');
+	await expect(body).not.toContainText('A change to drop.');
+	await expect(second.getByTestId('history').locator('li')).toHaveCount(2);
+});
+
+test('offline, edits are kept and saved once the network is back', async ({ page, context }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const path = await newArticle(page, project, 'Offline');
+
+	await context.setOffline(true);
+	await typeInBody(page, 'Typed without a network.');
+	await expect(status(page)).toHaveAttribute('data-status', 'retrying');
+	await context.setOffline(false);
+	await expect(status(page)).toHaveAttribute('data-status', 'saved', { timeout: 15_000 });
+
+	await page.goto(path);
+	await expect(page.getByRole('textbox', { name: 'Article body' })).toContainText('Typed without a network.');
+});
+
+test('edits made just before a reload come back from this device and are saved', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const path = await newArticle(page, project, 'Reloaded');
+
+	// Type, then leave before the autosave fires.
+	await typeInBody(page, 'Not yet saved.');
+	await page.goto(path);
+	await expect(page.getByTestId('save-message')).toHaveText('Restored unsaved changes from this device.');
+	await expect(page.getByRole('textbox', { name: 'Article body' })).toContainText('Not yet saved.');
+	await expect(status(page)).toHaveAttribute('data-status', 'saved');
+
+	await page.goto(path);
+	await expect(page.getByRole('textbox', { name: 'Article body' })).toContainText('Not yet saved.');
+	await expect(page.getByTestId('save-message')).toHaveCount(0);
+});
+
+test('the home page is accessible signed out and signed in, and lists your projects', async ({ page }) => {
+	await page.goto('/studio/');
+	await expect(page.getByTestId('signed-out')).toBeVisible();
+	expect(await violations(page)).toEqual([]);
+	await signIn(page);
+	const project = await newProject(page);
+	await page.goto('/studio/');
+	await expect(page.getByTestId('projects').getByRole('link')).not.toHaveCount(0);
+	await expect(page.locator(`a[href="/studio/projects/${project}"]`)).toBeVisible();
+	expect(await violations(page)).toEqual([]);
+});
+
+test('a save whose answer is lost is sent again with the same key, and replayed instead of saved twice', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	await newArticle(page, project, 'Lost answer');
+
+	const keys: string[] = [];
+	const answers: { status: number; replayed: string | undefined }[] = [];
+	await page.route('**/collections/articles/entries/*', async (route) => {
+		if (route.request().method() !== 'PUT') return route.continue();
+		keys.push(route.request().headers()['idempotency-key'] ?? '');
+		const response = await route.fetch();
+		answers.push({ status: response.status(), replayed: response.headers()['idempotent-replayed'] });
+		// The first save reaches the server and is committed; its answer never comes back.
+		if (answers.length === 1) return route.abort('connectionreset');
+		return route.fulfill({ response });
+	});
+
+	await typeInBody(page, 'Saved exactly once.');
+	await expect(status(page)).toHaveAttribute('data-status', 'saved', { timeout: 15_000 });
+	expect(answers[0]).toEqual({ status: 200, replayed: undefined });
+	expect(answers[1]).toEqual({ status: 200, replayed: 'true' });
+	expect(new Set(keys).size, 'the retry reused the key').toBe(1);
+	await expect(page.getByTestId('history').locator('li')).toHaveCount(2);
+});

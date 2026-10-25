@@ -109,6 +109,8 @@ jobs:
       - run: npx -w @colophon/testbed playwright install --with-deps chromium
       - name: Testbed in Chromium (scripts/testbed.sh)
         run: scripts/testbed.sh
+      - name: The Studio against the real server (scripts/studio.sh)
+        run: scripts/studio.sh
       - name: Load smoke runs (health, rich-text validation, signed-in requests, drafts)
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"

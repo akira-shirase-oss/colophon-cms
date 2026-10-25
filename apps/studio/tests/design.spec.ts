@@ -27,7 +27,7 @@ async function axe(page: Page) {
 
 for (const { theme, contrast } of THEMES) {
 	test(`no accessibility violations: ${theme}, ${contrast} contrast`, async ({ page }) => {
-		await page.goto('/');
+		await page.goto('/studio/playground');
 		await setAppearance(page, theme, contrast);
 		await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
 		await openFixture(page, 'valid/12-blog-post');
@@ -41,7 +41,7 @@ for (const { theme, contrast } of THEMES) {
 }
 
 test('the formatting toolbar is one tab stop, with arrow keys inside it', async ({ page }) => {
-	await page.goto('/');
+	await page.goto('/studio/playground');
 	await page.getByRole('button', { name: 'Appearance' }).focus();
 	await page.getByRole('toolbar', { name: 'Formatting' }).getByRole('button').first().focus();
 	await expect(page.getByTitle('Bold (⌘B)')).toBeFocused();
@@ -56,7 +56,7 @@ test('the formatting toolbar is one tab stop, with arrow keys inside it', async 
 });
 
 test('appearance choices change the colours and survive a reload', async ({ page }) => {
-	await page.goto('/');
+	await page.goto('/studio/playground');
 	// Material keeps surfaces fixed across contrast levels and moves text and outlines instead, so
 	// the outline colour is the one that changes in every step below.
 	const surface = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--md-sys-color-outline').trim());
@@ -76,7 +76,7 @@ test('appearance choices change the colours and survive a reload', async ({ page
 });
 
 test('the image dialog closes on Escape and gives focus back', async ({ page }) => {
-	await page.goto('/');
+	await page.goto('/studio/playground');
 	const opener = page.getByRole('button', { name: 'Image', exact: true });
 	await opener.click();
 	await expect(page.getByRole('dialog', { name: 'Insert an image' })).toBeVisible();
@@ -91,7 +91,7 @@ test('the Studio makes no requests to anyone else: the font is self-hosted', asy
 	page.on('request', (request) => {
 		if (!request.url().startsWith(baseURL ?? '') && !request.url().startsWith('data:')) foreign.push(request.url());
 	});
-	await page.goto('/');
+	await page.goto('/studio/playground');
 	await openFixture(page, 'valid/12-blog-post');
 	await page.getByRole('tab', { name: 'Preview' }).click();
 	await page.waitForLoadState('networkidle');

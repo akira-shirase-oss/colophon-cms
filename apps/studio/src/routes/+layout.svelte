@@ -1,11 +1,25 @@
 <script lang="ts">
 	import '@colophon/ui/tokens.css';
 	import '@colophon/ui/base.css';
+	import { resolve } from '$app/paths';
+	import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
 	import { AppearanceMenu, TopAppBar } from '@colophon/ui';
+	import { ApiError } from '#lib/api.ts';
 	import mark from '#lib/colophon-mark.svg';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
+
+	// Server state lives here (D-030). Reads retry only what can succeed on a second try; a
+	// refusal or "not found" is an answer, not a hiccup.
+	const queryClient = new QueryClient({
+		defaultOptions: {
+			queries: {
+				staleTime: 5_000,
+				retry: (count, error) => error instanceof ApiError && error.failure === 'retry' && count < 3
+			}
+		}
+	});
 </script>
 
 <svelte:head>
@@ -15,9 +29,11 @@
 
 <TopAppBar>
 	{#snippet title()}
-		<img src={mark} alt="" width="22" height="24" class="mark" />
-		<span>Colophon Studio</span>
-		<span class="tag">editor · step 0.7</span>
+		<a class="home" href={resolve('/')}>
+			<img src={mark} alt="" width="22" height="24" class="mark" />
+			<span>Colophon Studio</span>
+		</a>
+		<span class="tag">step 1.3</span>
 	{/snippet}
 	{#snippet trailing()}
 		<AppearanceMenu />
@@ -25,10 +41,19 @@
 </TopAppBar>
 
 <main>
-	{@render children()}
+	<QueryClientProvider client={queryClient}>
+		{@render children()}
+	</QueryClientProvider>
 </main>
 
 <style>
+	.home {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		color: inherit;
+		text-decoration: none;
+	}
 	.mark {
 		flex: none;
 	}
