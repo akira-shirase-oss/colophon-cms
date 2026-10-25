@@ -54,13 +54,23 @@ failing invariant for a new feature, and never relabel uncertainty as success to
   same origin. SvelteKit never queries PostgreSQL or holds CMS authority.
 - Rich text is stored as validated Tiptap JSON, never HTML. Rust revalidates every mutation.
 
-## Ownership (proposed 2026-10-25, not yet confirmed)
+## Ownership (D-019)
 
-- The maintainer writes `colophon-domain` and `colophon-db` (the invariants and transactions), with Claude pairing and
-  reviewing. Explain designs and trade-offs; don't silently generate this code.
-- Claude builds the Studio, scaffolding, the simulation harness, CI and docs; the maintainer reviews them.
-- Database migrations, authentication changes, publishing transitions and provider adapters always get a manual line-by-line
-  review (spec §34).
+- Claude builds every crate and app, including `colophon-domain` and `colophon-db`; the maintainer reviews.
+- Database migrations, authentication changes, publishing transitions and provider adapters are listed in the step's
+  build-log entry for a line-by-line review (spec §34).
+
+## Testing rule (D-018, from the maintainer)
+
+Every feature ships with all three, in the same branch:
+
+1. **Regression tests** in CI on every push: Rust unit tests, in-process API tests, and black-box tests against the
+   real binary and the local stack. Every fixed bug gets a test that fails without the fix.
+2. **Testbed coverage:** `apps/testbed` (separate from the Studio) exercises the feature through the real HTTP API,
+   with Playwright tests in CI.
+3. **A load scenario** in `perf/k6/` with thresholds. Full runs send at least 1,000,000 requests; results go in
+   `perf/results/` with the machine and commit; misses and regressions fail. Never present laptop numbers as
+   production capacity.
 
 ## Working rules
 
