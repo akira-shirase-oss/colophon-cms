@@ -12,6 +12,7 @@
 		toStored
 	} from '@colophon/editor';
 	import RichText from '@colophon/content-renderer/RichText.svelte';
+	import { Button, Dialog, Tabs, TextField, Toolbar, ToolbarButton, ToolbarDivider } from '@colophon/ui';
 	import { fixtures } from '#lib/fixtures.ts';
 
 	// Until media uploads arrive (P4), every image previews as the same placeholder.
@@ -35,7 +36,7 @@
 	let linkError = $state('');
 	let imageOpen = $state(false);
 	let imageAlt = $state('');
-	let tab = $state<'json' | 'preview'>('json');
+	let tab = $state('json');
 
 	let canonical = $derived(serialize(value));
 	let size = $derived(measure(value));
@@ -46,6 +47,8 @@
 		let created: Editor;
 		try {
 			created = openEditor(next, {
+				// The editing area is a multi-line text box; give it a name screen readers announce.
+				editorProps: { attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': 'Article body' } },
 				onTransaction: () => {
 					value = toStored(created.getJSON());
 					tick += 1;
@@ -81,6 +84,12 @@
 		if (editor) command(editor);
 	};
 
+	function toggleLink() {
+		linkOpen = !linkOpen;
+		linkHref = String(editor?.getAttributes('link')['href'] ?? '');
+		linkError = '';
+	}
+
 	function applyLink(event: SubmitEvent) {
 		event.preventDefault();
 		if (!editor) return;
@@ -110,44 +119,58 @@
 	const tones: CalloutTone[] = ['note', 'tip', 'warning'];
 </script>
 
+{#snippet jsonPanel()}
+	<p class="hint">What Colophon would save: canonical colophon/rich-text v1.</p>
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	<!-- A scrollable region must be reachable by keyboard (WCAG 2.1.1; axe scrollable-region-focusable). -->
+	<pre class="json" data-testid="stored" data-json={canonical} tabindex="0" aria-label="Stored JSON">{pretty}</pre>
+{/snippet}
+
+{#snippet previewPanel()}
+	<div class="preview" data-testid="preview">
+		<p class="hint">Rendered by the same renderer the public site uses.</p>
+		<RichText {value} {assetUrl}>
+			{#snippet fallback(problem)}
+				<p class="status refused" data-testid="preview-refused">This document can't be previewed: {problem}. The server would refuse it too.</p>
+			{/snippet}
+		</RichText>
+	</div>
+{/snippet}
+
 <section class="spike">
-	<div class="editor-column">
-		<div class="toolbar" role="toolbar" aria-label="Formatting">
-			<button aria-pressed={active('bold')} onclick={run((e) => e.chain().focus().toggleBold().run())} title="Bold (⌘B)"><b>B</b></button>
-			<button aria-pressed={active('italic')} onclick={run((e) => e.chain().focus().toggleItalic().run())} title="Italic (⌘I)"><i>I</i></button>
-			<button aria-pressed={active('strike')} onclick={run((e) => e.chain().focus().toggleStrike().run())} title="Strikethrough"><s>S</s></button>
-			<button aria-pressed={active('code')} onclick={run((e) => e.chain().focus().toggleCode().run())} title="Code">&lt;/&gt;</button>
-			<button aria-pressed={active('link')} onclick={() => { linkOpen = !linkOpen; linkHref = String(editor?.getAttributes('link')['href'] ?? ''); linkError = ''; }}>Link</button>
-			<span class="sep"></span>
+	<div class="editor-card">
+		<Toolbar label="Formatting">
+			<ToolbarButton pressed={active('bold')} onclick={run((e) => e.chain().focus().toggleBold().run())} title="Bold (⌘B)"><b>B</b></ToolbarButton>
+			<ToolbarButton pressed={active('italic')} onclick={run((e) => e.chain().focus().toggleItalic().run())} title="Italic (⌘I)"><i>I</i></ToolbarButton>
+			<ToolbarButton pressed={active('strike')} onclick={run((e) => e.chain().focus().toggleStrike().run())} title="Strikethrough"><s>S</s></ToolbarButton>
+			<ToolbarButton pressed={active('code')} onclick={run((e) => e.chain().focus().toggleCode().run())} title="Code">&lt;/&gt;</ToolbarButton>
+			<ToolbarButton pressed={active('link')} onclick={toggleLink}>Link</ToolbarButton>
+			<ToolbarDivider />
 			{#each [2, 3, 4] as const as level (level)}
-				<button aria-pressed={active('heading', { level })} onclick={run((e) => e.chain().focus().toggleHeading({ level }).run())}>H{level}</button>
+				<ToolbarButton pressed={active('heading', { level })} onclick={run((e) => e.chain().focus().toggleHeading({ level }).run())}>H{level}</ToolbarButton>
 			{/each}
-			<button aria-pressed={active('bulletList')} onclick={run((e) => e.chain().focus().toggleBulletList().run())}>• List</button>
-			<button aria-pressed={active('orderedList')} onclick={run((e) => e.chain().focus().toggleOrderedList().run())}>1. List</button>
-			<button aria-pressed={active('blockquote')} onclick={run((e) => e.chain().focus().toggleBlockquote().run())}>Quote</button>
-			<button aria-pressed={active('codeBlock')} onclick={run((e) => e.chain().focus().toggleCodeBlock().run())}>Code block</button>
-			<span class="sep"></span>
+			<ToolbarButton pressed={active('bulletList')} onclick={run((e) => e.chain().focus().toggleBulletList().run())}>• List</ToolbarButton>
+			<ToolbarButton pressed={active('orderedList')} onclick={run((e) => e.chain().focus().toggleOrderedList().run())}>1. List</ToolbarButton>
+			<ToolbarButton pressed={active('blockquote')} onclick={run((e) => e.chain().focus().toggleBlockquote().run())}>Quote</ToolbarButton>
+			<ToolbarButton pressed={active('codeBlock')} onclick={run((e) => e.chain().focus().toggleCodeBlock().run())}>Code block</ToolbarButton>
+			<ToolbarDivider />
 			{#each tones as tone (tone)}
-				<button aria-pressed={active('callout', { tone })} onclick={run((e) => (active('callout') ? e.chain().focus().unsetCallout().run() : e.chain().focus().setCallout(tone).run()))}>{tone[0]?.toUpperCase()}{tone.slice(1)}</button>
+				<ToolbarButton
+					pressed={active('callout', { tone })}
+					onclick={run((e) => (active('callout') ? e.chain().focus().unsetCallout().run() : e.chain().focus().setCallout(tone).run()))}
+				>{tone[0]?.toUpperCase()}{tone.slice(1)}</ToolbarButton>
 			{/each}
-			<button onclick={() => { imageOpen = !imageOpen; }}>Image</button>
-			<button onclick={run((e) => e.chain().focus().setHorizontalRule().run())}>Rule</button>
-			<span class="sep"></span>
-			<button onclick={run((e) => e.chain().focus().undo().run())} title="Undo (⌘Z)">Undo</button>
-			<button onclick={run((e) => e.chain().focus().redo().run())} title="Redo (⌘⇧Z)">Redo</button>
-		</div>
+			<ToolbarButton onclick={() => (imageOpen = true)}>Image</ToolbarButton>
+			<ToolbarButton onclick={run((e) => e.chain().focus().setHorizontalRule().run())}>Rule</ToolbarButton>
+			<ToolbarDivider />
+			<ToolbarButton onclick={run((e) => e.chain().focus().undo().run())} title="Undo (⌘Z)">Undo</ToolbarButton>
+			<ToolbarButton onclick={run((e) => e.chain().focus().redo().run())} title="Redo (⌘⇧Z)">Redo</ToolbarButton>
+		</Toolbar>
 
 		{#if linkOpen}
 			<form class="inline-form" onsubmit={applyLink}>
-				<label>Link <input bind:value={linkHref} placeholder="https://… or /page" aria-describedby="link-error" /></label>
-				<button type="submit">Apply</button>
-				{#if linkError}<p id="link-error" class="error" role="alert">{linkError}</p>{/if}
-			</form>
-		{/if}
-		{#if imageOpen}
-			<form class="inline-form" onsubmit={insertImage}>
-				<label>Alt text <input bind:value={imageAlt} maxlength={LIMITS.maxAltLength} placeholder="Describe the image for people who can't see it" /></label>
-				<button type="submit" disabled={imageAlt.trim() === ''}>Insert image</button>
+				<TextField label="Link" bind:value={linkHref} error={linkError} placeholder="https://… or /page" />
+				<Button type="submit" variant="tonal">Apply</Button>
 			</form>
 		{/if}
 
@@ -171,194 +194,180 @@
 					</optgroup>
 				{/each}
 			</select>
-			<button onclick={loadFixture} disabled={selectedFixture === ''}>Open</button>
+			<Button variant="outlined" onclick={loadFixture} disabled={selectedFixture === ''}>Open</Button>
 		</div>
 		{#if status}
 			<p class="status {status.kind}" data-testid="open-status" data-kind={status.kind}>{status.message}</p>
 		{/if}
 
-		<div class="tabs" role="tablist" aria-label="Output">
-			<button role="tab" aria-selected={tab === 'json'} onclick={() => (tab = 'json')}>Stored JSON</button>
-			<button role="tab" aria-selected={tab === 'preview'} onclick={() => (tab = 'preview')}>Preview</button>
-		</div>
-		<div hidden={tab !== 'json'}>
-			<p class="hint">What Colophon would save: canonical colophon/rich-text v1.</p>
-			<pre data-testid="stored" data-json={canonical}>{pretty}</pre>
-		</div>
-		<div hidden={tab !== 'preview'} class="preview" data-testid="preview">
-			<p class="hint">Rendered by the same renderer the public site uses.</p>
-			<RichText {value} {assetUrl}>
-				{#snippet fallback(problem)}
-					<p class="status refused" data-testid="preview-refused">This document can't be previewed: {problem}. The server would refuse it too.</p>
-				{/snippet}
-			</RichText>
-		</div>
+		<Tabs
+			bind:value={tab}
+			label="Output"
+			items={[
+				{ value: 'json', label: 'Stored JSON', panel: jsonPanel },
+				{ value: 'preview', label: 'Preview', panel: previewPanel }
+			]}
+		/>
 	</aside>
 </section>
+
+<Dialog bind:open={imageOpen} title="Insert an image" description="Media uploads arrive in a later milestone; for now the image is a placeholder. Alt text is required.">
+	<form class="dialog-form" onsubmit={insertImage}>
+		<TextField label="Alt text" bind:value={imageAlt} maxlength={LIMITS.maxAltLength} placeholder="Describe the image for people who can't see it" />
+		<div class="dialog-actions">
+			<Button type="button" variant="text" onclick={() => (imageOpen = false)}>Cancel</Button>
+			<Button type="submit" disabled={imageAlt.trim() === ''}>Insert image</Button>
+		</div>
+	</form>
+</Dialog>
 
 <style>
 	.spike {
 		display: grid;
 		grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-		gap: 1.25rem;
+		gap: 1.5rem;
+		align-items: start;
 	}
 	@media (max-width: 860px) {
 		.spike {
 			grid-template-columns: 1fr;
 		}
 	}
-	.toolbar {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.25rem;
-		padding: 0.4rem;
-		border: 1px solid var(--line);
-		border-radius: 10px 10px 0 0;
-		background: var(--card);
-	}
-	.toolbar button,
-	.inline-form button,
-	.row button {
-		font: inherit;
-		font-size: 0.85rem;
-		padding: 0.3rem 0.55rem;
-		border: 1px solid transparent;
-		border-radius: 6px;
-		background: transparent;
-		color: var(--fg);
-		cursor: pointer;
-	}
-	.toolbar button:hover {
-		background: var(--line);
-	}
-	.toolbar button[aria-pressed='true'] {
-		background: var(--accent);
-		color: var(--bg);
-	}
-	.inline-form button,
-	.row button {
-		border-color: var(--line);
-	}
-	button:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-	.sep {
-		width: 1px;
-		background: var(--line);
-		margin: 0 0.25rem;
+	.editor-card {
+		border-radius: var(--md-sys-shape-corner-large);
+		overflow: hidden;
+		background: var(--md-sys-color-surface-container-low);
+		border: 1px solid var(--md-sys-color-outline-variant);
 	}
 	.inline-form {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
+		gap: 0.75rem;
 		align-items: center;
-		padding: 0.5rem;
-		border: 1px solid var(--line);
-		border-top: 0;
-		background: var(--card);
-	}
-	.inline-form input {
-		font: inherit;
-		min-width: 18rem;
-		margin-left: 0.4rem;
-		padding: 0.3rem 0.5rem;
-	}
-	.error {
-		color: var(--bad);
-		margin: 0;
-		width: 100%;
+		padding: 0.75rem;
+		background: var(--md-sys-color-surface-container);
+		border-top: 1px solid var(--md-sys-color-outline-variant);
 	}
 	.editor {
-		border: 1px solid var(--line);
-		border-top: 0;
-		border-radius: 0 0 10px 10px;
-		background: var(--card);
-		min-height: 22rem;
+		background: var(--md-sys-color-surface);
+		border-top: 1px solid var(--md-sys-color-outline-variant);
+		min-height: 24rem;
 	}
 	.editor :global(.tiptap) {
 		outline: none;
-		padding: 1rem 1.25rem;
-		min-height: 20rem;
-		line-height: 1.6;
+		padding: 1.25rem 1.5rem;
+		min-height: 22rem;
 	}
-	.editor :global(aside[data-callout]) {
-		border-left: 4px solid var(--accent);
-		background: var(--bg);
-		padding: 0.25rem 0.9rem;
+	.editor :global(aside[data-callout]),
+	.preview :global(.callout) {
+		border-left: 4px solid var(--md-sys-color-primary);
+		background: var(--md-sys-color-primary-container);
+		color: var(--md-sys-color-on-primary-container);
+		padding: 0.25rem 1rem;
 		margin: 0.75rem 0;
-		border-radius: 4px;
+		border-radius: var(--md-sys-shape-corner-extra-small);
 	}
-	.editor :global(aside[data-tone='tip']) {
-		border-left-color: var(--ok);
+	.editor :global(aside[data-tone='tip']),
+	.preview :global(.callout-tip) {
+		border-left-color: var(--md-sys-color-success);
+		background: var(--md-sys-color-success-container);
+		color: var(--md-sys-color-on-success-container);
 	}
-	.editor :global(aside[data-tone='warning']) {
-		border-left-color: var(--warn);
+	.editor :global(aside[data-tone='warning']),
+	.preview :global(.callout-warning) {
+		border-left-color: var(--md-sys-color-tertiary);
+		background: var(--md-sys-color-tertiary-container);
+		color: var(--md-sys-color-on-tertiary-container);
+	}
+	.editor :global(aside[data-callout] a),
+	.preview :global(.callout a) {
+		color: inherit;
 	}
 	.editor :global(figure[data-colophon-image]) {
 		margin: 0.75rem 0;
 		padding: 2rem 1rem;
-		border: 2px dashed var(--line);
-		border-radius: 8px;
+		border: 2px dashed var(--md-sys-color-outline);
+		border-radius: var(--md-sys-shape-corner-medium);
 		text-align: center;
-		color: var(--muted);
+		color: var(--md-sys-color-on-surface-variant);
 	}
 	.editor :global(figure.ProseMirror-selectednode) {
-		border-color: var(--accent);
+		border-color: var(--md-sys-color-primary);
 	}
-	.editor :global(pre) {
-		background: var(--bg);
+	.editor :global(pre),
+	.preview :global(pre) {
+		background: var(--md-sys-color-surface-container-highest);
 		padding: 0.75rem;
-		border-radius: 6px;
+		border-radius: var(--md-sys-shape-corner-small);
+		overflow-x: auto;
 	}
-	.editor :global(blockquote) {
-		border-left: 3px solid var(--line);
+	.editor :global(blockquote),
+	.preview :global(blockquote) {
+		border-left: 3px solid var(--md-sys-color-outline);
 		margin-left: 0;
 		padding-left: 1rem;
-		color: var(--muted);
+		color: var(--md-sys-color-on-surface-variant);
+	}
+	.editor :global(a),
+	.preview :global(a) {
+		color: var(--md-sys-color-primary);
 	}
 	.limits,
 	.hint {
-		color: var(--muted);
-		font-size: 0.85rem;
+		margin: 0.5rem 0.75rem;
+		font: var(--md-sys-typescale-body-small);
+		color: var(--md-sys-color-on-surface-variant);
 	}
-	.tabs {
+	.hint {
+		margin: 0 0 0.5rem;
+	}
+	.side h2 {
+		font: var(--md-sys-typescale-title-medium);
+		margin: 0 0 0.75rem;
+	}
+	.row {
 		display: flex;
-		gap: 0.25rem;
-		margin: 1rem 0 0.25rem;
+		gap: 0.5rem;
+		align-items: center;
 	}
-	.tabs button {
-		font: inherit;
-		font-size: 0.9rem;
-		padding: 0.35rem 0.75rem;
-		border: 1px solid var(--line);
-		border-radius: 6px;
-		background: transparent;
-		color: var(--fg);
-		cursor: pointer;
+	.row select {
+		flex: 1;
+		min-width: 0;
+		height: 2.5rem;
+		padding: 0 0.75rem;
+		border: 1px solid var(--md-sys-color-outline);
+		border-radius: var(--md-sys-shape-corner-extra-small);
+		background: var(--md-sys-color-surface);
+		color: var(--md-sys-color-on-surface);
+		font: var(--md-sys-typescale-body-large);
 	}
-	.tabs button[aria-selected='true'] {
-		background: var(--fg);
-		color: var(--bg);
+	.status {
+		font: var(--md-sys-typescale-body-medium);
+		padding: 0.5rem 0.75rem;
+		border-radius: var(--md-sys-shape-corner-small);
+		overflow-wrap: anywhere;
+	}
+	.status.opened {
+		color: var(--md-sys-color-on-success-container);
+		background: var(--md-sys-color-success-container);
+	}
+	.status.refused {
+		color: var(--md-sys-color-on-error-container);
+		background: var(--md-sys-color-error-container);
+	}
+	.json {
+		margin: 0;
+		background: var(--md-sys-color-surface-container);
+		border-radius: var(--md-sys-shape-corner-medium);
+		padding: 0.75rem;
+		max-height: 34rem;
+		overflow: auto;
+		font-size: 0.75rem;
 	}
 	.preview {
-		border: 1px solid var(--line);
-		border-radius: 8px;
-		background: var(--card);
-		padding: 0 1rem 1rem;
-		line-height: 1.6;
-	}
-	.preview :global(.callout) {
-		border-left: 4px solid var(--accent);
-		background: var(--bg);
-		padding: 0.25rem 0.9rem;
-		margin: 0.75rem 0;
-	}
-	.preview :global(.callout-tip) {
-		border-left-color: var(--ok);
-	}
-	.preview :global(.callout-warning) {
-		border-left-color: var(--warn);
+		background: var(--md-sys-color-surface-container-lowest);
+		border-radius: var(--md-sys-shape-corner-medium);
+		padding: 0.75rem 1rem 1rem;
 	}
 	.preview :global(figure) {
 		margin: 0.75rem 0;
@@ -367,46 +376,13 @@
 		max-width: 100%;
 		height: auto;
 	}
-	.preview :global(pre) {
-		background: var(--bg);
-		padding: 0.75rem;
-		border-radius: 6px;
-		overflow-x: auto;
+	.dialog-form {
+		display: grid;
+		gap: 1.5rem;
 	}
-	.side h2 {
-		font-size: 1rem;
-		margin: 0.25rem 0 0.5rem;
-	}
-	.row {
+	.dialog-actions {
 		display: flex;
+		justify-content: flex-end;
 		gap: 0.5rem;
-	}
-	.row select {
-		font: inherit;
-		flex: 1;
-		min-width: 0;
-	}
-	.status {
-		font-size: 0.85rem;
-		padding: 0.4rem 0.6rem;
-		border-radius: 6px;
-		overflow-wrap: anywhere;
-	}
-	.status.opened {
-		color: var(--ok);
-		background: var(--ok-bg);
-	}
-	.status.refused {
-		color: var(--bad);
-		background: var(--bad-bg);
-	}
-	pre {
-		background: var(--card);
-		border: 1px solid var(--line);
-		border-radius: 8px;
-		padding: 0.75rem;
-		max-height: 34rem;
-		overflow: auto;
-		font-size: 0.75rem;
 	}
 </style>

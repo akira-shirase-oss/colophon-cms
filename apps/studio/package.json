@@ -15,9 +15,11 @@
   "dependencies": {
     "@colophon/content-renderer": "0.0.0",
     "@colophon/editor": "0.0.0",
+    "@colophon/ui": "0.0.0",
     "@tiptap/core": "3.32.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
     "@playwright/test": "1.64.1",
     "@sveltejs/adapter-static": "4.0.0",
     "@sveltejs/kit": "3.1.0",
