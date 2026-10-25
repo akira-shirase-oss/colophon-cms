@@ -16,7 +16,7 @@
   <a href="docs/modules/README.md">Modules</a>
 </p>
 
-> **Status: milestone P0, foundation (October 2026).** The design is complete. Step 0.1 is done: a pinned toolchain,
+> **Status: milestone P0, foundation, is done (October 2026); P1 is next.** The design is complete. Step 0.1 is done: a pinned toolchain,
 > a five-crate Cargo workspace with no features yet, and CI that runs the same checks as `scripts/check.sh`. Step 0.2 is
 > done: a local stack (PostgreSQL, Valkey, Garage, Keycloak) that proves each service works, in CI as well. Step 0.3
 > is done: one error envelope, request IDs, honest health checks and `colophon doctor`, plus the testing rule every
@@ -25,7 +25,9 @@
 > document only if it can give it back byte for byte. Step 0.5 is done: the Rust validator refuses all 34 invalid
 > fixtures with exactly the expected code and location, and writes the same canonical bytes as the editor. Step 0.6 is
 > done: one renderer for the Studio preview and the public site, with reviewed output for every valid document and a
-> check that nothing it produces can run code.
+> check that nothing it produces can run code. Step 0.7 is done, and with it **milestone P0**: Material 3 colours
+> generated from one seed (contrast checked in CI), components on Bits UI, and the Studio's first screen, with no
+> accessibility violations in light, dark and high-contrast themes.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
@@ -85,7 +87,7 @@ model, flows, consistency guarantees, capacity model and failure handling.
 | Server | Rust (edition 2024): Axum, Tokio, Tower, SQLx; one binary with API and worker roles |
 | Data | PostgreSQL 18 (authoritative); Valkey, a Redis-protocol cache (disposable); S3-compatible object storage (Garage locally) |
 | Frontends | SvelteKit + TypeScript: the Studio (single-page app), the reference blog (prerendered), the docs (mdsvex + Pagefind) |
-| Design system | Material Design 3 tokens on Bits UI primitives, with Tailwind CSS |
+| Design system | Material Design 3 tokens generated from one seed, components on Bits UI primitives, Roboto Flex (self-hosted) |
 | Editor | Tiptap / ProseMirror, stored as validated, versioned JSON, never HTML |
 | Identity | OIDC with Keycloak as the reference provider; sessions enforced by Rust and Postgres |
 | Delivery | Cloudflare CDN adapter: tag purge and evidence probes |
@@ -100,7 +102,7 @@ Each milestone is named after what it proves, and is done only when its proof ga
 | | Milestone | Proof gate | Status |
 |---|---|---|---|
 | D | Design | Scope cut, plan written, every decision recorded | ✅ Done |
-| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1–0.6 done) |
+| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | ✅ Done (October 2026) |
 | P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | Planned |
 | P2 | Publish exactly once | Crashed workers reconcile; stale deliveries are superseded | Planned |
 | P3 | Prove it reached the site | Cache and purge faults, no mixed releases; **first public demo** | Planned |
@@ -146,6 +148,7 @@ apps/
 packages/
   editor/            Tiptap configured to exactly the rich-text format, and the canonical conversion
   content-renderer/  stored documents to safe HTML, one implementation for the Studio and the public site
+  ui/                Material 3 tokens from one seed, and components on Bits UI primitives
 fixtures/            the shared rich-text contract: 12 valid documents with their reviewed HTML, 34 that must be refused
 perf/                k6 scenarios, every load result, and per-machine baselines
 deploy/              compose.yaml: the local stack (PostgreSQL, Valkey, Garage, Keycloak); local.env
