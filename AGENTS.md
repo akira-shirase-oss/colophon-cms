@@ -1,7 +1,7 @@
 # Colophon CMS: agent instructions
 
-**Status (2026-10-25): design phase.** Docs only. The next milestone is P0 (foundation), described in
-`docs/ROADMAP.md`.
+**Status (2026-10-25): milestone P0 in progress.** Step 0.1 is done: the pinned toolchain, a five-crate Cargo
+workspace and CI. Next is step 0.2, the local stack. See `docs/ROADMAP.md`.
 
 ## Read first
 
@@ -39,9 +39,9 @@ failing invariant for a new feature, and never relabel uncertainty as success to
 
 - On the maintainer's machine, use the `rust-mastery` skill: read `~/Desktop/Learning/rust-mastery/AGENT_PLAYBOOK.md`
   and the chapters it routes to (07 and 12 are mandatory for async and service code).
-- Toolchain on this machine: Homebrew `cargo`/`rustc` 1.96.0 come first on `PATH` and **ignore
-  `rust-toolchain.toml`**. Until P0 fixes the `PATH` (or removes Homebrew Rust), run Cargo with the pinned rustup
-  toolchain's `bin` first on `PATH`, and check `rustc --version` before trusting a build.
+- The toolchain is pinned to Rust 1.99.1 (`rust-toolchain.toml`, D-013). On the maintainer's machine Homebrew
+  `cargo`/`rustc` 1.96.0 come first on `PATH` and **ignore the pin**, so prefix every Cargo command with rustup's
+  proxies: `export PATH="$(brew --prefix rustup)/bin:$PATH"`. `scripts/check-toolchain.sh` fails if you forget.
 - `colophon-domain` must not depend on `tokio`, `axum`, `sqlx`, `reqwest` or any I/O crate. The build enforces the
   architecture.
 - Typed errors (`thiserror`) in library crates; `anyhow` only in the two binaries. No `unwrap`/`expect` on external
@@ -73,5 +73,7 @@ failing invariant for a new feature, and never relabel uncertainty as success to
 
 ## Verification commands
 
-Defined at P0. The expected gate is `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`,
-`cargo deny check`, the frontend lint/type-check/test commands, Playwright smoke tests, and a seeded simulation run.
+`scripts/check.sh` runs exactly what CI runs (D-014): the toolchain check, `cargo fmt --all --check`,
+`cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `cargo doc` with
+`-D warnings`, `scripts/check-architecture.sh` (no I/O crates in `colophon-domain`), and `cargo deny check`. Run it
+before every push. Frontend checks, Playwright smoke tests and seeded simulation runs join it in later steps.

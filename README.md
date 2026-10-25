@@ -16,9 +16,10 @@
   <a href="docs/modules/README.md">Modules</a>
 </p>
 
-> **Status: design phase (October 2026).** There is no code yet. This repository holds the complete plan: what will be
-> built, how each part can fail, and how each part will be proven. Nothing here claims that a feature, benchmark or
-> security review already exists. Progress is logged step by step at **[404human.dev/colophon](https://404human.dev/colophon/)**.
+> **Status: milestone P0, foundation (October 2026).** The design is complete, and step 0.1 is done: a pinned
+> toolchain, a five-crate Cargo workspace with no features yet, and CI that runs the same checks as `scripts/check.sh`.
+> Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
+> **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
 ---
 
@@ -91,7 +92,7 @@ Each milestone is named after what it proves, and is done only when its proof ga
 | | Milestone | Proof gate | Status |
 |---|---|---|---|
 | D | Design | Scope cut, plan written, every decision recorded | ✅ Done |
-| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | ⏭️ Next |
+| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1 done) |
 | P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | Planned |
 | P2 | Publish exactly once | Crashed workers reconcile; stale deliveries are superseded | Planned |
 | P3 | Prove it reached the site | Cache and purge faults, no mixed releases; **first public demo** | Planned |
@@ -122,18 +123,38 @@ active-active multi-region writes.
 
 ## Repository layout
 
-Today the repository holds only `docs/`. The target layout from P0 onwards:
+What exists today:
 
 ```text
-apps/       studio · web (reference blog) · docs
-crates/     colophon-domain · -db · -auth · -api · -delivery · -worker · -media · -automation · -sim · -cli · -server
-packages/   sdk · ui · content-renderer
-migrations/ schemas/ templates/blog/ tests/ deploy/ docs/
+crates/
+  colophon-domain/   the rules (no I/O allowed; enforced by scripts/check-architecture.sh)
+  colophon-db/       PostgreSQL adapter
+  colophon-api/      management API
+  colophon-cli/      the `colophon` binary
+  colophon-server/   the `colophon-server` binary (--role api|worker|all)
+scripts/             check.sh (everything CI runs), check-toolchain.sh, check-architecture.sh
+docs/                the plan
 ```
+
+The full target layout adds `apps/` (studio, web, docs), `packages/` (sdk, ui, content-renderer) and the remaining
+crates as the milestones need them; see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Development
+
+Requirements: [rustup](https://rustup.rs) (it installs the pinned toolchain, Rust 1.99.1, from `rust-toolchain.toml`)
+and optionally [cargo-deny](https://github.com/EmbarkStudios/cargo-deny).
+
+```sh
+scripts/check.sh        # toolchain, fmt, clippy -D warnings, tests, docs, architecture rule, cargo-deny
+```
+
+If `scripts/check-toolchain.sh` reports a mismatch, another `cargo` (for example Homebrew's) is ahead of rustup's
+proxies on your `PATH` and is ignoring the pin. Put rustup's proxies first, e.g.
+`export PATH="$(brew --prefix rustup)/bin:$PATH"`.
 
 ## Contributing
 
-Colophon is in its design phase. Issues with design feedback are welcome: a failure mode the plan misses, a guarantee
+Colophon is in its foundation milestone. Issues with design feedback are welcome: a failure mode the plan misses, a guarantee
 that is stronger than it can actually be, a simpler way to prove something. Code contributions open after P0, when the
 workspace, CI and a `CONTRIBUTING.md` exist.
 

@@ -1,0 +1,18 @@
+[package]
+name = "colophon-cli"
+description = "The colophon command: scriptable, with stable JSON output and honest exit codes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "colophon"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+
+[lints]
+workspace = true

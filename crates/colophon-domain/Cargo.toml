@@ -1,0 +1,16 @@
+[package]
+name = "colophon-domain"
+description = "Colophon's rules: content model, editorial workflow, releases and state machines. No I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Never add an async runtime, HTTP framework or database driver here (tokio, axum, hyper,
+# tower, sqlx, reqwest, ...). scripts/check-architecture.sh fails CI if one appears, even
+# transitively. See docs/modules/01-domain.md.
+[dependencies]
+
+[lints]
+workspace = true

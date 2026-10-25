@@ -1,0 +1,36 @@
+# Supply-chain policy, checked by cargo-deny on every push and daily (new advisories
+# appear without code changes). Starting point: rust-mastery chapter 11, "Supply chain".
+
+[graph]
+all-features = true
+
+[advisories]
+# Vulnerabilities and unmaintained crates fail by default. Ignore only with a reason and an expiry.
+ignore = []
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib"]
+confidence-threshold = 0.93
+# The allowlist names licences we accept ahead of the dependencies that will need them.
+unused-allowed-license = "allow"
+
+[licenses.private]
+# Our own crates are `publish = false` until the licence is confirmed.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = [
+    { crate = "openssl", reason = "use rustls: one TLS stack to patch" },
+    { crate = "openssl-sys", reason = "use rustls: one TLS stack to patch" },
+    { crate = "async-std", reason = "one async runtime: tokio" },
+]
+skip = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
