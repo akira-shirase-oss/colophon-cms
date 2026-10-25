@@ -1,0 +1,26 @@
+{
+  "name": "@colophon/content-renderer",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Turns a stored colophon/rich-text v1 document into safe HTML, identically in the Studio preview and on the public site.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./RichText.svelte": "./src/RichText.svelte"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@colophon/editor": "0.0.0"
+  },
+  "peerDependencies": {
+    "svelte": "^5.57.1"
+  },
+  "devDependencies": {
+    "happy-dom": "21.0.4",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}
