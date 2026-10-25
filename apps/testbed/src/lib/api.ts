@@ -83,3 +83,20 @@ export function envelopeOf(body: unknown): Envelope['error'] | null {
 		request_id: typeof requestId === 'string' ? requestId : null
 	};
 }
+
+/** The session's CSRF token, which cookie-authenticated writes echo in `X-CSRF-Token`. */
+export function csrfToken(): string {
+	const match = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='));
+	return match?.slice('colophon_csrf='.length) ?? '';
+}
+
+/** The `details` of an error envelope, when the server gave them. */
+export function detailsOf(body: unknown): { reason: string; pointer: string } | null {
+	const error = typeof body === 'object' && body !== null ? (body as { error?: { details?: unknown } }).error : undefined;
+	const details = error?.details;
+	if (typeof details !== 'object' || details === null) return null;
+	const fields = details as Record<string, unknown>;
+	return typeof fields['reason'] === 'string' && typeof fields['pointer'] === 'string'
+		? { reason: fields['reason'], pointer: fields['pointer'] }
+		: null;
+}

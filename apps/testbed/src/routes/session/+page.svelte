@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { call, envelopeOf } from '#lib/api.ts';
+	import { call, csrfToken, envelopeOf } from '#lib/api.ts';
 
 	interface Project {
 		id: string;
@@ -25,11 +25,6 @@
 	let name = $state('');
 	let message = $state('');
 
-	function csrf(): string {
-		const match = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='));
-		return match?.slice('colophon_csrf='.length) ?? '';
-	}
-
 	async function refresh() {
 		const reply = await call('GET', '/me');
 		status = reply.status;
@@ -39,7 +34,7 @@
 	async function createProject(event: SubmitEvent) {
 		event.preventDefault();
 		const reply = await call('POST', '/api/v1/projects', {
-			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf() },
+			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
 			body: JSON.stringify({ slug, name })
 		});
 		message = reply.status === 201 ? `created ${slug}` : `${reply.status} ${envelopeOf(reply.body)?.code ?? ''}: ${envelopeOf(reply.body)?.message ?? ''}`;
@@ -47,7 +42,7 @@
 	}
 
 	async function signOut() {
-		await call('POST', '/auth/logout', { headers: { 'X-CSRF-Token': csrf() } });
+		await call('POST', '/auth/logout', { headers: { 'X-CSRF-Token': csrfToken() } });
 		await refresh();
 	}
 
