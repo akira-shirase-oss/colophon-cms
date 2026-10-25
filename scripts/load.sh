@@ -7,8 +7,9 @@
 #   scripts/load.sh <endpoint> <scenario> --baseline also save this run as the machine's baseline
 #
 # <endpoint> is a script in perf/k6/: health (the health checks), rich-text (validation),
-# session (signed-in requests: session lookup and row-level security on every request) or
-# entries (drafts: reads, lists and If-Match saves, each read checked against the last save).
+# session (signed-in requests: session lookup and row-level security on every request),
+# entries (drafts: reads, lists and If-Match saves, each read checked against the last save) or
+# studio (the Studio's static files; builds the Studio first).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090).
@@ -18,6 +19,7 @@
 # 2,000/s and its p99 threshold 100 ms (END_GOAL's editorial budget is p99 <= 700 ms); the
 # baseline comparison still fails a p99 50% worse than the last accepted run. entries writes
 # on a fifth of its requests: 500/s steady and a 250 ms p99 (END_GOAL: draft writes p99 <= 700 ms).
+# studio reads a file per request: 10,000/s steady.
 #
 # A result file goes to perf/results/ and a line to perf/results/history.jsonl. Numbers from
 # a laptop are evidence about the code on that machine, not a production capacity claim;
@@ -28,7 +30,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|entries throughput|steady [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|entries|studio throughput|steady [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -49,6 +51,7 @@ VUS="${VUS:-$default_vus}"
 case "$endpoint" in
   session) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
   entries) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
+  studio) RATE="${RATE:-10000}" P99_MS="${P99_MS:-25}" ;;
   *) RATE="${RATE:-20000}" P99_MS="${P99_MS:-25}" ;;
 esac
 base_url="http://127.0.0.1:$port"
@@ -68,6 +71,12 @@ scripts/check-toolchain.sh >/dev/null
 scripts/migrate.sh
 echo "building the release binaries"
 cargo build --quiet --release --locked -p colophon-server -p colophon-cli
+studio_dir=""
+if [[ "$endpoint" == "studio" ]]; then
+  echo "building the Studio"
+  npm run build --silent -w @colophon/studio >/dev/null
+  studio_dir="$PWD/apps/studio/build"
+fi
 
 # The load-test server: the local stack's settings, its own port, and warnings-only logging,
 # as production would run (per-request lines are DEBUG).
@@ -78,6 +87,7 @@ cargo build --quiet --release --locked -p colophon-server -p colophon-cli
   set +a
   # The public URL is the sign-in redirect URI registered in the development realm.
   export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
+  if [[ -n "$studio_dir" ]]; then export COLOPHON_STUDIO_DIR="$studio_dir"; fi
   exec target/release/colophon-server
 ) >"$work/server.log" 2>&1 &
 server_pid=$!
