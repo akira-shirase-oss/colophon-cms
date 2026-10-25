@@ -1,47 +1,32 @@
-//! `colophon-server`: the composition root. It will load and validate
-//! configuration once, build the adapters, and run the API role, the worker
-//! role, or both (`docs/ARCHITECTURE.md`, "Process topology").
-//!
-//! Today it only accepts the documented `--role` contract. The HTTP server,
-//! health checks and error envelope arrive in milestone P0, step 0.3.
+//! Thin binary: parse the role, load and validate configuration, set up logging, run.
 
-use clap::{Parser, ValueEnum};
+use anyhow::Context as _;
+use clap::Parser;
+use colophon_server::{Config, Role, ShutdownOutcome, shutdown, telemetry};
 
-/// Which part of Colophon this process runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum Role {
-    /// The management and public delivery APIs.
-    Api,
-    /// Background work: the outbox dispatcher, retries and reconciliation.
-    Worker,
-    /// Both roles in one process (the v0.1 reference profile).
-    All,
-}
-
-impl Role {
-    fn as_str(self) -> &'static str {
-        match self {
-            Role::Api => "api",
-            Role::Worker => "worker",
-            Role::All => "all",
-        }
-    }
-}
-
-/// The Colophon server.
+/// The Colophon server. Configuration comes from `COLOPHON_*` environment variables; see
+/// `crates/colophon-server/src/config.rs` for the list.
 #[derive(Debug, Parser)]
 #[command(name = "colophon-server", version, about)]
 struct Args {
     /// Which part of the server this process runs.
-    #[arg(long, value_enum, default_value_t = Role::All)]
+    #[arg(long, value_enum, env = "COLOPHON_ROLE", default_value_t = Role::All)]
     role: Role,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    eprintln!(
-        "colophon-server {}: role `{}` has no services yet (they arrive in milestone P0, step 0.3)",
-        env!("CARGO_PKG_VERSION"),
-        args.role.as_str()
-    );
+    // Fail fast: an invalid environment exits non-zero with every problem listed.
+    let config = Config::from_env(args.role).context("loading configuration")?;
+    telemetry::init(config.log_format, &config.log_filter).context("setting up logging")?;
+    let signal = shutdown::os_signal().context("installing signal handlers")?;
+
+    match colophon_server::run(config, signal).await? {
+        ShutdownOutcome::Graceful => tracing::info!("shutdown complete"),
+        ShutdownOutcome::DeadlineExceeded => {
+            tracing::warn!("shutdown complete, abandoning requests still in flight");
+        }
+    }
+    Ok(())
 }

@@ -42,10 +42,12 @@ jobs:
           RUSTDOCFLAGS: -D warnings
       - run: scripts/check-architecture.sh
 
-  stack:
-    name: scripts and local stack (shellcheck, compose up, prove each service)
+  # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
+  # the testbed in a browser, and a load smoke run.
+  integration:
+    name: integration (stack, outage tests, testbed in Chromium, load smoke)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,9 +59,34 @@ jobs:
           scripts/*.sh
       - name: Start the stack and run its checks
         run: scripts/stack.sh up
+      - name: Install the pinned toolchain
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Tests that need the stack (they stop and restart its services)
+        run: cargo test --workspace --locked -- --ignored --test-threads=1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx -w @colophon/testbed playwright install --with-deps chromium
+      - name: Testbed in Chromium (scripts/testbed.sh)
+        run: scripts/testbed.sh
+      - name: Load smoke run (200,000 requests)
+        run: |
+          scripts/install-k6.sh "$RUNNER_TEMP/bin"
+          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=200000 P99_MS=50 KEEP=0 scripts/load.sh throughput
       - name: Service logs
         if: failure()
         run: docker compose -f deploy/compose.yaml logs --no-color --tail 200
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: playwright-traces
+          path: apps/testbed/test-results/
+          retention-days: 7
       - name: Tear down
         if: always()
         run: scripts/stack.sh reset

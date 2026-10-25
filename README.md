@@ -18,7 +18,9 @@
 
 > **Status: milestone P0, foundation (October 2026).** The design is complete. Step 0.1 is done: a pinned toolchain,
 > a five-crate Cargo workspace with no features yet, and CI that runs the same checks as `scripts/check.sh`. Step 0.2 is
-> done: a local stack (PostgreSQL, Valkey, Garage, Keycloak) that proves each service works, in CI as well.
+> done: a local stack (PostgreSQL, Valkey, Garage, Keycloak) that proves each service works, in CI as well. Step 0.3
+> is done: one error envelope, request IDs, honest health checks and `colophon doctor`, plus the testing rule every
+> feature now follows: regression tests, a separate testbed frontend, and million-request load tests.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
@@ -93,7 +95,7 @@ Each milestone is named after what it proves, and is done only when its proof ga
 | | Milestone | Proof gate | Status |
 |---|---|---|---|
 | D | Design | Scope cut, plan written, every decision recorded | ✅ Done |
-| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1, 0.2 done) |
+| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1–0.3 done) |
 | P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | Planned |
 | P2 | Publish exactly once | Crashed workers reconcile; stale deliveries are superseded | Planned |
 | P3 | Prove it reached the site | Cache and purge faults, no mixed releases; **first public demo** | Planned |
@@ -129,12 +131,15 @@ What exists today:
 ```text
 crates/
   colophon-domain/   the rules (no I/O allowed; enforced by scripts/check-architecture.sh)
-  colophon-db/       PostgreSQL adapter
-  colophon-api/      management API
-  colophon-cli/      the `colophon` binary
-  colophon-server/   the `colophon-server` binary (--role api|worker|all)
-deploy/              compose.yaml: the local stack (PostgreSQL, Valkey, Garage, Keycloak)
-scripts/             check.sh (everything CI runs), check-toolchain.sh, check-architecture.sh, stack.sh
+  colophon-db/       PostgreSQL adapter: a bounded, lazy pool and the readiness probe
+  colophon-api/      the HTTP surface: error envelope, request IDs, middleware, /livez, /readyz
+  colophon-cli/      the `colophon` binary (`colophon doctor`)
+  colophon-server/   the `colophon-server` binary: config, probes, graceful shutdown (--role api|worker|all)
+apps/
+  testbed/           a separate SvelteKit frontend that tests Colophon through its real HTTP API
+perf/                k6 scenarios, every load result, and per-machine baselines
+deploy/              compose.yaml: the local stack (PostgreSQL, Valkey, Garage, Keycloak); local.env
+scripts/             check.sh (everything CI runs), stack.sh, testbed.sh, load.sh, install-k6.sh, and the checks
 docs/                the plan
 ```
 
@@ -144,19 +149,49 @@ crates as the milestones need them; see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Development
 
 Requirements: [rustup](https://rustup.rs) (it installs the pinned toolchain, Rust 1.99.1, from `rust-toolchain.toml`),
-Docker with Compose for the local stack, and optionally [cargo-deny](https://github.com/EmbarkStudios/cargo-deny).
+Docker with Compose, Node 22.17+, and optionally [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) and
+[k6](https://k6.io) (`scripts/install-k6.sh` installs the pinned version).
 
 ```sh
-scripts/stack.sh up     # PostgreSQL, Valkey, Garage and Keycloak on 127.0.0.1, then 28 checks that each one works
-scripts/check.sh        # toolchain, fmt, clippy -D warnings, tests, docs, architecture rule, cargo-deny, ShellCheck,
-                        # and the stack checks if the stack is running
+scripts/stack.sh up      # PostgreSQL, Valkey, Garage and Keycloak on 127.0.0.1, then 28 checks that each one works
+scripts/check.sh         # everything CI runs: fmt, clippy -D warnings, tests, docs, architecture rule, cargo-deny,
+                         # ShellCheck, and with the stack up: outage tests, the testbed in Chromium, a load smoke run
+scripts/testbed.sh       # the testbed's Playwright suite (or --dev to explore it by hand)
+scripts/load.sh throughput   # 1,000,000 requests against a release build; result saved to perf/results/
 ```
 
-Ports, credentials and what each check proves: [deploy/README.md](deploy/README.md).
+Run the server against the local stack:
+
+```sh
+set -a; . deploy/local.env; set +a
+cargo run --release -p colophon-server
+cargo run --release -p colophon-cli -- doctor     # status, role and each dependency; exit 0 only when ready
+```
+
+Ports, credentials and what each stack check proves: [deploy/README.md](deploy/README.md).
 
 If `scripts/check-toolchain.sh` reports a mismatch, another `cargo` (for example Homebrew's) is ahead of rustup's
 proxies on your `PATH` and is ignoring the pin. Put rustup's proxies first, e.g.
 `export PATH="$(brew --prefix rustup)/bin:$PATH"`.
+
+## How it's tested
+
+Every feature ships with three kinds of proof ([D-018](docs/DECISIONS.md)):
+
+1. **Regression tests** in CI on every push, including tests against the real binary over real sockets, and tests that
+   stop the database and cache to watch readiness change and recover. Every fixed bug gets a test that failed first.
+2. **The testbed** (`apps/testbed`), a separate frontend that uses each feature through the real HTTP API, driven by
+   Playwright in CI.
+3. **Load tests** with k6. Results are committed, failures included, and a regression against the machine's baseline
+   fails the run.
+
+Step 0.3 on an Apple M2 Pro (12 cores), with k6 on the same machine (numbers about the code, not a production capacity
+claim):
+
+| Run | Requests | Rate | p99 | Failed | Database queries |
+|---|---|---|---|---|---|
+| Health endpoints, back to back | 5,000,000 | 75,405/s | 1.64 ms | 0 | 13 (all from the readiness probes) |
+| Health endpoints, steady | 1,199,936 | 20,000/s for 60 s | 0.25 ms | 0 | 12 |
 
 ## Contributing
 

@@ -44,14 +44,19 @@ create → conflict → review → publish scenario produce equivalent durable r
 ### Server shape (rust-mastery chapter 12)
 - Axum 0.8 routes with `/{param}` syntax.
 - Handlers are thin: extract → authorize → call a domain service → map the result.
-- One `ServiceBuilder`, outermost first:
-  1. set request ID;
+- One `ServiceBuilder`, outermost first (built in step 0.3, `crates/colophon-api/src/middleware.rs`):
+  0. drop unsafe client request IDs (over 64 characters, or outside `[A-Za-z0-9._-]`);
+  1. set request ID (UUIDv7);
   2. propagate request ID;
-  3. trace;
-  4. error envelope;
-  5. `CatchPanicLayer::custom`;
-  6. timeout;
-  7. body limit (1 MiB; uploads stream separately).
+  3. trace (one span per request; per-request lines at DEBUG, so the default `info` level logs no line per request);
+  4. error envelope: every 4xx/5xx becomes `{"error":{"code","message","request_id"}}`, including axum's 405 and
+     tower-http's 413 and 504;
+  5. body hygiene: never close a connection silently over an unread request body. Declared oversized bodies are
+     refused after being drained, bodies a handler leaves unread are drained afterwards (up to 32 MiB, within 2 s),
+     and otherwise the response says `Connection: close` (RFC 9112 §9.6; found by the testbed);
+  6. `CatchPanicLayer::custom`;
+  7. timeout (504 `deadline_exceeded`);
+  8. body limit (1 MiB; uploads stream separately).
 - `AppState` is cheap to clone (`Arc`s); there is no global mutable state.
 - A fallback route returns the error envelope.
 
