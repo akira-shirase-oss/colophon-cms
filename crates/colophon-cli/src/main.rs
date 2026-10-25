@@ -8,6 +8,7 @@
 //! Commands arrive with the milestones that make them true: `doctor` in P0,
 //! `content create` and `content list` in P1, `release …` in P2.
 
+mod admin;
 mod doctor;
 
 use std::{process::ExitCode, time::Duration};
@@ -57,6 +58,19 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Operator mode: direct infrastructure access, separate from normal commands.
+    #[command(subcommand)]
+    Admin(AdminCommand),
+}
+
+#[derive(Debug, Subcommand)]
+enum AdminCommand {
+    /// Apply pending database migrations, as the migrator role (the table owner).
+    Migrate {
+        /// The migrator's connection URL. Never the application's.
+        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -84,5 +98,8 @@ fn main() -> ExitCode {
                 json,
             ))
             .into(),
+        Command::Admin(AdminCommand::Migrate { database_url }) => {
+            runtime.block_on(admin::migrate(&database_url)).into()
+        }
     }
 }

@@ -2,8 +2,12 @@
 //! impossible to store, the transactional outbox, idempotency records and row-level
 //! security context.
 //!
-//! Design: `docs/modules/02-db.md`. Today it builds the connection pool and the readiness
-//! probe; schemas and migrations arrive in milestone P1.
+//! Design: `docs/modules/02-db.md`. Migrations live in `migrations/` and are embedded in the
+//! binary ([`MIGRATOR`]); queries are checked against the schema at compile time (D-026).
+
+pub mod identity;
+pub mod projects;
+pub mod scope;
 
 use std::{str::FromStr, time::Duration};
 
@@ -13,6 +17,15 @@ use sqlx::{
 };
 
 pub use sqlx::postgres::PgPool;
+
+/// The schema migrations, embedded at compile time from `migrations/`.
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+/// Applies any migrations the database doesn't have yet. Run as the migrator role (the table
+/// owner), never as the application role.
+pub async fn migrate(pool: &PgPool) -> Result<(), DbError> {
+    MIGRATOR.run(pool).await.map_err(DbError::Migrate)
+}
 
 /// Pool settings. Every value is a bound: connections, waiting, and statement time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +63,22 @@ pub enum DbError {
     /// No answer within the deadline.
     #[error("database did not answer within {0:?}")]
     Timeout(Duration),
+    /// A unique value (such as a slug) is already taken.
+    #[error("already exists")]
+    Conflict,
+    /// Applying migrations failed.
+    #[error("applying migrations failed")]
+    Migrate(#[source] sqlx::migrate::MigrateError),
+}
+
+impl DbError {
+    /// A write's error: unique violations become `Conflict`, everything else stays `Query`.
+    pub(crate) fn from_write(error: sqlx::Error) -> Self {
+        match &error {
+            sqlx::Error::Database(database) if database.is_unique_violation() => Self::Conflict,
+            _ => Self::Query(error),
+        }
+    }
 }
 
 /// Builds the pool without connecting. Connections open on first use, so the server starts

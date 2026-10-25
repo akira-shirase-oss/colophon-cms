@@ -20,6 +20,7 @@ if [[ "${1:-}" == "--dev" ]]; then
 fi
 
 scripts/check-toolchain.sh >/dev/null
+scripts/migrate.sh
 cargo build --quiet --release --locked -p colophon-server
 npm run check -w @colophon/testbed
 npm run build -w @colophon/testbed

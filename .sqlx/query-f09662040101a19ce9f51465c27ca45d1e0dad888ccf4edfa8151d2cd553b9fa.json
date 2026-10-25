@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM sign_in_attempts WHERE state_hash IN\n           (SELECT state_hash FROM sign_in_attempts WHERE expires_at < now() LIMIT 100)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "f09662040101a19ce9f51465c27ca45d1e0dad888ccf4edfa8151d2cd553b9fa"
+}

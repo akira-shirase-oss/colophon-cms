@@ -67,11 +67,15 @@ services:
       GARAGE_DEFAULT_ACCESS_KEY: GK636f6c6f70686f6e2d646576
       GARAGE_DEFAULT_SECRET_KEY: 636f6c6f70686f6e2d6c6f63616c2d6465762d73332d7365637265742d6b6579
       GARAGE_DEFAULT_BUCKET: colophon-dev
+      GARAGE_CONFIG_FILE: /etc/garage/garage.toml
     ports:
       - "127.0.0.1:${COLOPHON_S3_PORT:-53900}:3900"
       - "127.0.0.1:${COLOPHON_S3_ADMIN_PORT:-53903}:3903"
     volumes:
-      - ./garage/garage.toml:/etc/garage.toml:ro
+      # Folders, not single files: a single-file bind mount follows the file's original inode, so
+      # once git or an editor replaces the file the container can no longer read it (it happened:
+      # Garage went unhealthy, 2026-10-26).
+      - ./garage:/etc/garage:ro
       - garage:/var/lib/garage
     healthcheck:
       # The image has no shell; `garage health` exits 1 while the cluster is unavailable.
@@ -96,7 +100,7 @@ services:
     ports:
       - "127.0.0.1:${COLOPHON_KEYCLOAK_PORT:-58080}:8080"
     volumes:
-      - ./keycloak/colophon-realm.json:/opt/keycloak/data/import/colophon-realm.json:ro
+      - ./keycloak:/opt/keycloak/data/import:ro
     healthcheck:
       # No curl in the image: ask the management port directly. Judge by the status line
       # (200 up, 503 down), not the body: individual checks report "UP" even when the

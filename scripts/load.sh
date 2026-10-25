@@ -52,6 +52,7 @@ cleanup() {
 trap cleanup EXIT
 
 scripts/check-toolchain.sh >/dev/null
+scripts/migrate.sh
 echo "building the release binaries"
 cargo build --quiet --release --locked -p colophon-server -p colophon-cli
 
