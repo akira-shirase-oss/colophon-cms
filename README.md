@@ -24,6 +24,8 @@
 > high-contrast themes. Every feature follows one testing rule: regression tests, a separate testbed frontend, and
 > million-request load tests. Step 1.1 is done: sign-in through OpenID Connect (Keycloak locally), server-side sessions
 > with CSRF and `Origin` checks, and projects that PostgreSQL's row-level security hides from everyone but their members.
+> Step 1.2 is done: drafts that can't be lost. Revisions are never changed, a save on a stale revision is refused, and a
+> server killed just before or just after a save neither loses an acknowledged draft nor saves it twice.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 

@@ -73,6 +73,13 @@ quality claim (spec §30).
 | F13 | Restore backup containing an old outbox | New recovery epoch; reconcile external effects before replay; no blind resend |
 | F14 | Deleted project appears in a restored backup | Deletion ledger reapplied before read APIs and caches are enabled |
 
+**In place (step 1.2):** F01 and F02 run against the real binary in
+`crates/colophon-server/tests/faults.rs`. A build with the `fault-injection` feature exits at a named point
+(`COLOPHON_FAULT=entry.save:before-commit`, `entry.save:after-commit`, `entry.create:after-commit`); release builds
+don't contain the points (D-036). F04's database half (two concurrent saves on one base: one wins, one is stale, the
+loser's revision is never stored) is in `crates/colophon-db/tests/entries.rs`, and the testbed shows it in two browser
+tabs; the full editor flow is step 1.3.
+
 ### Load-test cases (spec §29)
 
 | ID | Scenario | Expected evidence |

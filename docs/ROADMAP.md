@@ -60,7 +60,9 @@ the same result), F04 (two editors on one base revision: one gets 409, nothing l
 colliding slugs and IDs; the spec's first slice works end to end (spec §37).
 
 **Steps:** 1.1 sign-in and projects that can't see each other (done: D-031 to D-033) · 1.2 a draft that can't be lost
-(entries, revisions, the expected-revision save, idempotency) · 1.3 conflicts · 1.4 the first simulator run.
+(done: entries, revisions, the expected-revision save, idempotency, F01 and F02; D-034 to D-036) · 1.3 conflicts
+(the Studio's editor, autosave and conflict screen; F04 end to end) · 1.4 the first simulator run · 1.5 content types
+you define (schemas, replacing the built-in `articles` collection).
 
 ## P2: Publish exactly once (≈ spec M2)
 

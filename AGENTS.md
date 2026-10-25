@@ -5,8 +5,10 @@ workspace, the local stack in `deploy/`, the error envelope and health checks, `
 `perf/`, the rich-text format with its editor, validator and renderer, and `packages/ui` with the Studio's first screen
 (D-013 to D-030). Step 1.1 is done: OpenID Connect sign-in through Keycloak (`colophon-auth`), server-side sessions with
 CSRF and `Origin` checks, projects isolated by row-level security (`colophon-db`, migration 0001), the testbed's Session
-page, and the signed-in load scenario `perf/k6/session.js` (D-031 to D-033). Next is step 1.2, a draft that can't be
-lost: entries, revisions, the expected-revision save and idempotency. See `docs/ROADMAP.md`.
+page, and the signed-in load scenario `perf/k6/session.js` (D-031 to D-033). Step 1.2 is done: entries with
+insert-only revisions in the built-in `articles` collection, saves with `If-Match`, idempotent writes, the crash tests
+F01 and F02, the testbed's Entries page and `perf/k6/entries.js` (D-034 to D-036). Next is step 1.3: the Studio's
+editor, autosave and conflict screen. See `docs/ROADMAP.md`.
 
 ## Read first
 
@@ -102,4 +104,16 @@ requests). Run it before every push. Full load runs:
 The local stack (`scripts/stack.sh up`, details in `deploy/README.md`) binds every port to `127.0.0.1`; its credentials
 are public development values. The database has two logins: `colophon` owns the tables and runs migrations
 (`scripts/migrate.sh`); the server uses `colophon_app`, which row-level security applies to. After changing the Keycloak
-realm in `deploy/keycloak`, run `docker compose -f deploy/compose.yaml up -d --force-recreate keycloak`. Never change the bind address, and never reuse those credentials outside `deploy/`.
+realm in `deploy/keycloak`, run `docker compose -f deploy/compose.yaml up -d --force-recreate keycloak`.
+
+Adding a migration whose tables new `sqlx::query!` calls use: `scripts/migrate.sh` compiles those queries before it can
+migrate, so apply the migration with sqlx-cli first, then refresh the offline data, and commit `.sqlx/`:
+
+```sh
+export DATABASE_URL=postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
+cargo sqlx migrate run --source crates/colophon-db/migrations
+SQLX_OFFLINE=false cargo sqlx prepare --workspace
+```
+
+The crash tests (F01, F02) build only with the fault points:
+`cargo test -p colophon-server --features fault-injection --test faults -- --ignored` (`check.sh` and CI run them). Never change the bind address, and never reuse those credentials outside `deploy/`.
