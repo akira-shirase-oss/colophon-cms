@@ -49,7 +49,7 @@ pub(crate) async fn list(
     let services = services(&state)?;
     let items = projects::list(&services.pool, caller.identity)
         .await
-        .map_err(ApiError::internal)?
+        .map_err(ApiError::from_db)?
         .into_iter()
         .map(ProjectView::from)
         .collect();
@@ -89,7 +89,7 @@ pub(crate) async fn create(
     .await
     .map_err(|error| match error {
         DbError::Conflict => ApiError::Conflict("a project with this slug already exists"),
-        other => ApiError::internal(other),
+        other => ApiError::from_db(other),
     })?;
     Ok((StatusCode::CREATED, Json(ProjectView::from(project))))
 }
@@ -105,7 +105,7 @@ pub(crate) async fn get(
     let id = Uuid::parse_str(&id).map_err(|_| ApiError::NotFound)?;
     let project = projects::get(&services.pool, caller.identity, id)
         .await
-        .map_err(ApiError::internal)?
+        .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
     Ok(Json(ProjectView::from(project)))
 }

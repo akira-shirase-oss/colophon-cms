@@ -13,9 +13,10 @@ use std::error::Error as StdError;
 use axum::{
     Json,
     extract::rejection::JsonRejection,
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use colophon_db::DbError;
 use colophon_domain::rich_text::Rejection;
 use serde::{Serialize, Serializer};
 
@@ -185,6 +186,10 @@ pub enum ApiError {
     /// Temporarily unable to serve; the reason is safe to show.
     #[error("{0}")]
     Unavailable(&'static str),
+    /// At capacity: no database connection became free in time, and nothing was attempted.
+    /// 503 with `Retry-After`, so clients back off instead of piling on.
+    #[error("the server is busy; try again shortly")]
+    Busy,
     /// Sign-in failed. Details are logged, never shown: they can help an attacker.
     #[error("sign-in failed or expired; start again")]
     SignInFailed,
@@ -197,6 +202,15 @@ impl ApiError {
     /// Wraps any error as an internal failure.
     pub fn internal(cause: impl Into<Box<dyn StdError + Send + Sync>>) -> Self {
         Self::Internal(cause.into())
+    }
+
+    /// A database error: an exhausted pool is [`Self::Busy`]; anything else is internal.
+    /// Callers that expect a particular error, such as a conflict, match it first.
+    pub fn from_db(error: DbError) -> Self {
+        match error {
+            DbError::Busy => Self::Busy,
+            other => Self::internal(other),
+        }
     }
 
     /// HTTP status for this error. Total over the variants, so every new variant must choose.
@@ -214,7 +228,7 @@ impl ApiError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::Conflict(_) => StatusCode::CONFLICT,
-            Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -232,7 +246,7 @@ impl ApiError {
             Self::Forbidden(_) => ErrorCode::Forbidden,
             Self::NotFound => ErrorCode::NotFound,
             Self::Conflict(_) => ErrorCode::Conflict,
-            Self::Unavailable(_) => ErrorCode::Unavailable,
+            Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
         }
@@ -266,6 +280,10 @@ impl ApiError {
         if let Self::Internal(cause) = self {
             let cause = error_chain(cause.as_ref());
             tracing::error!(code, %cause, "request failed");
+        } else if matches!(self, Self::Busy) {
+            // Operators need to see saturation. Each of these waited out the acquire timeout,
+            // so their rate is bounded by in-flight requests over that timeout.
+            tracing::warn!(code, "request refused: no database connection free");
         } else {
             // A client's mistake: worth a debug line, never a page.
             tracing::debug!(code, error = %self, "request rejected");
@@ -285,10 +303,20 @@ fn error_chain(error: &(dyn StdError + 'static)) -> String {
     text
 }
 
+/// Seconds a client should wait before retrying a [`ApiError::Busy`] request.
+pub const BUSY_RETRY_AFTER_SECONDS: u32 = 1;
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         self.log();
-        render(self.status(), &self.public(), None)
+        let mut response = render(self.status(), &self.public(), None);
+        if matches!(self, Self::Busy) {
+            response.headers_mut().insert(
+                header::RETRY_AFTER,
+                HeaderValue::from(BUSY_RETRY_AFTER_SECONDS),
+            );
+        }
+        response
     }
 }
 

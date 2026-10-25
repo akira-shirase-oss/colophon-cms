@@ -83,14 +83,14 @@ impl FromRequestParts<AppState> for SignedIn {
         }
         let session = identity::find_session(&services.pool, &tokens::hash(token))
             .await
-            .map_err(ApiError::internal)?
+            .map_err(ApiError::from_db)?
             .ok_or(ApiError::Unauthorized)?;
         let idle = time::Duration::try_from(services.sessions.idle).unwrap_or(time::Duration::HOUR);
         let unused_for = OffsetDateTime::now_utc() - session.last_seen_at;
         if unused_for > idle {
             identity::revoke_session(&services.pool, session.id)
                 .await
-                .map_err(ApiError::internal)?;
+                .map_err(ApiError::from_db)?;
             return Err(ApiError::Unauthorized);
         }
         if !matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS) {

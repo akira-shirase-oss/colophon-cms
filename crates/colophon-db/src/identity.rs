@@ -36,7 +36,7 @@ pub async fn record_sign_in(
     )
     .fetch_one(pool)
     .await
-    .map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
     Ok(row.id)
 }
 
@@ -74,7 +74,7 @@ pub async fn create_session(
     )
     .execute(pool)
     .await
-    .map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
     Ok(id)
 }
 
@@ -91,7 +91,7 @@ pub async fn find_session(
     )
     .fetch_optional(pool)
     .await
-    .map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
     Ok(row)
 }
 
@@ -104,7 +104,7 @@ pub async fn touch_session(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
     )
     .execute(pool)
     .await
-    .map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
     Ok(())
 }
 
@@ -116,7 +116,7 @@ pub async fn revoke_session(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
     )
     .execute(pool)
     .await
-    .map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
     Ok(())
 }
 
@@ -144,7 +144,7 @@ pub async fn start_sign_in(
     )
     .execute(pool)
     .await
-    .map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
     sqlx::query!(
         "INSERT INTO sign_in_attempts (state_hash, nonce, pkce_verifier, return_to, expires_at)
          VALUES ($1, $2, $3, $4, $5)",
@@ -156,7 +156,7 @@ pub async fn start_sign_in(
     )
     .execute(pool)
     .await
-    .map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
     Ok(())
 }
 
@@ -174,7 +174,7 @@ pub async fn finish_sign_in(
     )
     .fetch_optional(pool)
     .await
-    .map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
     Ok(row)
 }
 
@@ -215,7 +215,7 @@ pub async fn profile(pool: &PgPool, id: Uuid) -> Result<Option<Profile>, DbError
     )
     .fetch_optional(&mut *transaction)
     .await
-    .map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
     let profile = match identity {
         Some(identity) => Some(Profile {
             identity,
@@ -223,6 +223,6 @@ pub async fn profile(pool: &PgPool, id: Uuid) -> Result<Option<Profile>, DbError
         }),
         None => None,
     };
-    transaction.commit().await.map_err(DbError::Query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
     Ok(profile)
 }

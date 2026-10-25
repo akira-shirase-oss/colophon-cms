@@ -22,7 +22,7 @@ pub struct Scope {
 
 /// Begins a transaction with `scope` as its row-level-security context.
 pub async fn begin(pool: &PgPool, scope: Scope) -> Result<Transaction<'static, Postgres>, DbError> {
-    let mut transaction = pool.begin().await.map_err(DbError::Query)?;
+    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
     let identity = scope.identity.map(|id| id.to_string()).unwrap_or_default();
     let project = scope.project.map(|id| id.to_string()).unwrap_or_default();
     sqlx::query!(
@@ -32,6 +32,6 @@ pub async fn begin(pool: &PgPool, scope: Scope) -> Result<Transaction<'static, P
     )
     .fetch_one(&mut *transaction)
     .await
-    .map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
     Ok(transaction)
 }

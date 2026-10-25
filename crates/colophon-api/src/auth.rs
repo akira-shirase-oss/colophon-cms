@@ -75,7 +75,7 @@ pub(crate) async fn login(
         expires_in(SIGN_IN_WINDOW),
     )
     .await
-    .map_err(ApiError::internal)?;
+    .map_err(ApiError::from_db)?;
     let url = oidc
         .authorization_url(&sign_in_state, &nonce, &pkce_verifier)
         .await
@@ -139,7 +139,7 @@ pub(crate) async fn callback(
     }
     let attempt = identity::finish_sign_in(&services.pool, &tokens::hash(sign_in_state))
         .await
-        .map_err(ApiError::internal)?
+        .map_err(ApiError::from_db)?
         .ok_or_else(|| failed("unknown, expired or already used state"))?;
     let person = oidc
         .exchange(code, &attempt.pkce_verifier, &attempt.nonce)
@@ -152,7 +152,7 @@ pub(crate) async fn callback(
         person.display_name.as_deref(),
     )
     .await
-    .map_err(ApiError::internal)?;
+    .map_err(ApiError::from_db)?;
     let (session_token, csrf_token) = (random()?, random()?);
     identity::create_session(
         &services.pool,
@@ -162,7 +162,7 @@ pub(crate) async fn callback(
         expires_in(services.sessions.lifetime),
     )
     .await
-    .map_err(ApiError::internal)?;
+    .map_err(ApiError::from_db)?;
     tracing::info!(identity = %identity_id, "signed in");
 
     let lifetime = services.sessions.lifetime.as_secs();
@@ -189,7 +189,7 @@ pub(crate) async fn logout(
     let services = services(&state)?;
     identity::revoke_session(&services.pool, caller.session)
         .await
-        .map_err(ApiError::internal)?;
+        .map_err(ApiError::from_db)?;
     let mut response = StatusCode::NO_CONTENT.into_response();
     let headers = response.headers_mut();
     headers.append(header::SET_COOKIE, clear(SESSION_COOKIE, "/"));
@@ -216,7 +216,7 @@ pub(crate) async fn me(
     let services = services(&state)?;
     let profile = identity::profile(&services.pool, caller.identity)
         .await
-        .map_err(ApiError::internal)?
+        .map_err(ApiError::from_db)?
         .ok_or(ApiError::Unauthorized)?;
     Ok(Json(Me {
         id: profile.identity.id,

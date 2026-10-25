@@ -55,7 +55,7 @@ pub async fn create(
     )
     .execute(&mut *transaction)
     .await
-    .map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
     sqlx::query!(
         "INSERT INTO memberships (project_id, identity_id, role) VALUES ($1, $2, 'owner')",
         id,
@@ -63,8 +63,8 @@ pub async fn create(
     )
     .execute(&mut *transaction)
     .await
-    .map_err(DbError::Query)?;
-    transaction.commit().await.map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
     Ok(Project {
         id,
         slug: slug.to_owned(),
@@ -84,7 +84,7 @@ pub async fn list(pool: &PgPool, identity: Uuid) -> Result<Vec<Project>, DbError
     )
     .await?;
     let projects = list_in(&mut transaction, identity).await?;
-    transaction.commit().await.map_err(DbError::Query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
     Ok(projects)
 }
 
@@ -103,7 +103,7 @@ pub(crate) async fn list_in(
     )
     .fetch_all(connection)
     .await
-    .map_err(DbError::Query)
+    .map_err(DbError::from_query)
 }
 
 /// One project, if `identity` is a member. Not a member and doesn't exist look the same.
@@ -126,7 +126,7 @@ pub async fn get(pool: &PgPool, identity: Uuid, id: Uuid) -> Result<Option<Proje
     )
     .fetch_optional(&mut *transaction)
     .await
-    .map_err(DbError::Query)?;
-    transaction.commit().await.map_err(DbError::Query)?;
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
     Ok(project)
 }

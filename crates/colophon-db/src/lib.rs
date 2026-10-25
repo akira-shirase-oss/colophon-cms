@@ -60,6 +60,10 @@ pub enum DbError {
     /// The query failed.
     #[error("database query failed")]
     Query(#[source] sqlx::Error),
+    /// No pooled connection became free within the acquire timeout: the database is at
+    /// capacity. Nothing was sent to it, so the caller can safely answer "try again".
+    #[error("no database connection became free in time")]
+    Busy,
     /// No answer within the deadline.
     #[error("database did not answer within {0:?}")]
     Timeout(Duration),
@@ -72,11 +76,19 @@ pub enum DbError {
 }
 
 impl DbError {
-    /// A write's error: unique violations become `Conflict`, everything else stays `Query`.
+    /// A query's error: an exhausted pool becomes `Busy`, everything else `Query`.
+    pub(crate) fn from_query(error: sqlx::Error) -> Self {
+        match error {
+            sqlx::Error::PoolTimedOut => Self::Busy,
+            error => Self::Query(error),
+        }
+    }
+
+    /// A write's error: unique violations become `Conflict`, the rest as [`Self::from_query`].
     pub(crate) fn from_write(error: sqlx::Error) -> Self {
         match &error {
             sqlx::Error::Database(database) if database.is_unique_violation() => Self::Conflict,
-            _ => Self::Query(error),
+            _ => Self::from_query(error),
         }
     }
 }
@@ -187,6 +199,22 @@ mod tests {
         let result = ping(&pool, Duration::from_millis(300)).await;
         assert!(matches!(result, Err(DbError::Timeout(_))), "{result:?}");
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn an_exhausted_pool_is_busy_and_other_failures_are_not() {
+        assert!(matches!(
+            DbError::from_query(sqlx::Error::PoolTimedOut),
+            DbError::Busy
+        ));
+        assert!(matches!(
+            DbError::from_query(sqlx::Error::RowNotFound),
+            DbError::Query(_)
+        ));
+        assert!(matches!(
+            DbError::from_write(sqlx::Error::PoolTimedOut),
+            DbError::Busy
+        ));
     }
 
     /// Needs the local stack (`scripts/stack.sh up`).
