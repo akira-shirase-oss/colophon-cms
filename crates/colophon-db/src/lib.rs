@@ -93,10 +93,14 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
             "statement_timeout",
             settings.statement_timeout.as_millis().to_string(),
         )]);
+    // No ping on checkout: it is a round trip on every query. sqlx still pings each connection
+    // as it returns to the pool and drops broken ones, so only a connection that breaks while
+    // idle (a database restart) reaches a caller, and fails that one request (D-032).
     Ok(PgPoolOptions::new()
         .max_connections(settings.max_connections)
         .min_connections(0)
         .acquire_timeout(settings.acquire_timeout)
+        .test_before_acquire(false)
         .connect_lazy_with(options))
 }
 

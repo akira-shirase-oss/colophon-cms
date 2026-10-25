@@ -1,7 +1,7 @@
 //! Projects and memberships, through row-level security: a project exists, for the application,
 //! only inside its own context or for its members.
 
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use crate::{
@@ -83,7 +83,17 @@ pub async fn list(pool: &PgPool, identity: Uuid) -> Result<Vec<Project>, DbError
         },
     )
     .await?;
-    let projects = sqlx::query_as!(
+    let projects = list_in(&mut transaction, identity).await?;
+    transaction.commit().await.map_err(DbError::Query)?;
+    Ok(projects)
+}
+
+/// [`list`], inside a transaction already scoped to `identity`.
+pub(crate) async fn list_in(
+    connection: &mut PgConnection,
+    identity: Uuid,
+) -> Result<Vec<Project>, DbError> {
+    sqlx::query_as!(
         Project,
         "SELECT p.id, p.slug, p.name, m.role FROM projects p
          JOIN memberships m ON m.project_id = p.id AND m.identity_id = $1
@@ -91,11 +101,9 @@ pub async fn list(pool: &PgPool, identity: Uuid) -> Result<Vec<Project>, DbError
          LIMIT 1000",
         identity
     )
-    .fetch_all(&mut *transaction)
+    .fetch_all(connection)
     .await
-    .map_err(DbError::Query)?;
-    transaction.commit().await.map_err(DbError::Query)?;
-    Ok(projects)
+    .map_err(DbError::Query)
 }
 
 /// One project, if `identity` is a member. Not a member and doesn't exist look the same.

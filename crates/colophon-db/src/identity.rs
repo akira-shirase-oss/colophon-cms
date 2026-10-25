@@ -1,10 +1,19 @@
 //! Identities, sessions and sign-in attempts (docs/modules/03-auth.md). None of these tables is
 //! project-scoped; the application role reaches them through these functions only.
 
-use sqlx::{PgPool, types::time::OffsetDateTime};
+use sqlx::PgPool;
+use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-use crate::DbError;
+use crate::{
+    DbError,
+    projects::{self, Project},
+    scope::{self, Scope},
+};
+
+/// How stale `last_seen_at` may get before a request records the session's use. Callers check
+/// it before calling [`touch_session`], so most requests don't write at all.
+pub const TOUCH_INTERVAL: Duration = Duration::MINUTE;
 
 /// Records a sign-in by `(issuer, subject)`: creates the identity on first sight, refreshes its
 /// display name and sign-in time after that. Returns its id.
@@ -86,8 +95,8 @@ pub async fn find_session(
     Ok(row)
 }
 
-/// Marks a session as used now, at most once a minute, so busy sessions don't write on every
-/// request.
+/// Marks a session as used now. The statement itself also skips sessions touched within
+/// [`TOUCH_INTERVAL`], so concurrent requests on one session write once.
 pub async fn touch_session(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
     sqlx::query!(
         "UPDATE sessions SET last_seen_at = now() WHERE id = $1 AND last_seen_at < now() - interval '1 minute'",
@@ -180,15 +189,40 @@ pub struct Identity {
     pub display_name: Option<String>,
 }
 
-/// The identity with this id.
-pub async fn find_identity(pool: &PgPool, id: Uuid) -> Result<Option<Identity>, DbError> {
-    let row = sqlx::query_as!(
+/// An identity and the projects it is a member of: everything `/me` shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Profile {
+    /// The identity.
+    pub identity: Identity,
+    /// Its projects, as [`projects::list`] returns them.
+    pub projects: Vec<Project>,
+}
+
+/// The identity with this id and its projects, read in one transaction (one pooled connection).
+pub async fn profile(pool: &PgPool, id: Uuid) -> Result<Option<Profile>, DbError> {
+    let mut transaction = scope::begin(
+        pool,
+        Scope {
+            identity: Some(id),
+            project: None,
+        },
+    )
+    .await?;
+    let identity = sqlx::query_as!(
         Identity,
         "SELECT id, issuer, display_name FROM identities WHERE id = $1",
         id
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut *transaction)
     .await
     .map_err(DbError::Query)?;
-    Ok(row)
+    let profile = match identity {
+        Some(identity) => Some(Profile {
+            identity,
+            projects: projects::list_in(&mut transaction, id).await?,
+        }),
+        None => None,
+    };
+    transaction.commit().await.map_err(DbError::Query)?;
+    Ok(profile)
 }

@@ -9,7 +9,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use colophon_auth::tokens;
-use colophon_db::{identity, projects};
+use colophon_db::identity;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
@@ -214,21 +214,19 @@ pub(crate) async fn me(
     caller: SignedIn,
 ) -> Result<Json<Me>, ApiError> {
     let services = services(&state)?;
-    let person = identity::find_identity(&services.pool, caller.identity)
+    let profile = identity::profile(&services.pool, caller.identity)
         .await
         .map_err(ApiError::internal)?
         .ok_or(ApiError::Unauthorized)?;
-    let projects = projects::list(&services.pool, caller.identity)
-        .await
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .map(crate::projects::ProjectView::from)
-        .collect();
     Ok(Json(Me {
-        id: person.id,
-        issuer: person.issuer,
-        display_name: person.display_name,
-        projects,
+        id: profile.identity.id,
+        issuer: profile.identity.issuer,
+        display_name: profile.identity.display_name,
+        projects: profile
+            .projects
+            .into_iter()
+            .map(crate::projects::ProjectView::from)
+            .collect(),
     }))
 }
 

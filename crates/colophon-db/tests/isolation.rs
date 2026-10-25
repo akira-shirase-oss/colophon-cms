@@ -395,3 +395,74 @@ async fn a_sign_in_attempt_can_be_finished_once() {
     );
     db.drop().await;
 }
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_profile_names_the_person_and_only_their_projects() {
+    let db = TestDb::new().await;
+    let (alice, bob) = (db.person("alice").await, db.person("bob").await);
+    projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created");
+    projects::create(&db.app, bob, "beta", "Beta")
+        .await
+        .expect("created");
+
+    let profile = identity::profile(&db.app, alice)
+        .await
+        .expect("profile")
+        .expect("alice exists");
+    assert_eq!(profile.identity.id, alice);
+    assert_eq!(profile.identity.display_name.as_deref(), Some("alice"));
+    let slugs: Vec<&str> = profile.projects.iter().map(|p| p.slug.as_str()).collect();
+    assert_eq!(slugs, ["alpha"], "bob's project is not alice's");
+
+    assert_eq!(
+        identity::profile(&db.app, Uuid::now_v7())
+            .await
+            .expect("profile"),
+        None
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn touching_a_session_writes_at_most_once_per_interval() {
+    let db = TestDb::new().await;
+    let alice = db.person("alice").await;
+    let in_an_hour = OffsetDateTime::now_utc() + time::Duration::hours(1);
+    let token = [5_u8; 32];
+    let id = identity::create_session(&db.app, alice, &token, &[9_u8; 32], in_an_hour)
+        .await
+        .expect("created");
+    let last_seen = |db: &PgPool| {
+        let db = db.clone();
+        async move {
+            identity::find_session(&db, &token)
+                .await
+                .expect("find")
+                .expect("live")
+                .last_seen_at
+        }
+    };
+
+    // Fresh: a touch changes nothing.
+    let fresh = last_seen(&db.app).await;
+    identity::touch_session(&db.app, id).await.expect("touch");
+    assert_eq!(last_seen(&db.app).await, fresh);
+
+    // Older than the interval: a touch records the use.
+    let owner = db.owner().await;
+    sqlx::query("UPDATE sessions SET last_seen_at = now() - interval '2 minutes' WHERE id = $1")
+        .bind(id)
+        .execute(&owner)
+        .await
+        .expect("aged");
+    owner.close().await;
+    let aged = last_seen(&db.app).await;
+    assert!(OffsetDateTime::now_utc() - aged >= identity::TOUCH_INTERVAL);
+    identity::touch_session(&db.app, id).await.expect("touch");
+    assert!(last_seen(&db.app).await - aged >= identity::TOUCH_INTERVAL);
+    db.drop().await;
+}

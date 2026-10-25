@@ -86,7 +86,8 @@ impl FromRequestParts<AppState> for SignedIn {
             .map_err(ApiError::internal)?
             .ok_or(ApiError::Unauthorized)?;
         let idle = time::Duration::try_from(services.sessions.idle).unwrap_or(time::Duration::HOUR);
-        if OffsetDateTime::now_utc() - session.last_seen_at > idle {
+        let unused_for = OffsetDateTime::now_utc() - session.last_seen_at;
+        if unused_for > idle {
             identity::revoke_session(&services.pool, session.id)
                 .await
                 .map_err(ApiError::internal)?;
@@ -114,8 +115,10 @@ impl FromRequestParts<AppState> for SignedIn {
                 return Err(ApiError::Forbidden("missing or invalid CSRF token"));
             }
         }
-        // At most one write a minute per session (see touch_session).
-        if let Err(error) = identity::touch_session(&services.pool, session.id).await {
+        // At most one write a minute per session: most requests only read.
+        if unused_for >= identity::TOUCH_INTERVAL
+            && let Err(error) = identity::touch_session(&services.pool, session.id).await
+        {
             tracing::warn!(%error, "could not record session use");
         }
         Ok(Self {
