@@ -1,0 +1,25 @@
+{
+  "description": "A heading with no level.",
+  "reject": {
+    "code": "missing_field",
+    "path": "/doc/content/0/attrs"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "heading",
+          "content": [
+            {
+              "type": "text",
+              "text": "x"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "description": "A field the envelope doesn't define.",
+  "reject": {
+    "code": "unknown_field",
+    "path": "/html"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph"
+        }
+      ]
+    },
+    "html": "<p>hi</p>"
+  }
+}

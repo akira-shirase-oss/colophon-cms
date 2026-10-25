@@ -1,0 +1,38 @@
+{
+  "description": "A list item must start with a paragraph.",
+  "reject": {
+    "code": "invalid_content",
+    "path": "/doc/content/0/content/0/content/0"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "bulletList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "heading",
+                  "attrs": {
+                    "level": 2
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "x"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

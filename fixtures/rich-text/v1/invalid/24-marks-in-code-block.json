@@ -1,0 +1,30 @@
+{
+  "description": "Formatting inside a code block.",
+  "reject": {
+    "code": "invalid_marks",
+    "path": "/doc/content/0/content/0/marks/0"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "codeBlock",
+          "content": [
+            {
+              "type": "text",
+              "text": "x",
+              "marks": [
+                {
+                  "type": "bold"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

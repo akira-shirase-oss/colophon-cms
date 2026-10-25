@@ -1,0 +1,238 @@
+{
+  "description": "A realistic article using most of the format.",
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 2
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Why Colophon"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "In a book, the "
+            },
+            {
+              "type": "text",
+              "text": "colophon",
+              "marks": [
+                {
+                  "type": "italic"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": " records how it was printed. "
+            },
+            {
+              "type": "text",
+              "text": "Colophon",
+              "marks": [
+                {
+                  "type": "bold"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": " does that for a website."
+            }
+          ]
+        },
+        {
+          "type": "callout",
+          "attrs": {
+            "tone": "tip"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Read the "
+                },
+                {
+                  "type": "text",
+                  "text": "roadmap",
+                  "marks": [
+                    {
+                      "type": "link",
+                      "attrs": {
+                        "href": "/colophon/roadmap"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "text": " first."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "The promises"
+            }
+          ]
+        },
+        {
+          "type": "orderedList",
+          "content": [
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Kill it at any moment, lose nothing."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Every bug is a number you can replay."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Time travel."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "listItem",
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Receipts, not spinners."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "image",
+          "attrs": {
+            "assetId": "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d",
+            "alt": "Diagram of a release moving from draft to published"
+          }
+        },
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 3
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Try it"
+            }
+          ]
+        },
+        {
+          "type": "codeBlock",
+          "attrs": {
+            "language": "sh"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "scripts/stack.sh up\ncargo run -p colophon-server"
+            }
+          ]
+        },
+        {
+          "type": "blockquote",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Proof over features."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "horizontalRule"
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Questions? "
+            },
+            {
+              "type": "text",
+              "text": "Write to us",
+              "marks": [
+                {
+                  "type": "link",
+                  "attrs": {
+                    "href": "mailto:hello@example.com"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

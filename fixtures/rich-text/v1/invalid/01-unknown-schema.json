@@ -1,0 +1,19 @@
+{
+  "description": "Another format's envelope.",
+  "reject": {
+    "code": "unsupported_schema",
+    "path": "/schema"
+  },
+  "value": {
+    "schema": "tiptap/raw",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph"
+        }
+      ]
+    }
+  }
+}

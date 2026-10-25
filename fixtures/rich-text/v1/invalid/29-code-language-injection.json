@@ -1,0 +1,28 @@
+{
+  "description": "A code language that isn't a plain identifier.",
+  "reject": {
+    "code": "invalid_attribute",
+    "path": "/doc/content/0/attrs/language"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "codeBlock",
+          "attrs": {
+            "language": "rust\"><script>"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "x"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

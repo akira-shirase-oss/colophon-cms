@@ -1,0 +1,39 @@
+{
+  "description": "Code blocks with and without a language; whitespace and newlines kept exactly.",
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "codeBlock",
+          "attrs": {
+            "language": "rust"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "fn main() {\n    println!(\"hello\");\n}"
+            }
+          ]
+        },
+        {
+          "type": "codeBlock",
+          "content": [
+            {
+              "type": "text",
+              "text": "  two leading spaces\n\ttab\n\ntrailing blank line above"
+            }
+          ]
+        },
+        {
+          "type": "codeBlock",
+          "attrs": {
+            "language": "c++"
+          }
+        }
+      ]
+    }
+  }
+}

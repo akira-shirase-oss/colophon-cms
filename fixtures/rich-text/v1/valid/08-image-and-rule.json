@@ -1,0 +1,40 @@
+{
+  "description": "An image from the media library, then a horizontal rule.",
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Before the image."
+            }
+          ]
+        },
+        {
+          "type": "image",
+          "attrs": {
+            "assetId": "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d",
+            "alt": "A printer's colophon: the octagonal C mark"
+          }
+        },
+        {
+          "type": "horizontalRule"
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "After the rule."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "description": "An asset id that isn't a lowercase UUID.",
+  "reject": {
+    "code": "invalid_attribute",
+    "path": "/doc/content/0/attrs/assetId"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "image",
+          "attrs": {
+            "assetId": "../../etc/passwd",
+            "alt": "x"
+          }
+        }
+      ]
+    }
+  }
+}

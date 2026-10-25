@@ -1,0 +1,24 @@
+{
+  "name": "@colophon/editor",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Colophon's rich-text editor: Tiptap configured to exactly the colophon/rich-text v1 format, and the canonical conversion between editor JSON and stored JSON.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tiptap/core": "3.32.0",
+    "@tiptap/pm": "3.32.0",
+    "@tiptap/starter-kit": "3.32.0"
+  },
+  "devDependencies": {
+    "happy-dom": "21.0.4",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

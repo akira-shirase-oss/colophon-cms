@@ -1,0 +1,11 @@
+{
+  "description": "No document at all.",
+  "reject": {
+    "code": "missing_field",
+    "path": "/doc"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1
+  }
+}

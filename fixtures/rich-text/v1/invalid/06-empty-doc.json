@@ -1,0 +1,15 @@
+{
+  "description": "A document with no blocks.",
+  "reject": {
+    "code": "invalid_content",
+    "path": "/doc/content"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": []
+    }
+  }
+}

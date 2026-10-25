@@ -1,0 +1,86 @@
+{
+  "description": "Nesting to exactly depth 16, the most the format allows.",
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "blockquote",
+          "content": [
+            {
+              "type": "blockquote",
+              "content": [
+                {
+                  "type": "blockquote",
+                  "content": [
+                    {
+                      "type": "blockquote",
+                      "content": [
+                        {
+                          "type": "blockquote",
+                          "content": [
+                            {
+                              "type": "blockquote",
+                              "content": [
+                                {
+                                  "type": "blockquote",
+                                  "content": [
+                                    {
+                                      "type": "blockquote",
+                                      "content": [
+                                        {
+                                          "type": "blockquote",
+                                          "content": [
+                                            {
+                                              "type": "blockquote",
+                                              "content": [
+                                                {
+                                                  "type": "blockquote",
+                                                  "content": [
+                                                    {
+                                                      "type": "blockquote",
+                                                      "content": [
+                                                        {
+                                                          "type": "blockquote",
+                                                          "content": [
+                                                            {
+                                                              "type": "paragraph",
+                                                              "content": [
+                                                                {
+                                                                  "type": "text",
+                                                                  "text": "deep"
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

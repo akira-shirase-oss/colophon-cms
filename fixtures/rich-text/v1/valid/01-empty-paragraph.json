@@ -1,0 +1,15 @@
+{
+  "description": "A new, empty document: one empty paragraph.",
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph"
+        }
+      ]
+    }
+  }
+}

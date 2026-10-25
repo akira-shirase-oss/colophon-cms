@@ -1,0 +1,22 @@
+{
+  "description": "An embedded page from another site.",
+  "reject": {
+    "code": "unknown_node",
+    "path": "/doc/content/0/type"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "iframe",
+          "attrs": {
+            "src": "https://evil.example"
+          }
+        }
+      ]
+    }
+  }
+}

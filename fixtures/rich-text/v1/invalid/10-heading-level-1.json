@@ -1,0 +1,28 @@
+{
+  "description": "Level 1 is the entry's title, not a heading in the body.",
+  "reject": {
+    "code": "invalid_attribute",
+    "path": "/doc/content/0/attrs/level"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "heading",
+          "attrs": {
+            "level": 1
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Title"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "description": "A text node with no text.",
+  "reject": {
+    "code": "empty_text",
+    "path": "/doc/content/0/content/0/text"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": ""
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
