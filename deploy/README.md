@@ -23,8 +23,8 @@ Needs Docker with Compose, plus `curl`, `jq` and `openssl`. The first `up` downl
 
 The Keycloak realm (`keycloak/colophon-realm.json`) has one client, `colophon-server` (secret
 `colophon-dev-client-secret`). It allows only the Authorization Code flow with PKCE (S256), and only the redirect URIs
-`http://localhost:{58000,58090,58091,58092}/auth/callback` (the development server, the load test, the testbed and the
-server's integration tests): the password grant and the implicit flow are off. After editing the realm, run
+`http://localhost:{58000,58090,58091,58092,58093}/auth/callback` (the development server, the load test, the
+testbed, the server's integration tests, and the Studio's): the password grant and the implicit flow are off. After editing the realm, run
 `docker compose -f deploy/compose.yaml up -d --force-recreate keycloak`. Keycloak keeps no data of its
 own, so `down` followed by `up` resets it to that file.
 
