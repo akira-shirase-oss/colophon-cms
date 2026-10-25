@@ -13,6 +13,9 @@ export interface Kept {
 
 const storageKey = (project: string, entry: string) => `colophon:unsaved:${project}:${entry}`;
 
+/** Kept edits older than this are dropped unread (D-038). */
+export const KEEP_DAYS = 30;
+
 /** Keeps `kept`; false if this browser won't store it (private mode, storage full). */
 export function keep(project: string, entry: string, kept: Kept): boolean {
 	try {
@@ -30,13 +33,18 @@ export function kept(project: string, entry: string): Kept | null {
 		if (text === null) return null;
 		const value = JSON.parse(text) as Partial<Kept>;
 		const article = value.article;
-		return typeof value.base === 'string' &&
+		const valid =
+			typeof value.base === 'string' &&
 			typeof value.at === 'string' &&
 			typeof article?.title === 'string' &&
 			typeof article.body === 'object' &&
-			article.body !== null
-			? (value as Kept)
-			: null;
+			article.body !== null;
+		const age = Date.now() - Date.parse(value.at ?? '');
+		if (!valid || !(age < KEEP_DAYS * 86_400_000)) {
+			localStorage.removeItem(storageKey(project, entry));
+			return null;
+		}
+		return value as Kept;
 	} catch {
 		return null;
 	}

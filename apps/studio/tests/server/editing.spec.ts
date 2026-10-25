@@ -187,3 +187,27 @@ test('a save whose answer is lost is sent again with the same key, and replayed 
 	expect(new Set(keys).size, 'the retry reused the key').toBe(1);
 	await expect(page.getByTestId('history').locator('li')).toHaveCount(2);
 });
+
+test('edits kept on this device expire after 30 days', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const path = await newArticle(page, project, 'Expired copy');
+	const entry = path.split('/').at(-1) ?? '';
+	const etag = await page.evaluate(async ([project, entry]) => {
+		const response = await fetch(`/api/v1/projects/${project}/environments/production/collections/articles/entries/${entry}`);
+		return response.headers.get('etag');
+	}, [project, entry]);
+	// A copy kept 31 days ago, on the current revision.
+	await page.evaluate(
+		([key, etag]) => {
+			const at = new Date(Date.now() - 31 * 86_400_000).toISOString();
+			const body = { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Too old to restore.' }] }] } };
+			localStorage.setItem(key ?? '', JSON.stringify({ base: etag, at, article: { title: 'Expired copy', body } }));
+		},
+		[`colophon:unsaved:${project}:${entry}`, etag]
+	);
+	await page.goto(path);
+	await expect(status(page)).toHaveAttribute('data-status', 'saved');
+	await expect(page.getByRole('textbox', { name: 'Article body' })).not.toContainText('Too old to restore.');
+	expect(await page.evaluate((key) => localStorage.getItem(key), `colophon:unsaved:${project}:${entry}`)).toBeNull();
+});

@@ -94,6 +94,10 @@ export function signInUrl(returnTo: string): string {
 	return `/auth/login?return_to=${encodeURIComponent(returnTo)}`;
 }
 
+/** Every request gives up after this long and counts as "no answer": a save is then retried with
+ *  the same key, so nothing waits forever (invariant ST4). */
+export const REQUEST_TIMEOUT_MS = 15_000;
+
 interface Envelope {
 	error?: { code?: string; message?: string; details?: { reason?: string } };
 }
@@ -105,6 +109,7 @@ async function send(method: string, path: string, body?: unknown, headers: Recor
 		response = await fetch(path, {
 			method,
 			cache: 'no-store',
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
 			headers: {
 				Accept: 'application/json',
 				...(write ? { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() } : {}),
