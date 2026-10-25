@@ -23,5 +23,6 @@ scripts/check-toolchain.sh >/dev/null
 scripts/migrate.sh
 cargo build --quiet --release --locked -p colophon-server
 npm run check -w @colophon/testbed
-npm run build -w @colophon/testbed
+# The Session page links to the server's sign-in on its own origin; Vite bakes this in at build time.
+VITE_COLOPHON_SERVER_ORIGIN=http://localhost:58091 npm run build -w @colophon/testbed
 npm run test:e2e -w @colophon/testbed

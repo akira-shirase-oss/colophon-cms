@@ -10,6 +10,7 @@
 		{ href: resolve('/'), label: 'Health' },
 		{ href: resolve('/contract'), label: 'API contract' },
 		{ href: resolve('/rich-text'), label: 'Rich text' },
+		{ href: resolve('/session'), label: 'Session' },
 		{ href: resolve('/load'), label: 'Load tests' }
 	];
 </script>

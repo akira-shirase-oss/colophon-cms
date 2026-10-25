@@ -28,7 +28,9 @@ export default defineConfig({
 	reporter: [['list']],
 	timeout: 60_000,
 	use: {
-		baseURL: `http://127.0.0.1:${TESTBED_PORT}`,
+		// localhost, like the server: cookies are per host (not per port), so the testbed's pages share
+		// the server's session cookies, as a site and its API on one host do.
+		baseURL: `http://localhost:${TESTBED_PORT}`,
 		trace: 'retain-on-failure'
 	},
 	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
@@ -38,6 +40,9 @@ export default defineConfig({
 			env: {
 				...localEnv(),
 				COLOPHON_LISTEN_ADDR: `127.0.0.1:${SERVER_PORT}`,
+				COLOPHON_PUBLIC_URL: `http://localhost:${SERVER_PORT}`,
+				// The testbed's pages make cookie-authenticated writes through its proxy.
+				COLOPHON_TRUSTED_ORIGINS: `http://localhost:${TESTBED_PORT}`,
 				COLOPHON_LOG_FORMAT: 'json',
 				COLOPHON_PROBE_INTERVAL_MS: '250',
 				COLOPHON_PROBE_TIMEOUT_MS: '200'
