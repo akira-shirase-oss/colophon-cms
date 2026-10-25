@@ -5,18 +5,84 @@
 //! unavailable, 6 internal failure. Errors and diagnostics go to stderr; stdout
 //! is reserved for results.
 //!
-//! There are no commands yet. They arrive with the milestones that make them
-//! true: `content create` and `content list` in P1, `release …` in P2.
+//! Commands arrive with the milestones that make them true: `doctor` in P0,
+//! `content create` and `content list` in P1, `release …` in P2.
 
-use clap::Parser;
+mod doctor;
+
+use std::{process::ExitCode, time::Duration};
+
+use clap::{Parser, Subcommand};
+
+/// The exit codes of the CLI contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Exit {
+    Success = 0,
+    Usage = 2,
+    Unavailable = 5,
+    Internal = 6,
+}
+
+impl From<Exit> for ExitCode {
+    fn from(exit: Exit) -> Self {
+        Self::from(exit as u8)
+    }
+}
 
 /// Write, review and publish content from the terminal.
 #[derive(Debug, Parser)]
 #[command(name = "colophon", version, about, arg_required_else_help = true)]
-struct Cli {}
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
 
-fn main() {
-    // With no commands defined, clap handles every invocation itself: `--help`
-    // and `--version` exit 0, anything else is a usage error and exits 2.
-    let _cli = Cli::parse();
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Check whether a Colophon server is ready, and which dependency is not.
+    ///
+    /// Exits 0 when the server is ready, 5 when it is degraded, not ready or unreachable.
+    Doctor {
+        /// The server's base URL.
+        #[arg(
+            long,
+            env = "COLOPHON_SERVER",
+            default_value = "http://localhost:58000"
+        )]
+        server: String,
+        /// Give up after this many milliseconds.
+        #[arg(long, default_value_t = 5_000, value_parser = clap::value_parser!(u64).range(1..=120_000))]
+        timeout_ms: u64,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+fn main() -> ExitCode {
+    // Usage errors, `--help` and `--version` are handled by clap (exit 2, 0, 0).
+    let cli = Cli::parse();
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("error: could not start the async runtime: {error}");
+            return Exit::Internal.into();
+        }
+    };
+    match cli.command {
+        Command::Doctor {
+            server,
+            timeout_ms,
+            json,
+        } => runtime
+            .block_on(doctor::run(
+                &server,
+                Duration::from_millis(timeout_ms),
+                json,
+            ))
+            .into(),
+    }
 }
