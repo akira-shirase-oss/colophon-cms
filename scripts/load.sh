@@ -6,8 +6,9 @@
 #   scripts/load.sh <endpoint> steady                a fixed rate for 60 s (RATE, DURATION, VUS)
 #   scripts/load.sh <endpoint> <scenario> --baseline also save this run as the machine's baseline
 #
-# <endpoint> is a script in perf/k6/: health (the health checks), rich-text (validation) or
-# session (signed-in requests: session lookup and row-level security on every request).
+# <endpoint> is a script in perf/k6/: health (the health checks), rich-text (validation),
+# session (signed-in requests: session lookup and row-level security on every request) or
+# entries (drafts: reads, lists and If-Match saves, each read checked against the last save).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090).
@@ -15,7 +16,8 @@
 # RATE and P99_MS default per endpoint. health and rich-text never touch the database: 20,000
 # requests/s and a 25 ms p99. session waits on database round trips, so its steady rate is
 # 2,000/s and its p99 threshold 100 ms (END_GOAL's editorial budget is p99 <= 700 ms); the
-# baseline comparison still fails a p99 50% worse than the last accepted run.
+# baseline comparison still fails a p99 50% worse than the last accepted run. entries writes
+# on a fifth of its requests: 500/s steady and a 250 ms p99 (END_GOAL: draft writes p99 <= 700 ms).
 #
 # A result file goes to perf/results/ and a line to perf/results/history.jsonl. Numbers from
 # a laptop are evidence about the code on that machine, not a production capacity claim;
@@ -26,7 +28,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session throughput|steady [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|entries throughput|steady [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -46,6 +48,7 @@ if [[ "$scenario" == "steady" ]]; then default_vus=256; else default_vus=64; fi
 VUS="${VUS:-$default_vus}"
 case "$endpoint" in
   session) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
+  entries) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
   *) RATE="${RATE:-20000}" P99_MS="${P99_MS:-25}" ;;
 esac
 base_url="http://127.0.0.1:$port"
