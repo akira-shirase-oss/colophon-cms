@@ -183,7 +183,12 @@ if (( server_warnings > 0 )); then
 fi
 
 baseline="perf/baselines/$endpoint-$scenario-$machine.json"
-if [[ -f "$baseline" ]]; then
+# Only like with like: a 10,000-request smoke spends a visible share of its requests opening
+# pool connections and preparing statements, which a million-request run amortizes away, so
+# a run with different parameters relies on its absolute thresholds alone.
+if [[ -f "$baseline" ]] && ! jq -e --argjson now "$record" '.params == $now.params' "$baseline" >/dev/null; then
+  echo "not compared with $baseline: different parameters ($(echo "$record" | jq -c .params) vs $(jq -c .params "$baseline")); absolute thresholds only"
+elif [[ -f "$baseline" ]]; then
   # A regression: throughput 25% lower, or p99 50% higher (plus 1 ms, so microsecond noise on
   # a tiny p99 doesn't fail the run). The baseline is per machine; never compare across them.
   verdict=$(jq -n --argjson now "$record" --slurpfile base "$baseline" '
