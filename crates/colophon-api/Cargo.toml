@@ -9,9 +9,11 @@ publish.workspace = true
 
 [dependencies]
 axum.workspace = true
+colophon-domain.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time"] }
 tower.workspace = true
@@ -21,7 +23,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true
-serde_json.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

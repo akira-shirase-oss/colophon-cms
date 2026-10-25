@@ -9,6 +9,7 @@
 	const links = [
 		{ href: resolve('/'), label: 'Health' },
 		{ href: resolve('/contract'), label: 'API contract' },
+		{ href: resolve('/rich-text'), label: 'Rich text' },
 		{ href: resolve('/load'), label: 'Load tests' }
 	];
 </script>

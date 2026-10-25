@@ -2,9 +2,11 @@
 # Load-tests a release build of colophon-server against the local stack, keeps the evidence,
 # and fails on a threshold miss or a regression (D-018).
 #
-#   scripts/load.sh throughput            1,000,000 requests, back to back (TOTAL, VUS)
-#   scripts/load.sh steady                20,000 requests/s for 60 s (RATE, DURATION, VUS)
-#   scripts/load.sh <scenario> --baseline also save this run as the machine's new baseline
+#   scripts/load.sh <endpoint> throughput            1,000,000 requests, back to back (TOTAL, VUS)
+#   scripts/load.sh <endpoint> steady                20,000 requests/s for 60 s (RATE, DURATION, VUS)
+#   scripts/load.sh <endpoint> <scenario> --baseline also save this run as the machine's baseline
+#
+# <endpoint> is a script in perf/k6/: health (the health checks) or rich-text (validation).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090).
@@ -15,13 +17,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-scenario="${1:-}"
-case "$scenario" in
-  throughput | steady) ;;
-  *) echo "usage: scripts/load.sh throughput|steady [--baseline]" >&2; exit 2 ;;
-esac
+endpoint="${1:-}"
+scenario="${2:-}"
+if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
+  echo "usage: scripts/load.sh health|rich-text throughput|steady [--baseline]" >&2
+  exit 2
+fi
 save_baseline=0
-[[ "${2:-}" == "--baseline" ]] && save_baseline=1
+[[ "${3:-}" == "--baseline" ]] && save_baseline=1
 
 k6=$(command -v k6 || true)
 [[ -n "$k6" ]] || k6="$HOME/.local/bin/k6"
@@ -86,7 +89,7 @@ db_transactions() {
 sleep 1.5 # let Postgres publish its statistics
 tx_before=$(db_transactions)
 
-echo "running k6: $scenario"
+echo "running k6: $endpoint $scenario"
 k6_status=0
 "$k6" run --quiet --no-color \
   --summary-export "$work/summary.json" \
@@ -94,7 +97,7 @@ k6_status=0
   -e TOTAL="${TOTAL:-1000000}" -e VUS="$VUS" \
   -e RATE="${RATE:-20000}" -e DURATION="${DURATION:-60s}" \
   -e P99_MS="${P99_MS:-25}" \
-  perf/k6/health.js || k6_status=$?
+  "perf/k6/$endpoint.js" || k6_status=$?
 
 sleep 1.5
 tx_after=$(db_transactions)
@@ -121,14 +124,14 @@ machine=$(printf '%s-%sc' "$cpu" "$cores" | tr '[:upper:]' '[:lower:]' | tr -cs 
 stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 record=$(jq -c \
-  --arg scenario "$scenario" --arg stamp "$stamp" --arg commit "$commit" --argjson dirty "$dirty" \
+  --arg scenario "$scenario" --arg endpoint "$endpoint" --arg stamp "$stamp" --arg commit "$commit" --argjson dirty "$dirty" \
   --arg cpu "$cpu" --argjson cores "$cores" --argjson memory_gb "$memory_gb" --arg machine "$machine" \
   --arg os "$(uname -s) $(uname -r)" --arg k6 "$("$k6" version | awk '{print $2}')" \
   --argjson tx "$(( tx_after - tx_before ))" --argjson warnings "$server_warnings" \
   --argjson k6_status "$k6_status" \
   --arg total "${TOTAL:-1000000}" --arg vus "$VUS" --arg rate "${RATE:-20000}" --arg duration "${DURATION:-60s}" \
   '{
-    scenario: $scenario, endpoint: "health", date: $stamp, commit: $commit, dirty: $dirty,
+    scenario: $scenario, endpoint: $endpoint, date: $stamp, commit: $commit, dirty: $dirty,
     machine: { id: $machine, cpu: $cpu, cores: $cores, memory_gb: $memory_gb, os: $os },
     k6: $k6,
     params: (if $scenario == "throughput" then { total: ($total | tonumber), vus: ($vus | tonumber) }
@@ -152,7 +155,7 @@ echo "$record" | jq .
 
 if [[ "${KEEP:-1}" == "1" ]]; then
   mkdir -p perf/results perf/baselines
-  file="perf/results/${stamp//:/}-$scenario-$machine.json"
+  file="perf/results/${stamp//:/}-$endpoint-$scenario-$machine.json"
   echo "$record" | jq . >"$file"
   echo "$record" >>perf/results/history.jsonl
   echo "saved $file"
@@ -164,7 +167,7 @@ if (( server_warnings > 0 )); then
   status=1
 fi
 
-baseline="perf/baselines/$scenario-$machine.json"
+baseline="perf/baselines/$endpoint-$scenario-$machine.json"
 if [[ -f "$baseline" ]]; then
   # A regression: throughput 25% lower, or p99 50% higher (plus 1 ms, so microsecond noise on
   # a tiny p99 doesn't fail the run). The baseline is per machine; never compare across them.
@@ -191,6 +194,6 @@ if (( save_baseline == 1 )); then
 fi
 
 if (( status == 0 )); then
-  echo "load test passed: $scenario, $(echo "$record" | jq -r '"\(.requests) requests, \(.rps)/s, p99 \(.latency_ms.p99) ms, \(.failed) failed, \(.database_transactions_during_run) database transactions"')"
+  echo "load test passed: $endpoint $scenario, $(echo "$record" | jq -r '"\(.requests) requests, \(.rps)/s, p99 \(.latency_ms.p99) ms, \(.failed) failed, \(.database_transactions_during_run) database transactions"')"
 fi
 exit "$status"

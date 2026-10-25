@@ -239,6 +239,7 @@ name = "colophon-api"
 version = "0.0.0"
 dependencies = [
  "axum",
+ "colophon-domain",
  "futures-util",
  "http-body",
  "http-body-util",
