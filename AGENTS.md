@@ -1,7 +1,8 @@
 # Colophon CMS: agent instructions
 
 **Status (2026-10-25): milestone P0 in progress.** Step 0.1 is done: the pinned toolchain, a five-crate Cargo
-workspace and CI. Next is step 0.2, the local stack. See `docs/ROADMAP.md`.
+workspace and CI. Step 0.2 is done: the local stack in `deploy/` (D-015 to D-017). Next is step 0.3, one error format
+and honest health checks (`/livez`, `/readyz`, `colophon doctor`). See `docs/ROADMAP.md`.
 
 ## Read first
 
@@ -75,5 +76,9 @@ failing invariant for a new feature, and never relabel uncertainty as success to
 
 `scripts/check.sh` runs exactly what CI runs (D-014): the toolchain check, `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `cargo doc` with
-`-D warnings`, `scripts/check-architecture.sh` (no I/O crates in `colophon-domain`), and `cargo deny check`. Run it
-before every push. Frontend checks, Playwright smoke tests and seeded simulation runs join it in later steps.
+`-D warnings`, `scripts/check-architecture.sh` (no I/O crates in `colophon-domain`), `cargo deny check`, ShellCheck,
+and `scripts/stack.sh check` when the local stack is running. Run it before every push. Frontend checks, Playwright
+smoke tests and seeded simulation runs join it in later steps.
+
+The local stack (`scripts/stack.sh up`, details in `deploy/README.md`) binds every port to `127.0.0.1`; its credentials
+are public development values. Never change the bind address, and never reuse those credentials outside `deploy/`.

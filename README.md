@@ -16,8 +16,9 @@
   <a href="docs/modules/README.md">Modules</a>
 </p>
 
-> **Status: milestone P0, foundation (October 2026).** The design is complete, and step 0.1 is done: a pinned
-> toolchain, a five-crate Cargo workspace with no features yet, and CI that runs the same checks as `scripts/check.sh`.
+> **Status: milestone P0, foundation (October 2026).** The design is complete. Step 0.1 is done: a pinned toolchain,
+> a five-crate Cargo workspace with no features yet, and CI that runs the same checks as `scripts/check.sh`. Step 0.2 is
+> done: a local stack (PostgreSQL, Valkey, Garage, Keycloak) that proves each service works, in CI as well.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
@@ -75,7 +76,7 @@ model, flows, consistency guarantees, capacity model and failure handling.
 | Layer | Choice |
 |---|---|
 | Server | Rust (edition 2024): Axum, Tokio, Tower, SQLx; one binary with API and worker roles |
-| Data | PostgreSQL 18 (authoritative); Redis-compatible cache (disposable); S3-compatible object storage |
+| Data | PostgreSQL 18 (authoritative); Valkey, a Redis-protocol cache (disposable); S3-compatible object storage (Garage locally) |
 | Frontends | SvelteKit + TypeScript: the Studio (single-page app), the reference blog (prerendered), the docs (mdsvex + Pagefind) |
 | Design system | Material Design 3 tokens on Bits UI primitives, with Tailwind CSS |
 | Editor | Tiptap / ProseMirror, stored as validated, versioned JSON, never HTML |
@@ -83,7 +84,7 @@ model, flows, consistency guarantees, capacity model and failure handling.
 | Delivery | Cloudflare CDN adapter: tag purge and evidence probes |
 | Verification | Unit and property tests, deterministic simulation, testcontainers, Vitest, Playwright, k6 |
 
-Exact versions are pinned at milestone P0.
+Exact versions are pinned at milestone P0; the local stack's images are pinned by digest in `deploy/compose.yaml`.
 
 ## Roadmap
 
@@ -92,7 +93,7 @@ Each milestone is named after what it proves, and is done only when its proof ga
 | | Milestone | Proof gate | Status |
 |---|---|---|---|
 | D | Design | Scope cut, plan written, every decision recorded | ✅ Done |
-| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1 done) |
+| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1, 0.2 done) |
 | P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | Planned |
 | P2 | Publish exactly once | Crashed workers reconcile; stale deliveries are superseded | Planned |
 | P3 | Prove it reached the site | Cache and purge faults, no mixed releases; **first public demo** | Planned |
@@ -132,7 +133,8 @@ crates/
   colophon-api/      management API
   colophon-cli/      the `colophon` binary
   colophon-server/   the `colophon-server` binary (--role api|worker|all)
-scripts/             check.sh (everything CI runs), check-toolchain.sh, check-architecture.sh
+deploy/              compose.yaml: the local stack (PostgreSQL, Valkey, Garage, Keycloak)
+scripts/             check.sh (everything CI runs), check-toolchain.sh, check-architecture.sh, stack.sh
 docs/                the plan
 ```
 
@@ -141,12 +143,16 @@ crates as the milestones need them; see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Development
 
-Requirements: [rustup](https://rustup.rs) (it installs the pinned toolchain, Rust 1.99.1, from `rust-toolchain.toml`)
-and optionally [cargo-deny](https://github.com/EmbarkStudios/cargo-deny).
+Requirements: [rustup](https://rustup.rs) (it installs the pinned toolchain, Rust 1.99.1, from `rust-toolchain.toml`),
+Docker with Compose for the local stack, and optionally [cargo-deny](https://github.com/EmbarkStudios/cargo-deny).
 
 ```sh
-scripts/check.sh        # toolchain, fmt, clippy -D warnings, tests, docs, architecture rule, cargo-deny
+scripts/stack.sh up     # PostgreSQL, Valkey, Garage and Keycloak on 127.0.0.1, then 28 checks that each one works
+scripts/check.sh        # toolchain, fmt, clippy -D warnings, tests, docs, architecture rule, cargo-deny, ShellCheck,
+                        # and the stack checks if the stack is running
 ```
+
+Ports, credentials and what each check proves: [deploy/README.md](deploy/README.md).
 
 If `scripts/check-toolchain.sh` reports a mismatch, another `cargo` (for example Homebrew's) is ahead of rustup's
 proxies on your `PATH` and is ignoring the pin. Put rustup's proxies first, e.g.

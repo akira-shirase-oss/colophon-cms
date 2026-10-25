@@ -1,0 +1,24 @@
+# Garage, Colophon's local S3-compatible object store (D-016). Development only: the
+# secrets below are public, and deploy/compose.yaml binds every port to 127.0.0.1.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+# SQLite rather than LMDB: slower, but it survives the abrupt kills Colophon's tests
+# will inflict.
+db_engine = "sqlite"
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+# Hex for "colophon-local-dev-rpc-secret!!!".
+rpc_secret = "636f6c6f70686f6e2d6c6f63616c2d6465762d7270632d736563726574212121"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"
+
+[admin]
+api_bind_addr = "[::]:3903"
+admin_token = "colophon-dev-garage-admin-token"
+metrics_token = "colophon-dev-garage-metrics-token"

@@ -1,0 +1,118 @@
+# Colophon's local development stack: everything colophon-server depends on, started and
+# checked with `scripts/stack.sh up`.
+#
+# Development only. Every port is bound to 127.0.0.1, and the bind address is deliberately
+# not a setting. The credentials in this directory are public. Host ports can be moved with
+# the COLOPHON_*_PORT variables if they clash with something else on your machine.
+#
+# Images are pinned by digest (D-016). To upgrade one, change the tag, look up the new
+# digest with `docker buildx imagetools inspect <image>:<tag>`, and run the stack check.
+name: colophon
+
+services:
+  # The only source of truth.
+  postgres:
+    image: postgres:18.6-trixie@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+    environment:
+      POSTGRES_USER: colophon
+      POSTGRES_PASSWORD: colophon-dev
+      POSTGRES_DB: colophon
+    ports:
+      - "127.0.0.1:${COLOPHON_PG_PORT:-55432}:5432"
+    volumes:
+      # PostgreSQL 18 images keep their data in a versioned directory under
+      # /var/lib/postgresql, so the volume is mounted there, not at .../data.
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "--host=127.0.0.1", "--username=colophon", "--dbname=colophon"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+      start_interval: 1s
+
+  # A disposable cache (D-015): no snapshots, no append-only file, a memory cap, and
+  # eviction instead of errors when it is full. Losing it must never lose data.
+  valkey:
+    image: valkey/valkey:9.0.6-trixie@sha256:63346cb24a61221e76bdf41acce99b3968a9fa83d8122144deab45394b27b4f2
+    command:
+      - valkey-server
+      - --requirepass
+      - colophon-dev
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - allkeys-lru
+    ports:
+      - "127.0.0.1:${COLOPHON_VALKEY_PORT:-56379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a colophon-dev --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+      start_interval: 1s
+
+  # S3-compatible object storage (D-016). Single-node mode creates the layout, the access
+  # key and the `colophon-dev` bucket on first start.
+  garage:
+    image: dxflrs/garage:v2.5.0@sha256:677e5b758e4425a325b811c425c026bf35a4bf42f7ddbaa773de3f4fd779a5a5
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    environment:
+      # Readable on purpose: hex for "colophon-dev" and "colophon-local-dev-s3-secret-key".
+      GARAGE_DEFAULT_ACCESS_KEY: GK636f6c6f70686f6e2d646576
+      GARAGE_DEFAULT_SECRET_KEY: 636f6c6f70686f6e2d6c6f63616c2d6465762d73332d7365637265742d6b6579
+      GARAGE_DEFAULT_BUCKET: colophon-dev
+    ports:
+      - "127.0.0.1:${COLOPHON_S3_PORT:-53900}:3900"
+      - "127.0.0.1:${COLOPHON_S3_ADMIN_PORT:-53903}:3903"
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garage:/var/lib/garage
+    healthcheck:
+      # The image has no shell; `garage health` exits 1 while the cluster is unavailable.
+      test: ["CMD", "/garage", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+      start_interval: 1s
+
+  # The reference OpenID Connect provider, with the `colophon` realm imported on start.
+  # Its own data is not kept: `scripts/stack.sh down` resets it to the realm file.
+  keycloak:
+    image: keycloak/keycloak:26.8.1@sha256:a78d6b79572168cb25886b80a8b5b8d4ed4390743e3eecb810538683e209dd6b
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: colophon-dev
+      # Token issuers must not depend on how Keycloak was reached.
+      KC_HOSTNAME: http://localhost:${COLOPHON_KEYCLOAK_PORT:-58080}
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "127.0.0.1:${COLOPHON_KEYCLOAK_PORT:-58080}:8080"
+    volumes:
+      - ./keycloak/colophon-realm.json:/opt/keycloak/data/import/colophon-realm.json:ro
+    healthcheck:
+      # No curl in the image: ask the management port directly. Judge by the status line
+      # (200 up, 503 down), not the body: individual checks report "UP" even when the
+      # overall status is "DOWN".
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.0\r\n\r\n' >&3 &&
+          head -n 1 <&3 | grep -q ' 200 '
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+      start_interval: 2s
+
+volumes:
+  postgres:
+  garage:

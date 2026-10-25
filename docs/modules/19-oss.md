@@ -128,4 +128,4 @@ Roughly one working day in five is reserved for maintenance once users depend on
 ## Open decisions
 
 - **O-014:** licence confirmation.
-- **O-002:** cache licensing (Redis or Valkey).
+- Cache licensing is settled: Valkey (D-015).
