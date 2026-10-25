@@ -1,0 +1,13 @@
+[package]
+name = "colophon-api"
+description = "Colophon's management API (/api/v1), shared by the Studio, the CLI, the SDK and agents."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

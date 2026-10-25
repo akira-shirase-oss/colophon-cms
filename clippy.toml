@@ -1,0 +1,4 @@
+# Production code may not unwrap or expect; tests may, so they stay readable.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-dbg-in-tests = true
