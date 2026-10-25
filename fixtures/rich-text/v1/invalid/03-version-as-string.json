@@ -1,0 +1,19 @@
+{
+  "description": "A version of the wrong JSON type.",
+  "reject": {
+    "code": "wrong_type",
+    "path": "/version"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": "1",
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph"
+        }
+      ]
+    }
+  }
+}

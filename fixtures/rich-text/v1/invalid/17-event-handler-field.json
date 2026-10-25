@@ -1,0 +1,26 @@
+{
+  "description": "An event handler field on a node.",
+  "reject": {
+    "code": "unknown_field",
+    "path": "/doc/content/0/onclick"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "onclick": "alert(1)",
+          "content": [
+            {
+              "type": "text",
+              "text": "x"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

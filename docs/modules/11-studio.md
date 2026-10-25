@@ -133,7 +133,8 @@ Internal job terminology stays behind a technical detail drawer for developers.
 
 ## Build order
 
-1. **P0:** the Tiptap spike (custom blocks, paste, image placeholder, undo/redo, serialization).
+1. **P0:** the Tiptap spike (custom blocks, paste, image placeholder, undo/redo, serialization). Built in step 0.4:
+   `packages/editor` and `apps/studio`; documents open only if they survive the editor byte for byte (D-022).
 2. **P1:** content list, editor, autosave, conflict screen.
 3. **P2:** review and publish.
 4. **P3:** publishing labels and the receipt timeline.

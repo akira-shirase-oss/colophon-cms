@@ -1,0 +1,57 @@
+{
+  "description": "Text the round trip must not alter: emoji, joined emoji, right-to-left, CJK, combining marks.",
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Emoji 🚀 and a family 👩‍👩‍👧‍👦 (joined with zero-width joiners)."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Right to left: שלום עולם. Arabic: مرحبا."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "CJK: 書籍の奥付。 Korean: 판권."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Combining: é (e + U+0301), and a precomposed é."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "Quotes “curly” and ‘single’, an em dash — and a non-breaking space ( )."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

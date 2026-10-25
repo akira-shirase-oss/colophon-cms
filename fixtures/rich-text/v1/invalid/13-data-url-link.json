@@ -1,0 +1,33 @@
+{
+  "description": "A link to a data: URL.",
+  "reject": {
+    "code": "unsafe_link",
+    "path": "/doc/content/0/content/0/marks/0/attrs/href"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "open",
+              "marks": [
+                {
+                  "type": "link",
+                  "attrs": {
+                    "href": "data:text/html;base64,PHNjcmlwdD4="
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "description": "A node carrying raw HTML.",
+  "reject": {
+    "code": "unknown_node",
+    "path": "/doc/content/0/type"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "html",
+          "text": "<script>alert(1)</script>"
+        }
+      ]
+    }
+  }
+}

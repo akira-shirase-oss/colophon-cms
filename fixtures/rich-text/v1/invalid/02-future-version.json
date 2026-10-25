@@ -1,0 +1,19 @@
+{
+  "description": "A version this validator doesn't know.",
+  "reject": {
+    "code": "unsupported_version",
+    "path": "/version"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 2,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph"
+        }
+      ]
+    }
+  }
+}

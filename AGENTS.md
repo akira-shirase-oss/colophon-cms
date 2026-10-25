@@ -3,7 +3,9 @@
 **Status (2026-10-25): milestone P0 in progress.** Step 0.1 is done: the pinned toolchain, a five-crate Cargo
 workspace and CI. Step 0.2 is done: the local stack in `deploy/` (D-015 to D-017). Step 0.3 is done: the error envelope,
 request IDs, `/livez`, `/readyz`, `colophon doctor`, `apps/testbed`, and the k6 harness in `perf/` (D-018 to D-020).
-Next is step 0.4, the editor spike. See `docs/ROADMAP.md`.
+Step 0.4 is done: `docs/formats/rich-text-v1.md`, `fixtures/rich-text/v1`, `packages/editor` and the Studio's editor spike
+(D-021, D-022). Next is step 0.5: the Rust validator that refuses every invalid fixture with its exact code and pointer.
+See `docs/ROADMAP.md`.
 
 ## Read first
 
@@ -53,7 +55,9 @@ failing invariant for a new feature, and never relabel uncertainty as success to
 
 - SvelteKit + TypeScript (strict). The Studio is a client-side app served as static assets by the Rust server on the
   same origin. SvelteKit never queries PostgreSQL or holds CMS authority.
-- Rich text is stored as validated Tiptap JSON, never HTML. Rust revalidates every mutation.
+- Rich text is stored as validated Tiptap JSON, never HTML: the `colophon/rich-text` v1 format
+  (`docs/formats/rich-text-v1.md`). Rust revalidates every mutation. Change the format only with new fixtures, and keep
+  every existing valid fixture valid.
 
 ## Ownership (D-019)
 

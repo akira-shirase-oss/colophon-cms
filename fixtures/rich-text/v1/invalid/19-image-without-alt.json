@@ -1,0 +1,22 @@
+{
+  "description": "An image with no alt text.",
+  "reject": {
+    "code": "missing_field",
+    "path": "/doc/content/0/attrs/alt"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "image",
+          "attrs": {
+            "assetId": "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d"
+          }
+        }
+      ]
+    }
+  }
+}

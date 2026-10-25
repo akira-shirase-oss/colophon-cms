@@ -76,4 +76,4 @@ fixtures shared with the Rust validator and by XSS payload tests.
 
 ## Open decisions
 
-- The v0.1 block set (shared with [studio](11-studio.md)).
+- None for the block set: it is `colophon/rich-text` v1 (D-021, [formats/rich-text-v1.md](../formats/rich-text-v1.md)).

@@ -1,0 +1,20 @@
+{
+  "description": "Text directly in the document, outside any paragraph.",
+  "reject": {
+    "code": "invalid_content",
+    "path": "/doc/content/0"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "text",
+          "text": "loose"
+        }
+      ]
+    }
+  }
+}

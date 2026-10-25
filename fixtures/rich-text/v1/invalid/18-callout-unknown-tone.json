@@ -1,0 +1,33 @@
+{
+  "description": "A callout tone the format doesn't have.",
+  "reject": {
+    "code": "invalid_attribute",
+    "path": "/doc/content/0/attrs/tone"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "callout",
+          "attrs": {
+            "tone": "danger"
+          },
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "x"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
