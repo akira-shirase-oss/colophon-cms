@@ -31,6 +31,10 @@ for tool in cargo docker jq curl; do
 done
 
 port="${LOAD_PORT:-58090}"
+# The open model needs its virtual users allocated up front: creating them mid-run makes k6
+# miss its own schedule (a steady run on 2026-10-25 dropped 271 of 1.2 M iterations at 64).
+if [[ "$scenario" == "steady" ]]; then default_vus=256; else default_vus=64; fi
+VUS="${VUS:-$default_vus}"
 base_url="http://127.0.0.1:$port"
 work=$(mktemp -d)
 server_pid=""
@@ -87,7 +91,7 @@ k6_status=0
 "$k6" run --quiet --no-color \
   --summary-export "$work/summary.json" \
   -e BASE_URL="$base_url" -e SCENARIO="$scenario" \
-  -e TOTAL="${TOTAL:-1000000}" -e VUS="${VUS:-64}" \
+  -e TOTAL="${TOTAL:-1000000}" -e VUS="$VUS" \
   -e RATE="${RATE:-20000}" -e DURATION="${DURATION:-60s}" \
   -e P99_MS="${P99_MS:-25}" \
   perf/k6/health.js || k6_status=$?
@@ -122,7 +126,7 @@ record=$(jq -c \
   --arg os "$(uname -s) $(uname -r)" --arg k6 "$("$k6" version | awk '{print $2}')" \
   --argjson tx "$(( tx_after - tx_before ))" --argjson warnings "$server_warnings" \
   --argjson k6_status "$k6_status" \
-  --arg total "${TOTAL:-1000000}" --arg vus "${VUS:-64}" --arg rate "${RATE:-20000}" --arg duration "${DURATION:-60s}" \
+  --arg total "${TOTAL:-1000000}" --arg vus "$VUS" --arg rate "${RATE:-20000}" --arg duration "${DURATION:-60s}" \
   '{
     scenario: $scenario, endpoint: "health", date: $stamp, commit: $commit, dirty: $dirty,
     machine: { id: $machine, cpu: $cpu, cores: $cores, memory_gb: $memory_gb, os: $os },

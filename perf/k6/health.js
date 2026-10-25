@@ -34,7 +34,7 @@ const scenarios = {
     timeUnit: '1s',
     duration: DURATION,
     preAllocatedVUs: VUS,
-    maxVUs: VUS * 4,
+    maxVUs: VUS * 2,
   },
 };
 
