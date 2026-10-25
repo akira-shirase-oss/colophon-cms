@@ -71,7 +71,9 @@ fixtures shared with the Rust validator and by XSS payload tests.
 
 ## Build order
 
-1. **P0:** fixture set and basic nodes.
+1. **P0:** fixture set and basic nodes. Built in step 0.6: `packages/content-renderer` (`renderToHtml` and a `RichText`
+   Svelte wrapper around it), reviewed expected output in `fixtures/rich-text/v1/rendered/`, and an allowlist check that
+   parses every rendered page back into a DOM (D-023).
 2. **P1–P3:** full v0.1 block set, used in the Studio and the blog.
 
 ## Open decisions

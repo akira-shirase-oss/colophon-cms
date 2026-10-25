@@ -5,7 +5,9 @@
   "description": "Colophon's rich-text editor: Tiptap configured to exactly the colophon/rich-text v1 format, and the canonical conversion between editor JSON and stored JSON.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts",
+    "./stored": "./src/stored.ts"
   },
   "scripts": {
     "check": "tsc --noEmit",

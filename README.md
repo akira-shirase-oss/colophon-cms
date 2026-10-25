@@ -23,7 +23,9 @@
 > feature now follows: regression tests, a separate testbed frontend, and million-request load tests. Step 0.4 is
 > done: the rich-text format (`colophon/rich-text` v1), 42 shared fixtures, and a Tiptap editor in the Studio that opens a
 > document only if it can give it back byte for byte. Step 0.5 is done: the Rust validator refuses all 34 invalid
-> fixtures with exactly the expected code and location, and writes the same canonical bytes as the editor.
+> fixtures with exactly the expected code and location, and writes the same canonical bytes as the editor. Step 0.6 is
+> done: one renderer for the Studio preview and the public site, with reviewed output for every valid document and a
+> check that nothing it produces can run code.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
@@ -98,7 +100,7 @@ Each milestone is named after what it proves, and is done only when its proof ga
 | | Milestone | Proof gate | Status |
 |---|---|---|---|
 | D | Design | Scope cut, plan written, every decision recorded | ✅ Done |
-| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1–0.5 done) |
+| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1–0.6 done) |
 | P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | Planned |
 | P2 | Publish exactly once | Crashed workers reconcile; stale deliveries are superseded | Planned |
 | P3 | Prove it reached the site | Cache and purge faults, no mixed releases; **first public demo** | Planned |
@@ -143,7 +145,8 @@ apps/
   testbed/           a separate SvelteKit frontend that tests Colophon through its real HTTP API
 packages/
   editor/            Tiptap configured to exactly the rich-text format, and the canonical conversion
-fixtures/            the shared rich-text fixtures: 12 valid documents, 30 that must be refused
+  content-renderer/  stored documents to safe HTML, one implementation for the Studio and the public site
+fixtures/            the shared rich-text contract: 12 valid documents with their reviewed HTML, 34 that must be refused
 perf/                k6 scenarios, every load result, and per-machine baselines
 deploy/              compose.yaml: the local stack (PostgreSQL, Valkey, Garage, Keycloak); local.env
 scripts/             check.sh (everything CI runs), stack.sh, testbed.sh, load.sh, install-k6.sh, and the checks

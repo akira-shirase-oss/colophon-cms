@@ -5,8 +5,8 @@ workspace and CI. Step 0.2 is done: the local stack in `deploy/` (D-015 to D-017
 request IDs, `/livez`, `/readyz`, `colophon doctor`, `apps/testbed`, and the k6 harness in `perf/` (D-018 to D-020).
 Step 0.4 is done: `docs/formats/rich-text-v1.md`, `fixtures/rich-text/v1`, `packages/editor` and the Studio's editor spike
 (D-021, D-022). Step 0.5 is done: `colophon_domain::rich_text::validate` and `POST /api/v1/rich-text/validate`; every
-invalid fixture is refused with its exact code and pointer. Next is step 0.6: the renderer (the last part of P0's proof
-gate), then 0.7: Material 3 colours and the first screen.
+invalid fixture is refused with its exact code and pointer. Step 0.6 is done: `packages/content-renderer` and the
+Studio's preview (D-023). Next is step 0.7: Material 3 colours and the first screen.
 See `docs/ROADMAP.md`.
 
 ## Read first
