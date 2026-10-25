@@ -126,6 +126,9 @@ pub struct Config {
     /// More origins allowed to send cookie-authenticated writes (`COLOPHON_TRUSTED_ORIGINS`,
     /// comma-separated), after the public origin.
     pub extra_trusted_origins: Vec<String>,
+    /// A Studio build to serve at `/studio` (`COLOPHON_STUDIO_DIR`); none by default. Checked
+    /// when the server starts.
+    pub studio_dir: Option<std::path::PathBuf>,
 }
 
 /// `scheme://host[:port]` with no path, query or fragment, as browsers send in `Origin`.
@@ -301,6 +304,7 @@ impl Config {
         let drain_delay = env.millis("COLOPHON_DRAIN_DELAY_MS", 5_000, 0..=60_000);
         let shutdown_grace = env.millis("COLOPHON_SHUTDOWN_GRACE_MS", 25_000, 1_000..=600_000);
         let (public_origin, extra_trusted_origins, oidc) = env.sign_in(listen_addr);
+        let studio_dir = env.raw("COLOPHON_STUDIO_DIR").map(std::path::PathBuf::from);
 
         if probe_timeout >= probe_interval {
             env.problems.push(
@@ -335,6 +339,7 @@ impl Config {
                 public_origin,
                 oidc,
                 extra_trusted_origins,
+                studio_dir,
             })
         } else {
             Err(ConfigError {

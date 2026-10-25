@@ -16,6 +16,7 @@ mod rich_text;
 pub mod session;
 mod shape;
 pub mod state;
+pub mod studio;
 
 use axum::{
     Router,
