@@ -16,18 +16,14 @@
   <a href="docs/modules/README.md">Modules</a>
 </p>
 
-> **Status: milestone P0, foundation, is done (October 2026); P1 is next.** The design is complete. Step 0.1 is done: a pinned toolchain,
-> a five-crate Cargo workspace with no features yet, and CI that runs the same checks as `scripts/check.sh`. Step 0.2 is
-> done: a local stack (PostgreSQL, Valkey, Garage, Keycloak) that proves each service works, in CI as well. Step 0.3
-> is done: one error envelope, request IDs, honest health checks and `colophon doctor`, plus the testing rule every
-> feature now follows: regression tests, a separate testbed frontend, and million-request load tests. Step 0.4 is
-> done: the rich-text format (`colophon/rich-text` v1), 42 shared fixtures, and a Tiptap editor in the Studio that opens a
-> document only if it can give it back byte for byte. Step 0.5 is done: the Rust validator refuses all 34 invalid
-> fixtures with exactly the expected code and location, and writes the same canonical bytes as the editor. Step 0.6 is
-> done: one renderer for the Studio preview and the public site, with reviewed output for every valid document and a
-> check that nothing it produces can run code. Step 0.7 is done, and with it **milestone P0**: Material 3 colours
-> generated from one seed (contrast checked in CI), components on Bits UI, and the Studio's first screen, with no
-> accessibility violations in light, dark and high-contrast themes.
+> **Status: P0, foundation, is done; P1, never lose an edit, is in progress (October 2026).** P0 delivered a pinned
+> toolchain with CI that runs exactly what `scripts/check.sh` runs, a local stack (PostgreSQL, Valkey, Garage,
+> Keycloak), one error envelope with honest health checks, and the rich-text format: 42 shared fixtures, a Tiptap editor
+> that opens a document only if it can give it back byte for byte, and a Rust validator and a renderer that agree with
+> it. The Studio's first screen uses Material 3 components with no accessibility violations in light, dark and
+> high-contrast themes. Every feature follows one testing rule: regression tests, a separate testbed frontend, and
+> million-request load tests. Step 1.1 is done: sign-in through OpenID Connect (Keycloak locally), server-side sessions
+> with CSRF and `Origin` checks, and projects that PostgreSQL's row-level security hides from everyone but their members.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
@@ -91,7 +87,7 @@ model, flows, consistency guarantees, capacity model and failure handling.
 | Editor | Tiptap / ProseMirror, stored as validated, versioned JSON, never HTML |
 | Identity | OIDC with Keycloak as the reference provider; sessions enforced by Rust and Postgres |
 | Delivery | Cloudflare CDN adapter: tag purge and evidence probes |
-| Verification | Unit and property tests, deterministic simulation, testcontainers, Vitest, Playwright, k6 |
+| Verification | Unit and property tests, deterministic simulation, real PostgreSQL in a fresh database per test, Vitest, Playwright, k6 |
 
 Exact versions are pinned at milestone P0; the local stack's images are pinned by digest in `deploy/compose.yaml`.
 
@@ -103,7 +99,7 @@ Each milestone is named after what it proves, and is done only when its proof ga
 |---|---|---|---|
 | D | Design | Scope cut, plan written, every decision recorded | ✅ Done |
 | P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | ✅ Done (October 2026) |
-| P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | Planned |
+| P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | In progress (step 1.1 done) |
 | P2 | Publish exactly once | Crashed workers reconcile; stale deliveries are superseded | Planned |
 | P3 | Prove it reached the site | Cache and purge faults, no mixed releases; **first public demo** | Planned |
 | P4 | Time travel and media | Rollback, pinned reads, revocation, safe uploads | Planned |
@@ -168,21 +164,26 @@ Docker with Compose, Node 22.17+, and optionally [cargo-deny](https://github.com
 ```sh
 scripts/stack.sh up      # PostgreSQL, Valkey, Garage and Keycloak on 127.0.0.1, then 28 checks that each one works
 scripts/check.sh         # everything CI runs: fmt, clippy -D warnings, tests, docs, architecture rule, cargo-deny,
-                         # ShellCheck, and with the stack up: outage tests, the testbed in Chromium, a load smoke run
+                         # ShellCheck, and with the stack up: outage tests, the testbed in Chromium, load smoke runs
 scripts/frontend.sh      # type checks, the editor's unit tests, and the Studio in Chromium
 scripts/testbed.sh       # the testbed's Playwright suite (or --dev to explore it by hand)
 npm run dev -w @colophon/studio   # the editor spike on http://127.0.0.1:58200
 scripts/load.sh health throughput      # 1,000,000 requests against a release build; result in perf/results/
 scripts/load.sh rich-text steady       # validation at 20,000 requests a second for a minute
+scripts/load.sh session throughput     # signed-in requests: a session lookup and row-level security on each
 ```
 
 Run the server against the local stack:
 
 ```sh
+scripts/migrate.sh                                # apply migrations as the owner login
 set -a; . deploy/local.env; set +a
 cargo run --release -p colophon-server
 cargo run --release -p colophon-cli -- doctor     # status, role and each dependency; exit 0 only when ready
 ```
+
+Then open `http://localhost:58000/auth/login?return_to=/me` and sign in as `dev-editor` (password `colophon-dev`):
+you land on `/me`, which shows who you are and your projects.
 
 Ports, credentials and what each stack check proves: [deploy/README.md](deploy/README.md).
 

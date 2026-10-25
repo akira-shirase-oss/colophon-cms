@@ -6,7 +6,7 @@
 |---|---|
 | Milestones | P0 (skeleton, error envelope, health), P1 (projects, schemas, entries, revisions), P2 (changesets, reviews, releases, jobs), P3 (destinations, deliveries), P4 (assets, history), P5 (agents, credentials) |
 | Proposed owner | Claude |
-| Depends on | domain, auth, db (through ports), `axum` 0.8, `tower`, `tower-http`, an OpenAPI crate (O-004) |
+| Depends on | domain, auth, db (through ports), `axum` 0.8, `tower`, `tower-http`, `utoipa` for the OpenAPI document (D-027, from step 1.2) |
 | Used by | studio, cli, sdk, automation; wired in by colophon-server |
 | Spec | §09, §10, §26 |
 
@@ -67,8 +67,8 @@ create → conflict → review → publish scenario produce equivalent durable r
 | Route family | Operations and guard |
 |---|---|
 | `/api/v1/rich-text/validate` | The validator's verdict on a document: canonical form, or a 422 whose `details` name the rejection code and JSON Pointer. Stores nothing. Built in step 0.5; requires authentication from P1 |
-| `/auth/*`, `/me` | OIDC login, callback and logout; session inspection and revocation; exact callback origins, CSRF |
-| `/api/v1/projects`, `/members`, `/invitations` | Project lifecycle and membership; owner-scoped |
+| `/auth/*`, `/me` | OIDC login, callback and logout; session inspection and revocation; exact callback origins, CSRF. Built in step 1.1: `GET /auth/login`, `GET /auth/callback`, `POST /auth/logout`, and `GET /me` (the identity and its projects) |
+| `/api/v1/projects`, `/members`, `/invitations` | Project lifecycle and membership; owner-scoped. Built in step 1.1: list, create (with a `production` environment and the creator as owner; a taken slug is 409) and get, where a project you aren't a member of is 404 |
 | `{P}/schemas`, `/migrations` | Discover, validate, plan, apply, inspect; apply needs an approved current plan and migration permission |
 | `{P}/collections/{collection}/entries` | List and create; get, update and archive by ID; updates need the expected revision |
 | `{P}/entries/{id}/revisions`, `/comments` | History, compare, restore as a new draft, revision-bound comments |
@@ -112,7 +112,7 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 | 503 | Dependency or capacity unavailable, with `Retry-After` |
 
 ### Contracts and discovery
-- An OpenAPI document is exported from the code (O-004). The TypeScript client ([sdk](13-sdk.md)) is generated from it
+- An OpenAPI document is exported from the code (D-027, `utoipa`). The TypeScript client ([sdk](13-sdk.md)) is generated from it
   and tested against the server in CI.
 - Schema discovery returns only the collections and fields the caller may access.
 - Client-side validation helps feedback, but Rust revalidates every mutation.
@@ -149,10 +149,10 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 | Situation | Behaviour |
 |---|---|
-| Database down | Writes return 503 honestly; nothing is acknowledged |
+| Database down | 503 with `Retry-After` once the pool's acquire timeout passes (D-033); nothing is acknowledged |
 | Request exceeds a limit | 413 or 422 with field paths; nothing committed |
 | Handler panic | `CatchPanicLayer::custom` returns the JSON envelope (500); logged once |
-| Slow dependency | Timeout layer returns 503 within the request budget |
+| Slow dependency | Timeout layer returns 504 within the request budget |
 | Overload | 429 per principal, or 503 with `Retry-After` |
 
 ## Tests and evidence
@@ -162,11 +162,13 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 - The parity gate: Studio-API, CLI and SDK run the same scenario and produce equivalent records.
 - Cursor fuzzing: tampered cursors, cursors from another project or query shape.
 - A middleware-order test: request ID present on panic, timeout and body-limit responses.
+- A pool that can't hand out a connection gives 503 with `Retry-After` and the envelope (`tests/busy.rs`).
 
 ## Build order
 
 1. **P0:** skeleton, error envelope, request IDs, health.
-2. **P1:** projects, environments, schemas, entries, revisions, preconditions, idempotency, pagination.
+2. **P1:** projects (step 1.1, done), environments, schemas, entries, revisions, preconditions, idempotency,
+   pagination, and the generated OpenAPI document (from step 1.2).
 3. **P2:** changesets, reviews, releases, jobs.
 4. **P3:** destinations and deliveries.
 5. **P4:** assets, history and rollback.
@@ -174,7 +176,6 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 ## Open decisions
 
-- **O-004:** the OpenAPI generation crate.
 - Whether the Studio (session cookie) and the CLI (bearer credential) share every route, or whether some routes are
   cookie-only.
 - Rate-limit defaults per role.

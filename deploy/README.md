@@ -16,14 +16,16 @@ Needs Docker with Compose, plus `curl`, `jq` and `openssl`. The first `up` downl
 
 | Service | Image | On your machine | Credentials |
 |---|---|---|---|
-| PostgreSQL, the only source of truth | `postgres:18.6-trixie` | `postgresql://colophon:colophon-dev@localhost:55432/colophon` | user `colophon`, password `colophon-dev` |
+| PostgreSQL, the only source of truth | `postgres:18.6-trixie` | `postgresql://colophon:colophon-dev@localhost:55432/colophon` | owner and migrations: `colophon` / `colophon-dev`; the server: `colophon_app` / `colophon-dev` (`postgres/roles.sql`; row-level security applies to it) |
 | Valkey, the disposable cache ([D-015](../docs/DECISIONS.md)) | `valkey/valkey:9.0.6-trixie` | `redis://:colophon-dev@localhost:56379` | password `colophon-dev` |
 | Garage, S3-compatible storage ([D-016](../docs/DECISIONS.md)) | `dxflrs/garage:v2.5.0` | S3 API `http://localhost:53900` (region `garage`, path-style), admin API `http://localhost:53903` | access key `GK636f6c6f70686f6e2d646576`, secret key in `compose.yaml`, bucket `colophon-dev` |
 | Keycloak, sign-in ([module 03](../docs/modules/03-auth.md)) | `keycloak/keycloak:26.8.1` | issuer `http://localhost:58080/realms/colophon`, admin console `http://localhost:58080/admin` | console: `admin` / `colophon-dev`; users `dev-owner` and `dev-editor`, password `colophon-dev` |
 
 The Keycloak realm (`keycloak/colophon-realm.json`) has one client, `colophon-server` (secret
-`colophon-dev-client-secret`). It allows only the Authorization Code flow with PKCE (S256), and only the redirect URI
-`http://localhost:58000/auth/callback`: the password grant and the implicit flow are off. Keycloak keeps no data of its
+`colophon-dev-client-secret`). It allows only the Authorization Code flow with PKCE (S256), and only the redirect URIs
+`http://localhost:{58000,58090,58091,58092}/auth/callback` (the development server, the load test, the testbed and the
+server's integration tests): the password grant and the implicit flow are off. After editing the realm, run
+`docker compose -f deploy/compose.yaml up -d --force-recreate keycloak`. Keycloak keeps no data of its
 own, so `down` followed by `up` resets it to that file.
 
 If a port clashes with something else on your machine, move it: `COLOPHON_PG_PORT`, `COLOPHON_VALKEY_PORT`,
@@ -42,7 +44,7 @@ something:
 | Garage | cluster healthy; the bucket exists; an object stores, reads back byte for byte, deletes, and is gone | an anonymous read; a wrong secret; an upload whose bytes don't match its SHA-256 |
 | Keycloak | the realm's issuer is stable; a full Authorization Code + PKCE sign-in returns an ID token for the right user with our nonce | a code used twice; a code without its PKCE verifier; a wrong password; a sign-in without PKCE; an unregistered redirect URI; the password grant |
 
-The script only decodes the ID token. Verifying its signature is the job of Colophon's OIDC client (P1).
+The script only decodes the ID token. Colophon's OIDC client verifies it (`colophon-auth`, [D-031](../docs/DECISIONS.md)).
 
 ## Upgrading an image
 

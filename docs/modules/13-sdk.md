@@ -37,7 +37,7 @@ pins a generation across related reads and safe retry behaviour for mutations.
 
 ## Breakdown
 
-- **Generated client:** produced from the OpenAPI document (generator chosen with O-004).
+- **Generated client:** produced from the OpenAPI document (generator still to choose; the document itself comes from `utoipa`, D-027).
 - **Pinned reads:** `withRelease(client)` resolves the active `(epoch, generation)` once, then reads everything at
   that release.
 - **Mutations:**
@@ -78,4 +78,4 @@ pins a generation across related reads and safe retry behaviour for mutations.
 
 ## Open decisions
 
-- **O-004:** the generator, which follows the OpenAPI crate choice.
+- The TypeScript client generator, chosen once the OpenAPI document exists (D-027, from step 1.2).

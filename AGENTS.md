@@ -1,14 +1,12 @@
 # Colophon CMS: agent instructions
 
-**Status (2026-10-25): milestone P0 in progress.** Step 0.1 is done: the pinned toolchain, a five-crate Cargo
-workspace and CI. Step 0.2 is done: the local stack in `deploy/` (D-015 to D-017). Step 0.3 is done: the error envelope,
-request IDs, `/livez`, `/readyz`, `colophon doctor`, `apps/testbed`, and the k6 harness in `perf/` (D-018 to D-020).
-Step 0.4 is done: `docs/formats/rich-text-v1.md`, `fixtures/rich-text/v1`, `packages/editor` and the Studio's editor spike
-(D-021, D-022). Step 0.5 is done: `colophon_domain::rich_text::validate` and `POST /api/v1/rich-text/validate`; every
-invalid fixture is refused with its exact code and pointer. Step 0.6 is done: `packages/content-renderer` and the
-Studio's preview (D-023). Step 0.7 is done: `packages/ui` and the Studio's first screen (D-024 to D-030). **Milestone P0
-is complete.** Next is P1, never lose an edit: sign-in and project isolation, then drafts that can't be lost.
-See `docs/ROADMAP.md`.
+**Status (2026-10-25): milestone P1 in progress.** P0 is complete: steps 0.1 to 0.7 built the pinned toolchain and
+workspace, the local stack in `deploy/`, the error envelope and health checks, `apps/testbed` and the k6 harness in
+`perf/`, the rich-text format with its editor, validator and renderer, and `packages/ui` with the Studio's first screen
+(D-013 to D-030). Step 1.1 is done: OpenID Connect sign-in through Keycloak (`colophon-auth`), server-side sessions with
+CSRF and `Origin` checks, projects isolated by row-level security (`colophon-db`, migration 0001), the testbed's Session
+page, and the signed-in load scenario `perf/k6/session.js` (D-031 to D-033). Next is step 1.2, a draft that can't be
+lost: entries, revisions, the expected-revision save and idempotency. See `docs/ROADMAP.md`.
 
 ## Read first
 
@@ -97,8 +95,11 @@ Every feature ships with all three, in the same branch:
 `-D warnings`, `scripts/check-architecture.sh` (no I/O crates in `colophon-domain`), `cargo deny check`, ShellCheck,
 and, when the local stack is running, CI's integration half: `scripts/stack.sh check`, the `#[ignore]`d tests that need
 the stack (`cargo test --workspace -- --ignored --test-threads=1`; they stop and restart services), `scripts/testbed.sh`
-(svelte-check and Playwright) and a 200,000-request `scripts/load.sh` smoke run. Run it before every push. Full load runs:
+(svelte-check and Playwright) and the `scripts/load.sh` smoke runs (health, rich-text validation and signed-in
+requests). Run it before every push. Full load runs:
 `scripts/load.sh throughput|steady [--baseline]`; commit the result files they write.
 
 The local stack (`scripts/stack.sh up`, details in `deploy/README.md`) binds every port to `127.0.0.1`; its credentials
-are public development values. Never change the bind address, and never reuse those credentials outside `deploy/`.
+are public development values. The database has two logins: `colophon` owns the tables and runs migrations
+(`scripts/migrate.sh`); the server uses `colophon_app`, which row-level security applies to. After changing the Keycloak
+realm in `deploy/keycloak`, run `docker compose -f deploy/compose.yaml up -d --force-recreate keycloak`. Never change the bind address, and never reuse those credentials outside `deploy/`.

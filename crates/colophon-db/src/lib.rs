@@ -107,7 +107,7 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
         )]);
     // No ping on checkout: it is a round trip on every query. sqlx still pings each connection
     // as it returns to the pool and drops broken ones, so only a connection that breaks while
-    // idle (a database restart) reaches a caller, and fails that one request (D-032).
+    // idle (a database restart) reaches a caller, and fails that one request (D-033).
     Ok(PgPoolOptions::new()
         .max_connections(settings.max_connections)
         .min_connections(0)
