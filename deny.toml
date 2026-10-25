@@ -10,7 +10,9 @@ ignore = []
 
 [licenses]
 # BSL-1.0 (Boost): permissive and OSI-approved; needed by xxhash-rust, through redis (2026-10-25).
-allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause", "BSL-1.0", "ISC", "Unicode-3.0", "Zlib"]
+# CDLA-Permissive-2.0: a permissive licence for data; it covers the Mozilla root certificates in
+# webpki-root-certs, which TLS verification needs (2026-10-26).
+allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause", "BSL-1.0", "CDLA-Permissive-2.0", "ISC", "Unicode-3.0", "Zlib"]
 confidence-threshold = 0.93
 # The allowlist names licences we accept ahead of the dependencies that will need them.
 unused-allowed-license = "allow"

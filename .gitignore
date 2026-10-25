@@ -17,3 +17,6 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Throwaway keys from an abandoned test approach; the ID-token tests now generate keys per run.
+/crates/colophon-auth/tests/fixtures/

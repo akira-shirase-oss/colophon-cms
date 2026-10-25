@@ -1,0 +1,25 @@
+[package]
+name = "colophon-auth"
+description = "Colophon's sign-in: OpenID Connect against any compliant provider (Keycloak by default), and session and CSRF tokens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+aws-lc-rs.workspace = true
+base64.workspace = true
+jsonwebtoken.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
