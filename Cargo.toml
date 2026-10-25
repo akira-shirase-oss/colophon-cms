@@ -42,7 +42,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 time = { version = "0.3.55", default-features = false, features = ["std"] }
 url = { version = "2.5.8", default-features = false, features = ["std"] }
-uuid = { version = "1", features = ["v7"] }
+uuid = { version = "1", features = ["v7", "serde"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

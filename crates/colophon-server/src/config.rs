@@ -73,6 +73,20 @@ impl fmt::Debug for Secret {
     }
 }
 
+/// The OpenID Connect client registration. All three settings, or none.
+#[derive(Debug, Clone)]
+pub struct OidcSettings {
+    /// `COLOPHON_OIDC_ISSUER`: the provider's issuer, exactly.
+    pub issuer: String,
+    /// `COLOPHON_OIDC_CLIENT_ID`.
+    pub client_id: String,
+    /// `COLOPHON_OIDC_CLIENT_SECRET`.
+    pub client_secret: Secret,
+}
+
+/// The development realm's public client secret (deploy/keycloak). Refused off loopback.
+const DEV_CLIENT_SECRET: &str = "colophon-dev-client-secret";
+
 /// The validated configuration. Nothing is parsed again after startup.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -104,6 +118,22 @@ pub struct Config {
     pub drain_delay: Duration,
     /// Hard deadline from the shutdown signal to exit. `COLOPHON_SHUTDOWN_GRACE_MS`, default 25 s.
     pub shutdown_grace: Duration,
+    /// The origin browsers reach this server at (`COLOPHON_PUBLIC_URL`, default
+    /// `http://localhost:58000`): the sign-in redirect URI and the first trusted origin.
+    pub public_origin: String,
+    /// Sign-in; `None` when the three `COLOPHON_OIDC_*` settings are absent.
+    pub oidc: Option<OidcSettings>,
+    /// More origins allowed to send cookie-authenticated writes (`COLOPHON_TRUSTED_ORIGINS`,
+    /// comma-separated), after the public origin.
+    pub extra_trusted_origins: Vec<String>,
+}
+
+/// `scheme://host[:port]` with no path, query or fragment, as browsers send in `Origin`.
+fn parse_origin(text: &str) -> Option<String> {
+    let url = url::Url::parse(text).ok()?;
+    let bare = matches!(url.path(), "" | "/") && url.query().is_none() && url.fragment().is_none();
+    let web = matches!(url.scheme(), "http" | "https");
+    (bare && web && url.host().is_some()).then(|| url.origin().ascii_serialization())
 }
 
 /// Every configuration problem found, in one error. Never contains secret values.
@@ -174,6 +204,59 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         Duration::from_millis(self.ranged(key, default_ms, range))
     }
 
+    /// Sign-in settings: the public origin, extra trusted origins, and the OIDC client, with the
+    /// rule that the development client's public secret only runs on loopback.
+    fn sign_in(&mut self, listen_addr: SocketAddr) -> (String, Vec<String>, Option<OidcSettings>) {
+        let env = self;
+        let public_url = env
+            .raw("COLOPHON_PUBLIC_URL")
+            .unwrap_or_else(|| "http://localhost:58000".to_owned());
+        let public_origin = parse_origin(&public_url).unwrap_or_else(|| {
+            env.problems.push(format!("COLOPHON_PUBLIC_URL: {public_url:?} is not an http(s) origin like https://cms.example.com"));
+            String::new()
+        });
+        let mut extra_trusted_origins = Vec::new();
+        if let Some(list) = env.raw("COLOPHON_TRUSTED_ORIGINS") {
+            for item in list
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+            {
+                match parse_origin(item) {
+                    Some(origin) => extra_trusted_origins.push(origin),
+                    None => env.problems.push(format!(
+                        "COLOPHON_TRUSTED_ORIGINS: {item:?} is not an http(s) origin"
+                    )),
+                }
+            }
+        }
+        let issuer = env.raw("COLOPHON_OIDC_ISSUER");
+        let client_id = env.raw("COLOPHON_OIDC_CLIENT_ID");
+        let client_secret = env.secret("COLOPHON_OIDC_CLIENT_SECRET", false);
+        let oidc = match (issuer, client_id, client_secret) {
+            (Some(issuer), Some(client_id), Some(client_secret)) => Some(OidcSettings {
+                issuer,
+                client_id,
+                client_secret,
+            }),
+            (None, None, None) => None,
+            _ => {
+                env.problems.push("COLOPHON_OIDC_ISSUER, COLOPHON_OIDC_CLIENT_ID and COLOPHON_OIDC_CLIENT_SECRET go together: set all three or none".to_owned());
+                None
+            }
+        };
+        // The development realm's secret is public: never on an address others can reach (O-008).
+        if oidc
+            .as_ref()
+            .is_some_and(|oidc| oidc.client_secret.expose() == DEV_CLIENT_SECRET)
+            && !listen_addr.ip().is_loopback()
+        {
+            env.problems.push("the development sign-in client (its secret is public) may only run on a loopback COLOPHON_LISTEN_ADDR".to_owned());
+        }
+
+        (public_origin, extra_trusted_origins, oidc)
+    }
+
     /// A secret: the value is never echoed, not even in problems.
     fn secret(&mut self, key: &str, required: bool) -> Option<Secret> {
         let value = self.raw(key);
@@ -217,6 +300,7 @@ impl Config {
         let probe_timeout = env.millis("COLOPHON_PROBE_TIMEOUT_MS", 1_000, 50..=30_000);
         let drain_delay = env.millis("COLOPHON_DRAIN_DELAY_MS", 5_000, 0..=60_000);
         let shutdown_grace = env.millis("COLOPHON_SHUTDOWN_GRACE_MS", 25_000, 1_000..=600_000);
+        let (public_origin, extra_trusted_origins, oidc) = env.sign_in(listen_addr);
 
         if probe_timeout >= probe_interval {
             env.problems.push(
@@ -248,6 +332,9 @@ impl Config {
                 probe_timeout,
                 drain_delay,
                 shutdown_grace,
+                public_origin,
+                oidc,
+                extra_trusted_origins,
             })
         } else {
             Err(ConfigError {
@@ -326,6 +413,80 @@ mod tests {
         .expect_err("bad format");
         // The bad *format* value is echoed (it isn't secret); the database URL never is.
         assert!(!error.to_string().contains("55432"));
+    }
+
+    #[test]
+    fn sign_in_settings_go_together() {
+        let error = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            (
+                "COLOPHON_OIDC_ISSUER",
+                "http://localhost:58080/realms/colophon",
+            ),
+        ])
+        .expect_err("issuer alone");
+        assert!(error.to_string().contains("go together"));
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            (
+                "COLOPHON_OIDC_ISSUER",
+                "http://localhost:58080/realms/colophon",
+            ),
+            ("COLOPHON_OIDC_CLIENT_ID", "colophon-server"),
+            ("COLOPHON_OIDC_CLIENT_SECRET", "s3cret-value"),
+        ])
+        .expect("all three");
+        assert!(config.oidc.is_some());
+        assert!(
+            !format!("{config:?}").contains("s3cret-value"),
+            "the secret is redacted"
+        );
+    }
+
+    #[test]
+    fn the_public_development_client_refuses_to_run_off_loopback() {
+        let base = [
+            ("COLOPHON_DATABASE_URL", DB),
+            (
+                "COLOPHON_OIDC_ISSUER",
+                "http://localhost:58080/realms/colophon",
+            ),
+            ("COLOPHON_OIDC_CLIENT_ID", "colophon-server"),
+            ("COLOPHON_OIDC_CLIENT_SECRET", "colophon-dev-client-secret"),
+        ];
+        assert!(load(&base).is_ok(), "fine on loopback");
+        let mut public = base.to_vec();
+        public.push(("COLOPHON_LISTEN_ADDR", "0.0.0.0:58000"));
+        let error = load(&public).expect_err("refused on 0.0.0.0");
+        assert!(error.to_string().contains("loopback"), "{error}");
+    }
+
+    #[test]
+    fn origins_are_exact_and_bare() {
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_PUBLIC_URL", "https://cms.example.com/"),
+            (
+                "COLOPHON_TRUSTED_ORIGINS",
+                "http://localhost:58101, https://preview.example.com",
+            ),
+        ])
+        .expect("valid");
+        assert_eq!(config.public_origin, "https://cms.example.com");
+        assert_eq!(
+            config.extra_trusted_origins,
+            ["http://localhost:58101", "https://preview.example.com"]
+        );
+        for bad in [
+            "https://cms.example.com/path",
+            "ftp://cms.example.com",
+            "not a url",
+        ] {
+            assert!(
+                load(&[("COLOPHON_DATABASE_URL", DB), ("COLOPHON_PUBLIC_URL", bad)]).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

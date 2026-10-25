@@ -20,7 +20,12 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "redirectUris": ["http://localhost:58000/auth/callback"],
+      "redirectUris": [
+        "http://localhost:58000/auth/callback",
+        "http://localhost:58090/auth/callback",
+        "http://localhost:58091/auth/callback",
+        "http://localhost:58092/auth/callback"
+      ],
       "webOrigins": [],
       "attributes": {
         "pkce.code.challenge.method": "S256",

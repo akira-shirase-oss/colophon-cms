@@ -65,8 +65,33 @@ pub async fn run(
         "listening"
     );
 
+    let oidc = match &config.oidc {
+        Some(settings) => Some(
+            colophon_auth::OidcClient::new(colophon_auth::OidcConfig {
+                issuer: settings.issuer.clone(),
+                client_id: settings.client_id.clone(),
+                client_secret: colophon_auth::ClientSecret::new(settings.client_secret.expose()),
+                redirect_uri: format!("{}/auth/callback", config.public_origin),
+            })
+            .map_err(|error| anyhow::anyhow!(error))
+            .context("configuring sign-in")?,
+        ),
+        None => None,
+    };
+    let mut trusted_origins = vec![config.public_origin.clone()];
+    trusted_origins.extend(config.extra_trusted_origins.iter().cloned());
+    let services = colophon_api::Services {
+        pool: pool.clone(),
+        oidc,
+        sessions: colophon_api::SessionSettings::default(),
+        trusted_origins,
+    };
+    let state = colophon_api::AppState {
+        readiness: readiness.clone(),
+        services: Some(std::sync::Arc::new(services)),
+    };
     let app = colophon_api::app(
-        readiness.clone(),
+        state,
         HttpLimits {
             request_timeout: config.request_timeout,
             max_body_bytes: config.max_body_bytes,

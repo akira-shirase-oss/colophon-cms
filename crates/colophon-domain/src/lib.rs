@@ -5,7 +5,8 @@
 //! unchanged, so it must never depend on an async runtime, an HTTP framework or
 //! a database driver. `scripts/check-architecture.sh` enforces that in CI.
 //!
-//! Design: `docs/modules/01-domain.md`. So far: the rich-text validator
-//! ([`rich_text`]). Identifiers and schema field types arrive in milestone P1.
+//! Design: `docs/modules/01-domain.md`. So far: the rich-text validator ([`rich_text`]) and
+//! project fields ([`project`]).
 
+pub mod project;
 pub mod rich_text;

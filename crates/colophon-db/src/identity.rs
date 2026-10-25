@@ -168,3 +168,27 @@ pub async fn finish_sign_in(
     .map_err(DbError::Query)?;
     Ok(row)
 }
+
+/// An identity, as `/me` shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identity {
+    /// Its id.
+    pub id: Uuid,
+    /// The provider that vouches for it.
+    pub issuer: String,
+    /// A name to show, if the provider gave one.
+    pub display_name: Option<String>,
+}
+
+/// The identity with this id.
+pub async fn find_identity(pool: &PgPool, id: Uuid) -> Result<Option<Identity>, DbError> {
+    let row = sqlx::query_as!(
+        Identity,
+        "SELECT id, issuer, display_name FROM identities WHERE id = $1",
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(DbError::Query)?;
+    Ok(row)
+}

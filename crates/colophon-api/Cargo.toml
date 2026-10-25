@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 axum.workspace = true
+colophon-auth.workspace = true
+colophon-db.workspace = true
 colophon-domain.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
@@ -18,6 +20,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "time"] }
 tower.workspace = true
 tower-http.workspace = true
+time.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
