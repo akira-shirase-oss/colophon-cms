@@ -9,7 +9,8 @@ all-features = true
 ignore = []
 
 [licenses]
-allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib"]
+# BSL-1.0 (Boost): permissive and OSI-approved; needed by xxhash-rust, through redis (2026-10-25).
+allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause", "BSL-1.0", "ISC", "Unicode-3.0", "Zlib"]
 confidence-threshold = 0.93
 # The allowlist names licences we accept ahead of the dependencies that will need them.
 unused-allowed-license = "allow"
@@ -21,6 +22,9 @@ ignore = true
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Our own crates depend on each other by path, without a version. That is only a problem for
+# published crates, and these are `publish = false`.
+allow-wildcard-paths = true
 highlight = "all"
 deny = [
     { crate = "openssl", reason = "use rustls: one TLS stack to patch" },

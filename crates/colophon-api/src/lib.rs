@@ -1,6 +1,35 @@
-//! Colophon's management API, `/api/v1`: one surface with one error format,
-//! preconditions and idempotency, shared by the Studio, the CLI, the SDK and
-//! agents, so no interface can bypass the rules.
+//! Colophon's HTTP surface: one error format, request ids, the middleware stack and the
+//! health endpoints, shared by every route the server will ever have. The management API
+//! (`/api/v1`) is built on it from milestone P1.
 //!
-//! Design: `docs/modules/04-api.md`. Nothing is implemented yet; the error
-//! envelope and health checks arrive in milestone P0, step 0.3.
+//! Design: `docs/modules/04-api.md`.
+
+pub mod error;
+pub mod health;
+pub mod middleware;
+
+use axum::{Router, routing::get};
+
+pub use error::{ApiError, ErrorCode, PublicError};
+pub use health::{CheckState, Dependency, Readiness, ReadinessReport, Status};
+pub use middleware::{HttpLimits, REQUEST_ID_HEADER};
+
+/// The complete router: the routes, a fallback that answers with the error envelope, and the
+/// middleware stack around all of them.
+pub fn app(readiness: Readiness, limits: HttpLimits) -> Router {
+    middleware::apply(routes(readiness), limits)
+}
+
+/// The routes without the middleware stack, for tests that add their own routes before
+/// applying it.
+pub fn routes(readiness: Readiness) -> Router {
+    Router::new()
+        .route("/livez", get(health::livez))
+        .route("/readyz", get(health::readyz))
+        .fallback(fallback)
+        .with_state(readiness)
+}
+
+async fn fallback() -> ApiError {
+    ApiError::RouteNotFound
+}
