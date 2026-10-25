@@ -55,7 +55,7 @@ Marks apply to `text` nodes in any node except `codeBlock`.
 |---|---|---|
 | `bold`, `italic`, `strike` | none | |
 | `code` | none | can't be combined with any other mark |
-| `link` | `href` | `https:`, `http:` or `mailto:` URLs; paths starting with `/` (not `//`); fragments starting with `#`. At most 2048 characters. |
+| `link` | `href` | `https:`, `http:` or `mailto:` URLs (as a browser's `URL` parser reads them); paths starting with exactly one `/`; fragments starting with `#`. At most 2048 characters. No control characters, whitespace or backslashes anywhere: browsers strip tabs and newlines and read `\` as `/`, so `/<tab>/evil.example` would lead to another site. |
 
 A mark appears at most once on a node.
 
@@ -104,4 +104,13 @@ Every rejection has a code and a [JSON Pointer](https://www.rfc-editor.org/rfc/r
 | `too_large` | over 256 KiB of canonical JSON | the document root (empty pointer) |
 | `too_many_nodes` | over 10,000 nodes | the document root (empty pointer) |
 
-When a document has several problems, the validator reports at least the first in document order.
+When a document has several problems, the validator reports the first one, in this order: the envelope (`schema`,
+`version`, unknown fields, `doc`), then the tree depth-first. Within a node: the node count, its depth, its `type`,
+whether it may appear in that position, its unknown fields (in sorted order), then `attrs`, `text`, `marks` and
+`content`. Within `attrs`: unknown attributes first, then the defined ones in the order of the table above.
+
+Character counts (alt text, links) are Unicode code points.
+
+The validator also writes the canonical form. A valid document that differs from it only in key order, mark order, whitespace,
+or an empty `attrs`, `marks` or `content` is accepted and stored canonically: none of those carry meaning. Anything else
+is refused, never rewritten.

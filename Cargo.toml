@@ -36,6 +36,7 @@ tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["request-id", "trace", "timeout", "limit", "catch-panic"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+url = { version = "2.5.8", default-features = false, features = ["std"] }
 uuid = { version = "1", features = ["v7"] }
 
 [workspace.lints.rust]

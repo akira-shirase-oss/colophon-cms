@@ -3,7 +3,7 @@
 
 import { Extension, type Extensions, mergeAttributes, Node } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import { ASSET_ID, type CalloutTone, HEADING_LEVELS, isAllowedHref, isCalloutTone, LIMITS } from './schema.ts';
+import { ASSET_ID, type CalloutTone, HEADING_LEVELS, isAllowedHref, isCalloutTone, isValidAlt, LIMITS } from './schema.ts';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 
@@ -104,7 +104,7 @@ export const Image = Node.create({
 				(attrs) =>
 				({ commands }) => {
 					const alt = attrs.alt.trim();
-					if (!ASSET_ID.test(attrs.assetId) || alt === '' || alt.length > LIMITS.maxAltLength) return false;
+					if (!ASSET_ID.test(attrs.assetId) || !isValidAlt(alt)) return false;
 					return commands.insertContent({ type: this.name, attrs: { assetId: attrs.assetId, alt } });
 				}
 		};

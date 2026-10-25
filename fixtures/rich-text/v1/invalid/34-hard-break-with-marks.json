@@ -1,0 +1,37 @@
+{
+  "description": "Marks on a line break, which stored documents never carry.",
+  "reject": {
+    "code": "unknown_field",
+    "path": "/doc/content/0/content/1/marks"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "a"
+            },
+            {
+              "type": "hardBreak",
+              "marks": [
+                {
+                  "type": "bold"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "b"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
