@@ -12,9 +12,11 @@ use std::error::Error as StdError;
 
 use axum::{
     Json,
+    extract::rejection::JsonRejection,
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use colophon_domain::rich_text::Rejection;
 use serde::{Serialize, Serializer};
 
 /// Stable, machine-readable error codes. Renaming one is a breaking API change.
@@ -23,6 +25,10 @@ use serde::{Serialize, Serializer};
 pub enum ErrorCode {
     /// A malformed request that no more specific code describes.
     BadRequest,
+    /// The body isn't valid JSON.
+    MalformedJson,
+    /// The body is well-formed but breaks a rule; `details` says which, and where.
+    ValidationFailed,
     /// No route matches the path.
     RouteNotFound,
     /// The path exists, but not for this method.
@@ -44,6 +50,8 @@ impl ErrorCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BadRequest => "bad_request",
+            Self::MalformedJson => "malformed_json",
+            Self::ValidationFailed => "validation_failed",
             Self::RouteNotFound => "route_not_found",
             Self::MethodNotAllowed => "method_not_allowed",
             Self::PayloadTooLarge => "payload_too_large",
@@ -76,6 +84,15 @@ impl Serialize for ErrorCode {
     }
 }
 
+/// Machine-readable detail for an error about part of the request body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ErrorDetails {
+    /// A code specific to the failure, such as a rich-text rejection code (`unsafe_link`).
+    pub reason: &'static str,
+    /// RFC 6901 JSON Pointer into the request body; empty means the whole body.
+    pub pointer: String,
+}
+
 /// The part of an error a client may see. Stored in the response extensions so the edge
 /// middleware can render it together with the request id.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +101,8 @@ pub struct PublicError {
     pub code: ErrorCode,
     /// Safe, human-readable message.
     pub message: String,
+    /// Optional detail, for errors about part of the body.
+    pub details: Option<ErrorDetails>,
 }
 
 impl PublicError {
@@ -95,6 +114,7 @@ impl PublicError {
                 .canonical_reason()
                 .unwrap_or("request failed")
                 .to_ascii_lowercase(),
+            details: None,
         }
     }
 }
@@ -106,6 +126,22 @@ pub enum ApiError {
     /// No route matches the path.
     #[error("no route matches this path")]
     RouteNotFound,
+    /// The body isn't valid JSON. The detail is the parser's message (a position in the
+    /// client's own input), truncated.
+    #[error("the request body is not valid JSON: {0}")]
+    MalformedJson(String),
+    /// The body needs `Content-Type: application/json`.
+    #[error("expected `Content-Type: application/json`")]
+    UnsupportedMediaType,
+    /// The body is larger than the limit.
+    #[error("request body exceeds the configured limit")]
+    PayloadTooLarge,
+    /// The body couldn't be read.
+    #[error("the request body could not be read")]
+    BadRequest,
+    /// A rich-text document was refused.
+    #[error("{0}")]
+    InvalidRichText(Rejection),
     /// An unexpected failure; the boxed error is the private cause.
     #[error("internal error")]
     Internal(#[source] Box<dyn StdError + Send + Sync>),
@@ -121,6 +157,10 @@ impl ApiError {
     pub fn status(&self) -> StatusCode {
         match self {
             Self::RouteNotFound => StatusCode::NOT_FOUND,
+            Self::MalformedJson(_) | Self::BadRequest => StatusCode::BAD_REQUEST,
+            Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::InvalidRichText(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -129,27 +169,41 @@ impl ApiError {
     pub fn code(&self) -> ErrorCode {
         match self {
             Self::RouteNotFound => ErrorCode::RouteNotFound,
+            Self::MalformedJson(_) => ErrorCode::MalformedJson,
+            Self::UnsupportedMediaType => ErrorCode::UnsupportedMediaType,
+            Self::PayloadTooLarge => ErrorCode::PayloadTooLarge,
+            Self::BadRequest => ErrorCode::BadRequest,
+            Self::InvalidRichText(_) => ErrorCode::ValidationFailed,
             Self::Internal(_) => ErrorCode::Internal,
         }
     }
 
     /// What the client sees.
     pub fn public(&self) -> PublicError {
+        let details = if let Self::InvalidRichText(rejection) = self {
+            Some(ErrorDetails {
+                reason: rejection.code.as_str(),
+                pointer: rejection.pointer.clone(),
+            })
+        } else {
+            None
+        };
         PublicError {
             code: self.code(),
             message: self.to_string(),
+            details,
         }
     }
 
     /// Logs the error once, at a level that matches who is at fault.
     fn log(&self) {
         let code = self.code().as_str();
-        match self {
-            Self::Internal(cause) => {
-                let cause = error_chain(cause.as_ref());
-                tracing::error!(code, %cause, "request failed");
-            }
-            Self::RouteNotFound => tracing::debug!(code, "request rejected"),
+        if let Self::Internal(cause) = self {
+            let cause = error_chain(cause.as_ref());
+            tracing::error!(code, %cause, "request failed");
+        } else {
+            // A client's mistake: worth a debug line, never a page.
+            tracing::debug!(code, error = %self, "request rejected");
         }
     }
 }
@@ -182,6 +236,8 @@ struct Envelope<'a> {
 struct EnvelopeBody<'a> {
     code: ErrorCode,
     message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<&'a ErrorDetails>,
     request_id: Option<&'a str>,
 }
 
@@ -191,6 +247,7 @@ pub fn render(status: StatusCode, error: &PublicError, request_id: Option<&str>)
         error: EnvelopeBody {
             code: error.code,
             message: &error.message,
+            details: error.details.as_ref(),
             request_id,
         },
     };
@@ -207,6 +264,29 @@ pub fn is_json(headers: &HeaderMap) -> bool {
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.starts_with("application/json"))
+}
+
+/// The longest client-supplied detail echoed back in a message.
+const MAX_DETAIL_CHARS: usize = 200;
+
+fn truncate(text: &str) -> String {
+    match text.char_indices().nth(MAX_DETAIL_CHARS) {
+        Some((end, _)) => format!("{}...", &text[..end]),
+        None => text.to_owned(),
+    }
+}
+
+impl From<JsonRejection> for ApiError {
+    fn from(rejection: JsonRejection) -> Self {
+        match rejection {
+            JsonRejection::JsonSyntaxError(_) | JsonRejection::JsonDataError(_) => {
+                Self::MalformedJson(truncate(&rejection.body_text()))
+            }
+            JsonRejection::MissingJsonContentType(_) => Self::UnsupportedMediaType,
+            other if other.status() == StatusCode::PAYLOAD_TOO_LARGE => Self::PayloadTooLarge,
+            _ => Self::BadRequest,
+        }
+    }
 }
 
 #[cfg(test)]

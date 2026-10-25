@@ -4,6 +4,7 @@ import raw from '../../../../perf/results/history.jsonl?raw';
 
 export interface LoadResult {
 	scenario: 'throughput' | 'steady';
+	endpoint?: string;
 	date: string;
 	commit: string;
 	dirty: boolean;

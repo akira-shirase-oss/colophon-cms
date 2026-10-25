@@ -38,6 +38,9 @@ Total: about **4–6 months** to v0.1, with the first public demo around month 3
 **Proof gate:** valid fixtures round-trip through editor → JSON → Rust validator → renderer; invalid fixtures are
 rejected with field paths; CI is green from a clean clone.
 
+**Steps as built:** 0.1 toolchain and workspace · 0.2 local stack · 0.3 errors, health and the testing rule · 0.4 the
+rich-text format and editor · 0.5 the Rust validator · 0.6 the renderer · 0.7 Material 3 colours and the first screen.
+
 ## P1: Never lose an edit (≈ spec M1)
 
 **Goal:** an editor and the CLI create the same validated draft; conflicts are safe; projects are isolated.

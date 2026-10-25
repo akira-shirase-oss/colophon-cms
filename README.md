@@ -22,7 +22,8 @@
 > is done: one error envelope, request IDs, honest health checks and `colophon doctor`, plus the testing rule every
 > feature now follows: regression tests, a separate testbed frontend, and million-request load tests. Step 0.4 is
 > done: the rich-text format (`colophon/rich-text` v1), 42 shared fixtures, and a Tiptap editor in the Studio that opens a
-> document only if it can give it back byte for byte.
+> document only if it can give it back byte for byte. Step 0.5 is done: the Rust validator refuses all 34 invalid
+> fixtures with exactly the expected code and location, and writes the same canonical bytes as the editor.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
@@ -97,7 +98,7 @@ Each milestone is named after what it proves, and is done only when its proof ga
 | | Milestone | Proof gate | Status |
 |---|---|---|---|
 | D | Design | Scope cut, plan written, every decision recorded | ✅ Done |
-| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1–0.4 done) |
+| P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | 🚧 In progress (0.1–0.5 done) |
 | P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | Planned |
 | P2 | Publish exactly once | Crashed workers reconcile; stale deliveries are superseded | Planned |
 | P3 | Prove it reached the site | Cache and purge faults, no mixed releases; **first public demo** | Planned |
@@ -132,7 +133,7 @@ What exists today:
 
 ```text
 crates/
-  colophon-domain/   the rules (no I/O allowed; enforced by scripts/check-architecture.sh)
+  colophon-domain/   the rules, starting with the rich-text validator (no I/O allowed; scripts/check-architecture.sh)
   colophon-db/       PostgreSQL adapter: a bounded, lazy pool and the readiness probe
   colophon-api/      the HTTP surface: error envelope, request IDs, middleware, /livez, /readyz
   colophon-cli/      the `colophon` binary (`colophon doctor`)
@@ -165,7 +166,8 @@ scripts/check.sh         # everything CI runs: fmt, clippy -D warnings, tests, d
 scripts/frontend.sh      # type checks, the editor's unit tests, and the Studio in Chromium
 scripts/testbed.sh       # the testbed's Playwright suite (or --dev to explore it by hand)
 npm run dev -w @colophon/studio   # the editor spike on http://127.0.0.1:58200
-scripts/load.sh throughput   # 1,000,000 requests against a release build; result saved to perf/results/
+scripts/load.sh health throughput      # 1,000,000 requests against a release build; result in perf/results/
+scripts/load.sh rich-text steady       # validation at 20,000 requests a second for a minute
 ```
 
 Run the server against the local stack:
@@ -200,6 +202,8 @@ claim):
 |---|---|---|---|---|---|
 | Health endpoints, back to back | 5,000,000 | 75,405/s | 1.64 ms | 0 | 13 (all from the readiness probes) |
 | Health endpoints, steady | 1,199,936 | 20,000/s for 60 s | 0.25 ms | 0 | 12 |
+| Rich-text validation, back to back | 1,000,000 | 71,270/s | 2.28 ms | 0 | 5 |
+| Rich-text validation, steady | 1,199,949 | 20,000/s for 60 s | 0.37 ms | 0 | 12 |
 
 ## Contributing
 

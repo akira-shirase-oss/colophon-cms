@@ -66,6 +66,7 @@ create → conflict → review → publish scenario produce equivalent durable r
 
 | Route family | Operations and guard |
 |---|---|
+| `/api/v1/rich-text/validate` | The validator's verdict on a document: canonical form, or a 422 whose `details` name the rejection code and JSON Pointer. Stores nothing. Built in step 0.5; requires authentication from P1 |
 | `/auth/*`, `/me` | OIDC login, callback and logout; session inspection and revocation; exact callback origins, CSRF |
 | `/api/v1/projects`, `/members`, `/invitations` | Project lifecycle and membership; owner-scoped |
 | `{P}/schemas`, `/migrations` | Discover, validate, plan, apply, inspect; apply needs an approved current plan and migration permission |

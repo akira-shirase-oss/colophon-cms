@@ -12,6 +12,9 @@
       "content": [
         {
           "type": "orderedList",
+          "attrs": {
+            "start": 0
+          },
           "content": [
             {
               "type": "listItem",

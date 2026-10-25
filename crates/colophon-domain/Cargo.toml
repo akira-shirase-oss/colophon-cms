@@ -11,6 +11,13 @@ publish.workspace = true
 # tower, sqlx, reqwest, ...). scripts/check-architecture.sh fails CI if one appears, even
 # transitively. See docs/modules/01-domain.md.
 [dependencies]
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+# Keeps fixture key order when re-serializing a fixture to compare it with the canonical form.
+serde_json = { workspace = true, features = ["preserve_order"] }
 
 [lints]
 workspace = true

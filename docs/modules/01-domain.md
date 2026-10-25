@@ -63,7 +63,8 @@ invariant. Production adapters and the simulator both run this code unchanged.
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the
   `colophon/rich-text` v1 format (D-021, [formats/rich-text-v1.md](../formats/rich-text-v1.md)), with error codes and
-  JSON Pointers for every rejection.
+  JSON Pointers for every rejection. Built in step 0.5: `colophon_domain::rich_text::validate`, which also writes the
+  canonical form that is stored.
 - Limits: depth ≤ 16 and a maximum document size.
 - No executable HTML or components are ever stored.
 - The same JSON fixtures are used by this validator and by the TypeScript renderer.

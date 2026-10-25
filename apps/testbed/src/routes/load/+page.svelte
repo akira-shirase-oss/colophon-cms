@@ -37,7 +37,7 @@
 			{#each results as result (result.date)}
 				<tr data-scenario={result.scenario} data-passed={result.thresholds_passed}>
 					<td>{result.date.replace('T', ' ').replace('Z', '')}</td>
-					<td>{result.scenario}<br /><small>{params(result)}</small></td>
+					<td>{result.endpoint ?? 'health'} · {result.scenario}<br /><small>{params(result)}</small></td>
 					<td class="num">{number.format(result.requests)}</td>
 					<td class="num">{number.format(result.rps)}</td>
 					<td class="num">{result.latency_ms.p50}</td>

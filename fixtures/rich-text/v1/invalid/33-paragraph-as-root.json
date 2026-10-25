@@ -1,0 +1,20 @@
+{
+  "description": "A paragraph where the document should be.",
+  "reject": {
+    "code": "invalid_content",
+    "path": "/doc"
+  },
+  "value": {
+    "schema": "colophon/rich-text",
+    "version": 1,
+    "doc": {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "x"
+        }
+      ]
+    }
+  }
+}

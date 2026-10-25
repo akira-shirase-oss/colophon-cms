@@ -21,11 +21,18 @@ export const LIMITS = {
 export const CODE_LANGUAGE = /^[a-z0-9][a-z0-9+#.-]{0,19}$/;
 export const ASSET_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** https:, http: and mailto: URLs; paths starting with one `/`; fragments starting with `#`. */
+/**
+ * https:, http: and mailto: URLs; paths starting with exactly one `/`; fragments starting with
+ * `#`. Control characters, whitespace and backslashes are refused anywhere: browsers strip tabs
+ * and newlines and read `\` as `/`, so `/<tab>/evil.example` would lead to another site.
+ * Lengths are in characters (code points), as in the Rust validator.
+ */
 export function isAllowedHref(href: string): boolean {
-	if (href.length === 0 || href.length > LIMITS.maxHrefLength) return false;
+	const length = [...href].length;
+	if (length === 0 || length > LIMITS.maxHrefLength) return false;
+	if (/[\u0000-\u0020\u007f\\]/.test(href)) return false;
 	if (href.startsWith('#')) return true;
-	if (href.startsWith('/')) return !href.startsWith('//') && !href.startsWith('/\\');
+	if (href.startsWith('/')) return !href.startsWith('//');
 	let url: URL;
 	try {
 		url = new URL(href);
@@ -33,6 +40,11 @@ export function isAllowedHref(href: string): boolean {
 		return false;
 	}
 	return url.protocol === 'https:' || url.protocol === 'http:' || url.protocol === 'mailto:';
+}
+
+/** Alt text rules: not only whitespace, at most 300 characters (code points). */
+export function isValidAlt(alt: string): boolean {
+	return alt.trim() !== '' && [...alt].length <= LIMITS.maxAltLength;
 }
 
 export function isCalloutTone(value: unknown): value is CalloutTone {

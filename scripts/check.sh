@@ -50,7 +50,8 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     echo "note: npm is not installed here; CI runs the testbed suite" >&2
   fi
   if command -v k6 >/dev/null || [[ -x "$HOME/.local/bin/k6" ]]; then
-    PATH="$PATH:$HOME/.local/bin" TOTAL=200000 P99_MS=50 KEEP=0 scripts/load.sh throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=200000 P99_MS=50 KEEP=0 scripts/load.sh health throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=100000 P99_MS=50 KEEP=0 scripts/load.sh rich-text throughput
   else
     echo "note: k6 is not installed here (scripts/install-k6.sh); CI runs the load smoke test" >&2
   fi

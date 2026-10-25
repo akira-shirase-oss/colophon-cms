@@ -8,10 +8,14 @@ mod body;
 pub mod error;
 pub mod health;
 pub mod middleware;
+mod rich_text;
 
-use axum::{Router, routing::get};
+use axum::{
+    Router,
+    routing::{get, post},
+};
 
-pub use error::{ApiError, ErrorCode, PublicError};
+pub use error::{ApiError, ErrorCode, ErrorDetails, PublicError};
 pub use health::{CheckState, Dependency, Readiness, ReadinessReport, Status};
 pub use middleware::{HttpLimits, REQUEST_ID_HEADER};
 
@@ -27,6 +31,7 @@ pub fn routes(readiness: Readiness) -> Router {
     Router::new()
         .route("/livez", get(health::livez))
         .route("/readyz", get(health::readyz))
+        .route("/api/v1/rich-text/validate", post(rich_text::validate))
         .fallback(fallback)
         .with_state(readiness)
 }
