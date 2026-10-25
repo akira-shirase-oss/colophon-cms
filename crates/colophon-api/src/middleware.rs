@@ -23,7 +23,10 @@ use tower_http::{
 };
 use tracing::{Level, Span};
 
-use crate::error::{self, ApiError, PublicError};
+use crate::{
+    body,
+    error::{self, ApiError, PublicError},
+};
 
 /// The header that carries the request id in both directions.
 pub const REQUEST_ID_HEADER: &str = "x-request-id";
@@ -191,14 +194,21 @@ pub fn apply(router: Router, limits: HttpLimits) -> Router {
         )
         // 4. Every error below becomes the envelope, inside the span so its logs carry the id.
         .layer(axum_mw::from_fn(error_envelope))
-        // 5. A panic below becomes a 500 envelope instead of a dropped connection.
+        // 5. Never close a connection silently over an unread body: refuse declared oversized
+        //    bodies after draining them, drain what handlers leave unread, or say
+        //    `Connection: close` (body.rs). Outside the panic catcher, so it still runs after a
+        //    panic, and inside the envelope, so its bare 413 gets rendered.
+        .layer(axum_mw::from_fn(move |request: Request, next: Next| {
+            body::hygiene(limits.max_body_bytes, request, next)
+        }))
+        // 6. A panic below becomes a 500 envelope instead of a dropped connection.
         .layer(CatchPanicLayer::custom(panic_response))
-        // 6. The deadline for producing response headers.
+        // 7. The deadline for producing response headers.
         .layer(TimeoutLayer::with_status_code(
             TIMEOUT_STATUS,
             limits.request_timeout,
         ))
-        // 7. Reject large bodies by Content-Length up front, or while streaming otherwise...
+        // 8. Reject bodies that grow past the limit while streaming (no Content-Length)...
         .layer(RequestBodyLimitLayer::new(limits.max_body_bytes))
         // ...and give axum's extractors, whose own default is 2 MB, the same limit.
         .layer(DefaultBodyLimit::max(limits.max_body_bytes));

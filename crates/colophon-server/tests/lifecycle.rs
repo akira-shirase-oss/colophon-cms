@@ -283,3 +283,120 @@ async fn readiness_follows_real_outages_and_recoveries() {
         .wait_for_readiness("ready", Duration::from_secs(30))
         .await;
 }
+
+/// Regression (found by the testbed, 2026-10-25): the server answered 413 to a declared
+/// oversized body without reading it, then closed the connection while the client was still
+/// sending. The kernel reset the connection, and clients that finish sending before they read
+/// (Node's fetch, Vite's proxy) got ECONNRESET, EPIPE or a 502 instead of the envelope.
+/// RFC 9112 §9.6: close in stages, so the client can read the last response.
+///
+/// reqwest doesn't show the bug (hyper's client reads the response even when its upload
+/// fails), so this test is a plain socket client that sends everything it declared, then reads.
+#[test]
+fn oversized_uploads_get_the_413_envelope_not_a_connection_reset() {
+    use std::{io::Write as _, net::TcpStream};
+
+    let server = Server::start(&[], &[("COLOPHON_DATABASE_URL", DEAD_DATABASE)]);
+    let mut failures = Vec::new();
+    for megabytes in [2_usize, 16] {
+        let body = vec![0_u8; megabytes << 20];
+        for attempt in 0..10 {
+            let mut stream = TcpStream::connect(server.addr).expect("connect");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .expect("timeout");
+            let head = format!(
+                "POST /api/v1/upload HTTP/1.1\r\nHost: {}\r\nContent-Length: {}\r\nContent-Type: application/octet-stream\r\n\r\n",
+                server.addr,
+                body.len()
+            );
+            let sent = stream
+                .write_all(head.as_bytes())
+                .and_then(|()| stream.write_all(&body));
+            match read_response(&mut stream) {
+                Some((head, body))
+                    if head.starts_with("http/1.1 413")
+                        && String::from_utf8_lossy(&body).contains("payload_too_large") => {}
+                other => failures.push(format!(
+                    "{megabytes} MiB #{attempt}: send {:?}, got {:?}",
+                    sent.err().map(|e| e.kind()),
+                    other.map(|(head, _)| head.lines().next().unwrap_or_default().to_owned())
+                )),
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of 20 failed: {failures:#?}",
+        failures.len()
+    );
+}
+
+/// Reads one HTTP/1.1 response (headers plus a Content-Length body) from a socket.
+fn read_response(stream: &mut std::net::TcpStream) -> Option<(String, Vec<u8>)> {
+    use std::io::Read as _;
+    let mut buffer = Vec::new();
+    let mut byte = [0_u8; 1];
+    while !buffer.ends_with(b"\r\n\r\n") {
+        match stream.read(&mut byte) {
+            Ok(1) => buffer.push(byte[0]),
+            _ => return None,
+        }
+    }
+    let head = String::from_utf8_lossy(&buffer).to_ascii_lowercase();
+    let length = head
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut body = vec![0_u8; length];
+    stream.read_exact(&mut body).ok()?;
+    Some((head, body))
+}
+
+/// Regression (found by the testbed, 2026-10-25): when a handler answered without reading the
+/// request body, the server closed the connection afterwards without saying so. A client that
+/// pools connections then sent its next request into a dead socket (ECONNRESET/EPIPE); curl
+/// hid it by reconnecting. A response must either leave the connection usable or announce
+/// `connection: close`.
+#[test]
+fn a_connection_is_never_closed_silently_after_an_unread_body() {
+    use std::{io::Write as _, net::TcpStream};
+
+    let server = Server::start(&[], &[("COLOPHON_DATABASE_URL", DEAD_DATABASE)]);
+    // Bodies the handler never reads: under the limit (a 404) and over it (a 413).
+    for (path, kilobytes) in [
+        ("/api/v1/nope", 100_usize),
+        ("/api/v1/nope", 900),
+        ("/api/v1/upload", 2048),
+    ] {
+        let mut stream = TcpStream::connect(server.addr).expect("connect");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("timeout");
+        let body = vec![b'x'; kilobytes * 1024];
+        let head = format!(
+            "POST {path} HTTP/1.1\r\nHost: {}\r\nContent-Length: {}\r\n\r\n",
+            server.addr,
+            body.len()
+        );
+        let _ = stream
+            .write_all(head.as_bytes())
+            .and_then(|()| stream.write_all(&body));
+        let (first, _) = read_response(&mut stream).expect("the first response arrives");
+        if first.contains("connection: close") {
+            continue; // Announced: the client knows not to reuse this connection.
+        }
+        let next = format!("GET /livez HTTP/1.1\r\nHost: {}\r\n\r\n", server.addr);
+        let reused = stream
+            .write_all(next.as_bytes())
+            .ok()
+            .and_then(|()| read_response(&mut stream));
+        assert!(
+            reused
+                .as_ref()
+                .is_some_and(|(head, _)| head.starts_with("http/1.1 200")),
+            "{kilobytes} KiB to {path}: the connection was closed without `connection: close` after:\n{first}"
+        );
+    }
+}

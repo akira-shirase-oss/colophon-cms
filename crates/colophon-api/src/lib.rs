@@ -4,6 +4,7 @@
 //!
 //! Design: `docs/modules/04-api.md`.
 
+mod body;
 pub mod error;
 pub mod health;
 pub mod middleware;
