@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO idempotency_records (project_id, environment_id, identity_id, operation, key, request_hash)\n         VALUES ($1, $2, $3, $4, $5, $6)\n         ON CONFLICT DO NOTHING\n         RETURNING true AS \"claimed!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "claimed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4a9fce8de984fd5973895752bd7f5eb555099ff20a18975bfd089799f47d370f"
+}
