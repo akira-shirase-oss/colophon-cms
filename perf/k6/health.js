@@ -48,8 +48,19 @@ const thresholds = {
   http_req_duration: [`p(99)<${P99_MS}`],
 };
 if (SCENARIO === 'steady') {
-  // If k6 couldn't start requests on schedule, the run didn't test the rate it claims.
-  thresholds.dropped_iterations = ['count==0'];
+  // Requests k6 couldn't start on schedule. On a shared machine the OS occasionally pauses
+  // k6 for a few milliseconds and a handful are missed (8 of 1.2 M in a 2026-10-25 run). More
+  // than 0.01% of the scheduled total means the run didn't test the rate it claims.
+  const scheduled = RATE * durationSeconds(DURATION);
+  thresholds.dropped_iterations = [`count<=${Math.floor(scheduled * 0.0001)}`];
+}
+
+function durationSeconds(text) {
+  const match = /^(\d+)(s|m)$/.exec(text);
+  if (!match) {
+    throw new Error(`DURATION must look like 60s or 5m, got ${text}`);
+  }
+  return parseInt(match[1], 10) * (match[2] === 'm' ? 60 : 1);
 }
 
 export const options = {
