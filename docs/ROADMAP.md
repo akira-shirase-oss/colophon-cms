@@ -28,6 +28,8 @@ Total: about **4–6 months** to v0.1, with the first public demo around month 3
 - Frontend workspace with `apps/studio`, `packages/ui`, `packages/content-renderer`.
 - `deploy/compose.yaml`: PostgreSQL 18, Valkey (D-015), Garage (D-016, replacing MinIO), Keycloak; started and checked by `scripts/stack.sh` (D-017).
 - API error envelope, request IDs, `/livez` and `/readyz`.
+- The testing rule (D-018) in place: `apps/testbed` with Playwright, and the k6 harness in `perf/` with committed
+  results and per-machine baselines. Every later step adds its own checks and scenarios.
 - Tiptap spike: custom blocks, paste, image placeholder, undo/redo, JSON serialization; Rust validator for the allowed
   node set and depth ≤ 16; shared JSON fixtures used by both Rust and TypeScript.
 - CI: format, lint (`-D warnings`), tests, `cargo deny`, frontend type-check and tests.

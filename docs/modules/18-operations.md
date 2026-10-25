@@ -68,9 +68,14 @@ on clean infrastructure and an independent install, so operations are a module w
   image: Debian 13-based Rust build images and a Debian 12 distroless runtime can fail at startup (rust-mastery,
   "Known blind spots").
 
-### Health (spec §32)
-- `/livez`: the process responds.
-- `/readyz`: this role can safely serve its required operations.
+### Health (spec §32; built in step 0.3)
+- `/livez`: the process responds. It checks nothing else.
+- `/readyz`: this role can safely serve its required operations. Background probes (every 2 s, 1 s deadline) write the
+  state; the handler only reads it, so `/readyz` costs no database work however often it is called (a 5-million-request
+  load run saw 13 database transactions, all from the probes). Statuses: `starting`, `ready`, `degraded` (200),
+  `not_ready`, `draining` (503). A supervisor marks a dependency down if its probe ever stops, so readiness can't
+  freeze at "up".
+- `colophon doctor [--json]` reports what `/readyz` reports, with the CLI exit codes (0 ready, 5 otherwise).
   - A cache failure can be *degraded* rather than unready when the bounded fallback is available.
   - A database failure makes writes unavailable.
 - Service health is checked from another failure domain.

@@ -1,8 +1,9 @@
 # Colophon CMS: agent instructions
 
 **Status (2026-10-25): milestone P0 in progress.** Step 0.1 is done: the pinned toolchain, a five-crate Cargo
-workspace and CI. Step 0.2 is done: the local stack in `deploy/` (D-015 to D-017). Next is step 0.3, one error format
-and honest health checks (`/livez`, `/readyz`, `colophon doctor`). See `docs/ROADMAP.md`.
+workspace and CI. Step 0.2 is done: the local stack in `deploy/` (D-015 to D-017). Step 0.3 is done: the error envelope,
+request IDs, `/livez`, `/readyz`, `colophon doctor`, `apps/testbed`, and the k6 harness in `perf/` (D-018 to D-020).
+Next is step 0.4, the editor spike. See `docs/ROADMAP.md`.
 
 ## Read first
 
@@ -87,8 +88,10 @@ Every feature ships with all three, in the same branch:
 `scripts/check.sh` runs exactly what CI runs (D-014): the toolchain check, `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `cargo doc` with
 `-D warnings`, `scripts/check-architecture.sh` (no I/O crates in `colophon-domain`), `cargo deny check`, ShellCheck,
-and `scripts/stack.sh check` when the local stack is running. Run it before every push. Frontend checks, Playwright
-smoke tests and seeded simulation runs join it in later steps.
+and, when the local stack is running, CI's integration half: `scripts/stack.sh check`, the `#[ignore]`d tests that need
+the stack (`cargo test --workspace -- --ignored --test-threads=1`; they stop and restart services), `scripts/testbed.sh`
+(svelte-check and Playwright) and a 200,000-request `scripts/load.sh` smoke run. Run it before every push. Full load runs:
+`scripts/load.sh throughput|steady [--baseline]`; commit the result files they write.
 
 The local stack (`scripts/stack.sh up`, details in `deploy/README.md`) binds every port to `127.0.0.1`; its credentials
 are public development values. Never change the bind address, and never reuse those credentials outside `deploy/`.
