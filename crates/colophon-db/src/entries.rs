@@ -246,8 +246,9 @@ pub async fn get(tx: &mut ProjectTransaction, entry_id: Uuid) -> Result<Option<D
     }))
 }
 
-/// A collection's entries, newest first: at most `limit` (capped at [`MAX_PAGE`]), starting
-/// after `before` when given.
+/// A collection's entries, newest first, starting after `before` when given: at most `limit`,
+/// capped at one more than [`MAX_PAGE`] so a caller can ask for an extra row to learn whether
+/// another page follows.
 pub async fn list(
     tx: &mut ProjectTransaction,
     collection: &str,
@@ -269,7 +270,7 @@ pub async fn list(
         tx.environment,
         collection,
         before,
-        limit.clamp(1, MAX_PAGE)
+        limit.clamp(1, MAX_PAGE + 1)
     )
     .fetch_all(&mut *tx.transaction)
     .await

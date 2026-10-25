@@ -33,7 +33,7 @@
 	async function refresh() {
 		const reply = await call('GET', '/me');
 		status = reply.status;
-		me = reply.status === 200 ? (reply.body as Me) : null;
+		me = reply.status === 200 ? (reply.body as { data: Me }).data : null;
 	}
 
 	async function createProject(event: SubmitEvent) {

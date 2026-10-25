@@ -244,8 +244,11 @@ async fn sign_in_works_and_every_write_needs_csrf_and_a_trusted_origin() {
     let editor = sign_in("dev-editor").await;
     let (status, me) = get(Some(&editor), "/me").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(me["display_name"], "Dev Editor");
-    assert_eq!(me["issuer"], "http://localhost:58080/realms/colophon");
+    assert_eq!(me["data"]["display_name"], "Dev Editor");
+    assert_eq!(
+        me["data"]["issuer"],
+        "http://localhost:58080/realms/colophon"
+    );
 
     // Writes need a CSRF token and a trusted Origin.
     let slug = unique_slug();
@@ -285,7 +288,7 @@ async fn sign_in_works_and_every_write_needs_csrf_and_a_trusted_origin() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
-    assert_eq!(created["role"], "owner");
+    assert_eq!(created["data"]["role"], "owner");
 
     // The same slug again is a conflict; a bad slug says which field and why.
     let (status, error) = post(
@@ -344,7 +347,7 @@ async fn a_project_is_invisible_to_people_who_are_not_members() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
-    let project_id = created["id"].as_str().expect("an id").to_owned();
+    let project_id = created["data"]["id"].as_str().expect("an id").to_owned();
 
     // Another person can't see it, by listing or by id.
     let owner = sign_in("dev-owner").await;
@@ -362,7 +365,7 @@ async fn a_project_is_invisible_to_people_who_are_not_members() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, mine) = get(Some(&editor), &format!("/api/v1/projects/{project_id}")).await;
     assert_eq!(
-        (status, mine["slug"].as_str()),
+        (status, mine["data"]["slug"].as_str()),
         (StatusCode::OK, Some(slug.as_str()))
     );
 }
