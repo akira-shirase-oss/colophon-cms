@@ -1,0 +1,178 @@
+//! Delivery cache keys and tags (docs/modules/06-delivery.md, "Cache keys" and "CDN headers and
+//! purge"; spec §15; D-048). Shared by the delivery API and, later, the site build adapter, so both
+//! name an answer the same way.
+//!
+//! A key names everything an answer depends on: the project, the environment, the recovery epoch,
+//! the release generation, the render version and the normalized query. Nothing else in a request
+//! changes the answer: unknown query parameters are ignored, and a cursor is reduced to the
+//! generation and position it carries. A generation's published content never changes, so an
+//! entry under one of these keys can't go stale; a new release is a new generation and so new
+//! keys. Locales arrive later; until then every answer is in the one default locale.
+//!
+//! Tags name what an answer was built from, so a purge can find it: the project, the environment,
+//! the collection (a listing is tagged with its collection even when a newly published entry
+//! wasn't in it, F06) and, for a single entry, the entry.
+
+/// Changes whenever the shape of a delivery answer does, so an entry cached for the old shape is
+/// never served as the new one.
+pub const RENDER_VERSION: u32 = 1;
+
+/// Where an answer was read: everything a key or tag starts from. Ids are UUIDs as 128-bit
+/// numbers, written as fixed-width hex, so the only free text in a key is the collection name,
+/// which comes last and so can't be mistaken for another field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Scope {
+    /// The project's id.
+    pub project: u128,
+    /// The environment's id (not its name: names are looked up, ids are what's stored).
+    pub environment: u128,
+    /// The environment's recovery epoch: an operator restore (P4) starts a new one, and
+    /// generations from different epochs are never interchangeable (DL4).
+    pub epoch: i64,
+    /// The release generation the answer was read at.
+    pub generation: i64,
+}
+
+impl Scope {
+    fn prefix(&self) -> String {
+        format!(
+            "colophon:delivery:r{RENDER_VERSION}:p{:032x}:e{:032x}:x{}:g{}",
+            self.project, self.environment, self.epoch, self.generation
+        )
+    }
+
+    /// The key for a page of `collection`: at most `limit` entries, after the entry `after` (a
+    /// cursor's position) or from the start.
+    pub fn list_key(&self, collection: &str, limit: i64, after: Option<u128>) -> String {
+        let after = after.map_or_else(|| "-".to_owned(), |entry| format!("{entry:032x}"));
+        format!("{}:list:{limit}:{after}:{collection}", self.prefix())
+    }
+
+    /// The key for one entry of `collection`.
+    pub fn entry_key(&self, collection: &str, entry: u128) -> String {
+        format!("{}:entry:{entry:032x}:{collection}", self.prefix())
+    }
+
+    /// The tags for a page of `collection`.
+    pub fn list_tags(&self, collection: &str) -> Vec<String> {
+        let mut tags = vec![self.project_tag(), self.environment_tag()];
+        tags.extend(self.collection_tag(collection));
+        tags
+    }
+
+    /// The tags for one entry of `collection`.
+    pub fn entry_tags(&self, collection: &str, entry: u128) -> Vec<String> {
+        let mut tags = self.list_tags(collection);
+        tags.push(format!("{}:n:{entry:032x}", self.environment_tag()));
+        tags
+    }
+
+    fn project_tag(&self) -> String {
+        format!("colophon:p:{:032x}", self.project)
+    }
+
+    fn environment_tag(&self) -> String {
+        format!("{}:e:{:032x}", self.project_tag(), self.environment)
+    }
+
+    /// Only a name that could be a collection gets a tag of its own: tags go into a response
+    /// header, and a made-up name in a URL mustn't put arbitrary text there.
+    fn collection_tag(&self, collection: &str) -> Option<String> {
+        let bytes = collection.as_bytes();
+        let plausible = (1..=64).contains(&bytes.len())
+            && bytes
+                .iter()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_');
+        plausible.then(|| format!("{}:c:{collection}", self.environment_tag()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const fn scope(generation: i64) -> Scope {
+        Scope {
+            project: 0x01,
+            environment: 0x0e,
+            epoch: 1,
+            generation,
+        }
+    }
+
+    #[test]
+    fn a_key_names_the_generation_and_every_part_of_the_query() {
+        let at_3 = scope(3);
+        let first = at_3.list_key("articles", 20, None);
+        assert_eq!(
+            first,
+            format!(
+                "colophon:delivery:r1:p{:032x}:e{:032x}:x1:g3:list:20:-:articles",
+                1, 14
+            )
+        );
+        assert_ne!(
+            first,
+            scope(4).list_key("articles", 20, None),
+            "a new release, new keys"
+        );
+        let restored = Scope { epoch: 2, ..at_3 };
+        assert_ne!(
+            first,
+            restored.list_key("articles", 20, None),
+            "generation 3 of another epoch"
+        );
+        assert_ne!(first, at_3.list_key("articles", 21, None));
+        assert_ne!(first, at_3.list_key("articles", 20, Some(7)));
+        assert_ne!(first, at_3.list_key("events", 20, None));
+        let other_project = Scope { project: 2, ..at_3 };
+        assert_ne!(
+            first,
+            other_project.list_key("articles", 20, None),
+            "the same collection in two projects"
+        );
+        assert_ne!(
+            at_3.entry_key("articles", 7),
+            at_3.list_key("articles", 20, Some(7))
+        );
+    }
+
+    #[test]
+    fn text_in_a_collection_name_cant_pose_as_another_field() {
+        let at_3 = scope(3);
+        let posing = format!("x:list:20:{:032x}:articles", 7);
+        assert_ne!(
+            at_3.list_key(&posing, 20, None),
+            at_3.list_key("articles", 20, Some(7))
+        );
+        assert_ne!(
+            at_3.entry_key("articles", 7),
+            at_3.list_key(&format!("{:032x}:articles", 7), 20, None)
+        );
+    }
+
+    #[test]
+    fn tags_cover_the_project_environment_collection_and_entry() {
+        let at_3 = scope(3);
+        let (project, environment) = (format!("{:032x}", 1), format!("{:032x}", 14));
+        assert_eq!(
+            at_3.entry_tags("articles", 7),
+            [
+                format!("colophon:p:{project}"),
+                format!("colophon:p:{project}:e:{environment}"),
+                format!("colophon:p:{project}:e:{environment}:c:articles"),
+                format!("colophon:p:{project}:e:{environment}:n:{:032x}", 7),
+            ]
+        );
+        assert_eq!(at_3.list_tags("articles").len(), 3);
+        // Tags don't depend on the generation: a purge finds every release's answers.
+        assert_eq!(scope(4).list_tags("articles"), at_3.list_tags("articles"));
+    }
+
+    #[test]
+    fn a_made_up_collection_name_gets_no_tag_of_its_own() {
+        for name in ["", "Articles", "a,b", "a b", "ä", &"x".repeat(65)] {
+            assert_eq!(scope(1).list_tags(name).len(), 2, "{name:?}");
+        }
+    }
+}

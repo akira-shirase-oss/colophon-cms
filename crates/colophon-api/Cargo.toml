@@ -20,6 +20,7 @@ colophon-db.workspace = true
 colophon-domain.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
+redis.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true

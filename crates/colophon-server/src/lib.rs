@@ -75,6 +75,16 @@ async fn stop_worker(cancel: &CancellationToken, worker: Option<tokio::task::Joi
     }
 }
 
+/// The public delivery cache (D-048): Valkey at `COLOPHON_CACHE_URL`, or none.
+fn delivery_cache(config: &Config) -> anyhow::Result<colophon_api::DeliveryCache> {
+    match &config.cache_url {
+        Some(url) => colophon_api::DeliveryCache::new(url.expose())
+            .map_err(|error| anyhow::anyhow!(error))
+            .context("configuring the delivery cache"),
+        None => Ok(colophon_api::DeliveryCache::disabled()),
+    }
+}
+
 /// Runs the server until `signal` resolves, then shuts down.
 pub async fn run(
     config: Config,
@@ -141,6 +151,7 @@ pub async fn run(
         sessions: colophon_api::SessionSettings::default(),
         trusted_origins,
         allow_private_destinations: config.listen_addr.ip().is_loopback(),
+        cache: delivery_cache(&config)?,
     };
     let state = colophon_api::AppState {
         readiness: readiness.clone(),

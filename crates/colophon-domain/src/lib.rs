@@ -10,6 +10,7 @@
 //! who may do what ([`policy`]), changesets and their review ([`changeset`]), releases
 //! ([`release`]), delivery jobs ([`job`]) and where they may go ([`destination`]).
 
+pub mod cache;
 pub mod changeset;
 pub mod destination;
 pub mod job;

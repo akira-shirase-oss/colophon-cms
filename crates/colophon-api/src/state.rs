@@ -6,7 +6,7 @@ use axum::extract::FromRef;
 use colophon_auth::OidcClient;
 use colophon_db::PgPool;
 
-use crate::Readiness;
+use crate::{DeliveryCache, Readiness};
 
 /// Session lifetimes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +40,8 @@ pub struct Services {
     /// Whether delivery destinations may be private addresses: only for a development server
     /// bound to loopback (D-046).
     pub allow_private_destinations: bool,
+    /// The public delivery cache (D-048); [`DeliveryCache::disabled`] without `COLOPHON_CACHE_URL`.
+    pub cache: DeliveryCache,
 }
 
 /// The router's state. Cloning is two reference-count increments.

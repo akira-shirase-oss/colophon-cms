@@ -301,6 +301,7 @@ dependencies = [
  "futures-util",
  "http-body",
  "http-body-util",
+ "redis",
  "serde",
  "serde_json",
  "thiserror",

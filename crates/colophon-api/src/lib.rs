@@ -6,6 +6,7 @@
 
 mod auth;
 mod body;
+mod cache;
 mod changesets;
 mod content_types;
 mod delivery;
@@ -29,6 +30,7 @@ use axum::{
     routing::{get, post},
 };
 
+pub use cache::{DeliveryCache, InvalidCacheUrl};
 pub use error::{ApiError, ErrorCode, ErrorDetails, PublicError};
 pub use health::{CheckState, Dependency, Readiness, ReadinessReport, Status};
 pub use middleware::{HttpLimits, REQUEST_ID_HEADER};
