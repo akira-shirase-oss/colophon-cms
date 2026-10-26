@@ -90,6 +90,7 @@ async fn apply(db: &TestDb, world: &World, save: &Save) -> Real {
             content: &save.content,
             content_hash: &hash,
             title: &save.content,
+            schema_version: 1,
         },
     )
     .await
@@ -170,6 +171,7 @@ async fn world(db: &TestDb, report: &Report) -> World {
                 content,
                 content_hash: &digest(content),
                 title: content,
+                schema_version: 1,
             },
         )
         .await

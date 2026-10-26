@@ -203,7 +203,7 @@ async fn writes_need_their_preconditions_and_keys_replay_or_refuse() {
             invalid.body["error"]["details"]["reason"].as_str(),
             invalid.body["error"]["details"]["pointer"].as_str()
         ),
-        (Some("invalid_title"), Some("/title"))
+        (Some("invalid_text"), Some("/title"))
     );
 
     // The same request with the same key: one entry, and the recorded answer again.

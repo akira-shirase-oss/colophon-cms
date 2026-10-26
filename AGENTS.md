@@ -11,8 +11,9 @@ F01 and F02, the testbed's Entries page and `perf/k6/entries.js` (D-034 to D-036
 serves the Studio at `/studio`; the Studio edits real drafts with autosave, a device copy of unsaved edits, and a
 conflict screen (`apps/studio/tests/server/`, `scripts/studio.sh`, `perf/k6/studio.js`; D-037, D-038). Step 1.4 is
 done: `crates/colophon-sim`, a deterministic simulator with mutation checks and a differential test against Postgres
-(D-039); replay a failing seed with `cargo run -p colophon-sim -- --seed N --trace`. Next is step 1.5, content types.
-See `docs/ROADMAP.md`.
+(D-039); replay a failing seed with `cargo run -p colophon-sim -- --seed N --trace`. Step 1.5 is done: content
+types (`colophon_domain::schema`, migration 0003, `{P}/content-types`, the Studio's type-driven editor,
+`perf/k6/content-types.js`; D-040). Next is step 1.6, the CLI. See `docs/ROADMAP.md`.
 
 ## Read first
 

@@ -14,6 +14,8 @@ test('navigation reaches every testbed page', async ({ page }) => {
 	await expect(page.getByRole('heading', { name: 'API contract' })).toBeVisible();
 	await page.getByRole('link', { name: 'Entries' }).click();
 	await expect(page.getByRole('heading', { name: 'Entries', exact: true })).toBeVisible();
+	await page.getByRole('link', { name: 'Content types' }).click();
+	await expect(page.getByRole('heading', { name: 'Content types', exact: true })).toBeVisible();
 	await page.getByRole('link', { name: 'Load tests' }).click();
 	await expect(page.getByRole('heading', { name: 'Load tests' })).toBeVisible();
 	await page.getByRole('link', { name: 'Health' }).click();

@@ -62,7 +62,7 @@ colliding slugs and IDs; the spec's first slice works end to end (spec §37).
 **Steps:** 1.1 sign-in and projects that can't see each other (done: D-031 to D-033) · 1.2 a draft that can't be lost
 (done: entries, revisions, the expected-revision save, idempotency, F01 and F02; D-034 to D-036) · 1.3 conflicts
 (done: the Studio's editor, autosave and conflict screen, F04 end to end; D-037, D-038) · 1.4 the first simulator run (done: D-039; it found a double-save case in the Studio, now
-fixed) · 1.5 content types you define (schemas, replacing the built-in `articles` collection) · 1.6 the CLI signs in
+fixed) · 1.5 content types you define (done: D-040; `articles` is now an ordinary type) · 1.6 the CLI signs in
 and creates the same record as the Studio (the rest of the spec's first slice). After 1.6 the P1 proof gate is
 re-checked as a whole.
 

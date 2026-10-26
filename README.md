@@ -30,6 +30,8 @@
 > article it shows both versions and lets the editor choose instead of overwriting anyone. Step 1.4 is done: a
 > deterministic simulator runs thousands of seeded schedules of colliding editors, lost answers and crashes, catches
 > every planted bug, agrees with PostgreSQL save for save, and found a real double-save case in the Studio (fixed).
+> Step 1.5 is done: content types you define (text, rich text, numbers, booleans, choices, dates), changed only in
+> ways that keep every stored entry valid, and edited in the Studio field by field.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 

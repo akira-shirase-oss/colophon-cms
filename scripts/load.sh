@@ -8,7 +8,8 @@
 #
 # <endpoint> is a script in perf/k6/: health (the health checks), rich-text (validation),
 # session (signed-in requests: session lookup and row-level security on every request),
-# entries (drafts: reads, lists and If-Match saves, each read checked against the last save) or
+# entries (drafts: reads, lists and If-Match saves, each read checked against the last save),
+# content-types (the same for entries of a seven-field type, plus reads of its definition) or
 # studio (the Studio's static files; builds the Studio first).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
@@ -31,7 +32,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|entries|studio throughput|steady [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|entries|content-types|studio throughput|steady [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -51,7 +52,7 @@ if [[ "$scenario" == "steady" ]]; then default_vus=256; else default_vus=64; fi
 VUS="${VUS:-$default_vus}"
 case "$endpoint" in
   session) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
-  entries) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
+  entries | content-types) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
   studio) RATE="${RATE:-5000}" P99_MS="${P99_MS:-25}" ;;
   *) RATE="${RATE:-20000}" P99_MS="${P99_MS:-25}" ;;
 esac

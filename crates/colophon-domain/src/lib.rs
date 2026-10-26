@@ -6,8 +6,8 @@
 //! a database driver. `scripts/check-architecture.sh` enforces that in CI.
 //!
 //! Design: `docs/modules/01-domain.md`. So far: the rich-text validator ([`rich_text`]),
-//! project fields ([`project`]) and articles, the content of entries ([`entry`]).
+//! project fields ([`project`]) and content types, which validate entries' content ([`schema`]).
 
-pub mod entry;
 pub mod project;
 pub mod rich_text;
+pub mod schema;

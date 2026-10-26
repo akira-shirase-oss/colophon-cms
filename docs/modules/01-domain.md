@@ -59,6 +59,11 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - Validation uses a constrained, documented subset of JSON Schema, never user-executed code.
 - Unknown fields fail validation. Data is never dropped silently.
 - A canonical schema hash identifies each version.
+- Built in step 1.5 (D-040): `colophon_domain::schema::ContentType` parses a definition (text, rich text, number,
+  boolean, enum, datetime; images, references and lists later), validates content into canonical JSON with a code and
+  JSON Pointer for every refusal, writes the definition canonically for hashing, and `check_successor` allows only
+  changes that keep stored entries valid. `ContentType::articles()` replaced `entry::Article` with byte-identical
+  output.
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the
@@ -194,8 +199,8 @@ Port rules (rust-mastery chapter 10):
 ## Build order
 
 1. **P0:** IDs, scopes, schema field types, the rich-text validator, error types.
-2. **P1:** entries, revisions and articles (step 1.2, done); the save rule in the simulator (1.4); content types
-   (1.5); slugs and locales.
+2. **P1:** entries, revisions and articles (step 1.2, done); the save rule in the simulator (1.4, done); content
+   types (1.5, done); slugs and locales.
 3. **P2:** changesets, reviews, releases, publication history, job states.
 4. **P3:** delivery states, evidence, unpublish.
 5. **P4:** rollback, release-history queries, scheduling.

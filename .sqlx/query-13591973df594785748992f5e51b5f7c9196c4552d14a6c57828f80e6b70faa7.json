@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO collections (project_id, environment_id, slug) VALUES ($1, $2, 'articles')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "13591973df594785748992f5e51b5f7c9196c4552d14a6c57828f80e6b70faa7"
+}

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO content_type_versions (project_id, environment_id, collection, version, definition, definition_hash)\n         VALUES ($1, $2, 'articles', 1, $3, sha256(convert_to($3, 'UTF8')))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b7a8585f83bee4da9620b167b3f2bf8000ae9f22dcda74a9ec691c9b6eafa5b0"
+}

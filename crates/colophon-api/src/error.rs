@@ -17,7 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use colophon_db::DbError;
-use colophon_domain::{entry::ArticleError, rich_text::Rejection};
+use colophon_domain::{rich_text::Rejection, schema::Refusal};
 use serde::{Serialize, Serializer};
 use uuid::Uuid;
 
@@ -167,9 +167,9 @@ pub enum ApiError {
     /// A rich-text document was refused.
     #[error("{0}")]
     InvalidRichText(Rejection),
-    /// An article was refused.
+    /// Content or a content type definition was refused; `details` say which part and why.
     #[error("{0}")]
-    InvalidArticle(ArticleError),
+    Invalid(Refusal),
     /// A header is malformed; the reason is safe to show.
     #[error("{0}")]
     InvalidHeader(&'static str),
@@ -182,6 +182,13 @@ pub enum ApiError {
     StaleRevision {
         /// The revision the draft points at now.
         current: Uuid,
+    },
+    /// A content type update named a version that is no longer current. The response's `ETag`
+    /// names the current one.
+    #[error("the content type has changed since that version; load the current one and try again")]
+    StaleVersion {
+        /// The current version.
+        current: i32,
     },
     /// An `Idempotency-Key` was used before for a different request.
     #[error("this Idempotency-Key was already used for a different request")]
@@ -247,16 +254,17 @@ impl ApiError {
             }
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-            Self::InvalidRichText(_) | Self::InvalidArticle(_) | Self::InvalidField { .. } => {
+            Self::InvalidRichText(_) | Self::Invalid(_) | Self::InvalidField { .. } => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
             Self::InvalidHeader(_) => StatusCode::BAD_REQUEST,
             Self::PreconditionRequired(_) => StatusCode::PRECONDITION_REQUIRED,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
-            Self::Conflict(_) | Self::StaleRevision { .. } | Self::IdempotencyKeyReused => {
-                StatusCode::CONFLICT
-            }
+            Self::Conflict(_)
+            | Self::StaleRevision { .. }
+            | Self::StaleVersion { .. }
+            | Self::IdempotencyKeyReused => StatusCode::CONFLICT,
             Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -270,16 +278,17 @@ impl ApiError {
             Self::UnsupportedMediaType => ErrorCode::UnsupportedMediaType,
             Self::PayloadTooLarge => ErrorCode::PayloadTooLarge,
             Self::BadRequest | Self::InvalidHeader(_) => ErrorCode::BadRequest,
-            Self::InvalidRichText(_) | Self::InvalidArticle(_) | Self::InvalidField { .. } => {
+            Self::InvalidRichText(_) | Self::Invalid(_) | Self::InvalidField { .. } => {
                 ErrorCode::ValidationFailed
             }
             Self::PreconditionRequired(_) => ErrorCode::PreconditionRequired,
             Self::Unauthorized => ErrorCode::Unauthorized,
             Self::Forbidden(_) => ErrorCode::Forbidden,
             Self::NotFound => ErrorCode::NotFound,
-            Self::Conflict(_) | Self::StaleRevision { .. } | Self::IdempotencyKeyReused => {
-                ErrorCode::Conflict
-            }
+            Self::Conflict(_)
+            | Self::StaleRevision { .. }
+            | Self::StaleVersion { .. }
+            | Self::IdempotencyKeyReused => ErrorCode::Conflict,
             Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
@@ -293,12 +302,16 @@ impl ApiError {
                 reason: rejection.code.as_str(),
                 pointer: rejection.pointer.clone(),
             }),
-            Self::InvalidArticle(error) => Some(ErrorDetails {
-                reason: error.code(),
-                pointer: error.pointer(),
+            Self::Invalid(refusal) => Some(ErrorDetails {
+                reason: refusal.code,
+                pointer: refusal.pointer.clone(),
             }),
             Self::StaleRevision { .. } => Some(ErrorDetails {
                 reason: "stale_revision",
+                pointer: String::new(),
+            }),
+            Self::StaleVersion { .. } => Some(ErrorDetails {
+                reason: "stale_version",
                 pointer: String::new(),
             }),
             Self::IdempotencyKeyReused => Some(ErrorDetails {
@@ -365,6 +378,11 @@ impl IntoResponse for ApiError {
             }
             Self::StaleRevision { current } => {
                 if let Ok(etag) = HeaderValue::from_str(&format!("\"{current}\"")) {
+                    response.headers_mut().insert(header::ETAG, etag);
+                }
+            }
+            Self::StaleVersion { current } => {
+                if let Ok(etag) = HeaderValue::from_str(&format!("\"v{current}\"")) {
                     response.headers_mut().insert(header::ETAG, etag);
                 }
             }

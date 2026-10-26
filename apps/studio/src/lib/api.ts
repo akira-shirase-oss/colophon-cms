@@ -5,8 +5,6 @@
 // differently: a conflict opens the conflict screen, a refusal shows the reason, and a network
 // failure or a busy server means "keep the edit and try again".
 
-import type { RichTextValue } from '@colophon/editor';
-
 export interface Project {
 	id: string;
 	slug: string;
@@ -21,10 +19,34 @@ export interface Me {
 	projects: Project[];
 }
 
-export interface Article {
-	title: string;
-	body: RichTextValue;
+/** One field of a content type, as the server writes definitions: every default spelled out. */
+export type FieldDefinition = { id: string; label: string; required: boolean } & (
+	| { type: 'text'; max_chars: number; multiline: boolean }
+	| { type: 'rich_text' }
+	| { type: 'number'; integer: boolean; min?: number; max?: number }
+	| { type: 'boolean' }
+	| { type: 'enum'; values: string[] }
+	| { type: 'datetime' }
+);
+
+/** A content type's definition (D-040). */
+export interface Definition {
+	name: string;
+	title_field: string;
+	fields: FieldDefinition[];
 }
+
+/** One version of a content type. */
+export interface ContentType {
+	slug: string;
+	version: number;
+	definition: Definition;
+	definition_hash: string;
+	created_at: string;
+}
+
+/** An entry's content: field id to value, as its content type allows. */
+export type Content = Record<string, unknown>;
 
 export interface Revision {
 	id: string;
@@ -41,7 +63,7 @@ export interface Draft {
 	created_at: string;
 	updated_at: string;
 	revision: Revision;
-	content: Article;
+	content: Content;
 }
 
 export interface Summary {
@@ -147,7 +169,8 @@ async function loaded(response: Response): Promise<Loaded> {
 	};
 }
 
-const entries = (project: string) => `/api/v1/projects/${project}/environments/production/collections/articles/entries`;
+const base = (project: string) => `/api/v1/projects/${project}/environments/production`;
+const entries = (project: string, collection: string) => `${base(project)}/collections/${collection}/entries`;
 
 /** Who is signed in, or `null` if nobody is. */
 export async function me(): Promise<Me | null> {
@@ -159,25 +182,42 @@ export async function me(): Promise<Me | null> {
 	}
 }
 
-export async function listArticles(project: string): Promise<Summary[]> {
-	return ((await (await send('GET', `${entries(project)}?limit=100`)).json()) as { data: Summary[] }).data;
+export async function listContentTypes(project: string): Promise<ContentType[]> {
+	return ((await (await send('GET', `${base(project)}/content-types`)).json()) as { data: ContentType[] }).data;
 }
 
-export async function getArticle(project: string, entry: string): Promise<Loaded> {
-	return loaded(await send('GET', `${entries(project)}/${entry}`));
+export async function getContentType(project: string, collection: string): Promise<ContentType> {
+	return ((await (await send('GET', `${base(project)}/content-types/${collection}`)).json()) as { data: ContentType }).data;
 }
 
-export async function createArticle(project: string, article: Article, key: string): Promise<Loaded> {
-	return loaded(await send('POST', entries(project), article, { 'Idempotency-Key': key }));
+export async function listEntries(project: string, collection: string): Promise<Summary[]> {
+	return ((await (await send('GET', `${entries(project, collection)}?limit=100`)).json()) as { data: Summary[] }).data;
 }
 
-/** Saves `article` on top of the revision `etag` names. Sending the same key again is safe. */
-export async function saveArticle(project: string, entry: string, article: Article, etag: string, key: string): Promise<Loaded> {
-	return loaded(await send('PUT', `${entries(project)}/${entry}`, article, { 'If-Match': etag, 'Idempotency-Key': key }));
+export async function getEntry(project: string, collection: string, entry: string): Promise<Loaded> {
+	return loaded(await send('GET', `${entries(project, collection)}/${entry}`));
 }
 
-export async function listRevisions(project: string, entry: string): Promise<Revision[]> {
-	return ((await (await send('GET', `${entries(project)}/${entry}/revisions`)).json()) as { data: Revision[] }).data;
+export async function createEntry(project: string, collection: string, content: Content, key: string): Promise<Loaded> {
+	return loaded(await send('POST', entries(project, collection), content, { 'Idempotency-Key': key }));
+}
+
+/** Saves `content` on top of the revision `etag` names. Sending the same key again is safe. */
+export async function saveEntry(
+	project: string,
+	collection: string,
+	entry: string,
+	content: Content,
+	etag: string,
+	key: string
+): Promise<Loaded> {
+	return loaded(
+		await send('PUT', `${entries(project, collection)}/${entry}`, content, { 'If-Match': etag, 'Idempotency-Key': key })
+	);
+}
+
+export async function listRevisions(project: string, collection: string, entry: string): Promise<Revision[]> {
+	return ((await (await send('GET', `${entries(project, collection)}/${entry}/revisions`)).json()) as { data: Revision[] }).data;
 }
 
 /** A fresh idempotency key: 32 hex characters. */

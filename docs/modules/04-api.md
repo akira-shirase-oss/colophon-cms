@@ -69,7 +69,7 @@ create → conflict → review → publish scenario produce equivalent durable r
 | `/api/v1/rich-text/validate` | The validator's verdict on a document: canonical form, or a 422 whose `details` name the rejection code and JSON Pointer. Stores nothing. Built in step 0.5; requires authentication from P1 |
 | `/auth/*`, `/me` | OIDC login, callback and logout; session inspection and revocation; exact callback origins, CSRF. Built in step 1.1: `GET /auth/login`, `GET /auth/callback`, `POST /auth/logout`, and `GET /me` (the identity and its projects) |
 | `/api/v1/projects`, `/members`, `/invitations` | Project lifecycle and membership; owner-scoped. Built in step 1.1: list, create (with a `production` environment and the creator as owner; a taken slug is 409) and get, where a project you aren't a member of is 404 |
-| `{P}/schemas`, `/migrations` | Discover, validate, plan, apply, inspect; apply needs an approved current plan and migration permission |
+| `{P}/schemas`, `/migrations` | Discover, validate, plan, apply, inspect; apply needs an approved current plan and migration permission. Built in step 1.5 as `{P}/content-types` (D-040): list, create, get with `ETag: "v<n>"`, and update with `If-Match`, accepted only for changes that keep stored entries valid (`needs_migration` otherwise); owners and developers only. Migrations later |
 | `{P}/collections/{collection}/entries` | List and create; get, update and archive by ID; updates need the expected revision. Built in step 1.2 for the `articles` collection (D-034): list (cursor), create, get with `ETag`, save with `If-Match`, and `…/{entry}/revisions`; archive later |
 | `{P}/entries/{id}/revisions`, `/comments` | History, compare, restore as a new draft, revision-bound comments |
 | `{P}/changesets`, `/reviews`, `/releases` | Prepare, validate, request review, approve, publish, schedule, cancel, inspect, roll back as a new generation |
@@ -175,7 +175,7 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 1. **P0:** skeleton, error envelope, request IDs, health.
 2. **P1:** projects (step 1.1, done); entries, revisions, preconditions, idempotency and pagination (step 1.2,
-   done); environments, schemas (1.5), and the generated OpenAPI document.
+   done); content types (step 1.5, done); environments, migrations, and the generated OpenAPI document.
 3. **P2:** changesets, reviews, releases, jobs.
 4. **P3:** destinations and deliveries.
 5. **P4:** assets, history and rollback.

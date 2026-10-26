@@ -343,6 +343,7 @@ dependencies = [
 name = "colophon-db"
 version = "0.0.0"
 dependencies = [
+ "colophon-domain",
  "colophon-sim",
  "sqlx",
  "thiserror",
@@ -373,6 +374,7 @@ dependencies = [
  "redis",
  "reqwest",
  "serde_json",
+ "sqlx",
  "thiserror",
  "tokio",
  "tokio-util",
