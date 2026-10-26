@@ -10,8 +10,9 @@
 //! the generation of its first page, so paging through a list never mixes two releases.
 //!
 //! Since step 3.1 (D-048) answers are cached by generation (`crate::cache`). The generation is
-//! resolved from Postgres on every request, in a transaction of its own that ends before the
-//! cache is asked, so no database connection waits on the cache or on another request's fill.
+//! resolved from Postgres on every request, in one statement that ends before the cache is asked
+//! (`delivery::environment`), so no database connection waits on the cache or on another
+//! request's fill.
 //! Answers carry an `ETag` (and a matching `If-None-Match` gets 304), the shared-cache policy for
 //! their kind (latest 30 seconds, pinned 300, browsers always revalidate), `Cache-Tag` for purges,
 //! and `Colophon-Cache: hit | miss | coalesced | bypass`.
@@ -112,21 +113,16 @@ struct Answer {
 #[error("reading published content failed (logged by the request that read it)")]
 struct SharedReadFailed;
 
-/// The project's environment, from Postgres, in a transaction that ends here; or 404.
+/// The project's environment and its latest generation, from Postgres in one statement; or 404.
 async fn resolve(
     services: &Services,
     project: Uuid,
     environment: &str,
 ) -> Result<delivery::Environment, ApiError> {
-    let mut tx = delivery::begin(&services.pool, project)
+    delivery::environment(&services.pool, project, environment)
         .await
-        .map_err(ApiError::from_db)?;
-    let found = tx
-        .environment(environment)
-        .await
-        .map_err(ApiError::from_db)?;
-    tx.finish().await.map_err(ApiError::from_db)?;
-    found.ok_or(ApiError::NotFound)
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)
 }
 
 /// The generation to read at: the one asked for, which must have committed, or the latest.

@@ -47,6 +47,26 @@ pub struct Published {
     pub valid_from: i64,
 }
 
+/// The environment `slug` of `project` with its latest generation, in one statement: the delivery
+/// cache asks this on every request (`delivery_environment`, migration 0011, which runs as
+/// `colophon_delivery` in the project's context and returns nothing else).
+pub async fn environment(
+    pool: &PgPool,
+    project: Uuid,
+    slug: &str,
+) -> Result<Option<Environment>, DbError> {
+    sqlx::query_as!(
+        Environment,
+        r#"SELECT id AS "id!", epoch AS "epoch!", generation AS "generation!"
+           FROM delivery_environment($1, $2)"#,
+        project,
+        slug
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(DbError::from_query)
+}
+
 /// Starts a delivery transaction for `project`: switches to `colophon_delivery` for its duration.
 pub async fn begin(pool: &PgPool, project: Uuid) -> Result<DeliveryTransaction, DbError> {
     let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
