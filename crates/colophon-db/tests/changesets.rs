@@ -142,3 +142,33 @@ async fn reviews_are_numbered_kept_and_private_to_their_project() {
     drop(tx);
     db.drop().await;
 }
+
+/// Regression (CI, 2026-10-26): Postgres settled on one generic plan for the list while `reviews`
+/// was nearly empty (a full scan of it for each of the page's 100 changesets), then kept that plan
+/// while the table grew to 3,000 rows: the list took 200 ms. It is planned afresh on every run
+/// now, with the tables as they are at that moment.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_changeset_list_is_planned_afresh_on_every_run() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = enter(&db.app, alice, project).await;
+    // More runs than Postgres needs before it switches a prepared statement to a generic plan.
+    for _ in 0..8 {
+        changesets::list(&mut tx).await.expect("listed");
+    }
+    let (generic, custom): (i64, i64) = sqlx::query_as(
+        "SELECT generic_plans, custom_plans FROM pg_prepared_statements
+         WHERE statement LIKE '%FROM changesets c%LATERAL%' AND statement NOT LIKE '%pg_prepared_statements%'",
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .expect("the list is a prepared statement");
+    assert_eq!((generic, custom), (0, 8), "(generic plans, custom plans)");
+    tx.commit().await.expect("commit");
+    db.drop().await;
+}
