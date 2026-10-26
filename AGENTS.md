@@ -23,8 +23,10 @@ bootstrap` makes the first administrator once, and only administrators create pr
 `scripts/migrate.sh` bootstraps; a Keycloak started before 1.8 must be recreated (deploy/README.md). P1's proof gate
 is met; see `docs/ROADMAP.md` for what carries forward. P2 has begun: step 2.1 is done, changesets that pin exact
 revisions and reviews bound to their hash (`colophon_domain::changeset`, migration 0007, `{P}/changesets`, the
-Studio's changeset pages, `perf/k6/changesets.js`; D-044). Next is step 2.2: publishing an approved changeset as one
-release with one generation number.
+Studio's changeset pages, `perf/k6/changesets.js`; D-044). Step 2.2 is done: publishing commits a release on the
+publisher's base generation, publication history is non-overlapping intervals, and `/content/v1` reads a published
+copy as `colophon_delivery` (migration 0008, `colophon_db::{releases, delivery}`, `perf/k6/delivery.js`; D-045; rerun
+`scripts/stack.sh up` on an older stack to create the role). Next is step 2.3: the outbox and the worker.
 
 ## Read first
 

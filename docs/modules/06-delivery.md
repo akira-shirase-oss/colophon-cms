@@ -52,6 +52,11 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
 - Responses include the generation, an ETag and the resolved locale.
 - A pinned request for revoked or inaccessible content is still denied: history never bypasses current revocation
   rules (spec §10).
+- Built in step 2.2 (D-045): `GET /content/v1/{project}/{environment}/{collection}?generation=&limit=&cursor=` and
+  `…/{collection}/{entry}`, with no sign-in, from `publications` as `colophon_delivery` (`colophon_db::delivery`,
+  which switches role for each transaction). Answers carry `Colophon-Generation`; a list's cursor keeps the
+  generation of its first page; a generation that hasn't committed is 422 `invalid_generation`. Projects are
+  addressed by id; ETags, cache headers (`no-store` for now) and locales come with P3.
 
 ### Cache keys (spec §15)
 - A key includes:
@@ -154,10 +159,15 @@ These are policies to test, not a global 30-second consistency guarantee.
   - a stale fill after publish;
   - removal of prior public versions.
 - The mixed-release consistency checker ([sim](10-sim.md)).
+- **In place since step 2.2:** `crates/colophon-server/tests/releases.rs` (anonymous reads, a newer draft never
+  delivered, a pinned read of generation 1 after release 2, a cursor that keeps its generation across a release);
+  `crates/colophon-db/tests/releases.rs` (the delivery role refused drafts, entries, changesets, members, sessions,
+  identities and every write); `perf/k6/delivery.js` (anonymous latest, pinned and single-entry reads, at least
+  1,000,000 per full run).
 
 ## Build order
 
-1. **P2:** the public API from published projections without a cache; pinned reads.
+1. **P2:** the public API from published projections without a cache; pinned reads (step 2.2, done).
 2. **P3:** cache layer, CDN headers, tags, Cloudflare purge, probes, unpublish and revocation.
 3. **P4:** time-travel queries for the Studio slider, the preview origin, sitemaps, feeds and redirects.
 

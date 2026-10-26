@@ -58,6 +58,9 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   from picked entries; `…/changesets/{id}` shows the pinned entries (marking any edited since), submits, refreshes
   and, for owners and publishers, approves or asks for changes to the version on screen. If the changeset changed
   meanwhile, the page shows the current version and says so instead of acting on it. Its test runs that in two tabs.
+  Since step 2.2 (D-045): an approved changeset has a Publish button, which publishes on the latest release the page
+  has seen and, if another release came first, says so and lets you look again; `…/releases` lists releases and
+  links the public `/content/v1` address.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

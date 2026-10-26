@@ -94,10 +94,10 @@ claimed impossible), F05 (an old delivery after a newer release is blocked and r
 concurrent releases on one base generation cannot both win.
 
 **Steps:** 2.1 approving the exact change (done: D-044; changesets pin exact revisions and their content-type
-versions, approvals bind to the changeset's hash, and any later edit makes them stale) · 2.2 one
-release, one number: publishing an approved changeset commits a release with the next generation, publication history
-as non-overlapping intervals, `/content/v1` reads from published projections, and two releases racing on one generation
-can't both win · 2.3 work that survives a crash: the outbox, the worker's leases, attempt generations, retries and
+versions, approvals bind to the changeset's hash, and any later edit makes them stale) · 2.2 one release, one
+number (done: D-045; a release takes the next generation only from the publisher's base, publication history is
+non-overlapping intervals, `/content/v1` reads a published copy as a role that can't read drafts, and two releases on
+one base can't both commit) · 2.3 work that survives a crash: the outbox, the worker's leases, attempt generations, retries and
 supersession (F03, F05) · 2.4 killing it on purpose: the simulator covers releases and the outbox, and the first
 real-process crash loop.
 

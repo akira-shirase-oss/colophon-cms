@@ -117,6 +117,9 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - **Publication history:** half-open intervals `[valid_from, valid_to)` over generations per entry and locale. They
   never overlap.
 - Rollback creates a new generation that references older revisions. Generations are never decremented.
+- Built in step 2.2 (D-045): `colophon_domain::release`: `next_generation(base, current)` refuses a moved base;
+  `Interval` and `apply` model an entry's history, `well_formed` checks it (ordered, non-empty, non-overlapping, at
+  most one open, last); and changesets gain `Status::Published { generation }`.
 - Unpublish creates a tombstone and a removal job.
 - A first release batch holds at most 100 changed entries.
 - Dependency validation: a public entry may not embed an unpublished or private revision.
@@ -209,7 +212,7 @@ Port rules (rust-mastery chapter 10):
 1. **P0:** IDs, scopes, schema field types, the rich-text validator, error types.
 2. **P1:** entries, revisions and articles (step 1.2, done); the save rule in the simulator (1.4, done); content
    types (1.5, done); the role policy (1.7, done); slugs and locales.
-3. **P2:** changesets and reviews (2.1, done); releases, publication history, job states.
+3. **P2:** changesets and reviews (2.1, done); releases and publication history (2.2, done); job states.
 4. **P3:** delivery states, evidence, unpublish.
 5. **P4:** rollback, release-history queries, scheduling.
 
