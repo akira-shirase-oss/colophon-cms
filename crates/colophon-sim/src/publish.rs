@@ -74,8 +74,8 @@ impl Default for PublishConfig {
             workers: 3,
             steps: 600,
             step_ms: 200,
-            lease_ms: 3_000,
-            attempt_ms: 1_000,
+            lease_ms: 6_000,
+            attempt_ms: 3_000,
             stale_view: 250,
             lose_request: 80,
             lose_answer: 80,
@@ -106,11 +106,13 @@ pub enum PublishMutation {
     OutboxAfterCommit,
     /// A retried publish is applied again instead of replayed.
     PublishForgetsKey,
+    /// A worker sends however little of its lease is left, so a later holder can race it.
+    SendsLate,
 }
 
 impl PublishMutation {
     /// Every mutation, for the mutation suite.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::IgnoreBase,
         Self::KeepOpenInterval,
         Self::StaleLeaseFinalizes,
@@ -118,6 +120,7 @@ impl PublishMutation {
         Self::NoSupersedeCheck,
         Self::OutboxAfterCommit,
         Self::PublishForgetsKey,
+        Self::SendsLate,
     ];
 
     /// The name used on the command line.
@@ -131,6 +134,7 @@ impl PublishMutation {
             Self::NoSupersedeCheck => "no-supersede-check",
             Self::OutboxAfterCommit => "outbox-after-commit",
             Self::PublishForgetsKey => "publish-forgets-key",
+            Self::SendsLate => "sends-late",
         }
     }
 
@@ -232,6 +236,8 @@ enum Phase {
 struct Holding {
     job: usize,
     lease_generation: u32,
+    /// When this holder's own lease runs out. The job's lease can be newer: a later holder's.
+    expires_ms: i64,
     phase: Phase,
 }
 
@@ -582,14 +588,19 @@ impl Run<'_> {
         job.lease_generation += 1;
         job.attempts += 1;
         job.expires_ms = now + self.config.lease_ms;
-        let (generation, destination, lease_generation) =
-            (job.generation, job.destination, job.lease_generation);
+        let (generation, destination, lease_generation, expires_ms) = (
+            job.generation,
+            job.destination,
+            job.lease_generation,
+            job.expires_ms,
+        );
         self.note(&format!(
             "w{worker} claimed g{generation}->d{destination} (lease {lease_generation})"
         ));
         self.workers[worker] = Some(Holding {
             job: index,
             lease_generation,
+            expires_ms,
             phase: Phase::Check,
         });
     }
@@ -613,8 +624,11 @@ impl Run<'_> {
             }
             Phase::Send => {
                 // Never send so late that the lease could run out with the request still on its
-                // way: a later holder must not race this one.
-                if self.now_ms + self.config.attempt_ms > self.jobs[index].expires_ms {
+                // way: a later holder must not race this one. Measured against this holder's own
+                // lease, as the worker does: by now the job may be under a later holder's.
+                if self.now_ms + self.config.attempt_ms > holding.expires_ms
+                    && self.mutation != PublishMutation::SendsLate
+                {
                     self.stats.abandoned += 1;
                     self.note(&format!(
                         "w{worker} gave up g{}: too close to its lease's end",

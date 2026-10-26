@@ -35,7 +35,9 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
 - **One announcement in flight per destination** (step 2.4, D-047): a claim skips a job whose destination has
   another running job under a live lease (migration 0010). An attempt's deadline (`COLOPHON_WORKER_ATTEMPT_MS`,
   default 10 s) must be shorter than the lease, and a worker gives up before sending when less than one deadline of
-  its lease remains, so nothing it sent can still be on its way when the next holder starts. The simulator's model
+  its lease remains, so nothing it sent can still be on its way when the next holder starts. The time used is
+  measured from just before the worker asked for the claim: the database starts the lease while running the claim,
+  so a clock started earlier can only think less of the lease is left, never more. The simulator's model
   found the gap: before this, a slow network could deliver release N after N+1.
 - **Not yet:** per-project limits, signed announcements, wake-ups instead of polling,
   reconciliation beyond repeating with the same key, admission budgets (F09), scheduled releases.

@@ -9,7 +9,7 @@
 //!                                           NAME: none, ignore-base, keep-open-interval,
 //!                                           stale-lease-finalizes, parallel-sends,
 //!                                           no-supersede-check, outbox-after-commit,
-//!                                           publish-forgets-key
+//!                                           publish-forgets-key, sends-late
 //! ```
 //!
 //! Exits 0 when every run held its invariants, 1 when one failed (printing the seed to replay),

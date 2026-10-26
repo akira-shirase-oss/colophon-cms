@@ -92,3 +92,27 @@ fn every_planted_publishing_bug_is_caught() {
         }
     }
 }
+
+/// Seed 449 of the first CI sweep, under the timing it ran with: a worker whose lease had run out
+/// was still about to send when another worker reclaimed the job. The model checked the time left
+/// against the job's current lease (the new holder's) instead of the worker's own, so the stale
+/// worker sent release 44 after release 46 had gone out. The real worker measures its own lease;
+/// so does the model now. (The `sends-late` mutation keeps the guard itself honest.)
+#[test]
+fn a_worker_measures_the_time_left_on_its_own_lease_not_a_later_holders() {
+    let config = PublishConfig {
+        lease_ms: 3_000,
+        attempt_ms: 1_000,
+        ..PublishConfig::default()
+    };
+    let report = run_publishing(449, &config, PublishMutation::None);
+    assert!(
+        report.violations.is_empty(),
+        "seed 449: {:?}",
+        report.violations.first()
+    );
+    assert!(
+        report.stats.reclaims > 0 && report.stats.abandoned > 0,
+        "the run still reclaims leases and gives up sends that started too late"
+    );
+}
