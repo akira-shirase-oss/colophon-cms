@@ -35,7 +35,8 @@ struct SiteRunner {
 impl SiteRunner {
     fn start(project: &str) -> Self {
         let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let root = std::env::temp_dir().join(format!("colophon-site-{}", uuid::Uuid::now_v7().simple()));
+        let root =
+            std::env::temp_dir().join(format!("colophon-site-{}", uuid::Uuid::now_v7().simple()));
         let child = Command::new("node")
             .arg(repo.join("apps/web/src/runner.ts"))
             .current_dir(&repo)
@@ -112,37 +113,68 @@ async fn each_release_becomes_a_checked_static_site_and_its_receipt_says_so() {
     let _site = SiteRunner::start(&id);
     let ready = Instant::now() + Duration::from_secs(20);
     while page("/").await.0 != StatusCode::OK {
-        assert!(Instant::now() < ready, "the site runner never served its first build");
+        assert!(
+            Instant::now() < ready,
+            "the site runner never served its first build"
+        );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(page("/").await.1.contains("Nothing published yet"));
-    destination(&owner, &id, &json!({"name": "Site", "url": format!("http://{SITE}/hook")})).await;
-    destination(&owner, &id, &json!({"kind": "probe", "name": "Home page", "url": format!("http://{SITE}/")})).await;
+    destination(
+        &owner,
+        &id,
+        &json!({"name": "Site", "url": format!("http://{SITE}/hook")}),
+    )
+    .await;
+    destination(
+        &owner,
+        &id,
+        &json!({"kind": "probe", "name": "Home page", "url": format!("http://{SITE}/")}),
+    )
+    .await;
 
     let first = create_article(&owner, &id, "Hello, site").await;
-    assert_eq!(release(&owner, &id, &json!({"title": "One", "entries": [first]})).await, 1);
+    assert_eq!(
+        release(&owner, &id, &json!({"title": "One", "entries": [first]})).await,
+        1
+    );
     let receipt = verified(&owner, &id, 1, 30).await;
     assert_eq!(receipt["locations"], 1);
     let (status, home) = page("/").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(home.contains(r#"<meta name="colophon-generation" content="1">"#), "{home}");
+    assert!(
+        home.contains(r#"<meta name="colophon-generation" content="1">"#),
+        "{home}"
+    );
     assert!(home.contains("Hello, site"), "{home}");
     let (status, article) = page(&format!("/articles/{first}/")).await;
     assert_eq!(status, StatusCode::OK);
     assert!(article.contains("<h1>Hello, site</h1>"), "{article}");
 
     let second = create_article(&owner, &id, "Second post").await;
-    assert_eq!(release(&owner, &id, &json!({"title": "Two", "entries": [second]})).await, 2);
+    assert_eq!(
+        release(&owner, &id, &json!({"title": "Two", "entries": [second]})).await,
+        2
+    );
     verified(&owner, &id, 2, 30).await;
     let (_, colophon) = page("/colophon/").await;
-    assert!(colophon.contains("release <strong>2</strong>"), "{colophon}");
+    assert!(
+        colophon.contains("release <strong>2</strong>"),
+        "{colophon}"
+    );
     assert!(colophon.contains("Hello, site: release 1"), "{colophon}");
 
     // Taken down: the rebuilt site has no page for it, and only the second post is listed.
     let unpublish = json!({"title": "Take it down", "unpublish": [first]});
     assert_eq!(release(&owner, &id, &unpublish).await, 3);
     verified(&owner, &id, 3, 30).await;
-    assert_eq!(page(&format!("/articles/{first}/")).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        page(&format!("/articles/{first}/")).await.0,
+        StatusCode::NOT_FOUND
+    );
     let (_, home) = page("/").await;
-    assert!(!home.contains("Hello, site") && home.contains("Second post"), "{home}");
+    assert!(
+        !home.contains("Hello, site") && home.contains("Second post"),
+        "{home}"
+    );
 }
