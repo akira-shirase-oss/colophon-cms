@@ -162,7 +162,21 @@ These mirror domain invariants D1–D11 ([domain](01-domain.md)) and worker inva
    K (no key reused for a different request), four mutations each caught on the first seed, and
    `crates/colophon-db/tests/differential.rs`, which replays runs against Postgres and requires the same answers. The
    virtual clock arrives with leases and schedules (P2), the first thing that needs time.
-2. **P2:** releases, outbox, workers, faulty adapters, S2–S4, S6, S7; first crash loop.
+2. **P2:** releases, outbox, workers, faulty adapters, S2–S4, S6, S7; first crash loop (step 2.4, done: D-047). Built:
+   `colophon_sim::run_publishing` (`--scenario publishing`): publishers on the generation they saw, retried
+   publishes, an outbox, workers under leases on a virtual clock that crash at any step, and a webhook receiver
+   behind a network that loses requests and answers, duplicates and refuses. It checks G (two releases on one base
+   never both commit), S2, A (a retried publish that committed gets its generation back), S3, S4, O (every release
+   has an announcement per destination), S6 and S7 after every step, and L after a quiet drain. Eight planted bugs
+   are each caught within 200 seeds; CI sweeps 1,000. The first 1,000-seed sweep failed S6 at seed 449 on a bug in
+   the model, not the system: a worker checked the time left against the job's current lease, which by then could be
+   a later holder's, so a stale worker sent an older release. Each holder now carries its own lease's end, as the
+   real worker does. With that fixed, the two ordering bugs (parallel sends, no supersede check) went uncaught: a
+   request was in flight for under a second while a second worker needed about three turns to claim, check and send,
+   so the earlier catches had come through the model's bug. The model's lease and attempt deadline are now 6 s and
+   3 s of virtual time (a request can be in flight longer than another worker takes to send), and an eighth planted
+   bug, `sends-late`, removes the time-left guard itself. Seed 449 under the old timing is a regression test. The real-process crash loop is
+   `crates/colophon-server/tests/crash_loop.rs`, twelve SIGKILLs of the server and worker per run.
 3. **P3:** delivery, cache and evidence, S5, S9; the consistency checker; recorded demo.
 4. **P4:** operator restore with new epochs; deletion-ledger replay.
 5. **P6:** nightly sweeps, mutation suite complete, demo re-recorded for v0.1.

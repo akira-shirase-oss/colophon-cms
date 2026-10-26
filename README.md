@@ -42,7 +42,9 @@
 > the same base can't both commit, and anyone can read what's published, past releases included, through a database
 > role that can't see drafts. Step 2.3 is done: each release is announced to your webhooks by a background worker
 > that survives being killed mid-delivery, never sends an older release after a newer one, and only ever calls public
-> addresses.
+> addresses. Step 2.4 is done: a deterministic simulator races publishers, crashes workers and scrambles the network
+> thousands of times per run, and a crash loop really kills the server over and over; neither finds anything lost or
+> doubled. That completes the second milestone.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 

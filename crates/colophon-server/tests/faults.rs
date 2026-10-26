@@ -250,6 +250,7 @@ async fn a_worker_killed_after_announcing_is_followed_by_one_with_the_same_key()
         let mut server = Server::start_with(&[
             ("COLOPHON_FAULT", "worker:after-dispatch"),
             ("COLOPHON_WORKER_LEASE_MS", "1500"),
+            ("COLOPHON_WORKER_ATTEMPT_MS", "500"),
             ("COLOPHON_WORKER_POLL_MS", "300"),
         ])
         .await;
@@ -273,6 +274,7 @@ async fn a_worker_killed_after_announcing_is_followed_by_one_with_the_same_key()
 
     let _server = Server::start_with(&[
         ("COLOPHON_WORKER_LEASE_MS", "1500"),
+        ("COLOPHON_WORKER_ATTEMPT_MS", "500"),
         ("COLOPHON_WORKER_POLL_MS", "50"),
     ])
     .await;
