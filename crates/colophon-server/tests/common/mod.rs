@@ -340,3 +340,32 @@ pub(crate) async fn project(session: &Session) -> String {
 pub(crate) fn entries(project: &str) -> String {
     format!("/api/v1/projects/{project}/environments/production/collections/articles/entries")
 }
+
+/// Brings `guest` into `owner`'s project as `role`, through an invitation; nothing else.
+pub(crate) async fn join(owner: &Session, guest: &Session, project: &str, role: &str) {
+    let invited = call(
+        owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/invitations"),
+        Some(&serde_json::json!({"role": role, "label": "test"})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(invited.status, StatusCode::CREATED, "{}", invited.body);
+    let token = invited.body["data"]["link"]
+        .as_str()
+        .and_then(|link| link.split_once('#'))
+        .map(|(_, token)| token.to_owned())
+        .expect("a token");
+    let joined = call(
+        guest,
+        Method::POST,
+        "/api/v1/invitations/accept",
+        Some(&serde_json::json!({"token": token})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
+}

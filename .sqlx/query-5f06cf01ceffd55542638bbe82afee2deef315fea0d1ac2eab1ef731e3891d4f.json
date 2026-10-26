@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO changeset_items (project_id, environment_id, changeset_id, entry_id, revision_id)\n         SELECT $1, $2, $3, entry, revision FROM unnest($4::uuid[], $5::uuid[]) AS pinned (entry, revision)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "UuidArray",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5f06cf01ceffd55542638bbe82afee2deef315fea0d1ac2eab1ef731e3891d4f"
+}

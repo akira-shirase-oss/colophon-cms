@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO reviews (project_id, environment_id, id, changeset_id, changeset_hash, seq, reviewer_id, decision, comment)\n         SELECT $1, $2, $3, $4, $5, coalesce(max(seq), 0) + 1, $6, $7, $8\n         FROM reviews WHERE project_id = $1 AND environment_id = $2 AND changeset_id = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Bytea",
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "11902f97a6a2dcfaaf8c97649976b6031689b7fa4e68a5eef4caf2ed3f0827df"
+}

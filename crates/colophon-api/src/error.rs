@@ -190,6 +190,13 @@ pub enum ApiError {
         /// The current version.
         current: i32,
     },
+    /// A changeset action named a hash the changeset no longer has. The response's `ETag` names
+    /// the current one (D-044).
+    #[error("the changeset has changed since you loaded it; load it again and check what changed")]
+    StaleChangeset {
+        /// Its current hash, as `sha256:<hex>`.
+        current: String,
+    },
     /// An `Idempotency-Key` was used before for a different request.
     #[error("this Idempotency-Key was already used for a different request")]
     IdempotencyKeyReused,
@@ -264,6 +271,7 @@ impl ApiError {
             Self::Conflict(_)
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
+            | Self::StaleChangeset { .. }
             | Self::IdempotencyKeyReused => StatusCode::CONFLICT,
             Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -288,6 +296,7 @@ impl ApiError {
             Self::Conflict(_)
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
+            | Self::StaleChangeset { .. }
             | Self::IdempotencyKeyReused => ErrorCode::Conflict,
             Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
@@ -312,6 +321,10 @@ impl ApiError {
             }),
             Self::StaleVersion { .. } => Some(ErrorDetails {
                 reason: "stale_version",
+                pointer: String::new(),
+            }),
+            Self::StaleChangeset { .. } => Some(ErrorDetails {
+                reason: "stale_changeset",
                 pointer: String::new(),
             }),
             Self::IdempotencyKeyReused => Some(ErrorDetails {
@@ -383,6 +396,11 @@ impl IntoResponse for ApiError {
             }
             Self::StaleVersion { current } => {
                 if let Ok(etag) = HeaderValue::from_str(&format!("\"v{current}\"")) {
+                    response.headers_mut().insert(header::ETAG, etag);
+                }
+            }
+            Self::StaleChangeset { current } => {
+                if let Ok(etag) = HeaderValue::from_str(&format!("\"{current}\"")) {
                     response.headers_mut().insert(header::ETAG, etag);
                 }
             }

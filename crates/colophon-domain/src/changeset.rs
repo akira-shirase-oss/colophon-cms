@@ -94,7 +94,10 @@ pub struct Review {
     pub decision: Decision,
     /// The changeset hash they decided on.
     pub hash: String,
-    /// When, in Unix seconds.
+    /// Its place in the changeset's decisions, in the order they were recorded: the latest has
+    /// the highest. Timestamps can't order them (two reviews can share one).
+    pub seq: i64,
+    /// When, in Unix seconds: for expiry only.
     pub at: i64,
 }
 
@@ -145,8 +148,8 @@ pub enum Status {
 }
 
 /// Decides a changeset's status. Reviews of other hashes are ignored: they were about a
-/// different set of revisions. The latest decision on the current hash wins, except that a
-/// self-approval doesn't count where the project requires a different reviewer.
+/// different set of revisions. The latest decision (highest `seq`) on the current hash wins,
+/// except that a self-approval doesn't count where the project requires a different reviewer.
 pub fn status(facts: &Facts<'_>) -> Status {
     if facts.stale_items > 0 {
         return Status::Stale {
@@ -166,7 +169,7 @@ pub fn status(facts: &Facts<'_>) -> Status {
         .reviews
         .iter()
         .filter(counts)
-        .max_by(|a, b| a.at.cmp(&b.at));
+        .max_by_key(|review| review.seq);
     match latest {
         None => Status::AwaitingReview,
         Some(review) if review.decision == Decision::RequestChanges => Status::ChangesRequested {
@@ -195,11 +198,13 @@ mod tests {
         }
     }
 
+    /// A review whose sequence number follows its time, as most do.
     fn review(reviewer: &str, decision: Decision, hash: &str, at: i64) -> Review {
         Review {
             reviewer: reviewer.to_owned(),
             decision,
             hash: hash.to_owned(),
+            seq: at,
             at,
         }
     }
@@ -352,6 +357,49 @@ mod tests {
                 by: "ann".to_owned()
             },
             "asking for changes to your own work always counts"
+        );
+    }
+
+    #[test]
+    fn the_order_decisions_were_recorded_in_wins_not_their_timestamps() {
+        // Asked for changes, then approved within the same second: the approval is the latest.
+        let asked = Review {
+            seq: 1,
+            ..review("bo", Decision::RequestChanges, "h1", 20)
+        };
+        let approved = Review {
+            seq: 2,
+            ..review("bo", Decision::Approve, "h1", 20)
+        };
+        for reviews in [
+            [asked.clone(), approved.clone()],
+            [approved.clone(), asked.clone()],
+        ] {
+            assert_eq!(
+                status(&facts(&reviews)),
+                Status::Approved {
+                    by: "bo".to_owned(),
+                    self_review: false
+                }
+            );
+        }
+        // A transaction that waited for the lock can carry an earlier time than the decision
+        // recorded before it; the sequence still says which came last.
+        let inverted = [
+            Review {
+                seq: 1,
+                ..review("bo", Decision::Approve, "h1", 30)
+            },
+            Review {
+                seq: 2,
+                ..review("cy", Decision::RequestChanges, "h1", 25)
+            },
+        ];
+        assert_eq!(
+            status(&facts(&inverted)),
+            Status::ChangesRequested {
+                by: "cy".to_owned()
+            }
         );
     }
 
