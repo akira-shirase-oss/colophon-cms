@@ -78,13 +78,15 @@
 
 <Sidebar.Provider>
 	<Sidebar.Root variant="inset" collapsible="icon">
+		<!-- One landmark for the whole sidebar, so screen-reader users can jump to it. -->
+		<nav aria-label="Project" class="flex min-h-0 flex-1 flex-col">
 		<Sidebar.Header>
 			<Sidebar.Menu>
 				<Sidebar.MenuItem>
 					<DropdownMenu.Root>
 						<DropdownMenu.Trigger>
 							{#snippet child({ props })}
-								<Sidebar.MenuButton size="lg" {...props} class="data-[state=open]:bg-sidebar-accent" aria-label="Switch project">
+								<Sidebar.MenuButton size="lg" {...props} class="data-[state=open]:bg-sidebar-accent">
 									<span class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-sidebar-border bg-background shadow-xs">
 										<Mark size={16} />
 									</span>
@@ -92,7 +94,8 @@
 										<span class="truncate font-medium" data-testid="project-name">{mine.data?.name ?? '…'}</span>
 										<span class="truncate text-xs text-muted-foreground">{mine.data?.slug ?? ''}</span>
 									</span>
-									<ChevronsUpDownIcon class="ml-auto text-muted-foreground" />
+									<ChevronsUpDownIcon class="ml-auto text-muted-foreground" aria-hidden="true" />
+									<span class="sr-only">: switch project</span>
 								</Sidebar.MenuButton>
 							{/snippet}
 						</DropdownMenu.Trigger>
@@ -223,6 +226,7 @@
 			</div>
 		</Sidebar.Footer>
 		<Sidebar.Rail />
+		</nav>
 	</Sidebar.Root>
 
 	<Sidebar.Inset class="min-w-0 border border-sidebar-border md:peer-data-[variant=inset]:shadow-xs">

@@ -41,7 +41,7 @@ test('an article published in the Studio is live on the site, verified, and acce
 		}).toPass({ timeout: 20_000 });
 
 		// The site hears about releases, and a probe checks the live home page.
-		await page.goto(`/studio/projects/${project}/releases`);
+		await page.goto(`/studio/projects/${project}/settings`);
 		await page.getByLabel('Destination name').fill('Site build');
 		await page.getByLabel('Webhook URL (https)').fill(`${SITE}/hook`);
 		await page.getByRole('button', { name: 'Add destination' }).click();

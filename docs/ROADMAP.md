@@ -130,8 +130,11 @@ public demo:** recorded crash loop plus a live site with receipts.
 cache is down, ETags with 304s, CDN cache policies and tags; F06, F08, L04) · 3.2 taking it back (D-049, D-050; unpublish with
 tombstones, origin revocation through historical URLs, purge jobs through a fake CDN; F07) · 3.3 a receipt for every
 publish (D-051; probes, evidence scoped to the locations checked, the Studio's receipt timeline) · 3.4 my own site, running
-on Colophon (in progress: D-052; the reference blog with a generation marker and the build-and-promote adapter) · 3.5 the first public
-demo (docs skeleton, simulator cache and delivery faults, the mixed-release checker, a recorded crash loop).
+on Colophon (D-052; the reference blog with a generation marker and the build-and-promote adapter) · 3.5 the Studio, designed
+(D-053; the design system, entry states, title search, revision comparison, review diffs, the sign-in theme) · 3.6 content
+modelling in the Studio (a content-type builder with safe changes, and the editing that still goes through the API) · 3.7 my
+site goes live, and the first public demo (docs skeleton, simulator cache and delivery faults, the mixed-release checker, a
+recorded crash loop).
 
 ## P4: Time travel and media
 

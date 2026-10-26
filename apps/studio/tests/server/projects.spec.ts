@@ -15,7 +15,7 @@ test('the administrator creates a project from the home page; others are told ho
 	await expect(page.getByRole('heading', { name: 'Content' })).toBeVisible();
 	await expect(page.getByTestId('content-types')).toContainText('Articles');
 	await page.goto('/studio/');
-	await expect(page.getByTestId('projects').getByRole('listitem').filter({ hasText: name })).toContainText('owner');
+	await expect(page.getByTestId('projects').getByRole('listitem').filter({ hasText: name })).toContainText('Owner');
 
 	// The same slug again is refused, and says why.
 	await page.getByLabel('Name', { exact: true }).fill(name);

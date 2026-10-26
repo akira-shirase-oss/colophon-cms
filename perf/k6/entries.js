@@ -1,10 +1,12 @@
 // Load scenario for drafts (step 1.2): every request is signed in, and writes are real saves.
 // setup() signs in through Keycloak, creates a project, and gives every virtual user its own
-// article. Each VU then reads its article (70%), lists the collection (10%), or saves a new
-// revision with If-Match and a fresh Idempotency-Key (20%).
+// article. Each VU then reads its article (50%), lists the collection (10%), searches titles
+// with `q` (10%, step 3.5), reads the revision it last saved by id (10%, step 3.5), or saves a
+// new revision with If-Match and a fresh Idempotency-Key (20%).
 //
 // "No lost accepted revision" (END_GOAL) is a check, not a hope: a VU is the only writer of its
-// article, so every read must return exactly the revision that VU's last save was given.
+// article, so every read must return exactly the revision that VU's last save was given. A
+// search must return only titles that contain what was searched for.
 // Same SCENARIO, TOTAL, VUS, RATE, DURATION and P99_MS settings as health.js; scripts/load.sh
 // gives this endpoint RATE 500 and P99_MS 250.
 
@@ -109,6 +111,23 @@ export default function (data) {
     check(res, {
       'list 200': (r) => r.status === 200,
       'list is a page': (r) => r.body.indexOf('{"data":[') === 0,
+    });
+  } else if (roll < 4) {
+    const q = `VU ${__VU}`;
+    const res = http.get(`${data.base}?q=${encodeURIComponent(q)}`, Object.assign({ tags: { endpoint: 'search' } }, read));
+    check(res, {
+      'search 200': (r) => r.status === 200,
+      'search finds only matching titles': (r) => {
+        const rows = r.json('data');
+        return Array.isArray(rows) && rows.every((row) => row.revision.title.toLowerCase().indexOf(q.toLowerCase()) !== -1);
+      },
+    });
+  } else if (roll < 5) {
+    const revision = etag.replace(/"/g, '');
+    const res = http.get(`${url}/revisions/${revision}`, Object.assign({ tags: { endpoint: 'revision' } }, read));
+    check(res, {
+      'revision 200': (r) => r.status === 200,
+      'revision is the one asked for': (r) => r.json('data.revision.id') === revision,
     });
   } else {
     const res = http.get(url, Object.assign({ tags: { endpoint: 'read' } }, read));

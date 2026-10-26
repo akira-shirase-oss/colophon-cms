@@ -19,6 +19,7 @@
 		id: string;
 		updated_at: string;
 		revision: RevisionMeta;
+		published: { revision_id: string; generation: number } | null;
 	}
 	interface Paragraph {
 		type: 'paragraph';
@@ -50,6 +51,9 @@
 	let history = $state<RevisionMeta[]>([]);
 	let message = $state('');
 	let lastSave = $state<SaveRequest | null>(null);
+	let query = $state('');
+	let found = $state<{ status: number; titles: string[] } | null>(null);
+	let reading = $state<{ status: number; title: string; text: string } | null>(null);
 
 	const base = $derived(`/api/v1/projects/${projectId}/environments/production/collections/articles/entries`);
 
@@ -88,6 +92,28 @@
 		entries = reply.status === 200 ? (reply.body as { data: Summary[] }).data : [];
 	}
 
+	/** `?q=`: titles containing the text, case-insensitively, with % and _ taken literally. */
+	async function search(event: SubmitEvent) {
+		event.preventDefault();
+		const reply = await call('GET', `${base}?q=${encodeURIComponent(query)}`);
+		found = {
+			status: reply.status,
+			titles: reply.status === 200 ? (reply.body as { data: Summary[] }).data.map((entry) => entry.revision.title) : []
+		};
+	}
+
+	/** One revision with its content: `GET …/revisions/{revision}`. */
+	async function readRevision(id: string) {
+		if (!open) return;
+		const reply = await call('GET', `${base}/${open.id}/revisions/${id}`);
+		if (reply.status !== 200) {
+			reading = { status: reply.status, title: '', text: '' };
+			return;
+		}
+		const data = (reply.body as { data: { revision: RevisionMeta; content: Draft['content'] } }).data;
+		reading = { status: 200, title: data.revision.title, text: plainText({ ...open, content: data.content }) };
+	}
+
 	async function openEntry(id: string) {
 		const reply = await call('GET', `${base}/${id}`);
 		if (reply.status !== 200) {
@@ -99,6 +125,7 @@
 		title = open.content.title;
 		text = plainText(open);
 		lastSave = null;
+		reading = null;
 		const revisions = await call('GET', `${base}/${id}/revisions`);
 		history = revisions.status === 200 ? (revisions.body as { data: RevisionMeta[] }).data : [];
 	}
@@ -186,9 +213,21 @@
 
 	<section>
 		<h2>Articles</h2>
+		<form onsubmit={search}>
+			<label>Search titles <input bind:value={query} name="search" /></label>
+			<button type="submit">Search</button>
+		</form>
+		{#if found}
+			<p data-testid="search-status">{found.status}</p>
+			<ul data-testid="search-results">
+				{#each found.titles as match, index (index)}<li>{match}</li>{/each}
+			</ul>
+		{/if}
 		<ul data-testid="entries">
 			{#each entries as entry (entry.id)}
-				<li data-id={entry.id}><button class="link" onclick={() => openEntry(entry.id)}>{entry.revision.title}</button></li>
+				<li data-id={entry.id} data-state={entry.published === null ? 'draft' : entry.published.revision_id === entry.revision.id ? 'live' : 'changed'}>
+					<button class="link" onclick={() => openEntry(entry.id)}>{entry.revision.title}</button>
+				</li>
 			{:else}
 				<li>None yet.</li>
 			{/each}
@@ -209,9 +248,18 @@
 			<h3>History</h3>
 			<ol data-testid="history">
 				{#each history as revision (revision.id)}
-					<li data-id={revision.id}>{revision.title} <small>{revision.created_at}</small></li>
+					<li data-id={revision.id}>
+						{revision.title} <small>{revision.created_at}</small>
+						<button type="button" class="link" onclick={() => readRevision(revision.id)}>Read</button>
+					</li>
 				{/each}
 			</ol>
+			{#if reading}
+				<div data-testid="revision-content" data-status={reading.status}>
+					<p><strong>{reading.title}</strong></p>
+					<pre>{reading.text}</pre>
+				</div>
+			{/if}
 		</section>
 	{/if}
 {/if}

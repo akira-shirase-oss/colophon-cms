@@ -29,12 +29,12 @@ async function receiver(): Promise<{ url: string; seen: Seen[]; close: () => voi
 	return { url: `http://127.0.0.1:${port}/hook`, seen, close: () => server.close() };
 }
 
-test('a destination added on the Releases page gets each release, once', async ({ page }) => {
+test('a destination added in Settings gets each release, once', async ({ page }) => {
 	const hook = await receiver();
 	try {
 		await signIn(page);
 		const project = await newProject(page);
-		await page.goto(`/studio/projects/${project}/releases`);
+		await page.goto(`/studio/projects/${project}/settings`);
 		await page.getByLabel('Destination name').fill('Site rebuild');
 		await page.getByLabel('Webhook URL (https)').fill(hook.url);
 		await page.getByRole('button', { name: 'Add destination' }).click();
@@ -64,7 +64,7 @@ test('a destination added on the Releases page gets each release, once', async (
 		}, project);
 		expect(published).toBe(201);
 
-		await page.reload();
+		await page.goto(`/studio/projects/${project}/releases`);
 		await expect(page.getByTestId('delivery')).toHaveAttribute('data-status', 'succeeded', { timeout: 15_000 });
 		await expect(page.getByTestId('delivery')).toContainText('Site rebuild: delivered');
 		expect(hook.seen).toHaveLength(1);
@@ -91,12 +91,12 @@ async function purger(): Promise<{ url: string; purges: string[][]; close: () =>
 	return { url: `http://127.0.0.1:${port}/purge`, purges, close: () => server.close() };
 }
 
-test('a CDN added on the Releases page is asked to purge what each release changed', async ({ page }) => {
+test('a CDN added in Settings is asked to purge what each release changed', async ({ page }) => {
 	const cdn = await purger();
 	try {
 		await signIn(page);
 		const project = await newProject(page);
-		await page.goto(`/studio/projects/${project}/releases`);
+		await page.goto(`/studio/projects/${project}/settings`);
 		await page.getByLabel('Kind').selectOption('cdn');
 		await page.getByLabel('Destination name').fill('Edge cache');
 		await page.getByLabel('Purge URL (https)').fill(cdn.url);
@@ -122,7 +122,7 @@ test('a CDN added on the Releases page is asked to purge what each release chang
 			return entryId;
 		}, project);
 
-		await page.reload();
+		await page.goto(`/studio/projects/${project}/releases`);
 		await expect(page.getByTestId('purge')).toHaveAttribute('data-state', 'accepted', { timeout: 15_000 });
 		await expect(page.getByTestId('purge')).toHaveText('CDN purge accepted');
 		expect(cdn.purges).toHaveLength(1);
@@ -145,12 +145,12 @@ async function site(): Promise<{ url: string; serve: (generation: number) => voi
 	return { url: `http://127.0.0.1:${port}/`, serve: (next) => (generation = next), close: () => server.close() };
 }
 
-test('a probe added on the Releases page verifies a release, and its receipt shows what it saw', async ({ page }) => {
+test('a probe added in Settings verifies a release, and its receipt shows what it saw', async ({ page }) => {
 	const checked = await site();
 	try {
 		await signIn(page);
 		const project = await newProject(page);
-		await page.goto(`/studio/projects/${project}/releases`);
+		await page.goto(`/studio/projects/${project}/settings`);
 		await page.getByLabel('Kind').selectOption('probe');
 		await page.getByLabel('Destination name').fill('Home page');
 		await page.getByLabel('URL to check (https)').fill(checked.url);
@@ -177,7 +177,7 @@ test('a probe added on the Releases page verifies a release, and its receipt sho
 		}, project);
 		expect(published).toBe(201);
 
-		await page.reload();
+		await page.goto(`/studio/projects/${project}/releases`);
 		const label = page.locator('[data-generation="1"]').getByTestId('label');
 		await expect(label).toHaveAttribute('data-label', 'verified', { timeout: 15_000 });
 		await expect(label).toHaveText('Verified at 1 location');
@@ -185,7 +185,7 @@ test('a probe added on the Releases page verifies a release, and its receipt sho
 		await expect(page.getByTestId('receipt-label')).toHaveText('Verified at 1 location');
 		await expect(page.getByTestId('deliveries')).toContainText('Home page');
 		await expect(page.getByTestId('deliveries')).toContainText('saw this release');
-		await expect(page.getByTestId('observations')).toContainText('from local');
+		await expect(page.getByTestId('observations')).toContainText('From local');
 		await expect(page.getByTestId('observations')).toContainText('release 1, HTTP 200');
 		expect(await violations(page)).toEqual([]);
 	} finally {

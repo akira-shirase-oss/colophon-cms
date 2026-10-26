@@ -180,5 +180,5 @@ tested set at P0 (spec §02).
 | Sign-in | An OpenID Connect relying party on `reqwest` and `jsonwebtoken` (`aws-lc-rs` backend), not an OIDC crate (D-031) |
 | Testing | `proptest`, `insta`, real PostgreSQL from the local stack (a fresh database per test), `cargo-nextest`, `cargo-deny` |
 | Frontend | SvelteKit + TypeScript + Vite, scoped Svelte CSS over M3 tokens (Tailwind deferred, D-025), Bits UI, Tiptap, mdsvex, Pagefind, Vitest, Playwright |
-| Design system | Material Design 3 tokens (`@material/material-color-utilities` for colour roles; M3 type, shape, elevation, state layers, motion) on Bits UI primitives (D-011, D-025; `m3-svelte` not adopted) |
+| Design system | Colophon's own (D-053): OKLCH tokens in one stylesheet, Tailwind CSS v4, owned shadcn-svelte components on Bits UI primitives, Inter (self-hosted); contrast tested from the tokens |
 | Load testing | k6 arrival-rate scenarios |

@@ -87,7 +87,8 @@ test('an article is taken down through a reviewed changeset, and delivery says i
 	}, `/content/v1/${project}/production/articles`);
 
 	await page.goto(`/studio/projects/${project}/changesets`);
-	await page.getByLabel('Title').fill('Take it down');
+	await page.getByRole('button', { name: 'New changeset' }).click();
+	await page.getByLabel('Title', { exact: true }).fill('Take it down');
 	await page.getByRole('checkbox', { name: 'Unpublish Short-lived' }).check();
 	await expect(page.getByRole('checkbox', { name: 'Short-lived', exact: true })).toBeDisabled();
 	expect(await violations(page)).toEqual([]);
@@ -101,7 +102,7 @@ test('an article is taken down through a reviewed changeset, and delivery says i
 	await expect(page.getByTestId('release-link')).toHaveText('release 2');
 
 	await page.getByTestId('release-link').click();
-	await expect(page.locator('[data-generation="2"]').getByTestId('unpublished')).toHaveText('1 unpublished,');
+	await expect(page.locator('[data-generation="2"]').getByTestId('unpublished')).toHaveText('1 unpublished');
 	const after = await page.evaluate(
 		async ({ list, one }) => {
 			const listed = (await (await fetch(list, { credentials: 'omit' })).json()) as { data: unknown[] };
