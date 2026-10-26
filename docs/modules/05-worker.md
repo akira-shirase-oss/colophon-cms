@@ -11,6 +11,26 @@
 | Used by | colophon-server `--role worker` |
 | Spec | §14, §16, §25, §33 |
 
+## Built so far
+
+Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worker` or `all`.
+
+- **The outbox:** committing a release inserts one job per enabled destination in the same transaction, and
+  supersedes that destination's older jobs that haven't started (migration 0009).
+- **Claims and leases:** `colophon_db::jobs::claim` fails jobs past their one-hour lifetime, then claims due jobs and
+  running ones whose lease ran out, with `FOR UPDATE SKIP LOCKED`, raising the lease generation each time; `finish`
+  lands only for the current owner and lease generation. All of it runs as `colophon_worker`.
+- **Attempts:** a supersession check, then a `release.committed` POST with `Idempotency-Key` and
+  `Colophon-Generation`, a 10-second deadline, no redirects and no transaction open; the outcome follows
+  `colophon_domain::job` (2xx succeeds; 408, 425, 429, 500, 502, 503 and 504 retry with full-jitter backoff up to five
+  attempts; the rest fail).
+- **Addresses:** https and public only (`colophon_domain::destination`), checked on save and before every attempt;
+  the worker's resolver keeps only public addresses. A development server on loopback may use private ones.
+- **The loop:** it claims as soon as a slot is free (eight by default) and sleeps only when there's nothing to do;
+  on shutdown it stops claiming and lets attempts finish within the cleanup deadline.
+- **Not yet:** per-destination and per-project limits, signed announcements, wake-ups instead of polling,
+  reconciliation beyond repeating with the same key, admission budgets (F09), scheduled releases.
+
 ## Why it exists
 
 External work (purging a CDN, building a site, processing an image, calling a webhook) can't happen inside a database
@@ -148,11 +168,18 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
 - Scheduled releases across daylight-saving changes and expired approvals, with a fake clock (X07).
 - The simulator's worker scenarios: drop, delay, duplicate, reorder ([sim](10-sim.md)).
 - The real-process crash loop.
+- **In place since step 2.3:** `crates/colophon-server/tests/worker.rs` (announced once with a stable key; a 503
+  retried with the same key; a 400 final; an older release waiting when a newer commits is superseded and never sent:
+  F05); F03 in `tests/faults.rs` (the worker killed after announcing; another claims the job after the lease runs out
+  and announces again with the same key); `crates/colophon-db/tests/jobs.rs` (a lease hides a job until it runs out; a
+  late result is refused; two workers never claim one job; a job past its deadline fails; the worker's role can't
+  read drafts); `perf/k6/publishing.js` (whole publishes while the worker delivers to a local receiver).
 - Lifecycle tests: drain within the deadline, cancellation observed.
 
 ## Build order
 
-1. **P2:** dispatcher, leases, attempt generations, retries, supersession, the direct content API destination.
+1. **P2:** dispatcher, leases, attempt generations, retries, supersession, a webhook destination (step 2.3, done; the
+   direct content API needs no destination: it reads the published projection).
 2. **P3:** Cloudflare purge and probe jobs; the site build-and-promote adapter.
 3. **P4:** scheduled releases; the image pool for [media](07-media.md).
 4. **P5:** the AI and bulk-job pools for [automation](09-automation.md).

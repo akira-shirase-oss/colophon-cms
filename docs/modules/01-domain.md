@@ -130,6 +130,9 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - Job states: `pending | running | retrying | succeeded | failed | uncertain | cancelled | superseded`.
 - Retry policy as data: 10 s attempt deadline, ≤ 5 attempts, capped backoff with jitter, 1 h lifetime.
 - Lease semantics: owner, expiry and attempt generation. Completion is accepted only from the current lease.
+- Built in step 2.3 (D-046): `colophon_domain::job` (statuses, `classify` for HTTP outcomes, `backoff_ms` with full
+  jitter, `after_attempt` for the attempt budget and deadline) and `colophon_domain::destination` (`check_url`,
+  `is_public`).
 
 ### Scheduling (spec §06)
 - A schedule stores the chosen local time, the IANA time zone, the resolved UTC instant and the approval hash.
@@ -212,7 +215,7 @@ Port rules (rust-mastery chapter 10):
 1. **P0:** IDs, scopes, schema field types, the rich-text validator, error types.
 2. **P1:** entries, revisions and articles (step 1.2, done); the save rule in the simulator (1.4, done); content
    types (1.5, done); the role policy (1.7, done); slugs and locales.
-3. **P2:** changesets and reviews (2.1, done); releases and publication history (2.2, done); job states.
+3. **P2:** changesets and reviews (2.1, done); releases and publication history (2.2, done); job states (2.3, done).
 4. **P3:** delivery states, evidence, unpublish.
 5. **P4:** rollback, release-history queries, scheduling.
 

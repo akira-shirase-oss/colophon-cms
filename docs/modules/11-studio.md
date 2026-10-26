@@ -60,7 +60,9 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   meanwhile, the page shows the current version and says so instead of acting on it. Its test runs that in two tabs.
   Since step 2.2 (D-045): an approved changeset has a Publish button, which publishes on the latest release the page
   has seen and, if another release came first, says so and lets you look again; `…/releases` lists releases and
-  links the public `/content/v1` address.
+  links the public `/content/v1` address. Since step 2.3 (D-046), each release shows how its announcement to each
+  destination went (refreshing while any is still under way), and owners and developers add destinations and turn
+  them on or off there.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

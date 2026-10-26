@@ -35,8 +35,9 @@ tests create projects as `dev-owner` and invite `dev-editor`. A Keycloak started
 recreate it as above.
 
 `postgres/roles.sql` also creates `colophon_delivery` (step 2.2, [D-045](../docs/DECISIONS.md)), the read-only role
-public delivery switches to. A stack started before step 2.2 needs `scripts/stack.sh up` once more to create it;
-the script is safe to rerun.
+public delivery switches to, and `colophon_worker` (step 2.3, [D-046](../docs/DECISIONS.md)), the role the worker
+switches to. A stack started before those steps needs `scripts/stack.sh up` once more to create them; the script is
+safe to rerun.
 
 If a port clashes with something else on your machine, move it: `COLOPHON_PG_PORT`, `COLOPHON_VALKEY_PORT`,
 `COLOPHON_S3_PORT`, `COLOPHON_S3_ADMIN_PORT`, `COLOPHON_KEYCLOAK_PORT`. The bind address is deliberately not a setting.
