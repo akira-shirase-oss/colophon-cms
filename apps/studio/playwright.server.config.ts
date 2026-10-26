@@ -40,6 +40,8 @@ export default defineConfig({
 			COLOPHON_STUDIO_DIR: `${repo}apps/studio/build`,
 			COLOPHON_LOG_FORMAT: 'json'
 		},
+		// The server's log in the test output: a failed sign-in logs its reason at info.
+		stdout: 'pipe',
 		url: `http://127.0.0.1:${PORT}/livez`,
 		reuseExistingServer: false,
 		timeout: 30_000
