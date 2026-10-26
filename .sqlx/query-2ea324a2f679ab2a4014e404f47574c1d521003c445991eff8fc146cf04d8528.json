@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE publications p SET revoked_in = $3\n         FROM tombstones t\n         WHERE t.project_id = $1 AND t.environment_id = $2 AND t.generation = $3\n           AND p.project_id = t.project_id AND p.environment_id = t.environment_id\n           AND p.entry_id = t.entry_id AND p.valid_from < $3 AND p.revoked_in IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2ea324a2f679ab2a4014e404f47574c1d521003c445991eff8fc146cf04d8528"
+}

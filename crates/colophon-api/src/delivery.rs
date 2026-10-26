@@ -16,6 +16,10 @@
 //! Answers carry an `ETag` (and a matching `If-None-Match` gets 304), the shared-cache policy for
 //! their kind (latest 30 seconds, pinned 300, browsers always revalidate), `Cache-Tag` for purges,
 //! and `Colophon-Cache: hit | miss | coalesced | bypass`.
+//!
+//! Since step 3.2 (D-049) an unpublished entry is never delivered, at any generation: lists leave
+//! it out and a read of it is 410 `gone`, uncached. Cache keys name the environment's latest
+//! unpublish, so answers cached before it are never served again.
 
 use std::future::Future;
 
@@ -105,6 +109,13 @@ impl PublishedView {
 struct Answer {
     body: String,
     empty: bool,
+}
+
+/// What a read from Postgres found.
+enum Read {
+    Found(Answer),
+    Missing,
+    Gone,
 }
 
 /// A failed read that other requests were waiting for. Its cause was logged once, by the request
@@ -200,14 +211,14 @@ async fn serve<F, Fut>(
 ) -> Result<Response, ApiError>
 where
     F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<Option<Answer>, ApiError>>,
+    Fut: Future<Output = Result<Read, ApiError>>,
 {
     let jitter = Uuid::now_v7().as_u64_pair().1;
     let (filled, served) = services
         .cache
         .get_or_fill(key, jitter, || async {
             match fill().await {
-                Ok(Some(answer)) => {
+                Ok(Read::Found(answer)) => {
                     let cached = Cached {
                         etag: etag(&answer.body),
                         body: answer.body,
@@ -218,7 +229,8 @@ where
                         Filled::Keep(cached)
                     })
                 }
-                Ok(None) => Ok(Filled::Missing),
+                Ok(Read::Missing) => Ok(Filled::Missing),
+                Ok(Read::Gone) => Ok(Filled::Gone),
                 Err(ApiError::Busy) => Err(Refused::Busy),
                 Err(ApiError::Internal(cause)) => {
                     tracing::error!(%cause, "reading published content failed");
@@ -238,6 +250,7 @@ where
     let cached = match filled {
         Filled::Keep(cached) | Filled::Once(cached) => cached,
         Filled::Missing => return Err(ApiError::NotFound),
+        Filled::Gone => return Err(ApiError::Gone),
     };
     let unchanged = request
         .get(header::IF_NONE_MATCH)
@@ -299,6 +312,7 @@ pub(crate) async fn list(
         environment: environment.id.as_u128(),
         epoch: environment.epoch,
         generation,
+        unpublished: environment.last_unpublish,
     };
     let key = scope.list_key(&path.collection, limit, before.as_ref().map(Uuid::as_u128));
     let tags = scope.list_tags(&path.collection);
@@ -345,7 +359,7 @@ pub(crate) async fn list(
             let empty = data.is_empty();
             let body =
                 serde_json::to_string(&Page { data, next_cursor }).map_err(ApiError::internal)?;
-            Ok(Some(Answer { body, empty }))
+            Ok(Read::Found(Answer { body, empty }))
         },
     )
     .await
@@ -371,6 +385,7 @@ pub(crate) async fn get(
         environment: environment.id.as_u128(),
         epoch: environment.epoch,
         generation,
+        unpublished: environment.last_unpublish,
     };
     let key = scope.entry_key(&path.collection, entry.as_u128());
     let tags = scope.entry_tags(&path.collection, entry.as_u128());
@@ -390,13 +405,22 @@ pub(crate) async fn get(
                 .get(environment.id, &path.collection, entry, generation)
                 .await
                 .map_err(ApiError::from_db)?;
+            let gone = match found {
+                Some(_) => false,
+                None => tx
+                    .gone(environment.id, &path.collection, entry, generation)
+                    .await
+                    .map_err(ApiError::from_db)?,
+            };
             tx.finish().await.map_err(ApiError::from_db)?;
-            let Some(row) = found else { return Ok(None) };
+            let Some(row) = found else {
+                return Ok(if gone { Read::Gone } else { Read::Missing });
+            };
             let body = serde_json::to_string(&Data {
                 data: PublishedView::new(row)?,
             })
             .map_err(ApiError::internal)?;
-            Ok(Some(Answer { body, empty: false }))
+            Ok(Read::Found(Answer { body, empty: false }))
         },
     )
     .await

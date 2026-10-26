@@ -12,6 +12,7 @@
 		generation: number;
 		title: string;
 		entries: number;
+		unpublished: number;
 	}
 	interface Summary {
 		id: string;
@@ -30,6 +31,7 @@
 	let base = $state(0);
 	let message = $state('');
 	let readAt = $state('');
+	let readEntry = $state('');
 	let delivered = $state('');
 
 	const api = $derived(`/api/v1/projects/${projectId}/environments/production`);
@@ -74,9 +76,14 @@
 		event.preventDefault();
 		// No cookie: what any reader on the internet gets.
 		const query = readAt === '' ? '' : `?generation=${readAt}`;
-		const response = await fetch(`/server/content/v1/${projectId}/production/articles${query}`, { credentials: 'omit', cache: 'no-store' });
-		const body = (await response.json()) as { data?: { title: string }[] };
-		delivered = `HTTP ${response.status}, generation ${response.headers.get('colophon-generation') ?? '?'}: ${(body.data ?? []).map((entry) => entry.title).join(', ')}`;
+		const one = readEntry.trim() === '' ? '' : `/${readEntry.trim()}`;
+		const response = await fetch(`/server/content/v1/${projectId}/production/articles${one}${query}`, { credentials: 'omit', cache: 'no-store' });
+		const body = (await response.json()) as { data?: { title: string }[] | { title: string } };
+		const error = envelopeOf(body);
+		const titles = Array.isArray(body.data) ? body.data.map((entry) => entry.title).join(', ') : (body.data?.title ?? '');
+		delivered = error
+			? `HTTP ${response.status}, ${error.code}`
+			: `HTTP ${response.status}, generation ${response.headers.get('colophon-generation') ?? '?'}: ${titles}`;
 	}
 
 	onMount(loadProjects);
@@ -102,7 +109,11 @@
 	<p>Current generation: <code data-testid="generation">{generation}</code></p>
 	<ol reversed data-testid="releases">
 		{#each releases as release (release.generation)}
-			<li>generation {release.generation}: {release.title} ({release.entries} changed)</li>
+			<li>
+				generation {release.generation}: {release.title} ({release.entries} changed{release.unpublished > 0
+					? `, ${release.unpublished} unpublished`
+					: ''})
+			</li>
 		{/each}
 	</ol>
 
@@ -122,6 +133,7 @@
 
 	<form onsubmit={read}>
 		<label class="field">Read at generation (empty for the latest) <input bind:value={readAt} name="read-at" /></label>
+		<label class="field">One article's id (empty for the list) <input bind:value={readEntry} name="read-entry" /></label>
 		<button type="submit">Read published articles</button>
 	</form>
 	{#if delivered}<p data-testid="delivered">{delivered}</p>{/if}

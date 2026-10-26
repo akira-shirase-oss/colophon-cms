@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, epoch, generation FROM environments WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid AND slug = $1",
+  "query": "SELECT id, epoch, generation, last_unpublish FROM environments WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid AND slug = $1",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,17 @@
             "name": "generation"
           }
         }
+      },
+      {
+        "ordinal": 3,
+        "name": "last_unpublish",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "environments",
+            "name": "last_unpublish"
+          }
+        }
       }
     ],
     "parameters": {
@@ -45,8 +56,9 @@
     "nullable": [
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "6d8008ac3a0ca08d698f56c870faadde9e1f574ba17f8fd921f80ce315ba3267"
+  "hash": "61fbeb8d02f7edd905769bf1155b06ab86d13cfe8b2d81e28534b186d7d439a3"
 }

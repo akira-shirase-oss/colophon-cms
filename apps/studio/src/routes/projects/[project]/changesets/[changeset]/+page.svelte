@@ -111,7 +111,13 @@
 			<li>
 				<a href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.collection, entry: item.entry_id })}>{item.title}</a>
 				<small class="muted">{item.collection}</small>
-				{#if item.edited}<span class="flag" data-testid="edited">edited since pinned</span>{/if}
+				{#if item.kind === 'unpublish'}<span class="flag" data-testid="unpublish">unpublish</span>{/if}
+				{#if item.edited}
+					<span class="flag" data-testid="edited"
+						>{#if item.kind === 'publish'}edited since pinned{:else if item.current_revision_id === null}no longer published{:else}a newer
+							version was published{/if}</span
+					>
+				{/if}
 			</li>
 		{/each}
 	</ul>

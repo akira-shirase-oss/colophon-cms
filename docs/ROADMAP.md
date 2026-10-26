@@ -125,9 +125,9 @@ leased workers, the first real-process crash loop, and one announcement in fligh
 remaining exposure is visible), F08 (cache loss loses nothing), L01–L04; the mixed-release checker passes. **First
 public demo:** recorded crash loop plus a live site with receipts.
 
-**Steps:** 3.1 a cache that can't serve the wrong thing (in progress: D-048; a generation-keyed Valkey cache for
+**Steps:** 3.1 a cache that can't serve the wrong thing (D-048; a generation-keyed Valkey cache for
 `/content/v1` with the generation always resolved from Postgres, single-flight fills, a Postgres fallback when the
-cache is down, ETags with 304s, CDN cache policies and tags; F06, F08, L04) · 3.2 taking it back (unpublish with
+cache is down, ETags with 304s, CDN cache policies and tags; F06, F08, L04) · 3.2 taking it back (in progress: D-049; unpublish with
 tombstones, origin revocation through historical URLs, purge jobs through a fake CDN; F07) · 3.3 a receipt for every
 publish (probes, evidence scoped to the locations checked, the Studio's receipt timeline) · 3.4 my own site, running
 on Colophon (the reference blog with a generation marker and the build-and-promote adapter) · 3.5 the first public

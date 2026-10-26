@@ -17,7 +17,7 @@
 		title: string;
 		hash: string;
 		status: { state: string; by: string | null; self_review: boolean; edited_items: number };
-		items: { entry_id: string; title: string; edited: boolean }[];
+		items: { kind: string; entry_id: string; title: string; edited: boolean }[];
 		reviews: { id: string; decision: string; reviewer_name: string | null; current: boolean }[];
 	}
 
@@ -26,6 +26,8 @@
 	let projectId = $state('');
 	let entries = $state<Summary[]>([]);
 	let picked = $state<string[]>([]);
+	// Entries to take down (D-049). Nothing stops picking one in both lists: the API's answer is the point.
+	let takenDown = $state<string[]>([]);
 	let title = $state('');
 	let open = $state<Changeset | null>(null);
 	// The hash actions send in If-Match: the one on screen, editable to try a stale one.
@@ -53,6 +55,7 @@
 		const reply = await call('GET', `${base}/collections/articles/entries?limit=100`);
 		entries = reply.status === 200 ? (reply.body as { data: Summary[] }).data : [];
 		picked = [];
+		takenDown = [];
 		open = null;
 	}
 
@@ -70,7 +73,7 @@
 		event.preventDefault();
 		const reply = await call('POST', `${base}/changesets`, {
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken(), 'Idempotency-Key': crypto.randomUUID() },
-			body: JSON.stringify({ title, entries: picked })
+			body: JSON.stringify({ title, entries: picked, unpublish: takenDown })
 		});
 		show(reply, 201, 'created');
 	}
@@ -96,7 +99,7 @@
 <p class="lede">
 	Changesets through the real API (D-044): pin entries' current revisions, submit, and review the exact hash in
 	<code>If-Match</code>. Edit the hash below to see a stale one refused; edit an article on the Entries page to make a changeset
-	stale until it is refreshed.
+	stale until it is refreshed. Articles picked under Unpublish pin their published revision to be taken down (D-049).
 </p>
 
 {#if signedIn === false}
@@ -121,6 +124,12 @@
 				<p class="muted">No articles in this project.</p>
 			{/each}
 		</fieldset>
+		<fieldset>
+			<legend>Unpublish</legend>
+			{#each entries as entry (entry.id)}
+				<label><input type="checkbox" value={entry.id} bind:group={takenDown} /> Unpublish {entry.revision.title}</label>
+			{/each}
+		</fieldset>
 		<button type="submit">Create changeset</button>
 	</form>
 
@@ -134,7 +143,7 @@
 			</p>
 			<ul>
 				{#each open.items as item (item.entry_id)}
-					<li>{item.title}{item.edited ? ' (edited since pinned)' : ''}</li>
+					<li>{item.title}{item.kind === 'unpublish' ? ' (unpublish)' : ''}{item.edited ? ' (moved on since pinned)' : ''}</li>
 				{/each}
 			</ul>
 			<label class="field">If-Match hash <input bind:value={hash} name="hash" /></label>

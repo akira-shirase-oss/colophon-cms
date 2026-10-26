@@ -1,6 +1,7 @@
 <!--
   A project's changesets (D-044): what each is waiting for, and a form to pin entries into a new
-  one. A changeset holds the exact revisions it was made from; reviews approve exactly those.
+  one. A changeset holds the exact revisions it was made from; reviews approve exactly those. An
+  entry can be picked to publish its current version or to take its published one down (D-049).
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
@@ -24,6 +25,7 @@
 
 	let title = $state('');
 	let picked = $state<string[]>([]);
+	let takenDown = $state<string[]>([]);
 	let error = $state('');
 	let busy = $state(false);
 	// One key per changeset being made: pressing Create again after a lost answer is safe.
@@ -34,7 +36,7 @@
 		busy = true;
 		error = '';
 		try {
-			const made = await createChangeset(project, title, picked, key);
+			const made = await createChangeset(project, title, picked, takenDown, key);
 			key = newKey();
 			await goto(resolve('/projects/[project]/changesets/[changeset]', { project, changeset: made.id }));
 		} catch (failure) {
@@ -60,7 +62,9 @@
 			<li>
 				<a href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>{set.title}</a>
 				<span class="state" data-state={set.status.state}>{STATE_LABEL[set.status.state]}</span>
-				<small class="muted">{set.items} {set.items === 1 ? 'entry' : 'entries'}</small>
+				<small class="muted"
+					>{set.items} {set.items === 1 ? 'entry' : 'entries'}{#if set.unpublish > 0}, {set.unpublish} to unpublish{/if}</small
+				>
 			</li>
 		{:else}
 			<li class="muted">No changesets yet.</li>
@@ -70,7 +74,10 @@
 
 <form class="new" onsubmit={create} aria-label="New changeset">
 	<h2>New changeset</h2>
-	<p class="muted">It pins the current version of each entry you pick. Later edits don't change it until you refresh it.</p>
+	<p class="muted">
+		It pins the current version of each entry you pick to publish, and the published version of each entry you pick to
+		unpublish. Later changes don't change it until you refresh it.
+	</p>
 	<TextField label="Title" bind:value={title} required maxlength={200} />
 	{#if choices.isPending}
 		<p class="muted">Loading entries…</p>
@@ -82,7 +89,22 @@
 				<fieldset>
 					<legend>{group.type.definition.name}</legend>
 					{#each group.entries as entry (entry.id)}
-						<label class="pick"><input type="checkbox" value={entry.id} bind:group={picked} /> {entry.revision.title}</label>
+						<!-- Picking an entry publishes its current version; Unpublish takes its published one down. -->
+						<div class="pick">
+							<label
+								><input type="checkbox" value={entry.id} bind:group={picked} disabled={takenDown.includes(entry.id)} />
+								{entry.revision.title}</label
+							>
+							<label class="down"
+								><input
+									type="checkbox"
+									value={entry.id}
+									bind:group={takenDown}
+									disabled={picked.includes(entry.id)}
+									aria-label={`Unpublish ${entry.revision.title}`}
+								/> Unpublish</label
+							>
+						</div>
 					{/each}
 				</fieldset>
 			{/if}
@@ -91,7 +113,7 @@
 		{/each}
 	{/if}
 	{#if error}<p role="alert" class="error">{error}</p>{/if}
-	<div><Button type="submit" disabled={busy || picked.length === 0}>Create changeset</Button></div>
+	<div><Button type="submit" disabled={busy || picked.length + takenDown.length === 0}>Create changeset</Button></div>
 </form>
 
 <style>
@@ -129,8 +151,11 @@
 	}
 	.pick {
 		display: flex;
-		gap: 0.5rem;
+		gap: 1rem;
 		align-items: center;
+	}
+	.down {
+		color: var(--md-sys-color-on-surface-variant);
 	}
 	.error {
 		color: var(--md-sys-color-error);

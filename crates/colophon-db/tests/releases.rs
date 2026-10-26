@@ -90,7 +90,8 @@ async fn a_release_commits_once_from_its_base_and_history_never_overlaps() {
         Committed::Done {
             generation: 1,
             epoch: 1,
-            changed: 1
+            changed: 1,
+            unpublished: 0
         }
     );
     tx.commit().await.expect("commit");
@@ -248,5 +249,204 @@ async fn the_generation_lookup_answers_for_one_project_and_leaves_nothing_behind
         "{refused:?}"
     );
     worker.rollback().await.expect("rollback");
+    db.drop().await;
+}
+
+/// A changeset of `pins`, submitted and approved; (changeset, review).
+async fn approved(tx: &mut ProjectTransaction, pins: &[changesets::Pin]) -> (Uuid, Uuid) {
+    let changeset = Uuid::now_v7();
+    changesets::create(tx, changeset, "Changes", pins, &[6; 32])
+        .await
+        .expect("created");
+    changesets::submit(tx, changeset).await.expect("submitted");
+    changesets::lock(tx, changeset).await.expect("lock");
+    changesets::review(tx, changeset, &[6; 32], "approve", "")
+        .await
+        .expect("approved");
+    let review = changesets::reviews(tx, changeset, None)
+        .await
+        .expect("reviews")[0]
+        .id;
+    (changeset, review)
+}
+
+/// What delivery shows of `entry` at `generation`: (in the list, found, gone).
+async fn delivered_at(
+    db: &TestDb,
+    project: Uuid,
+    entry: Uuid,
+    generation: i64,
+) -> (bool, bool, bool) {
+    let mut delivered = delivery::begin(&db.app, project).await.expect("begin");
+    let environment = delivered
+        .environment("production")
+        .await
+        .expect("environment")
+        .expect("found");
+    let listed = delivered
+        .list(environment.id, "articles", generation, None, 10)
+        .await
+        .expect("list")
+        .iter()
+        .any(|row| row.entry_id == entry);
+    let found = delivered
+        .get(environment.id, "articles", entry, generation)
+        .await
+        .expect("get")
+        .is_some();
+    let gone = delivered
+        .gone(environment.id, "articles", entry, generation)
+        .await
+        .expect("gone");
+    delivered.finish().await.expect("finish");
+    (listed, found, gone)
+}
+
+/// Unpublishing (D-049, DL5): the release closes the entry's publication, leaves a tombstone and
+/// revokes every earlier publication, so no generation delivers it; an unpublish whose pinned
+/// revision is no longer the published one commits nothing; publishing the entry again delivers it
+/// from its new generation only.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story, told in order: published, taken down, a stale takedown, published again"
+)]
+async fn unpublishing_takes_an_entry_out_of_every_earlier_release_until_it_is_published_again() {
+    let db = TestDb::new().await;
+    let (alice, project, entry, changeset, review) = ready(&db).await;
+    let mut tx = enter(&db.app, alice, project).await;
+    releases::commit(&mut tx, 0, changeset, &[5; 32], review, HOUR)
+        .await
+        .expect("commit");
+    // Two takedowns of the same publication, both approved while it was live.
+    let pins = changesets::published_pins(&mut tx, &[entry])
+        .await
+        .expect("pins");
+    assert_eq!(pins.len(), 1);
+    assert_eq!(pins[0].kind, "unpublish");
+    let (first, first_review) = approved(&mut tx, &pins).await;
+    let (second, second_review) = approved(&mut tx, &pins).await;
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        delivered_at(&db, project, entry, 1).await,
+        (true, true, false)
+    );
+
+    let mut tx = enter(&db.app, alice, project).await;
+    assert_eq!(
+        releases::commit(&mut tx, 1, first, &[6; 32], first_review, HOUR)
+            .await
+            .expect("commit"),
+        Committed::Done {
+            generation: 2,
+            epoch: 1,
+            changed: 0,
+            unpublished: 1
+        }
+    );
+    let items = changesets::items(&mut tx, second).await.expect("items");
+    assert!(
+        items[0].moved(),
+        "nothing is published for the second one to take down"
+    );
+    assert_eq!(
+        changesets::published_pins(&mut tx, &[entry])
+            .await
+            .expect("pins"),
+        [],
+        "nothing left to unpublish"
+    );
+    tx.commit().await.expect("commit");
+    for generation in [1, 2] {
+        assert_eq!(
+            delivered_at(&db, project, entry, generation).await,
+            (false, false, true),
+            "generation {generation}"
+        );
+    }
+    let environment = delivery::environment(&db.app, project, "production")
+        .await
+        .expect("looked up")
+        .expect("found");
+    assert_eq!((environment.generation, environment.last_unpublish), (2, 2));
+
+    // The second takedown no longer matches what is published: nothing commits.
+    let mut tx = enter(&db.app, alice, project).await;
+    assert_eq!(
+        releases::commit(&mut tx, 2, second, &[6; 32], second_review, HOUR)
+            .await
+            .expect("commit"),
+        Committed::Unmatched
+    );
+    // The caller drops the transaction, which rolls the bumped generation back.
+    drop(tx);
+    let environment = delivery::environment(&db.app, project, "production")
+        .await
+        .expect("looked up")
+        .expect("found");
+    assert_eq!(environment.generation, 2);
+
+    // Published again: delivered from generation 3 on, and still not through 1's or 2's links.
+    let mut tx = enter(&db.app, alice, project).await;
+    let pins = changesets::pins(&mut tx, &[entry]).await.expect("pins");
+    let (again, again_review) = approved(&mut tx, &pins).await;
+    assert_eq!(
+        releases::commit(&mut tx, 2, again, &[6; 32], again_review, HOUR)
+            .await
+            .expect("commit"),
+        Committed::Done {
+            generation: 3,
+            epoch: 1,
+            changed: 1,
+            unpublished: 0
+        }
+    );
+    let listed = releases::list(&mut tx).await.expect("releases");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|release| (release.generation, release.entries, release.unpublished))
+            .collect::<Vec<_>>(),
+        [(3, 1, 0), (2, 0, 1), (1, 1, 0)]
+    );
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        delivered_at(&db, project, entry, 3).await,
+        (true, true, false)
+    );
+    assert_eq!(
+        delivered_at(&db, project, entry, 1).await,
+        (false, false, true)
+    );
+
+    // History stays, marked: the first publication was revoked by release 2.
+    let owner = db.owner().await;
+    let history: Vec<(i64, Option<i64>, Option<i64>)> = sqlx::query_as(
+        "SELECT valid_from, valid_to, revoked_in FROM publications WHERE entry_id = $1 ORDER BY valid_from",
+    )
+    .bind(entry)
+    .fetch_all(&owner)
+    .await
+    .expect("history");
+    assert_eq!(history, [(1, Some(2), Some(2)), (3, None, None)]);
+    owner.close().await;
+
+    // The delivery role reads tombstones and can't touch them.
+    for statement in [
+        "DELETE FROM tombstones",
+        "UPDATE publications SET revoked_in = NULL",
+        "UPDATE environments SET last_unpublish = 0",
+    ] {
+        let mut delivered = delivery::begin(&db.app, project).await.expect("begin");
+        let error = sqlx::query(statement)
+            .execute(&mut **delivered.raw())
+            .await
+            .expect_err(statement);
+        assert!(
+            format!("{error:?}").contains("permission denied"),
+            "{statement}: {error:?}"
+        );
+    }
     db.drop().await;
 }

@@ -55,3 +55,71 @@ test('release on a base, refuse a stale base, and read releases with no cookie',
 	await page.getByRole('button', { name: 'Read published articles' }).click();
 	await expect(page.getByTestId('delivered')).toHaveText('HTTP 200, generation 1: First story');
 });
+
+/** A project with one approved changeset of a published-to-be article and one draft; ids. */
+async function unpublishSetup(page: Page): Promise<{ project: string; live: string }> {
+	return page.evaluate(async (slug) => {
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const json = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
+		const created = await fetch('/server/api/v1/projects', { method: 'POST', headers: json, body: JSON.stringify({ slug, name: 'Unpublish testbed' }) });
+		const project = ((await created.json()) as { data: { id: string } }).data.id;
+		const base = `/server/api/v1/projects/${project}/environments/production`;
+		const ids: string[] = [];
+		for (const title of ['Gone soon', 'Only a draft']) {
+			const body = { title, body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } };
+			const entry = await fetch(`${base}/collections/articles/entries`, { method: 'POST', headers: { ...json, 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body) });
+			ids.push(((await entry.json()) as { data: { id: string } }).data.id);
+		}
+		const made = await fetch(`${base}/changesets`, { method: 'POST', headers: { ...json, 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ title: 'Launch', entries: [ids[0]] }) });
+		const set = ((await made.json()) as { data: { id: string; hash: string } }).data;
+		const ifMatch = { ...json, 'If-Match': `"${set.hash}"` };
+		await fetch(`${base}/changesets/${set.id}/submit`, { method: 'POST', headers: ifMatch });
+		await fetch(`${base}/changesets/${set.id}/reviews`, { method: 'POST', headers: ifMatch, body: JSON.stringify({ decision: 'approve' }) });
+		return { project, live: ids[0] ?? '' };
+	}, `tb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`);
+}
+
+test('refuse to unpublish a draft, take a published article down, and read it as gone at every release', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const { project, live } = await unpublishSetup(page);
+	await page.goto('/releases');
+	await page.getByLabel('Project').selectOption(project);
+	await page.locator('select[name="changeset"]').selectOption({ label: 'Launch (approved)' });
+	await page.getByRole('button', { name: 'Publish', exact: true }).click();
+	await expect(page.getByTestId('message')).toHaveText('published as generation 1');
+
+	await page.goto('/changesets');
+	await page.getByLabel('Project').selectOption(project);
+	await page.getByLabel('Changeset title').fill('Take it down');
+	await page.getByLabel('Unpublish Only a draft').check();
+	await page.getByRole('button', { name: 'Create changeset' }).click();
+	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (not_published)');
+	await page.getByLabel('Unpublish Only a draft').uncheck();
+	await page.getByLabel('Gone soon', { exact: true }).check();
+	await page.getByLabel('Unpublish Gone soon').check();
+	await page.getByRole('button', { name: 'Create changeset' }).click();
+	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (invalid_entries)');
+	await page.getByLabel('Gone soon', { exact: true }).uncheck();
+	await page.getByRole('button', { name: 'Create changeset' }).click();
+	await expect(page.getByTestId('state')).toHaveText('open');
+	await expect(page.getByTestId('changeset')).toContainText('Gone soon (unpublish)');
+	await page.getByRole('button', { name: 'Submit', exact: true }).click();
+	await page.getByRole('button', { name: 'Approve', exact: true }).click();
+	await expect(page.getByTestId('state')).toHaveText('approved');
+
+	await page.goto('/releases');
+	await page.getByLabel('Project').selectOption(project);
+	await page.locator('select[name="changeset"]').selectOption({ label: 'Take it down (approved)' });
+	await page.getByLabel('Base generation').fill('1');
+	await page.getByRole('button', { name: 'Publish', exact: true }).click();
+	await expect(page.getByTestId('message')).toHaveText('published as generation 2');
+	await expect(page.getByTestId('releases')).toContainText('generation 2: Take it down (0 changed, 1 unpublished)');
+	await page.getByRole('button', { name: 'Read published articles' }).click();
+	await expect(page.getByTestId('delivered')).toHaveText('HTTP 200, generation 2: ');
+	await page.getByLabel("One article's id (empty for the list)").fill(live);
+	for (const at of ['', '1']) {
+		await page.getByLabel('Read at generation').fill(at);
+		await page.getByRole('button', { name: 'Read published articles' }).click();
+		await expect(page.getByTestId('delivered')).toHaveText('HTTP 410, gone');
+	}
+});

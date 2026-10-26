@@ -2,12 +2,14 @@
 //! `{P}` = `/api/v1/projects/{project}/environments/{environment}`:
 //!
 //! - `GET  {P}/changesets`: the newest 100, each with its status;
-//! - `POST {P}/changesets`: `{"title", "entries": [ids]}` (`Idempotency-Key` required): pins
-//!   each entry's current revision;
+//! - `POST {P}/changesets`: `{"title", "entries": [ids], "unpublish": [ids]}` (`Idempotency-Key`
+//!   required): pins each entry's current revision to publish, and each published revision of the
+//!   entries in `unpublish` to take down (D-049);
 //! - `GET  {P}/changesets/{changeset}`: items, status and reviews, with `ETag: "sha256:…"`;
 //! - `POST {P}/changesets/{changeset}/submit`, `…/refresh` and `…/reviews` (`{"decision",
 //!   "comment"}`): each needs `If-Match` with the hash the caller looked at. A refresh re-pins
-//!   edited entries, which gives the changeset a new hash; reviews are for owners and publishers;
+//!   entries that moved on (edited, or published anew), which gives the changeset a new hash;
+//!   reviews are for owners and publishers;
 //! - `POST {P}/changesets/{changeset}/publish`: `{"base_generation"}` (`If-Match` and
 //!   `Idempotency-Key` required): commits an approved changeset as the next release (D-045).
 //!
@@ -29,7 +31,7 @@ use colophon_db::{
     scope::ProjectTransaction,
 };
 use colophon_domain::{
-    changeset::{self, Decision, Facts, Status},
+    changeset::{self, Decision, Facts, Kind, Status},
     policy::Action,
 };
 use serde::{Deserialize, Serialize};
@@ -61,12 +63,16 @@ pub(crate) struct OnePath {
     changeset: String,
 }
 
-/// `{"title": "Launch posts", "entries": ["…", "…"]}`.
+/// `{"title": "Launch posts", "entries": ["…", "…"], "unpublish": ["…"]}`: entries to publish and
+/// entries to take down; either may be left out.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NewChangeset {
     title: String,
+    #[serde(default)]
     entries: Vec<String>,
+    #[serde(default)]
+    unpublish: Vec<String>,
 }
 
 /// `{"base_generation": 4}`: the generation the publisher saw.
@@ -95,6 +101,8 @@ fn hex(bytes: &[u8]) -> String {
 /// What the domain hashes and decides about, from what the database pins.
 fn domain_item(pin: &Pin) -> changeset::Item {
     changeset::Item {
+        // The database only stores the two names.
+        kind: Kind::parse(&pin.kind).unwrap_or(Kind::Publish),
         entry: pin.entry_id.to_string(),
         revision: pin.revision_id.to_string(),
         collection: pin.collection.clone(),
@@ -112,14 +120,19 @@ fn hash_of(pins: &[Pin]) -> [u8; 32] {
 
 #[derive(Serialize)]
 pub(crate) struct ItemView {
+    /// `publish` or `unpublish`.
+    kind: String,
     entry_id: Uuid,
     collection: String,
     revision_id: Uuid,
     title: String,
     content_hash: String,
     schema_version: i32,
-    current_revision_id: Uuid,
-    /// The entry has a newer revision than the one pinned.
+    /// For `publish`, the entry's current revision; for `unpublish`, its published one (none
+    /// once nothing is).
+    current_revision_id: Option<Uuid>,
+    /// The entry moved on since it was pinned: edited, or (for `unpublish`) published anew or
+    /// already taken down.
     edited: bool,
 }
 
@@ -148,7 +161,7 @@ pub(crate) struct StatusView {
     by: Option<String>,
     /// The approver also submitted it.
     self_review: bool,
-    /// Entries edited since they were pinned.
+    /// Entries that moved on since they were pinned.
     edited_items: usize,
 }
 
@@ -199,6 +212,8 @@ pub(crate) struct SummaryView {
     hash: String,
     status: StatusView,
     items: i64,
+    /// How many of its items unpublish.
+    unpublish: i64,
     submitted_at: Option<String>,
     updated_at: String,
 }
@@ -263,10 +278,7 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
     let reviews = changesets::reviews(tx, head.id, None)
         .await
         .map_err(ApiError::from_db)?;
-    let edited = items
-        .iter()
-        .filter(|item| item.current_revision_id != item.pin.revision_id)
-        .count();
+    let edited = items.iter().filter(|item| item.moved()).count();
     let status = named(decide(&head, edited, &reviews), &reviews);
     Ok(ChangesetView {
         id: head.id,
@@ -281,6 +293,8 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
         items: items
             .into_iter()
             .map(|item| ItemView {
+                edited: item.moved(),
+                kind: item.pin.kind,
                 entry_id: item.pin.entry_id,
                 collection: item.pin.collection,
                 revision_id: item.pin.revision_id,
@@ -288,7 +302,6 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
                 content_hash: content_hash(&item.pin.content_hash),
                 schema_version: item.pin.schema_version,
                 current_revision_id: item.current_revision_id,
-                edited: item.current_revision_id != item.pin.revision_id,
             })
             .collect(),
         reviews: reviews
@@ -387,6 +400,7 @@ pub(crate) async fn list(
                 hash: content_hash(&row.head.hash),
                 status: StatusView::new(status, edited),
                 items: row.items,
+                unpublish: row.unpublish,
                 submitted_at: row.head.submitted_at.map(rfc3339).transpose()?,
                 updated_at: rfc3339(row.head.updated_at)?,
             })
@@ -416,35 +430,43 @@ pub(crate) async fn create(
             message: "a title is 1 to 200 characters, without control characters".to_owned(),
         });
     }
-    let entries: Vec<Uuid> = new
-        .entries
-        .iter()
-        .map(|id| Uuid::try_parse(id))
-        .collect::<Result<_, _>>()
-        .map_err(|_| ApiError::InvalidField {
-            reason: "unknown_entry",
-            pointer: "/entries",
-            message: "every entry is an entry id in this environment".to_owned(),
-        })?;
-    let distinct: HashSet<Uuid> = entries.iter().copied().collect();
-    if entries.is_empty()
-        || entries.len() > changesets::MAX_ITEMS
-        || distinct.len() != entries.len()
-    {
+    let ids = |list: &[String], pointer: &'static str| {
+        list.iter()
+            .map(|id| Uuid::try_parse(id))
+            .collect::<Result<Vec<Uuid>, _>>()
+            .map_err(|_| ApiError::InvalidField {
+                reason: "unknown_entry",
+                pointer,
+                message: "every entry is an entry id in this environment".to_owned(),
+            })
+    };
+    let entries = ids(&new.entries, "/entries")?;
+    let unpublish = ids(&new.unpublish, "/unpublish")?;
+    let total = entries.len() + unpublish.len();
+    let distinct: HashSet<Uuid> = entries.iter().chain(&unpublish).copied().collect();
+    if total == 0 || total > changesets::MAX_ITEMS || distinct.len() != total {
         return Err(ApiError::InvalidField {
             reason: "invalid_entries",
             pointer: "/entries",
             message: format!(
-                "a changeset holds 1 to {} different entries",
+                "a changeset holds 1 to {} different entries, each to publish or to unpublish",
                 changesets::MAX_ITEMS
             ),
         });
     }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_write(&tx)?;
-    let mut sorted: Vec<String> = entries.iter().map(Uuid::to_string).collect();
-    sorted.sort();
-    let request = request_hash(&[CREATE, title, &sorted.join(",")]);
+    let sorted = |list: &[Uuid]| {
+        let mut ids: Vec<String> = list.iter().map(Uuid::to_string).collect();
+        ids.sort();
+        ids.join(",")
+    };
+    // A changeset that only publishes hashes as it did before unpublishing existed.
+    let request = if unpublish.is_empty() {
+        request_hash(&[CREATE, title, &sorted(&entries)])
+    } else {
+        request_hash(&[CREATE, title, &sorted(&entries), &sorted(&unpublish)])
+    };
     match idempotency::claim(&mut tx, CREATE, key, &request)
         .await
         .map_err(ApiError::from_db)?
@@ -460,7 +482,7 @@ pub(crate) async fn create(
             return Ok(respond(status, response, &hash, true));
         }
     }
-    let pins = changesets::pins(&mut tx, &entries)
+    let mut pins = changesets::pins(&mut tx, &entries)
         .await
         .map_err(ApiError::from_db)?;
     if pins.len() != entries.len() {
@@ -470,6 +492,17 @@ pub(crate) async fn create(
             message: "every entry is an entry id in this environment".to_owned(),
         });
     }
+    let taken_down = changesets::published_pins(&mut tx, &unpublish)
+        .await
+        .map_err(ApiError::from_db)?;
+    if taken_down.len() != unpublish.len() {
+        return Err(ApiError::InvalidField {
+            reason: "not_published",
+            pointer: "/unpublish",
+            message: "every entry to unpublish is published in this environment".to_owned(),
+        });
+    }
+    pins.extend(taken_down);
     let id = Uuid::now_v7();
     changesets::create(&mut tx, id, title, &pins, &hash_of(&pins))
         .await
@@ -532,15 +565,31 @@ pub(crate) async fn refresh(
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_write(&tx)?;
     let head = locked(&mut tx, &path.changeset, &expected).await?;
-    let entries: Vec<Uuid> = changesets::items(&mut tx, head.id)
-        .await
-        .map_err(ApiError::from_db)?
-        .into_iter()
-        .map(|item| item.pin.entry_id)
-        .collect();
-    let pins = changesets::pins(&mut tx, &entries)
+    let items = changesets::items(&mut tx, head.id)
         .await
         .map_err(ApiError::from_db)?;
+    let of_kind = |kind: Kind| -> Vec<Uuid> {
+        items
+            .iter()
+            .filter(|item| item.pin.kind == kind.as_str())
+            .map(|item| item.pin.entry_id)
+            .collect()
+    };
+    let mut pins = changesets::pins(&mut tx, &of_kind(Kind::Publish))
+        .await
+        .map_err(ApiError::from_db)?;
+    pins.extend(
+        changesets::published_pins(&mut tx, &of_kind(Kind::Unpublish))
+            .await
+            .map_err(ApiError::from_db)?,
+    );
+    // An entry to unpublish that is no longer published keeps its pin and leaves the changeset
+    // stale: there's nothing left for it to take down.
+    for item in &items {
+        if !pins.iter().any(|pin| pin.entry_id == item.pin.entry_id) {
+            pins.push(item.pin.clone());
+        }
+    }
     let hash = hash_of(&pins);
     if hash[..] != head.hash[..] {
         changesets::repin(&mut tx, head.id, &pins, &hash)
@@ -589,10 +638,10 @@ pub(crate) async fn review(
         .await
         .map_err(ApiError::from_db)?
         .iter()
-        .any(|item| item.current_revision_id != item.pin.revision_id);
+        .any(changesets::Item::moved);
     if edited {
         return Err(ApiError::Conflict(
-            "an entry was edited after this changeset pinned it; refresh the changeset, then review it",
+            "an entry moved on after this changeset pinned it; refresh the changeset, then review it",
         ));
     }
     changesets::review(
@@ -615,6 +664,8 @@ pub(crate) struct PublishedView {
     changeset_hash: String,
     /// Entries whose published revision changed.
     entries_changed: u64,
+    /// Entries it took down.
+    entries_unpublished: u64,
 }
 
 /// Refuses to publish anything but an approved changeset, saying what it needs instead.
@@ -625,7 +676,7 @@ fn publishable(status: &Status) -> Result<(), ApiError> {
             "this changeset has already been published",
         )),
         Status::Stale { .. } => Err(ApiError::Conflict(
-            "an entry was edited after this changeset pinned it; refresh and review it again before publishing",
+            "an entry moved on after this changeset pinned it; refresh and review it again before publishing",
         )),
         Status::ApprovalExpired => Err(ApiError::Conflict(
             "the approval has expired; it needs reviewing again before publishing",
@@ -685,10 +736,7 @@ pub(crate) async fn publish(
     let reviews = changesets::reviews(&mut tx, head.id, Some(&head.hash))
         .await
         .map_err(ApiError::from_db)?;
-    let edited = items
-        .iter()
-        .filter(|item| item.current_revision_id != item.pin.revision_id)
-        .count();
+    let edited = items.iter().filter(|item| item.moved()).count();
     publishable(&decide(&head, edited, &reviews))?;
     // Approved means the newest decision on this hash is an approval: the one it publishes under.
     let approval = reviews
@@ -704,13 +752,20 @@ pub(crate) async fn publish(
     )
     .await
     .map_err(ApiError::from_db)?;
-    let (generation, epoch, changed) = match committed {
+    let (generation, epoch, changed, unpublished) = match committed {
         Committed::Done {
             generation,
             epoch,
             changed,
-        } => (generation, epoch, changed),
+            unpublished,
+        } => (generation, epoch, changed, unpublished),
         Committed::Moved { current } => return Err(ApiError::GenerationMoved { current }),
+        // Checked above under the changeset's lock; the transaction is dropped, not committed.
+        Committed::Unmatched => {
+            return Err(ApiError::internal(std::io::Error::other(
+                "an entry to unpublish no longer publishes its pinned revision",
+            )));
+        }
     };
     tracing::info!(project = %tx.project, generation, changeset = %head.id, "release committed");
     let text = serde_json::to_string(&Data {
@@ -720,6 +775,7 @@ pub(crate) async fn publish(
             changeset_id: head.id,
             changeset_hash: content_hash(&head.hash),
             entries_changed: changed,
+            entries_unpublished: unpublished,
         },
     })
     .map_err(ApiError::internal)?;
@@ -742,6 +798,8 @@ pub(crate) struct ReleaseView {
     published_at: String,
     /// Entries whose published revision changed in this release.
     entries: i64,
+    /// Entries it took down.
+    unpublished: i64,
 }
 
 /// `GET {P}/releases`: the newest 100, with the environment's current generation.
@@ -769,6 +827,7 @@ pub(crate) async fn releases(
                 published_by_name: row.published_by_name,
                 published_at: rfc3339(row.published_at)?,
                 entries: row.entries,
+                unpublished: row.unpublished,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;

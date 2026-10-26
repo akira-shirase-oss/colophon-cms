@@ -1,0 +1,97 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT 'unpublish' AS \"kind!\", p.entry_id, r.id AS revision_id, r.collection, r.content_hash,\n                  r.schema_version, v.definition_hash\n           FROM publications p\n           JOIN revisions r ON r.project_id = p.project_id AND r.environment_id = p.environment_id\n                           AND r.id = p.revision_id\n           JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id\n                                       AND v.collection = r.collection AND v.version = r.schema_version\n           WHERE p.project_id = $1 AND p.environment_id = $2 AND p.entry_id = ANY($3) AND p.valid_to IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "kind!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "entry_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "publications",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "revision_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "collection",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "collection"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "content_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "content_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "schema_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "schema_version"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "definition_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "content_type_versions",
+            "name": "definition_hash"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "efbbc2f6d9d0929b3f7e6dd2db59c0c505c1523c259f7a534b4c550cbbd761b9"
+}

@@ -107,7 +107,9 @@
 				<a href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: release.changeset_id })}>{release.title}</a>
 				<small class="muted">
 					{release.entries}
-					{release.entries === 1 ? 'entry' : 'entries'} changed, by {release.published_by_name ?? release.published_by},
+					{release.entries === 1 ? 'entry' : 'entries'} changed,{#if release.unpublished > 0}
+						<span data-testid="unpublished">{release.unpublished} unpublished,</span>{/if} by {release.published_by_name ??
+						release.published_by},
 					{new Date(release.published_at).toLocaleString()}
 				</small>
 				{#each byRelease.get(release.generation) ?? [] as job (job.id)}

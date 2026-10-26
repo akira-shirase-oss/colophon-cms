@@ -9,6 +9,10 @@
 //! entry under one of these keys can't go stale; a new release is a new generation and so new
 //! keys. Locales arrive later; until then every answer is in the one default locale.
 //!
+//! There is one exception: unpublishing (D-049) takes content out of every earlier generation's
+//! answers too. So a key also names the environment's latest unpublish, and each unpublish
+//! retires every answer cached before it, whatever generation it was read at (F07).
+//!
 //! Tags name what an answer was built from, so a purge can find it: the project, the environment,
 //! the collection (a listing is tagged with its collection even when a newly published entry
 //! wasn't in it, F06) and, for a single entry, the entry.
@@ -31,13 +35,16 @@ pub struct Scope {
     pub epoch: i64,
     /// The release generation the answer was read at.
     pub generation: i64,
+    /// The generation of the environment's latest release that unpublished something (0 if none
+    /// has).
+    pub unpublished: i64,
 }
 
 impl Scope {
     fn prefix(&self) -> String {
         format!(
-            "colophon:delivery:r{RENDER_VERSION}:p{:032x}:e{:032x}:x{}:g{}",
-            self.project, self.environment, self.epoch, self.generation
+            "colophon:delivery:r{RENDER_VERSION}:p{:032x}:e{:032x}:x{}:g{}:u{}",
+            self.project, self.environment, self.epoch, self.generation, self.unpublished
         )
     }
 
@@ -97,6 +104,7 @@ mod tests {
             environment: 0x0e,
             epoch: 1,
             generation,
+            unpublished: 0,
         }
     }
 
@@ -107,7 +115,7 @@ mod tests {
         assert_eq!(
             first,
             format!(
-                "colophon:delivery:r1:p{:032x}:e{:032x}:x1:g3:list:20:-:articles",
+                "colophon:delivery:r1:p{:032x}:e{:032x}:x1:g3:u0:list:20:-:articles",
                 1, 14
             )
         );
@@ -121,6 +129,15 @@ mod tests {
             first,
             restored.list_key("articles", 20, None),
             "generation 3 of another epoch"
+        );
+        let after_unpublish = Scope {
+            unpublished: 5,
+            ..at_3
+        };
+        assert_ne!(
+            first,
+            after_unpublish.list_key("articles", 20, None),
+            "generation 3 read again after release 5 took something down"
         );
         assert_ne!(first, at_3.list_key("articles", 21, None));
         assert_ne!(first, at_3.list_key("articles", 20, Some(7)));

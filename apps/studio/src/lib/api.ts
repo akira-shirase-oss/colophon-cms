@@ -334,18 +334,23 @@ export interface ChangesetStatus {
 	by: string | null;
 	/** The approver also submitted it: allowed, and always shown. */
 	self_review: boolean;
-	/** Entries edited since they were pinned. */
+	/** Entries that moved on since they were pinned. */
 	edited_items: number;
 }
 
 export interface ChangesetItem {
+	/** Publish the pinned revision, or take it down (D-049). */
+	kind: 'publish' | 'unpublish';
 	entry_id: string;
 	collection: string;
 	revision_id: string;
 	title: string;
 	content_hash: string;
 	schema_version: number;
-	current_revision_id: string;
+	/** For `publish`, the entry's current revision; for `unpublish`, the published one (null once
+	 *  nothing is). */
+	current_revision_id: string | null;
+	/** The entry moved on since it was pinned. */
 	edited: boolean;
 }
 
@@ -381,6 +386,8 @@ export interface ChangesetSummary {
 	hash: string;
 	status: ChangesetStatus;
 	items: number;
+	/** How many of its items unpublish. */
+	unpublish: number;
 	submitted_at: string | null;
 	updated_at: string;
 }
@@ -395,10 +402,17 @@ export async function getChangeset(project: string, id: string): Promise<Changes
 	return ((await (await send('GET', `${changesets(project)}/${id}`)).json()) as { data: Changeset }).data;
 }
 
-/** Pins each entry's current revision. Sending the same key again is safe. */
-export async function createChangeset(project: string, title: string, entries: string[], key: string): Promise<Changeset> {
-	return ((await (await send('POST', changesets(project), { title, entries }, { 'Idempotency-Key': key })).json()) as { data: Changeset })
-		.data;
+/** Pins each entry's current revision to publish, and the published revision of each entry in
+ *  `unpublish` to take down (D-049). Sending the same key again is safe. */
+export async function createChangeset(
+	project: string,
+	title: string,
+	entries: string[],
+	unpublish: string[],
+	key: string
+): Promise<Changeset> {
+	const body = { title, entries, unpublish };
+	return ((await (await send('POST', changesets(project), body, { 'Idempotency-Key': key })).json()) as { data: Changeset }).data;
 }
 
 /** Submits, refreshes or reviews the changeset whose hash the caller saw; a changed hash is refused
@@ -426,6 +440,8 @@ export interface Release {
 	published_at: string;
 	/** Entries whose published revision changed in it. */
 	entries: number;
+	/** Entries it took down. */
+	unpublished: number;
 }
 
 /** The environment's releases, newest first, and its current generation. */
@@ -444,10 +460,10 @@ export async function publishChangeset(
 	hash: string,
 	baseGeneration: number,
 	key: string
-): Promise<{ generation: number; entries_changed: number }> {
+): Promise<{ generation: number; entries_changed: number; entries_unpublished: number }> {
 	const path = `${changesets(project)}/${id}/publish`;
 	const response = await send('POST', path, { base_generation: baseGeneration }, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key });
-	return ((await response.json()) as { data: { generation: number; entries_changed: number } }).data;
+	return ((await response.json()) as { data: { generation: number; entries_changed: number; entries_unpublished: number } }).data;
 }
 
 /** Where a project's releases are announced (D-046). */

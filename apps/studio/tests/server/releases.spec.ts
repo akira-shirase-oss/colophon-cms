@@ -74,3 +74,41 @@ test('an approved changeset is published as release 1, and a stale tab is told a
 	await expect(other.getByTestId('release-link')).toHaveText('release 3');
 	expect(await violations(other)).toEqual([]);
 });
+
+test('an article is taken down through a reviewed changeset, and delivery says it is gone', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	await page.goto(await approvedChangeset(page, project, 'Short-lived'));
+	await page.getByRole('button', { name: 'Publish', exact: true }).click();
+	await expect(page.getByTestId('release-link')).toHaveText('release 1');
+	const entry = await page.evaluate(async (path) => {
+		const response = await fetch(path, { credentials: 'omit' });
+		return ((await response.json()) as { data: { id: string }[] }).data[0]?.id ?? '';
+	}, `/content/v1/${project}/production/articles`);
+
+	await page.goto(`/studio/projects/${project}/changesets`);
+	await page.getByLabel('Title').fill('Take it down');
+	await page.getByRole('checkbox', { name: 'Unpublish Short-lived' }).check();
+	await expect(page.getByRole('checkbox', { name: 'Short-lived', exact: true })).toBeDisabled();
+	expect(await violations(page)).toEqual([]);
+	await page.getByRole('button', { name: 'Create changeset' }).click();
+	await expect(page.getByTestId('changeset-items')).toContainText('Short-lived');
+	await expect(page.getByTestId('unpublish')).toBeVisible();
+	await page.getByRole('button', { name: 'Submit for review' }).click();
+	await page.getByRole('button', { name: 'Approve this version' }).click();
+	await expect(status(page)).toHaveAttribute('data-state', 'approved');
+	await page.getByRole('button', { name: 'Publish', exact: true }).click();
+	await expect(page.getByTestId('release-link')).toHaveText('release 2');
+
+	await page.getByTestId('release-link').click();
+	await expect(page.locator('[data-generation="2"]').getByTestId('unpublished')).toHaveText('1 unpublished,');
+	const after = await page.evaluate(
+		async ({ list, one }) => {
+			const listed = (await (await fetch(list, { credentials: 'omit' })).json()) as { data: unknown[] };
+			const statuses = await Promise.all([one, `${one}?generation=1`].map(async (path) => (await fetch(path, { credentials: 'omit' })).status));
+			return { listed: listed.data.length, statuses };
+		},
+		{ list: `/content/v1/${project}/production/articles?generation=1`, one: `/content/v1/${project}/production/articles/${entry}` }
+	);
+	expect(after).toEqual({ listed: 0, statuses: [410, 410] });
+});

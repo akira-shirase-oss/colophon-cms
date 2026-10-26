@@ -5,6 +5,12 @@
 //! releases prepared on the same base can't both commit. An entry's publication history is a
 //! series of half-open intervals of generations, `[from, to)`, that never overlap: publishing a
 //! new revision closes the open interval at the new generation and opens another.
+//!
+//! Unpublishing (D-049) closes the open interval and leaves a tombstone at the new generation.
+//! History stays as it was, but the origin no longer delivers any interval that began before a
+//! tombstone, at any generation: taking something down takes it out of old release links too
+//! (spec §15, DL5). Publishing the entry again later opens an interval after the tombstone, which
+//! is delivered from its own generation on.
 
 /// Why a release can't commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -99,6 +105,22 @@ pub fn apply<R: PartialEq + Clone>(
     next
 }
 
+/// Applies unpublishing an entry at `generation` to its history, oldest first: closes the open
+/// interval, if there is one.
+pub fn apply_unpublish<R: Clone>(history: &[Interval<R>], generation: i64) -> Vec<Interval<R>> {
+    let mut next = history.to_vec();
+    if let Some(open) = next.iter_mut().find(|interval| interval.to.is_none()) {
+        open.to = Some(generation);
+    }
+    next
+}
+
+/// Whether the origin may deliver an interval that began at `from`, given the generations at
+/// which the entry was unpublished: not if any of them came after it began.
+pub fn deliverable(from: i64, unpublished: &[i64]) -> bool {
+    unpublished.iter().all(|&at| at <= from)
+}
+
 /// Whether a history is well formed: intervals in order, none empty, none overlapping, at most
 /// one open and only as the last.
 pub fn well_formed<R>(history: &[Interval<R>]) -> bool {
@@ -187,6 +209,38 @@ mod tests {
         assert_eq!(publish(Some(&open), &"r1"), Change::Unchanged);
         assert_eq!(publish(Some(&open), &"r2"), Change::Publish { close: true });
         assert_eq!(publish(None, &"r1"), Change::Publish { close: false });
+    }
+
+    #[test]
+    fn unpublishing_takes_an_entry_out_of_every_earlier_release_until_it_is_published_again() {
+        let mut history: Vec<Interval<&str>> = Vec::new();
+        history = apply(&history, &"r1", 1);
+        history = apply(&history, &"r2", 2);
+        history = apply_unpublish(&history, 4);
+        assert!(well_formed(&history), "{history:?}");
+        assert_eq!(
+            apply_unpublish(&history, 5),
+            history,
+            "nothing published, nothing to close"
+        );
+        history = apply(&history, &"r3", 6);
+        assert!(well_formed(&history), "{history:?}");
+        let tombstones = [4];
+        let delivered = |generation| {
+            history
+                .iter()
+                .find(|interval| interval.covers(generation))
+                .filter(|interval| deliverable(interval.from, &tombstones))
+                .map(|interval| interval.revision)
+        };
+        assert_eq!(
+            [1, 2, 3, 4, 5, 6, 9].map(delivered),
+            [None, None, None, None, None, Some("r3"), Some("r3")],
+            "release 1's and 2's links stop delivering it; the republish delivers from 6"
+        );
+        assert!(deliverable(6, &[4]));
+        assert!(!deliverable(6, &[4, 7]), "unpublished again at 7");
+        assert!(deliverable(3, &[]));
     }
 
     #[test]

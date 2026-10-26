@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT c.id, c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at,\n                  c.updated_at, rel.generation AS \"published?\",\n                  counts.items AS \"items!\", counts.stale AS \"stale!\",\n                  latest.id AS \"review_id?\", latest.reviewer_id AS \"reviewer_id?\",\n                  latest.reviewer_name, latest.decision AS \"decision?\", latest.seq AS \"seq?\",\n                  latest.comment AS \"comment?\", latest.created_at AS \"reviewed_at?\"\n           FROM changesets c\n           CROSS JOIN LATERAL (\n               SELECT count(*) AS items, count(*) FILTER (WHERE e.draft_revision_id <> i.revision_id) AS stale\n               FROM changeset_items i\n               JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id\n                             AND e.id = i.entry_id\n               WHERE i.project_id = c.project_id AND i.environment_id = c.environment_id\n                 AND i.changeset_id = c.id\n           ) counts\n           LEFT JOIN LATERAL (\n               SELECT v.id, v.reviewer_id, n.display_name AS reviewer_name, v.decision, v.seq, v.comment,\n                      v.created_at\n               FROM reviews v JOIN identities n ON n.id = v.reviewer_id\n               WHERE v.project_id = c.project_id AND v.environment_id = c.environment_id\n                 AND v.changeset_id = c.id AND v.changeset_hash = c.hash\n               ORDER BY v.seq DESC\n               LIMIT 1\n           ) latest ON true\n           LEFT JOIN releases rel ON rel.project_id = c.project_id AND rel.environment_id = c.environment_id\n                                 AND rel.changeset_id = c.id\n           WHERE c.project_id = $1 AND c.environment_id = $2\n           ORDER BY c.id DESC\n           LIMIT 100",
+  "query": "SELECT c.id, c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at,\n                  c.updated_at, rel.generation AS \"published?\",\n                  counts.items AS \"items!\", counts.unpublish AS \"unpublish!\", counts.stale AS \"stale!\",\n                  latest.id AS \"review_id?\", latest.reviewer_id AS \"reviewer_id?\",\n                  latest.reviewer_name, latest.decision AS \"decision?\", latest.seq AS \"seq?\",\n                  latest.comment AS \"comment?\", latest.created_at AS \"reviewed_at?\"\n           FROM changesets c\n           CROSS JOIN LATERAL (\n               SELECT count(*) AS items, count(*) FILTER (WHERE i.kind = 'unpublish') AS unpublish,\n                      count(*) FILTER (\n                          WHERE CASE WHEN i.kind = 'publish' THEN e.draft_revision_id <> i.revision_id\n                                     ELSE NOT EXISTS (\n                                         SELECT 1 FROM publications p\n                                         WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id\n                                           AND p.entry_id = i.entry_id AND p.valid_to IS NULL\n                                           AND p.revision_id = i.revision_id)\n                                END\n                      ) AS stale\n               FROM changeset_items i\n               JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id\n                             AND e.id = i.entry_id\n               WHERE i.project_id = c.project_id AND i.environment_id = c.environment_id\n                 AND i.changeset_id = c.id\n           ) counts\n           LEFT JOIN LATERAL (\n               SELECT v.id, v.reviewer_id, n.display_name AS reviewer_name, v.decision, v.seq, v.comment,\n                      v.created_at\n               FROM reviews v JOIN identities n ON n.id = v.reviewer_id\n               WHERE v.project_id = c.project_id AND v.environment_id = c.environment_id\n                 AND v.changeset_id = c.id AND v.changeset_hash = c.hash\n               ORDER BY v.seq DESC\n               LIMIT 1\n           ) latest ON true\n           LEFT JOIN releases rel ON rel.project_id = c.project_id AND rel.environment_id = c.environment_id\n                                 AND rel.changeset_id = c.id\n           WHERE c.project_id = $1 AND c.environment_id = $2\n           ORDER BY c.id DESC\n           LIMIT 100",
   "describe": {
     "columns": [
       {
@@ -110,12 +110,18 @@
       },
       {
         "ordinal": 10,
-        "name": "stale!",
+        "name": "unpublish!",
         "type_info": "Int8",
         "origin": "Expression"
       },
       {
         "ordinal": 11,
+        "name": "stale!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
         "name": "review_id?",
         "type_info": "Uuid",
         "origin": {
@@ -126,7 +132,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "reviewer_id?",
         "type_info": "Uuid",
         "origin": {
@@ -137,7 +143,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "reviewer_name",
         "type_info": "Text",
         "origin": {
@@ -148,7 +154,7 @@
         }
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "decision?",
         "type_info": "Text",
         "origin": {
@@ -159,7 +165,7 @@
         }
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "seq?",
         "type_info": "Int4",
         "origin": {
@@ -170,7 +176,7 @@
         }
       },
       {
-        "ordinal": 16,
+        "ordinal": 17,
         "name": "comment?",
         "type_info": "Text",
         "origin": {
@@ -181,7 +187,7 @@
         }
       },
       {
-        "ordinal": 17,
+        "ordinal": 18,
         "name": "reviewed_at?",
         "type_info": "Timestamptz",
         "origin": {
@@ -210,6 +216,7 @@
       false,
       null,
       null,
+      null,
       false,
       false,
       true,
@@ -219,5 +226,5 @@
       false
     ]
   },
-  "hash": "88c3d0d5c863b5c4b8ce7543d4dde96027d7776a2ca470cffcf8014c3d3fd405"
+  "hash": "73e08e40edec13889a234f9b741c371cc1deddf297de92f0b77e0978153e0bdd"
 }
