@@ -7,8 +7,8 @@ import { signIn } from './sign-in.ts';
 test('sign in, create a project, and it stays invisible to someone else', async ({ browser }) => {
 	const editorContext = await browser.newContext();
 	const editor = await editorContext.newPage();
-	await signIn(editor, 'dev-editor');
-	await expect(editor.getByTestId('signed-in')).toContainText('Dev Editor');
+	await signIn(editor, 'dev-owner');
+	await expect(editor.getByTestId('signed-in')).toContainText('Dev Owner');
 
 	const slug = `tb-${Date.now().toString(36)}`;
 	await editor.getByLabel('Slug').fill(slug);
@@ -24,22 +24,22 @@ test('sign in, create a project, and it stays invisible to someone else', async 
 	await expect(editor.getByTestId('message')).toContainText('409 conflict');
 
 	// Another person, in another browser, can't see it: not listed, and 404 by id.
-	const ownerContext = await browser.newContext();
-	const owner = await ownerContext.newPage();
-	await signIn(owner, 'dev-owner');
-	await expect(owner.locator(`[data-slug="${slug}"]`)).toHaveCount(0);
-	const status = await owner.evaluate(async (id) => (await fetch(`/server/api/v1/projects/${id}`)).status, projectId);
+	const otherContext = await browser.newContext();
+	const other = await otherContext.newPage();
+	await signIn(other, 'dev-editor');
+	await expect(other.locator(`[data-slug="${slug}"]`)).toHaveCount(0);
+	const status = await other.evaluate(async (id) => (await fetch(`/server/api/v1/projects/${id}`)).status, projectId);
 	expect(status).toBe(404);
 
 	// Signing out ends the session.
 	await editor.getByRole('button', { name: 'Sign out' }).click();
 	await expect(editor.getByTestId('signed-out')).toContainText('HTTP 401');
 	await editorContext.close();
-	await ownerContext.close();
+	await otherContext.close();
 });
 
 test('a write without the CSRF token is refused', async ({ page }) => {
-	await signIn(page, 'dev-editor');
+	await signIn(page, 'dev-owner');
 	const status = await page.evaluate(async () => {
 		const response = await fetch('/server/api/v1/projects', {
 			method: 'POST',

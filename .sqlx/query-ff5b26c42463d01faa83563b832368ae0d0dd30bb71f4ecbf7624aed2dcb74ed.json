@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (SELECT 1 FROM administrators WHERE identity_id = $1) AS \"administrator!\",\n                  EXISTS (SELECT 1 FROM installation) AS \"bootstrapped!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "administrator!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "bootstrapped!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "ff5b26c42463d01faa83563b832368ae0d0dd30bb71f4ecbf7624aed2dcb74ed"
+}

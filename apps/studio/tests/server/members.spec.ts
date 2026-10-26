@@ -11,7 +11,7 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await page.goto(`/studio/projects/${project}`);
 	await page.getByTestId('members-link').click();
 	await expect(page.getByTestId('member')).toHaveCount(1);
-	await expect(page.getByLabel('Role of Dev Editor')).toHaveValue('owner');
+	await expect(page.getByLabel('Role of Dev Owner')).toHaveValue('owner');
 
 	// The link is shown once; the list of pending invitations never shows it again.
 	await page.getByLabel('Who is it for?').fill('A guest editor');
@@ -33,8 +33,8 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await expect(guest.getByTestId('signed-out')).toBeVisible();
 	expect(new URL(guest.url()).hash).toBe('');
 	await guest.getByRole('link', { name: 'Sign in' }).click();
-	await keycloak(guest, 'dev-owner');
-	await expect(guest.getByTestId('invite-ask')).toContainText('Dev Editor invited you to join Studio test as editor');
+	await keycloak(guest, 'dev-editor');
+	await expect(guest.getByTestId('invite-ask')).toContainText('Dev Owner invited you to join Studio test as editor');
 	expect(new URL(guest.url()).hash).toBe('');
 	expect(await violations(guest)).toEqual([]);
 	await guest.getByRole('button', { name: 'Join', exact: true }).click();
@@ -52,11 +52,11 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await page.reload();
 	await expect(page.getByTestId('member')).toHaveCount(2);
 	await expect(page.getByTestId('invitations')).toContainText('None.');
-	await page.getByLabel('Role of Dev Editor').selectOption('editor');
+	await page.getByLabel('Role of Dev Owner').selectOption('editor');
 	await expect(page.getByTestId('members-error')).toContainText('at least one owner');
-	await expect(page.getByLabel('Role of Dev Editor')).toHaveValue('owner');
-	await page.getByLabel('Role of Dev Owner').selectOption('developer');
-	await expect(page.getByLabel('Role of Dev Owner')).toHaveValue('developer');
+	await expect(page.getByLabel('Role of Dev Owner')).toHaveValue('owner');
+	await page.getByLabel('Role of Dev Editor').selectOption('developer');
+	await expect(page.getByLabel('Role of Dev Editor')).toHaveValue('developer');
 	await expect(page.getByTestId('members-error')).toHaveCount(0);
 
 	// A revoked invitation stops working at once.

@@ -185,8 +185,12 @@ pub struct Identity {
     pub id: Uuid,
     /// The provider that vouches for it.
     pub issuer: String,
+    /// Its id at that provider: what `colophon admin bootstrap` binds to.
+    pub subject: String,
     /// A name to show, if the provider gave one.
     pub display_name: Option<String>,
+    /// Whether it is one of the installation's administrators (D-043).
+    pub administrator: bool,
 }
 
 /// An identity and the projects it is a member of: everything `/me` shows.
@@ -210,7 +214,9 @@ pub async fn profile(pool: &PgPool, id: Uuid) -> Result<Option<Profile>, DbError
     .await?;
     let identity = sqlx::query_as!(
         Identity,
-        "SELECT id, issuer, display_name FROM identities WHERE id = $1",
+        r#"SELECT i.id, i.issuer, i.subject, i.display_name,
+                  EXISTS (SELECT 1 FROM administrators a WHERE a.identity_id = i.id) AS "administrator!"
+           FROM identities i WHERE i.id = $1"#,
         id
     )
     .fetch_optional(&mut *transaction)

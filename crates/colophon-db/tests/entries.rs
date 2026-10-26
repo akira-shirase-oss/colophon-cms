@@ -59,7 +59,7 @@ async fn enter(pool: &PgPool, identity: Uuid, project: Uuid) -> ProjectTransacti
 
 /// Alice's project with one entry; returns (alice, project, entry, first revision).
 async fn alice_with_an_entry(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid) {
-    let alice = db.person("alice").await;
+    let alice = db.administrator("alice").await;
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created")
@@ -248,7 +248,7 @@ async fn revisions_cannot_be_changed_or_deleted_and_pointers_cannot_cross_entrie
 async fn another_project_cannot_see_or_reach_an_entry() {
     let db = TestDb::new().await;
     let (alice, project, entry, _first) = alice_with_an_entry(&db).await;
-    let bob = db.person("bob").await;
+    let bob = db.administrator("bob").await;
     let beta = projects::create(&db.app, bob, "beta", "Beta")
         .await
         .expect("created")

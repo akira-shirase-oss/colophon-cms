@@ -26,7 +26,7 @@ const products = {
 };
 
 test('define a content type, change it safely, and see unsafe and stale changes refused', async ({ page }) => {
-	await signIn(page, 'dev-editor');
+	await signIn(page, 'dev-owner');
 	const projectId = await newProject(page);
 	await page.goto('/content-types');
 	await page.getByLabel('Project').selectOption(projectId);

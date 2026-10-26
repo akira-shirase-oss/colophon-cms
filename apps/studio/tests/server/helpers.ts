@@ -4,14 +4,14 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page } from '@playwright/test';
 
 /** Completes the local Keycloak's sign-in form, wherever the page sent us to it. */
-export async function keycloak(page: Page, user = 'dev-editor') {
+export async function keycloak(page: Page, user = 'dev-owner') {
 	await page.locator('#username').fill(user);
 	await page.locator('#password').fill('colophon-dev');
 	await page.locator('#kc-login').click();
 }
 
 /** Signs in from the Studio's home page. */
-export async function signIn(page: Page, user = 'dev-editor') {
+export async function signIn(page: Page, user = 'dev-owner') {
 	await page.goto('/studio/');
 	await page.getByTestId('sign-in').click();
 	await keycloak(page, user);

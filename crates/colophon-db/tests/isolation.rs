@@ -48,7 +48,7 @@ async fn the_application_login_cannot_bypass_row_level_security() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_project_is_invisible_to_everyone_but_its_members() {
     let db = TestDb::new().await;
-    let (alice, bob) = (db.person("alice").await, db.person("bob").await);
+    let (alice, bob) = (db.administrator("alice").await, db.person("bob").await);
     let alpha = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created");
@@ -103,7 +103,7 @@ async fn a_project_is_invisible_to_everyone_but_its_members() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn the_context_ends_with_its_transaction_on_a_reused_connection() {
     let db = TestDb::new().await;
-    let alice = db.person("alice").await;
+    let alice = db.administrator("alice").await;
     let alpha = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created");
@@ -159,7 +159,10 @@ async fn the_context_ends_with_its_transaction_on_a_reused_connection() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn nobody_can_write_into_a_project_from_another_ones_context() {
     let db = TestDb::new().await;
-    let (alice, bob) = (db.person("alice").await, db.person("bob").await);
+    let (alice, bob) = (
+        db.administrator("alice").await,
+        db.administrator("bob").await,
+    );
     let alpha = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created");
@@ -227,7 +230,10 @@ async fn nobody_can_write_into_a_project_from_another_ones_context() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_taken_slug_is_a_conflict() {
     let db = TestDb::new().await;
-    let (alice, bob) = (db.person("alice").await, db.person("bob").await);
+    let (alice, bob) = (
+        db.administrator("alice").await,
+        db.administrator("bob").await,
+    );
     projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created");
@@ -335,7 +341,10 @@ async fn a_sign_in_attempt_can_be_finished_once() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_profile_names_the_person_and_only_their_projects() {
     let db = TestDb::new().await;
-    let (alice, bob) = (db.person("alice").await, db.person("bob").await);
+    let (alice, bob) = (
+        db.administrator("alice").await,
+        db.administrator("bob").await,
+    );
     projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created");

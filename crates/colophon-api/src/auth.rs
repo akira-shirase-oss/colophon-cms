@@ -212,7 +212,10 @@ pub(crate) async fn logout(
 pub(crate) struct Me {
     id: uuid::Uuid,
     issuer: String,
+    subject: String,
     display_name: Option<String>,
+    /// Whether this person may create projects (D-043).
+    administrator: bool,
     projects: Vec<crate::projects::ProjectView>,
 }
 
@@ -230,7 +233,9 @@ pub(crate) async fn me(
         data: Me {
             id: profile.identity.id,
             issuer: profile.identity.issuer,
+            subject: profile.identity.subject,
             display_name: profile.identity.display_name,
+            administrator: profile.identity.administrator,
             projects: profile
                 .projects
                 .into_iter()

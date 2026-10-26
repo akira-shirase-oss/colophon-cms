@@ -146,7 +146,17 @@ pub(crate) async fn whoami(profile: &str, json: bool) -> Result<(), Failure> {
         );
     } else {
         let name = me["data"]["display_name"].as_str().unwrap_or("(no name)");
-        println!("{name} on {}", saved.server);
+        let administrator = if me["data"]["administrator"] == true {
+            ", administrator"
+        } else {
+            ""
+        };
+        println!("{name} on {}{administrator}", saved.server);
+        println!(
+            "  subject {} at {}",
+            me["data"]["subject"].as_str().unwrap_or("?"),
+            me["data"]["issuer"].as_str().unwrap_or("?")
+        );
         for project in me["data"]["projects"].as_array().into_iter().flatten() {
             println!(
                 "  {}  {}  ({})",

@@ -131,7 +131,7 @@ fn article(title: &str) -> String {
 )]
 async fn the_cli_signs_in_through_the_browser_and_creates_the_same_records() {
     let _server = Server::start().await;
-    let editor = sign_in("dev-editor").await;
+    let editor = sign_in("dev-owner").await;
     let slug = unique_slug();
     let created = call(
         &editor,
@@ -164,7 +164,7 @@ async fn the_cli_signs_in_through_the_browser_and_creates_the_same_records() {
     assert_eq!(mode & 0o777, 0o600, "only the owner can read the token");
 
     let whoami = colophon(&config, &["whoami", "--json"]);
-    assert_eq!(json_out(&whoami)["me"]["display_name"], "Dev Editor");
+    assert_eq!(json_out(&whoami)["me"]["display_name"], "Dev Owner");
 
     // Create an article by slug, then read the very same record through the API.
     let create = colophon(

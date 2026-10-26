@@ -48,8 +48,8 @@ export function setup() {
   const action = parseHTML(page.body).find('#kc-form-login').attr('action');
   if (!action) fail('no Keycloak login form');
   // Posting the credentials follows Keycloak's redirect to the callback, then to /me.
-  const me = http.post(action.replace(/&amp;/g, '&'), { username: 'dev-editor', password: 'colophon-dev' });
-  if (me.status !== 200 || me.json('data.display_name') !== 'Dev Editor') fail(`sign-in failed: HTTP ${me.status}`);
+  const me = http.post(action.replace(/&amp;/g, '&'), { username: 'dev-owner', password: 'colophon-dev' });
+  if (me.status !== 200 || me.json('data.display_name') !== 'Dev Owner') fail(`sign-in failed: HTTP ${me.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
   return { cookie: `colophon_session=${jar.colophon_session[0]}` };
 }
@@ -60,7 +60,7 @@ export default function (data) {
     const res = http.get(`${BASE_URL}/me`, Object.assign({ tags: { endpoint: 'me' } }, params));
     check(res, {
       'me 200': (r) => r.status === 200,
-      'me names the person': (r) => r.body.indexOf('"display_name":"Dev Editor"') !== -1,
+      'me names the person': (r) => r.body.indexOf('"display_name":"Dev Owner"') !== -1,
     });
   } else {
     const res = http.get(`${BASE_URL}/api/v1/projects`, Object.assign({ tags: { endpoint: 'projects' } }, params));

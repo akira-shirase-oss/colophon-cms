@@ -63,7 +63,7 @@ export function setup() {
   const page = http.get(`${PUBLIC_URL}/auth/login?return_to=/me`);
   const action = parseHTML(page.body).find('#kc-form-login').attr('action');
   if (!action) fail('no Keycloak login form');
-  const me = http.post(action.replace(/&amp;/g, '&'), { username: 'dev-editor', password: 'colophon-dev' });
+  const me = http.post(action.replace(/&amp;/g, '&'), { username: 'dev-owner', password: 'colophon-dev' });
   if (me.status !== 200) fail(`sign-in failed: HTTP ${me.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
   const session = { cookie: `colophon_session=${jar.colophon_session[0]}`, csrf: jar.colophon_csrf[0] };

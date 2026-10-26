@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO installation (bootstrapped_by) VALUES ($1) ON CONFLICT (singleton) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "35ba29f0955dacd910b488d4c3a41f44d531ff1102bdf73a3669fc083186d079"
+}
