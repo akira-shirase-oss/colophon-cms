@@ -62,7 +62,7 @@
 				<time datetime={seen.observed_at}>{when(seen.observed_at)}</time>, from <strong>{seen.location}</strong>
 				({named(seen.destination_id)}):
 				{#if seen.observed_generation !== null}release {seen.observed_generation}{:else}no release named{/if}{#if seen.http_status !== null},
-					HTTP {seen.http_status}{/if}{#if seen.error}
+					HTTP {seen.http_status}{/if}{#if seen.error && seen.error !== `HTTP ${seen.http_status}`}
 					<span class="muted">({seen.error})</span>{/if}
 			</li>
 		{:else}

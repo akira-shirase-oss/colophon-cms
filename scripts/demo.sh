@@ -94,7 +94,7 @@ fi
 
 if (( fresh == 1 )) || [[ -z "$project" ]]; then
   echo "seeding the demo project"
-  project=$(node scripts/demo-seed.ts "http://localhost:$server_port" "http://127.0.0.1:$site_port")
+  project=$(node scripts/demo-seed.mts "http://localhost:$server_port" "http://127.0.0.1:$site_port")
   echo "$project" >"$state/project"
 fi
 

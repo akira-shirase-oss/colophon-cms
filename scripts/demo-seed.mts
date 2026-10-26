@@ -2,7 +2,7 @@
 // browser does, then creates a project with a few articles about Colophon itself, points a site
 // webhook and a probe at the site runner, publishes three articles as release 1 and leaves two
 // more in a changeset waiting for review, so every flow can be tried from the Studio. Run with
-// Node 24: node scripts/demo-seed.ts <server origin> <site origin>. Prints the project's id.
+// Node 24: node scripts/demo-seed.mts <server origin> <site origin>. Prints the project's id.
 
 const [origin = 'http://localhost:58000', site = 'http://127.0.0.1:58099'] = process.argv.slice(2);
 
