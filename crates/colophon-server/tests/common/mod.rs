@@ -68,16 +68,40 @@ impl Drop for Server {
     }
 }
 
-/// `deploy/local.env`, the single source of the local settings, as `(key, value)` pairs.
+/// `deploy/local.env`, the single source of the local settings, as `(key, value)` pairs. With
+/// `COLOPHON_TEST_DATABASE` set to a database name, the server uses that database on the stack's
+/// Postgres instead of `colophon`: a branch with newer migrations is tested without migrating the
+/// database other checkouts share.
 pub(crate) fn local_env() -> Vec<(String, String)> {
     let env_file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local.env");
+    let database = std::env::var("COLOPHON_TEST_DATABASE").ok();
     std::fs::read_to_string(env_file)
         .expect("deploy/local.env")
         .lines()
         .filter_map(|line| line.split_once('='))
         .filter(|(key, _)| !key.starts_with('#'))
-        .map(|(key, value)| (key.trim().to_owned(), value.trim().to_owned()))
+        .map(|(key, value)| {
+            let value = match (&database, value.trim().strip_suffix("/colophon")) {
+                (Some(name), Some(server)) if key.ends_with("DATABASE_URL") => {
+                    format!("{server}/{name}")
+                }
+                _ => value.trim().to_owned(),
+            };
+            (key.trim().to_owned(), value)
+        })
         .collect()
+}
+
+/// The stack database's owner (the migrator), which row-level security doesn't apply to: for tests
+/// that set up or inspect rows directly. Follows `COLOPHON_TEST_DATABASE`, like the server.
+pub(crate) async fn owner_database() -> sqlx::PgPool {
+    let url = local_env()
+        .into_iter()
+        .find_map(|(key, value)| (key == "COLOPHON_MIGRATION_DATABASE_URL").then_some(value))
+        .expect("deploy/local.env names the migration database");
+    sqlx::PgPool::connect(&url)
+        .await
+        .expect("the stack's database")
 }
 
 /// Colophon's client: no redirects followed, no cookie store (cookies are checked by hand).
@@ -489,10 +513,8 @@ pub(crate) async fn finished_job(
     }
 }
 
-/// Publishes a new article as `owner`, through a self-approved changeset, as the next release;
-/// its generation.
-pub(crate) async fn publish_article(owner: &Session, project: &str, title: &str) -> i64 {
-    let base = format!("/api/v1/projects/{project}/environments/production");
+/// Creates an article in `project`; its id.
+pub(crate) async fn create_article(owner: &Session, project: &str, title: &str) -> String {
     let entry = call(
         owner,
         Method::POST,
@@ -503,16 +525,23 @@ pub(crate) async fn publish_article(owner: &Session, project: &str, title: &str)
     .await
     .expect("request");
     assert_eq!(entry.status, StatusCode::CREATED, "{}", entry.body);
-    let body = serde_json::json!({"title": title, "entries": [entry.body["data"]["id"]]});
+    entry.body["data"]["id"].as_str().expect("an id").to_owned()
+}
+
+/// Creates the changeset `body` (`{"title", "entries", "unpublish"}`), submits, approves and
+/// publishes it; the release's generation.
+pub(crate) async fn release(owner: &Session, project: &str, body: &Value) -> i64 {
+    let base = format!("/api/v1/projects/{project}/environments/production");
     let set = call(
         owner,
         Method::POST,
         &format!("{base}/changesets"),
-        Some(&body),
+        Some(body),
         &[("idempotency-key", &key())],
     )
     .await
     .expect("request");
+    assert_eq!(set.status, StatusCode::CREATED, "{}", set.body);
     let path = format!(
         "{base}/changesets/{}",
         set.body["data"]["id"].as_str().expect("an id")
@@ -558,6 +587,18 @@ pub(crate) async fn publish_article(owner: &Session, project: &str, title: &str)
     published.body["data"]["generation"]
         .as_i64()
         .expect("a generation")
+}
+
+/// Publishes a new article as `owner`, through a self-approved changeset, as the next release;
+/// its generation.
+pub(crate) async fn publish_article(owner: &Session, project: &str, title: &str) -> i64 {
+    let entry = create_article(owner, project, title).await;
+    release(
+        owner,
+        project,
+        &serde_json::json!({"title": title, "entries": [entry]}),
+    )
+    .await
 }
 
 /// Points a new webhook destination of `project` at `url`; its id.

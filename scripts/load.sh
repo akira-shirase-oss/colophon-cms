@@ -111,10 +111,8 @@ fi
 # The load-test server: the local stack's settings, its own port, and warnings-only logging,
 # as production would run (per-request lines are DEBUG).
 (
-  set -a
-  # shellcheck source=/dev/null # plain KEY=value lines
-  . deploy/local.env
-  set +a
+  # shellcheck source=scripts/local-env.sh
+  . scripts/local-env.sh
   # The public URL is the sign-in redirect URI registered in the development realm.
   export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
   if [[ -n "$studio_dir" ]]; then export COLOPHON_STUDIO_DIR="$studio_dir"; fi

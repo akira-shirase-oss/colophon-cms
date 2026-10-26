@@ -263,10 +263,7 @@ async fn only_owners_and_developers_change_content_types_and_strangers_see_nothi
         StatusCode::NOT_FOUND,
         "not a member: nothing to see"
     );
-    let database =
-        sqlx::PgPool::connect("postgres://colophon:colophon-dev@127.0.0.1:55432/colophon")
-            .await
-            .expect("the stack's database");
+    let database = common::owner_database().await;
     let me = call(&other, Method::GET, "/me", None, &[])
         .await
         .expect("request");
