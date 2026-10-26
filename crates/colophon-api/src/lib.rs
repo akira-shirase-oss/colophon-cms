@@ -6,6 +6,7 @@
 
 mod auth;
 mod body;
+mod content_types;
 mod entries;
 pub mod error;
 mod fault;
@@ -49,6 +50,14 @@ pub fn routes(state: AppState) -> Router {
             get(projects::list).post(projects::create),
         )
         .route("/api/v1/projects/{project}", get(projects::get))
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/content-types",
+            get(content_types::list).post(content_types::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/content-types/{slug}",
+            get(content_types::get).put(content_types::update),
+        )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries",
             get(entries::list).post(entries::create),

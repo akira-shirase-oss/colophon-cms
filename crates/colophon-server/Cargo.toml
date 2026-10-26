@@ -31,6 +31,8 @@ url.workspace = true
 reqwest = { workspace = true, features = ["cookies"] }
 uuid.workspace = true
 serde_json.workspace = true
+# Test setup the API can't do yet, such as adding a member with a given role.
+sqlx.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 # Crash tests (F01, F02): only with the fault points compiled in.

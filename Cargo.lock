@@ -374,6 +374,7 @@ dependencies = [
  "redis",
  "reqwest",
  "serde_json",
+ "sqlx",
  "thiserror",
  "tokio",
  "tokio-util",

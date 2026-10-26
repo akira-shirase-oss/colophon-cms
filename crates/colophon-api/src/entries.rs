@@ -126,12 +126,12 @@ pub(crate) struct ListQuery {
     cursor: Option<String>,
 }
 
-fn rfc3339(at: OffsetDateTime) -> Result<String, ApiError> {
+pub(crate) fn rfc3339(at: OffsetDateTime) -> Result<String, ApiError> {
     at.format(&Rfc3339).map_err(ApiError::internal)
 }
 
 /// `sha256:<64 hex digits>` (D-029).
-fn content_hash(bytes: &[u8]) -> String {
+pub(crate) fn content_hash(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut text = String::with_capacity(7 + bytes.len() * 2);
     text.push_str("sha256:");
@@ -142,7 +142,7 @@ fn content_hash(bytes: &[u8]) -> String {
     text
 }
 
-fn sha256(bytes: &[u8]) -> [u8; 32] {
+pub(crate) fn sha256(bytes: &[u8]) -> [u8; 32] {
     let digest = digest::digest(&digest::SHA256, bytes);
     let mut out = [0; 32];
     out.copy_from_slice(digest.as_ref());
@@ -151,7 +151,7 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
 
 /// The hash an idempotency record compares: every part, length-prefixed so no two different
 /// requests can produce the same input.
-fn request_hash(parts: &[&str]) -> [u8; 32] {
+pub(crate) fn request_hash(parts: &[&str]) -> [u8; 32] {
     let mut context = digest::Context::new(&digest::SHA256);
     for part in parts {
         context.update(part.len().to_string().as_bytes());
@@ -163,7 +163,7 @@ fn request_hash(parts: &[&str]) -> [u8; 32] {
     out
 }
 
-fn idempotency_key(headers: &HeaderMap) -> Result<&str, ApiError> {
+pub(crate) fn idempotency_key(headers: &HeaderMap) -> Result<&str, ApiError> {
     let value = headers
         .get(IDEMPOTENCY_KEY)
         .ok_or(ApiError::PreconditionRequired(
@@ -205,7 +205,12 @@ fn etag(revision: Uuid) -> HeaderValue {
     HeaderValue::from_str(&format!("\"{revision}\"")).unwrap_or(HeaderValue::from_static("\"\""))
 }
 
-fn json(status: StatusCode, body: String, revision: Option<Uuid>, replayed: bool) -> Response {
+pub(crate) fn json(
+    status: StatusCode,
+    body: String,
+    revision: Option<Uuid>,
+    replayed: bool,
+) -> Response {
     let mut response = (status, body).into_response();
     let headers = response.headers_mut();
     headers.insert(
