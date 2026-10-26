@@ -12,6 +12,7 @@
 		{ href: resolve('/rich-text'), label: 'Rich text' },
 		{ href: resolve('/session'), label: 'Session' },
 		{ href: resolve('/entries'), label: 'Entries' },
+		{ href: resolve('/content-types'), label: 'Content types' },
 		{ href: resolve('/load'), label: 'Load tests' }
 	];
 </script>
