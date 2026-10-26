@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT d.id AS destination_id, d.name, d.kind, d.location,\n                  own.status AS \"status?\", own.attempts AS \"attempts?\", own.last_error AS \"last_error?\",\n                  own.finished_at AS \"finished_at?\",\n                  min(j.generation) FILTER (WHERE j.status = 'succeeded') AS covered_by,\n                  bool_or(j.status IN ('pending', 'retrying', 'running')) AS \"open!\"\n           FROM destinations d\n           JOIN jobs j ON j.project_id = d.project_id AND j.environment_id = d.environment_id\n                      AND j.destination_id = d.id AND j.generation >= $3\n           LEFT JOIN jobs own ON own.project_id = d.project_id AND own.environment_id = d.environment_id\n                             AND own.destination_id = d.id AND own.generation = $3\n           WHERE d.project_id = $1 AND d.environment_id = $2\n           GROUP BY d.id, d.name, d.kind, d.location, own.status, own.attempts, own.last_error, own.finished_at\n           ORDER BY d.id",
+  "query": "SELECT d.id AS destination_id, d.name, d.kind, d.location,\n                  own.status AS \"status?\", own.attempts AS \"attempts?\", own.last_error AS \"last_error?\",\n                  own.finished_at AS \"finished_at?\",\n                  (SELECT min(j.generation) FROM jobs j\n                   WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id\n                     AND j.destination_id = d.id AND j.generation >= $3 AND j.status = 'succeeded') AS covered_by,\n                  EXISTS (SELECT 1 FROM jobs j\n                          WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id\n                            AND j.destination_id = d.id AND j.generation >= $3\n                            AND j.status IN ('pending', 'retrying', 'running')) AS \"open!\"\n           FROM destinations d\n           LEFT JOIN jobs own ON own.project_id = d.project_id AND own.environment_id = d.environment_id\n                             AND own.destination_id = d.id AND own.generation = $3\n           WHERE d.project_id = $1 AND d.environment_id = $2\n             AND EXISTS (SELECT 1 FROM jobs j\n                         WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id\n                           AND j.destination_id = d.id AND j.generation >= $3)\n           ORDER BY d.id",
   "describe": {
     "columns": [
       {
@@ -124,5 +124,5 @@
       null
     ]
   },
-  "hash": "fa91c55a036ef7276f0eaa9464963aa4dda977075c5b9725bf9e169b23c9242f"
+  "hash": "471be06ed40665d88ef0cb8fd1e0d49313b3fd5fe17c2c51a482b35b67413a65"
 }
