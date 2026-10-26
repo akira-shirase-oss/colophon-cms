@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM jobs\n               WHERE project_id = $1 AND environment_id = $2 AND destination_id = $3\n                 AND generation > $4 AND status <> 'superseded'\n           ) AS \"newer!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "newer!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "efd3dabf4c218514ddd131a2f844e52795bc9c88fe8fb22e2d6c21f1a8f5fc18"
+}

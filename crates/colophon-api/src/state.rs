@@ -37,6 +37,9 @@ pub struct Services {
     /// Exact origins (`scheme://host[:port]`) whose pages may send cookie-authenticated writes.
     /// The first is this server's public origin.
     pub trusted_origins: Vec<String>,
+    /// Whether delivery destinations may be private addresses: only for a development server
+    /// bound to loopback (D-046).
+    pub allow_private_destinations: bool,
 }
 
 /// The router's state. Cloning is two reference-count increments.

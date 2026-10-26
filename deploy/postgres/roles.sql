@@ -7,6 +7,9 @@
 --   colophon_delivery  what public delivery may read: published projections only (migration 0008
 --                 grants them; no login). colophon_app may switch to it for a transaction
 --                 (SET LOCAL ROLE), which drops every other privilege until the transaction ends
+--   colophon_worker  what the worker may touch: delivery jobs across every project, their
+--                 destinations and the releases they announce (migration 0009; no login), switched
+--                 to the same way
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'colophon_api') THEN
@@ -18,7 +21,11 @@ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'colophon_delivery') THEN
         CREATE ROLE colophon_delivery NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'colophon_worker') THEN
+        CREATE ROLE colophon_worker NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
 END
 $$;
 -- Not inherited: colophon_app holds these privileges only after SET ROLE.
 GRANT colophon_delivery TO colophon_app WITH INHERIT FALSE, SET TRUE;
+GRANT colophon_worker TO colophon_app WITH INHERIT FALSE, SET TRUE;

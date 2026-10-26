@@ -700,6 +700,7 @@ pub(crate) async fn publish(
         head.id,
         &head.hash,
         approval.id,
+        std::time::Duration::from_secs(colophon_domain::job::LIFETIME_SECS.unsigned_abs()),
     )
     .await
     .map_err(ApiError::from_db)?;

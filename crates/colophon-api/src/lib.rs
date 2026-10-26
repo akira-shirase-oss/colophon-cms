@@ -9,6 +9,7 @@ mod body;
 mod changesets;
 mod content_types;
 mod delivery;
+mod destinations;
 mod device;
 mod entries;
 pub mod error;
@@ -74,6 +75,35 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/v1/invitations/lookup", post(members::lookup))
         .route("/api/v1/invitations/accept", post(members::accept))
         .route(
+            "/api/v1/projects/{project}/environments/{environment}/content-types",
+            get(content_types::list).post(content_types::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/content-types/{slug}",
+            get(content_types::get).put(content_types::update),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries",
+            get(entries::list).post(entries::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}",
+            get(entries::get).put(entries::save),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions",
+            get(entries::history),
+        )
+        .route("/api/v1/rich-text/validate", post(rich_text::validate))
+        .merge(publishing())
+        .fallback(fallback)
+        .with_state(state)
+}
+
+/// Changesets, releases, their deliveries and public delivery (P2).
+fn publishing() -> Router<AppState> {
+    Router::new()
+        .route(
             "/api/v1/projects/{project}/environments/{environment}/changesets",
             get(changesets::list).post(changesets::create),
         )
@@ -102,6 +132,18 @@ pub fn routes(state: AppState) -> Router {
             get(changesets::releases),
         )
         .route(
+            "/api/v1/projects/{project}/environments/{environment}/destinations",
+            get(destinations::list).post(destinations::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/destinations/{destination}",
+            axum::routing::put(destinations::set_enabled),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/jobs",
+            get(destinations::jobs),
+        )
+        .route(
             "/content/v1/{project}/{environment}/{collection}",
             get(delivery::list),
         )
@@ -109,29 +151,6 @@ pub fn routes(state: AppState) -> Router {
             "/content/v1/{project}/{environment}/{collection}/{entry}",
             get(delivery::get),
         )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/content-types",
-            get(content_types::list).post(content_types::create),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/content-types/{slug}",
-            get(content_types::get).put(content_types::update),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries",
-            get(entries::list).post(entries::create),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}",
-            get(entries::get).put(entries::save),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions",
-            get(entries::history),
-        )
-        .route("/api/v1/rich-text/validate", post(rich_text::validate))
-        .fallback(fallback)
-        .with_state(state)
 }
 
 async fn fallback() -> ApiError {

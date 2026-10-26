@@ -372,6 +372,7 @@ dependencies = [
  "colophon-api",
  "colophon-auth",
  "colophon-db",
+ "colophon-worker",
  "redis",
  "reqwest",
  "serde_json",
@@ -388,6 +389,23 @@ dependencies = [
 [[package]]
 name = "colophon-sim"
 version = "0.0.0"
+
+[[package]]
+name = "colophon-worker"
+version = "0.0.0"
+dependencies = [
+ "colophon-db",
+ "colophon-domain",
+ "reqwest",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+ "uuid",
+]
 
 [[package]]
 name = "combine"

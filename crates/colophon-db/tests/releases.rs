@@ -18,6 +18,8 @@ use colophon_db::{
 use common::TestDb;
 use uuid::Uuid;
 
+const HOUR: std::time::Duration = std::time::Duration::from_secs(3600);
+
 async fn enter(pool: &PgPool, identity: Uuid, project: Uuid) -> ProjectTransaction {
     scope::begin_in_project(pool, identity, project, "production")
         .await
@@ -75,14 +77,14 @@ async fn a_release_commits_once_from_its_base_and_history_never_overlaps() {
     let (alice, project, entry, changeset, review) = ready(&db).await;
     let mut tx = enter(&db.app, alice, project).await;
     assert_eq!(
-        releases::commit(&mut tx, 3, changeset, &[5; 32], review)
+        releases::commit(&mut tx, 3, changeset, &[5; 32], review, HOUR)
             .await
             .expect("commit"),
         Committed::Moved { current: 0 },
         "a base the environment never had"
     );
     assert_eq!(
-        releases::commit(&mut tx, 0, changeset, &[5; 32], review)
+        releases::commit(&mut tx, 0, changeset, &[5; 32], review, HOUR)
             .await
             .expect("commit"),
         Committed::Done {
@@ -120,7 +122,7 @@ async fn delivery_reads_published_content_and_nothing_else() {
     let db = TestDb::new().await;
     let (alice, project, entry, changeset, review) = ready(&db).await;
     let mut tx = enter(&db.app, alice, project).await;
-    releases::commit(&mut tx, 0, changeset, &[5; 32], review)
+    releases::commit(&mut tx, 0, changeset, &[5; 32], review, HOUR)
         .await
         .expect("commit");
     tx.commit().await.expect("commit");

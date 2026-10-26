@@ -129,6 +129,13 @@ pub struct Config {
     /// A Studio build to serve at `/studio` (`COLOPHON_STUDIO_DIR`); none by default. Checked
     /// when the server starts.
     pub studio_dir: Option<std::path::PathBuf>,
+    /// How often the worker looks for due jobs. `COLOPHON_WORKER_POLL_MS`, default 500 ms.
+    pub worker_poll: Duration,
+    /// How long a worker's claim on a job lasts. `COLOPHON_WORKER_LEASE_MS`, default 30 s; longer
+    /// than an attempt's 10 s deadline.
+    pub worker_lease: Duration,
+    /// The most delivery attempts in flight at once. `COLOPHON_WORKER_SLOTS`, default 8.
+    pub worker_slots: usize,
 }
 
 /// `scheme://host[:port]` with no path, query or fragment, as browsers send in `Origin`.
@@ -305,6 +312,9 @@ impl Config {
         let shutdown_grace = env.millis("COLOPHON_SHUTDOWN_GRACE_MS", 25_000, 1_000..=600_000);
         let (public_origin, extra_trusted_origins, oidc) = env.sign_in(listen_addr);
         let studio_dir = env.raw("COLOPHON_STUDIO_DIR").map(std::path::PathBuf::from);
+        let worker_poll = env.millis("COLOPHON_WORKER_POLL_MS", 500, 10..=60_000);
+        let worker_lease = env.millis("COLOPHON_WORKER_LEASE_MS", 30_000, 1_000..=600_000);
+        let worker_slots = env.ranged("COLOPHON_WORKER_SLOTS", 8, 1..=64);
 
         if probe_timeout >= probe_interval {
             env.problems.push(
@@ -340,6 +350,9 @@ impl Config {
                 oidc,
                 extra_trusted_origins,
                 studio_dir,
+                worker_poll,
+                worker_lease,
+                worker_slots,
             })
         } else {
             Err(ConfigError {
