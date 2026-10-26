@@ -1,19 +1,19 @@
 // Unsaved edits, kept on this device until the server has them, so closing the tab, losing the
-// network or a server restart never loses an edit (milestone P1). One entry per article.
+// network or a server restart never loses an edit (milestone P1). One per entry.
 
-import type { Article } from './api.ts';
+import type { Content } from './api.ts';
 
 /** A save that was sent but not answered: exactly what to send again, key and all. */
 export interface Sent {
 	base: string;
 	key: string;
-	article: Article;
+	content: Content;
 }
 
 export interface Kept {
 	/** The revision the edits were made on top of (its ETag). */
 	base: string;
-	article: Article;
+	content: Content;
 	/** When it was kept, as an ISO timestamp. */
 	at: string;
 	/** The save in flight when this was kept, if any. Reopening sends it again with the same
@@ -37,19 +37,18 @@ export function keep(project: string, entry: string, kept: Kept): boolean {
 	}
 }
 
-/** The edits kept for this article, if any. Anything unreadable counts as nothing. */
+/** The edits kept for this entry, if any. Anything unreadable counts as nothing. */
 export function kept(project: string, entry: string): Kept | null {
 	try {
 		const text = localStorage.getItem(storageKey(project, entry));
 		if (text === null) return null;
 		const value = JSON.parse(text) as Partial<Kept>;
-		const article = value.article;
 		const valid =
 			typeof value.base === 'string' &&
 			typeof value.at === 'string' &&
-			typeof article?.title === 'string' &&
-			typeof article.body === 'object' &&
-			article.body !== null;
+			typeof value.content === 'object' &&
+			value.content !== null &&
+			!Array.isArray(value.content);
 		const age = Date.now() - Date.parse(value.at ?? '');
 		if (!valid || !(age < KEEP_DAYS * 86_400_000)) {
 			localStorage.removeItem(storageKey(project, entry));

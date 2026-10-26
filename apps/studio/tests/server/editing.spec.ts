@@ -28,15 +28,15 @@ async function newProject(page: Page): Promise<string> {
 
 /** Creates an article through the Studio; returns the editor's path. */
 async function newArticle(page: Page, project: string, title: string): Promise<string> {
-	await page.goto(`/studio/projects/${project}`);
-	await page.getByLabel('New article title').fill(title);
-	await page.getByRole('button', { name: 'Create article' }).click();
+	await page.goto(`/studio/projects/${project}/articles`);
+	await page.getByLabel('Title', { exact: true }).fill(title);
+	await page.getByRole('button', { name: 'Create', exact: true }).click();
 	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
 	return new URL(page.url()).pathname;
 }
 
 async function typeInBody(page: Page, text: string) {
-	await page.getByRole('textbox', { name: 'Article body' }).click();
+	await page.getByRole('textbox', { name: 'Body' }).click();
 	await page.keyboard.press('End');
 	await page.keyboard.type(text);
 }
@@ -67,7 +67,7 @@ test('an article autosaves as you type, and is there after a reload', async ({ p
 	await expect(page.getByTestId('history').locator('li')).toHaveCount(2);
 
 	await page.goto(path);
-	await expect(page.getByRole('textbox', { name: 'Article body' })).toContainText('Written in the Studio.');
+	await expect(page.getByRole('textbox', { name: 'Body' })).toContainText('Written in the Studio.');
 	await expect(status(page)).toHaveAttribute('data-status', 'saved');
 
 	expect(await violations(page)).toEqual([]);
@@ -113,7 +113,7 @@ test('choosing their version discards mine and continues from theirs', async ({ 
 
 	await second.getByRole('button', { name: 'Use their version' }).click();
 	await expect(status(second)).toHaveAttribute('data-status', 'saved');
-	const body = second.getByRole('textbox', { name: 'Article body' });
+	const body = second.getByRole('textbox', { name: 'Body' });
 	await expect(body).toContainText('The version to keep.');
 	await expect(body).not.toContainText('A change to drop.');
 	await expect(second.getByTestId('history').locator('li')).toHaveCount(2);
@@ -131,7 +131,7 @@ test('offline, edits are kept and saved once the network is back', async ({ page
 	await expect(status(page)).toHaveAttribute('data-status', 'saved', { timeout: 15_000 });
 
 	await page.goto(path);
-	await expect(page.getByRole('textbox', { name: 'Article body' })).toContainText('Typed without a network.');
+	await expect(page.getByRole('textbox', { name: 'Body' })).toContainText('Typed without a network.');
 });
 
 test('edits made just before a reload come back from this device and are saved', async ({ page }) => {
@@ -143,11 +143,11 @@ test('edits made just before a reload come back from this device and are saved',
 	await typeInBody(page, 'Not yet saved.');
 	await page.goto(path);
 	await expect(page.getByTestId('save-message')).toHaveText('Restored unsaved changes from this device.');
-	await expect(page.getByRole('textbox', { name: 'Article body' })).toContainText('Not yet saved.');
+	await expect(page.getByRole('textbox', { name: 'Body' })).toContainText('Not yet saved.');
 	await expect(status(page)).toHaveAttribute('data-status', 'saved');
 
 	await page.goto(path);
-	await expect(page.getByRole('textbox', { name: 'Article body' })).toContainText('Not yet saved.');
+	await expect(page.getByRole('textbox', { name: 'Body' })).toContainText('Not yet saved.');
 	await expect(page.getByTestId('save-message')).toHaveCount(0);
 });
 
@@ -202,13 +202,13 @@ test('edits kept on this device expire after 30 days', async ({ page }) => {
 		([key, etag]) => {
 			const at = new Date(Date.now() - 31 * 86_400_000).toISOString();
 			const body = { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Too old to restore.' }] }] } };
-			localStorage.setItem(key ?? '', JSON.stringify({ base: etag, at, article: { title: 'Expired copy', body } }));
+			localStorage.setItem(key ?? '', JSON.stringify({ base: etag, at, content: { title: 'Expired copy', body } }));
 		},
 		[`colophon:unsaved:${project}:${entry}`, etag]
 	);
 	await page.goto(path);
 	await expect(status(page)).toHaveAttribute('data-status', 'saved');
-	await expect(page.getByRole('textbox', { name: 'Article body' })).not.toContainText('Too old to restore.');
+	await expect(page.getByRole('textbox', { name: 'Body' })).not.toContainText('Too old to restore.');
 	expect(await page.evaluate((key) => localStorage.getItem(key), `colophon:unsaved:${project}:${entry}`)).toBeNull();
 });
 
@@ -271,4 +271,71 @@ test('a save that committed just before a reload is resent with its key on reope
 	expect(answers[0]?.replayed, 'the reopened page resent the same request and got the recorded answer').toBe('true');
 	// The first revision, the committed edit once, and the other person's save: nothing twice.
 	await expect(page.getByTestId('history').locator('li')).toHaveCount(3);
+});
+
+test('an entry of a content type you define: every kind of field, saved and read back', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const created = await page.evaluate(async (project) => {
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const response = await fetch(`/api/v1/projects/${project}/environments/production/content-types`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': crypto.randomUUID() },
+			body: JSON.stringify({
+				slug: 'events',
+				definition: {
+					name: 'Events',
+					title_field: 'name',
+					fields: [
+						{ id: 'name', label: 'Name', type: 'text', required: true },
+						{ id: 'starts_at', label: 'Starts at', type: 'datetime', required: true },
+						{ id: 'kind', label: 'Kind', type: 'enum', required: true, values: ['Talk', 'Workshop'] },
+						{ id: 'capacity', label: 'Capacity', type: 'number', integer: true, min: 1 },
+						{ id: 'online', label: 'Online', type: 'boolean' },
+						{ id: 'notes', label: 'Notes', type: 'text', multiline: true },
+						{ id: 'description', label: 'Description', type: 'rich_text' }
+					]
+				}
+			})
+		});
+		return response.status;
+	}, project);
+	expect(created).toBe(201);
+
+	await page.goto(`/studio/projects/${project}`);
+	await page.getByRole('link', { name: 'Events' }).click();
+	await page.getByLabel('Name', { exact: true }).fill('Launch night');
+	await page.getByLabel('Starts at').fill('2026-11-20T18:30');
+	await page.getByLabel('Kind').selectOption('Workshop');
+	await page.getByRole('button', { name: 'Create', exact: true }).click();
+	await expect(status(page)).toHaveAttribute('data-status', 'saved');
+	const path = new URL(page.url()).pathname;
+
+	await page.getByLabel('Capacity (optional)').fill('120');
+	await page.getByLabel('Online').check();
+	await page.getByLabel('Notes (optional)').fill('Doors at six.\nBring a laptop.');
+	await page.getByRole('textbox', { name: 'Description' }).click();
+	await page.keyboard.type('Hands-on.');
+	await expect(status(page)).toHaveAttribute('data-status', 'saved');
+
+	await page.goto(path);
+	await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Launch night');
+	await expect(page.getByLabel('Starts at')).toHaveValue('2026-11-20T18:30');
+	await expect(page.getByLabel('Kind')).toHaveValue('Workshop');
+	await expect(page.getByLabel('Capacity (optional)')).toHaveValue('120');
+	await expect(page.getByLabel('Online')).toBeChecked();
+	await expect(page.getByRole('textbox', { name: 'Description' })).toContainText('Hands-on.');
+	expect(await violations(page)).toEqual([]);
+
+	// What the server stored: canonical order, a whole number, a UTC time.
+	const entry = path.split('/').at(-1) ?? '';
+	const stored = await page.evaluate(
+		async ([project, entry]) =>
+			(await (await fetch(`/api/v1/projects/${project}/environments/production/collections/events/entries/${entry}`)).json()).data.content,
+		[project, entry]
+	);
+	expect(Object.keys(stored)).toEqual(['name', 'starts_at', 'kind', 'capacity', 'online', 'notes', 'description']);
+	expect(stored.capacity).toBe(120);
+	expect(stored.starts_at).toMatch(/^2026-11-2\dT\d\d:30:00Z$/);
+	expect(stored.notes).toBe('Doors at six.\nBring a laptop.');
 });
