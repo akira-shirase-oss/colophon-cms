@@ -36,7 +36,7 @@ export async function openFixture(page: Page, id: string) {
 
 /** A fresh, empty document with the cursor in it. */
 export async function freshEditor(page: Page) {
-	await page.goto('/');
+	await page.goto('/studio/playground');
 	await expect(page.getByTestId('open-status')).toHaveAttribute('data-kind', 'opened');
 	await page.locator('.tiptap').click();
 }

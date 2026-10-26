@@ -90,8 +90,14 @@ pub async fn run(
         readiness: readiness.clone(),
         services: Some(std::sync::Arc::new(services)),
     };
-    let app = colophon_api::app(
-        state,
+    let mut routes = colophon_api::routes(state);
+    if let Some(dir) = &config.studio_dir {
+        colophon_api::studio::check(dir).context("COLOPHON_STUDIO_DIR")?;
+        routes = colophon_api::studio::mount(routes, dir);
+    }
+    // The Studio gets the same limits, request ids and error envelope as the API.
+    let app = colophon_api::middleware::apply(
+        routes,
         HttpLimits {
             request_timeout: config.request_timeout,
             max_body_bytes: config.max_body_bytes,

@@ -78,7 +78,9 @@ quality claim (spec §30).
 (`COLOPHON_FAULT=entry.save:before-commit`, `entry.save:after-commit`, `entry.create:after-commit`); release builds
 don't contain the points (D-036). F04's database half (two concurrent saves on one base: one wins, one is stale, the
 loser's revision is never stored) is in `crates/colophon-db/tests/entries.rs`, and the testbed shows it in two browser
-tabs; the full editor flow is step 1.3.
+tabs. **Since step 1.3** F04 also runs end to end in the Studio (`apps/studio/tests/server/`): two browsers, the
+later save opens the conflict screen, and neither choice loses an accepted edit; the browser also re-sends a save whose
+answer was dropped and gets the replayed result (F02 from the client's side).
 
 ### Load-test cases (spec §29)
 

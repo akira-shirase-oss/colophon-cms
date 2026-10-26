@@ -50,6 +50,7 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
   cargo test -p colophon-server --features fault-injection --test faults --locked -- --ignored --test-threads=1
   if command -v npm >/dev/null; then
     scripts/testbed.sh
+    scripts/studio.sh
   else
     echo "note: npm is not installed here; CI runs the testbed suite" >&2
   fi
@@ -58,6 +59,7 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     PATH="$PATH:$HOME/.local/bin" TOTAL=100000 P99_MS=50 KEEP=0 scripts/load.sh rich-text throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh session throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh entries throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=50000 P99_MS=50 KEEP=0 scripts/load.sh studio throughput
   else
     echo "note: k6 is not installed here (scripts/install-k6.sh); CI runs the load smoke test" >&2
   fi

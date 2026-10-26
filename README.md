@@ -25,7 +25,9 @@
 > million-request load tests. Step 1.1 is done: sign-in through OpenID Connect (Keycloak locally), server-side sessions
 > with CSRF and `Origin` checks, and projects that PostgreSQL's row-level security hides from everyone but their members.
 > Step 1.2 is done: drafts that can't be lost. Revisions are never changed, a save on a stale revision is refused, and a
-> server killed just before or just after a save neither loses an acknowledged draft nor saves it twice.
+> server killed just before or just after a save neither loses an acknowledged draft nor saves it twice. Step 1.3 is
+> done: the Studio edits real drafts, autosaves, keeps unsaved edits on the device, and when two people edit the same
+> article it shows both versions and lets the editor choose instead of overwriting anyone.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
@@ -169,6 +171,7 @@ scripts/check.sh         # everything CI runs: fmt, clippy -D warnings, tests, d
                          # ShellCheck, and with the stack up: outage tests, the testbed in Chromium, load smoke runs
 scripts/frontend.sh      # type checks, the editor's unit tests, and the Studio in Chromium
 scripts/testbed.sh       # the testbed's Playwright suite (or --dev to explore it by hand)
+scripts/studio.sh        # the Studio against the real server: autosave, conflicts, offline, recovery
 npm run dev -w @colophon/studio   # the editor spike on http://127.0.0.1:58200
 scripts/load.sh health throughput      # 1,000,000 requests against a release build; result in perf/results/
 scripts/load.sh rich-text steady       # validation at 20,000 requests a second for a minute
@@ -186,6 +189,15 @@ cargo run --release -p colophon-cli -- doctor     # status, role and each depend
 
 Then open `http://localhost:58000/auth/login?return_to=/me` and sign in as `dev-editor` (password `colophon-dev`):
 you land on `/me`, which shows who you are and your projects.
+
+To use the Studio, build it and point the server at the build before starting it:
+
+```sh
+npm run build -w @colophon/studio
+COLOPHON_STUDIO_DIR="$PWD/apps/studio/build" cargo run --release -p colophon-server
+```
+
+and open `http://localhost:58000/studio/`.
 
 Ports, credentials and what each stack check proves: [deploy/README.md](deploy/README.md).
 

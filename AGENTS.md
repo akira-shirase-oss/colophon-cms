@@ -7,8 +7,10 @@ workspace, the local stack in `deploy/`, the error envelope and health checks, `
 CSRF and `Origin` checks, projects isolated by row-level security (`colophon-db`, migration 0001), the testbed's Session
 page, and the signed-in load scenario `perf/k6/session.js` (D-031 to D-033). Step 1.2 is done: entries with
 insert-only revisions in the built-in `articles` collection, saves with `If-Match`, idempotent writes, the crash tests
-F01 and F02, the testbed's Entries page and `perf/k6/entries.js` (D-034 to D-036). Next is step 1.3: the Studio's
-editor, autosave and conflict screen. See `docs/ROADMAP.md`.
+F01 and F02, the testbed's Entries page and `perf/k6/entries.js` (D-034 to D-036). Step 1.3 is done: the server
+serves the Studio at `/studio`; the Studio edits real drafts with autosave, a device copy of unsaved edits, and a
+conflict screen (`apps/studio/tests/server/`, `scripts/studio.sh`, `perf/k6/studio.js`; D-037, D-038). Next is step
+1.4, the first simulator run. See `docs/ROADMAP.md`.
 
 ## Read first
 
@@ -97,8 +99,8 @@ Every feature ships with all three, in the same branch:
 `-D warnings`, `scripts/check-architecture.sh` (no I/O crates in `colophon-domain`), `cargo deny check`, ShellCheck,
 and, when the local stack is running, CI's integration half: `scripts/stack.sh check`, the `#[ignore]`d tests that need
 the stack (`cargo test --workspace -- --ignored --test-threads=1`; they stop and restart services), `scripts/testbed.sh`
-(svelte-check and Playwright) and the `scripts/load.sh` smoke runs (health, rich-text validation and signed-in
-requests). Run it before every push. Full load runs:
+(svelte-check and Playwright), `scripts/studio.sh` (the Studio against the real server) and the `scripts/load.sh`
+smoke runs (health, rich-text validation, signed-in requests, drafts, the Studio). Run it before every push. Full load runs:
 `scripts/load.sh throughput|steady [--baseline]`; commit the result files they write.
 
 The local stack (`scripts/stack.sh up`, details in `deploy/README.md`) binds every port to `127.0.0.1`; its credentials

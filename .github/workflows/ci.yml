@@ -109,13 +109,16 @@ jobs:
       - run: npx -w @colophon/testbed playwright install --with-deps chromium
       - name: Testbed in Chromium (scripts/testbed.sh)
         run: scripts/testbed.sh
-      - name: Load smoke runs (health, rich-text validation, signed-in requests, drafts)
+      - name: The Studio against the real server (scripts/studio.sh)
+        run: scripts/studio.sh
+      - name: Load smoke runs (health, rich-text validation, signed-in requests, drafts, the Studio)
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=200000 P99_MS=50 KEEP=0 scripts/load.sh health throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=100000 P99_MS=50 KEEP=0 scripts/load.sh rich-text throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh session throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh entries throughput
+          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=50000 P99_MS=50 KEEP=0 scripts/load.sh studio throughput
       - name: Service logs
         if: failure()
         run: docker compose -f deploy/compose.yaml logs --no-color --tail 200

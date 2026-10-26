@@ -7,7 +7,7 @@
 |---|---|
 | Milestones | P0 (Tiptap spike), P1 (list, editor, autosave, conflicts), P2 (review, publish), P3 (receipts), P4 (history, time travel, media, preview), P5 (tokens, optional AI panel), P6 (polish, usability test) |
 | Proposed owner | Claude |
-| Depends on | api (`/api/v1`), sdk, ui (Material Design 3 tokens on Bits UI, D-011), content-renderer; SvelteKit + TypeScript + Vite, Tailwind, Tiptap |
+| Depends on | api (`/api/v1`), sdk, ui (Material Design 3 tokens on Bits UI, D-011, D-025), content-renderer; SvelteKit + TypeScript + Vite, TanStack Query (D-030), Tiptap |
 | Used by | editors, reviewers, publishers, developers (developer area) |
 | Spec | §04, §05, §06, §14 |
 
@@ -46,6 +46,10 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 ### Shape (spec §02)
 - A SvelteKit single-page app built as static assets and served by the Rust server on the administration origin, with
   `/api` routed to Rust on the same origin.
+- As built (step 1.3, D-037): `colophon-server` serves a build from `COLOPHON_STUDIO_DIR` at `/studio`, with the
+  app's `200.html` for client-side routes, year-long caching for hashed assets and revalidation for pages. Screens so
+  far: Projects (`/studio/`), Articles (`/studio/projects/{project}`), the editor
+  (`/studio/projects/{project}/articles/{entry}`), and the editor playground (`/studio/playground`).
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 
@@ -84,6 +88,12 @@ Internal job terminology stays behind a technical detail drawer for developers.
 - Leaving a page with unsaved changes asks for confirmation or an explicit discard.
 - **Saved** appears only after the server acknowledges.
 - No indefinitely spinning buttons. Every wait has a timeout and a plain explanation with a next action.
+- As built (step 1.3, D-038): `src/lib/saver.svelte.ts` keeps edits in this browser first, saves a second after typing
+  stops (one save at a time; ⌘S or **Save now** at once), reuses the `Idempotency-Key` while the base and content are
+  unchanged, and times every request out after 15 s. A 409 opens the conflict screen (both versions, rendered by the
+  content renderer): **Keep my version** or **Use their version**. Kept edits come back after a reload and expire
+  after 30 days. Two deliberate differences from the bullets above: no consent prompt for the local copy, and leaving
+  only warns when the copy couldn't be kept (D-038).
 
 ### Accessibility (spec §05)
 - Keyboard operation, meaningful focus states, labelled controls and screen-reader announcements.
@@ -126,6 +136,10 @@ Internal job terminology stays behind a technical detail drawer for developers.
   - a delivery failure becoming visible;
   - keyboard-only completion.
 - Vitest component tests.
+- In place since step 1.3 (`tests/server/`, `scripts/studio.sh`, against the release server and the stack): autosave
+  and reload; F04 in two browsers, keeping mine and using theirs; offline edits saved when the network returns; edits
+  restored after an immediate reload; a save whose answer is dropped is retried with the same key and replayed; kept
+  copies expire; axe finds nothing on the home page (signed out and in), the editor or the conflict screen.
 - Automated accessibility checks on every screen.
 - Budgets for bundle size, startup on a mobile network profile, and input latency. These are recorded separately from
   backend numbers (spec §28).
@@ -135,7 +149,8 @@ Internal job terminology stays behind a technical detail drawer for developers.
 
 1. **P0:** the Tiptap spike (custom blocks, paste, image placeholder, undo/redo, serialization). Built in step 0.4:
    `packages/editor` and `apps/studio`; documents open only if they survive the editor byte for byte (D-022).
-2. **P1:** content list, editor, autosave, conflict screen.
+2. **P1:** content list, editor, autosave, conflict screen (step 1.3, done: D-037, D-038). The formatting toolbar from
+   the playground, sign-out, and search come next.
 3. **P2:** review and publish.
 4. **P3:** publishing labels and the receipt timeline.
 5. **P4:** history, time-travel slider, media picker, preview.
@@ -144,6 +159,5 @@ Internal job terminology stays behind a technical detail drawer for developers.
 
 ## Open decisions
 
-- **O-007:** the frontend package manager and the server-state library.
 - The v0.1 rich-text block set.
 - How much of time travel is a full site view vs a per-entry view in v0.1.

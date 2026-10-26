@@ -2,7 +2,7 @@
   "name": "@colophon/studio",
   "private": true,
   "version": "0.0.0",
-  "description": "Colophon Studio: where editors write, review and publish. Today: the editor spike (step 0.4).",
+  "description": "Colophon Studio: where editors write, review and publish. Today: projects, articles, and an editor that autosaves and resolves conflicts (step 1.3).",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -16,6 +16,7 @@
     "@colophon/content-renderer": "0.0.0",
     "@colophon/editor": "0.0.0",
     "@colophon/ui": "0.0.0",
+    "@tanstack/svelte-query": "6.3.2",
     "@tiptap/core": "3.32.0"
   },
   "devDependencies": {
