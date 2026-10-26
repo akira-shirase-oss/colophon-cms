@@ -20,6 +20,8 @@ test('navigation reaches every testbed page', async ({ page }) => {
 	await expect(page.getByRole('heading', { name: 'Members', exact: true })).toBeVisible();
 	await page.getByRole('link', { name: 'Changesets' }).click();
 	await expect(page.getByRole('heading', { name: 'Changesets', exact: true })).toBeVisible();
+	await page.getByRole('link', { name: 'Releases' }).click();
+	await expect(page.getByRole('heading', { name: 'Releases', exact: true })).toBeVisible();
 	await page.getByRole('link', { name: 'Load tests' }).click();
 	await expect(page.getByRole('heading', { name: 'Load tests' })).toBeVisible();
 	await page.getByRole('link', { name: 'Health' }).click();
