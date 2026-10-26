@@ -33,6 +33,9 @@ pub enum Change {
     NotFound,
     /// Refused: the project would have no owner left.
     LastOwner,
+    /// Refused: the caller is no longer an owner. The role read when their transaction began was
+    /// stale, because a demotion was committing at the same moment.
+    NotOwner,
 }
 
 /// A pending invitation, as its project's owners see it.
@@ -98,7 +101,8 @@ pub async fn list(tx: &mut MemberTransaction) -> Result<Vec<Member>, DbError> {
     .map_err(DbError::from_query)
 }
 
-/// Locks the project's owners, so concurrent changes to them queue; how many there are.
+/// Locks the project's owners, so concurrent changes to them queue; who they are, once any change
+/// to them that was in flight has committed.
 async fn lock_owners(tx: &mut MemberTransaction) -> Result<Vec<Uuid>, DbError> {
     sqlx::query_scalar!(
         "SELECT identity_id FROM memberships WHERE project_id = $1 AND role = 'owner' FOR UPDATE",
@@ -109,13 +113,17 @@ async fn lock_owners(tx: &mut MemberTransaction) -> Result<Vec<Uuid>, DbError> {
     .map_err(DbError::from_query)
 }
 
-/// Changes `identity`'s role, refusing to take the last owner away.
+/// Changes `identity`'s role, refusing to take the last owner away, or to act for a caller who
+/// stopped being an owner after their transaction began.
 pub async fn change_role(
     tx: &mut MemberTransaction,
     identity: Uuid,
     role: &str,
 ) -> Result<Change, DbError> {
     let owners = lock_owners(tx).await?;
+    if !owners.contains(&tx.identity) {
+        return Ok(Change::NotOwner);
+    }
     if role != "owner" && owners == [identity] {
         return Ok(Change::LastOwner);
     }
@@ -135,9 +143,13 @@ pub async fn change_role(
     })
 }
 
-/// Removes `identity` from the project, refusing to remove the last owner.
+/// Removes `identity` from the project, refusing to remove the last owner. Anyone may remove
+/// themselves; removing someone else needs the caller to still be an owner.
 pub async fn remove(tx: &mut MemberTransaction, identity: Uuid) -> Result<Change, DbError> {
     let owners = lock_owners(tx).await?;
+    if identity != tx.identity && !owners.contains(&tx.identity) {
+        return Ok(Change::NotOwner);
+    }
     if owners == [identity] {
         return Ok(Change::LastOwner);
     }
@@ -154,6 +166,20 @@ pub async fn remove(tx: &mut MemberTransaction, identity: Uuid) -> Result<Change
     } else {
         Change::Done
     })
+}
+
+/// The caller's role now, holding their membership until the transaction ends: the role read when
+/// the transaction began may be stale, and a change to it that is in flight is waited for. `None`
+/// if they were just removed.
+pub async fn current_role(tx: &mut MemberTransaction) -> Result<Option<String>, DbError> {
+    sqlx::query_scalar!(
+        "SELECT role FROM memberships WHERE project_id = $1 AND identity_id = $2 FOR SHARE",
+        tx.project,
+        tx.identity
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
 }
 
 /// Stores an invitation to the transaction's project, made by its identity; only the token's

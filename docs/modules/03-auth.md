@@ -103,6 +103,9 @@ Built in step 1.7 (D-042), for people:
 - A project never loses its last owner: `colophon_db::members` locks the owners `FOR UPDATE` before changing one, and
   the deferred trigger `memberships_keep_an_owner` (migration 0005) refuses any commit that would leave none. The API
   answers 409.
+- An owner's role is re-checked under that lock before a member change, and under a share lock on their own membership
+  before creating or revoking an invitation: an owner demoted while their request runs gets 403, not the old role's
+  rights. Content writes act on the role read when their transaction began.
 - Publishers can't publish yet: publishing arrives in P2, and with it the difference between editor and publisher.
 
 ### Invitations (spec §04)
@@ -210,7 +213,8 @@ Built in step 1.7 (D-042), for people:
   - `crates/colophon-domain`: the policy table, every role against every action;
   - `crates/colophon-db/tests/members.rs`: an invitation joins once and shows its project only to its holder;
     revoked and expired invitations are dead; the last owner can be neither demoted nor removed; two owners demoting
-    each other at the same moment leave one owner; another project's owner can neither see nor revoke these
+    each other at the same moment leave one owner; an owner demoted while their request runs can neither promote nor
+    remove anyone; another project's owner can neither see nor revoke these
     invitations;
   - `crates/colophon-server/tests/members.rs`, against the real binary with two people signed in through Keycloak:
     invite, look up, accept once; an owner can't join their own project twice; revoked links are gone; an editor

@@ -65,6 +65,16 @@ async fn open(
         .ok_or(ApiError::NotFound)
 }
 
+/// The caller's role as of now, for a change that must not act on a role read a moment ago (a
+/// demotion committing at the same time). Role changes and removals get the same guarantee from
+/// the owner lock inside `colophon_db::members`.
+async fn fresh_role(tx: &mut MemberTransaction) -> Result<String, ApiError> {
+    Ok(members::current_role(tx)
+        .await
+        .map_err(ApiError::from_db)?
+        .unwrap_or_default())
+}
+
 #[derive(Serialize)]
 pub(crate) struct MemberView {
     identity_id: Uuid,
@@ -161,6 +171,9 @@ fn change_result(change: Change) -> Result<StatusCode, ApiError> {
         Change::Done => Ok(StatusCode::NO_CONTENT),
         Change::NotFound => Err(ApiError::NotFound),
         Change::LastOwner => Err(ApiError::Conflict("a project must keep at least one owner")),
+        Change::NotOwner => Err(ApiError::Forbidden(
+            "you are no longer an owner of this project",
+        )),
     }
 }
 
@@ -284,7 +297,7 @@ pub(crate) async fn invite(
     }
     let mut tx = open(&state, caller, &path.project).await?;
     require(
-        &tx.role,
+        &fresh_role(&mut tx).await?,
         Action::ManageMembers,
         "only a project's owners can invite people",
     )?;
@@ -325,7 +338,7 @@ pub(crate) async fn revoke(
     let id = Uuid::try_parse(&path.invitation).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project).await?;
     require(
-        &tx.role,
+        &fresh_role(&mut tx).await?,
         Action::ManageMembers,
         "only a project's owners can revoke invitations",
     )?;

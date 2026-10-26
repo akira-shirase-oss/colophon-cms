@@ -1,6 +1,6 @@
 //! Members and invitations against real PostgreSQL, as the application's login: a project never
-//! loses its last owner (even when two owners demote each other at once), an invitation joins
-//! once, an expired or revoked one is dead, and an existing member can't use one up. Needs the
+//! loses its last owner (even when two owners demote each other at once), an owner demoted while
+//! their request runs can no longer manage members, an invitation joins once, an expired or revoked one is dead, and an existing member can't use one up. Needs the
 //! local stack.
 #![expect(
     clippy::expect_used,
@@ -205,6 +205,12 @@ async fn the_last_owner_can_be_neither_demoted_nor_removed() {
         Change::LastOwner
     );
     assert_eq!(
+        members::change_role(&mut tx, Uuid::now_v7(), "editor")
+            .await
+            .expect("change"),
+        Change::NotFound
+    );
+    assert_eq!(
         members::change_role(&mut tx, bob, "owner")
             .await
             .expect("change"),
@@ -218,10 +224,11 @@ async fn the_last_owner_can_be_neither_demoted_nor_removed() {
         "two owners now"
     );
     assert_eq!(
-        members::change_role(&mut tx, Uuid::now_v7(), "editor")
+        members::change_role(&mut tx, bob, "editor")
             .await
             .expect("change"),
-        Change::NotFound
+        Change::NotOwner,
+        "having stepped down, Alice manages no one"
     );
     tx.commit().await.expect("commit");
 
@@ -280,6 +287,68 @@ async fn two_owners_demoting_each_other_at_once_leave_one_owner() {
         .map(|member| member.identity_id)
         .collect();
     assert_eq!(owners, [alice]);
+    drop(tx);
+    pool.close().await;
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn an_owner_demoted_mid_request_can_no_longer_manage_members() {
+    let db = TestDb::new().await;
+    let (alice, bob, project) = alice_and_bob(&db, "owner").await;
+    let carol = db.person("carol").await;
+    let mut tx = as_member(&db.app, alice, project).await;
+    members::invite(&mut tx, &[8; 32], "editor", "Carol", later())
+        .await
+        .expect("invited");
+    tx.commit().await.expect("commit");
+    members::accept(&db.app, carol, &[8; 32])
+        .await
+        .expect("accept");
+
+    let pool = db.app_pool(3).await;
+    // Bob's request has begun and read his role as owner...
+    let mut bobs = as_member(&pool, bob, project).await;
+    assert_eq!(bobs.role, "owner");
+    // ...when Alice demotes him.
+    let mut alices = as_member(&pool, alice, project).await;
+    assert_eq!(
+        members::change_role(&mut alices, bob, "editor")
+            .await
+            .expect("change"),
+        Change::Done
+    );
+    let waiting = tokio::spawn(async move {
+        let promoted = members::change_role(&mut bobs, carol, "owner")
+            .await
+            .expect("change");
+        let removed = members::remove(&mut bobs, carol).await.expect("remove");
+        let role = members::current_role(&mut bobs).await.expect("role");
+        drop(bobs);
+        (promoted, removed, role)
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        !waiting.is_finished(),
+        "Bob's change waits for Alice's to commit"
+    );
+    alices.commit().await.expect("commit");
+    let (promoted, removed, role) = waiting.await.expect("task");
+    assert_eq!(
+        (promoted, removed, role.as_deref()),
+        (Change::NotOwner, Change::NotOwner, Some("editor")),
+        "a stale owner role grants nothing"
+    );
+    let mut tx = as_member(&pool, alice, project).await;
+    let carols: Vec<String> = members::list(&mut tx)
+        .await
+        .expect("list")
+        .into_iter()
+        .filter(|member| member.identity_id == carol)
+        .map(|member| member.role)
+        .collect();
+    assert_eq!(carols, ["editor"], "Carol was neither promoted nor removed");
     drop(tx);
     pool.close().await;
     db.drop().await;
