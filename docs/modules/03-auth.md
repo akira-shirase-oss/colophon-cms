@@ -106,6 +106,9 @@ Built in step 1.7 (D-042), for people:
 - An owner's role is re-checked under that lock before a member change, and under a share lock on their own membership
   before creating or revoking an invitation: an owner demoted while their request runs gets 403, not the old role's
   rights. Content writes act on the role read when their transaction began.
+- The cost of that lock: changes to one project's members queue. In `perf/k6/members.js`, 100 role changes a second
+  on one project wait a median 34 ms (p99 81 ms), and invitations, which take a share lock on their owner's row, wait
+  behind them; at 10 role changes a second, they take 4.5 ms like any other request.
 - Publishers can't publish yet: publishing arrives in P2, and with it the difference between editor and publisher.
 
 ### Invitations (spec §04)
