@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM device_logins WHERE device_hash IN\n           (SELECT device_hash FROM device_logins WHERE expires_at < now() LIMIT 100)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "cc68e6b1260a1f78e3bc47251b95d05411744d285acb1f84b59bc2a40b8655d1"
+}

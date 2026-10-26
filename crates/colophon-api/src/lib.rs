@@ -7,6 +7,7 @@
 mod auth;
 mod body;
 mod content_types;
+mod device;
 mod entries;
 pub mod error;
 mod fault;
@@ -44,6 +45,10 @@ pub fn routes(state: AppState) -> Router {
         .route("/auth/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
         .route("/auth/logout", post(auth::logout))
+        .route("/auth/device", post(device::start))
+        .route("/auth/device/approve", post(device::approve))
+        .route("/auth/device/token", post(device::token))
+        .route("/auth/device/{code}", get(device::show))
         .route("/me", get(auth::me))
         .route(
             "/api/v1/projects",

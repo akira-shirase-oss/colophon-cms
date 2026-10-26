@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM device_logins\n           WHERE device_hash = $1 AND approved_by IS NOT NULL AND expires_at > now()\n           RETURNING approved_by AS \"approved_by!\", client_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "approved_by!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "device_logins",
+            "name": "approved_by"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "client_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "device_logins",
+            "name": "client_name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "bd39e8973cebc018b7e8a8cb4806275c68bb72f0291015345d786beac4f5de2d"
+}

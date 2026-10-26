@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE access_tokens SET last_used_at = now() WHERE id = $1 AND last_used_at < now() - interval '1 minute'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "457b192ed87f39be950933f1238f54d4979fcef390130ed93ea88755e1b20f93"
+}
