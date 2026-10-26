@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "WITH due AS (\n             SELECT project_id, environment_id, id FROM jobs\n             WHERE (status IN ('pending', 'retrying') AND next_attempt_at <= now())\n                OR (status = 'running' AND lease_expires_at < now())\n             ORDER BY next_attempt_at\n             LIMIT $3\n             FOR UPDATE SKIP LOCKED\n         )\n         UPDATE jobs j SET status = 'running', lease_owner = $1,\n                           lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),\n                           lease_generation = j.lease_generation + 1, attempts = j.attempts + 1, updated_at = now()\n         FROM due, destinations d\n         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id\n           AND d.project_id = j.project_id AND d.environment_id = j.environment_id AND d.id = j.destination_id\n         RETURNING j.project_id, j.environment_id, j.id, j.destination_id, d.url, j.generation, j.idempotency_key,\n                   j.attempts, j.lease_generation, j.deadline_at",
+  "query": "WITH due AS (\n             SELECT project_id, environment_id, id FROM jobs\n             WHERE ((status IN ('pending', 'retrying') AND next_attempt_at <= now())\n                    OR (status = 'running' AND lease_expires_at < now()))\n               AND deadline_at > now()\n             ORDER BY next_attempt_at\n             LIMIT $3\n             FOR UPDATE SKIP LOCKED\n         )\n         UPDATE jobs j SET status = 'running', lease_owner = $1,\n                           lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),\n                           lease_generation = j.lease_generation + 1, attempts = j.attempts + 1, updated_at = now()\n         FROM due, destinations d\n         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id\n           AND d.project_id = j.project_id AND d.environment_id = j.environment_id AND d.id = j.destination_id\n         RETURNING j.project_id, j.environment_id, j.id, j.destination_id, d.url, j.generation, j.idempotency_key,\n                   j.attempts, j.lease_generation, j.deadline_at",
   "describe": {
     "columns": [
       {
@@ -134,5 +134,5 @@
       false
     ]
   },
-  "hash": "3ffe70606dc8c3123d57b31b4821757780e7914f9c264098a78b09d8dc75575a"
+  "hash": "f4ef1a90e145c509918ca4ccf1963d2826847b69c23500def55a03ff50cdb9ec"
 }

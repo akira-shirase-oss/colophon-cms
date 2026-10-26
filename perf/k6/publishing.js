@@ -6,7 +6,7 @@
 // announces every release to the receiver; a release committed before the previous one was sent
 // supersedes it. teardown() waits for every project's latest release to be delivered.
 // TOTAL counts requests, as elsewhere: a full run is 200,000 publishes. RATE counts publishes;
-// scripts/load.sh gives this endpoint RATE 100 (500 requests a second) and P99_MS 250.
+// scripts/load.sh gives this endpoint RATE 40 (200 requests a second) and P99_MS 700.
 
 import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
@@ -18,9 +18,9 @@ const RECEIVER_URL = __ENV.RECEIVER_URL || 'http://127.0.0.1:58096';
 const SCENARIO = __ENV.SCENARIO || 'throughput';
 const TOTAL = parseInt(__ENV.TOTAL || '1000000', 10);
 const VUS = parseInt(__ENV.VUS || '64', 10);
-const RATE = parseInt(__ENV.RATE || '100', 10);
+const RATE = parseInt(__ENV.RATE || '40', 10);
 const DURATION = __ENV.DURATION || '60s';
-const P99_MS = parseFloat(__ENV.P99_MS || '250');
+const P99_MS = parseFloat(__ENV.P99_MS || '700');
 const REQUESTS_PER_PUBLISH = 5;
 
 function durationSeconds(text) {

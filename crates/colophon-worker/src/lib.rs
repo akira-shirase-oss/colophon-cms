@@ -21,6 +21,9 @@ use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
+/// How often the worker fails jobs that ran out of time.
+const EXPIRY_INTERVAL: Duration = Duration::from_secs(10);
+
 /// How the worker runs.
 #[derive(Debug, Clone)]
 pub struct Settings {
@@ -35,6 +38,9 @@ pub struct Settings {
     /// Whether destinations may be private addresses (a development server on loopback only).
     pub allow_private: bool,
 }
+
+// The worker gets its own small database pool (colophon-server's COLOPHON_WORKER_DB_CONNECTIONS),
+// so delivering announcements can never starve editors' requests of connections.
 
 /// The worker couldn't be built.
 #[derive(Debug, thiserror::Error)]
@@ -99,7 +105,18 @@ impl Worker {
     pub async fn run(self: Arc<Self>, cancel: CancellationToken) {
         let tracker = TaskTracker::new();
         tracing::info!(owner = %self.settings.owner, "worker started");
+        let mut last_expiry: Option<std::time::Instant> = None;
         loop {
+            if last_expiry.is_none_or(|at| at.elapsed() >= EXPIRY_INTERVAL) {
+                last_expiry = Some(std::time::Instant::now());
+                match jobs::expire(&self.pool).await {
+                    Ok(0) => {}
+                    Ok(expired) => tracing::info!(expired, "jobs ran out of time"),
+                    Err(error) => {
+                        tracing::warn!(error = %error, "expiring jobs failed; trying again later");
+                    }
+                }
+            }
             let first = tokio::select! {
                 () = cancel.cancelled() => break,
                 permit = Arc::clone(&self.slots).acquire_owned() => match permit {
@@ -154,8 +171,9 @@ impl Worker {
 
     /// One attempt at one job, from the supersession check to the record of its outcome.
     async fn attempt(&self, job: Claimed) {
-        match jobs::superseded(&self.pool, &job).await {
-            Ok(true) => {
+        let announcement = match jobs::prepare(&self.pool, &job).await {
+            Ok(Some(announcement)) => announcement,
+            Ok(None) => {
                 let finish = Finish {
                     status: job::Status::Superseded.as_str(),
                     next_attempt_at: None,
@@ -165,17 +183,9 @@ impl Worker {
                 self.record(&job, &finish).await;
                 return;
             }
-            Ok(false) => {}
             Err(error) => {
                 // The lease runs out and the job is claimed again.
-                tracing::warn!(job = %job.id, error = %error, "checking for a newer release failed");
-                return;
-            }
-        }
-        let announcement = match jobs::announcement(&self.pool, &job).await {
-            Ok(announcement) => announcement,
-            Err(error) => {
-                tracing::warn!(job = %job.id, error = %error, "reading the release failed");
+                tracing::warn!(job = %job.id, error = %error, "preparing the announcement failed");
                 return;
             }
         };

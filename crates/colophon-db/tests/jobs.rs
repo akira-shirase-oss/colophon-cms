@@ -186,8 +186,9 @@ async fn a_job_past_its_deadline_fails_and_the_worker_role_sees_no_drafts() {
             .await
             .expect("claim")
             .is_empty(),
-        "out of time: failed, not claimed"
+        "out of its lifetime: not claimed"
     );
+    assert_eq!(jobs::expire(&db.app).await.expect("expire"), 1);
     let (status, error): (String, Option<String>) =
         sqlx::query_as("SELECT status, last_error FROM jobs")
             .fetch_one(&owner)

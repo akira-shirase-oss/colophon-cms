@@ -29,7 +29,6 @@ const CLEANUP_DEADLINE: Duration = Duration::from_secs(5);
 /// server bound to loopback.
 fn start_worker(
     config: &Config,
-    pool: &colophon_db::PgPool,
     cancel: &CancellationToken,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
     if !matches!(config.role, Role::Worker | Role::All) {
@@ -46,9 +45,22 @@ fn start_worker(
         slots: config.worker_slots,
         allow_private: config.listen_addr.ip().is_loopback(),
     };
-    let worker =
-        colophon_worker::Worker::new(pool.clone(), settings).context("starting the worker")?;
-    Ok(Some(tokio::spawn(Arc::new(worker).run(cancel.clone()))))
+    // Its own pool: deliveries can never take the connections editors' requests need.
+    let worker_pool = colophon_db::connect_lazy(
+        config.database_url.expose(),
+        PoolSettings {
+            max_connections: config.worker_db_connections,
+            ..PoolSettings::default()
+        },
+    )
+    .context("configuring the worker's database pool")?;
+    let worker = colophon_worker::Worker::new(worker_pool.clone(), settings)
+        .context("starting the worker")?;
+    let cancel = cancel.clone();
+    Ok(Some(tokio::spawn(async move {
+        Arc::new(worker).run(cancel).await;
+        worker_pool.close().await;
+    })))
 }
 
 /// Stops the worker claiming, and lets attempts in flight finish within the cleanup deadline;
@@ -156,7 +168,7 @@ pub async fn run(
     };
 
     let worker_cancel = cancel.child_token();
-    let worker = start_worker(&config, &pool, &worker_cancel)?;
+    let worker = start_worker(&config, &worker_cancel)?;
 
     let outcome = tokio::select! {
         outcome = shutdown::serve(listener, app, readiness, timing, trigger) => outcome.context("serving")?,

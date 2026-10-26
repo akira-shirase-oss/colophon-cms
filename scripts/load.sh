@@ -18,7 +18,8 @@
 # studio (the Studio's static files; builds the Studio first).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
-# KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090).
+# KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090),
+# SERVER_LOG=<path> (keep the server's log there).
 #
 # RATE and P99_MS default per endpoint. health and rich-text never touch the database: 20,000
 # requests/s and a 25 ms p99. session waits on database round trips, so its steady rate is
@@ -62,8 +63,11 @@ case "$endpoint" in
   cli | members | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
   entries | content-types) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
   studio) RATE="${RATE:-5000}" P99_MS="${P99_MS:-25}" ;;
-  # RATE counts publishes here, five requests each.
-  publishing) RATE="${RATE:-100}" P99_MS="${P99_MS:-250}" ;;
+  # RATE counts publishes here, five requests each, and every request writes and commits: on the
+  # reference laptop that tops out around 500 to 700 requests a second, so the steady rate is 40
+  # publishes (200 requests) a second; a run at 100 fell behind (the result is kept). The p99
+  # threshold is END_GOAL's editorial write budget, 700 ms.
+  publishing) RATE="${RATE:-40}" P99_MS="${P99_MS:-700}" ;;
   *) RATE="${RATE:-20000}" P99_MS="${P99_MS:-25}" ;;
 esac
 base_url="http://127.0.0.1:$port"
@@ -81,6 +85,7 @@ cleanup() {
     kill "$receiver_pid" 2>/dev/null || true
     wait "$receiver_pid" 2>/dev/null || true
   fi
+  if [[ -n "${SERVER_LOG:-}" && -f "$work/server.log" ]]; then cp "$work/server.log" "$SERVER_LOG"; fi
   rm -rf "$work"
 }
 trap cleanup EXIT

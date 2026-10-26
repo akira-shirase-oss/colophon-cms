@@ -95,9 +95,26 @@ pub struct Claimed {
     pub deadline_at: OffsetDateTime,
 }
 
-/// Fails jobs that ran out of time, then claims up to `limit` due ones for `owner`, for `lease`:
-/// waiting jobs whose time has come, and running ones whose lease ran out. Rows another worker
-/// is claiming are skipped, not waited for.
+/// Fails unfinished jobs that ran out of time (a worker runs this now and then, not on every
+/// claim); how many.
+pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
+    let mut transaction = worker(pool).await?;
+    let expired = sqlx::query!(
+        "UPDATE jobs SET status = 'failed', last_error = 'ran out of time', lease_owner = NULL, lease_expires_at = NULL,
+                         updated_at = now(), finished_at = now()
+         WHERE deadline_at <= now() AND status IN ('pending', 'retrying', 'running')
+           AND (status <> 'running' OR lease_expires_at < now())"
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(expired.rows_affected())
+}
+
+/// Claims up to `limit` due jobs for `owner`, for `lease`: waiting jobs whose time has come, and
+/// running ones whose lease ran out, within their lifetime. Rows another worker is claiming are
+/// skipped, not waited for.
 pub async fn claim(
     pool: &PgPool,
     owner: &str,
@@ -105,22 +122,14 @@ pub async fn claim(
     limit: i64,
 ) -> Result<Vec<Claimed>, DbError> {
     let mut transaction = worker(pool).await?;
-    sqlx::query!(
-        "UPDATE jobs SET status = 'failed', last_error = 'ran out of time', lease_owner = NULL, lease_expires_at = NULL,
-                         updated_at = now(), finished_at = now()
-         WHERE deadline_at <= now()
-           AND (status IN ('pending', 'retrying') OR (status = 'running' AND lease_expires_at < now()))"
-    )
-    .execute(&mut *transaction)
-    .await
-    .map_err(DbError::from_query)?;
     let lease_ms = i64::try_from(lease.as_millis()).unwrap_or(i64::MAX);
     let claimed = sqlx::query_as!(
         Claimed,
         "WITH due AS (
              SELECT project_id, environment_id, id FROM jobs
-             WHERE (status IN ('pending', 'retrying') AND next_attempt_at <= now())
-                OR (status = 'running' AND lease_expires_at < now())
+             WHERE ((status IN ('pending', 'retrying') AND next_attempt_at <= now())
+                    OR (status = 'running' AND lease_expires_at < now()))
+               AND deadline_at > now()
              ORDER BY next_attempt_at
              LIMIT $3
              FOR UPDATE SKIP LOCKED
@@ -144,28 +153,6 @@ pub async fn claim(
     Ok(claimed)
 }
 
-/// Whether a newer release is already on its way to the job's destination: then this one must
-/// never be sent after it.
-pub async fn superseded(pool: &PgPool, job: &Claimed) -> Result<bool, DbError> {
-    let mut transaction = worker(pool).await?;
-    let newer = sqlx::query_scalar!(
-        r#"SELECT EXISTS (
-               SELECT 1 FROM jobs
-               WHERE project_id = $1 AND environment_id = $2 AND destination_id = $3
-                 AND generation > $4 AND status <> 'superseded'
-           ) AS "newer!""#,
-        job.project_id,
-        job.environment_id,
-        job.destination_id,
-        job.generation
-    )
-    .fetch_one(&mut *transaction)
-    .await
-    .map_err(DbError::from_query)?;
-    transaction.commit().await.map_err(DbError::from_query)?;
-    Ok(newer)
-}
-
 /// What a release announcement says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Announcement {
@@ -181,9 +168,27 @@ pub struct Announcement {
     pub entries: Vec<(Uuid, Uuid, String, String)>,
 }
 
-/// The release a job announces.
-pub async fn announcement(pool: &PgPool, job: &Claimed) -> Result<Announcement, DbError> {
+/// The announcement `job` should send, or `None` if a newer release is already on its way to the
+/// same destination: then this one must never be sent after it. One transaction.
+pub async fn prepare(pool: &PgPool, job: &Claimed) -> Result<Option<Announcement>, DbError> {
     let mut transaction = worker(pool).await?;
+    let newer = sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+               SELECT 1 FROM jobs
+               WHERE project_id = $1 AND environment_id = $2 AND destination_id = $3
+                 AND generation > $4 AND status <> 'superseded'
+           ) AS "newer!""#,
+        job.project_id,
+        job.environment_id,
+        job.destination_id,
+        job.generation
+    )
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    if newer {
+        return Ok(None);
+    }
     let release = sqlx::query!(
         "SELECT e.slug, r.epoch, r.changeset_id, r.published_at
          FROM releases r JOIN environments e ON e.project_id = r.project_id AND e.id = r.environment_id
@@ -207,7 +212,7 @@ pub async fn announcement(pool: &PgPool, job: &Claimed) -> Result<Announcement, 
     .await
     .map_err(DbError::from_query)?;
     transaction.commit().await.map_err(DbError::from_query)?;
-    Ok(Announcement {
+    Ok(Some(Announcement {
         environment: release.slug,
         epoch: release.epoch,
         changeset_id: release.changeset_id,
@@ -216,7 +221,7 @@ pub async fn announcement(pool: &PgPool, job: &Claimed) -> Result<Announcement, 
             .into_iter()
             .map(|row| (row.entry_id, row.revision_id, row.collection, row.title))
             .collect(),
-    })
+    }))
 }
 
 /// How an attempt ended, as recorded.

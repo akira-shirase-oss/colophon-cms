@@ -58,11 +58,18 @@ CREATE TABLE jobs (
     FOREIGN KEY (project_id, environment_id, generation)
         REFERENCES releases (project_id, environment_id, generation)
 );
--- What workers claim: due jobs, and running ones whose lease ran out.
+-- What workers claim: due jobs, and running ones whose lease ran out; and which unfinished jobs
+-- ran out of time. Partial, so finished jobs (nearly all of them, over time) cost nothing.
 CREATE INDEX jobs_due ON jobs (next_attempt_at) WHERE status IN ('pending', 'retrying');
 CREATE INDEX jobs_leased ON jobs (lease_expires_at) WHERE status = 'running';
+CREATE INDEX jobs_open_by_deadline ON jobs (deadline_at) WHERE status IN ('pending', 'retrying', 'running');
+-- What a new release supersedes: the environment's waiting jobs, however long its history.
+CREATE INDEX jobs_waiting ON jobs (project_id, environment_id, generation) WHERE status IN ('pending', 'retrying');
 -- A release's deliveries, for its page.
 CREATE INDEX jobs_by_generation ON jobs (project_id, environment_id, generation);
+-- What a release changed (the announcement, the releases list), without reading every
+-- publication of the project.
+CREATE INDEX publications_by_release ON publications (project_id, environment_id, valid_from);
 
 ALTER TABLE destinations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE destinations FORCE ROW LEVEL SECURITY;
