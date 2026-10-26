@@ -72,7 +72,9 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
 - Built in step 3.1 (D-048): `colophon_domain::cache::Scope` (render version, project, environment, epoch,
   generation; then limit, cursor position and the collection, last). Ids are fixed-width hex, so the collection name
   is the only free text in a key. Unknown query parameters don't change an answer and aren't in its key. Each request
-  resolves its generation from Postgres in a transaction of its own, before and apart from the cache.
+  resolves its generation from Postgres in one statement, before and apart from the cache: `delivery_environment`
+  (migration 0011) runs as `colophon_delivery` in the project's context and returns only the environment's id, epoch
+  and generation. As a delivery transaction (five round trips) the lookup cost as much as the cache saved.
 
 ### Cache layer (Redis-compatible)
 - Disposable, generation-keyed public results: 300 seconds with jitter, a 1 GiB reference budget, explicit eviction.
