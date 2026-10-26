@@ -21,6 +21,8 @@ pub struct NewRevision<'a> {
     pub content_hash: &'a [u8; 32],
     /// The title, copied out of the content for lists.
     pub title: &'a str,
+    /// The content type version the content was validated against.
+    pub schema_version: i32,
 }
 
 /// A revision's metadata.
@@ -103,7 +105,7 @@ pub async fn create(
     .fetch_one(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
-    let created_at = insert_revision(tx, entry_id, None, revision).await?;
+    let created_at = insert_revision(tx, entry_id, collection, None, revision).await?;
     Ok(Draft {
         entry_id,
         collection: collection.to_owned(),
@@ -149,7 +151,8 @@ pub async fn save(
             current: current.draft_revision_id,
         });
     }
-    let created_at = insert_revision(tx, entry_id, Some(expected), revision).await?;
+    let created_at =
+        insert_revision(tx, entry_id, &current.collection, Some(expected), revision).await?;
     let moved = sqlx::query_scalar!(
         "UPDATE entries SET draft_revision_id = $4, updated_at = now()
          WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND draft_revision_id = $5
@@ -189,13 +192,15 @@ pub async fn save(
 async fn insert_revision(
     tx: &mut ProjectTransaction,
     entry_id: Uuid,
+    collection: &str,
     base: Option<Uuid>,
     revision: NewRevision<'_>,
 ) -> Result<OffsetDateTime, DbError> {
     sqlx::query_scalar!(
         "INSERT INTO revisions
-           (project_id, environment_id, entry_id, id, base_revision_id, content, content_hash, title, author_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           (project_id, environment_id, entry_id, id, base_revision_id, content, content_hash, title,
+            author_id, collection, schema_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING created_at",
         tx.project,
         tx.environment,
@@ -205,15 +210,21 @@ async fn insert_revision(
         revision.content,
         &revision.content_hash[..],
         revision.title,
-        tx.identity
+        tx.identity,
+        collection,
+        revision.schema_version
     )
     .fetch_one(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)
 }
 
-/// The entry with its current draft, if it exists in this environment.
-pub async fn get(tx: &mut ProjectTransaction, entry_id: Uuid) -> Result<Option<Draft>, DbError> {
+/// The entry with its current draft, if it exists in this environment and collection.
+pub async fn get(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    entry_id: Uuid,
+) -> Result<Option<Draft>, DbError> {
     let row = sqlx::query!(
         "SELECT e.collection, e.created_at, e.updated_at,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
@@ -221,10 +232,11 @@ pub async fn get(tx: &mut ProjectTransaction, entry_id: Uuid) -> Result<Option<D
          FROM entries e
          JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id
                          AND r.id = e.draft_revision_id
-         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.id = $3",
+         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.id = $3 AND e.collection = $4",
         tx.project,
         tx.environment,
-        entry_id
+        entry_id,
+        collection
     )
     .fetch_optional(&mut *tx.transaction)
     .await
@@ -293,22 +305,24 @@ pub async fn list(
 }
 
 /// An entry's revisions, newest first, at most `limit` (capped at [`MAX_PAGE`]). Empty when
-/// the entry doesn't exist.
+/// the entry doesn't exist in this collection.
 pub async fn history(
     tx: &mut ProjectTransaction,
+    collection: &str,
     entry_id: Uuid,
     limit: i64,
 ) -> Result<Vec<Revision>, DbError> {
     sqlx::query_as!(
         Revision,
         "SELECT id, base_revision_id, author_id, created_at, content_hash, title FROM revisions
-         WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3
+         WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3 AND collection = $5
          ORDER BY id DESC
          LIMIT $4",
         tx.project,
         tx.environment,
         entry_id,
-        limit.clamp(1, MAX_PAGE)
+        limit.clamp(1, MAX_PAGE),
+        collection
     )
     .fetch_all(&mut *tx.transaction)
     .await

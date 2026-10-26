@@ -22,8 +22,8 @@ pub struct Project {
     pub role: String,
 }
 
-/// Creates a project with a `production` environment, and makes `owner` its owner, in one
-/// transaction. A taken slug is `DbError::Conflict`.
+/// Creates a project with a `production` environment holding the built-in articles content type,
+/// and makes `owner` its owner, in one transaction. A taken slug is `DbError::Conflict`.
 pub async fn create(
     pool: &PgPool,
     owner: Uuid,
@@ -48,10 +48,29 @@ pub async fn create(
     .execute(&mut *transaction)
     .await
     .map_err(DbError::from_write)?;
+    let environment = Uuid::now_v7();
     sqlx::query!(
         "INSERT INTO environments (project_id, id, slug) VALUES ($1, $2, 'production')",
         id,
-        Uuid::now_v7()
+        environment
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    sqlx::query!(
+        "INSERT INTO collections (project_id, environment_id, slug) VALUES ($1, $2, 'articles')",
+        id,
+        environment
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    sqlx::query!(
+        "INSERT INTO content_type_versions (project_id, environment_id, collection, version, definition, definition_hash)
+         VALUES ($1, $2, 'articles', 1, $3, sha256(convert_to($3, 'UTF8')))",
+        id,
+        environment,
+        crate::content_types::ARTICLES_DEFINITION
     )
     .execute(&mut *transaction)
     .await

@@ -21,11 +21,12 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use colophon_db::{
+    content_types,
     entries::{self, Draft, NewRevision, Revision, Saved, Summary},
     idempotency::{self, Claim},
     scope::{self, ProjectTransaction},
 };
-use colophon_domain::entry::{ARTICLES, Article};
+use colophon_domain::schema::{Content, ContentType};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -221,22 +222,33 @@ fn json(status: StatusCode, body: String, revision: Option<Uuid>, replayed: bool
 }
 
 /// Opens a transaction in the caller's project and environment, or 404.
-async fn open(
+pub(crate) async fn open(
     state: &AppState,
     caller: SignedIn,
     project: &str,
     environment: &str,
-    collection: &str,
 ) -> Result<ProjectTransaction, ApiError> {
     let services = services(state)?;
     let project = Uuid::try_parse(project).map_err(|_| ApiError::NotFound)?;
-    if collection != ARTICLES {
-        return Err(ApiError::NotFound);
-    }
     scope::begin_in_project(&services.pool, caller.identity, project, environment)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)
+}
+
+/// The collection's current content type and its version, or 404.
+pub(crate) async fn content_type(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+) -> Result<(ContentType, i32), ApiError> {
+    let stored = content_types::current(tx, collection)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    // Stored definitions were validated when written; failing to parse one is a bug.
+    let value: Value = serde_json::from_str(&stored.definition).map_err(ApiError::internal)?;
+    let parsed = ContentType::parse(&value).map_err(ApiError::internal)?;
+    Ok((parsed, stored.version))
 }
 
 /// Claims the key, or answers with the recorded response.
@@ -262,15 +274,11 @@ async fn claim(
     }
 }
 
-/// Validates the body and returns the article with its canonical JSON and that JSON's hash.
-fn article(
-    body: Result<Json<Value>, JsonRejection>,
-) -> Result<(Article, String, [u8; 32]), ApiError> {
-    let Json(value) = body?;
-    let article = Article::parse(&value).map_err(ApiError::InvalidArticle)?;
-    let content = article.canonical_json();
-    let hash = sha256(content.as_bytes());
-    Ok((article, content, hash))
+/// Validates content against its content type: the canonical content and its hash.
+fn validate(value: &Value, content_type: &ContentType) -> Result<(Content, [u8; 32]), ApiError> {
+    let content = content_type.validate(value).map_err(ApiError::Invalid)?;
+    let hash = sha256(content.canonical_json().as_bytes());
+    Ok((content, hash))
 }
 
 /// Records the answer, commits, and only then responds: an acknowledged write is durable.
@@ -304,26 +312,22 @@ pub(crate) async fn create(
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let key = idempotency_key(&headers)?;
-    let (article, content, hash) = article(body)?;
-    let request = request_hash(&[CREATE, &path.collection, &content]);
-    let mut tx = open(
-        &state,
-        caller,
-        &path.project,
-        &path.environment,
-        &path.collection,
-    )
-    .await?;
+    let Json(value) = body?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let (content_type, version) = content_type(&mut tx, &path.collection).await?;
+    let (content, hash) = validate(&value, &content_type)?;
+    let request = request_hash(&[CREATE, &path.collection, content.canonical_json()]);
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);
     }
     let revision = NewRevision {
         id: Uuid::now_v7(),
-        content: &content,
+        content: content.canonical_json(),
         content_hash: &hash,
-        title: article.title(),
+        title: content.title(),
+        schema_version: version,
     };
-    let draft = entries::create(&mut tx, Uuid::now_v7(), ARTICLES, revision)
+    let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision)
         .await
         .map_err(ApiError::from_db)?;
     finish(tx, CREATE, key, StatusCode::CREATED, draft).await
@@ -340,30 +344,26 @@ pub(crate) async fn save(
     let expected = if_match(&headers)?;
     let key = idempotency_key(&headers)?;
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
-    let (article, content, hash) = article(body)?;
+    let Json(value) = body?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let (content_type, version) = content_type(&mut tx, &path.collection).await?;
+    let (content, hash) = validate(&value, &content_type)?;
     let request = request_hash(&[
         SAVE,
         &path.collection,
         &entry.to_string(),
         &expected.to_string(),
-        &content,
+        content.canonical_json(),
     ]);
-    let mut tx = open(
-        &state,
-        caller,
-        &path.project,
-        &path.environment,
-        &path.collection,
-    )
-    .await?;
     if let Some(replay) = claim(&mut tx, SAVE, key, &request).await? {
         return Ok(replay);
     }
     let revision = NewRevision {
         id: Uuid::now_v7(),
-        content: &content,
+        content: content.canonical_json(),
         content_hash: &hash,
-        title: article.title(),
+        title: content.title(),
+        schema_version: version,
     };
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.
     match entries::save(&mut tx, entry, expected, revision)
@@ -383,15 +383,8 @@ pub(crate) async fn get(
     Path(path): Path<EntryPath>,
 ) -> Result<Response, ApiError> {
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
-    let mut tx = open(
-        &state,
-        caller,
-        &path.project,
-        &path.environment,
-        &path.collection,
-    )
-    .await?;
-    let draft = entries::get(&mut tx, entry)
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let draft = entries::get(&mut tx, &path.collection, entry)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
@@ -435,14 +428,9 @@ pub(crate) async fn list(
     if !(1..=entries::MAX_PAGE).contains(&limit) {
         return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
     }
-    let mut tx = open(
-        &state,
-        caller,
-        &path.project,
-        &path.environment,
-        &path.collection,
-    )
-    .await?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // An unknown collection is 404, not an empty list.
+    content_type(&mut tx, &path.collection).await?;
     let project = tx.project;
     let before = query
         .cursor
@@ -450,7 +438,7 @@ pub(crate) async fn list(
         .map(|cursor| after_cursor(&path, project, cursor))
         .transpose()?;
     // One more than the page, to know whether another page follows.
-    let mut rows: Vec<Summary> = entries::list(&mut tx, ARTICLES, before, limit + 1)
+    let mut rows: Vec<Summary> = entries::list(&mut tx, &path.collection, before, limit + 1)
         .await
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
@@ -480,15 +468,8 @@ pub(crate) async fn history(
     Path(path): Path<EntryPath>,
 ) -> Result<Response, ApiError> {
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
-    let mut tx = open(
-        &state,
-        caller,
-        &path.project,
-        &path.environment,
-        &path.collection,
-    )
-    .await?;
-    let revisions = entries::history(&mut tx, entry, entries::MAX_PAGE)
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let revisions = entries::history(&mut tx, &path.collection, entry, entries::MAX_PAGE)
         .await
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
@@ -594,7 +575,7 @@ mod tests {
         let here = CollectionPath {
             project: project.to_string(),
             environment: "production".to_owned(),
-            collection: ARTICLES.to_owned(),
+            collection: "articles".to_owned(),
         };
         let token = cursor(&here, project, last);
         assert_eq!(after_cursor(&here, project, &token).ok(), Some(last));
@@ -607,7 +588,7 @@ mod tests {
         let here_again = CollectionPath {
             project: other_project.to_string(),
             environment: "production".to_owned(),
-            collection: ARTICLES.to_owned(),
+            collection: "articles".to_owned(),
         };
         assert!(after_cursor(&here_again, other_project, &token).is_err());
         assert!(after_cursor(&here_again, other_project, "not base64 !").is_err());

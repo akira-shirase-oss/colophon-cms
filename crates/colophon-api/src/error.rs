@@ -17,7 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use colophon_db::DbError;
-use colophon_domain::{entry::ArticleError, rich_text::Rejection};
+use colophon_domain::{rich_text::Rejection, schema::Refusal};
 use serde::{Serialize, Serializer};
 use uuid::Uuid;
 
@@ -167,9 +167,9 @@ pub enum ApiError {
     /// A rich-text document was refused.
     #[error("{0}")]
     InvalidRichText(Rejection),
-    /// An article was refused.
+    /// Content or a content type definition was refused; `details` say which part and why.
     #[error("{0}")]
-    InvalidArticle(ArticleError),
+    Invalid(Refusal),
     /// A header is malformed; the reason is safe to show.
     #[error("{0}")]
     InvalidHeader(&'static str),
@@ -247,7 +247,7 @@ impl ApiError {
             }
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-            Self::InvalidRichText(_) | Self::InvalidArticle(_) | Self::InvalidField { .. } => {
+            Self::InvalidRichText(_) | Self::Invalid(_) | Self::InvalidField { .. } => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
             Self::InvalidHeader(_) => StatusCode::BAD_REQUEST,
@@ -270,7 +270,7 @@ impl ApiError {
             Self::UnsupportedMediaType => ErrorCode::UnsupportedMediaType,
             Self::PayloadTooLarge => ErrorCode::PayloadTooLarge,
             Self::BadRequest | Self::InvalidHeader(_) => ErrorCode::BadRequest,
-            Self::InvalidRichText(_) | Self::InvalidArticle(_) | Self::InvalidField { .. } => {
+            Self::InvalidRichText(_) | Self::Invalid(_) | Self::InvalidField { .. } => {
                 ErrorCode::ValidationFailed
             }
             Self::PreconditionRequired(_) => ErrorCode::PreconditionRequired,
@@ -293,9 +293,9 @@ impl ApiError {
                 reason: rejection.code.as_str(),
                 pointer: rejection.pointer.clone(),
             }),
-            Self::InvalidArticle(error) => Some(ErrorDetails {
-                reason: error.code(),
-                pointer: error.pointer(),
+            Self::Invalid(refusal) => Some(ErrorDetails {
+                reason: refusal.code,
+                pointer: refusal.pointer.clone(),
             }),
             Self::StaleRevision { .. } => Some(ErrorDetails {
                 reason: "stale_revision",

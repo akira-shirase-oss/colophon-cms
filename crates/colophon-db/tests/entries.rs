@@ -45,6 +45,7 @@ impl Content {
             content: &self.text,
             content_hash: &self.hash,
             title: &self.title,
+            schema_version: 1,
         }
     }
 }
@@ -92,7 +93,7 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
     tx.commit().await.expect("commit");
 
     let mut tx = enter(&db.app, alice, project).await;
-    let current = entries::get(&mut tx, entry)
+    let current = entries::get(&mut tx, ARTICLES, entry)
         .await
         .expect("get")
         .expect("exists");
@@ -101,7 +102,7 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
         current.content, second.text,
         "the stored bytes are the bytes saved"
     );
-    let history: Vec<(Uuid, Option<Uuid>)> = entries::history(&mut tx, entry, 10)
+    let history: Vec<(Uuid, Option<Uuid>)> = entries::history(&mut tx, ARTICLES, entry, 10)
         .await
         .expect("history")
         .into_iter()
@@ -144,7 +145,7 @@ async fn a_save_on_a_stale_draft_writes_nothing_and_names_the_current_revision()
 
     let mut tx = enter(&db.app, alice, project).await;
     assert_eq!(
-        entries::history(&mut tx, entry, 10)
+        entries::history(&mut tx, ARTICLES, entry, 10)
             .await
             .expect("history")
             .len(),
@@ -184,7 +185,7 @@ async fn two_concurrent_saves_on_one_base_revision_one_wins_one_is_stale() {
     assert_eq!(waiting.await.expect("task"), Saved::Stale { current: a.id });
 
     let mut tx = enter(&pool, alice, project).await;
-    let ids: Vec<Uuid> = entries::history(&mut tx, entry, 10)
+    let ids: Vec<Uuid> = entries::history(&mut tx, ARTICLES, entry, 10)
         .await
         .expect("history")
         .into_iter()
@@ -270,7 +271,10 @@ async fn another_project_cannot_see_or_reach_an_entry() {
 
     // Inside his own project, Bob asks for Alice's entry by its id, and counts every row.
     let mut tx = enter(&db.app, bob, beta).await;
-    assert_eq!(entries::get(&mut tx, entry).await.expect("get"), None);
+    assert_eq!(
+        entries::get(&mut tx, ARTICLES, entry).await.expect("get"),
+        None
+    );
     for table in ["entries", "revisions", "idempotency_records"] {
         let (n,): (i64,) =
             sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))

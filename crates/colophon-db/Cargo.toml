@@ -17,6 +17,8 @@ uuid.workspace = true
 [dev-dependencies]
 # The differential test replays simulated runs against Postgres (tests/differential.rs).
 colophon-sim.workspace = true
+# The built-in definitions must equal the domain's canonical form (tests/content_types.rs).
+colophon-domain.workspace = true
 
 [lints]
 workspace = true
