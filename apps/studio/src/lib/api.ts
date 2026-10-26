@@ -15,7 +15,11 @@ export interface Project {
 export interface Me {
 	id: string;
 	issuer: string;
+	/** Their id at the identity provider: what `colophon admin bootstrap` binds to. */
+	subject: string;
 	display_name: string | null;
+	/** Whether they may create projects (D-043). */
+	administrator: boolean;
 	projects: Project[];
 }
 
@@ -180,6 +184,11 @@ export async function me(): Promise<Me | null> {
 		if (error instanceof ApiError && error.failure === 'signed-out') return null;
 		throw error;
 	}
+}
+
+/** Administrators only (D-043); the creator becomes the project's owner. */
+export async function createProject(slug: string, name: string): Promise<Project> {
+	return ((await (await send('POST', '/api/v1/projects', { slug, name })).json()) as { data: Project }).data;
 }
 
 export async function listContentTypes(project: string): Promise<ContentType[]> {

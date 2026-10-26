@@ -9,6 +9,7 @@ test('sign in, create a project, and it stays invisible to someone else', async 
 	const editor = await editorContext.newPage();
 	await signIn(editor, 'dev-owner');
 	await expect(editor.getByTestId('signed-in')).toContainText('Dev Owner');
+	await expect(editor.getByTestId('standing')).toContainText('00000000-0000-4000-8000-00000000c001, administrator');
 
 	const slug = `tb-${Date.now().toString(36)}`;
 	await editor.getByLabel('Slug').fill(slug);
@@ -28,6 +29,12 @@ test('sign in, create a project, and it stays invisible to someone else', async 
 	const other = await otherContext.newPage();
 	await signIn(other, 'dev-editor');
 	await expect(other.locator(`[data-slug="${slug}"]`)).toHaveCount(0);
+	// Nor can they create projects: only administrators can (D-043).
+	await expect(other.getByTestId('standing')).toContainText('not an administrator');
+	await other.getByLabel('Slug').fill(`${slug}-x`);
+	await other.getByLabel('Name').fill('Not allowed');
+	await other.getByRole('button', { name: 'Create project' }).click();
+	await expect(other.getByTestId('message')).toContainText('403 forbidden: only an administrator can create projects');
 	const status = await other.evaluate(async (id) => (await fetch(`/server/api/v1/projects/${id}`)).status, projectId);
 	expect(status).toBe(404);
 
