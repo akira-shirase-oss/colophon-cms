@@ -97,6 +97,10 @@ pub fn routes(state: AppState) -> Router {
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions",
             get(entries::history),
         )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions/{revision}",
+            get(entries::revision),
+        )
         .route("/api/v1/rich-text/validate", post(rich_text::validate))
         .merge(publishing())
         .fallback(fallback)

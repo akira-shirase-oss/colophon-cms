@@ -1,33 +1,11 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT e.id, e.updated_at,\n                r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,\n                r.content_hash, r.title\n         FROM entries e\n         CROSS JOIN LATERAL (\n             SELECT r.id, r.base_revision_id, r.author_id, r.created_at, r.content_hash, r.title\n             FROM revisions r\n             WHERE r.project_id = e.project_id AND r.environment_id = e.environment_id\n               AND r.id = e.draft_revision_id\n             LIMIT 1\n         ) r\n         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3\n           AND ($4::uuid IS NULL OR e.id < $4)\n         ORDER BY e.id DESC\n         LIMIT $5",
+  "query": "SELECT id, base_revision_id, author_id, created_at, content_hash, title, content FROM revisions\n         WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3 AND id = $4 AND collection = $5",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid",
-        "origin": {
-          "Table": {
-            "table": "entries",
-            "name": "id"
-          }
-        }
-      },
-      {
-        "ordinal": 1,
-        "name": "updated_at",
-        "type_info": "Timestamptz",
-        "origin": {
-          "Table": {
-            "table": "entries",
-            "name": "updated_at"
-          }
-        }
-      },
-      {
-        "ordinal": 2,
-        "name": "revision_id",
         "type_info": "Uuid",
         "origin": {
           "Table": {
@@ -37,7 +15,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 1,
         "name": "base_revision_id",
         "type_info": "Uuid",
         "origin": {
@@ -48,7 +26,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 2,
         "name": "author_id",
         "type_info": "Uuid",
         "origin": {
@@ -59,8 +37,8 @@
         }
       },
       {
-        "ordinal": 5,
-        "name": "revision_created_at",
+        "ordinal": 3,
+        "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -70,7 +48,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 4,
         "name": "content_hash",
         "type_info": "Bytea",
         "origin": {
@@ -81,7 +59,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 5,
         "name": "title",
         "type_info": "Text",
         "origin": {
@@ -90,27 +68,37 @@
             "name": "title"
           }
         }
+      },
+      {
+        "ordinal": 6,
+        "name": "content",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "content"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
         "Uuid",
-        "Text",
         "Uuid",
-        "Int8"
+        "Uuid",
+        "Text"
       ]
     },
     "nullable": [
       false,
-      false,
-      false,
       true,
+      false,
       false,
       false,
       false,
       false
     ]
   },
-  "hash": "f02653834f07d04d33a26b2b427a39c9fda24ef205eb307db2d466ab0005f696"
+  "hash": "ff45ffb973dc16b80e196d60583754b75d29c23786685687040650459b582664"
 }
