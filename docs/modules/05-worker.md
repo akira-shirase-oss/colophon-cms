@@ -27,7 +27,11 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
 - **Addresses:** https and public only (`colophon_domain::destination`), checked on save and before every attempt;
   the worker's resolver keeps only public addresses. A development server on loopback may use private ones.
 - **The loop:** it claims as soon as a slot is free (eight by default) and sleeps only when there's nothing to do;
-  on shutdown it stops claiming and lets attempts finish within the cleanup deadline.
+  it fails jobs that ran out of time every 10 seconds; on shutdown it stops claiming and lets attempts finish within
+  the cleanup deadline.
+- **Its own database pool** (`COLOPHON_WORKER_DB_CONNECTIONS`, default 4), so deliveries can never take the
+  connections editors' requests need. The first publishing load test found the worker sharing the API's pool: at a
+  hundred deliveries a second, editors' requests queued behind it.
 - **Not yet:** per-destination and per-project limits, signed announcements, wake-ups instead of polling,
   reconciliation beyond repeating with the same key, admission budgets (F09), scheduled releases.
 
