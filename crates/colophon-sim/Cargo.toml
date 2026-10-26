@@ -10,6 +10,8 @@ publish.workspace = true
 # Deterministic and I/O-free, like the domain: no runtime, no clock, no randomness that doesn't
 # come from the seed (S10). scripts/check-architecture.sh checks this crate too.
 [dependencies]
+# The release and job rules, the same ones the real system runs (docs/modules/10-sim.md).
+colophon-domain.workspace = true
 
 [lints]
 workspace = true

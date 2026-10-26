@@ -113,8 +113,9 @@ pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
 }
 
 /// Claims up to `limit` due jobs for `owner`, for `lease`: waiting jobs whose time has come, and
-/// running ones whose lease ran out, within their lifetime. Rows another worker is claiming are
-/// skipped, not waited for.
+/// running ones whose lease ran out, within their lifetime, whose destination has no other job
+/// in flight under a live lease (one announcement in flight per destination, D-047). Rows
+/// another worker is claiming are skipped, not waited for.
 pub async fn claim(
     pool: &PgPool,
     owner: &str,
@@ -126,13 +127,20 @@ pub async fn claim(
     let claimed = sqlx::query_as!(
         Claimed,
         "WITH due AS (
-             SELECT project_id, environment_id, id FROM jobs
-             WHERE ((status IN ('pending', 'retrying') AND next_attempt_at <= now())
-                    OR (status = 'running' AND lease_expires_at < now()))
-               AND deadline_at > now()
-             ORDER BY next_attempt_at
+             SELECT j.project_id, j.environment_id, j.id
+             FROM jobs j
+             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())
+                    OR (j.status = 'running' AND j.lease_expires_at < now()))
+               AND j.deadline_at > now()
+               AND NOT EXISTS (
+                   SELECT 1 FROM jobs busy
+                   WHERE busy.project_id = j.project_id AND busy.environment_id = j.environment_id
+                     AND busy.destination_id = j.destination_id AND busy.status = 'running'
+                     AND busy.lease_expires_at >= now() AND busy.id <> j.id
+               )
+             ORDER BY j.next_attempt_at
              LIMIT $3
-             FOR UPDATE SKIP LOCKED
+             FOR UPDATE OF j SKIP LOCKED
          )
          UPDATE jobs j SET status = 'running', lease_owner = $1,
                            lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),

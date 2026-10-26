@@ -42,6 +42,7 @@ fn start_worker(
         owner: format!("colophon-{}-{started}", std::process::id()),
         poll: config.worker_poll,
         lease: config.worker_lease,
+        attempt: config.worker_attempt,
         slots: config.worker_slots,
         allow_private: config.listen_addr.ip().is_loopback(),
     };
