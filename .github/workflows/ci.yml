@@ -114,7 +114,7 @@ jobs:
         run: scripts/testbed.sh
       - name: The Studio against the real server (scripts/studio.sh)
         run: scripts/studio.sh
-      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, who may create projects, drafts, content types, the Studio)
+      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, who may create projects, changesets, drafts, content types, the Studio)
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=200000 P99_MS=50 KEEP=0 scripts/load.sh health throughput
@@ -123,6 +123,7 @@ jobs:
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh cli throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh members throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh projects throughput
+          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh changesets throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh entries throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh content-types throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=50000 P99_MS=50 KEEP=0 scripts/load.sh studio throughput

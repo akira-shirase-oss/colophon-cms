@@ -323,6 +323,95 @@ export async function acceptInvitation(token: string): Promise<{ project_id: str
 		.data;
 }
 
+/** Where a changeset stands (D-044); only `approved` can be published (step 2.2). */
+export type ChangesetState = 'open' | 'stale' | 'awaiting_review' | 'changes_requested' | 'approved' | 'approval_expired';
+
+export interface ChangesetStatus {
+	state: ChangesetState;
+	/** Who approved or asked for changes. */
+	by: string | null;
+	/** The approver also submitted it: allowed, and always shown. */
+	self_review: boolean;
+	/** Entries edited since they were pinned. */
+	edited_items: number;
+}
+
+export interface ChangesetItem {
+	entry_id: string;
+	collection: string;
+	revision_id: string;
+	title: string;
+	content_hash: string;
+	schema_version: number;
+	current_revision_id: string;
+	edited: boolean;
+}
+
+export interface ChangesetReview {
+	id: string;
+	reviewer_id: string;
+	reviewer_name: string | null;
+	decision: 'approve' | 'request_changes';
+	changeset_hash: string;
+	/** Made on the changeset's current hash, so it still counts. */
+	current: boolean;
+	comment: string;
+	created_at: string;
+}
+
+export interface Changeset {
+	id: string;
+	title: string;
+	hash: string;
+	status: ChangesetStatus;
+	created_by: string;
+	created_at: string;
+	submitted_by: string | null;
+	submitted_at: string | null;
+	updated_at: string;
+	items: ChangesetItem[];
+	reviews: ChangesetReview[];
+}
+
+export interface ChangesetSummary {
+	id: string;
+	title: string;
+	hash: string;
+	status: ChangesetStatus;
+	items: number;
+	submitted_at: string | null;
+	updated_at: string;
+}
+
+const changesets = (project: string) => `${base(project)}/changesets`;
+
+export async function listChangesets(project: string): Promise<ChangesetSummary[]> {
+	return ((await (await send('GET', changesets(project))).json()) as { data: ChangesetSummary[] }).data;
+}
+
+export async function getChangeset(project: string, id: string): Promise<Changeset> {
+	return ((await (await send('GET', `${changesets(project)}/${id}`)).json()) as { data: Changeset }).data;
+}
+
+/** Pins each entry's current revision. Sending the same key again is safe. */
+export async function createChangeset(project: string, title: string, entries: string[], key: string): Promise<Changeset> {
+	return ((await (await send('POST', changesets(project), { title, entries }, { 'Idempotency-Key': key })).json()) as { data: Changeset })
+		.data;
+}
+
+/** Submits, refreshes or reviews the changeset whose hash the caller saw; a changed hash is refused
+ *  with reason `stale_changeset`. */
+export async function changesetAction(
+	project: string,
+	id: string,
+	hash: string,
+	action: 'submit' | 'refresh' | 'reviews',
+	body?: { decision: 'approve' | 'request_changes'; comment: string }
+): Promise<Changeset> {
+	const path = `${changesets(project)}/${id}/${action}`;
+	return ((await (await send('POST', path, body, { 'If-Match': `"${hash}"` })).json()) as { data: Changeset }).data;
+}
+
 /** A fresh idempotency key: 32 hex characters. */
 export function newKey(): string {
 	return crypto.randomUUID().replaceAll('-', '');

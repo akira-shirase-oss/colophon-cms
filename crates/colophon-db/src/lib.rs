@@ -7,6 +7,7 @@
 
 pub mod access;
 pub mod administrators;
+pub mod changesets;
 pub mod content_types;
 pub mod entries;
 pub mod idempotency;

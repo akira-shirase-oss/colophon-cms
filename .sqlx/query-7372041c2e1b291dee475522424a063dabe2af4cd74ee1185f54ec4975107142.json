@@ -1,0 +1,114 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT i.entry_id, i.revision_id, r.collection, r.content_hash, r.schema_version,\n                v.definition_hash, r.title, e.draft_revision_id\n         FROM changeset_items i\n         JOIN revisions r ON r.project_id = i.project_id AND r.environment_id = i.environment_id\n                         AND r.id = i.revision_id\n         JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id\n                                     AND v.collection = r.collection AND v.version = r.schema_version\n         JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id\n                       AND e.id = i.entry_id\n         WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3\n         ORDER BY i.entry_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entry_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "changeset_items",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "revision_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "changeset_items",
+            "name": "revision_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "collection",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "collection"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "content_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "content_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "schema_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "schema_version"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "definition_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "content_type_versions",
+            "name": "definition_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "draft_revision_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "draft_revision_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7372041c2e1b291dee475522424a063dabe2af4cd74ee1185f54ec4975107142"
+}

@@ -105,6 +105,11 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - A review decision binds to the changeset hash. Any edit, policy change or expiry invalidates it.
 - Self-review is allowed by default but recorded visibly; a project can require a different reviewer.
 - **Agents can never approve their own proposals.**
+- Built in step 2.1 (D-044): `colophon_domain::changeset`. `Item` pins an entry's revision with its content hash and
+  content-type version; `canonical` is the text whose SHA-256 is the changeset's hash (a version line, then one line
+  per item, sorted by entry id); `status` decides `Open`, `Stale`, `AwaitingReview`, `ChangesRequested`,
+  `Approved { self_review }` or `ApprovalExpired` from the facts: only decisions on the current hash count, the
+  highest sequence number wins, approvals last seven days, and a project may require a different reviewer.
 
 ### Releases (spec §14)
 - `Release`: `prepared → committed`, identified by `(epoch, generation)`.
@@ -204,7 +209,7 @@ Port rules (rust-mastery chapter 10):
 1. **P0:** IDs, scopes, schema field types, the rich-text validator, error types.
 2. **P1:** entries, revisions and articles (step 1.2, done); the save rule in the simulator (1.4, done); content
    types (1.5, done); the role policy (1.7, done); slugs and locales.
-3. **P2:** changesets, reviews, releases, publication history, job states.
+3. **P2:** changesets and reviews (2.1, done); releases, publication history, job states.
 4. **P3:** delivery states, evidence, unpublish.
 5. **P4:** rollback, release-history queries, scheduling.
 

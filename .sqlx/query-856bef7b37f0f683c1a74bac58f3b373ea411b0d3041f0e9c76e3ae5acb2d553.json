@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE changesets SET hash = $4, updated_at = now()\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "856bef7b37f0f683c1a74bac58f3b373ea411b0d3041f0e9c76e3ae5acb2d553"
+}
