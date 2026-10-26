@@ -5,6 +5,10 @@
 //!   retrying with the same key works.
 //! - **F02**, killed after the commit but before the response: the write is stored, and retrying
 //!   with the same key returns the same result instead of writing again or failing.
+//! - **F03**, the worker killed after announcing a release but before recording it: the lease
+//!   runs out, another worker claims the job and announces it again with the same idempotency
+//!   key, so the destination can tell it's a repeat; the job ends `succeeded` after two attempts,
+//!   and nothing claims the first one didn't happen.
 //!
 //! Sessions live in Postgres, so one sign-in serves every server in the test. Needs the stack,
 //! migrations, and the fault points: `cargo test -p colophon-server --features fault-injection
@@ -17,7 +21,10 @@
 
 mod common;
 
-use common::{Server, Session, article, call, entries, key, project, sign_in};
+use common::{
+    Receiver, Server, Session, article, call, destination, entries, finished_job, key, project,
+    publish_article, sign_in,
+};
 use reqwest::{Method, StatusCode};
 
 /// The exit code `fault::point` uses.
@@ -228,5 +235,57 @@ async fn a_create_killed_after_its_commit_is_replayed_not_duplicated() {
         ids,
         [retry.body["data"]["id"].as_str().expect("an id")],
         "one entry, not two"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the stack, migrations and --features fault-injection"]
+async fn a_worker_killed_after_announcing_is_followed_by_one_with_the_same_key() {
+    let receiver = Receiver::start(&[]).await;
+    let owner;
+    let project_id;
+    {
+        // Leases short enough to run out during the test; slow polling, so the release's own
+        // response is long gone when the worker crashes.
+        let mut server = Server::start_with(&[
+            ("COLOPHON_FAULT", "worker:after-dispatch"),
+            ("COLOPHON_WORKER_LEASE_MS", "1500"),
+            ("COLOPHON_WORKER_POLL_MS", "300"),
+        ])
+        .await;
+        // Sessions live in Postgres: this sign-in serves the next server too.
+        owner = sign_in("dev-owner").await;
+        let project = project(&owner).await;
+        destination(&owner, &project, &receiver.url).await;
+        assert_eq!(publish_article(&owner, &project, "Crashed once").await, 1);
+        assert_eq!(
+            server.exit_code().await,
+            Some(FAULT_EXIT),
+            "the worker stopped after announcing"
+        );
+        project_id = project;
+    }
+    assert_eq!(
+        receiver.seen().len(),
+        1,
+        "the announcement went out before the crash"
+    );
+
+    let _server = Server::start_with(&[
+        ("COLOPHON_WORKER_LEASE_MS", "1500"),
+        ("COLOPHON_WORKER_POLL_MS", "50"),
+    ])
+    .await;
+    let job = finished_job(&owner, &project_id, 1, 20).await;
+    assert_eq!(
+        (job["status"].as_str(), job["attempts"].as_i64()),
+        (Some("succeeded"), Some(2)),
+        "{job}"
+    );
+    let seen = receiver.seen();
+    assert_eq!(seen.len(), 2, "announced again after the lease ran out");
+    assert_eq!(
+        seen[0].key, seen[1].key,
+        "with the same key, so the destination can drop it"
     );
 }

@@ -68,7 +68,6 @@ impl Drop for Server {
     }
 }
 
-/// Colophon's client: no redirects followed, no cookie store (cookies are checked by hand).
 /// `deploy/local.env`, the single source of the local settings, as `(key, value)` pairs.
 pub(crate) fn local_env() -> Vec<(String, String)> {
     let env_file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local.env");
@@ -81,6 +80,7 @@ pub(crate) fn local_env() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Colophon's client: no redirects followed, no cookie store (cookies are checked by hand).
 pub(crate) fn app() -> reqwest::Client {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -368,4 +368,209 @@ pub(crate) async fn join(owner: &Session, guest: &Session, project: &str, role: 
     .await
     .expect("request");
     assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
+}
+
+/// One request a [`Receiver`] got.
+#[derive(Debug, Clone)]
+pub(crate) struct Received {
+    /// Its `Idempotency-Key`.
+    pub(crate) key: String,
+    /// Its `Colophon-Generation`.
+    pub(crate) generation: String,
+    /// Its JSON body.
+    pub(crate) body: Value,
+}
+
+type ReceiverState = std::sync::Arc<(
+    std::sync::Mutex<Vec<Received>>,
+    std::sync::Mutex<std::collections::VecDeque<u16>>,
+)>;
+
+/// A webhook destination for the worker tests, on 127.0.0.1: it records every request and
+/// answers with the next status in its script, then 200 once the script runs out.
+pub(crate) struct Receiver {
+    /// Where to point a destination.
+    pub(crate) url: String,
+    state: ReceiverState,
+    task: tokio::task::JoinHandle<()>,
+}
+
+async fn receive(
+    axum::extract::State(state): axum::extract::State<ReceiverState>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::http::StatusCode {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let received = Received {
+        key: header("idempotency-key"),
+        generation: header("colophon-generation"),
+        body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+    };
+    state.0.lock().expect("not poisoned").push(received);
+    let status = state
+        .1
+        .lock()
+        .expect("not poisoned")
+        .pop_front()
+        .unwrap_or(200);
+    axum::http::StatusCode::from_u16(status).unwrap_or(axum::http::StatusCode::OK)
+}
+
+impl Receiver {
+    /// Starts a receiver that answers with `script`, in order, then 200.
+    pub(crate) async fn start(script: &[u16]) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let address = listener.local_addr().expect("an address");
+        let state: ReceiverState = std::sync::Arc::new((
+            std::sync::Mutex::new(Vec::new()),
+            std::sync::Mutex::new(script.iter().copied().collect()),
+        ));
+        let app = axum::Router::new()
+            .route("/hook", axum::routing::post(receive))
+            .with_state(std::sync::Arc::clone(&state));
+        let task = tokio::spawn(async move {
+            let _stopped = axum::serve(listener, app).await;
+        });
+        Self {
+            url: format!("http://{address}/hook"),
+            state,
+            task,
+        }
+    }
+
+    /// Every request so far, in order.
+    pub(crate) fn seen(&self) -> Vec<Received> {
+        self.state.0.lock().expect("not poisoned").clone()
+    }
+}
+
+impl Drop for Receiver {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// Waits up to `seconds` for the delivery job of `generation` to finish; the job.
+pub(crate) async fn finished_job(
+    session: &Session,
+    project: &str,
+    generation: i64,
+    seconds: u64,
+) -> Value {
+    let path =
+        format!("/api/v1/projects/{project}/environments/production/jobs?generation={generation}");
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    loop {
+        let reply = call(session, Method::GET, &path, None, &[])
+            .await
+            .expect("request");
+        if let Some(job) = reply.body["data"].as_array().and_then(|jobs| jobs.first())
+            && matches!(
+                job["status"].as_str(),
+                Some("succeeded" | "failed" | "superseded")
+            )
+        {
+            return job.clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "job of generation {generation} never finished: {}",
+            reply.body
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Publishes a new article as `owner`, through a self-approved changeset, as the next release;
+/// its generation.
+pub(crate) async fn publish_article(owner: &Session, project: &str, title: &str) -> i64 {
+    let base = format!("/api/v1/projects/{project}/environments/production");
+    let entry = call(
+        owner,
+        Method::POST,
+        &entries(project),
+        Some(&article(title, "text")),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(entry.status, StatusCode::CREATED, "{}", entry.body);
+    let body = serde_json::json!({"title": title, "entries": [entry.body["data"]["id"]]});
+    let set = call(
+        owner,
+        Method::POST,
+        &format!("{base}/changesets"),
+        Some(&body),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    let path = format!(
+        "{base}/changesets/{}",
+        set.body["data"]["id"].as_str().expect("an id")
+    );
+    let if_match = format!("\"{}\"", set.body["data"]["hash"].as_str().expect("a hash"));
+    call(
+        owner,
+        Method::POST,
+        &format!("{path}/submit"),
+        None,
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    let approve = serde_json::json!({"decision": "approve"});
+    call(
+        owner,
+        Method::POST,
+        &format!("{path}/reviews"),
+        Some(&approve),
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    let releases = call(owner, Method::GET, &format!("{base}/releases"), None, &[])
+        .await
+        .expect("request");
+    let current: i64 = releases
+        .headers
+        .get("colophon-generation")
+        .and_then(|value| value.to_str().ok()?.parse().ok())
+        .expect("a generation");
+    let published = call(
+        owner,
+        Method::POST,
+        &format!("{path}/publish"),
+        Some(&serde_json::json!({"base_generation": current})),
+        &[("if-match", &if_match), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(published.status, StatusCode::CREATED, "{}", published.body);
+    published.body["data"]["generation"]
+        .as_i64()
+        .expect("a generation")
+}
+
+/// Points a new webhook destination of `project` at `url`; its id.
+pub(crate) async fn destination(owner: &Session, project: &str, url: &str) -> String {
+    let reply = call(
+        owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/environments/production/destinations"),
+        Some(&serde_json::json!({"name": "Test receiver", "url": url})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    reply.body["data"]["id"].as_str().expect("an id").to_owned()
 }
