@@ -39,6 +39,10 @@ if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.
 const ARTICLES = SCENARIO === 'steady' ? VUS * 2 : VUS;
 
 const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`] };
+// Per endpoint too, so a slow tail names its endpoint in the summary.
+for (const endpoint of ['read', 'list', 'search', 'revision', 'save']) {
+  thresholds[`http_req_duration{endpoint:${endpoint}}`] = [`p(99)<${P99_MS}`];
+}
 if (SCENARIO === 'steady') {
   thresholds.dropped_iterations = [`count<=${Math.floor(RATE * durationSeconds(DURATION) * 0.0001)}`];
 }
