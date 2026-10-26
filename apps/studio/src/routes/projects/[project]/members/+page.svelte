@@ -12,6 +12,7 @@
 		ApiError,
 		changeRole,
 		createInvitation,
+		getProject,
 		type Invitation,
 		listInvitations,
 		listMembers,
@@ -26,7 +27,9 @@
 	const project = $derived(page.params.project ?? '');
 	const queryClient = useQueryClient();
 	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
-	const owner = $derived(who.data?.projects.find((mine) => mine.id === project)?.role === 'owner');
+	// The role comes from the project itself: me().projects lists at most 1,000 projects.
+	const mine = createQuery(() => ({ queryKey: ['project', project], queryFn: () => getProject(project) }));
+	const owner = $derived(mine.data?.role === 'owner');
 	const people = createQuery(() => ({ queryKey: ['members', project], queryFn: () => listMembers(project) }));
 	const pending = createQuery(() => ({
 		queryKey: ['invitations', project],
@@ -60,6 +63,7 @@
 		Promise.all([
 			queryClient.invalidateQueries({ queryKey: ['members', project] }),
 			queryClient.invalidateQueries({ queryKey: ['invitations', project] }),
+			queryClient.invalidateQueries({ queryKey: ['project', project] }),
 			queryClient.invalidateQueries({ queryKey: ['me'] })
 		]);
 

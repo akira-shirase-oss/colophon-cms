@@ -8,15 +8,16 @@
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui';
-	import { ApiError, changesetAction, getChangeset, listReleases, me, newKey, publishChangeset, type Changeset } from '#lib/api.ts';
+	import { ApiError, changesetAction, getChangeset, getProject, listReleases, newKey, publishChangeset, type Changeset } from '#lib/api.ts';
 	import { STATE_LABEL } from '#lib/changesets.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const id = $derived(page.params.changeset ?? '');
 	const queryClient = useQueryClient();
 	const set = createQuery(() => ({ queryKey: ['changeset', project, id], queryFn: () => getChangeset(project, id) }));
-	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
-	const role = $derived(who.data?.projects.find((mine) => mine.id === project)?.role);
+	// The role comes from the project itself: me().projects lists at most 1,000 projects.
+	const mine = createQuery(() => ({ queryKey: ['project', project], queryFn: () => getProject(project) }));
+	const role = $derived(mine.data?.role);
 	const reviewer = $derived(role === 'owner' || role === 'publisher');
 	// Publishing names the release it follows: the latest one this page has seen.
 	const releases = createQuery(() => ({ queryKey: ['releases', project], queryFn: () => listReleases(project) }));
