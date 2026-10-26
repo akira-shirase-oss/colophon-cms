@@ -12,6 +12,8 @@ publish.workspace = true
 fault-injection = []
 
 [dependencies]
+# SHA-256 of what a probe read (D-051), from the TLS stack already in the build.
+aws-lc-rs.workspace = true
 colophon-db.workspace = true
 colophon-domain.workspace = true
 reqwest.workspace = true

@@ -453,6 +453,48 @@ export interface Release {
 	/** Whether the environment's CDNs accepted a purge covering it (D-050); until then, copies they
 	 *  hold may still be served. */
 	purge: 'none' | 'pending' | 'accepted' | 'failed';
+	/** Its one label (D-051): in the CMS only, update pending, verified at `locations` locations,
+	 *  or needs attention. */
+	label: 'published' | 'pending' | 'verified' | 'needs_attention';
+	/** How many distinct locations a probe saw this release, or a later one, from. */
+	locations: number;
+}
+
+/** One destination's part in delivering a release. */
+export interface Delivery {
+	destination_id: string;
+	name: string;
+	kind: Destination['kind'];
+	location: string | null;
+	/** `covered` means a later release's delivery covered this one (see `covered_by`). */
+	state: 'done' | 'covered' | 'pending' | 'failed';
+	covered_by: number | null;
+	status: Job['status'] | null;
+	attempts: number | null;
+	last_error: string | null;
+	finished_at: string | null;
+}
+
+/** One look a probe took for a release. */
+export interface Observation {
+	destination_id: string;
+	location: string;
+	/** The release the answer said it was built from, if it said. */
+	observed_generation: number | null;
+	http_status: number | null;
+	body_hash: string | null;
+	error: string | null;
+	observed_at: string;
+}
+
+/** A release's receipt: its label, each destination's part and every probe look, oldest first. */
+export interface Receipt extends Release {
+	deliveries: Delivery[];
+	observations: Observation[];
+}
+
+export async function getReceipt(project: string, generation: number): Promise<Receipt> {
+	return ((await (await send('GET', `${base(project)}/releases/${generation}`)).json()) as { data: Receipt }).data;
 }
 
 /** The environment's releases, newest first, and its current generation. */
@@ -480,11 +522,14 @@ export async function publishChangeset(
 /** Where a project's releases are announced (D-046). */
 export interface Destination {
 	id: string;
-	/** A webhook hears each release; a CDN is told what to purge (D-050). */
-	kind: 'webhook' | 'cdn';
+	/** A webhook hears each release; a CDN is told what to purge (D-050); a probe looks for it
+	 *  (D-051). */
+	kind: 'webhook' | 'cdn' | 'probe';
 	name: string;
 	url: string;
 	enabled: boolean;
+	/** For a probe: the only location whose workers run it, if pinned. */
+	location: string | null;
 	created_at: string;
 }
 
@@ -507,8 +552,15 @@ export async function listDestinations(project: string): Promise<Destination[]> 
 	return ((await (await send('GET', `${base(project)}/destinations`)).json()) as { data: Destination[] }).data;
 }
 
-export async function createDestination(project: string, kind: Destination['kind'], name: string, url: string): Promise<Destination> {
-	return ((await (await send('POST', `${base(project)}/destinations`, { kind, name, url })).json()) as { data: Destination }).data;
+export async function createDestination(
+	project: string,
+	kind: Destination['kind'],
+	name: string,
+	url: string,
+	location: string | null = null
+): Promise<Destination> {
+	const body = { kind, name, url, location };
+	return ((await (await send('POST', `${base(project)}/destinations`, body)).json()) as { data: Destination }).data;
 }
 
 export async function setDestinationEnabled(project: string, id: string, enabled: boolean): Promise<void> {

@@ -132,3 +132,63 @@ test('a CDN added on the Releases page is asked to purge what each release chang
 		cdn.close();
 	}
 });
+
+/** A site on 127.0.0.1 whose answers name `generation` in the Colophon-Generation header. */
+async function site(): Promise<{ url: string; serve: (generation: number) => void; close: () => void }> {
+	let generation = 0;
+	const server = createServer((request, response) => {
+		request.resume();
+		request.on('end', () => response.writeHead(200, { 'colophon-generation': String(generation) }).end('{}'));
+	});
+	await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+	const { port } = server.address() as AddressInfo;
+	return { url: `http://127.0.0.1:${port}/`, serve: (next) => (generation = next), close: () => server.close() };
+}
+
+test('a probe added on the Releases page verifies a release, and its receipt shows what it saw', async ({ page }) => {
+	const checked = await site();
+	try {
+		await signIn(page);
+		const project = await newProject(page);
+		await page.goto(`/studio/projects/${project}/releases`);
+		await page.getByLabel('Kind').selectOption('probe');
+		await page.getByLabel('Destination name').fill('Home page');
+		await page.getByLabel('URL to check (https)').fill(checked.url);
+		await page.getByRole('button', { name: 'Add destination' }).click();
+		await expect(page.getByTestId('destinations')).toContainText('Check each release');
+		expect(await violations(page)).toEqual([]);
+
+		checked.serve(1);
+		const published = await page.evaluate(async (project) => {
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
+			const key = () => crypto.randomUUID().replaceAll('-', '');
+			const base = `/api/v1/projects/${project}/environments/production`;
+			const body = { title: 'Checked', body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } };
+			const created = await fetch(`${base}/collections/articles/entries`, { method: 'POST', headers: { ...headers, 'Idempotency-Key': key() }, body: JSON.stringify(body) });
+			const entryId = ((await created.json()) as { data: { id: string } }).data.id;
+			const made = await fetch(`${base}/changesets`, { method: 'POST', headers: { ...headers, 'Idempotency-Key': key() }, body: JSON.stringify({ title: 'Checked', entries: [entryId] }) });
+			const set = ((await made.json()) as { data: { id: string; hash: string } }).data;
+			const ifMatch = { ...headers, 'If-Match': `"${set.hash}"` };
+			await fetch(`${base}/changesets/${set.id}/submit`, { method: 'POST', headers: ifMatch });
+			await fetch(`${base}/changesets/${set.id}/reviews`, { method: 'POST', headers: ifMatch, body: JSON.stringify({ decision: 'approve' }) });
+			const reply = await fetch(`${base}/changesets/${set.id}/publish`, { method: 'POST', headers: { ...ifMatch, 'Idempotency-Key': key() }, body: JSON.stringify({ base_generation: 0 }) });
+			return reply.status;
+		}, project);
+		expect(published).toBe(201);
+
+		await page.reload();
+		const label = page.locator('[data-generation="1"]').getByTestId('label');
+		await expect(label).toHaveAttribute('data-label', 'verified', { timeout: 15_000 });
+		await expect(label).toHaveText('Verified at 1 location');
+		await label.click();
+		await expect(page.getByTestId('receipt-label')).toHaveText('Verified at 1 location');
+		await expect(page.getByTestId('deliveries')).toContainText('Home page');
+		await expect(page.getByTestId('deliveries')).toContainText('saw this release');
+		await expect(page.getByTestId('observations')).toContainText('from local');
+		await expect(page.getByTestId('observations')).toContainText('release 1, HTTP 200');
+		expect(await violations(page)).toEqual([]);
+	} finally {
+		checked.close();
+	}
+});

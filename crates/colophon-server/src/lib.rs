@@ -45,6 +45,7 @@ fn start_worker(
         attempt: config.worker_attempt,
         slots: config.worker_slots,
         allow_private: config.listen_addr.ip().is_loopback(),
+        location: config.worker_location.clone(),
     };
     // Its own pool: deliveries can never take the connections editors' requests need.
     let worker_pool = colophon_db::connect_lazy(

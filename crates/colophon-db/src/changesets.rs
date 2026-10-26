@@ -285,6 +285,8 @@ pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>,
 }
 
 /// The changeset's items, each with the revision its pin must still match, ordered by entry id.
+/// Each item's revision and entry are looked up on their own, so stale statistics can't turn the
+/// join into scans of every revision (see `entries::list`).
 pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, DbError> {
     let rows = sqlx::query!(
         r#"SELECT i.kind, i.entry_id, i.revision_id, r.collection, r.content_hash, r.schema_version,
@@ -295,12 +297,20 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
                                AND p.entry_id = i.entry_id AND p.valid_to IS NULL)
                   END AS current_revision_id
          FROM changeset_items i
-         JOIN revisions r ON r.project_id = i.project_id AND r.environment_id = i.environment_id
-                         AND r.id = i.revision_id
-         JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id
+         CROSS JOIN LATERAL (
+             SELECT r.collection, r.content_hash, r.schema_version, r.title
+             FROM revisions r
+             WHERE r.project_id = i.project_id AND r.environment_id = i.environment_id AND r.id = i.revision_id
+             LIMIT 1
+         ) r
+         JOIN content_type_versions v ON v.project_id = i.project_id AND v.environment_id = i.environment_id
                                      AND v.collection = r.collection AND v.version = r.schema_version
-         JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
-                       AND e.id = i.entry_id
+         CROSS JOIN LATERAL (
+             SELECT e.draft_revision_id
+             FROM entries e
+             WHERE e.project_id = i.project_id AND e.environment_id = i.environment_id AND e.id = i.entry_id
+             LIMIT 1
+         ) e
          WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
          ORDER BY i.entry_id"#,
         tx.project,

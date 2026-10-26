@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "WITH due AS (\n             SELECT j.project_id, j.environment_id, j.id\n             FROM jobs j\n             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())\n                    OR (j.status = 'running' AND j.lease_expires_at < now()))\n               AND j.deadline_at > now()\n               AND NOT EXISTS (\n                   SELECT 1 FROM jobs busy\n                   WHERE busy.project_id = j.project_id AND busy.environment_id = j.environment_id\n                     AND busy.destination_id = j.destination_id AND busy.status = 'running'\n                     AND busy.lease_expires_at >= now() AND busy.id <> j.id\n               )\n             ORDER BY j.next_attempt_at\n             LIMIT $3\n             FOR UPDATE OF j SKIP LOCKED\n         )\n         UPDATE jobs j SET status = 'running', lease_owner = $1,\n                           lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),\n                           lease_generation = j.lease_generation + 1, attempts = j.attempts + 1, updated_at = now()\n         FROM due, destinations d\n         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id\n           AND d.project_id = j.project_id AND d.environment_id = j.environment_id AND d.id = j.destination_id\n         RETURNING j.project_id, j.environment_id, j.id, j.destination_id, d.kind, d.url, j.generation,\n                   j.idempotency_key, j.attempts, j.lease_generation, j.deadline_at",
+  "query": "WITH due AS (\n             SELECT j.project_id, j.environment_id, j.id\n             FROM jobs j\n             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())\n                    OR (j.status = 'running' AND j.lease_expires_at < now()))\n               AND j.deadline_at > now()\n               AND NOT EXISTS (\n                   SELECT 1 FROM jobs busy\n                   WHERE busy.project_id = j.project_id AND busy.environment_id = j.environment_id\n                     AND busy.destination_id = j.destination_id AND busy.status = 'running'\n                     AND busy.lease_expires_at >= now() AND busy.id <> j.id\n               )\n               AND EXISTS (\n                   SELECT 1 FROM destinations here\n                   WHERE here.project_id = j.project_id AND here.environment_id = j.environment_id\n                     AND here.id = j.destination_id AND (here.location IS NULL OR here.location = $4)\n               )\n             ORDER BY j.next_attempt_at\n             LIMIT $3\n             FOR UPDATE OF j SKIP LOCKED\n         )\n         UPDATE jobs j SET status = 'running', lease_owner = $1,\n                           lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),\n                           lease_generation = j.lease_generation + 1, attempts = j.attempts + 1, updated_at = now()\n         FROM due, destinations d\n         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id\n           AND d.project_id = j.project_id AND d.environment_id = j.environment_id AND d.id = j.destination_id\n         RETURNING j.project_id, j.environment_id, j.id, j.destination_id, d.kind, d.url, j.generation,\n                   j.idempotency_key, j.attempts, j.lease_generation, j.deadline_at",
   "describe": {
     "columns": [
       {
@@ -129,7 +129,8 @@
       "Left": [
         "Text",
         "Int8",
-        "Int8"
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
@@ -146,5 +147,5 @@
       false
     ]
   },
-  "hash": "60c875d6543248481acfbdf2541fa7b3b6e0bb785a2c097d691c0b8884e30c6e"
+  "hash": "163586a322ed5fa7e52b772f4c4930aed561194a81e740183162813454802934"
 }

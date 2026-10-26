@@ -274,6 +274,12 @@ async fn an_unpublished_entry_stays_at_the_cdn_until_its_purge_is_accepted() {
     cdn.refuse(Some(503));
     let unpublish = json!({"title": "Take it down", "unpublish": [down]});
     assert_eq!(release(&owner, &id, &unpublish).await, 2);
+    // Wait for the CDN to refuse once: until then the worker may simply not have tried yet.
+    let refused = Instant::now() + Duration::from_secs(15);
+    while !cdn.purges().iter().any(|(_, accepted)| !accepted) {
+        assert!(Instant::now() < refused, "the purge was never attempted");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     let (status, _) = common::get(None, &entry).await;
     assert_eq!(status, StatusCode::GONE, "the origin denies it at once");
     let (status, hit, body) = cdn.get(&entry).await;

@@ -1,0 +1,103 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT destination_id, location, observed_generation, http_status, body_hash, error, observed_at\n         FROM observations\n         WHERE project_id = $1 AND environment_id = $2 AND generation = $3\n         ORDER BY observed_at, id\n         LIMIT $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "destination_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "observations",
+            "name": "destination_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "location",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "observations",
+            "name": "location"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "observed_generation",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "observations",
+            "name": "observed_generation"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "http_status",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "observations",
+            "name": "http_status"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "body_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "observations",
+            "name": "body_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "observations",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "observed_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "observations",
+            "name": "observed_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "34c013273578e47b3c1085d1cbb4ad95fd0fcad27c9ac3f87f0080514ce901f1"
+}

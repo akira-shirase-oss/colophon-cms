@@ -39,6 +39,10 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   measured from just before the worker asked for the claim: the database starts the lease while running the claim,
   so a clock started earlier can only think less of the lease is left, never more. The simulator's model
   found the gap: before this, a slow network could deliver release N after N+1.
+- **Probes** (step 3.3, D-051): a destination of kind `probe` is fetched, not posted to; its job passes once the
+  answer names the release or a later one, retries "not yet" no sooner than every 5 s up to 10 attempts, and stores
+  an observation with every attempt's result. A worker claims only probes pinned to its location
+  (`COLOPHON_WORKER_LOCATION`, default `local`) or to none.
 - **CDN purges** (step 3.2, D-050): a destination of kind `cdn` gets a purge by tag instead of an announcement
   (migration 0013). Its job covers every release since that destination's last successful purge, so a purge skipped
   for a newer release is never lost; the tags come from `colophon_domain::cache::purge_tags`, at most 30 (more, and

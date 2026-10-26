@@ -1,0 +1,128 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT d.id AS destination_id, d.name, d.kind, d.location,\n                  own.status AS \"status?\", own.attempts AS \"attempts?\", own.last_error AS \"last_error?\",\n                  own.finished_at AS \"finished_at?\",\n                  (SELECT min(j.generation) FROM jobs j\n                   WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id\n                     AND j.destination_id = d.id AND j.generation >= $3 AND j.status = 'succeeded') AS covered_by,\n                  EXISTS (SELECT 1 FROM jobs j\n                          WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id\n                            AND j.destination_id = d.id AND j.generation >= $3\n                            AND j.status IN ('pending', 'retrying', 'running')) AS \"open!\"\n           FROM destinations d\n           LEFT JOIN jobs own ON own.project_id = d.project_id AND own.environment_id = d.environment_id\n                             AND own.destination_id = d.id AND own.generation = $3\n           WHERE d.project_id = $1 AND d.environment_id = $2\n             AND EXISTS (SELECT 1 FROM jobs j\n                         WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id\n                           AND j.destination_id = d.id AND j.generation >= $3)\n           ORDER BY d.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "destination_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "destinations",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "destinations",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "destinations",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "location",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "destinations",
+            "name": "location"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "status?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "attempts?",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "last_error?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "last_error"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "finished_at?",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "finished_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "covered_by",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "open!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "471be06ed40665d88ef0cb8fd1e0d49313b3fd5fe17c2c51a482b35b67413a65"
+}

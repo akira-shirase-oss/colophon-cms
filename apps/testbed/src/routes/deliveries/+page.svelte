@@ -11,6 +11,7 @@
 	interface Destination {
 		id: string;
 		kind: string;
+		location: string | null;
 		name: string;
 		url: string;
 		enabled: boolean;
@@ -34,6 +35,8 @@
 	let kind = $state('webhook');
 	let name = $state('');
 	let url = $state('');
+	// Sent only when filled in: the API accepts a location for probes alone.
+	let location = $state('');
 	let message = $state('');
 
 	const api = $derived(`/api/v1/projects/${projectId}/environments/production`);
@@ -63,7 +66,7 @@
 		event.preventDefault();
 		const reply = await call('POST', `${api}/destinations`, {
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
-			body: JSON.stringify({ kind, name, url })
+			body: JSON.stringify({ kind, name, url, ...(location.trim() === '' ? {} : { location: location.trim() }) })
 		});
 		message = reply.status === 201 ? 'added' : describe(reply);
 		await load();
@@ -95,6 +98,7 @@
 		<label class="field">Kind (webhook or cdn) <input bind:value={kind} name="kind" /></label>
 		<label class="field">Destination name <input bind:value={name} name="name" /></label>
 		<label class="field">URL <input bind:value={url} name="url" /></label>
+		<label class="field">Location (probes only; empty for any) <input bind:value={location} name="location" /></label>
 		<button type="submit">Add destination</button>
 	</form>
 	{#if message}<p data-testid="message">{message}</p>{/if}
@@ -102,7 +106,10 @@
 	<h2>Destinations</h2>
 	<ul data-testid="destinations">
 		{#each destinations as destination (destination.id)}
-			<li>{destination.name} ({destination.kind}): <code>{destination.url}</code>{destination.enabled ? '' : ' (off)'}</li>
+			<li>
+				{destination.name} ({destination.kind}{destination.location ? ` at ${destination.location}` : ''}):
+				<code>{destination.url}</code>{destination.enabled ? '' : ' (off)'}
+			</li>
 		{/each}
 	</ul>
 

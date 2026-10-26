@@ -1,13 +1,15 @@
 // Load scenario for the editorial pipeline and the worker (step 2.3, D-046). setup() signs in the
 // administrator and creates one project per virtual user, each with a webhook destination and a
-// CDN destination (D-050), both at the receiver scripts/load.sh starts. Each iteration publishes
+// CDN destination (D-050), both at the receiver scripts/load.sh starts, and a probe (D-051) that
+// reads the project's own public API to see which release it serves. Each iteration publishes
 // one new article in the virtual user's own project: create the entry, pin it into a changeset,
 // submit, approve, publish on the generation it knows (five requests; nobody else publishes
 // there). Every tenth changeset also takes down the article the previous iteration published
 // (step 3.2, D-049). Meanwhile the worker announces every release and sends the CDN its purge; a
 // release committed before the previous one was sent supersedes it, and a CDN's purge covers
 // every release since its last successful one. teardown() waits for every project's latest
-// release to be delivered and purged.
+// release to be delivered, purged and seen, and requires every listed release verified at one
+// location.
 // TOTAL counts requests, as elsewhere: a full run is 200,000 publishes. RATE counts publishes;
 // scripts/load.sh gives this endpoint RATE 40 (200 requests a second) and P99_MS 700.
 
@@ -78,6 +80,9 @@ export function setup() {
     if (destination.status !== 201) fail(`destination: HTTP ${destination.status} ${destination.body}`);
     const cdn = http.post(`${base}/destinations`, JSON.stringify({ kind: 'cdn', name: 'cdn', url: `${RECEIVER_URL}/purge` }), { headers });
     if (cdn.status !== 201) fail(`cdn: HTTP ${cdn.status} ${cdn.body}`);
+    const site = `${BASE_URL}/content/v1/${project.json('data.id')}/production/articles`;
+    const probe = http.post(`${base}/destinations`, JSON.stringify({ kind: 'probe', name: 'public api', url: site }), { headers });
+    if (probe.status !== 201) fail(`probe: HTTP ${probe.status} ${probe.body}`);
     bases.push(base);
   }
   return { headers, bases, run };
@@ -131,8 +136,11 @@ export function teardown(data) {
       if (Date.now() > deadline) fail(`the latest release of ${base} was not delivered in time: ${JSON.stringify(latest)}`);
       sleep(0.2);
     }
-    const unpurged = http.get(`${base}/releases`, { headers: data.headers }).json('data').filter((release) => release.purge !== 'accepted');
+    const listed = http.get(`${base}/releases`, { headers: data.headers }).json('data');
+    const unpurged = listed.filter((release) => release.purge !== 'accepted');
     if (unpurged.length > 0) fail(`releases of ${base} without an accepted purge: ${JSON.stringify(unpurged.slice(0, 3))}`);
+    const unverified = listed.filter((release) => release.label !== 'verified' || release.locations !== 1);
+    if (unverified.length > 0) fail(`releases of ${base} not verified at 1 location: ${JSON.stringify(unverified.slice(0, 3))}`);
   }
   const stats = http.get(`${RECEIVER_URL}/stats`).json();
   console.log(`receiver: ${stats.requests} announcements and purges, ${stats.distinct_keys} distinct keys`);

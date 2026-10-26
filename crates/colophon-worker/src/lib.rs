@@ -1,7 +1,8 @@
 //! The worker (docs/modules/05-worker.md; D-046). It finds all its work in Postgres: it claims
 //! due delivery jobs under a lease, announces each release to its destination (or, for a CDN, asks
-//! it to purge what changed; D-050) with the job's stable idempotency key, and records the outcome
-//! only through the lease it holds. A worker
+//! it to purge what changed, D-050; for a probe, looks for the release from where it runs and
+//! keeps what it saw, D-051) with the job's stable idempotency key, and records the outcome only
+//! through the lease it holds. A worker
 //! killed mid-attempt leaves a lease that runs out; the job is claimed again and the attempt
 //! repeats with the same key, so the destination can drop the duplicate (F03). An announcement
 //! never goes out after a newer one for the same destination (F05). No database transaction is
@@ -14,11 +15,12 @@ use std::{sync::Arc, time::Duration};
 
 use colophon_db::{
     PgPool,
-    jobs::{self, Announcement, Claimed, Finish},
+    jobs::{self, Announcement, Claimed, Finish, Observation},
 };
 use colophon_domain::{
     cache,
     job::{self, Next, Outcome},
+    receipt,
 };
 use serde_json::json;
 use time::OffsetDateTime;
@@ -44,6 +46,9 @@ pub struct Settings {
     pub slots: usize,
     /// Whether destinations may be private addresses (a development server on loopback only).
     pub allow_private: bool,
+    /// Where it runs, as probes report it (`COLOPHON_PROBE_LOCATION`); it only runs probes pinned
+    /// to this location, or to none.
+    pub location: String,
 }
 
 // The worker gets its own small database pool (colophon-server's COLOPHON_WORKER_DB_CONNECTIONS),
@@ -56,6 +61,25 @@ enum Message {
     /// A CDN purges these tags (`colophon_domain::cache::purge_tags`); empty when the releases it
     /// covers changed nothing a CDN could hold.
     Purge(Vec<String>),
+}
+
+/// What one attempt does.
+enum Work {
+    /// Posts a message.
+    Post(Message),
+    /// Looks for the release (a probe).
+    Probe,
+}
+
+/// The most of a probe's answer it reads, for the marker and the hash.
+const MAX_PROBE_BODY: usize = 1024 * 1024;
+
+/// What a probe found on one look.
+struct Look {
+    outcome: Outcome,
+    seen: Option<i64>,
+    status: Option<u16>,
+    body_hash: Option<[u8; 32]>,
 }
 
 /// The worker couldn't be built.
@@ -147,6 +171,7 @@ impl Worker {
             let claimed = match jobs::claim(
                 &self.pool,
                 &self.settings.owner,
+                &self.settings.location,
                 self.settings.lease,
                 i64::try_from(free).unwrap_or(1),
             )
@@ -188,47 +213,59 @@ impl Worker {
         tracing::info!("worker stopped");
     }
 
-    /// One attempt at one job, from the supersession check to the record of its outcome.
-    /// `asked_at` is when the claim was requested: no later than the lease's start.
-    async fn attempt(&self, job: Claimed, asked_at: std::time::Instant) {
-        let prepared = if job.kind == "cdn" {
-            jobs::purge(&self.pool, &job).await.map(|found| {
+    /// What `job`'s attempt will do, or `None` if a newer release's job for the same destination
+    /// makes it obsolete.
+    async fn prepare(&self, job: &Claimed) -> Result<Option<Work>, colophon_db::DbError> {
+        if job.kind == "probe" {
+            jobs::newer(&self.pool, job)
+                .await
+                .map(|newer| (!newer).then_some(Work::Probe))
+        } else if job.kind == "cdn" {
+            jobs::purge(&self.pool, job).await.map(|found| {
                 found.map(|purge| {
                     let entries: Vec<(String, u128)> = purge
                         .entries
                         .into_iter()
                         .map(|(collection, entry)| (collection, entry.as_u128()))
                         .collect();
-                    Message::Purge(cache::purge_tags(
+                    Work::Post(Message::Purge(cache::purge_tags(
                         job.project_id.as_u128(),
                         job.environment_id.as_u128(),
                         &entries,
-                    ))
+                    )))
                 })
             })
         } else {
-            jobs::prepare(&self.pool, &job)
+            jobs::prepare(&self.pool, job)
                 .await
-                .map(|found| found.map(Message::Announce))
-        };
-        let message = match prepared {
-            Ok(Some(Message::Purge(tags))) if tags.is_empty() => {
+                .map(|found| found.map(|announcement| Work::Post(Message::Announce(announcement))))
+        }
+    }
+
+    /// One attempt at one job, from the supersession check to the record of its outcome.
+    /// `asked_at` is when the claim was requested: no later than the lease's start.
+    async fn attempt(&self, job: Claimed, asked_at: std::time::Instant) {
+        let prepared = self.prepare(&job).await;
+        let work = match prepared {
+            Ok(Some(Work::Post(Message::Purge(tags)))) if tags.is_empty() => {
                 let finish = Finish {
                     status: job::Status::Succeeded.as_str(),
                     next_attempt_at: None,
                     http_status: None,
                     error: None,
+                    observation: None,
                 };
                 self.record(&job, &finish).await;
                 return;
             }
-            Ok(Some(message)) => message,
+            Ok(Some(work)) => work,
             Ok(None) => {
                 let finish = Finish {
                     status: job::Status::Superseded.as_str(),
                     next_attempt_at: None,
                     http_status: None,
                     error: Some("a newer release is on its way to this destination"),
+                    observation: None,
                 };
                 self.record(&job, &finish).await;
                 return;
@@ -245,12 +282,24 @@ impl Worker {
             tracing::warn!(job = %job.id, "gave up before sending: too close to the lease's end");
             return;
         }
-        let outcome = self.post(&job, &message).await;
+        let (outcome, look) = match work {
+            Work::Probe => {
+                let look = self.look(&job).await;
+                (look.outcome.clone(), Some(look))
+            }
+            Work::Post(message) => (self.post(&job, &message).await, None),
+        };
         fault::point("worker:after-dispatch");
         let attempts = u32::try_from(job.attempts).unwrap_or(u32::MAX);
-        let next = job::after_attempt(
+        let max_attempts = if look.is_some() {
+            job::MAX_PROBE_ATTEMPTS
+        } else {
+            job::MAX_ATTEMPTS
+        };
+        let next = job::after_attempt_within(
             &outcome,
             attempts,
+            max_attempts,
             millis(OffsetDateTime::now_utc()),
             millis(job.deadline_at),
             entropy(),
@@ -272,13 +321,87 @@ impl Worker {
                 Some(OffsetDateTime::now_utc() + Duration::from_millis(after_ms)),
             ),
         };
+        let observation = look.as_ref().map(|look| Observation {
+            location: &self.settings.location,
+            generation: look.seen,
+            http_status: look.status.and_then(|status| i16::try_from(status).ok()),
+            body_hash: look.body_hash,
+            error: match &look.outcome {
+                Outcome::Delivered { .. } => None,
+                Outcome::Retryable { reason, .. } | Outcome::Terminal { reason } => {
+                    Some(reason.as_str())
+                }
+            },
+        });
         let finish = Finish {
             status: status.as_str(),
             next_attempt_at,
-            http_status,
+            http_status: look
+                .as_ref()
+                .and_then(|look| look.status)
+                .and_then(|status| i16::try_from(status).ok())
+                .or(http_status),
             error,
+            observation,
         };
         self.record(&job, &finish).await;
+    }
+
+    /// Fetches a probe's URL and reads which release the answer was built from: the
+    /// `Colophon-Generation` header, or else a marker in the first megabyte of the body.
+    async fn look(&self, job: &Claimed) -> Look {
+        let failed = |outcome| Look {
+            outcome,
+            seen: None,
+            status: None,
+            body_hash: None,
+        };
+        if let Err(reason) =
+            colophon_domain::destination::check_url(&job.url, self.settings.allow_private)
+        {
+            return failed(Outcome::Terminal { reason });
+        }
+        let sent = self
+            .http
+            .get(&job.url)
+            .header("accept", "text/html, application/json")
+            .send()
+            .await;
+        let mut response = match sent {
+            Ok(response) => response,
+            Err(error) => return failed(self.unsent(&error)),
+        };
+        let status = response.status().as_u16();
+        let header = response
+            .headers()
+            .get("colophon-generation")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<i64>().ok());
+        let mut body = Vec::new();
+        loop {
+            match response.chunk().await {
+                Ok(Some(chunk)) => {
+                    let room = MAX_PROBE_BODY.saturating_sub(body.len());
+                    body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+                    if body.len() >= MAX_PROBE_BODY {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    let mut look = failed(self.unsent(&error));
+                    look.status = Some(status);
+                    return look;
+                }
+            }
+        }
+        let seen = header.or_else(|| receipt::marker(&String::from_utf8_lossy(&body)));
+        Look {
+            outcome: receipt::probe(status, seen, job.generation),
+            seen,
+            status: Some(status),
+            body_hash: Some(sha256(&body)),
+        }
     }
 
     async fn record(&self, job: &Claimed, finish: &Finish<'_>) {
@@ -344,17 +467,35 @@ impl Worker {
                 let wait = retry_after(response.headers());
                 job::classify(response.status().as_u16(), wait)
             }
-            Err(error) => match guard::blocked(&error) {
-                Some(reason) => Outcome::Terminal { reason },
-                None if error.is_timeout() => Outcome::Retryable {
-                    reason: "timed out".to_owned(),
-                    retry_after_ms: None,
-                },
-                None => Outcome::Retryable {
-                    reason: "could not connect".to_owned(),
-                    retry_after_ms: None,
-                },
+            Err(error) => self.unsent(&error),
+        }
+    }
+
+    /// What a request that got no answer means: a refused address is final; a timeout or a
+    /// connection failure is worth another try.
+    #[expect(
+        clippy::unused_self,
+        reason = "a method, beside post and look, so the three read alike"
+    )]
+    fn unsent(&self, error: &reqwest::Error) -> Outcome {
+        match guard::blocked(error) {
+            Some(reason) => Outcome::Terminal { reason },
+            None if error.is_timeout() => Outcome::Retryable {
+                reason: "timed out".to_owned(),
+                retry_after_ms: None,
+            },
+            None => Outcome::Retryable {
+                reason: "could not connect".to_owned(),
+                retry_after_ms: None,
             },
         }
     }
+}
+
+/// The SHA-256 of `bytes`: what a probe's evidence records of the answer it read.
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, bytes);
+    let mut out = [0; 32];
+    out.copy_from_slice(digest.as_ref());
+    out
 }
