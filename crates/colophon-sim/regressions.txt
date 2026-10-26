@@ -1,0 +1,3 @@
+# Seeds that once failed, replayed by tests/sim.rs on every run, forever. One per line:
+#   <seed> <steps> <why it was added>
+# (none yet: the simulator has found no failure in the store or the client protocol as built)

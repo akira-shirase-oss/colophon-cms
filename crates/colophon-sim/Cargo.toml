@@ -1,0 +1,15 @@
+[package]
+name = "colophon-sim"
+description = "Colophon's deterministic simulator: seeded schedules, injected faults and invariant checks over an in-memory model of the store."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Deterministic and I/O-free, like the domain: no runtime, no clock, no randomness that doesn't
+# come from the seed (S10). scripts/check-architecture.sh checks this crate too.
+[dependencies]
+
+[lints]
+workspace = true
