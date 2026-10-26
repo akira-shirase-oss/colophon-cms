@@ -28,6 +28,12 @@ testbed, the server's integration tests, and the Studio's): the password grant a
 `docker compose -f deploy/compose.yaml up -d --force-recreate keycloak`. Keycloak keeps no data of its
 own, so `down` followed by `up` resets it to that file.
 
+The two users' ids, which are their subjects in ID tokens, are fixed in the realm file: `dev-owner` is
+`00000000-0000-4000-8000-00000000c001` and `dev-editor` is `…c002`. `scripts/migrate.sh` bootstraps `dev-owner` as
+the installation's first administrator, the only person who can create projects ([D-043](../docs/DECISIONS.md)), so
+tests create projects as `dev-owner` and invite `dev-editor`. A Keycloak started before step 1.8 has random ids:
+recreate it as above.
+
 If a port clashes with something else on your machine, move it: `COLOPHON_PG_PORT`, `COLOPHON_VALKEY_PORT`,
 `COLOPHON_S3_PORT`, `COLOPHON_S3_ADMIN_PORT`, `COLOPHON_KEYCLOAK_PORT`. The bind address is deliberately not a setting.
 

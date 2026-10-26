@@ -80,6 +80,10 @@ colophon export --env production --out export-directory
 
 ### Operator mode
 - `colophon admin …` covers bootstrap and infrastructure migrations.
+- Built: `colophon admin migrate` and, in step 1.8, `colophon admin bootstrap --subject S [--issuer I]
+  [--json]` (D-043): the first administrator, once. Both read `COLOPHON_MIGRATION_DATABASE_URL`; the issuer defaults
+  to `COLOPHON_OIDC_ISSUER`. `colophon whoami` prints your subject, so an operator can sign in once and then bootstrap
+  themselves.
 - It is the only path with direct infrastructure access, and it requires a distinct mode.
 - Normal commands never need a production database password.
 

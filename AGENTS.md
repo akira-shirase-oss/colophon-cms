@@ -17,8 +17,11 @@ types (`colophon_domain::schema`, migration 0003, `{P}/content-types`, the Studi
 `content list`, device sign-in approved at `/studio/device`, bearer tokens on every route (migration 0004,
 `crates/colophon-server/tests/cli.rs`, `perf/k6/cli.js`; D-041). Step 1.7 is done: roles enforced by one policy
 table (`colophon_domain::policy`), members and single-use invitation links (migration 0005, `colophon_db::members`,
-the Studio's Members and `/studio/invite` pages, `perf/k6/members.js`; D-042). Next is step 1.8: the owner bootstrap.
-See `docs/ROADMAP.md`.
+the Studio's Members and `/studio/invite` pages, `perf/k6/members.js`; D-042). Step 1.8 is done: `colophon admin
+bootstrap` makes the first administrator once, and only administrators create projects (migration 0006,
+`colophon_db::administrators`, `perf/k6/projects.js`; D-043). Tests create projects as `dev-owner`, which
+`scripts/migrate.sh` bootstraps; a Keycloak started before 1.8 must be recreated (deploy/README.md). P1's proof gate
+is met; see `docs/ROADMAP.md` for what carries forward.
 
 ## Read first
 

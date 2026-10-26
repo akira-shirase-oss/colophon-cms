@@ -64,15 +64,17 @@ colliding slugs and IDs; the spec's first slice works end to end (spec §37).
 (done: the Studio's editor, autosave and conflict screen, F04 end to end; D-037, D-038) · 1.4 the first simulator run (done: D-039; it found a double-save case in the Studio, now
 fixed) · 1.5 content types you define (done: D-040; `articles` is now an ordinary type) · 1.6 the CLI signs in
 and creates the same record as the Studio (done: D-041) · 1.7 roles and invitations (done: D-042; one policy
-table, members, single-use invitation links) · 1.8 the owner bootstrap.
+table, members, single-use invitation links) · 1.8 the first owner (done: D-043; `colophon admin bootstrap`, and only
+administrators create projects).
 
-**Proof gate, re-checked after 1.7:** F01 and F02 pass against the real binary (`faults.rs`) and in the simulator;
+**Proof gate, re-checked after 1.8:** F01 and F02 pass against the real binary (`faults.rs`) and in the simulator;
 F04 passes in two browsers, in the database and in the simulator; a second project is denied by ID on every route; the
 spec's first slice works end to end (the Studio saves a validated draft, the CLI creates the same record, a conflict
-returns safely, another project is denied); roles are enforced by one policy table, and invitations work once, end to
-end, in two browsers. Two things stand between this and "P1 done": entry slugs don't exist yet, so the gate's
-"colliding slugs" can't be tested (slugs arrive with publishing routes in P2/P3, and that check moves with them), and
-the P1 list's owner bootstrap is step 1.8.
+returns safely, another project is denied); roles are enforced by one policy table, invitations work once, and the
+first owner is bootstrapped once, from the operator's terminal. The gate is met, with one check moved: entry slugs
+don't exist yet, so "colliding slugs" moves to P2/P3, where slugs arrive with publishing. Carried forward from the P1
+list, not built: slug rules and claims (with publishing), locales, environments beyond `production`, and the generated
+OpenAPI document (D-027).
 
 ## P2: Publish exactly once (≈ spec M2)
 
