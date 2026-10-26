@@ -339,3 +339,40 @@ test('an entry of a content type you define: every kind of field, saved and read
 	expect(stored.starts_at).toMatch(/^2026-11-2\dT\d\d:30:00Z$/);
 	expect(stored.notes).toBe('Doors at six.\nBring a laptop.');
 });
+
+test('a terminal is approved on the device page and gets a working token', async ({ page }) => {
+	await signIn(page);
+	const started = await page.evaluate(async () => {
+		const response = await fetch('/auth/device', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ client_name: 'Playwright terminal' })
+		});
+		return ((await response.json()) as { data: { user_code: string; device_secret: string; verification_uri: string } }).data;
+	});
+	expect(new URL(started.verification_uri).pathname).toBe('/studio/device');
+
+	await page.goto(new URL(started.verification_uri).pathname + new URL(started.verification_uri).search);
+	await expect(page.getByTestId('device-ask')).toContainText('Playwright terminal');
+	await expect(page.getByTestId('device-code')).toHaveText(started.user_code);
+	expect(await violations(page)).toEqual([]);
+	await page.getByRole('button', { name: 'Allow', exact: true }).click();
+	await expect(page.getByTestId('device-outcome')).toContainText('return to it');
+
+	// The terminal's next poll gets a token, and the token works.
+	const status = await page.evaluate(async (secret) => {
+		const polled = await fetch('/auth/device/token', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ device_secret: secret })
+		});
+		const token = ((await polled.json()) as { data: { access_token: string } }).data.access_token;
+		const me = await fetch('/me', { headers: { Authorization: `Bearer ${token}` }, credentials: 'omit' });
+		return me.status;
+	}, started.device_secret);
+	expect(status).toBe(200);
+
+	// The same link afterwards: nothing left to approve.
+	await page.reload();
+	await expect(page.getByTestId('device-outcome')).toContainText('expired or was already used');
+});

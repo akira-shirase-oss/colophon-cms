@@ -220,6 +220,22 @@ export async function listRevisions(project: string, collection: string, entry: 
 	return ((await (await send('GET', `${entries(project, collection)}/${entry}/revisions`)).json()) as { data: Revision[] }).data;
 }
 
+/** A terminal asking to sign in (D-041), as the approval page shows it. */
+export interface DeviceLogin {
+	client_name: string;
+	expires_at: string;
+	approved: boolean;
+}
+
+export async function deviceLogin(code: string): Promise<DeviceLogin> {
+	return ((await (await send('GET', `/auth/device/${encodeURIComponent(code)}`)).json()) as { data: DeviceLogin }).data;
+}
+
+/** Lets the terminal showing `code` sign in as the current person. */
+export async function approveDevice(code: string): Promise<void> {
+	await send('POST', '/auth/device/approve', { user_code: code });
+}
+
 /** A fresh idempotency key: 32 hex characters. */
 export function newKey(): string {
 	return crypto.randomUUID().replaceAll('-', '');
