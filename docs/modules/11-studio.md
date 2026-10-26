@@ -63,7 +63,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 | Screen | Required behaviour |
 |---|---|
 | Content list | Search, draft/published filters, clear ownership, revision status, bounded bulk actions |
-| Editor | Title and schema fields, Tiptap rich text with approved blocks, media picker, accessible errors, autosave state, preview |
+| Editor | Title and schema fields, Tiptap rich text with approved blocks, media picker, accessible errors, autosave state, preview. Since step 1.5 every field is drawn from the entry's content type (D-040) |
 | Review | Exactly which revisions and assets will be published, validation failures, required approvals |
 | Publishing | One of five labels (below), plus the delivery-receipt timeline |
 | History | Who changed what, human or agent attribution, revision comparison, restore as a new revision |
@@ -151,8 +151,9 @@ Internal job terminology stays behind a technical detail drawer for developers.
 
 1. **P0:** the Tiptap spike (custom blocks, paste, image placeholder, undo/redo, serialization). Built in step 0.4:
    `packages/editor` and `apps/studio`; documents open only if they survive the editor byte for byte (D-022).
-2. **P1:** content list, editor, autosave, conflict screen (step 1.3, done: D-037, D-038). The formatting toolbar from
-   the playground, sign-out, and search come next.
+2. **P1:** content list, editor, autosave, conflict screen (step 1.3, done: D-037, D-038); entries of any content
+   type (step 1.5, done). The formatting toolbar from the playground, sign-out, search, and a content-type designer
+   (today definitions are written as JSON through the API and the testbed) come next.
 3. **P2:** review and publish.
 4. **P3:** publishing labels and the receipt timeline.
 5. **P4:** history, time-travel slider, media picker, preview.
