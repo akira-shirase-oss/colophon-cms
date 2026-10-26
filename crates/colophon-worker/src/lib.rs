@@ -93,41 +93,58 @@ impl Worker {
         })
     }
 
-    /// Claims and runs due jobs until `cancel` fires, then lets attempts in flight finish.
+    /// Claims and runs due jobs until `cancel` fires, then lets attempts in flight finish. It
+    /// claims as soon as a slot is free and only sleeps when it found nothing to do, so a backlog
+    /// drains at the speed of the destinations, not of the polling interval.
     pub async fn run(self: Arc<Self>, cancel: CancellationToken) {
         let tracker = TaskTracker::new();
         tracing::info!(owner = %self.settings.owner, "worker started");
         loop {
-            let free = self.slots.available_permits();
-            if free > 0 {
-                match jobs::claim(
-                    &self.pool,
-                    &self.settings.owner,
-                    self.settings.lease,
-                    i64::try_from(free).unwrap_or(1),
-                )
-                .await
-                {
-                    Ok(claimed) => {
-                        for job in claimed {
-                            let Ok(permit) = Arc::clone(&self.slots).acquire_owned().await else {
-                                break;
-                            };
-                            let worker = Arc::clone(&self);
-                            tracker.spawn(async move {
-                                worker.attempt(job).await;
-                                drop(permit);
-                            });
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!(error = %error, "claiming jobs failed; trying again");
-                    }
-                }
-            }
-            tokio::select! {
+            let first = tokio::select! {
                 () = cancel.cancelled() => break,
-                () = tokio::time::sleep(self.settings.poll) => {}
+                permit = Arc::clone(&self.slots).acquire_owned() => match permit {
+                    Ok(permit) => permit,
+                    Err(_closed) => break,
+                },
+            };
+            let free = 1 + self.slots.available_permits();
+            let claimed = match jobs::claim(
+                &self.pool,
+                &self.settings.owner,
+                self.settings.lease,
+                i64::try_from(free).unwrap_or(1),
+            )
+            .await
+            {
+                Ok(claimed) => claimed,
+                Err(error) => {
+                    tracing::warn!(error = %error, "claiming jobs failed; trying again");
+                    Vec::new()
+                }
+            };
+            if claimed.is_empty() {
+                drop(first);
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = tokio::time::sleep(self.settings.poll) => {}
+                }
+                continue;
+            }
+            let mut permit = Some(first);
+            for job in claimed {
+                let held = match permit.take() {
+                    Some(held) => held,
+                    // Counted as free when claiming; nothing else takes slots.
+                    None => match Arc::clone(&self.slots).acquire_owned().await {
+                        Ok(held) => held,
+                        Err(_closed) => break,
+                    },
+                };
+                let worker = Arc::clone(&self);
+                tracker.spawn(async move {
+                    worker.attempt(job).await;
+                    drop(held);
+                });
             }
         }
         tracker.close();

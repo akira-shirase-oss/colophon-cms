@@ -13,7 +13,9 @@
 # cli (requests authenticated by a bearer token, as the CLI sends them), members (member lists,
 # invitation lookups, role changes and new invitations), projects (who may create projects:
 # refused creations and /me), changesets (reading, listing, reviewing and creating changesets),
-# delivery (anonymous /content/v1 reads, latest and pinned) or studio (the Studio's static files; builds the Studio first).
+# delivery (anonymous /content/v1 reads, latest and pinned), publishing (whole publishes, five
+# requests each, with the worker announcing every release to a local receiver; needs node) or
+# studio (the Studio's static files; builds the Studio first).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090).
@@ -35,7 +37,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|cli|members|projects|changesets|delivery|entries|content-types|studio throughput|steady [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|cli|members|projects|changesets|delivery|publishing|entries|content-types|studio throughput|steady [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -60,16 +62,24 @@ case "$endpoint" in
   cli | members | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
   entries | content-types) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
   studio) RATE="${RATE:-5000}" P99_MS="${P99_MS:-25}" ;;
+  # RATE counts publishes here, five requests each.
+  publishing) RATE="${RATE:-100}" P99_MS="${P99_MS:-250}" ;;
   *) RATE="${RATE:-20000}" P99_MS="${P99_MS:-25}" ;;
 esac
 base_url="http://127.0.0.1:$port"
 work=$(mktemp -d)
 server_pid=""
+receiver_pid=""
+receiver_port="${RECEIVER_PORT:-58096}"
 # shellcheck disable=SC2329 # invoked by the EXIT trap below
 cleanup() {
   if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
     kill -TERM "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$receiver_pid" ]]; then
+    kill "$receiver_pid" 2>/dev/null || true
+    wait "$receiver_pid" 2>/dev/null || true
   fi
   rm -rf "$work"
 }
@@ -84,6 +94,13 @@ if [[ "$endpoint" == "studio" ]]; then
   echo "building the Studio"
   npm run build --silent -w @colophon/studio >/dev/null
   studio_dir="$PWD/apps/studio/build"
+fi
+
+# The publishing scenario's webhook destination.
+if [[ "$endpoint" == "publishing" ]]; then
+  command -v node >/dev/null || { echo "error: the publishing scenario needs node" >&2; exit 1; }
+  node perf/receiver/receiver.mjs "$receiver_port" >"$work/receiver.log" 2>&1 &
+  receiver_pid=$!
 fi
 
 # The load-test server: the local stack's settings, its own port, and warnings-only logging,
@@ -129,7 +146,7 @@ k6_status=0
   -e BASE_URL="$base_url" -e PUBLIC_URL="http://localhost:$port" -e SCENARIO="$scenario" \
   -e TOTAL="${TOTAL:-1000000}" -e VUS="$VUS" \
   -e RATE="$RATE" -e DURATION="${DURATION:-60s}" \
-  -e P99_MS="$P99_MS" \
+  -e P99_MS="$P99_MS" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" \
   "perf/k6/$endpoint.js" || k6_status=$?
 
 sleep 1.5
