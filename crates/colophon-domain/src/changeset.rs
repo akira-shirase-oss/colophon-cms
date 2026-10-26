@@ -1,7 +1,9 @@
 //! Changesets and their review (docs/modules/01-domain.md, "Editorial workflow"; spec §06; D-044).
 //!
 //! A changeset pins exact revisions: for each entry, the revision, its content hash, and the
-//! content-type version it was validated against. Its hash is the SHA-256 of [`canonical`], so
+//! content-type version it was validated against, and whether the changeset publishes that
+//! revision or takes it down (D-049: an unpublish item pins the revision that is published, so the
+//! reviewer approves taking down exactly what readers see). Its hash is the SHA-256 of [`canonical`], so
 //! two changesets with the same items have the same hash whatever order they were added in, and
 //! any difference in any item changes it. A review decision records the hash it was made on, and
 //! only counts while the changeset still has that hash: refreshing a changeset after an edit
@@ -18,10 +20,39 @@ pub const FORMAT: &str = "colophon/changeset v1";
 /// revalidation"). Seven days, in seconds.
 pub const APPROVAL_LIFETIME_SECS: i64 = 7 * 24 * 60 * 60;
 
+/// What a changeset does with one of its entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// Publish the pinned revision.
+    Publish,
+    /// Take the pinned revision, the published one, down: out of the release and, at the origin,
+    /// out of every earlier release too (D-049).
+    Unpublish,
+}
+
+impl Kind {
+    /// The name stored and used in the API.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Publish => "publish",
+            Self::Unpublish => "unpublish",
+        }
+    }
+
+    /// The kind with this name.
+    pub fn parse(name: &str) -> Option<Self> {
+        [Self::Publish, Self::Unpublish]
+            .into_iter()
+            .find(|kind| kind.as_str() == name)
+    }
+}
+
 /// One entry in a changeset, pinned to an exact revision. Ids and hashes are as the database
 /// writes them: lowercase hyphenated UUIDs and lowercase hex.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
+    /// What the changeset does with it.
+    pub kind: Kind,
     /// The entry.
     pub entry: String,
     /// The exact revision of it.
@@ -38,17 +69,23 @@ pub struct Item {
 
 /// The exact text whose SHA-256 is a changeset's hash: the format line, then one line per item,
 /// sorted by entry id, each field in a fixed order separated by spaces. None of the fields can
-/// contain a space or a newline (ids, slugs, hex and an integer), so the form is unambiguous.
+/// contain a space or a newline (ids, slugs, hex and an integer), so the form is unambiguous. An
+/// unpublish item has the word `unpublish` after its entry id, where a publish item has its
+/// revision id (never that word), so a publish line reads as it did before unpublishing existed
+/// and no earlier changeset's hash changed.
 pub fn canonical(items: &[Item]) -> String {
     let mut sorted: Vec<&Item> = items.iter().collect();
     sorted.sort_by(|a, b| a.entry.cmp(&b.entry));
     let mut text = String::from(FORMAT);
     for item in sorted {
         // Writing to a String can't fail.
+        let _ = write!(text, "\n{}", item.entry);
+        if item.kind == Kind::Unpublish {
+            text.push_str(" unpublish");
+        }
         let _ = write!(
             text,
-            "\n{} {} {} {} {} {}",
-            item.entry,
+            " {} {} {} {} {}",
             item.revision,
             item.collection,
             item.content_hash,
@@ -200,6 +237,7 @@ mod tests {
 
     fn item(entry: &str, revision: &str) -> Item {
         Item {
+            kind: Kind::Publish,
             entry: entry.to_owned(),
             revision: revision.to_owned(),
             collection: "articles".to_owned(),
@@ -251,7 +289,8 @@ mod tests {
                 "cd".repeat(32)
             )
         );
-        let changes: [fn(&mut Item); 5] = [
+        let changes: [fn(&mut Item); 6] = [
+            |i| i.kind = Kind::Unpublish,
             |i| i.revision = "r9".to_owned(),
             |i| i.collection = "posts".to_owned(),
             |i| i.content_hash = "ef".repeat(32),
@@ -269,6 +308,26 @@ mod tests {
             "a missing item changes it"
         );
         assert_eq!(canonical(&[]), FORMAT);
+    }
+
+    #[test]
+    fn an_unpublish_line_names_itself_and_leaves_publish_lines_as_they_were() {
+        let mut down = item("e1", "r1");
+        down.kind = Kind::Unpublish;
+        assert_eq!(
+            canonical(&[down, item("e2", "r2")]),
+            format!(
+                "{FORMAT}\ne1 unpublish r1 articles {} 1 {}\ne2 r2 articles {} 1 {}",
+                "ab".repeat(32),
+                "cd".repeat(32),
+                "ab".repeat(32),
+                "cd".repeat(32)
+            )
+        );
+        for kind in [Kind::Publish, Kind::Unpublish] {
+            assert_eq!(Kind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(Kind::parse("delete"), None);
     }
 
     #[test]

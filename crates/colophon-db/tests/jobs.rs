@@ -41,6 +41,7 @@ async fn released_by(db: &TestDb, destination_count: usize) -> (Uuid, Uuid) {
     for n in 0..destination_count {
         destinations::create(
             &mut tx,
+            "webhook",
             &format!("hook {n}"),
             &format!("https://hooks.example.com/{n}"),
         )

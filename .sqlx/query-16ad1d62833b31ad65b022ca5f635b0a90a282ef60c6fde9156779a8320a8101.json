@@ -1,10 +1,16 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT e.id AS entry_id, r.id AS revision_id, r.collection, r.content_hash, r.schema_version,\n                v.definition_hash\n         FROM entries e\n         JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id\n                         AND r.id = e.draft_revision_id\n         JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id\n                                     AND v.collection = r.collection AND v.version = r.schema_version\n         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.id = ANY($3)",
+  "query": "SELECT 'publish' AS \"kind!\", e.id AS entry_id, r.id AS revision_id, r.collection, r.content_hash,\n                  r.schema_version, v.definition_hash\n         FROM entries e\n         JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id\n                         AND r.id = e.draft_revision_id\n         JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id\n                                     AND v.collection = r.collection AND v.version = r.schema_version\n         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.id = ANY($3)",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
+        "name": "kind!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
         "name": "entry_id",
         "type_info": "Uuid",
         "origin": {
@@ -15,7 +21,7 @@
         }
       },
       {
-        "ordinal": 1,
+        "ordinal": 2,
         "name": "revision_id",
         "type_info": "Uuid",
         "origin": {
@@ -26,7 +32,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "collection",
         "type_info": "Text",
         "origin": {
@@ -37,7 +43,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "content_hash",
         "type_info": "Bytea",
         "origin": {
@@ -48,7 +54,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "schema_version",
         "type_info": "Int4",
         "origin": {
@@ -59,7 +65,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "definition_hash",
         "type_info": "Bytea",
         "origin": {
@@ -78,6 +84,7 @@
       ]
     },
     "nullable": [
+      null,
       false,
       false,
       false,
@@ -86,5 +93,5 @@
       false
     ]
   },
-  "hash": "27d8033ce24398fff51c698c982c253204916594b2c2dd4e7e1a20a423a4c858"
+  "hash": "16ad1d62833b31ad65b022ca5f635b0a90a282ef60c6fde9156779a8320a8101"
 }

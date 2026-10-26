@@ -1,7 +1,9 @@
 //! Releases and public delivery end to end (step 2.2, D-045): an approved changeset becomes
 //! release 1, delivery serves it to anyone with no sign-in, a newer draft never leaks into it,
 //! release 2 changes one entry while generation 1 still reads as it was, and two releases racing
-//! on one base can't both commit. Needs the stack and `scripts/migrate.sh`.
+//! on one base can't both commit. Unpublishing (step 3.2, D-049) is reviewed like publishing: it
+//! pins the published revision, goes stale when that changes, and its release says what it took
+//! down. Needs the stack and `scripts/migrate.sh`.
 #![cfg(unix)]
 #![expect(
     clippy::expect_used,
@@ -61,11 +63,22 @@ async fn approved(
     project: &str,
     entries: &[&str],
 ) -> (String, String) {
+    let body = json!({"title": "Release", "entries": entries});
+    approved_changeset(author, approver, project, &body).await
+}
+
+/// The changeset `body`, submitted by `author` and approved by `approver`; its path and hash.
+async fn approved_changeset(
+    author: &Session,
+    approver: &Session,
+    project: &str,
+    body: &Value,
+) -> (String, String) {
     let created = call(
         author,
         Method::POST,
         &format!("{}/changesets", base(project)),
-        Some(&json!({"title": "Release", "entries": entries})),
+        Some(body),
         &[("idempotency-key", &key())],
     )
     .await
@@ -385,4 +398,172 @@ async fn delivery_refuses_what_it_cannot_serve() {
         .to_owned();
     let refused = publish(&owner, &path, &hash, 0, &key()).await;
     assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+}
+
+async fn create_changeset(session: &Session, project: &str, body: &Value) -> Reply {
+    call(
+        session,
+        Method::POST,
+        &format!("{}/changesets", base(project)),
+        Some(body),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request")
+}
+
+/// Unpublishing through review (D-049): only a published entry can be taken down, never in the
+/// same changeset that publishes it; the item pins the published revision, goes stale when a newer
+/// one is published, and refreshes onto it; the release reports what it took down, and delivery
+/// answers 410 for it.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story, told in order: refusals, a takedown, a newer release, refresh, release"
+)]
+async fn unpublishing_is_reviewed_pins_what_is_published_and_says_what_it_took_down() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let id = project(&owner).await;
+    let live = new_article(&owner, &id, "Live", "first").await;
+    let draft = new_article(&owner, &id, "Draft", "never published").await;
+    let (path, hash) = approved(&owner, &owner, &id, &[&live]).await;
+    assert_eq!(
+        publish(&owner, &path, &hash, 0, &key()).await.status,
+        StatusCode::CREATED
+    );
+
+    let refused =
+        create_changeset(&owner, &id, &json!({"title": "No", "unpublish": [draft]})).await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.body
+    );
+    assert_eq!(refused.body["error"]["details"]["reason"], "not_published");
+    let both = json!({"title": "No", "entries": [live], "unpublish": [live]});
+    let refused = create_changeset(&owner, &id, &both).await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.body
+    );
+    assert_eq!(
+        refused.body["error"]["details"]["reason"],
+        "invalid_entries"
+    );
+    let empty = create_changeset(&owner, &id, &json!({"title": "No"})).await;
+    assert_eq!(
+        empty.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        empty.body
+    );
+
+    let takedown = json!({"title": "Take it down", "unpublish": [live]});
+    let (down_path, down_hash) = approved_changeset(&owner, &owner, &id, &takedown).await;
+    let (_, shown) = common::get(Some(&owner), &down_path).await;
+    let item = &shown["data"]["items"][0];
+    assert_eq!(item["kind"], "unpublish");
+    assert_eq!(item["edited"], false);
+    let pinned = item["revision_id"].as_str().expect("a revision").to_owned();
+    assert_eq!(item["current_revision_id"], pinned.as_str());
+    let (_, listed) = common::get(Some(&owner), &format!("{}/changesets", base(&id))).await;
+    let summary = listed["data"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter().find(|row| {
+                format!(
+                    "{}/changesets/{}",
+                    base(&id),
+                    row["id"].as_str().unwrap_or_default()
+                ) == down_path
+            })
+        })
+        .expect("listed");
+    assert_eq!(
+        (summary["items"].as_i64(), summary["unpublish"].as_i64()),
+        (Some(1), Some(1))
+    );
+
+    // A newer revision is published meanwhile: the takedown pinned the old one, so it's stale.
+    edit(&owner, &id, &live, "Live", "second").await;
+    let (path, hash) = approved(&owner, &owner, &id, &[&live]).await;
+    assert_eq!(
+        publish(&owner, &path, &hash, 1, &key()).await.status,
+        StatusCode::CREATED
+    );
+    let stale = publish(&owner, &down_path, &down_hash, 2, &key()).await;
+    assert_eq!(stale.status, StatusCode::CONFLICT, "{}", stale.body);
+    let (_, shown) = common::get(Some(&owner), &down_path).await;
+    assert_eq!(shown["data"]["status"]["state"], "stale");
+    assert_eq!(shown["data"]["items"][0]["edited"], true);
+    let refreshed = call(
+        &owner,
+        Method::POST,
+        &format!("{down_path}/refresh"),
+        None,
+        &[("if-match", &format!("\"{down_hash}\""))],
+    )
+    .await
+    .expect("request");
+    assert_eq!(refreshed.status, StatusCode::OK, "{}", refreshed.body);
+    let item = &refreshed.body["data"]["items"][0];
+    assert_eq!(
+        (item["kind"].as_str(), item["edited"].as_bool()),
+        (Some("unpublish"), Some(false))
+    );
+    assert_ne!(
+        item["revision_id"],
+        pinned.as_str(),
+        "now pins the revision published since"
+    );
+    let new_hash = refreshed.body["data"]["hash"]
+        .as_str()
+        .expect("a hash")
+        .to_owned();
+    assert_ne!(new_hash, down_hash);
+    let approval = call(
+        &owner,
+        Method::POST,
+        &format!("{down_path}/reviews"),
+        Some(&json!({"decision": "approve"})),
+        &[("if-match", &format!("\"{new_hash}\""))],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        approval.body["data"]["status"]["state"], "approved",
+        "{}",
+        approval.body
+    );
+
+    let released = publish(&owner, &down_path, &new_hash, 2, &key()).await;
+    assert_eq!(released.status, StatusCode::CREATED, "{}", released.body);
+    assert_eq!(released.body["data"]["generation"], 3);
+    assert_eq!(
+        (
+            released.body["data"]["entries_changed"].as_i64(),
+            released.body["data"]["entries_unpublished"].as_i64()
+        ),
+        (Some(0), Some(1))
+    );
+    let (_, history) = common::get(Some(&owner), &format!("{}/releases", base(&id))).await;
+    assert_eq!(
+        (
+            history["data"][0]["generation"].as_i64(),
+            history["data"][0]["unpublished"].as_i64()
+        ),
+        (Some(3), Some(1))
+    );
+    for generation in ["", "?generation=1", "?generation=2"] {
+        let (status, body, _) = deliver(&format!(
+            "/content/v1/{id}/production/articles/{live}{generation}"
+        ))
+        .await;
+        assert_eq!(status, StatusCode::GONE, "{generation}: {body}");
+    }
 }

@@ -81,6 +81,8 @@ pub struct Claimed {
     pub id: Uuid,
     /// Its destination.
     pub destination_id: Uuid,
+    /// The destination's kind: `webhook` (announce the release) or `cdn` (purge what changed).
+    pub kind: String,
     /// Where to post.
     pub url: String,
     /// The release it announces.
@@ -148,8 +150,8 @@ pub async fn claim(
          FROM due, destinations d
          WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id
            AND d.project_id = j.project_id AND d.environment_id = j.environment_id AND d.id = j.destination_id
-         RETURNING j.project_id, j.environment_id, j.id, j.destination_id, d.url, j.generation, j.idempotency_key,
-                   j.attempts, j.lease_generation, j.deadline_at",
+         RETURNING j.project_id, j.environment_id, j.id, j.destination_id, d.kind, d.url, j.generation,
+                   j.idempotency_key, j.attempts, j.lease_generation, j.deadline_at",
         owner,
         lease_ms,
         limit.clamp(1, 100)
@@ -228,6 +230,76 @@ pub async fn prepare(pool: &PgPool, job: &Claimed) -> Result<Option<Announcement
         entries: entries
             .into_iter()
             .map(|row| (row.entry_id, row.revision_id, row.collection, row.title))
+            .collect(),
+    }))
+}
+
+/// What a CDN destination's job purges: every entry (collection, entry) that the releases since
+/// its last successful purge, up to and including the job's, published, replaced or took down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Purge {
+    /// The generation after which this purge starts: the last one purged successfully (0 if none).
+    pub since: i64,
+    /// The entries, by collection then id, at most [`MAX_PURGE_ENTRIES`].
+    pub entries: Vec<(String, Uuid)>,
+}
+
+/// The most entries [`purge`] reads; more than the domain names one by one anyway, so it purges
+/// the environment instead (`colophon_domain::cache::MAX_PURGE_TAGS`).
+pub const MAX_PURGE_ENTRIES: i64 = 100;
+
+/// The purge a CDN destination's `job` should send, or `None` if a newer release's purge is on
+/// its way to the same destination: that one covers this one's releases too. One transaction.
+pub async fn purge(pool: &PgPool, job: &Claimed) -> Result<Option<Purge>, DbError> {
+    let mut transaction = worker(pool).await?;
+    let row = sqlx::query!(
+        r#"SELECT EXISTS (
+                   SELECT 1 FROM jobs
+                   WHERE project_id = $1 AND environment_id = $2 AND destination_id = $3
+                     AND generation > $4 AND status <> 'superseded'
+               ) AS "newer!",
+               coalesce((SELECT max(generation) FROM jobs
+                         WHERE project_id = $1 AND environment_id = $2 AND destination_id = $3
+                           AND generation < $4 AND status = 'succeeded'), 0) AS "since!""#,
+        job.project_id,
+        job.environment_id,
+        job.destination_id,
+        job.generation
+    )
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    if row.newer {
+        return Ok(None);
+    }
+    let entries = sqlx::query!(
+        r#"SELECT collection AS "collection!", entry_id AS "entry_id!" FROM (
+               SELECT collection, entry_id FROM publications
+               WHERE project_id = $1 AND environment_id = $2 AND valid_from > $3 AND valid_from <= $4
+               UNION
+               SELECT collection, entry_id FROM publications
+               WHERE project_id = $1 AND environment_id = $2 AND valid_to > $3 AND valid_to <= $4
+               UNION
+               SELECT collection, entry_id FROM tombstones
+               WHERE project_id = $1 AND environment_id = $2 AND generation > $3 AND generation <= $4
+           ) changed
+           ORDER BY collection, entry_id
+           LIMIT $5"#,
+        job.project_id,
+        job.environment_id,
+        row.since,
+        job.generation,
+        MAX_PURGE_ENTRIES
+    )
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(Some(Purge {
+        since: row.since,
+        entries: entries
+            .into_iter()
+            .map(|row| (row.collection, row.entry_id))
             .collect(),
     }))
 }

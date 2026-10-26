@@ -120,7 +120,9 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - Built in step 2.2 (D-045): `colophon_domain::release`: `next_generation(base, current)` refuses a moved base;
   `Interval` and `apply` model an entry's history, `well_formed` checks it (ordered, non-empty, non-overlapping, at
   most one open, last); and changesets gain `Status::Published { generation }`.
-- Unpublish creates a tombstone and a removal job.
+- Unpublish creates a tombstone and a removal job. Built in step 3.2 (D-049): an `unpublish` changeset item pins the
+  published revision; its release closes the publication, leaves a tombstone and revokes earlier publications
+  (`colophon_domain::release::{apply_unpublish, deliverable}`).
 - A first release batch holds at most 100 changed entries.
 - Dependency validation: a public entry may not embed an unpublished or private revision.
 

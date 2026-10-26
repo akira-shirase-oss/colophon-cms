@@ -302,10 +302,7 @@ async fn killing_the_server_and_worker_loses_and_doubles_nothing() {
         );
     }
 
-    let database =
-        sqlx::PgPool::connect("postgres://colophon:colophon-dev@127.0.0.1:55432/colophon")
-            .await
-            .expect("the stack's database");
+    let database = common::owner_database().await;
     let announcements = receiver.seen();
     let mut published = 0;
     for state in &states {

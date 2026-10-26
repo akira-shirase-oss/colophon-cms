@@ -1,8 +1,9 @@
 //! The delivery cache against the real server, Postgres and Valkey (docs/modules/06-delivery.md;
 //! D-048): answers are cached by generation, a new release shows at once (F06), a hot key is read
 //! from Postgres once however many ask (L04), answers survive Valkey going away and caching
-//! resumes when it's back (F08), and two projects never share an answer. Needs the stack and
-//! `scripts/migrate.sh`.
+//! resumes when it's back (F08), and two projects never share an answer. Unpublishing takes an
+//! entry out of every release however much was cached (F07 at the origin, D-049). Needs the stack
+//! and `scripts/migrate.sh`.
 #![cfg(unix)]
 #![expect(
     clippy::expect_used,
@@ -18,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use common::{ORIGIN, Server, app, project, publish_article, sign_in};
+use common::{ORIGIN, Server, app, create_article, project, publish_article, release, sign_in};
 use reqwest::{StatusCode, header};
 use serde_json::Value;
 
@@ -217,6 +218,75 @@ async fn nothing_missing_or_made_up_is_cached() {
         );
         assert_eq!(titles(&empty.body), Vec::<String>::new());
     }
+}
+
+/// F07 at the origin (D-049): an entry is unpublished while the answers that hold it are cached,
+/// latest and pinned. After that release no generation shows it: lists leave it out, read from new
+/// keys rather than the cached answers, and a read of the entry itself is 410, never cached.
+/// Publishing it again brings it back from the new generation only.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_unpublished_entry_is_gone_from_every_release_however_much_was_cached() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let id = project(&owner).await;
+    let keep = create_article(&owner, &id, "Keep").await;
+    let down = create_article(&owner, &id, "Take down").await;
+    let both = serde_json::json!({"title": "Both", "entries": [keep, down]});
+    assert_eq!(release(&owner, &id, &both).await, 1);
+    let list = format!("/content/v1/{id}/production/articles");
+    let entry = format!("{list}/{down}");
+    let pinned = |path: &str, generation: i64| format!("{path}?generation={generation}");
+    for path in [&list, &pinned(&list, 1), &entry, &pinned(&entry, 1)] {
+        read(path, None).await;
+        assert_eq!(read(path, None).await.served, "hit", "{path}");
+    }
+
+    let unpublish = serde_json::json!({"title": "Take it down", "unpublish": [down]});
+    assert_eq!(release(&owner, &id, &unpublish).await, 2);
+    // Both answers cached before the release are read afresh; release 2's own is then shared.
+    for path in [&list, &pinned(&list, 1)] {
+        let after = read(path, None).await;
+        assert_eq!(after.status, StatusCode::OK, "{path}");
+        assert_eq!(
+            after.served, "miss",
+            "{path}: never the answer cached before"
+        );
+        assert_eq!(titles(&after.body), ["Keep"], "{path}");
+        assert_eq!(read(path, None).await.served, "hit", "{path}");
+    }
+    let same = read(&pinned(&list, 2), None).await;
+    assert_eq!(
+        (same.served.as_str(), titles(&same.body)),
+        ("hit", vec!["Keep".to_owned()]),
+        "release 2 pinned is the latest read above"
+    );
+    for path in [&entry, &pinned(&entry, 1), &pinned(&entry, 2)] {
+        for _ in 0..2 {
+            let gone = read(path, None).await;
+            assert_eq!(gone.status, StatusCode::GONE, "{path}");
+            assert_eq!(gone.body["error"]["code"], "gone", "{path}");
+            assert_eq!(gone.cache_control, "no-store", "{path}");
+            assert_eq!(gone.served, "", "{path}: not from or into the cache");
+        }
+    }
+
+    let again = serde_json::json!({"title": "Back", "entries": [down]});
+    assert_eq!(release(&owner, &id, &again).await, 3);
+    let back = read(&entry, None).await;
+    assert_eq!(back.status, StatusCode::OK);
+    assert_eq!(back.body["data"]["title"], "Take down");
+    assert_eq!(back.body["data"]["published_in"], 3);
+    for generation in [1, 2] {
+        assert_eq!(
+            read(&pinned(&entry, generation), None).await.status,
+            StatusCode::GONE,
+            "generation {generation}'s link stays dead"
+        );
+    }
+    let mut listed = titles(&read(&list, None).await.body);
+    listed.sort();
+    assert_eq!(listed, ["Keep", "Take down"]);
 }
 
 /// A random UUID-shaped id, without a dependency for one.

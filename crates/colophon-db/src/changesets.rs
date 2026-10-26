@@ -15,12 +15,16 @@ pub const MAX_ITEMS: usize = 100;
 /// The most reviews a changeset view shows, newest first.
 pub const MAX_REVIEWS: i64 = 100;
 
-/// An entry's current revision, with everything a changeset pins about it.
+/// What a changeset pins about one entry: the revision, with everything that identifies it, and
+/// what to do with it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pin {
+    /// `publish` (the pinned revision is the entry's current one) or `unpublish` (it is the
+    /// published one, to be taken down; D-049).
+    pub kind: String,
     /// The entry.
     pub entry_id: Uuid,
-    /// Its revision.
+    /// The pinned revision.
     pub revision_id: Uuid,
     /// Its collection.
     pub collection: String,
@@ -62,8 +66,17 @@ pub struct Item {
     pub pin: Pin,
     /// The pinned revision's title.
     pub title: String,
-    /// The entry's current revision: different from the pinned one once someone edits it.
-    pub current_revision_id: Uuid,
+    /// The revision the pin must still match: for `publish`, the entry's current revision
+    /// (different once someone edits it); for `unpublish`, the published one (none once nothing
+    /// is).
+    pub current_revision_id: Option<Uuid>,
+}
+
+impl Item {
+    /// Whether the entry moved on since it was pinned, so the changeset must be refreshed.
+    pub fn moved(&self) -> bool {
+        self.current_revision_id != Some(self.pin.revision_id)
+    }
 }
 
 /// A recorded review.
@@ -94,7 +107,9 @@ pub struct Summary {
     pub head: Head,
     /// How many entries it pins.
     pub items: i64,
-    /// How many of them have been edited since they were pinned.
+    /// How many of those it unpublishes.
+    pub unpublish: i64,
+    /// How many of them moved on since they were pinned.
     pub stale: i64,
     /// The newest review on its current hash.
     pub latest: Option<Review>,
@@ -105,14 +120,39 @@ pub struct Summary {
 pub async fn pins(tx: &mut ProjectTransaction, entries: &[Uuid]) -> Result<Vec<Pin>, DbError> {
     sqlx::query_as!(
         Pin,
-        "SELECT e.id AS entry_id, r.id AS revision_id, r.collection, r.content_hash, r.schema_version,
-                v.definition_hash
+        r#"SELECT 'publish' AS "kind!", e.id AS entry_id, r.id AS revision_id, r.collection, r.content_hash,
+                  r.schema_version, v.definition_hash
          FROM entries e
          JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id
                          AND r.id = e.draft_revision_id
          JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id
                                      AND v.collection = r.collection AND v.version = r.schema_version
-         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.id = ANY($3)",
+         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.id = ANY($3)"#,
+        tx.project,
+        tx.environment,
+        entries
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// The published revisions of `entries`, pinned to be unpublished. Entries that aren't published
+/// here are left out.
+pub async fn published_pins(
+    tx: &mut ProjectTransaction,
+    entries: &[Uuid],
+) -> Result<Vec<Pin>, DbError> {
+    sqlx::query_as!(
+        Pin,
+        r#"SELECT 'unpublish' AS "kind!", p.entry_id, r.id AS revision_id, r.collection, r.content_hash,
+                  r.schema_version, v.definition_hash
+           FROM publications p
+           JOIN revisions r ON r.project_id = p.project_id AND r.environment_id = p.environment_id
+                           AND r.id = p.revision_id
+           JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id
+                                       AND v.collection = r.collection AND v.version = r.schema_version
+           WHERE p.project_id = $1 AND p.environment_id = $2 AND p.entry_id = ANY($3) AND p.valid_to IS NULL"#,
         tx.project,
         tx.environment,
         entries
@@ -145,14 +185,17 @@ pub async fn create(
     .map_err(DbError::from_write)?;
     let entries: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
     let revisions: Vec<Uuid> = pins.iter().map(|pin| pin.revision_id).collect();
+    let kinds: Vec<String> = pins.iter().map(|pin| pin.kind.clone()).collect();
     sqlx::query!(
-        "INSERT INTO changeset_items (project_id, environment_id, changeset_id, entry_id, revision_id)
-         SELECT $1, $2, $3, entry, revision FROM unnest($4::uuid[], $5::uuid[]) AS pinned (entry, revision)",
+        "INSERT INTO changeset_items (project_id, environment_id, changeset_id, entry_id, revision_id, kind)
+         SELECT $1, $2, $3, entry, revision, kind
+         FROM unnest($4::uuid[], $5::uuid[], $6::text[]) AS pinned (entry, revision, kind)",
         tx.project,
         tx.environment,
         id,
         &entries,
-        &revisions
+        &revisions,
+        &kinds
     )
     .execute(&mut *tx.transaction)
     .await
@@ -241,11 +284,16 @@ pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>,
     }))
 }
 
-/// The changeset's items, each with its entry's current revision, ordered by entry id.
+/// The changeset's items, each with the revision its pin must still match, ordered by entry id.
 pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, DbError> {
     let rows = sqlx::query!(
-        "SELECT i.entry_id, i.revision_id, r.collection, r.content_hash, r.schema_version,
-                v.definition_hash, r.title, e.draft_revision_id
+        r#"SELECT i.kind, i.entry_id, i.revision_id, r.collection, r.content_hash, r.schema_version,
+                  v.definition_hash, r.title,
+                  CASE WHEN i.kind = 'publish' THEN e.draft_revision_id
+                       ELSE (SELECT p.revision_id FROM publications p
+                             WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id
+                               AND p.entry_id = i.entry_id AND p.valid_to IS NULL)
+                  END AS current_revision_id
          FROM changeset_items i
          JOIN revisions r ON r.project_id = i.project_id AND r.environment_id = i.environment_id
                          AND r.id = i.revision_id
@@ -254,7 +302,7 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
          JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
                        AND e.id = i.entry_id
          WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
-         ORDER BY i.entry_id",
+         ORDER BY i.entry_id"#,
         tx.project,
         tx.environment,
         id
@@ -266,6 +314,7 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
         .into_iter()
         .map(|row| Item {
             pin: Pin {
+                kind: row.kind,
                 entry_id: row.entry_id,
                 revision_id: row.revision_id,
                 collection: row.collection,
@@ -274,13 +323,13 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
                 definition_hash: row.definition_hash,
             },
             title: row.title,
-            current_revision_id: row.draft_revision_id,
+            current_revision_id: row.current_revision_id,
         })
         .collect())
 }
 
-/// Re-pins the changeset's entries to `pins` (their current revisions) and stores the new hash.
-/// The caller holds [`lock`].
+/// Re-pins the changeset's entries to `pins` (for each, the revision its kind pins now) and stores
+/// the new hash. The caller holds [`lock`].
 pub async fn repin(
     tx: &mut ProjectTransaction,
     id: Uuid,
@@ -404,13 +453,22 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
     let rows = sqlx::query!(
         r#"SELECT c.id, c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at,
                   c.updated_at, rel.generation AS "published?",
-                  counts.items AS "items!", counts.stale AS "stale!",
+                  counts.items AS "items!", counts.unpublish AS "unpublish!", counts.stale AS "stale!",
                   latest.id AS "review_id?", latest.reviewer_id AS "reviewer_id?",
                   latest.reviewer_name, latest.decision AS "decision?", latest.seq AS "seq?",
                   latest.comment AS "comment?", latest.created_at AS "reviewed_at?"
            FROM changesets c
            CROSS JOIN LATERAL (
-               SELECT count(*) AS items, count(*) FILTER (WHERE e.draft_revision_id <> i.revision_id) AS stale
+               SELECT count(*) AS items, count(*) FILTER (WHERE i.kind = 'unpublish') AS unpublish,
+                      count(*) FILTER (
+                          WHERE CASE WHEN i.kind = 'publish' THEN e.draft_revision_id <> i.revision_id
+                                     ELSE NOT EXISTS (
+                                         SELECT 1 FROM publications p
+                                         WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id
+                                           AND p.entry_id = i.entry_id AND p.valid_to IS NULL
+                                           AND p.revision_id = i.revision_id)
+                                END
+                      ) AS stale
                FROM changeset_items i
                JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
                              AND e.id = i.entry_id
@@ -478,6 +536,7 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
                     (row.updated_at, row.published),
                 ),
                 items: row.items,
+                unpublish: row.unpublish,
                 stale: row.stale,
                 latest,
             }

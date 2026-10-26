@@ -37,6 +37,8 @@ pub enum ErrorCode {
     Forbidden,
     /// No such resource, or one the caller may not see: the two look the same.
     NotFound,
+    /// Published content that has been taken down (unpublished).
+    Gone,
     /// The request conflicts with the current state (for example, a taken slug, or a save on a
     /// revision that is no longer the draft); `details.reason` says which.
     Conflict,
@@ -70,6 +72,7 @@ impl ErrorCode {
             Self::Unauthorized => "unauthorized",
             Self::Forbidden => "forbidden",
             Self::NotFound => "not_found",
+            Self::Gone => "gone",
             Self::Conflict => "conflict",
             Self::PreconditionRequired => "precondition_required",
             Self::SignInFailed => "sign_in_failed",
@@ -229,6 +232,9 @@ pub enum ApiError {
     /// No such resource (or one the caller may not see).
     #[error("no such resource")]
     NotFound,
+    /// Public content that was published and has been taken down: 410, never cached.
+    #[error("this was published and has been taken down")]
+    Gone,
     /// A conflict with the current state; the reason is safe to show.
     #[error("{0}")]
     Conflict(&'static str),
@@ -266,6 +272,7 @@ impl ApiError {
     pub fn status(&self) -> StatusCode {
         match self {
             Self::RouteNotFound | Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Gone => StatusCode::GONE,
             Self::MalformedJson(_) | Self::BadRequest | Self::SignInFailed => {
                 StatusCode::BAD_REQUEST
             }
@@ -304,6 +311,7 @@ impl ApiError {
             Self::Unauthorized => ErrorCode::Unauthorized,
             Self::Forbidden(_) => ErrorCode::Forbidden,
             Self::NotFound => ErrorCode::NotFound,
+            Self::Gone => ErrorCode::Gone,
             Self::Conflict(_)
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
@@ -404,6 +412,13 @@ impl IntoResponse for ApiError {
                     header::RETRY_AFTER,
                     HeaderValue::from(BUSY_RETRY_AFTER_SECONDS),
                 );
+            }
+            // Nothing keeps a removal: if the entry is published again, no cache must still say
+            // it's gone.
+            Self::Gone => {
+                response
+                    .headers_mut()
+                    .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
             }
             Self::StaleRevision { current } => {
                 if let Ok(etag) = HeaderValue::from_str(&format!("\"{current}\"")) {
@@ -515,6 +530,8 @@ mod tests {
     fn statuses_and_codes_are_stable() {
         assert_eq!(ApiError::RouteNotFound.status(), StatusCode::NOT_FOUND);
         assert_eq!(ApiError::RouteNotFound.code().as_str(), "route_not_found");
+        assert_eq!(ApiError::Gone.status(), StatusCode::GONE);
+        assert_eq!(ApiError::Gone.code().as_str(), "gone");
         let internal = ApiError::internal(io::Error::other("x"));
         assert_eq!(internal.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(internal.code().as_str(), "internal");

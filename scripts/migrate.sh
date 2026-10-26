@@ -8,10 +8,8 @@ cd "$(dirname "$0")/.."
 scripts/check-toolchain.sh >/dev/null
 cargo build --quiet --release --locked -p colophon-cli
 (
-  set -a
-  # shellcheck source=/dev/null # plain KEY=value lines
-  . deploy/local.env
-  set +a
+  # shellcheck source=scripts/local-env.sh
+  . scripts/local-env.sh
   target/release/colophon admin migrate
   # dev-owner's subject is fixed in deploy/keycloak/colophon-realm.json.
   exec target/release/colophon admin bootstrap --subject 00000000-0000-4000-8000-00000000c001

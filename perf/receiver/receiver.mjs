@@ -1,5 +1,6 @@
-// A webhook destination for the publishing load test (scripts/load.sh publishing): answers every
-// POST with 204 and counts what it got, by idempotency key. GET /stats returns the counts, so
+// A webhook and CDN destination for the publishing load test (scripts/load.sh publishing): answers
+// every POST (announcements to /hook, purges to /purge) with 204 and counts what it got, by
+// idempotency key. GET /stats returns the counts, so
 // the scenario can check that every announcement arrived and how many were repeats.
 // Usage: node perf/receiver/receiver.mjs <port>
 

@@ -1,6 +1,7 @@
 //! The worker (docs/modules/05-worker.md; D-046). It finds all its work in Postgres: it claims
-//! due delivery jobs under a lease, announces each release to its destination with the job's
-//! stable idempotency key, and records the outcome only through the lease it holds. A worker
+//! due delivery jobs under a lease, announces each release to its destination (or, for a CDN, asks
+//! it to purge what changed; D-050) with the job's stable idempotency key, and records the outcome
+//! only through the lease it holds. A worker
 //! killed mid-attempt leaves a lease that runs out; the job is claimed again and the attempt
 //! repeats with the same key, so the destination can drop the duplicate (F03). An announcement
 //! never goes out after a newer one for the same destination (F05). No database transaction is
@@ -15,7 +16,10 @@ use colophon_db::{
     PgPool,
     jobs::{self, Announcement, Claimed, Finish},
 };
-use colophon_domain::job::{self, Next, Outcome};
+use colophon_domain::{
+    cache,
+    job::{self, Next, Outcome},
+};
 use serde_json::json;
 use time::OffsetDateTime;
 use tokio::sync::Semaphore;
@@ -44,6 +48,15 @@ pub struct Settings {
 
 // The worker gets its own small database pool (colophon-server's COLOPHON_WORKER_DB_CONNECTIONS),
 // so delivering announcements can never starve editors' requests of connections.
+
+/// What one attempt sends.
+enum Message {
+    /// A webhook hears about the release.
+    Announce(Announcement),
+    /// A CDN purges these tags (`colophon_domain::cache::purge_tags`); empty when the releases it
+    /// covers changed nothing a CDN could hold.
+    Purge(Vec<String>),
+}
 
 /// The worker couldn't be built.
 #[derive(Debug, thiserror::Error)]
@@ -178,8 +191,38 @@ impl Worker {
     /// One attempt at one job, from the supersession check to the record of its outcome.
     /// `asked_at` is when the claim was requested: no later than the lease's start.
     async fn attempt(&self, job: Claimed, asked_at: std::time::Instant) {
-        let announcement = match jobs::prepare(&self.pool, &job).await {
-            Ok(Some(announcement)) => announcement,
+        let prepared = if job.kind == "cdn" {
+            jobs::purge(&self.pool, &job).await.map(|found| {
+                found.map(|purge| {
+                    let entries: Vec<(String, u128)> = purge
+                        .entries
+                        .into_iter()
+                        .map(|(collection, entry)| (collection, entry.as_u128()))
+                        .collect();
+                    Message::Purge(cache::purge_tags(
+                        job.project_id.as_u128(),
+                        job.environment_id.as_u128(),
+                        &entries,
+                    ))
+                })
+            })
+        } else {
+            jobs::prepare(&self.pool, &job)
+                .await
+                .map(|found| found.map(Message::Announce))
+        };
+        let message = match prepared {
+            Ok(Some(Message::Purge(tags))) if tags.is_empty() => {
+                let finish = Finish {
+                    status: job::Status::Succeeded.as_str(),
+                    next_attempt_at: None,
+                    http_status: None,
+                    error: None,
+                };
+                self.record(&job, &finish).await;
+                return;
+            }
+            Ok(Some(message)) => message,
             Ok(None) => {
                 let finish = Finish {
                     status: job::Status::Superseded.as_str(),
@@ -192,7 +235,7 @@ impl Worker {
             }
             Err(error) => {
                 // The lease runs out and the job is claimed again.
-                tracing::warn!(job = %job.id, error = %error, "preparing the announcement failed");
+                tracing::warn!(job = %job.id, error = %error, "preparing the delivery failed");
                 return;
             }
         };
@@ -202,7 +245,7 @@ impl Worker {
             tracing::warn!(job = %job.id, "gave up before sending: too close to the lease's end");
             return;
         }
-        let outcome = self.post(&job, &announcement).await;
+        let outcome = self.post(&job, &message).await;
         fault::point("worker:after-dispatch");
         let attempts = u32::try_from(job.attempts).unwrap_or(u32::MAX);
         let next = job::after_attempt(
@@ -258,30 +301,36 @@ impl Worker {
         }
     }
 
-    /// Posts the announcement; what happened, as the domain classifies it.
-    async fn post(&self, job: &Claimed, announcement: &Announcement) -> Outcome {
+    /// Posts the announcement or the purge; what happened, as the domain classifies it.
+    async fn post(&self, job: &Claimed, message: &Message) -> Outcome {
         if let Err(reason) =
             colophon_domain::destination::check_url(&job.url, self.settings.allow_private)
         {
             return Outcome::Terminal { reason };
         }
-        let entries: Vec<_> = announcement
-            .entries
-            .iter()
-            .map(|(id, revision, collection, title)| {
-                json!({"id": id, "revision_id": revision, "collection": collection, "title": title})
-            })
-            .collect();
-        let body = json!({
-            "event": "release.committed",
-            "project": job.project_id,
-            "environment": announcement.environment,
-            "epoch": announcement.epoch,
-            "generation": job.generation,
-            "changeset": announcement.changeset_id,
-            "published_at": announcement.published_at.unix_timestamp(),
-            "entries": entries,
-        });
+        let body = match message {
+            Message::Announce(announcement) => {
+                let entries: Vec<_> = announcement
+                    .entries
+                    .iter()
+                    .map(|(id, revision, collection, title)| {
+                        json!({"id": id, "revision_id": revision, "collection": collection, "title": title})
+                    })
+                    .collect();
+                json!({
+                    "event": "release.committed",
+                    "project": job.project_id,
+                    "environment": announcement.environment,
+                    "epoch": announcement.epoch,
+                    "generation": job.generation,
+                    "changeset": announcement.changeset_id,
+                    "published_at": announcement.published_at.unix_timestamp(),
+                    "entries": entries,
+                })
+            }
+            // The shape of a purge by tag.
+            Message::Purge(tags) => json!({ "tags": tags }),
+        };
         let sent = self
             .http
             .post(&job.url)

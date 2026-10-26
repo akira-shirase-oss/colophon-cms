@@ -12,11 +12,13 @@
 		ApiError,
 		createDestination,
 		deliveryUrl,
+		type Destination,
 		getProject,
 		type Job,
 		listDestinations,
 		listJobs,
 		listReleases,
+		type Release,
 		setDestinationEnabled
 	} from '#lib/api.ts';
 
@@ -26,7 +28,12 @@
 	const mine = createQuery(() => ({ queryKey: ['project', project], queryFn: () => getProject(project) }));
 	const role = $derived(mine.data?.role);
 	const manages = $derived(role === 'owner' || role === 'developer');
-	const releases = createQuery(() => ({ queryKey: ['releases', project], queryFn: () => listReleases(project) }));
+	// A CDN purge settles on its own too: look again while one is pending.
+	const releases = createQuery(() => ({
+		queryKey: ['releases', project],
+		queryFn: () => listReleases(project),
+		refetchInterval: (query) => (query.state.data?.releases.some((release) => release.purge === 'pending') ? 2_000 : false)
+	}));
 	// Deliveries settle on their own; look again every few seconds while any is still going.
 	const jobs = createQuery(() => ({
 		queryKey: ['jobs', project],
@@ -56,6 +63,13 @@
 		superseded: 'skipped: a newer release went instead'
 	};
 
+	const PURGE: Record<Exclude<Release['purge'], 'none'>, string> = {
+		pending: 'CDN purge pending: copies the CDN holds may still be served',
+		accepted: 'CDN purge accepted',
+		failed: 'CDN purge failed: copies the CDN holds may be served until they expire (up to 5 minutes)'
+	};
+
+	let kind = $state<Destination['kind']>('webhook');
 	let name = $state('');
 	let url = $state('');
 	let error = $state('');
@@ -66,7 +80,7 @@
 		busy = true;
 		error = '';
 		try {
-			await createDestination(project, name, url);
+			await createDestination(project, kind, name, url);
 			name = '';
 			url = '';
 			await queryClient.invalidateQueries({ queryKey: ['destinations', project] });
@@ -108,9 +122,18 @@
 				<a href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: release.changeset_id })}>{release.title}</a>
 				<small class="muted">
 					{release.entries}
-					{release.entries === 1 ? 'entry' : 'entries'} changed, by {release.published_by_name ?? release.published_by},
+					{release.entries === 1 ? 'entry' : 'entries'} changed,{#if release.unpublished > 0}
+						<span data-testid="unpublished">{release.unpublished} unpublished,</span>{/if} by {release.published_by_name ??
+						release.published_by},
 					{new Date(release.published_at).toLocaleString()}
 				</small>
+				{#if release.purge !== 'none'}
+					<div class="delivery" data-testid="purge" data-state={release.purge}>
+						{#if release.unpublished > 0 && release.purge === 'pending'}Removal pending at the CDN: copies it holds may still be served{:else}{PURGE[
+								release.purge
+							]}{/if}
+					</div>
+				{/if}
 				{#each byRelease.get(release.generation) ?? [] as job (job.id)}
 					<div class="delivery" data-testid="delivery" data-status={job.status}>
 						{job.destination_name}: {STATUS[job.status]}{job.attempts > 1 ? ` after ${job.attempts} attempts` : ''}{job.last_error &&
@@ -127,15 +150,19 @@
 {#if manages}
 	<section class="destinations" aria-label="Destinations">
 		<h2>Destinations</h2>
-		<p class="muted">Every release is announced to each enabled destination, once, with a key it can use to drop repeats.</p>
+		<p class="muted">
+			Every release is announced to each enabled webhook, once, with a key it can use to drop repeats. Each enabled CDN is asked to
+			purge what the release changed.
+		</p>
 		{#if destinations.data}
 			<ul class="list" data-testid="destinations">
 				{#each destinations.data as destination (destination.id)}
 					<li>
-						<strong>{destination.name}</strong> <code>{destination.url}</code>
+						<strong>{destination.name}</strong> <small class="muted">{destination.kind === 'cdn' ? 'CDN' : 'webhook'}</small>
+						<code>{destination.url}</code>
 						<label class="check">
 							<input type="checkbox" checked={destination.enabled} onchange={(event) => toggle(destination.id, event.currentTarget.checked)} />
-							Announce releases
+							{destination.kind === 'cdn' ? 'Purge on release' : 'Announce releases'}
 						</label>
 					</li>
 				{:else}
@@ -144,8 +171,15 @@
 			</ul>
 		{/if}
 		<form class="new" onsubmit={add} aria-label="New destination">
+			<div class="choice">
+				<label for="destination-kind">Kind</label>
+				<select id="destination-kind" bind:value={kind}>
+					<option value="webhook">Webhook: hears about each release</option>
+					<option value="cdn">CDN: purges what each release changed</option>
+				</select>
+			</div>
 			<TextField label="Destination name" bind:value={name} required maxlength={100} />
-			<TextField label="Webhook URL (https)" bind:value={url} required type="url" />
+			<TextField label={kind === 'cdn' ? 'Purge URL (https)' : 'Webhook URL (https)'} bind:value={url} required type="url" />
 			{#if error}<p role="alert" class="error">{error}</p>{/if}
 			<div><Button type="submit" disabled={busy}>Add destination</Button></div>
 		</form>
@@ -173,6 +207,20 @@
 		display: grid;
 		gap: 0.75rem;
 		max-width: 32rem;
+	}
+	.choice {
+		display: grid;
+		gap: 0.25rem;
+		font: var(--md-sys-typescale-body-small);
+		color: var(--md-sys-color-on-surface-variant);
+	}
+	select {
+		font: var(--md-sys-typescale-body-large);
+		color: var(--md-sys-color-on-surface);
+		background: transparent;
+		border: 1px solid var(--md-sys-color-outline);
+		border-radius: var(--md-sys-shape-corner-extra-small, 4px);
+		padding: 0.5rem;
 	}
 	.check {
 		display: inline-flex;

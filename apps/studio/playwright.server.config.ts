@@ -8,12 +8,16 @@ import { defineConfig, devices } from '@playwright/test';
 const PORT = 58093;
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 
-/** deploy/local.env, the single source of the server's local settings. */
+/** deploy/local.env, the single source of the server's local settings. With COLOPHON_TEST_DATABASE
+ *  set, the database URLs name that database instead of `colophon` (scripts/local-env.sh). */
 function localEnv(): Record<string, string> {
 	const env: Record<string, string> = {};
+	const database = process.env['COLOPHON_TEST_DATABASE'];
 	for (const line of readFileSync(`${repo}deploy/local.env`, 'utf8').split('\n')) {
 		const match = /^([A-Z_]+)=(.*)$/.exec(line.trim());
-		if (match?.[1] !== undefined && match[2] !== undefined) env[match[1]] = match[2];
+		if (match?.[1] === undefined || match[2] === undefined) continue;
+		const named = database !== undefined && match[1].endsWith('DATABASE_URL') && match[2].endsWith('/colophon');
+		env[match[1]] = named ? `${match[2].slice(0, -'colophon'.length)}${database}` : match[2];
 	}
 	return env;
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id AS \"id!\", epoch AS \"epoch!\", generation AS \"generation!\"\n           FROM delivery_environment($1, $2)",
+  "query": "SELECT id AS \"id!\", epoch AS \"epoch!\", generation AS \"generation!\",\n                  last_unpublish AS \"last_unpublish!\"\n           FROM delivery_environment($1, $2)",
   "describe": {
     "columns": [
       {
@@ -20,6 +20,12 @@
         "name": "generation!",
         "type_info": "Int8",
         "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "last_unpublish!",
+        "type_info": "Int8",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -31,8 +37,9 @@
     "nullable": [
       null,
       null,
+      null,
       null
     ]
   },
-  "hash": "47c3f50015aa973a15a15616dcb3610fe998865f963c162dd07752d11d96712a"
+  "hash": "45db77a451ee1903385f2f2014d3f763e6ccb05d40c617b8dcf9c07a50a754c1"
 }

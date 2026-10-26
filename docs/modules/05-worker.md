@@ -39,6 +39,11 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   measured from just before the worker asked for the claim: the database starts the lease while running the claim,
   so a clock started earlier can only think less of the lease is left, never more. The simulator's model
   found the gap: before this, a slow network could deliver release N after N+1.
+- **CDN purges** (step 3.2, D-050): a destination of kind `cdn` gets a purge by tag instead of an announcement
+  (migration 0013). Its job covers every release since that destination's last successful purge, so a purge skipped
+  for a newer release is never lost; the tags come from `colophon_domain::cache::purge_tags`, at most 30 (more, and
+  the environment's tag instead). Tested against a fake CDN that caches and purges
+  (`crates/colophon-server/tests/purges.rs`).
 - **Not yet:** per-project limits, signed announcements, wake-ups instead of polling,
   reconciliation beyond repeating with the same key, admission budgets (F09), scheduled releases.
 
@@ -108,7 +113,8 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
 - An outcome that can't be confirmed stays `uncertain` with a repair action.
 
 ### Supersession
-- Work for generation N is marked superseded once N+1 is desired.
+- Work for generation N is marked superseded once N+1 is desired. A CDN purge is never lost to this: the newer
+  purge covers every release since the last successful one (D-050).
 - An obsolete "make release X current" is never dispatched after release Y.
 - Superseded history is kept for inspection.
 

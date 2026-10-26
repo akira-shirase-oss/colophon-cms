@@ -89,6 +89,8 @@ pub(crate) enum Filled {
     Once(Cached),
     /// Nothing there: 404, not cached.
     Missing,
+    /// Taken down (D-049): 410, not cached.
+    Gone,
 }
 
 /// Why a fill failed, shared with every request that waited for it.

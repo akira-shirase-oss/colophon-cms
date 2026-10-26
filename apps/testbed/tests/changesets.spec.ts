@@ -31,8 +31,8 @@ test('pin, submit, refuse a stale hash, approve, and go stale after an edit', as
 	await page.goto('/changesets');
 	await page.getByLabel('Project').selectOption(project);
 	await page.getByLabel('Changeset title').fill('Notes');
-	await page.getByLabel('Alpha note').check();
-	await page.getByLabel('Beta note').check();
+	await page.getByLabel('Alpha note', { exact: true }).check();
+	await page.getByLabel('Beta note', { exact: true }).check();
 	await page.getByRole('button', { name: 'Create changeset' }).click();
 	await expect(page.getByTestId('state')).toHaveText('open');
 	const pinned = await page.getByLabel('If-Match hash').inputValue();

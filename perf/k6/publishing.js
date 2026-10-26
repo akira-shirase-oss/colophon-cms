@@ -1,10 +1,13 @@
 // Load scenario for the editorial pipeline and the worker (step 2.3, D-046). setup() signs in the
-// administrator and creates one project per virtual user, each with a webhook destination: the
-// receiver scripts/load.sh starts. Each iteration publishes one new article in the virtual
-// user's own project: create the entry, pin it into a changeset, submit, approve, publish on the
-// generation it knows (five requests; nobody else publishes there). Meanwhile the worker
-// announces every release to the receiver; a release committed before the previous one was sent
-// supersedes it. teardown() waits for every project's latest release to be delivered.
+// administrator and creates one project per virtual user, each with a webhook destination and a
+// CDN destination (D-050), both at the receiver scripts/load.sh starts. Each iteration publishes
+// one new article in the virtual user's own project: create the entry, pin it into a changeset,
+// submit, approve, publish on the generation it knows (five requests; nobody else publishes
+// there). Every tenth changeset also takes down the article the previous iteration published
+// (step 3.2, D-049). Meanwhile the worker announces every release and sends the CDN its purge; a
+// release committed before the previous one was sent supersedes it, and a CDN's purge covers
+// every release since its last successful one. teardown() waits for every project's latest
+// release to be delivered and purged.
 // TOTAL counts requests, as elsewhere: a full run is 200,000 publishes. RATE counts publishes;
 // scripts/load.sh gives this endpoint RATE 40 (200 requests a second) and P99_MS 700.
 
@@ -73,13 +76,17 @@ export function setup() {
     const base = `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production`;
     const destination = http.post(`${base}/destinations`, JSON.stringify({ name: 'receiver', url: `${RECEIVER_URL}/hook` }), { headers });
     if (destination.status !== 201) fail(`destination: HTTP ${destination.status} ${destination.body}`);
+    const cdn = http.post(`${base}/destinations`, JSON.stringify({ kind: 'cdn', name: 'cdn', url: `${RECEIVER_URL}/purge` }), { headers });
+    if (cdn.status !== 201) fail(`cdn: HTTP ${cdn.status} ${cdn.body}`);
     bases.push(base);
   }
   return { headers, bases, run };
 }
 
-// Each virtual user publishes in its own project, so it knows the generation it publishes on.
+// Each virtual user publishes in its own project, so it knows the generation it publishes on, and
+// what it published last.
 let generation = 0;
+let previous = null;
 
 const article = (title) => ({
   title,
@@ -93,7 +100,9 @@ export default function (data) {
 
   const entry = http.post(`${base}/collections/articles/entries`, JSON.stringify(article(`Article ${__VU}-${__ITER}`)), params('entry', { 'Idempotency-Key': key('e') }));
   if (!check(entry, { 'entry 201': (r) => r.status === 201 })) return;
-  const set = http.post(`${base}/changesets`, JSON.stringify({ title: `k6 ${__ITER}`, entries: [entry.json('data.id')] }), params('changeset', { 'Idempotency-Key': key('c') }));
+  const unpublish = previous !== null && __ITER % 10 === 9 ? [previous] : [];
+  const changes = { title: `k6 ${__ITER}`, entries: [entry.json('data.id')], unpublish };
+  const set = http.post(`${base}/changesets`, JSON.stringify(changes), params('changeset', { 'Idempotency-Key': key('c') }));
   if (!check(set, { 'changeset 201': (r) => r.status === 201 })) return;
   const path = `${base}/changesets/${set.json('data.id')}`;
   const ifMatch = { 'If-Match': `"${set.json('data.hash')}"` };
@@ -102,24 +111,29 @@ export default function (data) {
   const approved = http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), params('review', ifMatch));
   if (!check(approved, { 'approved': (r) => r.status === 200 && r.json('data.status.state') === 'approved' })) return;
   const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: generation }), params('publish', Object.assign({ 'Idempotency-Key': key('p') }, ifMatch)));
-  if (check(published, { 'publish 201': (r) => r.status === 201 })) {
+  if (check(published, { 'publish 201': (r) => r.status === 201 && r.json('data.entries_unpublished') === unpublish.length })) {
     generation = published.json('data.generation');
+    previous = entry.json('data.id');
   }
 }
 
 export function teardown(data) {
-  // Every project's latest release must reach the receiver; older ones may have been superseded.
+  // Every project's latest release must reach both destinations; older ones may have been
+  // superseded, and its purge then covers theirs, so every release must show its purge accepted.
   const deadline = Date.now() + 90000;
   for (const base of data.bases) {
     for (;;) {
-      const jobs = http.get(`${base}/jobs`, { headers: data.headers });
-      const latest = jobs.json('data')[0];
-      if (!latest || latest.status === 'succeeded') break;
-      if (latest.status === 'failed') fail(`the latest release of ${base} failed: ${JSON.stringify(latest)}`);
+      const jobs = http.get(`${base}/jobs`, { headers: data.headers }).json('data');
+      const latest = jobs.filter((job) => job.generation === (jobs[0] || {}).generation);
+      if (latest.every((job) => job.status === 'succeeded')) break;
+      const failed = latest.find((job) => job.status === 'failed');
+      if (failed) fail(`the latest release of ${base} failed: ${JSON.stringify(failed)}`);
       if (Date.now() > deadline) fail(`the latest release of ${base} was not delivered in time: ${JSON.stringify(latest)}`);
       sleep(0.2);
     }
+    const unpurged = http.get(`${base}/releases`, { headers: data.headers }).json('data').filter((release) => release.purge !== 'accepted');
+    if (unpurged.length > 0) fail(`releases of ${base} without an accepted purge: ${JSON.stringify(unpurged.slice(0, 3))}`);
   }
   const stats = http.get(`${RECEIVER_URL}/stats`).json();
-  console.log(`receiver: ${stats.requests} announcements, ${stats.distinct_keys} distinct keys`);
+  console.log(`receiver: ${stats.requests} announcements and purges, ${stats.distinct_keys} distinct keys`);
 }

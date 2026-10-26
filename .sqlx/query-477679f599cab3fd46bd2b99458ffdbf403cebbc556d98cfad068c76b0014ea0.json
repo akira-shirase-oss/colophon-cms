@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT NOT EXISTS (\n                   SELECT 1 FROM publications\n                   WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n                     AND environment_id = $1 AND collection = $2 AND entry_id = $3\n                     AND valid_from <= $4 AND (valid_to IS NULL OR valid_to > $4) AND revoked_in IS NULL\n               ) AND (EXISTS (\n                   SELECT 1 FROM publications\n                   WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n                     AND environment_id = $1 AND collection = $2 AND entry_id = $3\n                     AND valid_from <= $4 AND (valid_to IS NULL OR valid_to > $4) AND revoked_in IS NOT NULL\n               ) OR EXISTS (\n                   SELECT 1 FROM tombstones\n                   WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n                     AND environment_id = $1 AND collection = $2 AND entry_id = $3 AND generation <= $4\n               )) AS \"gone!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "gone!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "477679f599cab3fd46bd2b99458ffdbf403cebbc556d98cfad068c76b0014ea0"
+}

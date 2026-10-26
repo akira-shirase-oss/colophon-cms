@@ -1,7 +1,8 @@
 //! Destinations and delivery jobs (docs/modules/04-api.md, "Route families"; D-046). Under `{P}`:
 //!
-//! - `GET {P}/destinations` and `POST {P}/destinations` (`{"name", "url"}`): owners and
-//!   developers only, since a webhook address can carry a secret;
+//! - `GET {P}/destinations` and `POST {P}/destinations` (`{"kind", "name", "url"}`, `kind` being
+//!   `webhook`, the default, or `cdn`, which is sent purges by tag instead; D-050): owners and
+//!   developers only, since an address can carry a secret;
 //! - `PUT {P}/destinations/{id}` (`{"enabled"}`): turns announcements on or off;
 //! - `GET {P}/jobs?generation=`: delivery jobs, newest first, for any member.
 //!
@@ -39,12 +40,18 @@ pub(crate) struct OnePath {
     destination: String,
 }
 
-/// `{"name": "Site rebuild", "url": "https://…"}`.
+/// `{"kind": "webhook", "name": "Site rebuild", "url": "https://…"}`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NewDestination {
+    #[serde(default = "webhook")]
+    kind: String,
     name: String,
     url: String,
+}
+
+fn webhook() -> String {
+    "webhook".to_owned()
 }
 
 /// `{"enabled": false}`.
@@ -130,6 +137,13 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<Data<DestinationView>>), ApiError> {
     let allow_private = services(&state)?.allow_private_destinations;
     let Json(new) = body?;
+    if new.kind != "webhook" && new.kind != "cdn" {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_kind",
+            pointer: "/kind",
+            message: "a destination is a webhook or a cdn".to_owned(),
+        });
+    }
     let name = new.name.trim();
     if !(1..=100).contains(&name.chars().count()) || name.chars().any(char::is_control) {
         return Err(ApiError::InvalidField {
@@ -153,7 +167,7 @@ pub(crate) async fn create(
     })?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     require(&tx.role, Action::ManageDestinations, WHO)?;
-    let row = destinations::create(&mut tx, name, url)
+    let row = destinations::create(&mut tx, &new.kind, name, url)
         .await
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
