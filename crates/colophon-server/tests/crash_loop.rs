@@ -24,7 +24,10 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use common::{ORIGIN, Receiver, Server, Session, app, article, call, destination, entries, finished_job, key, project, sign_in};
+use common::{
+    ORIGIN, Receiver, Server, Session, app, article, call, destination, entries, finished_job, key,
+    project, sign_in,
+};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 
@@ -35,7 +38,7 @@ const WORKER: [(&str, &str); 3] = [
     ("COLOPHON_WORKER_POLL_MS", "50"),
 ];
 
-/// SplitMix64, for kill timing that a seed can repeat (the server's own timing still varies).
+/// `SplitMix64`, for kill timing that a seed can repeat (the server's own timing still varies).
 struct Seeded(u64);
 
 impl Seeded {
@@ -82,6 +85,10 @@ fn base(project: &str) -> String {
 }
 
 /// Advances `state`'s publish by one request; false if the request got no answer (a kill).
+#[expect(
+    clippy::too_many_lines,
+    reason = "one publish, request by request: each branch is one step of it"
+)]
 async fn step(session: &Session, state: &mut ProjectState, counts: &mut Counts) -> bool {
     let cycle = state.cycle.get_or_insert_with(|| Cycle {
         entry_key: key(),
@@ -96,7 +103,15 @@ async fn step(session: &Session, state: &mut ProjectState, counts: &mut Counts) 
     let project = state.id.clone();
     if cycle.entry.is_none() {
         let title = format!("Crash loop {}", state.acknowledged.len() + 1);
-        let Ok(reply) = call(session, Method::POST, &entries(&project), Some(&article(&title, "text")), &[("idempotency-key", &cycle.entry_key)]).await else {
+        let Ok(reply) = call(
+            session,
+            Method::POST,
+            &entries(&project),
+            Some(&article(&title, "text")),
+            &[("idempotency-key", &cycle.entry_key)],
+        )
+        .await
+        else {
             return false;
         };
         assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
@@ -105,18 +120,37 @@ async fn step(session: &Session, state: &mut ProjectState, counts: &mut Counts) 
     }
     if cycle.set.is_none() {
         let body = json!({"title": "crash loop", "entries": [cycle.entry]});
-        let Ok(reply) = call(session, Method::POST, &format!("{}/changesets", base(&project)), Some(&body), &[("idempotency-key", &cycle.set_key)]).await else {
+        let Ok(reply) = call(
+            session,
+            Method::POST,
+            &format!("{}/changesets", base(&project)),
+            Some(&body),
+            &[("idempotency-key", &cycle.set_key)],
+        )
+        .await
+        else {
             return false;
         };
         assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
         let id = reply.body["data"]["id"].as_str().expect("an id");
         let hash = reply.body["data"]["hash"].as_str().expect("a hash");
-        cycle.set = Some((format!("{}/changesets/{id}", base(&project)), format!("\"{hash}\"")));
+        cycle.set = Some((
+            format!("{}/changesets/{id}", base(&project)),
+            format!("\"{hash}\""),
+        ));
         return true;
     }
     let (path, if_match) = cycle.set.clone().expect("a changeset");
     if !cycle.submitted {
-        let Ok(reply) = call(session, Method::POST, &format!("{path}/submit"), None, &[("if-match", &if_match)]).await else {
+        let Ok(reply) = call(
+            session,
+            Method::POST,
+            &format!("{path}/submit"),
+            None,
+            &[("if-match", &if_match)],
+        )
+        .await
+        else {
             return false;
         };
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
@@ -125,7 +159,15 @@ async fn step(session: &Session, state: &mut ProjectState, counts: &mut Counts) 
     }
     if !cycle.approved {
         let body = json!({"decision": "approve"});
-        let Ok(reply) = call(session, Method::POST, &format!("{path}/reviews"), Some(&body), &[("if-match", &if_match)]).await else {
+        let Ok(reply) = call(
+            session,
+            Method::POST,
+            &format!("{path}/reviews"),
+            Some(&body),
+            &[("if-match", &if_match)],
+        )
+        .await
+        else {
             return false;
         };
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
@@ -133,16 +175,38 @@ async fn step(session: &Session, state: &mut ProjectState, counts: &mut Counts) 
         return true;
     }
     let body = json!({"base_generation": cycle.base});
-    let Ok(reply) = call(session, Method::POST, &format!("{path}/publish"), Some(&body), &[("if-match", &if_match), ("idempotency-key", &cycle.publish_key)]).await else {
+    let Ok(reply) = call(
+        session,
+        Method::POST,
+        &format!("{path}/publish"),
+        Some(&body),
+        &[
+            ("if-match", &if_match),
+            ("idempotency-key", &cycle.publish_key),
+        ],
+    )
+    .await
+    else {
         counts.resent += 1;
         return false;
     };
-    assert_eq!(reply.status, StatusCode::CREATED, "a publish, first time or resent: {}", reply.body);
+    assert_eq!(
+        reply.status,
+        StatusCode::CREATED,
+        "a publish, first time or resent: {}",
+        reply.body
+    );
     if reply.replayed() {
         counts.replayed += 1;
     }
-    let generation = reply.body["data"]["generation"].as_i64().expect("a generation");
-    assert_eq!(generation, cycle.base + 1, "nobody else publishes in this project");
+    let generation = reply.body["data"]["generation"]
+        .as_i64()
+        .expect("a generation");
+    assert_eq!(
+        generation,
+        cycle.base + 1,
+        "nobody else publishes in this project"
+    );
     state.generation = generation;
     state.acknowledged.push((generation, path));
     state.cycle = None;
@@ -150,14 +214,22 @@ async fn step(session: &Session, state: &mut ProjectState, counts: &mut Counts) 
 }
 
 /// Publishes round-robin until `deadline`; a request cut off by the kill leaves its cycle to resume.
-async fn publish_until(session: &Session, states: &mut [ProjectState], counts: &mut Counts, deadline: Instant) {
+async fn publish_until(
+    session: &Session,
+    states: &mut [ProjectState],
+    counts: &mut Counts,
+    deadline: Instant,
+) {
     let mut turn = 0;
     while Instant::now() < deadline {
         let index = turn % states.len();
         turn += 1;
         let remaining = deadline.saturating_duration_since(Instant::now());
         let state = &mut states[index];
-        if tokio::time::timeout(remaining, step(session, state, counts)).await.is_err() {
+        if tokio::time::timeout(remaining, step(session, state, counts))
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -166,17 +238,29 @@ async fn publish_until(session: &Session, states: &mut [ProjectState], counts: &
 async fn finish_cycles(session: &Session, states: &mut [ProjectState], counts: &mut Counts) {
     for state in states.iter_mut() {
         while state.cycle.is_some() {
-            assert!(step(session, state, counts).await, "the last server keeps running");
+            assert!(
+                step(session, state, counts).await,
+                "the last server keeps running"
+            );
         }
     }
 }
 
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh; slow: kills and restarts the server repeatedly"]
-#[expect(clippy::too_many_lines, reason = "the loop and its checker, in the order they run")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the loop and its checker, in the order they run"
+)]
 async fn killing_the_server_and_worker_loses_and_doubles_nothing() {
-    let kills: u64 = std::env::var("COLOPHON_CRASH_LOOP_KILLS").ok().and_then(|v| v.parse().ok()).unwrap_or(12);
-    let seed: u64 = std::env::var("COLOPHON_CRASH_LOOP_SEED").ok().and_then(|v| v.parse().ok()).unwrap_or(2_400);
+    let kills: u64 = std::env::var("COLOPHON_CRASH_LOOP_KILLS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(12);
+    let seed: u64 = std::env::var("COLOPHON_CRASH_LOOP_SEED")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2_400);
     println!("crash loop: {kills} kills, seed {seed}");
     let mut rng = Seeded(seed);
     let receiver = Receiver::start(&[]).await;
@@ -188,7 +272,12 @@ async fn killing_the_server_and_worker_loses_and_doubles_nothing() {
     for _ in 0..2 {
         let id = project(&owner).await;
         destination(&owner, &id, &receiver.url).await;
-        states.push(ProjectState { id, generation: 0, cycle: None, acknowledged: Vec::new() });
+        states.push(ProjectState {
+            id,
+            generation: 0,
+            cycle: None,
+            acknowledged: Vec::new(),
+        });
     }
     let mut server = Some(server);
     for _ in 0..kills {
@@ -203,32 +292,72 @@ async fn killing_the_server_and_worker_loses_and_doubles_nothing() {
     // Let the worker drain: every project's latest release must be delivered.
     for state in &states {
         let job = finished_job(&owner, &state.id, state.generation, 30).await;
-        assert_eq!(job["status"], "succeeded", "the latest announcement of {}: {job}", state.id);
+        assert_eq!(
+            job["status"], "succeeded",
+            "the latest announcement of {}: {job}",
+            state.id
+        );
     }
 
-    let database = sqlx::PgPool::connect("postgres://colophon:colophon-dev@127.0.0.1:55432/colophon")
-        .await
-        .expect("the stack's database");
-    let seen = receiver.seen();
+    let database =
+        sqlx::PgPool::connect("postgres://colophon:colophon-dev@127.0.0.1:55432/colophon")
+            .await
+            .expect("the stack's database");
+    let announcements = receiver.seen();
     let mut published = 0;
     for state in &states {
         // Every acknowledged publish is a release at the generation the client was told, each
         // changeset once, generations 1..N.
-        let listed = call(&owner, Method::GET, &format!("{}/releases", base(&state.id)), None, &[]).await.expect("request");
+        let listed = call(
+            &owner,
+            Method::GET,
+            &format!("{}/releases", base(&state.id)),
+            None,
+            &[],
+        )
+        .await
+        .expect("request");
         let releases = listed.body["data"].as_array().cloned().expect("releases");
-        let generations: Vec<i64> = releases.iter().filter_map(|r| r["generation"].as_i64()).collect();
+        let generations: Vec<i64> = releases
+            .iter()
+            .filter_map(|r| r["generation"].as_i64())
+            .collect();
         let expected: Vec<i64> = (1..=state.generation).rev().collect();
-        assert_eq!(generations, expected, "{}: generations are 1..{}", state.id, state.generation);
-        assert_eq!(state.acknowledged.len(), generations.len(), "{}: every release was acknowledged once", state.id);
+        assert_eq!(
+            generations, expected,
+            "{}: generations are 1..{}",
+            state.id, state.generation
+        );
+        assert_eq!(
+            state.acknowledged.len(),
+            generations.len(),
+            "{}: every release was acknowledged once",
+            state.id
+        );
         for (generation, path) in &state.acknowledged {
-            let release = releases.iter().find(|r| r["generation"] == *generation).expect("acknowledged release exists");
+            let release = releases
+                .iter()
+                .find(|r| r["generation"] == *generation)
+                .expect("acknowledged release exists");
             let changeset = path.rsplit('/').next().expect("an id");
-            assert_eq!(release["changeset_id"], changeset, "{}: generation {generation} is the acknowledged changeset", state.id);
+            assert_eq!(
+                release["changeset_id"], changeset,
+                "{}: generation {generation} is the acknowledged changeset",
+                state.id
+            );
         }
-        let mut changesets: Vec<&str> = releases.iter().filter_map(|r| r["changeset_id"].as_str()).collect();
+        let mut changesets: Vec<&str> = releases
+            .iter()
+            .filter_map(|r| r["changeset_id"].as_str())
+            .collect();
         changesets.sort_unstable();
         changesets.dedup();
-        assert_eq!(changesets.len(), releases.len(), "{}: no changeset published twice", state.id);
+        assert_eq!(
+            changesets.len(),
+            releases.len(),
+            "{}: no changeset published twice",
+            state.id
+        );
 
         // Publication history never overlaps.
         let rows: Vec<(uuid::Uuid, i64, Option<i64>)> = sqlx::query_as(
@@ -238,47 +367,99 @@ async fn killing_the_server_and_worker_loses_and_doubles_nothing() {
         .fetch_all(&database)
         .await
         .expect("history");
-        let mut by_entry: std::collections::BTreeMap<uuid::Uuid, Vec<colophon_domain::release::Interval<()>>> = std::collections::BTreeMap::new();
+        let mut by_entry: std::collections::BTreeMap<
+            uuid::Uuid,
+            Vec<colophon_domain::release::Interval<()>>,
+        > = std::collections::BTreeMap::new();
         for (entry, from, to) in rows {
-            by_entry.entry(entry).or_default().push(colophon_domain::release::Interval { revision: (), from, to });
+            by_entry
+                .entry(entry)
+                .or_default()
+                .push(colophon_domain::release::Interval {
+                    revision: (),
+                    from,
+                    to,
+                });
         }
-        assert!(by_entry.values().all(|history| colophon_domain::release::well_formed(history)), "{}: overlapping history", state.id);
+        assert!(
+            by_entry
+                .values()
+                .all(|history| colophon_domain::release::well_formed(history)),
+            "{}: overlapping history",
+            state.id
+        );
 
         // The receiver never got an older release after a newer one, and got the latest.
         let prefix = format!("colophon:{}:", state.id);
-        let order: Vec<i64> = seen.iter().filter(|r| r.key.starts_with(&prefix)).filter_map(|r| r.generation.parse().ok()).collect();
-        assert!(order.windows(2).all(|pair| pair[0] <= pair[1]), "{}: announcements out of order: {order:?}", state.id);
-        assert_eq!(order.last().copied(), Some(state.generation), "{}: the latest release was announced", state.id);
+        let order: Vec<i64> = announcements
+            .iter()
+            .filter(|r| r.key.starts_with(&prefix))
+            .filter_map(|r| r.generation.parse().ok())
+            .collect();
+        assert!(
+            order.windows(2).all(|pair| pair[0] <= pair[1]),
+            "{}: announcements out of order: {order:?}",
+            state.id
+        );
+        assert_eq!(
+            order.last().copied(),
+            Some(state.generation),
+            "{}: the latest release was announced",
+            state.id
+        );
 
         // Every announcement finished delivered or superseded.
-        let jobs = call(&owner, Method::GET, &format!("{}/jobs", base(&state.id)), None, &[]).await.expect("request");
+        let jobs = call(
+            &owner,
+            Method::GET,
+            &format!("{}/jobs", base(&state.id)),
+            None,
+            &[],
+        )
+        .await
+        .expect("request");
         for job in jobs.body["data"].as_array().cloned().unwrap_or_default() {
-            assert!(matches!(job["status"].as_str(), Some("succeeded" | "superseded")), "{}: {job}", state.id);
+            assert!(
+                matches!(job["status"].as_str(), Some("succeeded" | "superseded")),
+                "{}: {job}",
+                state.id
+            );
         }
 
         // Delivery at generation g serves exactly g entries: one new entry per release.
-        for generation in [1, state.generation / 2, state.generation].into_iter().filter(|g| *g >= 1) {
+        for generation in [1, state.generation / 2, state.generation]
+            .into_iter()
+            .filter(|g| *g >= 1)
+        {
             let response = app()
-                .get(format!("{ORIGIN}/content/v1/{}/production/articles?generation={generation}&limit=100", state.id))
+                .get(format!(
+                    "{ORIGIN}/content/v1/{}/production/articles?generation={generation}&limit=100",
+                    state.id
+                ))
                 .send()
                 .await
                 .expect("request");
             let body: Value = response.json().await.expect("JSON");
-            let served = body["data"].as_array().map_or(0, Vec::len);
-            assert_eq!(i64::try_from(served).unwrap_or(-1), generation.min(100), "{}: entries at generation {generation}", state.id);
+            let count = body["data"].as_array().map_or(0, Vec::len);
+            assert_eq!(
+                i64::try_from(count).unwrap_or(-1),
+                generation.min(100),
+                "{}: entries at generation {generation}",
+                state.id
+            );
         }
         published += state.generation;
     }
-    let mut keys: Vec<&str> = seen.iter().map(|r| r.key.as_str()).collect();
-    let received = keys.len();
+    let mut keys: Vec<&str> = announcements.iter().map(|r| r.key.as_str()).collect();
+    let total = keys.len();
     keys.sort_unstable();
     keys.dedup();
     println!(
-        "crash loop: {} kills, {published} releases acknowledged and checked, {} publishes resent after a kill ({} replayed), {received} announcements received ({} repeats of a key)",
+        "crash loop: {} kills, {published} releases acknowledged and checked, {} publishes resent after a kill ({} replayed), {total} announcements received ({} repeats of a key)",
         counts.kills,
         counts.resent,
         counts.replayed,
-        received - keys.len()
+        total - keys.len()
     );
     database.close().await;
     drop(server);

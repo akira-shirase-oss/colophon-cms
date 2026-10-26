@@ -19,7 +19,11 @@ fn the_same_seed_gives_the_same_publishing_run() {
     let distinct: std::collections::BTreeSet<u64> = (1..=20)
         .map(|seed| run_publishing(seed, &config, PublishMutation::None).trace_hash)
         .collect();
-    assert_eq!(distinct.len(), 20, "different seeds explore different schedules");
+    assert_eq!(
+        distinct.len(),
+        20,
+        "different seeds explore different schedules"
+    );
 }
 
 #[test]
@@ -73,9 +77,16 @@ fn every_planted_publishing_bug_is_caught() {
     for mutation in PublishMutation::ALL {
         let caught = (1..=SWEEP).find_map(|seed| {
             let report = run_publishing(seed, &config, mutation);
-            report.violations.first().map(|violation| (seed, violation.invariant))
+            report
+                .violations
+                .first()
+                .map(|violation| (seed, violation.invariant))
         });
-        assert!(caught.is_some(), "{} was never caught in {SWEEP} seeds", mutation.name());
+        assert!(
+            caught.is_some(),
+            "{} was never caught in {SWEEP} seeds",
+            mutation.name()
+        );
         if let Some((seed, invariant)) = caught {
             println!("{}: caught by {invariant} at seed {seed}", mutation.name());
         }

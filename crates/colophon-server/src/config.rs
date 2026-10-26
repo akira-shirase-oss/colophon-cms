@@ -332,7 +332,8 @@ impl Config {
         }
         if worker_attempt >= worker_lease {
             env.problems.push(
-                "COLOPHON_WORKER_ATTEMPT_MS must be shorter than COLOPHON_WORKER_LEASE_MS".to_owned(),
+                "COLOPHON_WORKER_ATTEMPT_MS must be shorter than COLOPHON_WORKER_LEASE_MS"
+                    .to_owned(),
             );
         }
         if drain_delay >= shutdown_grace {

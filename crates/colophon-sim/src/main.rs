@@ -145,7 +145,10 @@ fn main() -> ExitCode {
 /// The publishing scenario: a sweep of seeds, stopping at the first that fails.
 fn publishing(args: &Args) -> ExitCode {
     let Some(mutation) = PublishMutation::parse(&args.mutation_name) else {
-        eprintln!("colophon-sim: unknown mutation {:?} for the publishing scenario", args.mutation_name);
+        eprintln!(
+            "colophon-sim: unknown mutation {:?} for the publishing scenario",
+            args.mutation_name
+        );
         return ExitCode::from(2);
     };
     let mut config = PublishConfig::default();
@@ -187,7 +190,7 @@ fn publishing(args: &Args) -> ExitCode {
         }
     }
     println!(
-        "{} seed(s) x {} steps held G, S2, S3, S4, O, S6, S7 and L (mutation: {}): {} releases, {} refused on a moved base, {} replayed, {} announcements received ({} repeats), {} worker crashes, {} reclaimed leases, {} superseded, {} late results refused",
+        "{} seed(s) x {} steps held G, S2, A, S3, S4, O, S6, S7 and L (mutation: {}): {} releases, {} refused on a moved base, {} replayed, {} announcements received ({} repeats), {} worker crashes, {} reclaimed leases, {} superseded, {} late results refused",
         args.seeds,
         config.steps,
         mutation.name(),

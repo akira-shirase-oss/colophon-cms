@@ -262,13 +262,24 @@ async fn one_announcement_is_in_flight_per_destination() {
     let both = jobs::claim(&db.app, "worker-b", Duration::from_secs(30), 10)
         .await
         .expect("claim");
-    let older = both.iter().find(|job| job.generation == 1).expect("release 1 again");
-    let newer = both.iter().find(|job| job.generation == 2).expect("release 2");
+    let older = both
+        .iter()
+        .find(|job| job.generation == 1)
+        .expect("release 1 again");
+    let newer = both
+        .iter()
+        .find(|job| job.generation == 2)
+        .expect("release 2");
     assert_eq!(
         jobs::prepare(&db.app, older).await.expect("prepare"),
         None,
         "superseded by release 2"
     );
-    assert!(jobs::prepare(&db.app, newer).await.expect("prepare").is_some());
+    assert!(
+        jobs::prepare(&db.app, newer)
+            .await
+            .expect("prepare")
+            .is_some()
+    );
     db.drop().await;
 }

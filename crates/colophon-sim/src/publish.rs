@@ -8,7 +8,9 @@
 //! Checked after every step:
 //!
 //! - **G**, two releases on one base generation never both commit;
-//! - **S2**, no logical release is applied twice (a retried publish replays its first answer);
+//! - **S2**, no logical release is applied twice;
+//! - **A**, a retried publish whose first attempt committed is answered with that release, never
+//!   refused as if another release had come first;
 //! - **S3**, generations go up by exactly one per committed release;
 //! - **S4**, an entry's publication intervals never overlap;
 //! - **O**, every committed release has an announcement for every destination (the outbox);
@@ -283,7 +285,11 @@ fn fnv1a(lines: &[String]) -> u64 {
 }
 
 /// Runs one publishing seed.
-pub fn run_publishing(seed: u64, config: &PublishConfig, mutation: PublishMutation) -> PublishReport {
+pub fn run_publishing(
+    seed: u64,
+    config: &PublishConfig,
+    mutation: PublishMutation,
+) -> PublishReport {
     let environments = (0..config.environments)
         .map(|_| Environment {
             generation: 0,
@@ -330,7 +336,10 @@ pub fn run_publishing(seed: u64, config: &PublishConfig, mutation: PublishMutati
     let drain = config.steps.saturating_mul(4).max(2_000);
     for step in config.steps..config.steps + drain {
         run.step = step;
-        if run.jobs.iter().all(|job| job.status.is_final()) && run.network.is_empty() && run.workers.iter().all(Option::is_none) {
+        if run.jobs.iter().all(|job| job.status.is_final())
+            && run.network.is_empty()
+            && run.workers.iter().all(Option::is_none)
+        {
             break;
         }
         run.tick();
@@ -346,12 +355,13 @@ pub fn run_publishing(seed: u64, config: &PublishConfig, mutation: PublishMutati
 }
 
 impl Run<'_> {
-    fn note(&mut self, line: String) {
-        self.trace.push(format!("{:>5} t={:>7} {line}", self.step, self.now_ms));
+    fn note(&mut self, line: &str) {
+        self.trace
+            .push(format!("{:>5} t={:>7} {line}", self.step, self.now_ms));
     }
 
     fn violation(&mut self, invariant: &'static str, detail: String) {
-        self.note(format!("VIOLATION {invariant}: {detail}"));
+        self.note(&format!("VIOLATION {invariant}: {detail}"));
         self.violations.push(Violation {
             invariant,
             step: self.step,
@@ -394,73 +404,117 @@ impl Run<'_> {
             self.publishers[index].seen = current;
             self.keys_counter += 1;
             let count = 1 + self.rng.below(2);
-            let entries = (0..count)
-                .map(|_| u64::try_from(self.rng.below(usize::try_from(self.config.entries).unwrap_or(1))).unwrap_or(0))
+            // Distinct entries, as the API requires of a changeset.
+            let entries: Vec<u64> = (0..count)
+                .map(|_| {
+                    u64::try_from(
+                        self.rng
+                            .below(usize::try_from(self.config.entries).unwrap_or(1)),
+                    )
+                    .unwrap_or(0)
+                })
+                .collect::<BTreeSet<u64>>()
+                .into_iter()
                 .collect();
             (self.keys_counter, seen, entries)
         };
         if self.chance(self.config.lose_request) {
             self.stats.lost_requests += 1;
-            self.note(format!("p{index} publish key {key} on {base}: request lost"));
+            self.note(&format!(
+                "p{index} publish key {key} on {base}: request lost"
+            ));
             self.publishers[index].retry = Some((key, base, entries));
             return;
         }
         let answer = self.commit(environment, index, key, base, &entries);
+        if answer.is_err()
+            && let Some(&committed) = self.environments[environment].keys.get(&key)
+        {
+            let detail = format!(
+                "publish key {key} committed generation {committed}, but its retry was refused"
+            );
+            self.violation("A", detail);
+        }
         if self.chance(self.config.lose_answer) {
             self.stats.lost_answers += 1;
-            self.note(format!("p{index} publish key {key}: answer lost ({answer:?})"));
+            self.note(&format!(
+                "p{index} publish key {key}: answer lost ({answer:?})"
+            ));
             self.publishers[index].retry = Some((key, base, entries));
         }
     }
 
     /// The release transaction: replay, conditional bump, history, outbox, supersession.
-    fn commit(&mut self, environment: usize, publisher: usize, key: u64, base: i64, entries: &[u64]) -> Result<i64, i64> {
+    fn commit(
+        &mut self,
+        environment: usize,
+        publisher: usize,
+        key: u64,
+        base: i64,
+        entries: &[u64],
+    ) -> Result<i64, i64> {
         if self.mutation != PublishMutation::PublishForgetsKey
             && let Some(&generation) = self.environments[environment].keys.get(&key)
         {
             self.stats.replayed += 1;
-            self.note(format!("p{publisher} publish key {key}: replayed generation {generation}"));
+            self.note(&format!(
+                "p{publisher} publish key {key}: replayed generation {generation}"
+            ));
             return Ok(generation);
         }
         let current = self.environments[environment].generation;
         let generation = if self.mutation == PublishMutation::IgnoreBase {
             current + 1
         } else {
-            match release::next_generation(base, current) {
-                Ok(generation) => generation,
-                Err(_) => {
-                    self.stats.moved += 1;
-                    self.note(format!("p{publisher} publish key {key} on {base}: generation moved to {current}"));
-                    return Err(current);
-                }
-            }
+            let Ok(generation) = release::next_generation(base, current) else {
+                self.stats.moved += 1;
+                self.note(&format!(
+                    "p{publisher} publish key {key} on {base}: generation moved to {current}"
+                ));
+                return Err(current);
+            };
+            generation
         };
         let env = &mut self.environments[environment];
         env.generation = generation;
-        env.releases.push(Release { generation, base, key });
+        env.releases.push(Release {
+            generation,
+            base,
+            key,
+        });
         env.keys.insert(key, generation);
         for &entry in entries {
             let revision = env.next_revision;
             env.next_revision += 1;
             let history = env.history.entry(entry).or_default();
             if self.mutation == PublishMutation::KeepOpenInterval {
-                history.push(Interval { revision, from: generation, to: None });
+                history.push(Interval {
+                    revision,
+                    from: generation,
+                    to: None,
+                });
             } else {
                 *history = release::apply(history, &revision, generation);
             }
         }
         self.stats.commits += 1;
-        self.note(format!("p{publisher} publish key {key} on {base}: committed generation {generation} ({} entries)", entries.len()));
+        self.note(&format!("p{publisher} publish key {key} on {base}: committed generation {generation} ({} entries)", entries.len()));
         // Waiting announcements of older releases are obsolete now.
         for job in &mut self.jobs {
-            if job.environment == environment && job.generation < generation && matches!(job.status, Status::Pending | Status::Retrying) {
+            if job.environment == environment
+                && job.generation < generation
+                && matches!(job.status, Status::Pending | Status::Retrying)
+            {
                 job.status = Status::Superseded;
                 self.stats.superseded += 1;
             }
         }
-        let lost_outbox = self.mutation == PublishMutation::OutboxAfterCommit && self.rng.chance(300);
+        let lost_outbox =
+            self.mutation == PublishMutation::OutboxAfterCommit && self.rng.chance(300);
         if lost_outbox {
-            self.note(format!("generation {generation}: crashed before queueing its announcements"));
+            self.note(&format!(
+                "generation {generation}: crashed before queueing its announcements"
+            ));
         } else {
             for destination in 0..self.config.destinations {
                 self.jobs.push(Job {
@@ -487,7 +541,7 @@ impl Run<'_> {
         if self.chance(self.config.crash) {
             if self.workers[worker].take().is_some() {
                 self.stats.crashes += 1;
-                self.note(format!("w{worker} crashed holding a job"));
+                self.note(&format!("w{worker} crashed holding a job"));
             }
             return;
         }
@@ -515,7 +569,8 @@ impl Run<'_> {
             };
             ready
                 && job.deadline_ms > now
-                && (self.mutation == PublishMutation::ParallelSends || !busy.contains(&(job.environment, job.destination)))
+                && (self.mutation == PublishMutation::ParallelSends
+                    || !busy.contains(&(job.environment, job.destination)))
         });
         let Some(index) = due else { return };
         let job = &mut self.jobs[index];
@@ -527,8 +582,11 @@ impl Run<'_> {
         job.lease_generation += 1;
         job.attempts += 1;
         job.expires_ms = now + self.config.lease_ms;
-        let (generation, destination, lease_generation) = (job.generation, job.destination, job.lease_generation);
-        self.note(format!("w{worker} claimed g{generation}->d{destination} (lease {lease_generation})"));
+        let (generation, destination, lease_generation) =
+            (job.generation, job.destination, job.lease_generation);
+        self.note(&format!(
+            "w{worker} claimed g{generation}->d{destination} (lease {lease_generation})"
+        ));
         self.workers[worker] = Some(Holding {
             job: index,
             lease_generation,
@@ -558,7 +616,10 @@ impl Run<'_> {
                 // way: a later holder must not race this one.
                 if self.now_ms + self.config.attempt_ms > self.jobs[index].expires_ms {
                     self.stats.abandoned += 1;
-                    self.note(format!("w{worker} gave up g{}: too close to its lease's end", self.jobs[index].generation));
+                    self.note(&format!(
+                        "w{worker} gave up g{}: too close to its lease's end",
+                        self.jobs[index].generation
+                    ));
                     return;
                 }
                 let outcome = self.send(index);
@@ -575,11 +636,20 @@ impl Run<'_> {
             Phase::Record { outcome } => {
                 let job = &self.jobs[index];
                 let entropy = self.rng.next_u64();
-                let next = job::after_attempt(&outcome, job.attempts, self.now_ms, job.deadline_ms, entropy);
+                let next = job::after_attempt(
+                    &outcome,
+                    job.attempts,
+                    self.now_ms,
+                    job.deadline_ms,
+                    entropy,
+                );
                 let (status, retry_at) = match next {
                     Next::Succeeded => (Status::Succeeded, None),
                     Next::Failed => (Status::Failed, None),
-                    Next::Retry { after_ms } => (Status::Retrying, Some(self.now_ms + i64::try_from(after_ms).unwrap_or(i64::MAX))),
+                    Next::Retry { after_ms } => (
+                        Status::Retrying,
+                        Some(self.now_ms + i64::try_from(after_ms).unwrap_or(i64::MAX)),
+                    ),
                 };
                 self.record(worker, &holding, status, retry_at);
                 return;
@@ -593,12 +663,23 @@ impl Run<'_> {
         let job = self.jobs[index].clone();
         if self.chance(self.config.lose_request) {
             self.stats.lost_requests += 1;
-            return Outcome::Retryable { reason: "timed out".to_owned(), retry_after_ms: None };
+            return Outcome::Retryable {
+                reason: "timed out".to_owned(),
+                retry_after_ms: None,
+            };
         }
         let refused = self.chance(self.config.refuse);
-        let copies = if self.chance(self.config.duplicate) { 2 } else { 1 };
+        let copies = if self.chance(self.config.duplicate) {
+            2
+        } else {
+            1
+        };
         for _ in 0..copies {
-            let delay = i64::try_from(self.rng.below(usize::try_from(self.config.attempt_ms).unwrap_or(1))).unwrap_or(0);
+            let delay = i64::try_from(
+                self.rng
+                    .below(usize::try_from(self.config.attempt_ms).unwrap_or(1)),
+            )
+            .unwrap_or(0);
             self.order += 1;
             self.network.push(InFlight {
                 arrives_ms: self.now_ms + delay,
@@ -616,7 +697,10 @@ impl Run<'_> {
         }
         if self.chance(self.config.lose_answer) {
             self.stats.lost_answers += 1;
-            return Outcome::Retryable { reason: "timed out".to_owned(), retry_after_ms: None };
+            return Outcome::Retryable {
+                reason: "timed out".to_owned(),
+                retry_after_ms: None,
+            };
         }
         job::classify(204, None)
     }
@@ -625,14 +709,23 @@ impl Run<'_> {
     fn record(&mut self, worker: usize, holding: &Holding, status: Status, retry_at: Option<i64>) {
         let me = u64::try_from(worker).unwrap_or(0);
         let job = &self.jobs[holding.job];
-        let current = job.status == Status::Running && job.holder == Some(me) && job.lease_generation == holding.lease_generation;
+        let current = job.status == Status::Running
+            && job.holder == Some(me)
+            && job.lease_generation == holding.lease_generation;
         if !current && self.mutation != PublishMutation::StaleLeaseFinalizes {
             self.stats.late_refused += 1;
-            self.note(format!("w{worker} late result for g{} refused", job.generation));
+            self.note(&format!(
+                "w{worker} late result for g{} refused",
+                job.generation
+            ));
             return;
         }
         if !current {
-            let detail = format!("w{worker} recorded g{} {} without holding its lease", job.generation, status.as_str());
+            let detail = format!(
+                "w{worker} recorded g{} {} without holding its lease",
+                job.generation,
+                status.as_str()
+            );
             self.violation("S7", detail);
         }
         let job = &mut self.jobs[holding.job];
@@ -645,7 +738,10 @@ impl Run<'_> {
             self.stats.superseded += 1;
         }
         let (generation, destination) = (job.generation, job.destination);
-        self.note(format!("w{worker} recorded g{generation}->d{destination} {}", status.as_str()));
+        self.note(&format!(
+            "w{worker} recorded g{generation}->d{destination} {}",
+            status.as_str()
+        ));
     }
 
     // ---- the receiver ----
@@ -666,7 +762,10 @@ impl Run<'_> {
             if message.refused {
                 continue;
             }
-            let seen = self.received.entry((message.environment, message.destination)).or_default();
+            let seen = self
+                .received
+                .entry((message.environment, message.destination))
+                .or_default();
             let newest = seen.iter().map(|(generation, _)| *generation).max();
             let repeat = seen.iter().any(|(_, key)| *key == message.key);
             seen.push((message.generation, message.key.clone()));
@@ -674,11 +773,19 @@ impl Run<'_> {
             if repeat {
                 self.stats.duplicates += 1;
             }
-            self.note(format!("d{} received g{} ({})", message.destination, message.generation, if repeat { "repeat" } else { "new" }));
+            self.note(&format!(
+                "d{} received g{} ({})",
+                message.destination,
+                message.generation,
+                if repeat { "repeat" } else { "new" }
+            ));
             if let Some(newest) = newest
                 && newest > message.generation
             {
-                let detail = format!("destination {} of environment {} received g{} after g{newest}", message.destination, message.environment, message.generation);
+                let detail = format!(
+                    "destination {} of environment {} received g{} after g{newest}",
+                    message.destination, message.environment, message.generation
+                );
                 self.violation("S6", detail);
             }
         }
@@ -697,20 +804,41 @@ impl Run<'_> {
             let mut bases: Vec<i64> = env.releases.iter().map(|release| release.base).collect();
             bases.sort_unstable();
             if bases.windows(2).any(|pair| pair[0] == pair[1]) {
-                found.push(("G", format!("environment {index}: two releases committed on one base")));
+                found.push((
+                    "G",
+                    format!("environment {index}: two releases committed on one base"),
+                ));
             }
             let mut keys: Vec<u64> = env.releases.iter().map(|release| release.key).collect();
             keys.sort_unstable();
             if keys.windows(2).any(|pair| pair[0] == pair[1]) {
-                found.push(("S2", format!("environment {index}: a publish was applied twice")));
+                found.push((
+                    "S2",
+                    format!("environment {index}: a publish was applied twice"),
+                ));
             }
-            let contiguous = env.releases.iter().enumerate().all(|(n, release)| release.generation == i64::try_from(n).unwrap_or(-1) + 1);
+            let contiguous = env
+                .releases
+                .iter()
+                .enumerate()
+                .all(|(n, release)| release.generation == i64::try_from(n).unwrap_or(-1) + 1);
             if !contiguous || env.generation != i64::try_from(env.releases.len()).unwrap_or(-1) {
-                found.push(("S3", format!("environment {index}: generations aren't 1..{}", env.releases.len())));
+                found.push((
+                    "S3",
+                    format!(
+                        "environment {index}: generations aren't 1..{}",
+                        env.releases.len()
+                    ),
+                ));
             }
             for (entry, history) in &env.history {
                 if !release::well_formed(history) {
-                    found.push(("S4", format!("environment {index}, entry {entry}: overlapping publication intervals")));
+                    found.push((
+                        "S4",
+                        format!(
+                            "environment {index}, entry {entry}: overlapping publication intervals"
+                        ),
+                    ));
                 }
             }
             for release in &env.releases {
@@ -722,7 +850,11 @@ impl Run<'_> {
             }
         }
         for (invariant, detail) in found {
-            if !self.violations.iter().any(|seen| seen.invariant == invariant && seen.detail == detail) {
+            if !self
+                .violations
+                .iter()
+                .any(|seen| seen.invariant == invariant && seen.detail == detail)
+            {
                 self.violation(invariant, detail);
             }
         }
@@ -733,10 +865,24 @@ impl Run<'_> {
             .jobs
             .iter()
             .filter(|job| !job.status.is_final())
-            .map(|job| format!("e{} g{} d{} {}", job.environment, job.generation, job.destination, job.status.as_str()))
+            .map(|job| {
+                format!(
+                    "e{} g{} d{} {}",
+                    job.environment,
+                    job.generation,
+                    job.destination,
+                    job.status.as_str()
+                )
+            })
             .collect();
         if !unfinished.is_empty() {
-            self.violation("L", format!("jobs still unfinished after the drain: {}", unfinished.join(", ")));
+            self.violation(
+                "L",
+                format!(
+                    "jobs still unfinished after the drain: {}",
+                    unfinished.join(", ")
+                ),
+            );
         }
         let mut missing = Vec::new();
         for (index, _) in self.environments.iter().enumerate() {
@@ -748,14 +894,20 @@ impl Run<'_> {
                     .max_by_key(|job| job.generation);
                 if let Some(job) = latest
                     && job.status == Status::Succeeded
-                    && !self.received.get(&(index, destination)).is_some_and(|seen| seen.iter().any(|(_, key)| *key == job.key))
+                    && !self
+                        .received
+                        .get(&(index, destination))
+                        .is_some_and(|seen| seen.iter().any(|(_, key)| *key == job.key))
                 {
                     missing.push(format!("e{index} d{destination} g{}", job.generation));
                 }
             }
         }
         if !missing.is_empty() {
-            self.violation("L", format!("succeeded but never received: {}", missing.join(", ")));
+            self.violation(
+                "L",
+                format!("succeeded but never received: {}", missing.join(", ")),
+            );
         }
     }
 }
