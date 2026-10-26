@@ -140,6 +140,8 @@ Internal job terminology stays behind a technical detail drawer for developers.
   and reload; F04 in two browsers, keeping mine and using theirs; offline edits saved when the network returns; edits
   restored after an immediate reload; a save whose answer is dropped is retried with the same key and replayed; kept
   copies expire; axe finds nothing on the home page (signed out and in), the editor or the conflict screen.
+- Since step 1.4: a save that committed just before a reload, with someone else's save on top, is resent with its key
+  on reopening and replayed, with no conflict and no second copy (the case the simulator found, D-039).
 - Automated accessibility checks on every screen.
 - Budgets for bundle size, startup on a mobile network profile, and input latency. These are recorded separately from
   backend numbers (spec §28).
