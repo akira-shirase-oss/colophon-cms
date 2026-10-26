@@ -1,30 +1,8 @@
 // The Studio's editor against a real server: autosave, the conflict screen when two people
 // edit one article (F04), going offline, and edits kept on the device across a reload.
 
-import AxeBuilder from '@axe-core/playwright';
 import { type Browser, expect, type Page, test } from '@playwright/test';
-
-async function signIn(page: Page) {
-	await page.goto('/studio/');
-	await page.getByTestId('sign-in').click();
-	await page.locator('#username').fill('dev-editor');
-	await page.locator('#password').fill('colophon-dev');
-	await page.locator('#kc-login').click();
-	await expect(page.getByTestId('signed-in')).toBeVisible();
-}
-
-/** A fresh project, created through the API as the signed-in page; its id. */
-async function newProject(page: Page): Promise<string> {
-	return page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
-		const response = await fetch('/api/v1/projects', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-			body: JSON.stringify({ slug, name: 'Studio test' })
-		});
-		return ((await response.json()) as { data: { id: string } }).data.id;
-	}, `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`);
-}
+import { newProject, signIn, violations } from './helpers.ts';
 
 /** Creates an article through the Studio; returns the editor's path. */
 async function newArticle(page: Page, project: string, title: string): Promise<string> {
@@ -42,14 +20,6 @@ async function typeInBody(page: Page, text: string) {
 }
 
 const status = (page: Page) => page.getByTestId('save-status');
-
-/** Accessibility problems on the page, one line per rule and element, so a failure says what. */
-async function violations(page: Page): Promise<string[]> {
-	const results = await new AxeBuilder({ page }).analyze();
-	return results.violations.flatMap((violation) =>
-		violation.nodes.map((node) => `${violation.id}: ${node.target.join(' ')} (${node.failureSummary ?? ''})`)
-	);
-}
 
 async function editor(browser: Browser): Promise<Page> {
 	const page = await (await browser.newContext()).newPage();

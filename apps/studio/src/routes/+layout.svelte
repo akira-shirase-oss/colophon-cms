@@ -33,7 +33,7 @@
 			<img src={mark} alt="" width="22" height="24" class="mark" />
 			<span>Colophon Studio</span>
 		</a>
-		<span class="tag">step 1.3</span>
+		<span class="tag">step 1.7</span>
 	{/snippet}
 	{#snippet trailing()}
 		<AppearanceMenu />

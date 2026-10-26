@@ -9,7 +9,7 @@ export interface Project {
 	id: string;
 	slug: string;
 	name: string;
-	role: string;
+	role: Role;
 }
 
 export interface Me {
@@ -234,6 +234,84 @@ export async function deviceLogin(code: string): Promise<DeviceLogin> {
 /** Lets the terminal showing `code` sign in as the current person. */
 export async function approveDevice(code: string): Promise<void> {
 	await send('POST', '/auth/device/approve', { user_code: code });
+}
+
+/** What a member may do in a project (D-042): owners everything, developers all but members,
+ *  editors and publishers content. */
+export type Role = 'owner' | 'developer' | 'editor' | 'publisher';
+export const ROLES: readonly Role[] = ['owner', 'developer', 'editor', 'publisher'];
+
+/** What each role may do, in a few words, for the members and invitation pages. */
+export const ROLE_SUMMARY: Record<Role, string> = {
+	owner: 'everything, including who belongs',
+	developer: 'content and content types',
+	editor: 'content',
+	publisher: 'content (publishing comes later)'
+};
+
+export interface Member {
+	identity_id: string;
+	display_name: string | null;
+	role: Role;
+	joined_at: string;
+}
+
+/** A pending invitation; `link` only in the answer that made it, because it carries the token. */
+export interface Invitation {
+	id: string;
+	role: Role;
+	label: string;
+	created_at: string;
+	expires_at: string;
+	link?: string;
+}
+
+/** What an invitation offers, as the person holding its link sees it. */
+export interface Offer {
+	project_id: string;
+	project_name: string;
+	role: Role;
+	invited_by: string | null;
+	expires_at: string;
+}
+
+const members = (project: string) => `/api/v1/projects/${project}/members`;
+const invitations = (project: string) => `/api/v1/projects/${project}/invitations`;
+
+export async function listMembers(project: string): Promise<Member[]> {
+	return ((await (await send('GET', members(project))).json()) as { data: Member[] }).data;
+}
+
+/** Owners only; refused when it would leave the project without an owner. */
+export async function changeRole(project: string, identity: string, role: Role): Promise<void> {
+	await send('PUT', `${members(project)}/${identity}`, { role });
+}
+
+/** An owner removing someone, or anyone removing themselves (leaving). */
+export async function removeMember(project: string, identity: string): Promise<void> {
+	await send('DELETE', `${members(project)}/${identity}`);
+}
+
+export async function listInvitations(project: string): Promise<Invitation[]> {
+	return ((await (await send('GET', invitations(project))).json()) as { data: Invitation[] }).data;
+}
+
+export async function createInvitation(project: string, role: Role, label: string): Promise<Invitation> {
+	return ((await (await send('POST', invitations(project), { role, label })).json()) as { data: Invitation }).data;
+}
+
+export async function revokeInvitation(project: string, invitation: string): Promise<void> {
+	await send('DELETE', `${invitations(project)}/${invitation}`);
+}
+
+/** The token travels in a body, never in a URL the server would see or log. */
+export async function lookupInvitation(token: string): Promise<Offer> {
+	return ((await (await send('POST', '/api/v1/invitations/lookup', { token })).json()) as { data: Offer }).data;
+}
+
+export async function acceptInvitation(token: string): Promise<{ project_id: string; role: Role }> {
+	return ((await (await send('POST', '/api/v1/invitations/accept', { token })).json()) as { data: { project_id: string; role: Role } })
+		.data;
 }
 
 /** A fresh idempotency key: 32 hex characters. */
