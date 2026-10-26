@@ -106,13 +106,11 @@ fn if_match(headers: &HeaderMap) -> Result<i32, ApiError> {
 }
 
 fn may_change(tx: &ProjectTransaction) -> Result<(), ApiError> {
-    if matches!(tx.role.as_str(), "owner" | "developer") {
-        Ok(())
-    } else {
-        Err(ApiError::Forbidden(
-            "only a project's owners and developers can change its content types",
-        ))
-    }
+    crate::members::require(
+        &tx.role,
+        colophon_domain::policy::Action::ChangeContentTypes,
+        "only a project's owners and developers can change its content types",
+    )
 }
 
 fn respond(status: StatusCode, body: String, version: i32, replayed: bool) -> Response {

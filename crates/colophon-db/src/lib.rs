@@ -10,6 +10,7 @@ pub mod content_types;
 pub mod entries;
 pub mod idempotency;
 pub mod identity;
+pub mod members;
 pub mod projects;
 pub mod scope;
 

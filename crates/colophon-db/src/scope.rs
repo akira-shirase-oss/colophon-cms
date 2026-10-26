@@ -58,15 +58,34 @@ impl ProjectTransaction {
     }
 }
 
+/// A transaction inside a project the caller belongs to, without an environment: for
+/// project-level work such as members. The only way to get one is [`begin_as_member`].
+pub struct MemberTransaction {
+    /// The transaction, with both `app.identity_id` and `app.project_id` set.
+    pub transaction: Transaction<'static, Postgres>,
+    /// The signed-in identity.
+    pub identity: Uuid,
+    /// The project.
+    pub project: Uuid,
+    /// The identity's role in the project.
+    pub role: String,
+}
+
+impl MemberTransaction {
+    /// Commits.
+    pub async fn commit(self) -> Result<(), DbError> {
+        self.transaction.commit().await.map_err(DbError::from_query)
+    }
+}
+
 /// Begins a transaction as `identity`, checks that it is a member of `project`, and only then
-/// enters the project's context and resolves the environment slug. `None` if either check fails:
-/// to the caller, a project they aren't in and one that doesn't exist look the same (A6).
-pub async fn begin_in_project(
+/// enters the project's context. `None` if it isn't: to the caller, a project they aren't in and
+/// one that doesn't exist look the same (A6).
+pub async fn begin_as_member(
     pool: &PgPool,
     identity: Uuid,
     project: Uuid,
-    environment: &str,
-) -> Result<Option<ProjectTransaction>, DbError> {
+) -> Result<Option<MemberTransaction>, DbError> {
     let mut transaction = begin(
         pool,
         Scope {
@@ -92,19 +111,37 @@ pub async fn begin_in_project(
     .fetch_one(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
+    Ok(Some(MemberTransaction {
+        transaction,
+        identity,
+        project,
+        role,
+    }))
+}
+
+/// [`begin_as_member`], then resolves the environment slug. `None` if either check fails.
+pub async fn begin_in_project(
+    pool: &PgPool,
+    identity: Uuid,
+    project: Uuid,
+    environment: &str,
+) -> Result<Option<ProjectTransaction>, DbError> {
+    let Some(mut member) = begin_as_member(pool, identity, project).await? else {
+        return Ok(None);
+    };
     let environment = sqlx::query_scalar!(
         "SELECT id FROM environments WHERE project_id = $1 AND slug = $2",
         project,
         environment
     )
-    .fetch_optional(&mut *transaction)
+    .fetch_optional(&mut *member.transaction)
     .await
     .map_err(DbError::from_query)?;
     Ok(environment.map(|environment| ProjectTransaction {
-        transaction,
+        transaction: member.transaction,
         identity,
         project,
         environment,
-        role,
+        role: member.role,
     }))
 }
