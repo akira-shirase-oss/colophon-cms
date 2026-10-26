@@ -31,7 +31,9 @@
 > deterministic simulator runs thousands of seeded schedules of colliding editors, lost answers and crashes, catches
 > every planted bug, agrees with PostgreSQL save for save, and found a real double-save case in the Studio (fixed).
 > Step 1.5 is done: content types you define (text, rich text, numbers, booleans, choices, dates), changed only in
-> ways that keep every stored entry valid, and edited in the Studio field by field.
+> ways that keep every stored entry valid, and edited in the Studio field by field. Step 1.6 is done: the `colophon`
+> command line signs in through a code you approve in the Studio, and creates and lists the same records the Studio
+> edits, with the CLI contract's exit codes.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
@@ -176,6 +178,7 @@ scripts/check.sh         # everything CI runs: fmt, clippy -D warnings, tests, d
 scripts/frontend.sh      # type checks, the editor's unit tests, and the Studio in Chromium
 scripts/testbed.sh       # the testbed's Playwright suite (or --dev to explore it by hand)
 scripts/studio.sh        # the Studio against the real server: autosave, conflicts, offline, recovery
+cargo run -p colophon-cli -- login --server http://localhost:58000   # then approve the code in the Studio
 npm run dev -w @colophon/studio   # the editor spike on http://127.0.0.1:58200
 scripts/load.sh health throughput      # 1,000,000 requests against a release build; result in perf/results/
 scripts/load.sh rich-text steady       # validation at 20,000 requests a second for a minute

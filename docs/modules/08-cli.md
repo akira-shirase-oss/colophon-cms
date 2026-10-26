@@ -69,6 +69,12 @@ colophon export --env production --out export-directory
 ```
 
 - `content get --generation` and `release history` are Colophon additions for time travel.
+- Built in step 1.6 (D-041): `colophon login [--server] [--profile] [--name]` (device sign-in approved in the Studio;
+  credentials in `credentials.json`, mode 0600, under `COLOPHON_CONFIG_DIR`, `XDG_CONFIG_HOME/colophon` or
+  `~/.config/colophon`), `colophon logout` (revokes the token), `colophon whoami`, `colophon content create
+  COLLECTION --project ID|SLUG (--data JSON | --file PATH) [--idempotency-key KEY]` and `colophon content list
+  COLLECTION --project … [--limit N]`. `--profile` holds the server; `--project` stands in for profile defaults until
+  profiles carry a project.
 - `module enable` from spec §11 is dropped, because v0.1 has no optional modules.
 - `colophon dev` may orchestrate local dependencies but must never discover or use production credentials silently.
 
@@ -143,10 +149,12 @@ colophon export --env production --out export-directory
 
 ## Build order
 
-1. **P1:** `login` (development identity), `content create`, `content list`, `--json`, exit codes.
+1. **P1:** `login` (a device sign-in approved in the Studio), `whoami`, `logout`, `content create`, `content list`,
+   `--json`, exit codes (step 1.6, done).
 2. **P2:** `release validate|publish|status`, `jobs inspect`.
 3. **P3:** `doctor`, `integration test`.
-4. **P5:** device login, `--jsonl`, `content import`, `export`, `content get --generation`, `release history`.
+4. **P5:** scoped machine credentials, `--jsonl`, `content import`, `export`, `content get --generation`,
+   `release history`.
 5. **P6:** `init`, `migrate plan|apply`, `admin`.
 
 ## Open decisions

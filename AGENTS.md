@@ -13,7 +13,10 @@ conflict screen (`apps/studio/tests/server/`, `scripts/studio.sh`, `perf/k6/stud
 done: `crates/colophon-sim`, a deterministic simulator with mutation checks and a differential test against Postgres
 (D-039); replay a failing seed with `cargo run -p colophon-sim -- --seed N --trace`. Step 1.5 is done: content
 types (`colophon_domain::schema`, migration 0003, `{P}/content-types`, the Studio's type-driven editor,
-`perf/k6/content-types.js`; D-040). Next is step 1.6, the CLI. See `docs/ROADMAP.md`.
+`perf/k6/content-types.js`; D-040). Step 1.6 is done: `colophon login`/`logout`/`whoami`/`content create`/
+`content list`, device sign-in approved at `/studio/device`, bearer tokens on every route (migration 0004,
+`crates/colophon-server/tests/cli.rs`, `perf/k6/cli.js`; D-041). Next is step 1.7: roles, invitations and the owner
+bootstrap. See `docs/ROADMAP.md`.
 
 ## Read first
 

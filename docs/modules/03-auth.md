@@ -95,6 +95,9 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - The invitee sees the project name, role and capabilities before accepting.
 
 ### Machine credentials (P5)
+- Built early, for people (step 1.6, D-041): **personal access tokens for the CLI**, issued by a device sign-in that a
+  signed-in person approves at `/studio/device`. 30 days, hashed, revocable, acting with the person's memberships;
+  `Authorization: Bearer` is accepted on every route. Scoped machine credentials for scripts and agents remain P5.
 - Scoped to project, environment, collections and actions.
 - Expiring, with quotas, stored hashed and compared in constant time, as session tokens are.
 - The CLI signs in through a browser or device-authorization flow.
