@@ -63,14 +63,16 @@ colliding slugs and IDs; the spec's first slice works end to end (spec §37).
 (done: entries, revisions, the expected-revision save, idempotency, F01 and F02; D-034 to D-036) · 1.3 conflicts
 (done: the Studio's editor, autosave and conflict screen, F04 end to end; D-037, D-038) · 1.4 the first simulator run (done: D-039; it found a double-save case in the Studio, now
 fixed) · 1.5 content types you define (done: D-040; `articles` is now an ordinary type) · 1.6 the CLI signs in
-and creates the same record as the Studio (done: D-041) · 1.7 roles, invitations and the owner bootstrap.
+and creates the same record as the Studio (done: D-041) · 1.7 roles and invitations (done: D-042; one policy
+table, members, single-use invitation links) · 1.8 the owner bootstrap.
 
-**Proof gate, re-checked after 1.6:** F01 and F02 pass against the real binary (`faults.rs`) and in the simulator;
+**Proof gate, re-checked after 1.7:** F01 and F02 pass against the real binary (`faults.rs`) and in the simulator;
 F04 passes in two browsers, in the database and in the simulator; a second project is denied by ID on every route; the
 spec's first slice works end to end (the Studio saves a validated draft, the CLI creates the same record, a conflict
-returns safely, another project is denied). Two things stand between this and "P1 done": entry slugs don't exist yet,
-so the gate's "colliding slugs" can't be tested (slugs arrive with publishing routes in P2/P3, and that check moves with
-them), and the P1 list's owner bootstrap, roles and invitations are step 1.7.
+returns safely, another project is denied); roles are enforced by one policy table, and invitations work once, end to
+end, in two browsers. Two things stand between this and "P1 done": entry slugs don't exist yet, so the gate's
+"colliding slugs" can't be tested (slugs arrive with publishing routes in P2/P3, and that check moves with them), and
+the P1 list's owner bootstrap is step 1.8.
 
 ## P2: Publish exactly once (≈ spec M2)
 

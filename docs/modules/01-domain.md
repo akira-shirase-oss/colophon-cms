@@ -51,6 +51,9 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - `Scope { org, project, environment }` travels with every command. A user-supplied ID never establishes authority on
   its own (spec §08).
 - `Actor`: a human user or an agent service account, with the request ID used for attribution and audit.
+- Built in step 1.7 (D-042): `colophon_domain::policy`, with `Role` (owner, developer, editor, publisher), `Action`
+  (read, write content, change content types, manage members) and `allows(role, action)`, the one table every
+  handler asks.
 
 ### Schema model (spec §07)
 - Collections with versioned definitions: field ID, type, validation, references, visibility (public or private), and
@@ -200,7 +203,7 @@ Port rules (rust-mastery chapter 10):
 
 1. **P0:** IDs, scopes, schema field types, the rich-text validator, error types.
 2. **P1:** entries, revisions and articles (step 1.2, done); the save rule in the simulator (1.4, done); content
-   types (1.5, done); slugs and locales.
+   types (1.5, done); the role policy (1.7, done); slugs and locales.
 3. **P2:** changesets, reviews, releases, publication history, job states.
 4. **P3:** delivery states, evidence, unpublish.
 5. **P4:** rollback, release-history queries, scheduling.

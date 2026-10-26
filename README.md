@@ -33,7 +33,9 @@
 > Step 1.5 is done: content types you define (text, rich text, numbers, booleans, choices, dates), changed only in
 > ways that keep every stored entry valid, and edited in the Studio field by field. Step 1.6 is done: the `colophon`
 > command line signs in through a code you approve in the Studio, and creates and lists the same records the Studio
-> edits, with the CLI contract's exit codes.
+> edits, with the CLI contract's exit codes. Step 1.7 is done: owners invite people with single-use links, and one
+> policy table decides what owners, developers, editors and publishers may do; a project can never lose its last
+> owner.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
