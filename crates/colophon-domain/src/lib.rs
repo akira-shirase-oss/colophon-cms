@@ -7,10 +7,11 @@
 //!
 //! Design: `docs/modules/01-domain.md`. So far: the rich-text validator ([`rich_text`]),
 //! project fields ([`project`]), content types, which validate entries' content ([`schema`]),
-//! who may do what ([`policy`]), changesets and their review ([`changeset`]), and releases
-//! ([`release`]).
+//! who may do what ([`policy`]), changesets and their review ([`changeset`]), releases
+//! ([`release`]), and delivery jobs ([`job`]).
 
 pub mod changeset;
+pub mod job;
 pub mod policy;
 pub mod project;
 pub mod release;
