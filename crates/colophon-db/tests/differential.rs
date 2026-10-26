@@ -126,7 +126,7 @@ async fn world(db: &TestDb, report: &Report) -> World {
         if world.projects.contains_key(project) {
             continue;
         }
-        let creator = db.person(&format!("creator-{project}")).await;
+        let creator = db.administrator(&format!("creator-{project}")).await;
         let id = projects::create(&db.app, creator, &format!("sim-{project}"), "Simulated")
             .await
             .expect("project")

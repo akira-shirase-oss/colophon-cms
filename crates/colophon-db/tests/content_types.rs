@@ -46,7 +46,7 @@ fn the_built_in_definition_is_the_domain_s_canonical_articles() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_new_project_starts_with_articles_hashed_as_the_api_hashes_it() {
     let db = TestDb::new().await;
-    let alice = db.person("alice").await;
+    let alice = db.administrator("alice").await;
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created")
@@ -74,7 +74,7 @@ async fn a_new_project_starts_with_articles_hashed_as_the_api_hashes_it() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn versions_move_forward_one_at_a_time_from_the_current_one() {
     let db = TestDb::new().await;
-    let alice = db.person("alice").await;
+    let alice = db.administrator("alice").await;
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created")
@@ -133,7 +133,7 @@ async fn versions_move_forward_one_at_a_time_from_the_current_one() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn versions_cannot_be_rewritten_skipped_or_seen_from_another_project() {
     let db = TestDb::new().await;
-    let alice = db.person("alice").await;
+    let alice = db.administrator("alice").await;
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created")
@@ -173,7 +173,7 @@ async fn versions_cannot_be_rewritten_skipped_or_seen_from_another_project() {
         .await
         .expect("created");
     own.commit().await.expect("commit");
-    let bob = db.person("bob").await;
+    let bob = db.administrator("bob").await;
     let beta = projects::create(&db.app, bob, "beta", "Beta")
         .await
         .expect("created")
@@ -204,7 +204,7 @@ async fn versions_cannot_be_rewritten_skipped_or_seen_from_another_project() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_revision_names_its_entry_s_collection_and_a_version_that_exists() {
     let db = TestDb::new().await;
-    let alice = db.person("alice").await;
+    let alice = db.administrator("alice").await;
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created")

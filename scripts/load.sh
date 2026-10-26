@@ -11,7 +11,8 @@
 # entries (drafts: reads, lists and If-Match saves, each read checked against the last save),
 # content-types (the same for entries of a seven-field type, plus reads of its definition),
 # cli (requests authenticated by a bearer token, as the CLI sends them), members (member lists,
-# invitation lookups, role changes and new invitations) or studio (the Studio's static files; builds the Studio first).
+# invitation lookups, role changes and new invitations), projects (who may create projects:
+# refused creations and /me) or studio (the Studio's static files; builds the Studio first).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090).
@@ -33,7 +34,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|cli|members|entries|content-types|studio throughput|steady [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|cli|members|projects|entries|content-types|studio throughput|steady [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -52,7 +53,7 @@ port="${LOAD_PORT:-58090}"
 if [[ "$scenario" == "steady" ]]; then default_vus=256; else default_vus=64; fi
 VUS="${VUS:-$default_vus}"
 case "$endpoint" in
-  session) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
+  session | projects) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
   # Half its requests list entries (a content type lookup too): about 2,000/s at most here, so
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
   cli | members) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;

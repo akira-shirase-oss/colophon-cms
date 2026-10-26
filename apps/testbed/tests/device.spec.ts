@@ -6,7 +6,7 @@ import { expect, test } from '@playwright/test';
 import { signIn } from './sign-in.ts';
 
 test('start a device sign-in, approve it, and use the token without a cookie', async ({ page }) => {
-	await signIn(page, 'dev-editor');
+	await signIn(page, 'dev-owner');
 	await page.goto('/device');
 	await page.getByLabel('Terminal name').fill('testbed terminal');
 	await page.getByRole('button', { name: 'Start device sign-in' }).click();
@@ -19,7 +19,7 @@ test('start a device sign-in, approve it, and use the token without a cookie', a
 	await expect(page.getByTestId('status')).toHaveText('approved in the browser');
 	await page.getByRole('button', { name: 'Poll' }).click();
 	await expect(page.getByTestId('status')).toHaveText('approved');
-	await expect(page.getByTestId('me')).toHaveText('HTTP 200 as Dev Editor');
+	await expect(page.getByTestId('me')).toHaveText('HTTP 200 as Dev Owner');
 
 	await page.getByRole('button', { name: 'Poll' }).click();
 	await expect(page.getByTestId('status')).toHaveText('404 not_found');

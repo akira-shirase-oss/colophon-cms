@@ -37,8 +37,8 @@ async fn status(
 )]
 async fn an_invitation_brings_someone_in_and_their_role_decides_what_they_may_do() {
     let _server = Server::start().await;
-    let owner = sign_in("dev-editor").await;
-    let guest = sign_in("dev-owner").await;
+    let owner = sign_in("dev-owner").await;
+    let guest = sign_in("dev-editor").await;
     let project = project(&owner).await;
 
     // The owner invites; the token only ever travels after '#', or in a body.
@@ -88,7 +88,7 @@ async fn an_invitation_brings_someone_in_and_their_role_decides_what_they_may_do
             offer.body["data"]["role"].as_str(),
             offer.body["data"]["invited_by"].as_str()
         ),
-        (Some("editor"), Some("Dev Editor"))
+        (Some("editor"), Some("Dev Owner"))
     );
     assert_eq!(offer.body["data"]["project_name"], "Test project");
     let joined = call(

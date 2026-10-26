@@ -31,7 +31,7 @@ async fn create(session: &Session, project: &str, title: &str) -> (String, Strin
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn a_draft_is_created_read_saved_and_kept_in_history() {
     let _server = Server::start().await;
-    let editor = sign_in("dev-editor").await;
+    let editor = sign_in("dev-owner").await;
     let project = project(&editor).await;
 
     let body = article("First \"draft\"", "Hello");
@@ -121,7 +121,7 @@ async fn a_draft_is_created_read_saved_and_kept_in_history() {
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn a_stale_save_is_refused_with_the_current_etag_and_writes_nothing() {
     let _server = Server::start().await;
-    let editor = sign_in("dev-editor").await;
+    let editor = sign_in("dev-owner").await;
     let project = project(&editor).await;
     let (id, first) = create(&editor, &project, "First").await;
     let path = format!("{}/{id}", entries(&project));
@@ -173,7 +173,7 @@ async fn a_stale_save_is_refused_with_the_current_etag_and_writes_nothing() {
 )]
 async fn writes_need_their_preconditions_and_keys_replay_or_refuse() {
     let _server = Server::start().await;
-    let editor = sign_in("dev-editor").await;
+    let editor = sign_in("dev-owner").await;
     let project = project(&editor).await;
     let list = entries(&project);
 
@@ -289,7 +289,7 @@ async fn writes_need_their_preconditions_and_keys_replay_or_refuse() {
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn lists_page_with_a_cursor_that_only_works_where_it_came_from() {
     let _server = Server::start().await;
-    let editor = sign_in("dev-editor").await;
+    let editor = sign_in("dev-owner").await;
     let project = project(&editor).await;
     for title in ["One", "Two", "Three"] {
         create(&editor, &project, title).await;
@@ -353,12 +353,12 @@ async fn lists_page_with_a_cursor_that_only_works_where_it_came_from() {
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn nobody_outside_the_project_can_read_or_write_its_entries() {
     let _server = Server::start().await;
-    let editor = sign_in("dev-editor").await;
+    let editor = sign_in("dev-owner").await;
     let project = project(&editor).await;
     let (id, etag) = create(&editor, &project, "Private").await;
     let path = format!("{}/{id}", entries(&project));
 
-    let stranger = sign_in("dev-owner").await;
+    let stranger = sign_in("dev-editor").await;
     let attempts = [
         (Method::GET, entries(&project), None),
         (Method::GET, path.clone(), None),

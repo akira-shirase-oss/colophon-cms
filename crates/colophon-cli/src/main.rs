@@ -177,6 +177,21 @@ enum AdminCommand {
         #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
         database_url: String,
     },
+    /// Make the first administrator, once: bound to an identity provider's issuer and subject,
+    /// never to an email address. Afterwards bootstrap is disabled for good.
+    Bootstrap {
+        /// The migrator's connection URL. Never the application's.
+        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// The identity provider's issuer URL; by default the server's.
+        #[arg(long, env = "COLOPHON_OIDC_ISSUER")]
+        issuer: String,
+        /// The person's subject at that provider (`colophon whoami` shows yours).
+        #[arg(long)]
+        subject: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -207,6 +222,14 @@ fn main() -> ExitCode {
         Command::Admin(AdminCommand::Migrate { database_url }) => {
             runtime.block_on(admin::migrate(&database_url)).into()
         }
+        Command::Admin(AdminCommand::Bootstrap {
+            database_url,
+            issuer,
+            subject,
+            json,
+        }) => runtime
+            .block_on(admin::bootstrap(&database_url, &issuer, &subject, json))
+            .into(),
         Command::Login {
             server,
             profile,

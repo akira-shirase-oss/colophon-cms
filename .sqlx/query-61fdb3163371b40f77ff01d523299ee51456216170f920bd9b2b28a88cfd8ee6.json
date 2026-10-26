@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT bootstrapped_by FROM installation",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bootstrapped_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "installation",
+            "name": "bootstrapped_by"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "61fdb3163371b40f77ff01d523299ee51456216170f920bd9b2b28a88cfd8ee6"
+}

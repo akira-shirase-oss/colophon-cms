@@ -36,6 +36,7 @@
   ],
   "users": [
     {
+      "id": "00000000-0000-4000-8000-00000000c001",
       "username": "dev-owner",
       "enabled": true,
       "email": "owner@example.test",
@@ -45,6 +46,7 @@
       "credentials": [{ "type": "password", "value": "colophon-dev", "temporary": false }]
     },
     {
+      "id": "00000000-0000-4000-8000-00000000c002",
       "username": "dev-editor",
       "enabled": true,
       "email": "editor@example.test",

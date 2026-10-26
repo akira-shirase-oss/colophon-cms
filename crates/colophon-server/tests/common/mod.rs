@@ -28,22 +28,12 @@ impl Server {
 
     /// Starts the server with extra environment variables, such as `COLOPHON_FAULT`.
     pub(crate) async fn start_with(extra: &[(&str, &str)]) -> Self {
-        let env_file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local.env");
         let mut command = Command::new(env!("CARGO_BIN_EXE_colophon-server"));
         command
             .env_clear()
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit());
-        for line in std::fs::read_to_string(env_file)
-            .expect("deploy/local.env")
-            .lines()
-        {
-            if let Some((key, value)) = line.split_once('=')
-                && !key.starts_with('#')
-            {
-                command.env(key.trim(), value.trim());
-            }
-        }
+            .stderr(Stdio::inherit())
+            .envs(local_env());
         command
             .env("COLOPHON_LISTEN_ADDR", format!("127.0.0.1:{PORT}"))
             .env("COLOPHON_PUBLIC_URL", ORIGIN)
@@ -79,6 +69,18 @@ impl Drop for Server {
 }
 
 /// Colophon's client: no redirects followed, no cookie store (cookies are checked by hand).
+/// `deploy/local.env`, the single source of the local settings, as `(key, value)` pairs.
+pub(crate) fn local_env() -> Vec<(String, String)> {
+    let env_file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/local.env");
+    std::fs::read_to_string(env_file)
+        .expect("deploy/local.env")
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .filter(|(key, _)| !key.starts_with('#'))
+        .map(|(key, value)| (key.trim().to_owned(), value.trim().to_owned()))
+        .collect()
+}
+
 pub(crate) fn app() -> reqwest::Client {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())

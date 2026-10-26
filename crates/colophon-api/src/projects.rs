@@ -6,7 +6,11 @@ use axum::{
     extract::{Path, State, rejection::JsonRejection},
     http::StatusCode,
 };
-use colophon_db::{DbError, projects};
+use colophon_db::{
+    DbError,
+    administrators::{self, Standing},
+    projects,
+};
 use colophon_domain::project::{ProjectName, Slug};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -62,7 +66,8 @@ pub(crate) struct NewProject {
     name: String,
 }
 
-/// `POST /api/v1/projects`: creates a project; the caller becomes its owner.
+/// `POST /api/v1/projects`: creates a project; the caller, who must be an administrator (D-043),
+/// becomes its owner. The database refuses anyone else too.
 pub(crate) async fn create(
     State(state): State<AppState>,
     caller: SignedIn,
@@ -79,6 +84,22 @@ pub(crate) async fn create(
     };
     let slug = Slug::parse(&body.slug).map_err(|error| invalid(error, "/slug"))?;
     let name = ProjectName::parse(&body.name).map_err(|error| invalid(error, "/name"))?;
+    match administrators::standing(&services.pool, caller.identity)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Standing::Administrator => {}
+        Standing::Member => {
+            return Err(ApiError::Forbidden(
+                "only an administrator can create projects; ask one to invite you to a project",
+            ));
+        }
+        Standing::NotBootstrapped => {
+            return Err(ApiError::Forbidden(
+                "this installation has no administrator yet: its operator runs `colophon admin bootstrap`",
+            ));
+        }
+    }
     let project = projects::create(
         &services.pool,
         caller.identity,

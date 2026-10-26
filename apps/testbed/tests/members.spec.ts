@@ -18,7 +18,7 @@ async function newProject(page: Page): Promise<string> {
 }
 
 test('invite, look up, accept once, keep an owner, and revoke', async ({ page, browser }) => {
-	await signIn(page, 'dev-editor');
+	await signIn(page, 'dev-owner');
 	const projectId = await newProject(page);
 	await page.goto('/members');
 	await page.getByLabel('Project').selectOption(projectId);
@@ -34,11 +34,11 @@ test('invite, look up, accept once, keep an owner, and revoke', async ({ page, b
 
 	// Someone else, in their own browser.
 	const guest = await (await browser.newContext()).newPage();
-	await signIn(guest, 'dev-owner');
+	await signIn(guest, 'dev-editor');
 	await guest.goto('/members');
 	await guest.getByLabel('Invitation link or token').fill(link);
 	await guest.getByRole('button', { name: 'Look up' }).click();
-	await expect(guest.getByTestId('offer')).toHaveText('Members testbed as publisher, from Dev Editor');
+	await expect(guest.getByTestId('offer')).toHaveText('Members testbed as publisher, from Dev Owner');
 	await guest.getByRole('button', { name: 'Accept' }).click();
 	await expect(guest.getByTestId('message')).toHaveText('joined as publisher');
 	await guest.getByRole('button', { name: 'Accept' }).click();
@@ -49,11 +49,11 @@ test('invite, look up, accept once, keep an owner, and revoke', async ({ page, b
 	await page.getByLabel('Project').selectOption(projectId);
 	await expect(page.getByTestId('members').locator('li')).toHaveCount(2);
 	await expect(page.getByTestId('invitations').locator('li')).toHaveCount(0);
-	await page.getByLabel('Role of Dev Editor').selectOption('editor');
+	await page.getByLabel('Role of Dev Owner').selectOption('editor');
 	await expect(page.getByTestId('message')).toHaveText('409 conflict');
-	await page.getByLabel('Role of Dev Owner').selectOption('owner');
+	await page.getByLabel('Role of Dev Editor').selectOption('owner');
 	await expect(page.getByTestId('message')).toHaveText('role changed to owner');
-	await page.getByRole('button', { name: 'Remove Dev Owner' }).click();
+	await page.getByRole('button', { name: 'Remove Dev Editor' }).click();
 	await expect(page.getByTestId('message')).toHaveText('removed');
 	await expect(page.getByTestId('members').locator('li')).toHaveCount(1);
 

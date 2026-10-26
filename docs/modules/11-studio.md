@@ -52,6 +52,8 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   (`…/{collection}`), the editor (`…/{collection}/{entry}`), Members (`…/members`), joining a project
   (`/studio/invite`), approving a terminal (`/studio/device`), and the editor playground (`/studio/playground`).
   Content-type slugs `members` and `settings` are reserved, so these pages can sit beside collections (D-042).
+  Since step 1.8 (D-043), the home page lets an administrator create a project, with the slug following the name
+  until edited, and tells everyone else to ask a project's owner for an invitation.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

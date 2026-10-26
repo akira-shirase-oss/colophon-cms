@@ -62,6 +62,19 @@ operation, and the cross-project and identity test families from spec §27 pass.
 ### Owner bootstrap (spec §04)
 - A one-time, local `colophon admin bootstrap` command binds the first owner to an authenticated issuer and subject.
 - Bootstrap is then permanently disabled.
+- Built in step 1.8 (D-043):
+  - the first owner is the installation's first **administrator**: the only kind of person who can create projects.
+    Signing in grants nothing by itself; people reach a project by invitation;
+  - `colophon admin bootstrap --subject S [--issuer I]` runs as the migrator, finds or creates the identity, claims
+    the single `installation` row and records the administrator, in one transaction. Again for the same identity it
+    changes nothing; for anyone else it exits 4. Migration 0006 makes the installation row permanent (no update,
+    delete or truncate, even by the table owner) and gives the application role read-only access to both tables;
+  - `POST /api/v1/projects` checks `colophon_db::administrators::standing` (403 for a non-administrator, with a
+    different message before any bootstrap), and the restrictive policy `projects_created_by_administrators` refuses
+    anyone else's project below the API;
+  - `/me` shows the subject (what to bootstrap with) and whether you're an administrator; `colophon whoami` prints
+    both;
+  - more administrators need a grant flow, planned with project administration.
 - A development-only identity exists for local work and refuses to run on a publicly bound install: the Keycloak
   realm in `deploy/keycloak` has a public client secret, and the server refuses to start with it on a non-loopback
   listen address (D-031).
@@ -201,6 +214,19 @@ Built in step 1.7 (D-042), for people:
   paths (spec §13).
 - **Invitations:** expired, reused, or accepted by a different identity.
 - **Bootstrap:** fails once it is complete; the development identity refuses a public bind.
+- **Since step 1.8 (D-043):**
+  - `crates/colophon-db/tests/administrators.rs`: a bootstrap before the person's first sign-in, which then finds
+    the same identity; again for the same person changes nothing, for anyone else it's refused; the installation row
+    survives delete, update and truncate as the table owner; two bootstraps at the same moment make one
+    administrator; the database refuses a non-administrator's project; the application login can't insert an
+    administrator or an installation;
+  - `crates/colophon-server/tests/bootstrap.rs`, against the real binaries: `/me` says dev-owner is an administrator
+    and dev-editor isn't; dev-editor's project is refused with 403 and dev-owner's created; `colophon admin bootstrap`
+    exits 0 for dev-owner again, 4 for dev-editor, 2 for a plain-http issuer off localhost;
+  - `apps/studio/tests/server/projects.spec.ts` and the testbed's session spec: the administrator creates a project
+    in the Studio, others see how to join one instead, and the testbed shows the refusal;
+  - `perf/k6/projects.js`: refused creations and `/me` for both people, at least 1,000,000 requests per full run,
+    checking that no refusal created anything.
 - **Contract tests** for the identity-provider adapter against Keycloak.
 - **In place since step 1.1:**
   - `crates/colophon-auth/tests/id_token.rs`: every forged or mismatched ID token is refused, with keys generated per
@@ -231,7 +257,7 @@ Built in step 1.7 (D-042), for people:
 ## Build order
 
 1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin and cross-project denial for projects (step 1.1, done); roles,
-   invitations and the policy function (step 1.7, done); the owner bootstrap (step 1.8).
+   invitations and the policy function (step 1.7, done); the owner bootstrap (step 1.8, done).
 2. **P2:** approval permissions and self-review recording.
 3. **P4:** preview capabilities.
 4. **P5:** machine credentials, device-authorization login, quotas, kill switch.

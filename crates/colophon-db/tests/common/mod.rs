@@ -91,4 +91,18 @@ impl TestDb {
             .await
             .expect("sign-in recorded")
     }
+
+    /// [`Self::person`], made one of the installation's administrators, who may create projects
+    /// (D-043). The application login can't do that, so the table owner does.
+    pub(crate) async fn administrator(&self, subject: &str) -> Uuid {
+        let identity = self.person(subject).await;
+        let owner = self.owner().await;
+        sqlx::query("INSERT INTO administrators (identity_id) VALUES ($1)")
+            .bind(identity)
+            .execute(&owner)
+            .await
+            .expect("made an administrator");
+        owner.close().await;
+        identity
+    }
 }

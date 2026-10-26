@@ -25,7 +25,7 @@ async function openEntries(page: Page, projectId: string) {
 }
 
 test('create an article, save a new revision, and replay the save with its key', async ({ page }) => {
-	await signIn(page, 'dev-editor');
+	await signIn(page, 'dev-owner');
 	const projectId = await newProject(page);
 	await openEntries(page, projectId);
 
@@ -53,7 +53,7 @@ test('create an article, save a new revision, and replay the save with its key',
 test('two tabs edit one article: the later save is refused, and nothing is lost', async ({ browser }) => {
 	const context = await browser.newContext();
 	const first = await context.newPage();
-	await signIn(first, 'dev-editor');
+	await signIn(first, 'dev-owner');
 	const projectId = await newProject(first);
 	await openEntries(first, projectId);
 	await first.getByLabel('New title').fill('Shared article');

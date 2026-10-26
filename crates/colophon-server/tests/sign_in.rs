@@ -25,10 +25,10 @@ async fn sign_in_works_and_every_write_needs_csrf_and_a_trusted_origin() {
         (StatusCode::UNAUTHORIZED, Some("unauthorized"))
     );
 
-    let editor = sign_in("dev-editor").await;
+    let editor = sign_in("dev-owner").await;
     let (status, me) = get(Some(&editor), "/me").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(me["data"]["display_name"], "Dev Editor");
+    assert_eq!(me["data"]["display_name"], "Dev Owner");
     assert_eq!(
         me["data"]["issuer"],
         "http://localhost:58080/realms/colophon"
@@ -119,7 +119,7 @@ async fn sign_in_works_and_every_write_needs_csrf_and_a_trusted_origin() {
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn a_project_is_invisible_to_people_who_are_not_members() {
     let _server = Server::start().await;
-    let editor = sign_in("dev-editor").await;
+    let editor = sign_in("dev-owner").await;
     let slug = unique_slug();
     let body = json!({ "slug": slug, "name": "Editor's site" });
     let (status, created) = post(
@@ -134,18 +134,18 @@ async fn a_project_is_invisible_to_people_who_are_not_members() {
     let project_id = created["data"]["id"].as_str().expect("an id").to_owned();
 
     // Another person can't see it, by listing or by id.
-    let owner = sign_in("dev-owner").await;
-    let (status, error) = get(Some(&owner), &format!("/api/v1/projects/{project_id}")).await;
+    let other = sign_in("dev-editor").await;
+    let (status, error) = get(Some(&other), &format!("/api/v1/projects/{project_id}")).await;
     assert_eq!(
         (status, error["error"]["code"].as_str()),
         (StatusCode::NOT_FOUND, Some("not_found"))
     );
-    let (_, list) = get(Some(&owner), "/api/v1/projects").await;
+    let (_, list) = get(Some(&other), "/api/v1/projects").await;
     assert!(
         !list.to_string().contains(&project_id),
         "not listed for a non-member"
     );
-    let (status, _) = get(Some(&owner), "/api/v1/projects/not-a-uuid").await;
+    let (status, _) = get(Some(&other), "/api/v1/projects/not-a-uuid").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, mine) = get(Some(&editor), &format!("/api/v1/projects/{project_id}")).await;
     assert_eq!(
@@ -158,7 +158,7 @@ async fn a_project_is_invisible_to_people_who_are_not_members() {
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn a_callback_works_once_and_only_in_the_browser_that_started_it() {
     let _server = Server::start().await;
-    let (callback, binding) = reach_callback("dev-editor").await;
+    let (callback, binding) = reach_callback("dev-owner").await;
 
     // Login CSRF: someone else's browser (no binding cookie, or another one) can't complete it.
     let stranger = app().get(&callback).send().await.expect("callback");

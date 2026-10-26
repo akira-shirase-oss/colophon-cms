@@ -50,7 +50,7 @@ async fn create_posts(session: &Session, project: &str) -> common::Reply {
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn a_content_type_is_defined_and_its_entries_follow_it() {
     let _server = Server::start().await;
-    let editor = sign_in("dev-editor").await;
+    let editor = sign_in("dev-owner").await;
     let project = project(&editor).await;
 
     let listed = call(&editor, Method::GET, &types(&project), None, &[])
@@ -154,7 +154,7 @@ async fn a_content_type_is_defined_and_its_entries_follow_it() {
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn a_content_type_changes_only_in_ways_that_keep_its_entries_valid() {
     let _server = Server::start().await;
-    let editor = sign_in("dev-editor").await;
+    let editor = sign_in("dev-owner").await;
     let project = project(&editor).await;
     create_posts(&editor, &project).await;
     let post = call(
@@ -249,12 +249,12 @@ async fn a_content_type_changes_only_in_ways_that_keep_its_entries_valid() {
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn only_owners_and_developers_change_content_types_and_strangers_see_nothing() {
     let _server = Server::start().await;
-    let owner = sign_in("dev-editor").await;
+    let owner = sign_in("dev-owner").await;
     let project = project(&owner).await;
     create_posts(&owner, &project).await;
 
-    // dev-owner joins this project as an editor (no membership API yet).
-    let other = sign_in("dev-owner").await;
+    // dev-editor joins this project as an editor (no membership API yet).
+    let other = sign_in("dev-editor").await;
     let stranger = call(&other, Method::GET, &types(&project), None, &[])
         .await
         .expect("request");

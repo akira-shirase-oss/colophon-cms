@@ -1,0 +1,37 @@
+{
+  "scenario": "steady",
+  "endpoint": "projects",
+  "date": "2026-10-26T03:25:25Z",
+  "commit": "e9bd500",
+  "dirty": false,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 2000,
+    "duration": "60s",
+    "vus": 256
+  },
+  "requests": 120014,
+  "rps": 1995,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 3.323,
+    "p50": 3.36,
+    "p90": 5.827,
+    "p95": 6.58,
+    "p99": 11.922,
+    "p999": 20.216,
+    "max": 46.519
+  },
+  "database_transactions_during_run": 236632,
+  "server_warnings": 0,
+  "thresholds_passed": true
+}

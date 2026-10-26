@@ -65,8 +65,8 @@ function signIn(username) {
 const tokenOf = (res) => res.json('data.link').split('#')[1];
 
 export function setup() {
-  const owner = signIn('dev-editor');
-  const guest = signIn('dev-owner');
+  const owner = signIn('dev-owner');
+  const guest = signIn('dev-editor');
   const slug = `k6-${Date.now().toString(36)}`;
   const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug, name: 'k6 members' }), { headers: owner });
   if (project.status !== 201) fail(`project: HTTP ${project.status}`);

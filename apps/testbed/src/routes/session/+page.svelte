@@ -11,7 +11,9 @@
 	interface Me {
 		id: string;
 		issuer: string;
+		subject: string;
 		display_name: string | null;
+		administrator: boolean;
 		projects: Project[];
 	}
 
@@ -57,6 +59,9 @@
 
 {#if me}
 	<p data-testid="signed-in">Signed in as <strong>{me.display_name ?? me.id}</strong> <small>({me.issuer})</small></p>
+	<p data-testid="standing">
+		subject <code>{me.subject}</code>, {me.administrator ? 'administrator: may create projects' : 'not an administrator'}
+	</p>
 	<h2>Projects</h2>
 	<ul data-testid="projects">
 		{#each me.projects as project (project.id)}

@@ -6,6 +6,7 @@
 //! binary ([`MIGRATOR`]); queries are checked against the schema at compile time (D-026).
 
 pub mod access;
+pub mod administrators;
 pub mod content_types;
 pub mod entries;
 pub mod idempotency;

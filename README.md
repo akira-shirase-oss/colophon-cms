@@ -35,7 +35,8 @@
 > command line signs in through a code you approve in the Studio, and creates and lists the same records the Studio
 > edits, with the CLI contract's exit codes. Step 1.7 is done: owners invite people with single-use links, and one
 > policy table decides what owners, developers, editors and publishers may do; a project can never lose its last
-> owner.
+> owner. Step 1.8 is done: the operator makes the first administrator once, from a terminal, and only administrators
+> create projects. With it, the first milestone's proof gate is met.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 

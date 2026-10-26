@@ -32,7 +32,7 @@ fn later() -> OffsetDateTime {
 
 /// Alice's project, with Bob invited and joined as `role`.
 async fn alice_and_bob(db: &TestDb, role: &str) -> (Uuid, Uuid, Uuid) {
-    let (alice, bob) = (db.person("alice").await, db.person("bob").await);
+    let (alice, bob) = (db.administrator("alice").await, db.person("bob").await);
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created")
@@ -59,7 +59,7 @@ async fn alice_and_bob(db: &TestDb, role: &str) -> (Uuid, Uuid, Uuid) {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn an_invitation_joins_once_and_shows_its_project_to_its_holder() {
     let db = TestDb::new().await;
-    let (alice, carol) = (db.person("alice").await, db.person("carol").await);
+    let (alice, carol) = (db.administrator("alice").await, db.person("carol").await);
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created")
@@ -142,7 +142,7 @@ async fn an_invitation_joins_once_and_shows_its_project_to_its_holder() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn revoked_and_expired_invitations_are_dead() {
     let db = TestDb::new().await;
-    let (alice, carol) = (db.person("alice").await, db.person("carol").await);
+    let (alice, carol) = (db.administrator("alice").await, db.person("carol").await);
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created")
@@ -358,7 +358,10 @@ async fn an_owner_demoted_mid_request_can_no_longer_manage_members() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn another_project_s_owner_cannot_revoke_or_see_these_invitations() {
     let db = TestDb::new().await;
-    let (alice, mallory) = (db.person("alice").await, db.person("mallory").await);
+    let (alice, mallory) = (
+        db.administrator("alice").await,
+        db.administrator("mallory").await,
+    );
     let alpha = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
         .expect("created")

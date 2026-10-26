@@ -70,7 +70,7 @@ async fn titles(session: &Session, project: &str, entry: &str) -> Vec<String> {
 async fn a_save_killed_before_or_after_its_commit_loses_nothing_and_never_doubles() {
     let (editor, project, entry, first) = {
         let _server = Server::start().await;
-        let editor = sign_in("dev-editor").await;
+        let editor = sign_in("dev-owner").await;
         let project = project(&editor).await;
         let created = call(
             &editor,
@@ -184,7 +184,7 @@ async fn a_save_killed_before_or_after_its_commit_loses_nothing_and_never_double
 async fn a_create_killed_after_its_commit_is_replayed_not_duplicated() {
     let (editor, project) = {
         let _server = Server::start().await;
-        let editor = sign_in("dev-editor").await;
+        let editor = sign_in("dev-owner").await;
         let project = project(&editor).await;
         (editor, project)
     };
