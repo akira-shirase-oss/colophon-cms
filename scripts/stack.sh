@@ -289,6 +289,8 @@ check() {
 case "${1:-}" in
   up)
     compose up --detach --wait --wait-timeout 300
+    # Database roles for colophon-server (idempotent; see deploy/postgres/roles.sql).
+    compose exec -T postgres psql -U colophon -d colophon -q -v ON_ERROR_STOP=1 <deploy/postgres/roles.sql
     check
     ;;
   check) check ;;

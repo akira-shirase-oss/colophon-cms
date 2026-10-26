@@ -3,13 +3,19 @@
 # and fails on a threshold miss or a regression (D-018).
 #
 #   scripts/load.sh <endpoint> throughput            1,000,000 requests, back to back (TOTAL, VUS)
-#   scripts/load.sh <endpoint> steady                20,000 requests/s for 60 s (RATE, DURATION, VUS)
+#   scripts/load.sh <endpoint> steady                a fixed rate for 60 s (RATE, DURATION, VUS)
 #   scripts/load.sh <endpoint> <scenario> --baseline also save this run as the machine's baseline
 #
-# <endpoint> is a script in perf/k6/: health (the health checks) or rich-text (validation).
+# <endpoint> is a script in perf/k6/: health (the health checks), rich-text (validation) or
+# session (signed-in requests: session lookup and row-level security on every request).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090).
+#
+# RATE and P99_MS default per endpoint. health and rich-text never touch the database: 20,000
+# requests/s and a 25 ms p99. session waits on database round trips, so its steady rate is
+# 2,000/s and its p99 threshold 100 ms (END_GOAL's editorial budget is p99 <= 700 ms); the
+# baseline comparison still fails a p99 50% worse than the last accepted run.
 #
 # A result file goes to perf/results/ and a line to perf/results/history.jsonl. Numbers from
 # a laptop are evidence about the code on that machine, not a production capacity claim;
@@ -20,7 +26,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
-  echo "usage: scripts/load.sh health|rich-text throughput|steady [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session throughput|steady [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -38,6 +44,10 @@ port="${LOAD_PORT:-58090}"
 # miss its own schedule (a steady run on 2026-10-25 dropped 271 of 1.2 M iterations at 64).
 if [[ "$scenario" == "steady" ]]; then default_vus=256; else default_vus=64; fi
 VUS="${VUS:-$default_vus}"
+case "$endpoint" in
+  session) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
+  *) RATE="${RATE:-20000}" P99_MS="${P99_MS:-25}" ;;
+esac
 base_url="http://127.0.0.1:$port"
 work=$(mktemp -d)
 server_pid=""
@@ -52,6 +62,7 @@ cleanup() {
 trap cleanup EXIT
 
 scripts/check-toolchain.sh >/dev/null
+scripts/migrate.sh
 echo "building the release binaries"
 cargo build --quiet --release --locked -p colophon-server -p colophon-cli
 
@@ -62,7 +73,8 @@ cargo build --quiet --release --locked -p colophon-server -p colophon-cli
   # shellcheck source=/dev/null # plain KEY=value lines
   . deploy/local.env
   set +a
-  export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
+  # The public URL is the sign-in redirect URI registered in the development realm.
+  export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
   exec target/release/colophon-server
 ) >"$work/server.log" 2>&1 &
 server_pid=$!
@@ -93,10 +105,10 @@ echo "running k6: $endpoint $scenario"
 k6_status=0
 "$k6" run --quiet --no-color \
   --summary-export "$work/summary.json" \
-  -e BASE_URL="$base_url" -e SCENARIO="$scenario" \
+  -e BASE_URL="$base_url" -e PUBLIC_URL="http://localhost:$port" -e SCENARIO="$scenario" \
   -e TOTAL="${TOTAL:-1000000}" -e VUS="$VUS" \
-  -e RATE="${RATE:-20000}" -e DURATION="${DURATION:-60s}" \
-  -e P99_MS="${P99_MS:-25}" \
+  -e RATE="$RATE" -e DURATION="${DURATION:-60s}" \
+  -e P99_MS="$P99_MS" \
   "perf/k6/$endpoint.js" || k6_status=$?
 
 sleep 1.5
@@ -129,7 +141,7 @@ record=$(jq -c \
   --arg os "$(uname -s) $(uname -r)" --arg k6 "$("$k6" version | awk '{print $2}')" \
   --argjson tx "$(( tx_after - tx_before ))" --argjson warnings "$server_warnings" \
   --argjson k6_status "$k6_status" \
-  --arg total "${TOTAL:-1000000}" --arg vus "$VUS" --arg rate "${RATE:-20000}" --arg duration "${DURATION:-60s}" \
+  --arg total "${TOTAL:-1000000}" --arg vus "$VUS" --arg rate "$RATE" --arg duration "${DURATION:-60s}" \
   '{
     scenario: $scenario, endpoint: $endpoint, date: $stamp, commit: $commit, dirty: $dirty,
     machine: { id: $machine, cpu: $cpu, cores: $cores, memory_gb: $memory_gb, os: $os },

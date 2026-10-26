@@ -19,7 +19,10 @@ use tower::ServiceExt as _;
 fn app() -> axum::Router {
     let readiness = Readiness::new("all", false);
     readiness.record(Dependency::Database, true);
-    colophon_api::app(readiness, HttpLimits::default())
+    colophon_api::app(
+        colophon_api::AppState::without_services(readiness),
+        HttpLimits::default(),
+    )
 }
 
 async fn post(body: Body, content_type: Option<&str>) -> (StatusCode, String, Value) {

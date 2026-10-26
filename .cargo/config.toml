@@ -1,0 +1,6 @@
+[env]
+# Builds use the committed query data in .sqlx/ (D-026), so no database is needed to compile.
+# After changing a query or a migration: start the stack, run `scripts/migrate.sh`, then
+# `SQLX_OFFLINE=false DATABASE_URL=postgres://colophon:colophon-dev@127.0.0.1:55432/colophon cargo sqlx prepare --workspace -- --all-targets`
+# and commit .sqlx/. A query without data fails the build loudly.
+SQLX_OFFLINE = "true"

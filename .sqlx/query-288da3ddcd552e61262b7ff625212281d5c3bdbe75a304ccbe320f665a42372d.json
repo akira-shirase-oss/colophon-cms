@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM sign_in_attempts WHERE state_hash = $1 AND expires_at > now()\n         RETURNING nonce, pkce_verifier, return_to",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "nonce",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "sign_in_attempts",
+            "name": "nonce"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "pkce_verifier",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "sign_in_attempts",
+            "name": "pkce_verifier"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "return_to",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "sign_in_attempts",
+            "name": "return_to"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "288da3ddcd552e61262b7ff625212281d5c3bdbe75a304ccbe320f665a42372d"
+}

@@ -13,9 +13,10 @@ use std::error::Error as StdError;
 use axum::{
     Json,
     extract::rejection::JsonRejection,
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use colophon_db::DbError;
 use colophon_domain::rich_text::Rejection;
 use serde::{Serialize, Serializer};
 
@@ -29,6 +30,16 @@ pub enum ErrorCode {
     MalformedJson,
     /// The body is well-formed but breaks a rule; `details` says which, and where.
     ValidationFailed,
+    /// Not signed in, or the session ended.
+    Unauthorized,
+    /// Signed in, but not allowed (for example, a write without a valid CSRF token).
+    Forbidden,
+    /// No such resource, or one the caller may not see: the two look the same.
+    NotFound,
+    /// The request conflicts with the current state (for example, a taken slug).
+    Conflict,
+    /// Sign-in failed, was cancelled, or its state expired or was already used.
+    SignInFailed,
     /// No route matches the path.
     RouteNotFound,
     /// The path exists, but not for this method.
@@ -52,6 +63,11 @@ impl ErrorCode {
             Self::BadRequest => "bad_request",
             Self::MalformedJson => "malformed_json",
             Self::ValidationFailed => "validation_failed",
+            Self::Unauthorized => "unauthorized",
+            Self::Forbidden => "forbidden",
+            Self::NotFound => "not_found",
+            Self::Conflict => "conflict",
+            Self::SignInFailed => "sign_in_failed",
             Self::RouteNotFound => "route_not_found",
             Self::MethodNotAllowed => "method_not_allowed",
             Self::PayloadTooLarge => "payload_too_large",
@@ -67,6 +83,9 @@ impl ErrorCode {
     pub fn from_status(status: StatusCode) -> Self {
         match status {
             StatusCode::NOT_FOUND => Self::RouteNotFound,
+            StatusCode::UNAUTHORIZED => Self::Unauthorized,
+            StatusCode::FORBIDDEN => Self::Forbidden,
+            StatusCode::CONFLICT => Self::Conflict,
             StatusCode::METHOD_NOT_ALLOWED => Self::MethodNotAllowed,
             StatusCode::PAYLOAD_TOO_LARGE => Self::PayloadTooLarge,
             StatusCode::UNSUPPORTED_MEDIA_TYPE => Self::UnsupportedMediaType,
@@ -142,6 +161,38 @@ pub enum ApiError {
     /// A rich-text document was refused.
     #[error("{0}")]
     InvalidRichText(Rejection),
+    /// A field of the request body was refused.
+    #[error("{message}")]
+    InvalidField {
+        /// A stable code for the problem.
+        reason: &'static str,
+        /// JSON Pointer to the field.
+        pointer: &'static str,
+        /// What is wrong, for people.
+        message: String,
+    },
+    /// Not signed in, or the session ended.
+    #[error("sign in first")]
+    Unauthorized,
+    /// Not allowed; the reason is safe to show.
+    #[error("{0}")]
+    Forbidden(&'static str),
+    /// No such resource (or one the caller may not see).
+    #[error("no such resource")]
+    NotFound,
+    /// A conflict with the current state; the reason is safe to show.
+    #[error("{0}")]
+    Conflict(&'static str),
+    /// Temporarily unable to serve; the reason is safe to show.
+    #[error("{0}")]
+    Unavailable(&'static str),
+    /// At capacity: no database connection became free in time, and nothing was attempted.
+    /// 503 with `Retry-After`, so clients back off instead of piling on.
+    #[error("the server is busy; try again shortly")]
+    Busy,
+    /// Sign-in failed. Details are logged, never shown: they can help an attacker.
+    #[error("sign-in failed or expired; start again")]
+    SignInFailed,
     /// An unexpected failure; the boxed error is the private cause.
     #[error("internal error")]
     Internal(#[source] Box<dyn StdError + Send + Sync>),
@@ -153,14 +204,31 @@ impl ApiError {
         Self::Internal(cause.into())
     }
 
+    /// A database error: an exhausted pool is [`Self::Busy`]; anything else is internal.
+    /// Callers that expect a particular error, such as a conflict, match it first.
+    pub fn from_db(error: DbError) -> Self {
+        match error {
+            DbError::Busy => Self::Busy,
+            other => Self::internal(other),
+        }
+    }
+
     /// HTTP status for this error. Total over the variants, so every new variant must choose.
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::RouteNotFound => StatusCode::NOT_FOUND,
-            Self::MalformedJson(_) | Self::BadRequest => StatusCode::BAD_REQUEST,
+            Self::RouteNotFound | Self::NotFound => StatusCode::NOT_FOUND,
+            Self::MalformedJson(_) | Self::BadRequest | Self::SignInFailed => {
+                StatusCode::BAD_REQUEST
+            }
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-            Self::InvalidRichText(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::InvalidRichText(_) | Self::InvalidField { .. } => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Forbidden(_) => StatusCode::FORBIDDEN,
+            Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -173,20 +241,31 @@ impl ApiError {
             Self::UnsupportedMediaType => ErrorCode::UnsupportedMediaType,
             Self::PayloadTooLarge => ErrorCode::PayloadTooLarge,
             Self::BadRequest => ErrorCode::BadRequest,
-            Self::InvalidRichText(_) => ErrorCode::ValidationFailed,
+            Self::InvalidRichText(_) | Self::InvalidField { .. } => ErrorCode::ValidationFailed,
+            Self::Unauthorized => ErrorCode::Unauthorized,
+            Self::Forbidden(_) => ErrorCode::Forbidden,
+            Self::NotFound => ErrorCode::NotFound,
+            Self::Conflict(_) => ErrorCode::Conflict,
+            Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
+            Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
         }
     }
 
     /// What the client sees.
     pub fn public(&self) -> PublicError {
-        let details = if let Self::InvalidRichText(rejection) = self {
-            Some(ErrorDetails {
+        let details = match self {
+            Self::InvalidRichText(rejection) => Some(ErrorDetails {
                 reason: rejection.code.as_str(),
                 pointer: rejection.pointer.clone(),
-            })
-        } else {
-            None
+            }),
+            Self::InvalidField {
+                reason, pointer, ..
+            } => Some(ErrorDetails {
+                reason,
+                pointer: (*pointer).to_owned(),
+            }),
+            _ => None,
         };
         PublicError {
             code: self.code(),
@@ -201,6 +280,10 @@ impl ApiError {
         if let Self::Internal(cause) = self {
             let cause = error_chain(cause.as_ref());
             tracing::error!(code, %cause, "request failed");
+        } else if matches!(self, Self::Busy) {
+            // Operators need to see saturation. Each of these waited out the acquire timeout,
+            // so their rate is bounded by in-flight requests over that timeout.
+            tracing::warn!(code, "request refused: no database connection free");
         } else {
             // A client's mistake: worth a debug line, never a page.
             tracing::debug!(code, error = %self, "request rejected");
@@ -220,10 +303,20 @@ fn error_chain(error: &(dyn StdError + 'static)) -> String {
     text
 }
 
+/// Seconds a client should wait before retrying a [`ApiError::Busy`] request.
+pub const BUSY_RETRY_AFTER_SECONDS: u32 = 1;
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         self.log();
-        render(self.status(), &self.public(), None)
+        let mut response = render(self.status(), &self.public(), None);
+        if matches!(self, Self::Busy) {
+            response.headers_mut().insert(
+                header::RETRY_AFTER,
+                HeaderValue::from(BUSY_RETRY_AFTER_SECONDS),
+            );
+        }
+        response
     }
 }
 

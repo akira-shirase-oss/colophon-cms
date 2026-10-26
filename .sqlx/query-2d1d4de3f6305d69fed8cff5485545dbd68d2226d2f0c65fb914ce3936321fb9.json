@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO environments (project_id, id, slug) VALUES ($1, $2, 'production')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2d1d4de3f6305d69fed8cff5485545dbd68d2226d2f0c65fb914ce3936321fb9"
+}

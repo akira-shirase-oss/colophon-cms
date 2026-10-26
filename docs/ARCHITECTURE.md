@@ -176,8 +176,9 @@ tested set at P0 (spec §02).
 | IDs / time | `uuid` v7 newtypes; `jiff` for IANA time zones (scheduled publishing) |
 | CLI | `clap` 4 (derive) |
 | Outbound HTTP | one shared `reqwest` 0.13 client (rustls) with connect and request timeouts |
-| Secrets / tokens | `secrecy` for in-memory secrets; `subtle` for constant-time token comparison |
-| Testing | `proptest`, `insta`, `testcontainers`, `cargo-nextest`, `cargo-deny` |
-| Frontend | SvelteKit + TypeScript + Vite, Tailwind CSS, Bits UI, Tiptap, mdsvex, Pagefind, Vitest, Playwright |
-| Design system | Material Design 3 tokens (`@material/material-color-utilities` for colour roles; M3 type, shape, elevation, state layers, motion) on Bits UI primitives (D-011); `m3-svelte` under evaluation (O-015) |
+| Secrets / tokens | Redacting newtypes for in-memory secrets (no `Display`, redacted `Debug`); `aws-lc-rs` for random tokens, SHA-256 and constant-time comparison |
+| Sign-in | An OpenID Connect relying party on `reqwest` and `jsonwebtoken` (`aws-lc-rs` backend), not an OIDC crate (D-031) |
+| Testing | `proptest`, `insta`, real PostgreSQL from the local stack (a fresh database per test), `cargo-nextest`, `cargo-deny` |
+| Frontend | SvelteKit + TypeScript + Vite, scoped Svelte CSS over M3 tokens (Tailwind deferred, D-025), Bits UI, Tiptap, mdsvex, Pagefind, Vitest, Playwright |
+| Design system | Material Design 3 tokens (`@material/material-color-utilities` for colour roles; M3 type, shape, elevation, state layers, motion) on Bits UI primitives (D-011, D-025; `m3-svelte` not adopted) |
 | Load testing | k6 arrival-rate scenarios |

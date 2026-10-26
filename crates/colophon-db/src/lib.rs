@@ -2,8 +2,12 @@
 //! impossible to store, the transactional outbox, idempotency records and row-level
 //! security context.
 //!
-//! Design: `docs/modules/02-db.md`. Today it builds the connection pool and the readiness
-//! probe; schemas and migrations arrive in milestone P1.
+//! Design: `docs/modules/02-db.md`. Migrations live in `migrations/` and are embedded in the
+//! binary ([`MIGRATOR`]); queries are checked against the schema at compile time (D-026).
+
+pub mod identity;
+pub mod projects;
+pub mod scope;
 
 use std::{str::FromStr, time::Duration};
 
@@ -13,6 +17,15 @@ use sqlx::{
 };
 
 pub use sqlx::postgres::PgPool;
+
+/// The schema migrations, embedded at compile time from `migrations/`.
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+/// Applies any migrations the database doesn't have yet. Run as the migrator role (the table
+/// owner), never as the application role.
+pub async fn migrate(pool: &PgPool) -> Result<(), DbError> {
+    MIGRATOR.run(pool).await.map_err(DbError::Migrate)
+}
 
 /// Pool settings. Every value is a bound: connections, waiting, and statement time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,9 +60,37 @@ pub enum DbError {
     /// The query failed.
     #[error("database query failed")]
     Query(#[source] sqlx::Error),
+    /// No pooled connection became free within the acquire timeout: the database is at
+    /// capacity. Nothing was sent to it, so the caller can safely answer "try again".
+    #[error("no database connection became free in time")]
+    Busy,
     /// No answer within the deadline.
     #[error("database did not answer within {0:?}")]
     Timeout(Duration),
+    /// A unique value (such as a slug) is already taken.
+    #[error("already exists")]
+    Conflict,
+    /// Applying migrations failed.
+    #[error("applying migrations failed")]
+    Migrate(#[source] sqlx::migrate::MigrateError),
+}
+
+impl DbError {
+    /// A query's error: an exhausted pool becomes `Busy`, everything else `Query`.
+    pub(crate) fn from_query(error: sqlx::Error) -> Self {
+        match error {
+            sqlx::Error::PoolTimedOut => Self::Busy,
+            error => Self::Query(error),
+        }
+    }
+
+    /// A write's error: unique violations become `Conflict`, the rest as [`Self::from_query`].
+    pub(crate) fn from_write(error: sqlx::Error) -> Self {
+        match &error {
+            sqlx::Error::Database(database) if database.is_unique_violation() => Self::Conflict,
+            _ => Self::from_query(error),
+        }
+    }
 }
 
 /// Builds the pool without connecting. Connections open on first use, so the server starts
@@ -64,10 +105,14 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
             "statement_timeout",
             settings.statement_timeout.as_millis().to_string(),
         )]);
+    // No ping on checkout: it is a round trip on every query. sqlx still pings each connection
+    // as it returns to the pool and drops broken ones, so only a connection that breaks while
+    // idle (a database restart) reaches a caller, and fails that one request (D-033).
     Ok(PgPoolOptions::new()
         .max_connections(settings.max_connections)
         .min_connections(0)
         .acquire_timeout(settings.acquire_timeout)
+        .test_before_acquire(false)
         .connect_lazy_with(options))
 }
 
@@ -154,6 +199,22 @@ mod tests {
         let result = ping(&pool, Duration::from_millis(300)).await;
         assert!(matches!(result, Err(DbError::Timeout(_))), "{result:?}");
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn an_exhausted_pool_is_busy_and_other_failures_are_not() {
+        assert!(matches!(
+            DbError::from_query(sqlx::Error::PoolTimedOut),
+            DbError::Busy
+        ));
+        assert!(matches!(
+            DbError::from_query(sqlx::Error::RowNotFound),
+            DbError::Query(_)
+        ));
+        assert!(matches!(
+            DbError::from_write(sqlx::Error::PoolTimedOut),
+            DbError::Busy
+        ));
     }
 
     /// Needs the local stack (`scripts/stack.sh up`).

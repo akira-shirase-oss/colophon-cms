@@ -52,6 +52,7 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
   if command -v k6 >/dev/null || [[ -x "$HOME/.local/bin/k6" ]]; then
     PATH="$PATH:$HOME/.local/bin" TOTAL=200000 P99_MS=50 KEEP=0 scripts/load.sh health throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=100000 P99_MS=50 KEEP=0 scripts/load.sh rich-text throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh session throughput
   else
     echo "note: k6 is not installed here (scripts/install-k6.sh); CI runs the load smoke test" >&2
   fi

@@ -7,7 +7,7 @@
 |---|---|
 | Milestones | All (each milestone's proof gate lives here) |
 | Proposed owner | Shared: the maintainer owns the requirement matrix; Claude builds the harnesses |
-| Depends on | every module; `proptest`, `insta`, `testcontainers`, `cargo-nextest`, Vitest, Playwright, k6 |
+| Depends on | every module; `proptest`, `insta`, the local stack's PostgreSQL, `cargo-nextest`, Vitest, Playwright, k6 |
 | Used by | CI, release decisions, the README and docs (published evidence) |
 | Spec | §26–§31, §36 |
 

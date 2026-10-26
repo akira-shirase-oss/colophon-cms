@@ -7,7 +7,7 @@
 |---|---|
 | Milestones | P1 (OIDC, sessions, roles, invitations, cross-project denial), P2 (approval policy), P4 (preview capabilities), P5 (machine credentials, device login, kill switch) |
 | Proposed owner | Claude builds; every authentication change gets a manual line-by-line review (spec §34) |
-| Depends on | domain (`Actor`, `Scope`, actions), an OIDC client crate (O-008), `secrecy`, `subtle` |
+| Depends on | domain (`Actor`, `Scope`, actions), `reqwest` and `jsonwebtoken` (D-031), `aws-lc-rs` (random tokens, SHA-256, constant-time comparison) |
 | Used by | api, delivery (preview capabilities), automation, cli (login flows); db implements its session and credential stores |
 | Spec | §04, §06, §13, §26, §27 |
 
@@ -43,22 +43,38 @@ operation, and the cross-project and identity test families from spec §27 pass.
 
 ## Breakdown
 
-### Sign-in (spec §13)
+### Sign-in (spec §13; built in step 1.1, D-031)
 - Authorization Code flow with PKCE, `state` and `nonce` checks.
 - Exact redirect URIs and exact callback origins.
 - **Keycloak** is the reference provider, behind an adapter boundary. Another provider can replace it once it passes the
   same contract tests (spec §04).
 - A person's identity is `(issuer, subject)`. An email claim is never used to establish identity or pick an owner.
+- `colophon_auth::OidcClient` is the relying party, built on `reqwest` and `jsonwebtoken` rather than an OIDC crate:
+  - discovery is lazy and checked: the document's `issuer` must equal the configured issuer;
+  - ID tokens need an allowlisted asymmetric algorithm (RS256, PS256, ES256, EdDSA) and a key from the provider's
+    JWKS, which is refreshed at most once a minute when an unknown key id appears;
+  - `iss` and `aud` must match exactly, `azp` when present, `exp` and `nbf` with a minute of leeway, and the nonce;
+  - every provider request has a timeout and a 64 KiB response limit, and redirects are not followed.
+- The routes live in `colophon-api` (`/auth/login`, `/auth/callback`, `/auth/logout`, `/me`). A sign-in attempt is a
+  row keyed by the hash of its `state`, bound to the starting browser by the `colophon_signin` cookie, valid for 10
+  minutes and usable once. `return_to` accepts only a path on this site.
 
 ### Owner bootstrap (spec §04)
 - A one-time, local `colophon admin bootstrap` command binds the first owner to an authenticated issuer and subject.
 - Bootstrap is then permanently disabled.
-- A development-only identity exists for local work and refuses to run on a publicly bound install (O-008).
+- A development-only identity exists for local work and refuses to run on a publicly bound install: the Keycloak
+  realm in `deploy/keycloak` has a public client secret, and the server refuses to start with it on a non-loopback
+  listen address (D-031).
 
-### Sessions
+### Sessions (built in step 1.1, D-032)
 - Rust issues opaque, random, revocable session tokens and stores only their hash in Postgres.
 - Cookies are `Secure`, `HttpOnly`, with `SameSite`; sessions have expiry and idle timeout.
 - Cookie-authenticated writes need a CSRF token **and** a matching `Origin`.
+- Defaults: a session ends 12 hours after sign-in or after 2 hours unused. Its last use is written at most once a
+  minute, decided from the row just read, so most requests only read.
+- The CSRF token is per session, stored hashed, and sent to the page in a readable `SameSite=Strict` cookie; writes
+  echo it in `X-CSRF-Token`. Trusted origins are the public origin plus `COLOPHON_TRUSTED_ORIGINS`, compared exactly.
+- Nothing caches sessions, so revocation (logout) takes effect on the next request.
 - CORS is narrowly scoped, and no secrets ever appear in URLs.
 - Sensitive actions require fresh authentication: deleting a project, export, credential and role changes.
 
@@ -80,7 +96,7 @@ operation, and the cross-project and identity test families from spec §27 pass.
 
 ### Machine credentials (P5)
 - Scoped to project, environment, collections and actions.
-- Expiring, with quotas, stored hashed and compared in constant time (`subtle`).
+- Expiring, with quotas, stored hashed and compared in constant time, as session tokens are.
 - The CLI signs in through a browser or device-authorization flow.
 - A broad administrator token never appears in a template or frontend bundle.
 - A **kill switch** revokes a principal and prevents new work; actions it already completed stay auditable.
@@ -114,7 +130,8 @@ operation, and the cross-project and identity test families from spec §27 pass.
 
 ## Interfaces
 
-- **Axum extractors:** `Principal`, `RequireFreshAuth`.
+- **Axum extractors:** `SignedIn` (step 1.1, in `colophon-api`: the identity and session, plus CSRF and `Origin`
+  checks for writes); `Principal` and `RequireFreshAuth` replace it as roles and machine credentials arrive.
 - **Policy:** `authorize(principal, action, resource)`.
 - **Session store and credential store** ports, implemented in [db](02-db.md).
 - **Identity-provider adapter:** discovery, code exchange, token validation.
@@ -147,18 +164,25 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - **Invitations:** expired, reused, or accepted by a different identity.
 - **Bootstrap:** fails once it is complete; the development identity refuses a public bind.
 - **Contract tests** for the identity-provider adapter against Keycloak.
+- **In place since step 1.1:**
+  - `crates/colophon-auth/tests/id_token.rs`: every forged or mismatched ID token is refused, with keys generated per
+    run (another key under the provider's key id, nonce, issuer, audience, expiry, `nbf`, subject, `azp`, key id,
+    HS256 signed with the public key, `alg: none`);
+  - `crates/colophon-server/tests/sign_in.rs`, against the real binary and Keycloak's login form: sign-in, `/me`,
+    writes refused without CSRF or a trusted `Origin`, logout and 401 afterwards; a project invisible to non-members;
+    a callback that works once and only in the browser that started it;
+  - the server's configuration tests: the development client secret is refused off loopback;
+  - `apps/testbed/tests/session.spec.ts`: two browsers; a project created by one is invisible to the other;
+  - `perf/k6/session.js`: every request authenticated by cookie, at least 1,000,000 requests per full run.
 
 ## Build order
 
-1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin, bootstrap, roles, invitations, the policy function,
-   cross-project denial.
+1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin and cross-project denial for projects (step 1.1, done); bootstrap,
+   roles, invitations and the policy function.
 2. **P2:** approval permissions and self-review recording.
 3. **P4:** preview capabilities.
 4. **P5:** machine credentials, device-authorization login, quotas, kill switch.
 
 ## Open decisions
 
-- **O-008:** the OIDC client crate (not in the rust-mastery crate guide; evaluate with its chapter 15 checklist) and the
-  guard for the development identity.
-- Session lifetime and idle-timeout defaults.
 - Whether a hidden resource answers 404 everywhere, or 403 for members of the same project.

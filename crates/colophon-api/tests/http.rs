@@ -32,7 +32,11 @@ fn app(readiness: Readiness) -> Router {
             }),
         )
         .route("/test/echo", post(|body: String| async move { body }));
-    middleware::apply(colophon_api::routes(readiness).merge(test_routes), LIMITS)
+    middleware::apply(
+        colophon_api::routes(colophon_api::AppState::without_services(readiness))
+            .merge(test_routes),
+        LIMITS,
+    )
 }
 
 async fn panics() -> &'static str {

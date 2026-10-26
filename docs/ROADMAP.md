@@ -49,7 +49,8 @@ rich-text format and editor · 0.5 the Rust validator · 0.6 the renderer · 0.7
 - `db`: core tables, composite foreign keys, slug claims, insert-only revisions, expected-revision save, idempotency
   records, database roles with row-level security.
 - `auth`: OIDC login (Keycloak), sessions, CSRF/Origin checks, owner bootstrap, roles, invitations, cross-project denial.
-- `api`: projects, environments, schemas, entries, revisions; `If-Match`, `Idempotency-Key`, cursor pagination.
+- `api`: projects, environments, schemas, entries, revisions; `If-Match`, `Idempotency-Key`, cursor pagination; the
+  generated OpenAPI document (D-027).
 - `cli`: `login`, `content create`, `content list`, `--json`, exit codes.
 - `studio`: content list, editor with autosave and the conflict screen.
 - `sim`: scheduler, virtual clock, in-memory store, save invariants, determinism test.
@@ -57,6 +58,9 @@ rich-text format and editor · 0.5 the Rust validator · 0.6 the renderer · 0.7
 **Proof gate:** F01 (kill before commit: no false acknowledgement), F02 (kill after commit: idempotent retry returns
 the same result), F04 (two editors on one base revision: one gets 409, nothing lost); a second project is denied with
 colliding slugs and IDs; the spec's first slice works end to end (spec §37).
+
+**Steps:** 1.1 sign-in and projects that can't see each other (done: D-031 to D-033) · 1.2 a draft that can't be lost
+(entries, revisions, the expected-revision save, idempotency) · 1.3 conflicts · 1.4 the first simulator run.
 
 ## P2: Publish exactly once (≈ spec M2)
 
