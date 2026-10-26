@@ -5,6 +5,8 @@
 //! Design: `docs/modules/02-db.md`. Migrations live in `migrations/` and are embedded in the
 //! binary ([`MIGRATOR`]); queries are checked against the schema at compile time (D-026).
 
+pub mod entries;
+pub mod idempotency;
 pub mod identity;
 pub mod projects;
 pub mod scope;
@@ -73,6 +75,9 @@ pub enum DbError {
     /// Applying migrations failed.
     #[error("applying migrations failed")]
     Migrate(#[source] sqlx::migrate::MigrateError),
+    /// Stored data broke an invariant the schema is meant to guarantee: a bug, never input.
+    #[error("stored data is inconsistent: {0}")]
+    Corrupt(&'static str),
 }
 
 impl DbError {

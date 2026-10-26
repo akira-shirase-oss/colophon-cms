@@ -18,6 +18,7 @@ use crate::{
     session::{
         CSRF_COOKIE, SESSION_COOKIE, SIGN_IN_COOKIE, SignedIn, cookie, services, set_cookie,
     },
+    shape::Data,
 };
 
 /// How long a started sign-in may take.
@@ -212,21 +213,23 @@ pub(crate) struct Me {
 pub(crate) async fn me(
     State(state): State<AppState>,
     caller: SignedIn,
-) -> Result<Json<Me>, ApiError> {
+) -> Result<Json<Data<Me>>, ApiError> {
     let services = services(&state)?;
     let profile = identity::profile(&services.pool, caller.identity)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::Unauthorized)?;
-    Ok(Json(Me {
-        id: profile.identity.id,
-        issuer: profile.identity.issuer,
-        display_name: profile.identity.display_name,
-        projects: profile
-            .projects
-            .into_iter()
-            .map(crate::projects::ProjectView::from)
-            .collect(),
+    Ok(Json(Data {
+        data: Me {
+            id: profile.identity.id,
+            issuer: profile.identity.issuer,
+            display_name: profile.identity.display_name,
+            projects: profile
+                .projects
+                .into_iter()
+                .map(crate::projects::ProjectView::from)
+                .collect(),
+        },
     }))
 }
 

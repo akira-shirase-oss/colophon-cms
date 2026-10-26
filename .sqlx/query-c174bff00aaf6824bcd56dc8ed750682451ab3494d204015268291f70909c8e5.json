@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE idempotency_records SET status = $6, response = $7\n         WHERE project_id = $1 AND environment_id = $2 AND identity_id = $3 AND operation = $4 AND key = $5",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Int2",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c174bff00aaf6824bcd56dc8ed750682451ab3494d204015268291f70909c8e5"
+}

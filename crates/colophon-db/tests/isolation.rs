@@ -6,80 +6,15 @@
     reason = "database tests: a failed connection or setup step is a test failure"
 )]
 
+mod common;
+
 use colophon_db::{
     DbError, PgPool, identity, projects,
     scope::{self, Scope},
 };
-use sqlx::{AssertSqlSafe, postgres::PgPoolOptions, types::time::OffsetDateTime};
+use common::TestDb;
+use sqlx::{AssertSqlSafe, types::time::OffsetDateTime};
 use uuid::Uuid;
-
-fn host() -> String {
-    std::env::var("COLOPHON_TEST_PG_HOST").unwrap_or_else(|_| "127.0.0.1:55432".to_owned())
-}
-
-struct TestDb {
-    admin: PgPool,
-    name: String,
-    app: PgPool,
-}
-
-impl TestDb {
-    async fn new() -> Self {
-        let host = host();
-        let admin = PgPool::connect(&format!("postgres://colophon:colophon-dev@{host}/postgres"))
-            .await
-            .expect("the stack's database answers (scripts/stack.sh up)");
-        let name = format!("colophon_test_{}", Uuid::now_v7().simple());
-        // The name is generated above from a UUID, never from input.
-        sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {name}")))
-            .execute(&admin)
-            .await
-            .expect("create database");
-        let owner = PgPool::connect(&format!("postgres://colophon:colophon-dev@{host}/{name}"))
-            .await
-            .expect("connect as owner");
-        colophon_db::migrate(&owner)
-            .await
-            .expect("migrations apply to an empty database");
-        owner.close().await;
-        // One connection: every transaction below reuses it, as pooled requests do.
-        let app = PgPoolOptions::new()
-            .max_connections(1)
-            .connect(&format!(
-                "postgres://colophon_app:colophon-dev@{host}/{name}"
-            ))
-            .await
-            .expect("connect as the application login");
-        Self { admin, name, app }
-    }
-
-    async fn owner(&self) -> PgPool {
-        PgPool::connect(&format!(
-            "postgres://colophon:colophon-dev@{}/{}",
-            host(),
-            self.name
-        ))
-        .await
-        .expect("connect as owner")
-    }
-
-    async fn drop(self) {
-        self.app.close().await;
-        sqlx::query(AssertSqlSafe(format!(
-            "DROP DATABASE {} WITH (FORCE)",
-            self.name
-        )))
-        .execute(&self.admin)
-        .await
-        .expect("drop database");
-    }
-
-    async fn person(&self, subject: &str) -> Uuid {
-        identity::record_sign_in(&self.app, "http://issuer.test", subject, Some(subject))
-            .await
-            .expect("sign-in recorded")
-    }
-}
 
 /// Runs a fixed counting query (written in this file, never from input) inside `within`.
 async fn count(pool: &PgPool, within: Scope, sql: &str) -> i64 {

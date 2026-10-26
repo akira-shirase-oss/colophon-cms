@@ -70,7 +70,7 @@ create → conflict → review → publish scenario produce equivalent durable r
 | `/auth/*`, `/me` | OIDC login, callback and logout; session inspection and revocation; exact callback origins, CSRF. Built in step 1.1: `GET /auth/login`, `GET /auth/callback`, `POST /auth/logout`, and `GET /me` (the identity and its projects) |
 | `/api/v1/projects`, `/members`, `/invitations` | Project lifecycle and membership; owner-scoped. Built in step 1.1: list, create (with a `production` environment and the creator as owner; a taken slug is 409) and get, where a project you aren't a member of is 404 |
 | `{P}/schemas`, `/migrations` | Discover, validate, plan, apply, inspect; apply needs an approved current plan and migration permission |
-| `{P}/collections/{collection}/entries` | List and create; get, update and archive by ID; updates need the expected revision |
+| `{P}/collections/{collection}/entries` | List and create; get, update and archive by ID; updates need the expected revision. Built in step 1.2 for the `articles` collection (D-034): list (cursor), create, get with `ETag`, save with `If-Match`, and `…/{entry}/revisions`; archive later |
 | `{P}/entries/{id}/revisions`, `/comments` | History, compare, restore as a new draft, revision-bound comments |
 | `{P}/changesets`, `/reviews`, `/releases` | Prepare, validate, request review, approve, publish, schedule, cancel, inspect, roll back as a new generation |
 | `{P}/assets`, `/upload-intents` | Create an intent, complete verification, inspect, list references, request deletion |
@@ -86,10 +86,15 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
   - a stable ID tie-breaker;
   - cursors are bound to the project and query shape, and rejected elsewhere.
 - **Preconditions:** single-resource updates use `If-Match` with revision ETags. A missing precondition returns
-  **428**; a stale one returns **409** with a safe description of the conflict.
+  **428**; a stale one returns **409** with a safe description of the conflict. As built (D-035): the ETag is
+  `"<revision id>"`; a malformed `If-Match`, or `*`, is 400; the 409 has `details.reason` `stale_revision` and the
+  current `ETag` header.
 - **Idempotency:** retriable creates need `Idempotency-Key`, scoped to actor + operation + environment. A matching
-  replay returns the recorded result; a different payload conflicts.
-- **Response shapes:**
+  replay returns the recorded result; a different payload conflicts. As built (D-035): saves need a key too; keys are
+  16 to 128 of `A-Z a-z 0-9 - _`; a replay carries `Idempotent-Replayed: true`; a reused key is 409 with
+  `details.reason` `idempotency_key_reused`; only successes are recorded.
+- **Response shapes** (as built, D-035: `{ data }` and `{ data, next_cursor }`, with the request id in the
+  `x-request-id` header and the revision in `ETag`):
   - Success: `{ data, request_id, revision }`.
   - Asynchronous work: `202 { operation_id, status: "accepted", poll_url }`. It never says published.
   - Lists: `{ data, next_cursor, filters, limits }`.
@@ -107,7 +112,7 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 | 409 | Conflict: stale revision or generation, or a different payload for an idempotency key |
 | 413 | Body over the limit |
 | 422 | Invalid content, with field paths |
-| 428 | Required precondition missing |
+| 428 | Required precondition missing (`If-Match`, `Idempotency-Key`) |
 | 429 | Throttled (per-principal rate limit) |
 | 503 | Dependency or capacity unavailable, with `Retry-After` |
 
@@ -163,12 +168,14 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 - Cursor fuzzing: tampered cursors, cursors from another project or query shape.
 - A middleware-order test: request ID present on panic, timeout and body-limit responses.
 - A pool that can't hand out a connection gives 503 with `Retry-After` and the envelope (`tests/busy.rs`).
+- Entries end to end against the real binary (`crates/colophon-server/tests/entries.rs`), and the crash tests F01 and
+  F02 (`faults.rs`, D-036).
 
 ## Build order
 
 1. **P0:** skeleton, error envelope, request IDs, health.
-2. **P1:** projects (step 1.1, done), environments, schemas, entries, revisions, preconditions, idempotency,
-   pagination, and the generated OpenAPI document (from step 1.2).
+2. **P1:** projects (step 1.1, done); entries, revisions, preconditions, idempotency and pagination (step 1.2,
+   done); environments, schemas (1.5), and the generated OpenAPI document.
 3. **P2:** changesets, reviews, releases, jobs.
 4. **P3:** destinations and deliveries.
 5. **P4:** assets, history and rollback.

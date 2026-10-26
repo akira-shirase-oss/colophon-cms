@@ -49,7 +49,7 @@ export function setup() {
   if (!action) fail('no Keycloak login form');
   // Posting the credentials follows Keycloak's redirect to the callback, then to /me.
   const me = http.post(action.replace(/&amp;/g, '&'), { username: 'dev-editor', password: 'colophon-dev' });
-  if (me.status !== 200 || me.json('display_name') !== 'Dev Editor') fail(`sign-in failed: HTTP ${me.status}`);
+  if (me.status !== 200 || me.json('data.display_name') !== 'Dev Editor') fail(`sign-in failed: HTTP ${me.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
   return { cookie: `colophon_session=${jar.colophon_session[0]}` };
 }
@@ -66,7 +66,7 @@ export default function (data) {
     const res = http.get(`${BASE_URL}/api/v1/projects`, Object.assign({ tags: { endpoint: 'projects' } }, params));
     check(res, {
       'projects 200': (r) => r.status === 200,
-      'projects listed': (r) => r.body.indexOf('"items":[') === 0 || r.body.indexOf('"items":[') === 1,
+      'projects listed': (r) => r.body.indexOf('{"data":[') === 0,
     });
   }
 }

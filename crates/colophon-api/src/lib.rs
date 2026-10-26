@@ -6,12 +6,15 @@
 
 mod auth;
 mod body;
+mod entries;
 pub mod error;
+mod fault;
 pub mod health;
 pub mod middleware;
 mod projects;
 mod rich_text;
 pub mod session;
+mod shape;
 pub mod state;
 
 use axum::{
@@ -45,6 +48,18 @@ pub fn routes(state: AppState) -> Router {
             get(projects::list).post(projects::create),
         )
         .route("/api/v1/projects/{project}", get(projects::get))
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries",
+            get(entries::list).post(entries::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}",
+            get(entries::get).put(entries::save),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions",
+            get(entries::history),
+        )
         .route("/api/v1/rich-text/validate", post(rich_text::validate))
         .fallback(fallback)
         .with_state(state)

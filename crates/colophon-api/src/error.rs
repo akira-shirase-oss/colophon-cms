@@ -17,8 +17,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use colophon_db::DbError;
-use colophon_domain::rich_text::Rejection;
+use colophon_domain::{entry::ArticleError, rich_text::Rejection};
 use serde::{Serialize, Serializer};
+use uuid::Uuid;
 
 /// Stable, machine-readable error codes. Renaming one is a breaking API change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,8 +37,11 @@ pub enum ErrorCode {
     Forbidden,
     /// No such resource, or one the caller may not see: the two look the same.
     NotFound,
-    /// The request conflicts with the current state (for example, a taken slug).
+    /// The request conflicts with the current state (for example, a taken slug, or a save on a
+    /// revision that is no longer the draft); `details.reason` says which.
     Conflict,
+    /// A required precondition header (`If-Match`, `Idempotency-Key`) is missing.
+    PreconditionRequired,
     /// Sign-in failed, was cancelled, or its state expired or was already used.
     SignInFailed,
     /// No route matches the path.
@@ -67,6 +71,7 @@ impl ErrorCode {
             Self::Forbidden => "forbidden",
             Self::NotFound => "not_found",
             Self::Conflict => "conflict",
+            Self::PreconditionRequired => "precondition_required",
             Self::SignInFailed => "sign_in_failed",
             Self::RouteNotFound => "route_not_found",
             Self::MethodNotAllowed => "method_not_allowed",
@@ -86,6 +91,7 @@ impl ErrorCode {
             StatusCode::UNAUTHORIZED => Self::Unauthorized,
             StatusCode::FORBIDDEN => Self::Forbidden,
             StatusCode::CONFLICT => Self::Conflict,
+            StatusCode::PRECONDITION_REQUIRED => Self::PreconditionRequired,
             StatusCode::METHOD_NOT_ALLOWED => Self::MethodNotAllowed,
             StatusCode::PAYLOAD_TOO_LARGE => Self::PayloadTooLarge,
             StatusCode::UNSUPPORTED_MEDIA_TYPE => Self::UnsupportedMediaType,
@@ -161,6 +167,25 @@ pub enum ApiError {
     /// A rich-text document was refused.
     #[error("{0}")]
     InvalidRichText(Rejection),
+    /// An article was refused.
+    #[error("{0}")]
+    InvalidArticle(ArticleError),
+    /// A header is malformed; the reason is safe to show.
+    #[error("{0}")]
+    InvalidHeader(&'static str),
+    /// A required precondition header is missing; the message names it.
+    #[error("{0}")]
+    PreconditionRequired(&'static str),
+    /// A save named a revision that is no longer the draft. The response's `ETag` names the
+    /// current one.
+    #[error("the draft has changed since that revision; load the current one and try again")]
+    StaleRevision {
+        /// The revision the draft points at now.
+        current: Uuid,
+    },
+    /// An `Idempotency-Key` was used before for a different request.
+    #[error("this Idempotency-Key was already used for a different request")]
+    IdempotencyKeyReused,
     /// A field of the request body was refused.
     #[error("{message}")]
     InvalidField {
@@ -222,12 +247,16 @@ impl ApiError {
             }
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-            Self::InvalidRichText(_) | Self::InvalidField { .. } => {
+            Self::InvalidRichText(_) | Self::InvalidArticle(_) | Self::InvalidField { .. } => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
+            Self::InvalidHeader(_) => StatusCode::BAD_REQUEST,
+            Self::PreconditionRequired(_) => StatusCode::PRECONDITION_REQUIRED,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
-            Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::Conflict(_) | Self::StaleRevision { .. } | Self::IdempotencyKeyReused => {
+                StatusCode::CONFLICT
+            }
             Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -240,12 +269,17 @@ impl ApiError {
             Self::MalformedJson(_) => ErrorCode::MalformedJson,
             Self::UnsupportedMediaType => ErrorCode::UnsupportedMediaType,
             Self::PayloadTooLarge => ErrorCode::PayloadTooLarge,
-            Self::BadRequest => ErrorCode::BadRequest,
-            Self::InvalidRichText(_) | Self::InvalidField { .. } => ErrorCode::ValidationFailed,
+            Self::BadRequest | Self::InvalidHeader(_) => ErrorCode::BadRequest,
+            Self::InvalidRichText(_) | Self::InvalidArticle(_) | Self::InvalidField { .. } => {
+                ErrorCode::ValidationFailed
+            }
+            Self::PreconditionRequired(_) => ErrorCode::PreconditionRequired,
             Self::Unauthorized => ErrorCode::Unauthorized,
             Self::Forbidden(_) => ErrorCode::Forbidden,
             Self::NotFound => ErrorCode::NotFound,
-            Self::Conflict(_) => ErrorCode::Conflict,
+            Self::Conflict(_) | Self::StaleRevision { .. } | Self::IdempotencyKeyReused => {
+                ErrorCode::Conflict
+            }
             Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
@@ -258,6 +292,18 @@ impl ApiError {
             Self::InvalidRichText(rejection) => Some(ErrorDetails {
                 reason: rejection.code.as_str(),
                 pointer: rejection.pointer.clone(),
+            }),
+            Self::InvalidArticle(error) => Some(ErrorDetails {
+                reason: error.code(),
+                pointer: error.pointer(),
+            }),
+            Self::StaleRevision { .. } => Some(ErrorDetails {
+                reason: "stale_revision",
+                pointer: String::new(),
+            }),
+            Self::IdempotencyKeyReused => Some(ErrorDetails {
+                reason: "idempotency_key_reused",
+                pointer: String::new(),
             }),
             Self::InvalidField {
                 reason, pointer, ..
@@ -310,11 +356,19 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         self.log();
         let mut response = render(self.status(), &self.public(), None);
-        if matches!(self, Self::Busy) {
-            response.headers_mut().insert(
-                header::RETRY_AFTER,
-                HeaderValue::from(BUSY_RETRY_AFTER_SECONDS),
-            );
+        match self {
+            Self::Busy => {
+                response.headers_mut().insert(
+                    header::RETRY_AFTER,
+                    HeaderValue::from(BUSY_RETRY_AFTER_SECONDS),
+                );
+            }
+            Self::StaleRevision { current } => {
+                if let Ok(etag) = HeaderValue::from_str(&format!("\"{current}\"")) {
+                    response.headers_mut().insert(header::ETAG, etag);
+                }
+            }
+            _ => {}
         }
         response
     }

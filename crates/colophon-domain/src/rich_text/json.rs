@@ -4,7 +4,7 @@
 /// Appends `text` as a JSON string. Escapes exactly what `JSON.stringify` escapes: `"`, `\`,
 /// the five short escapes, and the other control characters below U+0020 as `\u00xx`
 /// (lowercase hex). Everything else, including non-ASCII, U+2028 and U+2029, is written as is.
-pub(super) fn write_string(out: &mut String, text: &str) {
+pub(crate) fn write_string(out: &mut String, text: &str) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     out.push('"');
     for character in text.chars() {

@@ -7,8 +7,8 @@
 //! fixtures in `fixtures/rich-text/v1` are the contract with the editor and the renderer.
 
 mod href;
-mod json;
-mod pointer;
+pub(crate) mod json;
+pub(crate) mod pointer;
 mod validate;
 
 use std::fmt;

@@ -78,6 +78,12 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - **Save rule:** a save succeeds only if `expected_revision` equals the current draft pointer; otherwise it is a
   conflict carrying the current revision.
 - Restoring an old revision creates a new revision.
+- Built in step 1.2 (D-034): `colophon_domain::entry::Article`, the content of every revision until content types
+  exist. One collection, `articles`; a title (1 to 200 characters, no control characters or surrounding whitespace,
+  refused rather than trimmed) and a rich-text body; any other field is refused with its JSON Pointer.
+  `Article::canonical_json` is the exact text stored and hashed, escaped as `JSON.stringify` escapes it. The save rule
+  (D2) is enforced by the database's conditional update in step 1.2; the simulator's in-memory store applies the same
+  rule in step 1.4.
 
 ### Slugs and locales
 - Slug normalization, plus the uniqueness claim model: project + environment + collection + locale.
@@ -188,7 +194,8 @@ Port rules (rust-mastery chapter 10):
 ## Build order
 
 1. **P0:** IDs, scopes, schema field types, the rich-text validator, error types.
-2. **P1:** entries, revisions, the save rule, slugs, locales.
+2. **P1:** entries, revisions and articles (step 1.2, done); the save rule in the simulator (1.4); content types
+   (1.5); slugs and locales.
 3. **P2:** changesets, reviews, releases, publication history, job states.
 4. **P3:** delivery states, evidence, unpublish.
 5. **P4:** rollback, release-history queries, scheduling.

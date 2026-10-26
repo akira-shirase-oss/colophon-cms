@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT set_config('app.project_id', $1, true) AS project_scope",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "project_scope",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0f92d3b2b3c5238e8491ce602fe3fd1612b765b47710ea32fb3edb09af6017ce"
+}

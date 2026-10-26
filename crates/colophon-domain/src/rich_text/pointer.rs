@@ -1,12 +1,12 @@
 //! A JSON Pointer (RFC 6901) built up while walking a document.
 
-pub(super) struct Pointer {
+pub(crate) struct Pointer {
     text: String,
     marks: Vec<usize>,
 }
 
 impl Pointer {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             text: String::new(),
             marks: Vec::new(),
@@ -14,7 +14,7 @@ impl Pointer {
     }
 
     /// Appends a segment, escaping `~` and `/` as RFC 6901 requires.
-    pub(super) fn push(&mut self, segment: &str) {
+    pub(crate) fn push(&mut self, segment: &str) {
         self.marks.push(self.text.len());
         self.text.push('/');
         for character in segment.chars() {
@@ -26,24 +26,24 @@ impl Pointer {
         }
     }
 
-    pub(super) fn push_index(&mut self, index: usize) {
+    pub(crate) fn push_index(&mut self, index: usize) {
         self.marks.push(self.text.len());
         self.text.push('/');
         self.text.push_str(&index.to_string());
     }
 
-    pub(super) fn pop(&mut self) {
+    pub(crate) fn pop(&mut self) {
         if let Some(length) = self.marks.pop() {
             self.text.truncate(length);
         }
     }
 
-    pub(super) fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         &self.text
     }
 
     /// The pointer with one more segment, without changing this one.
-    pub(super) fn with(&self, segment: &str) -> String {
+    pub(crate) fn with(&self, segment: &str) -> String {
         let mut copy = Self {
             text: self.text.clone(),
             marks: Vec::new(),

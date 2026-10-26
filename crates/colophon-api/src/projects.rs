@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::{
     ApiError, AppState,
     session::{SignedIn, services},
+    shape::{Data, Page},
 };
 
 /// A project as the API shows it.
@@ -36,24 +37,22 @@ impl From<projects::Project> for ProjectView {
     }
 }
 
-#[derive(Serialize)]
-pub(crate) struct ProjectList {
-    items: Vec<ProjectView>,
-}
-
-/// `GET /api/v1/projects`.
+/// `GET /api/v1/projects`: every project the caller belongs to (at most 1,000, on one page).
 pub(crate) async fn list(
     State(state): State<AppState>,
     caller: SignedIn,
-) -> Result<Json<ProjectList>, ApiError> {
+) -> Result<Json<Page<ProjectView>>, ApiError> {
     let services = services(&state)?;
-    let items = projects::list(&services.pool, caller.identity)
+    let data = projects::list(&services.pool, caller.identity)
         .await
         .map_err(ApiError::from_db)?
         .into_iter()
         .map(ProjectView::from)
         .collect();
-    Ok(Json(ProjectList { items }))
+    Ok(Json(Page {
+        data,
+        next_cursor: None,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -68,7 +67,7 @@ pub(crate) async fn create(
     State(state): State<AppState>,
     caller: SignedIn,
     body: Result<Json<NewProject>, JsonRejection>,
-) -> Result<(StatusCode, Json<ProjectView>), ApiError> {
+) -> Result<(StatusCode, Json<Data<ProjectView>>), ApiError> {
     let services = services(&state)?;
     let Json(body) = body?;
     let invalid = |error: colophon_domain::project::ProjectFieldError, pointer: &'static str| {
@@ -91,7 +90,12 @@ pub(crate) async fn create(
         DbError::Conflict => ApiError::Conflict("a project with this slug already exists"),
         other => ApiError::from_db(other),
     })?;
-    Ok((StatusCode::CREATED, Json(ProjectView::from(project))))
+    Ok((
+        StatusCode::CREATED,
+        Json(Data {
+            data: ProjectView::from(project),
+        }),
+    ))
 }
 
 /// `GET /api/v1/projects/{project}`.
@@ -99,7 +103,7 @@ pub(crate) async fn get(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(id): Path<String>,
-) -> Result<Json<ProjectView>, ApiError> {
+) -> Result<Json<Data<ProjectView>>, ApiError> {
     let services = services(&state)?;
     // An id that isn't a UUID can't name a project: not found, same as any other.
     let id = Uuid::parse_str(&id).map_err(|_| ApiError::NotFound)?;
@@ -107,5 +111,7 @@ pub(crate) async fn get(
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
-    Ok(Json(ProjectView::from(project)))
+    Ok(Json(Data {
+        data: ProjectView::from(project),
+    }))
 }
