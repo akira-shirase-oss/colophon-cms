@@ -81,6 +81,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Linux hands outgoing connections ports from 32768 to 60999, which includes every port the
+      # stack and its test servers listen on (53900 and up); with a dozen servers started back to
+      # back and k6's thousands of connections, one eventually took 58090 first ("address in
+      # use", twice). Keep outgoing ports below them.
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - name: ShellCheck
         run: >-
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt
