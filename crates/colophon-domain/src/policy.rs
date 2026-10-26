@@ -13,7 +13,7 @@ pub enum Role {
     Developer,
     /// Writes and edits content.
     Editor,
-    /// Writes content and, from P2, publishes it.
+    /// Writes content, reviews changesets and, from step 2.2, publishes them.
     Publisher,
 }
 
@@ -48,6 +48,8 @@ pub enum Action {
     ChangeContentTypes,
     /// Invite people, change roles, remove members.
     ManageMembers,
+    /// Approve a changeset, or ask for changes to it (D-044).
+    Review,
 }
 
 /// Whether `role` may perform `action`. Deny by default: anything not listed is refused.
@@ -57,6 +59,7 @@ pub const fn allows(role: Role, action: Action) -> bool {
         (_, Action::Read | Action::WriteContent)
             | (Role::Owner | Role::Developer, Action::ChangeContentTypes)
             | (Role::Owner, Action::ManageMembers)
+            | (Role::Owner | Role::Publisher, Action::Review)
     )
 }
 
@@ -66,16 +69,22 @@ mod tests {
 
     #[test]
     fn the_table_as_written_in_module_03() {
-        use Action::{ChangeContentTypes, ManageMembers, Read, WriteContent};
+        use Action::{ChangeContentTypes, ManageMembers, Read, Review, WriteContent};
         let table = [
-            (Role::Owner, [true, true, true, true]),
-            (Role::Developer, [true, true, true, false]),
-            (Role::Editor, [true, true, false, false]),
-            (Role::Publisher, [true, true, false, false]),
+            (Role::Owner, [true, true, true, true, true]),
+            (Role::Developer, [true, true, true, false, false]),
+            (Role::Editor, [true, true, false, false, false]),
+            (Role::Publisher, [true, true, false, false, true]),
         ];
         for (role, expected) in table {
-            let actual = [Read, WriteContent, ChangeContentTypes, ManageMembers]
-                .map(|action| allows(role, action));
+            let actual = [
+                Read,
+                WriteContent,
+                ChangeContentTypes,
+                ManageMembers,
+                Review,
+            ]
+            .map(|action| allows(role, action));
             assert_eq!(actual, expected, "{role:?}");
         }
     }
