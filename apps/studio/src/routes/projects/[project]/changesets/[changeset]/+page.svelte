@@ -8,7 +8,7 @@
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui';
-	import { ApiError, changesetAction, getChangeset, me, type Changeset } from '#lib/api.ts';
+	import { ApiError, changesetAction, getChangeset, listReleases, me, newKey, publishChangeset, type Changeset } from '#lib/api.ts';
 	import { STATE_LABEL } from '#lib/changesets.ts';
 
 	const project = $derived(page.params.project ?? '');
@@ -18,6 +18,38 @@
 	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
 	const role = $derived(who.data?.projects.find((mine) => mine.id === project)?.role);
 	const reviewer = $derived(role === 'owner' || role === 'publisher');
+	// Publishing names the release it follows: the latest one this page has seen.
+	const releases = createQuery(() => ({ queryKey: ['releases', project], queryFn: () => listReleases(project) }));
+	// One key per publish attempt: pressing Publish again after a lost answer is safe.
+	let publishKey = newKey();
+
+	async function publish(shown: Changeset) {
+		const base = releases.data?.generation;
+		if (base === undefined) return;
+		busy = true;
+		error = '';
+		notice = '';
+		try {
+			await publishChangeset(project, id, shown.hash, base, publishKey);
+			publishKey = newKey();
+		} catch (failure) {
+			if (failure instanceof ApiError && failure.reason === 'generation_moved') {
+				notice = 'Another release was published first. Check what is live now, then publish again.';
+				publishKey = newKey();
+			} else if (failure instanceof ApiError && failure.reason === 'stale_changeset') {
+				notice = 'This changeset changed since you loaded it. Here is the current version: check it, then try again.';
+			} else {
+				error = failure instanceof ApiError ? failure.message : String(failure);
+			}
+		} finally {
+			busy = false;
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: ['changeset', project, id] }),
+				queryClient.invalidateQueries({ queryKey: ['releases', project] }),
+				queryClient.invalidateQueries({ queryKey: ['changesets', project] })
+			]);
+		}
+	}
 
 	let comment = $state('');
 	let error = $state('');
@@ -65,6 +97,8 @@
 			by {shown.status.by}{#if shown.status.self_review}<span class="flag" data-testid="self-review"> (reviewed their own changeset)</span>{/if}
 		{:else if shown.status.state === 'changes_requested'}
 			by {shown.status.by}
+		{:else if shown.status.state === 'published'}
+			as <a href={resolve('/projects/[project]/releases', { project })} data-testid="release-link">release {shown.status.generation}</a>
 		{/if}
 	</p>
 	<p class="muted small">Version <code title={shown.hash}>{shown.hash.slice(7, 19)}</code></p>
@@ -87,10 +121,12 @@
 			<Button onclick={() => act(shown, 'refresh')} disabled={busy}>Refresh to the current versions</Button>
 		{:else if shown.status.state === 'open'}
 			<Button onclick={() => act(shown, 'submit')} disabled={busy}>Submit for review</Button>
+		{:else if shown.status.state === 'approved' && reviewer}
+			<Button onclick={() => publish(shown)} disabled={busy || releases.data === undefined}>Publish</Button>
 		{/if}
 	</div>
 
-	{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale'}
+	{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale' && shown.status.state !== 'published'}
 		<section class="review" aria-label="Review">
 			<h2>Review</h2>
 			<label class="field">

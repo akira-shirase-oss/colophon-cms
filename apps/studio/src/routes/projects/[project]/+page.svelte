@@ -14,7 +14,8 @@
 <h1>Content</h1>
 <p>
 	<a href={resolve('/projects/[project]/members', { project })} data-testid="members-link">Members and invitations</a> ·
-	<a href={resolve('/projects/[project]/changesets', { project })} data-testid="changesets-link">Changesets</a>
+	<a href={resolve('/projects/[project]/changesets', { project })} data-testid="changesets-link">Changesets</a> ·
+	<a href={resolve('/projects/[project]/releases', { project })} data-testid="releases-link">Releases</a>
 </p>
 
 {#if types.isPending}

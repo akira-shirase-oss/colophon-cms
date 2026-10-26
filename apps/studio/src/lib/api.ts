@@ -323,11 +323,13 @@ export async function acceptInvitation(token: string): Promise<{ project_id: str
 		.data;
 }
 
-/** Where a changeset stands (D-044); only `approved` can be published (step 2.2). */
-export type ChangesetState = 'open' | 'stale' | 'awaiting_review' | 'changes_requested' | 'approved' | 'approval_expired';
+/** Where a changeset stands (D-044); only `approved` can be published (D-045). */
+export type ChangesetState = 'open' | 'stale' | 'awaiting_review' | 'changes_requested' | 'approved' | 'approval_expired' | 'published';
 
 export interface ChangesetStatus {
 	state: ChangesetState;
+	/** For `published`: the release's generation. */
+	generation: number | null;
 	/** Who approved or asked for changes. */
 	by: string | null;
 	/** The approver also submitted it: allowed, and always shown. */
@@ -410,6 +412,47 @@ export async function changesetAction(
 ): Promise<Changeset> {
 	const path = `${changesets(project)}/${id}/${action}`;
 	return ((await (await send('POST', path, body, { 'If-Match': `"${hash}"` })).json()) as { data: Changeset }).data;
+}
+
+/** A committed release (D-045). */
+export interface Release {
+	generation: number;
+	epoch: number;
+	changeset_id: string;
+	title: string;
+	changeset_hash: string;
+	published_by: string;
+	published_by_name: string | null;
+	published_at: string;
+	/** Entries whose published revision changed in it. */
+	entries: number;
+}
+
+/** The environment's releases, newest first, and its current generation. */
+export async function listReleases(project: string): Promise<{ releases: Release[]; generation: number }> {
+	const response = await send('GET', `${base(project)}/releases`);
+	const generation = Number(response.headers.get('colophon-generation') ?? '0');
+	return { releases: ((await response.json()) as { data: Release[] }).data, generation };
+}
+
+/** Publishes the approved changeset with `hash` as the release after `baseGeneration`; refused
+ *  with reason `generation_moved` if another release committed first. Sending the same key again
+ *  is safe. */
+export async function publishChangeset(
+	project: string,
+	id: string,
+	hash: string,
+	baseGeneration: number,
+	key: string
+): Promise<{ generation: number; entries_changed: number }> {
+	const path = `${changesets(project)}/${id}/publish`;
+	const response = await send('POST', path, { base_generation: baseGeneration }, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key });
+	return ((await response.json()) as { data: { generation: number; entries_changed: number } }).data;
+}
+
+/** Where anyone can read what the project publishes, with no sign-in. */
+export function deliveryUrl(project: string, collection: string): string {
+	return `/content/v1/${project}/production/${collection}`;
 }
 
 /** A fresh idempotency key: 32 hex characters. */
