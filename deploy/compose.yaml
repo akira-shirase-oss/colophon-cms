@@ -101,6 +101,8 @@ services:
       - "127.0.0.1:${COLOPHON_KEYCLOAK_PORT:-58080}:8080"
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
+      # Colophon's look for the sign-in pages (D-053); the realm names it as its login theme.
+      - ./keycloak-theme/colophon:/opt/keycloak/themes/colophon:ro
     healthcheck:
       # No curl in the image: ask the management port directly. Judge by the status line
       # (200 up, 503 down), not the body: individual checks report "UP" even when the

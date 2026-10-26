@@ -88,7 +88,7 @@
 			<p class="text-sm">{mine.data.name}</p>
 		</FormRow>
 		<FormRow label="Slug" hint="Used in the CLI.">
-			<p class="font-mono text-sm">{mine.data.slug}</p>
+			<p class="text-sm">{mine.data.slug}</p>
 		</FormRow>
 		<FormRow label="Project id">
 			<div class="flex items-center gap-2">

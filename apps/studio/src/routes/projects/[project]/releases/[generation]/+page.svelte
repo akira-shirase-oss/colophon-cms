@@ -70,7 +70,7 @@
 			<ul class="space-y-2" data-testid="deliveries">
 				{#each shown.deliveries as delivery (delivery.destination_id)}
 					<li class="flex items-start gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-sm" data-state={delivery.state}>
-						<span class="mt-1.5 size-2 shrink-0 rounded-full {DOT[delivery.state]}" aria-hidden="true"></span>
+						<span class="mt-1.5 size-2 shrink-0 rounded-full {DOT[delivery.state]}" class:breathe={delivery.state === 'pending'} aria-hidden="true"></span>
 						<span class="min-w-0 flex-1">
 							<strong class="font-medium">{delivery.name}</strong>
 							<span class="text-xs text-muted-foreground">{KIND[delivery.kind]}{delivery.location ? ` at ${delivery.location}` : ''}</span>:

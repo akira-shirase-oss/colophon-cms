@@ -90,11 +90,11 @@
 	{#if releases.data.releases.length === 0}
 		<EmptyState icon={PackageCheckIcon} title="No releases yet">Publish an approved changeset to make release No. 1.</EmptyState>
 	{:else}
-		<ol class="space-y-3" reversed data-testid="releases">
-			{#each releases.data.releases as release (release.generation)}
-				<li class="rounded-xl border border-border bg-card p-4" data-generation={release.generation}>
+		<ol class="stagger space-y-3" reversed data-testid="releases">
+			{#each releases.data.releases as release, index (release.generation)}
+				<li class="rounded-xl border border-border bg-card p-4" style="--i: {index}" data-generation={release.generation}>
 					<div class="flex flex-wrap items-start gap-x-4 gap-y-2">
-						<span class="font-mono text-2xl leading-none font-medium tabular">
+						<span class="text-2xl leading-none font-semibold tracking-tight tabular">
 							<span aria-hidden="true" class="text-muted-foreground">No.&nbsp;</span><span class="sr-only">Release </span>{release.generation}
 						</span>
 						<div class="min-w-0 flex-1">
@@ -118,7 +118,7 @@
 							{/if}
 							{#each byRelease.get(release.generation) ?? [] as job (job.id)}
 								<li class="flex items-center gap-2" data-testid="delivery" data-status={job.status} class:text-destructive={job.status === 'failed'}>
-									<span class="size-1.5 rounded-full {DOT[job.status]}" aria-hidden="true"></span>
+									<span class="size-1.5 rounded-full {DOT[job.status]}" class:breathe={['pending', 'running', 'retrying'].includes(job.status)} aria-hidden="true"></span>
 									{job.destination_name}: {STATUS[job.status]}{job.attempts > 1 ? ` after ${job.attempts} attempts` : ''}{job.last_error && job.status !== 'succeeded'
 										? ` (${job.last_error})`
 										: ''}

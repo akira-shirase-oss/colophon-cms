@@ -50,7 +50,7 @@
 <PageHeader title={mine.data?.name ?? 'Overview'}>
 	{#snippet meta()}
 		{#if mine.data}
-			<span class="font-mono text-xs">{mine.data.slug}</span>
+			<span>{mine.data.slug}</span>
 			<span aria-hidden="true">·</span>
 			<span>{ROLE_WORD[mine.data.role]}</span>
 		{/if}
@@ -60,25 +60,25 @@
 {#if mine.isError}
 	<Problem error={mine.error} />
 {:else}
-	<section class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="At a glance">
-		<a class="stat" href={live ? resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) }) : resolve('/projects/[project]/releases', { project })}>
+	<section class="stagger grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="At a glance">
+		<a class="stat lift" style="--i: 0" href={live ? resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) }) : resolve('/projects/[project]/releases', { project })}>
 			<span class="stat-label">Live release</span>
 			{#if releases.isPending}
 				<Skeleton class="h-8 w-24" />
 			{:else if live}
-				<span class="stat-value font-mono">No. {live.generation}</span>
+				<span class="stat-value">No. {live.generation}</span>
 				<ReleaseLabel release={live} testid="overview-label" />
 			{:else}
 				<span class="stat-value">None yet</span>
 				<span class="text-xs text-muted-foreground">Nothing is published</span>
 			{/if}
 		</a>
-		<a class="stat" href={resolve('/projects/[project]/changesets', { project })}>
+		<a class="stat lift" style="--i: 1" href={resolve('/projects/[project]/changesets', { project })}>
 			<span class="stat-label">Waiting for review</span>
 			<span class="stat-value tabular" data-testid="awaiting-count">{(sets.data ?? []).filter((set) => set.status.state === 'awaiting_review').length}</span>
 			<span class="text-xs text-muted-foreground">{waiting.length} changeset{waiting.length === 1 ? '' : 's'} in progress</span>
 		</a>
-		<div class="stat">
+		<div class="stat" style="--i: 2">
 			<span class="stat-label">Entries</span>
 			<span class="stat-value tabular">{all.length}</span>
 			<span class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -87,7 +87,7 @@
 				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-draft align-middle"></span>{tally.draft} draft</span>
 			</span>
 		</div>
-		<div class="stat">
+		<div class="stat" style="--i: 3">
 			<span class="stat-label">Last published</span>
 			<span class="stat-value">{live ? ago(live.published_at) : '—'}</span>
 			<span class="truncate text-xs text-muted-foreground">{live ? `by ${live.published_by_name ?? live.published_by}` : 'No releases yet'}</span>
@@ -99,10 +99,11 @@
 			<div class="mb-3 flex items-baseline justify-between">
 				<h2 id="recent" class="text-base font-semibold">Recently edited</h2>
 			</div>
-			<div class="overflow-hidden rounded-xl border border-border bg-card">
-				{#each recent as { type, entry } (entry.id)}
+			<div class="stagger overflow-hidden rounded-xl border border-border bg-card">
+				{#each recent as { type, entry }, index (entry.id)}
 					<a
-						class="rule-dotted flex items-center gap-3 px-4 py-3 last:border-b-0 hover:bg-muted/50"
+						class="rule-dotted flex items-center gap-3 px-4 py-3 transition-colors last:border-b-0 hover:bg-muted/50"
+						style="--i: {index}"
 						href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: type.slug, entry: entry.id })}
 					>
 						<FileTextIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -124,7 +125,7 @@
 				<ul class="space-y-2">
 					{#each waiting.slice(0, 5) as set (set.id)}
 						<li>
-							<a class="block rounded-lg border border-border bg-card p-3 hover:border-foreground/20" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
+							<a class="lift block rounded-lg border border-border bg-card p-3 hover:border-foreground/20" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}>
 								<span class="block truncate text-sm font-medium">{set.title}</span>
 								<span class="mt-1.5 flex items-center justify-between gap-2">
 									<ChangesetBadge state={set.status.state} />
@@ -183,10 +184,10 @@
 		color: var(--muted-foreground);
 	}
 	.stat-value {
-		font-family: var(--font-serif);
-		font-size: 1.875rem;
+		font-size: 1.75rem;
 		line-height: 2.25rem;
-		font-weight: 500;
-		letter-spacing: -0.01em;
+		font-weight: 600;
+		letter-spacing: -0.02em;
+		font-variant-numeric: tabular-nums;
 	}
 </style>

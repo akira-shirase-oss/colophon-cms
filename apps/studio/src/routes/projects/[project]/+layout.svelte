@@ -102,7 +102,7 @@
 								<DropdownMenu.Item>
 									{#snippet child({ props })}
 										<a {...props} href={resolve('/projects/[project]', { project: other.id })}>
-											<span class="flex size-6 items-center justify-center rounded-md border border-border font-serif text-xs">{other.name.slice(0, 1).toUpperCase()}</span>
+											<span class="flex size-6 items-center justify-center rounded-md border border-border text-xs font-semibold">{other.name.slice(0, 1).toUpperCase()}</span>
 											<span class="truncate">{other.name}</span>
 											{#if other.id === project}<span class="ml-auto text-xs text-muted-foreground">current</span>{/if}
 										</a>
@@ -176,7 +176,7 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 						{#if releases.data && releases.data.generation > 0}
-							<Sidebar.MenuBadge class="tabular font-mono">No.&nbsp;{releases.data.generation}</Sidebar.MenuBadge>
+							<Sidebar.MenuBadge class="tabular">No.&nbsp;{releases.data.generation}</Sidebar.MenuBadge>
 						{/if}
 					</Sidebar.MenuItem>
 				</Sidebar.Menu>
@@ -213,7 +213,7 @@
 				{:else}
 					<div class="flex items-baseline justify-between gap-2">
 						<span class="text-xs text-muted-foreground">Live now</span>
-						<a class="font-mono text-sm font-medium tabular hover:underline" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) })}>No. {live.generation}</a>
+						<a class="text-sm font-semibold tabular hover:underline" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) })}>No. {live.generation}</a>
 					</div>
 					<div class="mt-2"><ReleaseLabel release={live} testid="live-label" /></div>
 				{/if}
@@ -252,9 +252,11 @@
 				<AppearanceMenu />
 			</div>
 		</header>
-		<div class="mx-auto w-full max-w-6xl flex-1 px-5 py-8 sm:px-8 lg:px-10">
-			{@render children()}
-		</div>
+		{#key page.url.pathname}
+			<div class="page-enter mx-auto w-full max-w-6xl flex-1 px-5 py-8 sm:px-8 lg:px-10">
+				{@render children()}
+			</div>
+		{/key}
 	</Sidebar.Inset>
 </Sidebar.Provider>
 

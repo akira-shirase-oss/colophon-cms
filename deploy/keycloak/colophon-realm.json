@@ -1,6 +1,7 @@
 {
   "realm": "colophon",
-  "displayName": "Colophon (local development)",
+  "displayName": "Colophon",
+  "loginTheme": "colophon",
   "enabled": true,
   "sslRequired": "external",
   "registrationAllowed": false,

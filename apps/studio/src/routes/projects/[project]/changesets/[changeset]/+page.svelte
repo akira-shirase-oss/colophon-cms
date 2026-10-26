@@ -196,7 +196,7 @@
 							</Button>
 						</div>
 						{#if expanded}
-							<div id="diff-{item.entry_id}" class="border-t border-dotted border-border bg-background/60 px-4 py-4">
+							<div id="diff-{item.entry_id}" class="unfold border-t border-dotted border-border bg-background/60 px-4 py-4">
 								<ItemDiff {project} {item} />
 							</div>
 						{/if}

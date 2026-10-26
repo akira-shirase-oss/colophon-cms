@@ -20,5 +20,5 @@
 </script>
 
 <Badge variant={look.variant} {href} data-testid={testid} data-label={release.label}>
-	<look.icon aria-hidden="true" />{labelText(release)}
+	<look.icon aria-hidden="true" class={release.label === 'pending' ? 'breathe' : ''} />{labelText(release)}
 </Badge>

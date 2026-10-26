@@ -38,7 +38,7 @@
 <svelte:head><title>Sign in a terminal · Colophon Studio</title></svelte:head>
 
 <div class="mx-auto max-w-lg space-y-4 rounded-2xl border border-border bg-card p-8 shadow-xs">
-<h1 class="font-serif text-3xl font-medium tracking-tight">Sign in a terminal</h1>
+<h1 class="text-2xl font-semibold tracking-tight">Sign in a terminal</h1>
 {#if who.isPending}
 	<p class="text-sm text-muted-foreground">Loading…</p>
 {:else if who.data === null}

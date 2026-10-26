@@ -83,7 +83,7 @@
 	<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
 		<RichTextToolbar {editor} />
 		<div class="editor px-6 py-5 sm:px-8" bind:this={host} data-testid="editor"></div>
-		<p class="border-t border-dotted border-border px-4 py-2 font-mono text-xs text-muted-foreground tabular" data-testid="limits">
+		<p class="border-t border-dotted border-border px-4 py-2 text-xs text-muted-foreground tabular" data-testid="limits">
 			Depth {size.depth}/{LIMITS.maxDepth} · {size.nodes} nodes/{LIMITS.maxNodes} · {size.bytes.toLocaleString()} bytes/{LIMITS.maxBytes.toLocaleString()}
 		</p>
 	</div>

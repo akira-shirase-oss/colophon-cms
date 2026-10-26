@@ -133,9 +133,9 @@
 						<Table.Head class="pr-4 text-right">Updated</Table.Head>
 					</Table.Row>
 				</Table.Header>
-				<Table.Body data-testid="entries">
-					{#each rows as entry (entry.id)}
-						<Table.Row class="relative">
+				<Table.Body data-testid="entries" class="stagger">
+					{#each rows as entry, index (entry.id)}
+						<Table.Row class="relative" style="--i: {index}">
 							<Table.Cell class="max-w-0 pl-4 sm:max-w-md">
 								<a
 									class="block truncate font-medium after:absolute after:inset-0 focus-visible:underline focus-visible:outline-none"
@@ -143,7 +143,7 @@
 								>
 							</Table.Cell>
 							<Table.Cell><StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} /></Table.Cell>
-							<Table.Cell class="hidden font-mono text-xs text-muted-foreground md:table-cell">
+							<Table.Cell class="hidden text-sm text-muted-foreground tabular md:table-cell">
 								{entry.published ? `No. ${entry.published.generation}` : '—'}
 							</Table.Cell>
 							<Table.Cell class="pr-4 text-right text-sm text-muted-foreground" title={new Date(entry.updated_at).toLocaleString()}>{ago(entry.updated_at)}</Table.Cell>

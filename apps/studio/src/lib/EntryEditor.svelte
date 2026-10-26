@@ -308,7 +308,7 @@
 								{/if}
 							</div>
 							{#if comparing === revision.id}
-								<div class="mx-3 mb-3 rounded-lg border border-border bg-card p-4">
+								<div class="unfold mx-3 mb-3 rounded-lg border border-border bg-card p-4">
 									{#if compared.data}
 										<DiffView changes={compare(definition, compared.data.content, current())} before="this revision" after="the draft" />
 									{:else if compared.isError}
@@ -329,11 +329,11 @@
 		<div class="rounded-xl border border-border bg-card p-4 shadow-xs">
 			<p class="flex items-start gap-2 text-sm font-medium" role="status" data-testid="save-status" data-status={saver.status}>
 				{#if saver.status === 'saved'}
-					<CloudCheckIcon class="mt-0.5 size-4 shrink-0 text-live" aria-hidden="true" />
+					<CloudCheckIcon class="pop mt-0.5 size-4 shrink-0 text-live" aria-hidden="true" />
 				{:else if saver.status === 'saving'}
 					<LoaderIcon class="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
 				{:else if saver.status === 'unsaved'}
-					<span class="mt-1.5 size-2 shrink-0 rounded-full bg-pending" aria-hidden="true"></span>
+					<span class="breathe mt-1.5 size-2 shrink-0 rounded-full bg-pending" aria-hidden="true"></span>
 				{:else}
 					<CloudAlertIcon class="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
 				{/if}
@@ -356,7 +356,7 @@
 				</div>
 				<div class="flex items-center justify-between gap-2">
 					<dt class="text-muted-foreground">Live in</dt>
-					<dd class="font-mono text-xs">{published ? `No. ${published.generation}` : '—'}</dd>
+					<dd class="tabular">{published ? `No. ${published.generation}` : '—'}</dd>
 				</div>
 				<div class="flex items-center justify-between gap-2">
 					<dt class="text-muted-foreground">Revision</dt>

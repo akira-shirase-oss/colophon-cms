@@ -58,7 +58,7 @@
 	<Problem error={who.error} />
 {:else if who.data === null}
 	<div class="mx-auto max-w-md py-16 text-center">
-		<h1 class="font-serif text-4xl font-medium tracking-tight">Welcome to Colophon</h1>
+		<h1 class="text-3xl font-semibold tracking-tight">Welcome to Colophon</h1>
 		<p class="mt-3 text-muted-foreground" data-testid="signed-out">Sign in to write and edit.</p>
 		<Button class="mt-8" href={signInUrl(resolve('/'))} data-sveltekit-reload data-testid="sign-in">Sign in<ArrowRightIcon data-icon="inline-end" /></Button>
 	</div>
@@ -74,17 +74,17 @@
 			{who.data.administrator ? 'Create the first one below.' : 'Ask a project owner for an invitation link.'}
 		</EmptyState>
 	{:else}
-		<ul class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects">
-			{#each who.data.projects as project (project.id)}
-				<li>
+		<ul class="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects">
+			{#each who.data.projects as project, index (project.id)}
+				<li style="--i: {index}">
 					<a
 						href={resolve('/projects/[project]', { project: project.id })}
-						class="group flex h-full flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-xs transition-colors outline-none hover:border-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/40"
+						class="lift group flex h-full flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-xs outline-none hover:border-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/40"
 					>
-						<span class="flex size-9 items-center justify-center rounded-lg bg-secondary font-serif text-lg">{project.name.slice(0, 1).toUpperCase()}</span>
+						<span class="flex size-9 items-center justify-center rounded-lg bg-secondary text-sm font-semibold">{project.name.slice(0, 1).toUpperCase()}</span>
 						<span>
 							<span class="block font-medium">{project.name}</span>
-							<span class="font-mono text-xs text-muted-foreground">{project.slug}</span>
+							<span class="text-xs text-muted-foreground">{project.slug}</span>
 						</span>
 						<span class="mt-auto flex items-center justify-between text-sm text-muted-foreground">
 							{ROLE_WORD[project.role]}
@@ -115,7 +115,6 @@
 				<FormRow label="Slug (in addresses and the CLI)" hint="Lowercase letters, digits and dashes." for="project-slug">
 					<Input
 						id="project-slug"
-						class="font-mono"
 						bind:value={slug}
 						required
 						maxlength={63}

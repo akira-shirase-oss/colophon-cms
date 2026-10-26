@@ -65,7 +65,7 @@
 					<Input
 						id={input}
 						maxlength={field.max_chars}
-						class={field.id === titleField ? 'h-11 font-serif text-xl!' : ''}
+						class={field.id === titleField ? 'h-10 text-base! font-medium' : ''}
 						bind:value={form[field.id] as string}
 						oninput={onchange}
 					/>

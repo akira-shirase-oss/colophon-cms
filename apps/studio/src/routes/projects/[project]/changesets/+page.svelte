@@ -91,9 +91,9 @@
 					<Table.Head class="pr-4 text-right">Updated</Table.Head>
 				</Table.Row>
 			</Table.Header>
-			<Table.Body data-testid="changesets">
-				{#each sets.data as set (set.id)}
-					<Table.Row class="relative">
+			<Table.Body data-testid="changesets" class="stagger">
+				{#each sets.data as set, index (set.id)}
+					<Table.Row class="relative" style="--i: {index}">
 						<Table.Cell class="max-w-0 pl-4 sm:max-w-md">
 							<a class="block truncate font-medium after:absolute after:inset-0" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: set.id })}
 								>{set.title}</a

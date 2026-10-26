@@ -1,0 +1,236 @@
+/*
+ * Colophon's look for Keycloak's v2 login pages (D-053): the Studio's paper ground, one white
+ * card, Inter served from this theme (nothing from other origins), the mark, boxed fields with a
+ * blue focus ring, and a blue-black button. Dark mode follows the system, as the Studio does.
+ * Colours mirror packages/ui/src/lib/styles.css.
+ */
+@font-face {
+	font-family: 'Inter Variable';
+	font-style: normal;
+	font-display: swap;
+	font-weight: 100 900;
+	src: url('../fonts/inter-latin-wght-normal.woff2') format('woff2-variations');
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+	font-family: 'Inter Variable';
+	font-style: normal;
+	font-display: swap;
+	font-weight: 100 900;
+	src: url('../fonts/inter-latin-ext-wght-normal.woff2') format('woff2-variations');
+	unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+:root {
+	--colophon-paper: oklch(0.955 0.007 85);
+	--colophon-card: oklch(1 0 0);
+	--colophon-ink: oklch(0.22 0.018 265);
+	--colophon-muted: oklch(0.47 0.015 265);
+	--colophon-border: oklch(0.9 0.008 85);
+	--colophon-input: oklch(0.88 0.01 85);
+	--colophon-ring: oklch(0.52 0.13 258);
+	--colophon-button: oklch(0.24 0.02 265);
+	--colophon-button-text: oklch(0.985 0.004 85);
+	--colophon-danger: oklch(0.55 0.2 20);
+	--keycloak-card-top-color: transparent;
+	--pf-v5-global--FontFamily--text: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+	--pf-v5-global--FontFamily--heading: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+	--pf-v5-global--FontFamily--redhatfont--text: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+	--pf-v5-global--FontFamily--redhatfont--heading: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+}
+.pf-v5-theme-dark {
+	--colophon-paper: oklch(0.145 0.007 60);
+	--colophon-card: oklch(0.205 0.008 60);
+	--colophon-ink: oklch(0.93 0.012 85);
+	--colophon-muted: oklch(0.7 0.012 85);
+	--colophon-border: oklch(0.3 0.01 60);
+	--colophon-input: oklch(0.33 0.01 60);
+	--colophon-ring: oklch(0.72 0.12 258);
+	--colophon-button: oklch(0.93 0.012 85);
+	--colophon-button-text: oklch(0.19 0.01 60);
+	--colophon-danger: oklch(0.65 0.19 20);
+}
+
+html,
+.login-pf body {
+	background: var(--colophon-paper);
+	color: var(--colophon-ink);
+	font-family: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+	font-feature-settings: 'cv11', 'ss01';
+	-webkit-font-smoothing: antialiased;
+}
+.pf-v5-c-login {
+	background: none;
+	min-height: 100svh;
+}
+.pf-v5-c-login__container {
+	grid-template-columns: min(26rem, calc(100vw - 2rem));
+}
+
+/* The mark and the name, then a quiet note that this is the local identity provider. */
+#kc-header {
+	padding-block: 0 1.75rem;
+}
+#kc-header-wrapper {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.75rem;
+	font-size: 1.125rem;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	text-transform: none;
+	/* Keycloak's own styles force this white with !important. */
+	color: var(--colophon-ink) !important;
+	padding: 0;
+}
+#kc-header-wrapper::before {
+	content: '';
+	width: 1.75rem;
+	height: 1.875rem;
+	background-color: var(--colophon-ink);
+	-webkit-mask: url('../img/colophon-mark.svg') no-repeat center / contain;
+	mask: url('../img/colophon-mark.svg') no-repeat center / contain;
+}
+/* This realm only exists in the local stack. */
+#kc-header-wrapper::after {
+	content: 'Local development';
+	font-size: 0.75rem;
+	font-weight: 500;
+	letter-spacing: 0;
+	color: var(--colophon-muted);
+	border: 1px solid var(--colophon-border);
+	background: var(--colophon-card);
+	border-radius: 999px;
+	padding: 0.125rem 0.5rem;
+}
+
+/* The card. */
+.pf-v5-c-login__main {
+	background: var(--colophon-card);
+	border: 1px solid var(--colophon-border);
+	border-radius: 1rem;
+	box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px -12px rgb(0 0 0 / 0.12);
+	animation: colophon-rise 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.pf-v5-c-login__main-header {
+	border-top: 0;
+	padding-block-start: 2rem;
+}
+.pf-v5-c-login__main-body,
+.pf-v5-c-login__main-header,
+.pf-v5-c-login__main-footer {
+	padding-inline: 2rem;
+}
+.pf-v5-c-login__main-body {
+	padding-block-end: 2rem;
+}
+.pf-v5-c-title,
+#kc-page-title {
+	font-size: 1.375rem;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	color: var(--colophon-ink);
+}
+
+/* Fields. */
+.pf-v5-c-form__label-text {
+	font-size: 0.875rem;
+	font-weight: 500;
+	color: var(--colophon-ink);
+}
+/* PatternFly draws a field's top and sides with ::before and its bottom with ::after: one even
+ * border all round instead, coloured by --colophon-field. */
+.pf-v5-c-form-control {
+	--colophon-field: var(--colophon-input);
+	--pf-v5-c-form-control--before--BorderTopColor: var(--colophon-field);
+	--pf-v5-c-form-control--before--BorderRightColor: var(--colophon-field);
+	--pf-v5-c-form-control--before--BorderLeftColor: var(--colophon-field);
+	--pf-v5-c-form-control--before--BorderBottomColor: var(--colophon-field);
+	--pf-v5-c-form-control--before--BorderBottomWidth: var(--pf-v5-global--BorderWidth--sm);
+	--pf-v5-c-form-control--after--BorderBottomWidth: 0;
+	--pf-v5-c-form-control--focus--after--BorderBottomWidth: 0;
+	--pf-v5-c-form-control--m-expanded--after--BorderBottomWidth: 0;
+	--pf-v5-c-form-control--BackgroundColor: var(--colophon-card);
+	border-radius: 0.5rem;
+	box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+	transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.pf-v5-c-form-control::before,
+.pf-v5-c-form-control::after {
+	border-radius: 0.5rem;
+}
+.pf-v5-c-form-control:hover {
+	--colophon-field: color-mix(in oklch, var(--colophon-input) 60%, var(--colophon-ink));
+}
+.pf-v5-c-form-control:focus-within {
+	--colophon-field: var(--colophon-ring);
+	box-shadow: 0 0 0 3px color-mix(in oklch, var(--colophon-ring) 25%, transparent);
+}
+.pf-v5-c-form-control > input {
+	font-size: 0.9375rem;
+	color: var(--colophon-ink);
+	padding-block: 0.5rem;
+}
+.pf-v5-c-input-group {
+	gap: 0.375rem;
+}
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control {
+	border-radius: 0.5rem;
+	border: 1px solid var(--colophon-input);
+	background: var(--colophon-card);
+	color: var(--colophon-muted);
+}
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control::after {
+	border: 0;
+}
+.pf-v5-c-form-control.pf-m-error,
+.pf-v5-c-form-control:has([aria-invalid='true']) {
+	--colophon-field: var(--colophon-danger);
+}
+
+/* The button. */
+.pf-v5-c-button.pf-m-primary {
+	--pf-v5-c-button--m-primary--BackgroundColor: var(--colophon-button);
+	--pf-v5-c-button--m-primary--hover--BackgroundColor: color-mix(in oklch, var(--colophon-button) 88%, var(--colophon-card));
+	--pf-v5-c-button--m-primary--focus--BackgroundColor: var(--colophon-button);
+	--pf-v5-c-button--m-primary--active--BackgroundColor: var(--colophon-button);
+	--pf-v5-c-button--m-primary--Color: var(--colophon-button-text);
+	--pf-v5-c-button--m-primary--hover--Color: var(--colophon-button-text);
+	border-radius: 0.5rem;
+	font-weight: 500;
+	padding-block: 0.625rem;
+	transition: background-color 150ms ease, transform 100ms ease;
+}
+.pf-v5-c-button.pf-m-primary:active {
+	transform: translateY(1px);
+}
+.pf-v5-c-button:focus-visible {
+	outline: 3px solid color-mix(in oklch, var(--colophon-ring) 40%, transparent);
+	outline-offset: 2px;
+}
+.pf-v5-c-alert {
+	border-radius: 0.5rem;
+}
+a,
+.pf-v5-c-button.pf-m-link {
+	color: var(--colophon-ink);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+@keyframes colophon-rise {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.pf-v5-c-login__main {
+		animation: none;
+	}
+	.pf-v5-c-form-control,
+	.pf-v5-c-button.pf-m-primary {
+		transition: none;
+	}
+}

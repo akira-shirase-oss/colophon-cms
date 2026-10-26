@@ -96,7 +96,7 @@
 	<Toolbar.Button pressed={active('link')} onclick={toggleLink} aria-label="Link"><LinkIcon /></Toolbar.Button>
 	<Toolbar.Separator />
 	{#each [2, 3, 4] as const as level (level)}
-		<Toolbar.Button pressed={active('heading', { level })} onclick={run((e) => e.chain().focus().toggleHeading({ level }).run())} class="font-serif">H{level}</Toolbar.Button>
+		<Toolbar.Button pressed={active('heading', { level })} onclick={run((e) => e.chain().focus().toggleHeading({ level }).run())} class="text-xs font-semibold">H{level}</Toolbar.Button>
 	{/each}
 	<Toolbar.Button pressed={active('bulletList')} onclick={run((e) => e.chain().focus().toggleBulletList().run())} aria-label="Bulleted list"><ListIcon /></Toolbar.Button>
 	<Toolbar.Button pressed={active('orderedList')} onclick={run((e) => e.chain().focus().toggleOrderedList().run())} aria-label="Numbered list"><ListOrderedIcon /></Toolbar.Button>

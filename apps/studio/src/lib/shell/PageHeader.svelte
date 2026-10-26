@@ -1,4 +1,4 @@
-<!-- A page's title in the editorial serif, a line of context under it, and its actions. -->
+<!-- A page's title, a line of context under it, and its actions. -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
@@ -14,7 +14,7 @@
 <header class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
 	<div class="min-w-0 space-y-2">
 		{#if eyebrow}<div class="text-sm text-muted-foreground">{@render eyebrow()}</div>{/if}
-		<h1 class="font-serif text-3xl leading-tight font-medium tracking-tight text-balance sm:text-4xl">{title}</h1>
+		<h1 class="text-2xl leading-tight font-semibold tracking-tight text-balance sm:text-[1.75rem]">{title}</h1>
 		{#if meta}<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">{@render meta()}</div>{/if}
 		{#if description}<div class="max-w-2xl text-sm text-pretty text-muted-foreground">{@render description()}</div>{/if}
 	</div>

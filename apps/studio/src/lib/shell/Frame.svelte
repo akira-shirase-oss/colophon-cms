@@ -5,6 +5,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import AppearanceMenu from './AppearanceMenu.svelte';
 	import Mark from './Mark.svelte';
 
@@ -21,8 +22,10 @@
 		<div class="ml-auto"><AppearanceMenu /></div>
 	</header>
 	<main class="mx-2 mb-2 flex-1 rounded-2xl border border-sidebar-border bg-background shadow-xs">
-		<div class="mx-auto w-full max-w-6xl px-5 py-8 sm:px-10 sm:py-12">
-			{@render children()}
-		</div>
+		{#key page.url.pathname}
+			<div class="page-enter mx-auto w-full max-w-6xl px-5 py-8 sm:px-10 sm:py-12">
+				{@render children()}
+			</div>
+		{/key}
 	</main>
 </div>

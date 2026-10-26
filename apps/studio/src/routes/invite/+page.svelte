@@ -78,7 +78,7 @@
 <svelte:head><title>Join a project · Colophon Studio</title></svelte:head>
 
 <div class="mx-auto max-w-lg space-y-4 rounded-2xl border border-border bg-card p-8 shadow-xs">
-<h1 class="font-serif text-3xl font-medium tracking-tight">Join a project</h1>
+<h1 class="text-2xl font-semibold tracking-tight">Join a project</h1>
 {#if token === ''}
 	<p role="alert" data-testid="invite-outcome">This link has no invitation in it. Ask the person who invited you for a new link.</p>
 {:else if who.isPending}

@@ -1,7 +1,7 @@
 /*
  * Colophon's design system (D-053): Tailwind CSS v4, shadcn-svelte components, and tokens of its
- * own. The look is a printed page: warm paper and blue-black ink, an editorial serif for titles,
- * mono for release numbers and hashes, dotted rules between rows, and status colours taken from a
+ * own. The look is a printed page: warm paper and blue-black ink, one typeface (Inter) for
+ * everything people read, mono only for hashes, ids, addresses and code, dotted rules between rows, and status colours taken from a
  * printer's registration marks (cyan for live and verified, yellow for pending, magenta for
  * attention). Dark mode is a darkroom: warm near-black, paper-coloured type.
  *
@@ -12,7 +12,6 @@
 @import 'tw-animate-css';
 @import 'shadcn-svelte/tailwind.css';
 @import '@fontsource-variable/inter';
-@import '@fontsource-variable/newsreader';
 @import '@fontsource-variable/jetbrains-mono';
 
 @custom-variant dark (&:is(.dark *));
@@ -141,7 +140,6 @@
 
 @theme inline {
 	--font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
-	--font-serif: 'Newsreader Variable', ui-serif, Georgia, serif;
 	--font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
 
 	--radius-sm: calc(var(--radius) * 0.6);
