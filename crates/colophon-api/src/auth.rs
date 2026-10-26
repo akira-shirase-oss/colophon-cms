@@ -188,6 +188,13 @@ pub(crate) async fn logout(
     caller: SignedIn,
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
+    if caller.credential == crate::session::Credential::Token {
+        // The CLI signing out: revoke its token; there are no cookies to clear.
+        colophon_db::access::revoke_access_token(&services.pool, caller.session)
+            .await
+            .map_err(ApiError::from_db)?;
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
     identity::revoke_session(&services.pool, caller.session)
         .await
         .map_err(ApiError::from_db)?;

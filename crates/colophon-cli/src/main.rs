@@ -6,12 +6,16 @@
 //! is reserved for results.
 //!
 //! Commands arrive with the milestones that make them true: `doctor` in P0,
-//! `content create` and `content list` in P1, `release …` in P2.
+//! `login`, `whoami`, `content create` and `content list` in P1, `release …` in P2.
 
 mod admin;
+mod client;
+mod content;
+mod credentials;
 mod doctor;
+mod login;
 
-use std::{process::ExitCode, time::Duration};
+use std::{path::PathBuf, process::ExitCode, time::Duration};
 
 use clap::{Parser, Subcommand};
 
@@ -20,6 +24,8 @@ use clap::{Parser, Subcommand};
 enum Exit {
     Success = 0,
     Usage = 2,
+    Denied = 3,
+    Conflict = 4,
     Unavailable = 5,
     Internal = 6,
 }
@@ -58,9 +64,109 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Sign in to a server: approve this terminal in a browser where you're signed in.
+    Login {
+        /// The server's base URL.
+        #[arg(
+            long,
+            env = "COLOPHON_SERVER",
+            default_value = "http://localhost:58000"
+        )]
+        server: String,
+        /// The name to keep these credentials under.
+        #[arg(long, default_value = "default")]
+        profile: String,
+        /// What the approval page calls this terminal.
+        #[arg(long, default_value = "colophon CLI")]
+        name: String,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Sign out: revoke this profile's token and forget it.
+    Logout {
+        #[arg(long, default_value = "default")]
+        profile: String,
+    },
+    /// Show who you're signed in as, and your projects.
+    Whoami {
+        #[arg(long, default_value = "default")]
+        profile: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create and list entries.
+    #[command(subcommand)]
+    Content(ContentCommand),
     /// Operator mode: direct infrastructure access, separate from normal commands.
     #[command(subcommand)]
     Admin(AdminCommand),
+}
+
+/// Where an entry lives.
+#[derive(Debug, clap::Args)]
+struct Where {
+    /// The collection (content type), for example `articles`.
+    collection: String,
+    /// The project's id or slug.
+    #[arg(long)]
+    project: String,
+    /// The environment.
+    #[arg(long, default_value = "production")]
+    env: String,
+    #[arg(long, default_value = "default")]
+    profile: String,
+}
+
+#[derive(Debug, Subcommand)]
+enum ContentCommand {
+    /// Create an entry. Exits 2 if the content doesn't fit its content type, 3 if denied.
+    Create {
+        #[command(flatten)]
+        place: Where,
+        /// The content as JSON.
+        #[arg(long, conflicts_with = "file")]
+        data: Option<String>,
+        /// A file holding the content as JSON.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Reuse the key of an earlier attempt that got no answer: it can't create twice.
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List a collection's entries, newest first.
+    List {
+        #[command(flatten)]
+        place: Where,
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u8).range(1..=100))]
+        limit: u8,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+impl Where {
+    fn place(&self) -> content::Place<'_> {
+        content::Place {
+            profile: &self.profile,
+            project: &self.project,
+            environment: &self.env,
+            collection: &self.collection,
+        }
+    }
+}
+
+/// Prints a failure to stderr and returns its exit code.
+fn finish(result: Result<(), client::Failure>) -> Exit {
+    match result {
+        Ok(()) => Exit::Success,
+        Err(failure) => {
+            eprintln!("error: {}", failure.message);
+            failure.exit
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -100,6 +206,30 @@ fn main() -> ExitCode {
             .into(),
         Command::Admin(AdminCommand::Migrate { database_url }) => {
             runtime.block_on(admin::migrate(&database_url)).into()
+        }
+        Command::Login {
+            server,
+            profile,
+            name,
+            json,
+        } => finish(runtime.block_on(login::login(&server, &profile, &name, json))).into(),
+        Command::Logout { profile } => finish(runtime.block_on(login::logout(&profile))).into(),
+        Command::Whoami { profile, json } => {
+            finish(runtime.block_on(login::whoami(&profile, json))).into()
+        }
+        Command::Content(ContentCommand::Create {
+            place,
+            data,
+            file,
+            idempotency_key,
+            json,
+        }) => finish(runtime.block_on(async {
+            let content = content::content(data.as_deref(), file.as_deref()).await?;
+            content::create(&place.place(), &content, idempotency_key.as_deref(), json).await
+        }))
+        .into(),
+        Command::Content(ContentCommand::List { place, limit, json }) => {
+            finish(runtime.block_on(content::list(&place.place(), limit, json))).into()
         }
     }
 }

@@ -47,6 +47,8 @@ export default defineConfig({
 				COLOPHON_PROBE_INTERVAL_MS: '250',
 				COLOPHON_PROBE_TIMEOUT_MS: '200'
 			},
+			// The server's log in the test output: a failed sign-in logs its reason at info.
+			stdout: 'pipe',
 			url: `http://127.0.0.1:${SERVER_PORT}/livez`,
 			reuseExistingServer: false,
 			timeout: 30_000

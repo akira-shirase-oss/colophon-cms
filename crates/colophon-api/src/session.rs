@@ -1,5 +1,9 @@
-//! Sessions: who is asking, from the session cookie, and CSRF protection for writes
-//! (docs/modules/03-auth.md, "Sessions").
+//! Sessions: who is asking, from the session cookie or a personal access token, and CSRF
+//! protection for cookie writes (docs/modules/03-auth.md, "Sessions"; D-041).
+//!
+//! - A request with `Authorization: Bearer <token>` is authenticated by that token alone: a
+//!   bearer token is never sent by a browser on its own, so it needs no CSRF token, and an invalid
+//!   one is 401 rather than a fall back to the cookie.
 //!
 //! - The session cookie holds a random token; only its hash is stored. `HttpOnly; Secure;
 //!   SameSite=Lax`, so scripts can't read it and other sites can't send it with their writes.
@@ -13,7 +17,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, header, request::Parts},
 };
 use colophon_auth::tokens;
-use colophon_db::identity;
+use colophon_db::{access, identity};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -63,13 +67,49 @@ pub(crate) fn services(state: &AppState) -> Result<&Services, ApiError> {
     ))
 }
 
-/// A signed-in caller. Extracting it checks the session, and for writes, CSRF and `Origin`.
+/// How a caller proved who they are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Credential {
+    /// A browser session cookie.
+    Session,
+    /// A personal access token (`Authorization: Bearer`), as the CLI uses.
+    Token,
+}
+
+/// A signed-in caller. Extracting it checks the token, or the session and, for writes, CSRF and
+/// `Origin`.
 #[derive(Debug, Clone, Copy)]
 pub struct SignedIn {
     /// The identity.
     pub identity: Uuid,
-    /// The session (not its token).
+    /// The session's or the token's id (not the secret).
     pub session: Uuid,
+    /// Which of the two it is.
+    pub credential: Credential,
+}
+
+/// The caller behind `Authorization: Bearer <token>`.
+async fn bearer(services: &Services, value: &HeaderValue) -> Result<SignedIn, ApiError> {
+    let token = value
+        .to_str()
+        .ok()
+        .and_then(|text| text.strip_prefix("Bearer "))
+        .filter(|token| token.len() == 43)
+        .ok_or(ApiError::Unauthorized)?;
+    let found = access::find_access_token(&services.pool, &tokens::hash(token))
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::Unauthorized)?;
+    if OffsetDateTime::now_utc() - found.last_used_at >= access::TOUCH_INTERVAL
+        && let Err(error) = access::touch_access_token(&services.pool, found.id).await
+    {
+        tracing::warn!(%error, "could not record token use");
+    }
+    Ok(SignedIn {
+        identity: found.identity_id,
+        session: found.id,
+        credential: Credential::Token,
+    })
 }
 
 impl FromRequestParts<AppState> for SignedIn {
@@ -77,6 +117,9 @@ impl FromRequestParts<AppState> for SignedIn {
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let services = services(state)?;
+        if let Some(value) = parts.headers.get(header::AUTHORIZATION) {
+            return bearer(services, value).await;
+        }
         let token = cookie(&parts.headers, SESSION_COOKIE).ok_or(ApiError::Unauthorized)?;
         if token.len() != 43 {
             return Err(ApiError::Unauthorized);
@@ -124,6 +167,7 @@ impl FromRequestParts<AppState> for SignedIn {
         Ok(Self {
             identity: session.identity_id,
             session: session.id,
+            credential: Credential::Session,
         })
     }
 }

@@ -142,6 +142,8 @@ Internal job terminology stays behind a technical detail drawer for developers.
   copies expire; axe finds nothing on the home page (signed out and in), the editor or the conflict screen.
 - Since step 1.4: a save that committed just before a reload, with someone else's save on top, is resent with its key
   on reopening and replayed, with no conflict and no second copy (the case the simulator found, D-039).
+- Since step 1.6: `/studio/device` approves a terminal's sign-in (D-041); its test allows a device and uses the token it
+  produces.
 - Automated accessibility checks on every screen.
 - Budgets for bundle size, startup on a mobile network profile, and input latency. These are recorded separately from
   backend numbers (spec §28).

@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT client_name, expires_at, approved_by IS NOT NULL AS \"approved!\" FROM device_logins\n           WHERE user_code = $1 AND expires_at > now()",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "client_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "device_logins",
+            "name": "client_name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "device_logins",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "approved!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "b184c77e7dad5e80e1d344daf96b5b269b4597c1ed5ff117a6cf0f5d70799a80"
+}

@@ -13,6 +13,7 @@
 		{ href: resolve('/session'), label: 'Session' },
 		{ href: resolve('/entries'), label: 'Entries' },
 		{ href: resolve('/content-types'), label: 'Content types' },
+		{ href: resolve('/device'), label: 'Device sign-in' },
 		{ href: resolve('/load'), label: 'Load tests' }
 	];
 </script>
