@@ -8,6 +8,7 @@ mod auth;
 mod body;
 mod changesets;
 mod content_types;
+mod delivery;
 mod device;
 mod entries;
 pub mod error;
@@ -91,6 +92,22 @@ pub fn routes(state: AppState) -> Router {
         .route(
             "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/reviews",
             post(changesets::review),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/publish",
+            post(changesets::publish),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/releases",
+            get(changesets::releases),
+        )
+        .route(
+            "/content/v1/{project}/{environment}/{collection}",
+            get(delivery::list),
+        )
+        .route(
+            "/content/v1/{project}/{environment}/{collection}/{entry}",
+            get(delivery::get),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/content-types",

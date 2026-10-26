@@ -116,11 +116,19 @@ pub struct Facts<'a> {
     pub now: i64,
     /// Whether the project requires a reviewer other than the submitter.
     pub require_different_reviewer: bool,
+    /// The release it was published as, if it has been (D-045).
+    pub published: Option<i64>,
 }
 
-/// Where a changeset stands. Only [`Status::Approved`] may be published (step 2.2).
+/// Where a changeset stands. Only [`Status::Approved`] may be published.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
+    /// Published as the release with this generation; a changeset is published once, and stays a
+    /// record of what that release contained.
+    Published {
+        /// The release's generation.
+        generation: i64,
+    },
     /// Being put together; not submitted for review.
     Open,
     /// An entry was edited after its revision was pinned: refresh the changeset (a new hash).
@@ -151,6 +159,9 @@ pub enum Status {
 /// different set of revisions. The latest decision (highest `seq`) on the current hash wins,
 /// except that a self-approval doesn't count where the project requires a different reviewer.
 pub fn status(facts: &Facts<'_>) -> Status {
+    if let Some(generation) = facts.published {
+        return Status::Published { generation };
+    }
     if facts.stale_items > 0 {
         return Status::Stale {
             items: facts.stale_items,
@@ -217,6 +228,7 @@ mod tests {
             reviews,
             now: 1_000,
             require_different_reviewer: false,
+            published: None,
         }
     }
 
@@ -400,6 +412,20 @@ mod tests {
             Status::ChangesRequested {
                 by: "cy".to_owned()
             }
+        );
+    }
+
+    #[test]
+    fn a_published_changeset_stays_published() {
+        let approved = [review("bo", Decision::Approve, "h1", 20)];
+        assert_eq!(
+            status(&Facts {
+                published: Some(7),
+                stale_items: 3,
+                ..facts(&approved)
+            }),
+            Status::Published { generation: 7 },
+            "later edits don't change what a release contained"
         );
     }
 

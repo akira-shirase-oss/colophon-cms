@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE publications p SET valid_to = $4\n         FROM changeset_items i\n         WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3\n           AND p.project_id = i.project_id AND p.environment_id = i.environment_id\n           AND p.entry_id = i.entry_id AND p.valid_to IS NULL AND p.revision_id <> i.revision_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9dd4e6a3b13265192f6981df5a65ac5a682dab16d612a5ddd6fcaf145f77e73f"
+}

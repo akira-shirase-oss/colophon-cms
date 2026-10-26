@@ -9,11 +9,13 @@ pub mod access;
 pub mod administrators;
 pub mod changesets;
 pub mod content_types;
+pub mod delivery;
 pub mod entries;
 pub mod idempotency;
 pub mod identity;
 pub mod members;
 pub mod projects;
+pub mod releases;
 pub mod scope;
 
 use std::{str::FromStr, time::Duration};

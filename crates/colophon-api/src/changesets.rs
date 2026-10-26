@@ -7,7 +7,9 @@
 //! - `GET  {P}/changesets/{changeset}`: items, status and reviews, with `ETag: "sha256:…"`;
 //! - `POST {P}/changesets/{changeset}/submit`, `…/refresh` and `…/reviews` (`{"decision",
 //!   "comment"}`): each needs `If-Match` with the hash the caller looked at. A refresh re-pins
-//!   edited entries, which gives the changeset a new hash; reviews are for owners and publishers.
+//!   edited entries, which gives the changeset a new hash; reviews are for owners and publishers;
+//! - `POST {P}/changesets/{changeset}/publish`: `{"base_generation"}` (`If-Match` and
+//!   `Idempotency-Key` required): commits an approved changeset as the next release (D-045).
 //!
 //! A review is stored with the hash it was made on, under a lock on the changeset, and counts only
 //! while the changeset keeps that hash (`colophon_domain::changeset::status`).
@@ -23,6 +25,7 @@ use axum::{
 use colophon_db::{
     changesets::{self, Head, Pin},
     idempotency::{self, Claim},
+    releases::{self, Committed},
     scope::ProjectTransaction,
 };
 use colophon_domain::{
@@ -43,6 +46,7 @@ use crate::{
 };
 
 const CREATE: &str = "changeset.create";
+const PUBLISH: &str = "changeset.publish";
 
 #[derive(Deserialize)]
 pub(crate) struct ListPath {
@@ -63,6 +67,13 @@ pub(crate) struct OnePath {
 pub(crate) struct NewChangeset {
     title: String,
     entries: Vec<String>,
+}
+
+/// `{"base_generation": 4}`: the generation the publisher saw.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NewRelease {
+    base_generation: i64,
 }
 
 /// `{"decision": "approve", "comment": "…"}`.
@@ -128,8 +139,11 @@ pub(crate) struct ReviewView {
 /// Where a changeset stands, as the API writes it.
 #[derive(Serialize)]
 pub(crate) struct StatusView {
-    /// `open`, `stale`, `awaiting_review`, `changes_requested`, `approved` or `approval_expired`.
+    /// `open`, `stale`, `awaiting_review`, `changes_requested`, `approved`, `approval_expired` or
+    /// `published`.
     state: &'static str,
+    /// For `published`: the release's generation.
+    generation: Option<i64>,
     /// Who asked for changes or approved.
     by: Option<String>,
     /// The approver also submitted it.
@@ -140,7 +154,12 @@ pub(crate) struct StatusView {
 
 impl StatusView {
     fn new(status: Status, edited_items: usize) -> Self {
+        let generation = match status {
+            Status::Published { generation } => Some(generation),
+            _ => None,
+        };
         let (state, by, self_review) = match status {
+            Status::Published { .. } => ("published", None, false),
             Status::Open => ("open", None, false),
             Status::Stale { .. } => ("stale", None, false),
             Status::AwaitingReview => ("awaiting_review", None, false),
@@ -150,6 +169,7 @@ impl StatusView {
         };
         Self {
             state,
+            generation,
             by,
             self_review,
             edited_items,
@@ -212,6 +232,7 @@ fn decide(head: &Head, edited: usize, reviews: &[colophon_db::changesets::Review
         now: unix(OffsetDateTime::now_utc()),
         // Projects can't require a different reviewer yet; the rule is in place for when they can.
         require_different_reviewer: false,
+        published: head.published,
     })
 }
 
@@ -584,6 +605,182 @@ pub(crate) async fn review(
     .await
     .map_err(ApiError::from_db)?;
     finish(tx, head.id).await
+}
+
+#[derive(Serialize)]
+pub(crate) struct PublishedView {
+    generation: i64,
+    epoch: i64,
+    changeset_id: Uuid,
+    changeset_hash: String,
+    /// Entries whose published revision changed.
+    entries_changed: u64,
+}
+
+/// Refuses to publish anything but an approved changeset, saying what it needs instead.
+fn publishable(status: &Status) -> Result<(), ApiError> {
+    match status {
+        Status::Approved { .. } => Ok(()),
+        Status::Published { .. } => Err(ApiError::Conflict(
+            "this changeset has already been published",
+        )),
+        Status::Stale { .. } => Err(ApiError::Conflict(
+            "an entry was edited after this changeset pinned it; refresh and review it again before publishing",
+        )),
+        Status::ApprovalExpired => Err(ApiError::Conflict(
+            "the approval has expired; it needs reviewing again before publishing",
+        )),
+        Status::Open | Status::AwaitingReview | Status::ChangesRequested { .. } => Err(
+            ApiError::Conflict("only an approved changeset can be published"),
+        ),
+    }
+}
+
+/// `POST {P}/changesets/{changeset}/publish`: commits the approved changeset as the release after
+/// `base_generation`, if the environment is still there.
+pub(crate) async fn publish(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<OnePath>,
+    headers: HeaderMap,
+    body_json: Result<Json<NewRelease>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let expected = if_match(&headers)?;
+    let key = idempotency_key(&headers)?;
+    let Json(new) = body_json?;
+    if new.base_generation < 0 {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_generation",
+            pointer: "/base_generation",
+            message: "a generation is 0 or more".to_owned(),
+        });
+    }
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    require(
+        &tx.role,
+        Action::Publish,
+        "only a project's owners and publishers can publish",
+    )?;
+    let request = request_hash(&[
+        PUBLISH,
+        &path.changeset,
+        &expected,
+        &new.base_generation.to_string(),
+    ]);
+    match idempotency::claim(&mut tx, PUBLISH, key, &request)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Claim::Fresh => {}
+        Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+        Claim::Replay { status, response } => {
+            let status = StatusCode::from_u16(status).map_err(ApiError::internal)?;
+            return Ok(json(status, response, None, true));
+        }
+    }
+    let head = locked(&mut tx, &path.changeset, &expected).await?;
+    let items = changesets::items(&mut tx, head.id)
+        .await
+        .map_err(ApiError::from_db)?;
+    let reviews = changesets::reviews(&mut tx, head.id, Some(&head.hash))
+        .await
+        .map_err(ApiError::from_db)?;
+    let edited = items
+        .iter()
+        .filter(|item| item.current_revision_id != item.pin.revision_id)
+        .count();
+    publishable(&decide(&head, edited, &reviews))?;
+    // Approved means the newest decision on this hash is an approval: the one it publishes under.
+    let approval = reviews
+        .first()
+        .ok_or_else(|| ApiError::internal(std::io::Error::other("approved without a review")))?;
+    let committed = releases::commit(
+        &mut tx,
+        new.base_generation,
+        head.id,
+        &head.hash,
+        approval.id,
+    )
+    .await
+    .map_err(ApiError::from_db)?;
+    let (generation, epoch, changed) = match committed {
+        Committed::Done {
+            generation,
+            epoch,
+            changed,
+        } => (generation, epoch, changed),
+        Committed::Moved { current } => return Err(ApiError::GenerationMoved { current }),
+    };
+    tracing::info!(project = %tx.project, generation, changeset = %head.id, "release committed");
+    let text = serde_json::to_string(&Data {
+        data: PublishedView {
+            generation,
+            epoch,
+            changeset_id: head.id,
+            changeset_hash: content_hash(&head.hash),
+            entries_changed: changed,
+        },
+    })
+    .map_err(ApiError::internal)?;
+    idempotency::complete(&mut tx, PUBLISH, key, StatusCode::CREATED.as_u16(), &text)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(json(StatusCode::CREATED, text, None, false))
+}
+
+#[derive(Serialize)]
+pub(crate) struct ReleaseView {
+    generation: i64,
+    epoch: i64,
+    changeset_id: Uuid,
+    title: String,
+    changeset_hash: String,
+    published_by: Uuid,
+    published_by_name: Option<String>,
+    published_at: String,
+    /// Entries whose published revision changed in this release.
+    entries: i64,
+}
+
+/// `GET {P}/releases`: the newest 100, with the environment's current generation.
+pub(crate) async fn releases(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<ListPath>,
+) -> Result<Response, ApiError> {
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let (_, generation) = releases::generation(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
+    let rows = releases::list(&mut tx).await.map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let data = rows
+        .into_iter()
+        .map(|row| {
+            Ok(ReleaseView {
+                generation: row.generation,
+                epoch: row.epoch,
+                changeset_id: row.changeset_id,
+                title: row.title,
+                changeset_hash: content_hash(&row.changeset_hash),
+                published_by: row.published_by,
+                published_by_name: row.published_by_name,
+                published_at: rfc3339(row.published_at)?,
+                entries: row.entries,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    let body = serde_json::to_string(&Page {
+        data,
+        next_cursor: None,
+    })
+    .map_err(ApiError::internal)?;
+    let mut response = json(StatusCode::OK, body, None, false);
+    response
+        .headers_mut()
+        .insert(crate::delivery::GENERATION, HeaderValue::from(generation));
+    Ok(response)
 }
 
 /// Reads the changeset back, commits, and answers with it.
