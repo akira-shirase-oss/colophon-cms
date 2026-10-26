@@ -99,7 +99,7 @@ jobs:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
         run: cargo test --workspace --locked -- --ignored --test-threads=1
-      - name: Crash tests F01 and F02 (the server killed before and after a commit)
+      - name: Crash tests F01, F02 and F03 (the server killed before and after a commit, the worker after announcing)
         env:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
