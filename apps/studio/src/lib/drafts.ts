@@ -3,12 +3,23 @@
 
 import type { Article } from './api.ts';
 
+/** A save that was sent but not answered: exactly what to send again, key and all. */
+export interface Sent {
+	base: string;
+	key: string;
+	article: Article;
+}
+
 export interface Kept {
 	/** The revision the edits were made on top of (its ETag). */
 	base: string;
 	article: Article;
 	/** When it was kept, as an ISO timestamp. */
 	at: string;
+	/** The save in flight when this was kept, if any. Reopening sends it again with the same
+	 *  key, so if it committed before the page went away the server replays it instead of
+	 *  storing the edit twice (found by the simulator, D-039). */
+	sent?: Sent;
 }
 
 const storageKey = (project: string, entry: string) => `colophon:unsaved:${project}:${entry}`;
