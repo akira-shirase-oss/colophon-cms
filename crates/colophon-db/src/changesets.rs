@@ -390,7 +390,17 @@ pub async fn reviews(
 
 /// The environment's changesets, newest first (at most 100), each with its counts and the newest
 /// review on its current hash.
+///
+/// Planned afresh on every run (`plan_cache_mode`, for this transaction only): its lookups per
+/// changeset are only fast with indexes, and a generic plan Postgres settles on while the tables
+/// are nearly empty (a full scan of `reviews` for each changeset) would be kept as they grow,
+/// until the next `ANALYZE`. The first CI runs of step 2.4 measured exactly that: the list slowed
+/// to 200 ms within a 40-second load test as reviews grew from a few to 3,000.
 pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> {
+    sqlx::query("SET LOCAL plan_cache_mode = force_custom_plan")
+        .execute(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query)?;
     let rows = sqlx::query!(
         r#"SELECT c.id, c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at,
                   c.updated_at, rel.generation AS "published?",
