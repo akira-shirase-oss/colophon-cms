@@ -56,7 +56,9 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   `…/{collection}/{entry}`, with no sign-in, from `publications` as `colophon_delivery` (`colophon_db::delivery`,
   which switches role for each transaction). Answers carry `Colophon-Generation`; a list's cursor keeps the
   generation of its first page; a generation that hasn't committed is 422 `invalid_generation`. Projects are
-  addressed by id; ETags, cache headers (`no-store` for now) and locales come with P3.
+  addressed by id; locales come later.
+- Step 3.1 (D-048) adds a strong `ETag` (304 for a matching `If-None-Match`), the cache policies below,
+  `Cache-Tag`, and `Colophon-Cache: hit | miss | coalesced | bypass`.
 
 ### Cache keys (spec §15)
 - A key includes:
@@ -67,12 +69,23 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
 - On an origin miss, the active generation is always resolved from Postgres, so a stale cache pointer can never
   reintroduce an older publication.
 - Generations from different epochs are never interchangeable.
+- Built in step 3.1 (D-048): `colophon_domain::cache::Scope` (render version, project, environment, epoch,
+  generation; then limit, cursor position and the collection, last). Ids are fixed-width hex, so the collection name
+  is the only free text in a key. Unknown query parameters don't change an answer and aren't in its key. Each request
+  resolves its generation from Postgres in one statement, before and apart from the cache: `delivery_environment`
+  (migration 0011) runs as `colophon_delivery` in the project's context and returns only the environment's id, epoch
+  and generation. As a delivery transaction (five round trips) the lookup cost as much as the cache saved.
 
 ### Cache layer (Redis-compatible)
 - Disposable, generation-keyed public results: 300 seconds with jitter, a 1 GiB reference budget, explicit eviction.
 - Request coalescing (single-flight) on misses, so 1,000 callers at expiry trigger one regeneration (L04).
 - When the cache is down, reads fall back to Postgres with coalescing and admission limits, never unlimited database
   load (L11).
+- Built in step 3.1 (D-048): `colophon_api::DeliveryCache`. Valkey calls have a 100 ms deadline. A miss is filled
+  once per key per process (the leader looks once more first), and waiters share the outcome, failures included.
+  Empty pages, 404s and answers over 1 MiB are never stored, so made-up names in URLs can't fill the cache. After a
+  failure the connection is dropped and left alone for a second; one request reconnects at a time, and the rest read
+  Postgres, whose pool (and 503 with `Retry-After` when it's full) is the admission limit.
 
 ### CDN headers and purge (spec §15)
 
@@ -168,7 +181,8 @@ These are policies to test, not a global 30-second consistency guarantee.
 ## Build order
 
 1. **P2:** the public API from published projections without a cache; pinned reads (step 2.2, done).
-2. **P3:** cache layer, CDN headers, tags, Cloudflare purge, probes, unpublish and revocation.
+2. **P3:** cache layer, CDN headers, tags, Cloudflare purge, probes, unpublish and revocation. Step 3.1 (in progress,
+   D-048): the cache layer, CDN headers and tags; F06, F08 and L04 in `crates/colophon-server/tests/cache.rs`.
 3. **P4:** time-travel queries for the Studio slider, the preview origin, sitemaps, feeds and redirects.
 
 ## Open decisions

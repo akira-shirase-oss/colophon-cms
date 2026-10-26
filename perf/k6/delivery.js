@@ -4,10 +4,16 @@
 // public reads: 60 in 100 list the latest release, 20 list a release pinned at generation 1, 2
 // or 3, and 20 read one entry at the latest release. Each read runs as colophon_delivery.
 // Same settings as health.js; scripts/load.sh gives this endpoint RATE 2000 and P99_MS 100.
+// Since step 3.1 (D-048) answers are cached by generation: cache_hits is the share answered
+// without a database read of their own (Colophon-Cache hit or coalesced). The scenario has 23
+// distinct answers, so under 99% means the cache isn't working; CACHE=off skips that threshold.
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import { parseHTML } from 'k6/html';
+import { Rate } from 'k6/metrics';
+
+const cacheHits = new Rate('cache_hits');
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -34,6 +40,9 @@ const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req
 // Reported per kind of request, so a tail can be traced to its cause; only the overall p99 fails a run.
 for (const endpoint of ['latest', 'pinned', 'entry']) {
   thresholds[`http_req_duration{endpoint:${endpoint}}`] = ['p(99)<60000'];
+}
+if (__ENV.CACHE !== 'off') {
+  thresholds.cache_hits = ['rate>0.99'];
 }
 if (SCENARIO === 'steady') {
   thresholds.dropped_iterations = [`count<=${Math.floor(RATE * durationSeconds(DURATION) * 0.0001)}`];
@@ -103,15 +112,18 @@ export function setup() {
 export default function (data) {
   const slot = __ITER % 10;
   const params = (endpoint) => ({ redirects: 0, tags: { endpoint } });
+  let res;
   if (slot < 6) {
-    const res = http.get(data.content, params('latest'));
+    res = http.get(data.content, params('latest'));
     check(res, { 'latest: 20 at generation 3': (r) => r.status === 200 && r.headers['Colophon-Generation'] === '3' && r.json('data').length === 20 });
   } else if (slot < 8) {
     const generation = 1 + (__ITER % 3);
-    const res = http.get(`${data.content}?generation=${generation}`, params('pinned'));
+    res = http.get(`${data.content}?generation=${generation}`, params('pinned'));
     check(res, { 'pinned: the generation asked for': (r) => r.status === 200 && r.headers['Colophon-Generation'] === String(generation) && r.json('data').length === 20 });
   } else {
-    const res = http.get(`${data.content}/${data.entries[__ITER % 20]}`, params('entry'));
+    res = http.get(`${data.content}/${data.entries[__ITER % 20]}`, params('entry'));
     check(res, { 'entry 200': (r) => r.status === 200 && r.json('data.published_in') >= 1 });
   }
+  const served = res.headers['Colophon-Cache'];
+  cacheHits.add(served === 'hit' || served === 'coalesced');
 }

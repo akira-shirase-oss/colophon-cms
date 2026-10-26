@@ -179,3 +179,74 @@ async fn delivery_reads_published_content_and_nothing_else() {
     elsewhere.finish().await.expect("finish");
     db.drop().await;
 }
+
+/// The delivery cache's one-statement generation lookup (migration 0011, D-048): it answers for the
+/// project asked about and nothing else, the project context it sets doesn't outlive the call, and
+/// only the API's role may call it.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_generation_lookup_answers_for_one_project_and_leaves_nothing_behind() {
+    let db = TestDb::new().await;
+    let (alice, project, _, changeset, review) = ready(&db).await;
+    let mut tx = enter(&db.app, alice, project).await;
+    releases::commit(&mut tx, 0, changeset, &[5; 32], review, HOUR)
+        .await
+        .expect("commit");
+    tx.commit().await.expect("commit");
+
+    let found = delivery::environment(&db.app, project, "production")
+        .await
+        .expect("looked up")
+        .expect("found");
+    assert_eq!((found.generation, found.epoch), (1, 1));
+    let mut delivered = delivery::begin(&db.app, project).await.expect("begin");
+    let same = delivered
+        .environment("production")
+        .await
+        .expect("environment");
+    delivered.finish().await.expect("finish");
+    assert_eq!(
+        same,
+        Some(found),
+        "the same answer as a delivery transaction"
+    );
+    for (other_project, slug) in [(Uuid::now_v7(), "production"), (project, "staging")] {
+        assert_eq!(
+            delivery::environment(&db.app, other_project, slug)
+                .await
+                .expect("looked up"),
+            None
+        );
+    }
+
+    // Called inside a transaction, it leaves no project context behind.
+    let mut held = db.app.begin().await.expect("begin");
+    let leftover: Option<String> = sqlx::query_scalar(
+        "SELECT (SELECT generation FROM delivery_environment($1, 'production'))::text \
+         || ':' || coalesce(nullif(current_setting('app.project_id', true), ''), 'none')",
+    )
+    .bind(project)
+    .fetch_one(&mut *held)
+    .await
+    .expect("called");
+    assert_eq!(leftover.as_deref(), Some("1:none"));
+    held.rollback().await.expect("rollback");
+
+    // Only the API's role may call it: not the worker's.
+    let mut worker = db.app.begin().await.expect("begin");
+    sqlx::query("SET LOCAL ROLE colophon_worker")
+        .execute(&mut *worker)
+        .await
+        .expect("switch");
+    let refused = sqlx::query("SELECT * FROM delivery_environment($1, 'production')")
+        .bind(project)
+        .execute(&mut *worker)
+        .await
+        .expect_err("the worker can't call it");
+    assert!(
+        format!("{refused:?}").contains("permission denied"),
+        "{refused:?}"
+    );
+    worker.rollback().await.expect("rollback");
+    db.drop().await;
+}
