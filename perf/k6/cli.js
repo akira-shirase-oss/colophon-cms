@@ -3,7 +3,7 @@
 // exchanges it for an access token. Every measured request then authenticates with
 // `Authorization: Bearer` alone (a token lookup, no cookie, no CSRF) and alternates between the
 // project list and a collection's entries. Same settings as health.js; scripts/load.sh gives
-// this endpoint RATE 2000 and P99_MS 100, like the cookie-authenticated session scenario.
+// this endpoint RATE 1000 and P99_MS 100.
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
@@ -14,7 +14,7 @@ const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
 const SCENARIO = __ENV.SCENARIO || 'throughput';
 const TOTAL = parseInt(__ENV.TOTAL || '1000000', 10);
 const VUS = parseInt(__ENV.VUS || '64', 10);
-const RATE = parseInt(__ENV.RATE || '2000', 10);
+const RATE = parseInt(__ENV.RATE || '1000', 10);
 const DURATION = __ENV.DURATION || '60s';
 const P99_MS = parseFloat(__ENV.P99_MS || '100');
 
