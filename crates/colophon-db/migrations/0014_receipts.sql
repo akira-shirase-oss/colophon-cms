@@ -43,6 +43,11 @@ CREATE INDEX observations_by_generation ON observations (project_id, environment
 CREATE INDEX observations_by_release ON observations (project_id, environment_id, generation);
 CREATE INDEX observations_by_job ON observations (project_id, environment_id, job_id);
 
+-- A destination's latest open job, for receipts: open jobs are few, so this stays small, and the
+-- latest one is found without reading the destination's history.
+CREATE INDEX jobs_open_by_destination ON jobs (project_id, environment_id, destination_id, generation)
+    WHERE status IN ('pending', 'retrying', 'running');
+
 ALTER TABLE observations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE observations FORCE ROW LEVEL SECURITY;
 CREATE POLICY observations_in_project ON observations FOR SELECT TO colophon_api

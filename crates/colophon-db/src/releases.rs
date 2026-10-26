@@ -301,59 +301,73 @@ pub async fn of_changeset(
 
 /// The environment's releases, newest first, at most 100; only the one at `generation` when
 /// given.
+///
+/// A destination counts as done for a release once one of its jobs at that release or later
+/// succeeded (D-050, D-051), which is to say once its latest success is at that release or later.
+/// So each destination's latest job, latest success and latest open job, read once by index,
+/// answer for every release on the page. Asked per release instead, as a range of jobs, the list
+/// read every later job for every release: 5.2 seconds for a project with 3,139 releases, timed
+/// out at the end of a million-request load test. This way it takes about 7 ms.
 pub async fn list(
     tx: &mut ProjectTransaction,
     generation: Option<i64>,
 ) -> Result<Vec<Release>, DbError> {
     sqlx::query_as!(
         Release,
-        r#"SELECT r.generation, r.epoch, r.changeset_id, c.title, r.changeset_hash, r.review_id,
-                  r.published_by, i.display_name AS published_by_name, r.published_at,
-                  (SELECT count(*) FROM publications p
-                   WHERE p.project_id = r.project_id AND p.environment_id = r.environment_id
-                     AND p.valid_from = r.generation) AS "entries!",
+        r#"WITH page AS MATERIALIZED (
+               SELECT r.project_id, r.environment_id, r.generation, r.epoch, r.changeset_id, c.title,
+                      r.changeset_hash, r.review_id, r.published_by, i.display_name AS published_by_name,
+                      r.published_at
+               FROM releases r
+               JOIN changesets c ON c.project_id = r.project_id AND c.environment_id = r.environment_id
+                                AND c.id = r.changeset_id
+               JOIN identities i ON i.id = r.published_by
+               WHERE r.project_id = $1 AND r.environment_id = $2 AND ($3::bigint IS NULL OR r.generation = $3)
+               ORDER BY r.generation DESC
+               LIMIT 100
+           ), latest AS MATERIALIZED (
+               SELECT d.id, d.kind,
+                      (SELECT max(j.generation) FROM jobs j
+                       WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id
+                         AND j.destination_id = d.id) AS last_job,
+                      (SELECT max(j.generation) FROM jobs j
+                       WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id
+                         AND j.destination_id = d.id AND j.status = 'succeeded') AS last_success,
+                      (SELECT max(j.generation) FROM jobs j
+                       WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id
+                         AND j.destination_id = d.id AND j.status IN ('pending', 'retrying', 'running')) AS last_open
+               FROM destinations d
+               WHERE d.project_id = $1 AND d.environment_id = $2
+           ), seen AS MATERIALIZED (
+               SELECT o.location, max(o.observed_generation) AS last_seen
+               FROM observations o
+               WHERE o.project_id = $1 AND o.environment_id = $2 AND o.http_status BETWEEN 200 AND 299
+                 AND o.observed_generation >= (SELECT coalesce(min(generation), 0) FROM page)
+               GROUP BY o.location
+           )
+           SELECT p.generation AS "generation!", p.epoch AS "epoch!", p.changeset_id AS "changeset_id!",
+                  p.title AS "title!", p.changeset_hash AS "changeset_hash!", p.review_id AS "review_id!",
+                  p.published_by AS "published_by!", p.published_by_name, p.published_at AS "published_at!",
+                  (SELECT count(*) FROM publications x
+                   WHERE x.project_id = p.project_id AND x.environment_id = p.environment_id
+                     AND x.valid_from = p.generation) AS "entries!",
                   (SELECT count(*) FROM tombstones t
-                   WHERE t.project_id = r.project_id AND t.environment_id = r.environment_id
-                     AND t.generation = r.generation) AS "unpublished!",
-                  -- A CDN's purge covers every release since its last successful one, so any
-                  -- success at this generation or later covers this release.
+                   WHERE t.project_id = p.project_id AND t.environment_id = p.environment_id
+                     AND t.generation = p.generation) AS "unpublished!",
                   (SELECT CASE WHEN count(*) = 0 THEN 'none'
-                               WHEN bool_and(done) THEN 'accepted'
-                               WHEN bool_or(open) THEN 'pending'
+                               WHEN bool_and(coalesce(l.last_success >= p.generation, false)) THEN 'accepted'
+                               WHEN bool_or(coalesce(l.last_open >= p.generation, false)) THEN 'pending'
                                ELSE 'failed' END
-                   FROM (SELECT bool_or(j.status = 'succeeded') AS done,
-                                bool_or(j.status IN ('pending', 'retrying', 'running')) AS open
-                         FROM jobs j
-                         JOIN destinations d ON d.project_id = j.project_id AND d.environment_id = j.environment_id
-                                            AND d.id = j.destination_id AND d.kind = 'cdn'
-                         WHERE j.project_id = r.project_id AND j.environment_id = r.environment_id
-                           AND j.generation >= r.generation
-                         GROUP BY j.destination_id) cdns) AS "purge!",
-                  deliveries.kinds AS "delivery_kinds!", deliveries.covered AS "delivery_covered!",
-                  deliveries.open AS "delivery_open!",
-                  (SELECT count(DISTINCT o.location) FROM observations o
-                   WHERE o.project_id = r.project_id AND o.environment_id = r.environment_id
-                     AND o.observed_generation >= r.generation AND o.http_status BETWEEN 200 AND 299) AS "locations!"
-           FROM releases r
-           JOIN changesets c ON c.project_id = r.project_id AND c.environment_id = r.environment_id
-                            AND c.id = r.changeset_id
-           JOIN identities i ON i.id = r.published_by
-           -- A later job's success covers this release too (D-050, D-051).
-           CROSS JOIN LATERAL (
-               SELECT coalesce(array_agg(per.kind), '{}') AS kinds, coalesce(array_agg(per.covered), '{}') AS covered,
-                      coalesce(array_agg(per.open), '{}') AS open
-               FROM (SELECT d.kind, bool_or(j.status = 'succeeded') AS covered,
-                            bool_or(j.status IN ('pending', 'retrying', 'running')) AS open
-                     FROM jobs j
-                     JOIN destinations d ON d.project_id = j.project_id AND d.environment_id = j.environment_id
-                                        AND d.id = j.destination_id
-                     WHERE j.project_id = r.project_id AND j.environment_id = r.environment_id
-                       AND j.generation >= r.generation
-                     GROUP BY d.id, d.kind) per
-           ) deliveries
-           WHERE r.project_id = $1 AND r.environment_id = $2 AND ($3::bigint IS NULL OR r.generation = $3)
-           ORDER BY r.generation DESC
-           LIMIT 100"#,
+                   FROM latest l WHERE l.kind = 'cdn' AND l.last_job >= p.generation) AS "purge!",
+                  (SELECT coalesce(array_agg(l.kind ORDER BY l.id), '{}') FROM latest l
+                   WHERE l.last_job >= p.generation) AS "delivery_kinds!",
+                  (SELECT coalesce(array_agg(coalesce(l.last_success >= p.generation, false) ORDER BY l.id), '{}')
+                   FROM latest l WHERE l.last_job >= p.generation) AS "delivery_covered!",
+                  (SELECT coalesce(array_agg(coalesce(l.last_open >= p.generation, false) ORDER BY l.id), '{}')
+                   FROM latest l WHERE l.last_job >= p.generation) AS "delivery_open!",
+                  (SELECT count(*) FROM seen s WHERE s.last_seen >= p.generation) AS "locations!"
+           FROM page p
+           ORDER BY p.generation DESC"#,
         tx.project,
         tx.environment,
         generation
@@ -423,15 +437,20 @@ pub async fn receipt(
         r#"SELECT d.id AS destination_id, d.name, d.kind, d.location,
                   own.status AS "status?", own.attempts AS "attempts?", own.last_error AS "last_error?",
                   own.finished_at AS "finished_at?",
-                  min(j.generation) FILTER (WHERE j.status = 'succeeded') AS covered_by,
-                  bool_or(j.status IN ('pending', 'retrying', 'running')) AS "open!"
+                  (SELECT min(j.generation) FROM jobs j
+                   WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id
+                     AND j.destination_id = d.id AND j.generation >= $3 AND j.status = 'succeeded') AS covered_by,
+                  EXISTS (SELECT 1 FROM jobs j
+                          WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id
+                            AND j.destination_id = d.id AND j.generation >= $3
+                            AND j.status IN ('pending', 'retrying', 'running')) AS "open!"
            FROM destinations d
-           JOIN jobs j ON j.project_id = d.project_id AND j.environment_id = d.environment_id
-                      AND j.destination_id = d.id AND j.generation >= $3
            LEFT JOIN jobs own ON own.project_id = d.project_id AND own.environment_id = d.environment_id
                              AND own.destination_id = d.id AND own.generation = $3
            WHERE d.project_id = $1 AND d.environment_id = $2
-           GROUP BY d.id, d.name, d.kind, d.location, own.status, own.attempts, own.last_error, own.finished_at
+             AND EXISTS (SELECT 1 FROM jobs j
+                         WHERE j.project_id = d.project_id AND j.environment_id = d.environment_id
+                           AND j.destination_id = d.id AND j.generation >= $3)
            ORDER BY d.id"#,
         tx.project,
         tx.environment,
