@@ -1,8 +1,9 @@
 //! Destinations and delivery jobs (docs/modules/04-api.md, "Route families"; D-046). Under `{P}`:
 //!
-//! - `GET {P}/destinations` and `POST {P}/destinations` (`{"kind", "name", "url"}`, `kind` being
-//!   `webhook`, the default, or `cdn`, which is sent purges by tag instead; D-050): owners and
-//!   developers only, since an address can carry a secret;
+//! - `GET {P}/destinations` and `POST {P}/destinations` (`{"kind", "name", "url", "location"}`,
+//!   `kind` being `webhook`, the default; `cdn`, which is sent purges by tag instead (D-050); or
+//!   `probe`, whose URL is fetched to see which release it serves, optionally only by workers at
+//!   `location` (D-051)): owners and developers only, since an address can carry a secret;
 //! - `PUT {P}/destinations/{id}` (`{"enabled"}`): turns announcements on or off;
 //! - `GET {P}/jobs?generation=`: delivery jobs, newest first, for any member.
 //!
@@ -48,6 +49,8 @@ pub(crate) struct NewDestination {
     kind: String,
     name: String,
     url: String,
+    #[serde(default)]
+    location: Option<String>,
 }
 
 fn webhook() -> String {
@@ -73,6 +76,7 @@ pub(crate) struct DestinationView {
     name: String,
     url: String,
     enabled: bool,
+    location: Option<String>,
     created_at: String,
 }
 
@@ -84,6 +88,7 @@ impl DestinationView {
             name: row.name,
             url: row.url,
             enabled: row.enabled,
+            location: row.location,
             created_at: rfc3339(row.created_at)?,
         })
     }
@@ -137,12 +142,32 @@ pub(crate) async fn create(
 ) -> Result<(StatusCode, Json<Data<DestinationView>>), ApiError> {
     let allow_private = services(&state)?.allow_private_destinations;
     let Json(new) = body?;
-    if new.kind != "webhook" && new.kind != "cdn" {
+    if !matches!(new.kind.as_str(), "webhook" | "cdn" | "probe") {
         return Err(ApiError::InvalidField {
             reason: "invalid_kind",
             pointer: "/kind",
-            message: "a destination is a webhook or a cdn".to_owned(),
+            message: "a destination is a webhook, a cdn or a probe".to_owned(),
         });
+    }
+    let location = new.location.as_deref().map(str::trim);
+    if let Some(location) = location {
+        let plain = (1..=63).contains(&location.len())
+            && location
+                .bytes()
+                .next()
+                .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+            && location
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+        if new.kind != "probe" || !plain {
+            return Err(ApiError::InvalidField {
+                reason: "invalid_location",
+                pointer: "/location",
+                message:
+                    "only a probe has a location: 1 to 63 lowercase letters, digits and dashes"
+                        .to_owned(),
+            });
+        }
     }
     let name = new.name.trim();
     if !(1..=100).contains(&name.chars().count()) || name.chars().any(char::is_control) {
@@ -167,7 +192,7 @@ pub(crate) async fn create(
     })?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     require(&tx.role, Action::ManageDestinations, WHO)?;
-    let row = destinations::create(&mut tx, &new.kind, name, url)
+    let row = destinations::create(&mut tx, &new.kind, name, url, location)
         .await
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;

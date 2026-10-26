@@ -399,6 +399,7 @@ dependencies = [
 name = "colophon-worker"
 version = "0.0.0"
 dependencies = [
+ "aws-lc-rs",
  "colophon-db",
  "colophon-domain",
  "reqwest",

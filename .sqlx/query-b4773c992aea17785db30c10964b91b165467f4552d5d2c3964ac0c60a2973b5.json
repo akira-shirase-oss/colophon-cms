@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO destinations (project_id, environment_id, id, kind, name, url, created_by)\n         VALUES ($1, $2, $3, $4, $5, $6, $7)\n         RETURNING id, kind, name, url, enabled, created_at",
+  "query": "SELECT id, kind, name, url, enabled, location, created_at FROM destinations\n         WHERE project_id = $1 AND environment_id = $2 ORDER BY id LIMIT 100",
   "describe": {
     "columns": [
       {
@@ -60,6 +60,17 @@
       },
       {
         "ordinal": 5,
+        "name": "location",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "destinations",
+            "name": "location"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -73,11 +84,6 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Uuid",
-        "Uuid",
-        "Text",
-        "Text",
-        "Text",
         "Uuid"
       ]
     },
@@ -87,8 +93,9 @@
       false,
       false,
       false,
+      true,
       false
     ]
   },
-  "hash": "9e8f6e2daeccf4dbea26e2508507f1e79de0d00aab8df63ae36d39590adaf272"
+  "hash": "b4773c992aea17785db30c10964b91b165467f4552d5d2c3964ac0c60a2973b5"
 }

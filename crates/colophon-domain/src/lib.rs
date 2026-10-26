@@ -16,6 +16,7 @@ pub mod destination;
 pub mod job;
 pub mod policy;
 pub mod project;
+pub mod receipt;
 pub mod release;
 pub mod rich_text;
 pub mod schema;

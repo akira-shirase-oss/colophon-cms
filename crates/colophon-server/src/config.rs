@@ -142,6 +142,22 @@ pub struct Config {
     /// The worker's own database pool, separate from the API's so deliveries can't starve
     /// requests. `COLOPHON_WORKER_DB_CONNECTIONS`, default 4.
     pub worker_db_connections: u32,
+    /// Where the worker runs, as its probes' evidence names it, and which pinned probes it may
+    /// run (D-051). `COLOPHON_WORKER_LOCATION`: 1 to 63 lowercase letters, digits and dashes,
+    /// default `local`.
+    pub worker_location: String,
+}
+
+/// Whether `text` can name a worker's location: what destinations.location accepts.
+fn is_location(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    (1..=63).contains(&bytes.len())
+        && bytes
+            .first()
+            .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
 }
 
 /// `scheme://host[:port]` with no path, query or fragment, as browsers send in `Origin`.
@@ -323,6 +339,16 @@ impl Config {
         let worker_slots = env.ranged("COLOPHON_WORKER_SLOTS", 8, 1..=64);
         let worker_attempt = env.millis("COLOPHON_WORKER_ATTEMPT_MS", 10_000, 100..=60_000);
         let worker_db_connections = env.ranged("COLOPHON_WORKER_DB_CONNECTIONS", 4, 1..=100);
+        let worker_location = env
+            .raw("COLOPHON_WORKER_LOCATION")
+            .unwrap_or_else(|| "local".to_owned());
+        if !is_location(&worker_location) {
+            env.problems.push(
+                "COLOPHON_WORKER_LOCATION must be 1 to 63 lowercase letters, digits and dashes, \
+                 starting with a letter or digit"
+                    .to_owned(),
+            );
+        }
 
         if probe_timeout >= probe_interval {
             env.problems.push(
@@ -369,6 +395,7 @@ impl Config {
                 worker_slots,
                 worker_attempt,
                 worker_db_connections,
+                worker_location,
             })
         } else {
             Err(ConfigError {
@@ -403,6 +430,30 @@ mod tests {
         assert_eq!(config.probe_interval, Duration::from_secs(2));
         assert!(config.cache_url.is_none());
         assert_eq!(config.log_format, LogFormat::Json);
+        assert_eq!(config.worker_location, "local");
+    }
+
+    #[test]
+    fn a_worker_location_is_a_plain_label() {
+        for good in ["eu-west-1", "laptop", "a", "9"] {
+            let config = load(&[
+                ("COLOPHON_DATABASE_URL", DB),
+                ("COLOPHON_WORKER_LOCATION", good),
+            ])
+            .expect("valid");
+            assert_eq!(config.worker_location, good);
+        }
+        for bad in ["EU", "-west", "a b", "ä", &"x".repeat(64)] {
+            let error = load(&[
+                ("COLOPHON_DATABASE_URL", DB),
+                ("COLOPHON_WORKER_LOCATION", bad),
+            ])
+            .expect_err(bad);
+            assert!(
+                error.to_string().contains("COLOPHON_WORKER_LOCATION"),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

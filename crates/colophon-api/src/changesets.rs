@@ -803,6 +803,32 @@ pub(crate) struct ReleaseView {
     /// `none`, `pending`, `accepted` or `failed`: whether the environment's CDNs accepted a purge
     /// covering it (D-050). Until then, copies they hold may still be served.
     purge: String,
+    /// The release's one label (D-051): `published` (in the CMS; nothing checked the site),
+    /// `pending`, `verified` (at `locations` locations) or `needs_attention`.
+    label: &'static str,
+    /// How many distinct locations a probe saw this release, or a later one, from.
+    locations: i64,
+}
+
+impl ReleaseView {
+    pub(crate) fn new(row: releases::Release) -> Result<Self, ApiError> {
+        let label = crate::receipts::label(&row);
+        Ok(Self {
+            generation: row.generation,
+            epoch: row.epoch,
+            changeset_id: row.changeset_id,
+            title: row.title,
+            changeset_hash: content_hash(&row.changeset_hash),
+            published_by: row.published_by,
+            published_by_name: row.published_by_name,
+            published_at: rfc3339(row.published_at)?,
+            entries: row.entries,
+            unpublished: row.unpublished,
+            purge: row.purge,
+            label: label.as_str(),
+            locations: row.locations,
+        })
+    }
 }
 
 /// `GET {P}/releases`: the newest 100, with the environment's current generation.
@@ -815,25 +841,13 @@ pub(crate) async fn releases(
     let (_, generation) = releases::generation(&mut tx)
         .await
         .map_err(ApiError::from_db)?;
-    let rows = releases::list(&mut tx).await.map_err(ApiError::from_db)?;
+    let rows = releases::list(&mut tx, None)
+        .await
+        .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     let data = rows
         .into_iter()
-        .map(|row| {
-            Ok(ReleaseView {
-                generation: row.generation,
-                epoch: row.epoch,
-                changeset_id: row.changeset_id,
-                title: row.title,
-                changeset_hash: content_hash(&row.changeset_hash),
-                published_by: row.published_by,
-                published_by_name: row.published_by_name,
-                published_at: rfc3339(row.published_at)?,
-                entries: row.entries,
-                unpublished: row.unpublished,
-                purge: row.purge,
-            })
-        })
+        .map(ReleaseView::new)
         .collect::<Result<Vec<_>, ApiError>>()?;
     let body = serde_json::to_string(&Page {
         data,

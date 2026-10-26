@@ -37,6 +37,16 @@ pub struct Release {
     /// job covers it), `accepted` (every CDN with one accepted a purge covering it), `pending`
     /// (one is still trying) or `failed`.
     pub purge: String,
+    /// Each destination with a job at this generation or later (D-051), as three parallel lists:
+    /// its kind, whether one of those jobs succeeded (covering this release), and whether one is
+    /// still waiting or running.
+    pub delivery_kinds: Vec<String>,
+    /// See `delivery_kinds`.
+    pub delivery_covered: Vec<bool>,
+    /// See `delivery_kinds`.
+    pub delivery_open: Vec<bool>,
+    /// How many distinct locations a probe saw this release, or a later one, from.
+    pub locations: i64,
 }
 
 /// What [`commit`] did.
@@ -289,8 +299,12 @@ pub async fn of_changeset(
     .map_err(DbError::from_query)
 }
 
-/// The environment's releases, newest first, at most 100.
-pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Release>, DbError> {
+/// The environment's releases, newest first, at most 100; only the one at `generation` when
+/// given.
+pub async fn list(
+    tx: &mut ProjectTransaction,
+    generation: Option<i64>,
+) -> Result<Vec<Release>, DbError> {
     sqlx::query_as!(
         Release,
         r#"SELECT r.generation, r.epoch, r.changeset_id, c.title, r.changeset_hash, r.review_id,
@@ -314,18 +328,132 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Release>, DbError> 
                                             AND d.id = j.destination_id AND d.kind = 'cdn'
                          WHERE j.project_id = r.project_id AND j.environment_id = r.environment_id
                            AND j.generation >= r.generation
-                         GROUP BY j.destination_id) cdns) AS "purge!"
+                         GROUP BY j.destination_id) cdns) AS "purge!",
+                  deliveries.kinds AS "delivery_kinds!", deliveries.covered AS "delivery_covered!",
+                  deliveries.open AS "delivery_open!",
+                  (SELECT count(DISTINCT o.location) FROM observations o
+                   WHERE o.project_id = r.project_id AND o.environment_id = r.environment_id
+                     AND o.observed_generation >= r.generation AND o.http_status BETWEEN 200 AND 299) AS "locations!"
            FROM releases r
            JOIN changesets c ON c.project_id = r.project_id AND c.environment_id = r.environment_id
                             AND c.id = r.changeset_id
            JOIN identities i ON i.id = r.published_by
-           WHERE r.project_id = $1 AND r.environment_id = $2
+           -- A later job's success covers this release too (D-050, D-051).
+           CROSS JOIN LATERAL (
+               SELECT coalesce(array_agg(per.kind), '{}') AS kinds, coalesce(array_agg(per.covered), '{}') AS covered,
+                      coalesce(array_agg(per.open), '{}') AS open
+               FROM (SELECT d.kind, bool_or(j.status = 'succeeded') AS covered,
+                            bool_or(j.status IN ('pending', 'retrying', 'running')) AS open
+                     FROM jobs j
+                     JOIN destinations d ON d.project_id = j.project_id AND d.environment_id = j.environment_id
+                                        AND d.id = j.destination_id
+                     WHERE j.project_id = r.project_id AND j.environment_id = r.environment_id
+                       AND j.generation >= r.generation
+                     GROUP BY d.id, d.kind) per
+           ) deliveries
+           WHERE r.project_id = $1 AND r.environment_id = $2 AND ($3::bigint IS NULL OR r.generation = $3)
            ORDER BY r.generation DESC
            LIMIT 100"#,
         tx.project,
-        tx.environment
+        tx.environment,
+        generation
     )
     .fetch_all(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)
+}
+
+/// One destination's part in a release's receipt (D-051).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delivery {
+    /// The destination.
+    pub destination_id: Uuid,
+    /// Its name.
+    pub name: String,
+    /// `webhook`, `cdn` or `probe`.
+    pub kind: String,
+    /// For a probe, the location it is pinned to.
+    pub location: Option<String>,
+    /// Its job for this very release, if it had one: status, attempts, the last error, when it
+    /// finished.
+    pub status: Option<String>,
+    /// See `status`.
+    pub attempts: Option<i32>,
+    /// See `status`.
+    pub last_error: Option<String>,
+    /// See `status`.
+    pub finished_at: Option<OffsetDateTime>,
+    /// The earliest release at or after this one whose job for the destination succeeded: this
+    /// release's own, or a later one that covered it.
+    pub covered_by: Option<i64>,
+    /// Whether a job at this release or later is still waiting or running.
+    pub open: bool,
+}
+
+/// One probe attempt for a release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Seen {
+    /// The probe.
+    pub destination_id: Uuid,
+    /// Where from.
+    pub location: String,
+    /// The generation the answer named, if any.
+    pub observed_generation: Option<i64>,
+    /// The HTTP status, if there was an answer.
+    pub http_status: Option<i16>,
+    /// The body's SHA-256, if one was read.
+    pub body_hash: Option<Vec<u8>>,
+    /// What went wrong, if anything.
+    pub error: Option<String>,
+    /// When.
+    pub observed_at: OffsetDateTime,
+}
+
+/// The most probe attempts a receipt lists.
+pub const MAX_SEEN: i64 = 100;
+
+/// The deliveries of the release at `generation`, one per destination with a job at that release
+/// or later, oldest destination first, and the probe attempts made for it, in order.
+pub async fn receipt(
+    tx: &mut ProjectTransaction,
+    generation: i64,
+) -> Result<(Vec<Delivery>, Vec<Seen>), DbError> {
+    let deliveries = sqlx::query_as!(
+        Delivery,
+        r#"SELECT d.id AS destination_id, d.name, d.kind, d.location,
+                  own.status AS "status?", own.attempts AS "attempts?", own.last_error AS "last_error?",
+                  own.finished_at AS "finished_at?",
+                  min(j.generation) FILTER (WHERE j.status = 'succeeded') AS covered_by,
+                  bool_or(j.status IN ('pending', 'retrying', 'running')) AS "open!"
+           FROM destinations d
+           JOIN jobs j ON j.project_id = d.project_id AND j.environment_id = d.environment_id
+                      AND j.destination_id = d.id AND j.generation >= $3
+           LEFT JOIN jobs own ON own.project_id = d.project_id AND own.environment_id = d.environment_id
+                             AND own.destination_id = d.id AND own.generation = $3
+           WHERE d.project_id = $1 AND d.environment_id = $2
+           GROUP BY d.id, d.name, d.kind, d.location, own.status, own.attempts, own.last_error, own.finished_at
+           ORDER BY d.id"#,
+        tx.project,
+        tx.environment,
+        generation
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    let seen = sqlx::query_as!(
+        Seen,
+        "SELECT destination_id, location, observed_generation, http_status, body_hash, error, observed_at
+         FROM observations
+         WHERE project_id = $1 AND environment_id = $2 AND generation = $3
+         ORDER BY observed_at, id
+         LIMIT $4",
+        tx.project,
+        tx.environment,
+        generation,
+        MAX_SEEN
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok((deliveries, seen))
 }

@@ -6,6 +6,9 @@
 pub const ATTEMPT_DEADLINE_SECS: u64 = 10;
 /// The most attempts a job gets.
 pub const MAX_ATTEMPTS: u32 = 5;
+/// The most attempts a probe gets (D-051): "not yet" is its usual answer for a while, and each
+/// look waits at least `receipt::PROBE_INTERVAL_MS`, so ten looks span about a minute or more.
+pub const MAX_PROBE_ATTEMPTS: u32 = 10;
 /// How long after it was created a job may still be attempted.
 pub const LIFETIME_SECS: i64 = 60 * 60;
 /// The first retry waits up to this long; each later one up to twice the last.
@@ -133,11 +136,30 @@ pub fn after_attempt(
     deadline_ms: i64,
     entropy: u64,
 ) -> Next {
+    after_attempt_within(
+        outcome,
+        attempts,
+        MAX_ATTEMPTS,
+        now_ms,
+        deadline_ms,
+        entropy,
+    )
+}
+
+/// [`after_attempt`], for a job allowed `max_attempts` attempts.
+pub fn after_attempt_within(
+    outcome: &Outcome,
+    attempts: u32,
+    max_attempts: u32,
+    now_ms: i64,
+    deadline_ms: i64,
+    entropy: u64,
+) -> Next {
     match outcome {
         Outcome::Delivered { .. } => Next::Succeeded,
         Outcome::Terminal { .. } => Next::Failed,
         Outcome::Retryable { retry_after_ms, .. } => {
-            if attempts >= MAX_ATTEMPTS {
+            if attempts >= max_attempts {
                 return Next::Failed;
             }
             let jittered = backoff_ms(attempts, entropy);

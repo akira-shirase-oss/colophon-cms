@@ -402,7 +402,7 @@ async fn unpublishing_takes_an_entry_out_of_every_earlier_release_until_it_is_pu
             unpublished: 0
         }
     );
-    let listed = releases::list(&mut tx).await.expect("releases");
+    let listed = releases::list(&mut tx, None).await.expect("releases");
     assert_eq!(
         listed
             .iter()

@@ -19,6 +19,7 @@ pub mod health;
 mod members;
 pub mod middleware;
 mod projects;
+mod receipts;
 mod rich_text;
 pub mod session;
 mod shape;
@@ -132,6 +133,10 @@ fn publishing() -> Router<AppState> {
         .route(
             "/api/v1/projects/{project}/environments/{environment}/releases",
             get(changesets::releases),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/releases/{generation}",
+            get(receipts::get),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/destinations",

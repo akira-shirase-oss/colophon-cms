@@ -81,7 +81,8 @@ pub struct Claimed {
     pub id: Uuid,
     /// Its destination.
     pub destination_id: Uuid,
-    /// The destination's kind: `webhook` (announce the release) or `cdn` (purge what changed).
+    /// The destination's kind: `webhook` (announce the release), `cdn` (purge what changed) or
+    /// `probe` (look for the release).
     pub kind: String,
     /// Where to post.
     pub url: String,
@@ -114,13 +115,15 @@ pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
     Ok(expired.rows_affected())
 }
 
-/// Claims up to `limit` due jobs for `owner`, for `lease`: waiting jobs whose time has come, and
-/// running ones whose lease ran out, within their lifetime, whose destination has no other job
-/// in flight under a live lease (one announcement in flight per destination, D-047). Rows
-/// another worker is claiming are skipped, not waited for.
+/// Claims up to `limit` due jobs for `owner`, a worker at `location`, for `lease`: waiting jobs
+/// whose time has come, and running ones whose lease ran out, within their lifetime, whose
+/// destination has no other job in flight under a live lease (one announcement in flight per
+/// destination, D-047) and isn't a probe pinned to another location (D-051). Rows another
+/// worker is claiming are skipped, not waited for.
 pub async fn claim(
     pool: &PgPool,
     owner: &str,
+    location: &str,
     lease: Duration,
     limit: i64,
 ) -> Result<Vec<Claimed>, DbError> {
@@ -140,6 +143,11 @@ pub async fn claim(
                      AND busy.destination_id = j.destination_id AND busy.status = 'running'
                      AND busy.lease_expires_at >= now() AND busy.id <> j.id
                )
+               AND EXISTS (
+                   SELECT 1 FROM destinations here
+                   WHERE here.project_id = j.project_id AND here.environment_id = j.environment_id
+                     AND here.id = j.destination_id AND (here.location IS NULL OR here.location = $4)
+               )
              ORDER BY j.next_attempt_at
              LIMIT $3
              FOR UPDATE OF j SKIP LOCKED
@@ -154,7 +162,8 @@ pub async fn claim(
                    j.idempotency_key, j.attempts, j.lease_generation, j.deadline_at",
         owner,
         lease_ms,
-        limit.clamp(1, 100)
+        limit.clamp(1, 100),
+        location
     )
     .fetch_all(&mut *transaction)
     .await
@@ -234,6 +243,28 @@ pub async fn prepare(pool: &PgPool, job: &Claimed) -> Result<Option<Announcement
     }))
 }
 
+/// Whether a newer release's job for the same destination is on its way, so `job` would only
+/// repeat what that one does (a probe that sees the newer release sees this one's changes too).
+pub async fn newer(pool: &PgPool, job: &Claimed) -> Result<bool, DbError> {
+    let mut transaction = worker(pool).await?;
+    let newer = sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+               SELECT 1 FROM jobs
+               WHERE project_id = $1 AND environment_id = $2 AND destination_id = $3
+                 AND generation > $4 AND status <> 'superseded'
+           ) AS "newer!""#,
+        job.project_id,
+        job.environment_id,
+        job.destination_id,
+        job.generation
+    )
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(newer)
+}
+
 /// What a CDN destination's job purges: every entry (collection, entry) that the releases since
 /// its last successful purge, up to and including the job's, published, replaced or took down.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -304,6 +335,21 @@ pub async fn purge(pool: &PgPool, job: &Claimed) -> Result<Option<Purge>, DbErro
     }))
 }
 
+/// What a probe saw on one attempt (D-051).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Observation<'a> {
+    /// The worker's location label.
+    pub location: &'a str,
+    /// The generation the answer named, if it named one.
+    pub generation: Option<i64>,
+    /// The HTTP status, if there was an answer.
+    pub http_status: Option<i16>,
+    /// The SHA-256 of the body read, if one was.
+    pub body_hash: Option<[u8; 32]>,
+    /// What went wrong, if anything (at most 500 characters).
+    pub error: Option<&'a str>,
+}
+
 /// How an attempt ended, as recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finish<'a> {
@@ -315,10 +361,13 @@ pub struct Finish<'a> {
     pub http_status: Option<i16>,
     /// What went wrong, if anything (at most 500 characters).
     pub error: Option<&'a str>,
+    /// For a probe: what it saw, stored with the result.
+    pub observation: Option<Observation<'a>>,
 }
 
-/// Records how `job`'s attempt ended, only if `owner` still holds that lease; false if it
-/// doesn't (the lease expired and the job was claimed again), and nothing is written.
+/// Records how `job`'s attempt ended, and for a probe what it saw, only if `owner` still holds
+/// that lease; false if it doesn't (the lease expired and the job was claimed again), and nothing
+/// is written.
 pub async fn finish(
     pool: &PgPool,
     job: &Claimed,
@@ -347,6 +396,31 @@ pub async fn finish(
     .execute(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
+    if updated.rows_affected() != 1 {
+        return Ok(false);
+    }
+    if let Some(seen) = &finish.observation {
+        let error: Option<String> = seen.error.map(|text| text.chars().take(500).collect());
+        sqlx::query!(
+            "INSERT INTO observations (project_id, environment_id, id, job_id, destination_id, generation, location,
+                                       observed_generation, http_status, body_hash, error)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            job.project_id,
+            job.environment_id,
+            Uuid::now_v7(),
+            job.id,
+            job.destination_id,
+            job.generation,
+            seen.location,
+            seen.generation,
+            seen.http_status,
+            seen.body_hash.as_ref().map(|hash| &hash[..]),
+            error
+        )
+        .execute(&mut *transaction)
+        .await
+        .map_err(DbError::from_write)?;
+    }
     transaction.commit().await.map_err(DbError::from_query)?;
-    Ok(updated.rows_affected() == 1)
+    Ok(true)
 }
