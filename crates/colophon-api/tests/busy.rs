@@ -45,6 +45,7 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
             oidc: None,
             sessions: SessionSettings::default(),
             trusted_origins: vec!["http://localhost:58000".to_owned()],
+            allow_private_destinations: true,
         })),
     };
     let app = middleware::apply(

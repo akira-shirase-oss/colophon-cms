@@ -40,7 +40,9 @@
 > versions of the entries in it, and an approval counts only for that exact set; edit anything afterwards and it has
 > to be approved again. Step 2.2 is done: publishing an approved changeset is one numbered release, two releases on
 > the same base can't both commit, and anyone can read what's published, past releases included, through a database
-> role that can't see drafts.
+> role that can't see drafts. Step 2.3 is done: each release is announced to your webhooks by a background worker
+> that survives being killed mid-delivery, never sends an older release after a newer one, and only ever calls public
+> addresses.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 

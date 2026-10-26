@@ -450,6 +450,47 @@ export async function publishChangeset(
 	return ((await response.json()) as { data: { generation: number; entries_changed: number } }).data;
 }
 
+/** Where a project's releases are announced (D-046). */
+export interface Destination {
+	id: string;
+	kind: 'webhook';
+	name: string;
+	url: string;
+	enabled: boolean;
+	created_at: string;
+}
+
+/** One release's announcement to one destination. */
+export interface Job {
+	id: string;
+	destination_id: string;
+	destination_name: string;
+	generation: number;
+	status: 'pending' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'superseded';
+	attempts: number;
+	last_http_status: number | null;
+	last_error: string | null;
+	created_at: string;
+	finished_at: string | null;
+}
+
+/** Owners and developers only: an address may carry a secret. */
+export async function listDestinations(project: string): Promise<Destination[]> {
+	return ((await (await send('GET', `${base(project)}/destinations`)).json()) as { data: Destination[] }).data;
+}
+
+export async function createDestination(project: string, name: string, url: string): Promise<Destination> {
+	return ((await (await send('POST', `${base(project)}/destinations`, { name, url })).json()) as { data: Destination }).data;
+}
+
+export async function setDestinationEnabled(project: string, id: string, enabled: boolean): Promise<void> {
+	await send('PUT', `${base(project)}/destinations/${id}`, { enabled });
+}
+
+export async function listJobs(project: string): Promise<Job[]> {
+	return ((await (await send('GET', `${base(project)}/jobs`)).json()) as { data: Job[] }).data;
+}
+
 /** Where anyone can read what the project publishes, with no sign-in. */
 export function deliveryUrl(project: string, collection: string): string {
 	return `/content/v1/${project}/production/${collection}`;

@@ -53,7 +53,8 @@ fn json_out(output: &Output) -> Value {
     })
 }
 
-/// Runs `colophon login`, approves it as `approver`, and waits for it to finish.
+/// Runs `colophon login`, approves it as `approver`, and waits for it to finish; its output, with
+/// everything it wrote to stderr.
 async fn login(config: &Path, approver: &Session) -> Output {
     let mut child = Command::new(colophon_binary())
         .args([
@@ -71,19 +72,23 @@ async fn login(config: &Path, approver: &Session) -> Output {
         .spawn()
         .expect("the CLI starts");
     let stderr = child.stderr.take().expect("stderr");
-    let code = tokio::task::spawn_blocking(move || {
-        BufReader::new(stderr)
-            .lines()
-            .map_while(Result::ok)
-            .find_map(|line| {
-                line.split("shows the code ")
-                    .nth(1)
-                    .map(|code| code.trim_end_matches('.').to_owned())
-            })
-    })
-    .await
-    .expect("task")
-    .expect("the CLI prints the code");
+    // Keep reading stderr to the end: a reader that stopped at the code would close the pipe,
+    // and the CLI's next line ("Waiting for approval…") would then fail to print and panic.
+    let (found, code) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let mut lines = Vec::new();
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if let Some(code) = line.split("shows the code ").nth(1) {
+                let _ignored = found.send(code.trim_end_matches('.').to_owned());
+            }
+            lines.push(line);
+        }
+        lines.join("\n")
+    });
+    let code = tokio::task::spawn_blocking(move || code.recv())
+        .await
+        .expect("task")
+        .expect("the CLI prints the code");
 
     let shown = call(
         approver,
@@ -108,9 +113,12 @@ async fn login(config: &Path, approver: &Session) -> Output {
     .await
     .expect("request");
     assert_eq!(approval.status, StatusCode::NO_CONTENT, "{}", approval.body);
-    tokio::task::spawn_blocking(move || child.wait_with_output().expect("the CLI exits"))
-        .await
-        .expect("task")
+    let mut output =
+        tokio::task::spawn_blocking(move || child.wait_with_output().expect("the CLI exits"))
+            .await
+            .expect("task");
+    output.stderr = reader.join().expect("the reader finishes").into_bytes();
+    output
 }
 
 fn article(title: &str) -> String {

@@ -153,7 +153,7 @@ Built in step 1.7 (D-042), for people:
 - `authorize(principal, action, resource) -> Decision`, deny by default.
 - Its first form, built in step 1.7: `colophon_domain::policy::allows(role, action)` over `Read`, `WriteContent`,
   `ChangeContentTypes` and `ManageMembers`; step 2.1 adds `Review` and step 2.2 `Publish`, both for owners and
-  publishers (D-044, D-045). Every handler asks it (`members::require` in the API); an unknown stored
+  publishers (D-044, D-045); step 2.3 `ManageDestinations`, for owners and developers (D-046). Every handler asks it (`members::require` in the API); an unknown stored
   role denies everything. Principals other than people and resource-level checks arrive with machine credentials.
 - It checks object ownership, project, environment, action and field policy on **every** read and mutation.
 - Publish, export, schema change and secret administration need explicit permission.

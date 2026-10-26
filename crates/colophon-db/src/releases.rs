@@ -1,6 +1,6 @@
 //! Releases (docs/modules/01-domain.md, "Releases"; D-045). [`commit`] is the whole release in
-//! one transaction: the conditional generation bump, the release record, and the publication
-//! history. The API checks approval and policy first, under the changeset's lock.
+//! one transaction: the conditional generation bump, the release record, the publication
+//! history, and the outbox of delivery jobs (D-046). The API checks approval and policy first, under the changeset's lock.
 
 use sqlx::types::time::OffsetDateTime;
 use uuid::Uuid;
@@ -68,13 +68,14 @@ pub async fn generation(tx: &mut ProjectTransaction) -> Result<(i64, i64), DbErr
 /// generation, if the environment is still at `base`. Each item whose entry doesn't already
 /// publish the pinned revision closes its open interval at the new generation and opens one
 /// with a copy of the revision. The caller holds the changeset's lock and has checked the
-/// approval `review`.
+/// approval `review`. Each enabled destination gets a delivery job with `job_lifetime` to run.
 pub async fn commit(
     tx: &mut ProjectTransaction,
     base: i64,
     changeset: Uuid,
     hash: &[u8],
     review: Uuid,
+    job_lifetime: std::time::Duration,
 ) -> Result<Committed, DbError> {
     let bumped = sqlx::query!(
         "UPDATE environments SET generation = generation + 1
@@ -136,6 +137,33 @@ pub async fn commit(
         tx.environment,
         changeset,
         bumped.generation
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    // The outbox: one job per enabled destination, committed with the release or not at all.
+    // Older announcements that haven't started are obsolete now.
+    sqlx::query!(
+        "UPDATE jobs SET status = 'superseded', updated_at = now(), finished_at = now()
+         WHERE project_id = $1 AND environment_id = $2 AND generation < $3 AND status IN ('pending', 'retrying')",
+        tx.project,
+        tx.environment,
+        bumped.generation
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    sqlx::query!(
+        "INSERT INTO jobs (project_id, environment_id, id, destination_id, generation, idempotency_key, deadline_at)
+         SELECT project_id, environment_id, uuidv7(), id, $3,
+                format('colophon:%s:%s:%s:%s', project_id, environment_id, $3::bigint, id),
+                now() + make_interval(secs => $4::bigint)
+         FROM destinations
+         WHERE project_id = $1 AND environment_id = $2 AND enabled",
+        tx.project,
+        tx.environment,
+        bumped.generation,
+        i64::try_from(job_lifetime.as_secs()).unwrap_or(i64::MAX)
     )
     .execute(&mut *tx.transaction)
     .await

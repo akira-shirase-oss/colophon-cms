@@ -60,9 +60,9 @@ quality claim (spec §30).
 |---|---|---|
 | F01 | Kill server before content commit | No success acknowledgment for an uncommitted revision |
 | F02 | Kill after commit, before response | Idempotent retry returns the same logical operation and durable result |
-| F03 | Kill worker after purge/send, before recording | Reconcile or safely retry; no duplicated business effect claimed impossible |
+| F03 | Kill worker after purge/send, before recording | Reconcile or safely retry; no duplicated business effect claimed impossible. In place since step 2.3: `tests/faults.rs` |
 | F04 | Two editors save the same base revision | One conflicts; neither silently loses an accepted edit |
-| F05 | Old delivery runs after a newer release | Generation check blocks regression and records superseded work |
+| F05 | Old delivery runs after a newer release | Generation check blocks regression and records superseded work. In place since step 2.3: `tests/worker.rs` |
 | F06 | Collection filter gains a new matching article | Listing cache invalidates even though the old response did not reference the new entry |
 | F07 | Entry unpublished while old caches exist | Origin denies revoked content; purge/evidence tracked; remaining exposure visible |
 | F08 | Cache eviction/failover/restart | No loss of content, jobs, sessions or hard budget accounting |

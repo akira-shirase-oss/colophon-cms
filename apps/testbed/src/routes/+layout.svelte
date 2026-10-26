@@ -17,6 +17,7 @@
 		{ href: resolve('/members'), label: 'Members' },
 		{ href: resolve('/changesets'), label: 'Changesets' },
 		{ href: resolve('/releases'), label: 'Releases' },
+		{ href: resolve('/deliveries'), label: 'Deliveries' },
 		{ href: resolve('/load'), label: 'Load tests' }
 	];
 </script>

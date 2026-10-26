@@ -26,7 +26,11 @@ revisions and reviews bound to their hash (`colophon_domain::changeset`, migrati
 Studio's changeset pages, `perf/k6/changesets.js`; D-044). Step 2.2 is done: publishing commits a release on the
 publisher's base generation, publication history is non-overlapping intervals, and `/content/v1` reads a published
 copy as `colophon_delivery` (migration 0008, `colophon_db::{releases, delivery}`, `perf/k6/delivery.js`; D-045; rerun
-`scripts/stack.sh up` on an older stack to create the role). Next is step 2.3: the outbox and the worker.
+`scripts/stack.sh up` on an older stack to create the role). Step 2.3 is done: a release commits its delivery jobs
+(the outbox), and `crates/colophon-worker` (`--role worker|all`) claims them under leases as `colophon_worker` and
+posts webhooks with a stable idempotency key to public addresses only (migration 0009, F03 in `tests/faults.rs`,
+F05 in `tests/worker.rs`, `perf/k6/publishing.js` with `perf/receiver/`; D-046). P2's proof gate is met; next is
+step 2.4: the simulator for releases and the outbox, and the first crash loop.
 
 ## Read first
 

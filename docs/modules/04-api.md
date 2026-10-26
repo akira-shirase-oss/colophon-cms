@@ -75,7 +75,7 @@ create → conflict → review → publish scenario produce equivalent durable r
 | `{P}/changesets`, `/reviews`, `/releases` | Prepare, validate, request review, approve, publish, schedule, cancel, inspect, roll back as a new generation. Built in step 2.1 (D-044): `{P}/changesets` list and create (idempotent; 1 to 100 entries, each pinned at its current revision), `{P}/changesets/{id}` with `ETag: "sha256:…"`, and `…/submit`, `…/refresh` and `…/reviews` (`{"decision", "comment"}`, owners and publishers), each needing `If-Match` with the hash (409 `stale_changeset` otherwise). Built in step 2.2 (D-045): `…/publish` (`{"base_generation"}`, `If-Match` and `Idempotency-Key`; 409 `generation_moved` if another release committed first) and `{P}/releases`, newest first, with `Colophon-Generation` |
 | `{P}/assets`, `/upload-intents` | Create an intent, complete verification, inspect, list references, request deletion |
 | `{P}/agents`, `/jobs` | Scoped credentials, proposals, bounded bulk work, status, authorized cancellation |
-| `{P}/destinations`, `/deliveries` | Configure and test integrations; inspect failures; retry or reconcile safely |
+| `{P}/destinations`, `/deliveries` | Configure and test integrations; inspect failures; retry or reconcile safely. Built in step 2.3 (D-046): `{P}/destinations` (list and create, owners and developers; https and public addresses), `PUT {P}/destinations/{id}` (`{"enabled"}`), and `{P}/jobs?generation=` for any member |
 
 The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked ([parked](parked.md)).
 
@@ -180,7 +180,7 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 1. **P0:** skeleton, error envelope, request IDs, health.
 2. **P1:** projects (step 1.1, done); entries, revisions, preconditions, idempotency and pagination (step 1.2,
    done); content types (step 1.5, done); members and invitations (step 1.7, done); environments, migrations, and the generated OpenAPI document.
-3. **P2:** changesets and reviews (step 2.1, done); releases (step 2.2, done); jobs.
+3. **P2:** changesets and reviews (step 2.1, done); releases (step 2.2, done); destinations and jobs (step 2.3, done).
 4. **P3:** destinations and deliveries.
 5. **P4:** assets, history and rollback.
 6. **P5:** agents and machine credentials.

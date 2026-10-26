@@ -52,6 +52,8 @@ pub enum Action {
     Review,
     /// Publish an approved changeset as a release (D-045).
     Publish,
+    /// Configure where releases are delivered (D-046).
+    ManageDestinations,
 }
 
 /// Whether `role` may perform `action`. Deny by default: anything not listed is refused.
@@ -59,7 +61,10 @@ pub const fn allows(role: Role, action: Action) -> bool {
     matches!(
         (role, action),
         (_, Action::Read | Action::WriteContent)
-            | (Role::Owner | Role::Developer, Action::ChangeContentTypes)
+            | (
+                Role::Owner | Role::Developer,
+                Action::ChangeContentTypes | Action::ManageDestinations
+            )
             | (Role::Owner, Action::ManageMembers)
             | (
                 Role::Owner | Role::Publisher,
@@ -74,12 +79,24 @@ mod tests {
 
     #[test]
     fn the_table_as_written_in_module_03() {
-        use Action::{ChangeContentTypes, ManageMembers, Publish, Read, Review, WriteContent};
+        use Action::{
+            ChangeContentTypes, ManageDestinations, ManageMembers, Publish, Read, Review,
+            WriteContent,
+        };
         let table = [
-            (Role::Owner, [true, true, true, true, true, true]),
-            (Role::Developer, [true, true, true, false, false, false]),
-            (Role::Editor, [true, true, false, false, false, false]),
-            (Role::Publisher, [true, true, false, false, true, true]),
+            (Role::Owner, [true, true, true, true, true, true, true]),
+            (
+                Role::Developer,
+                [true, true, true, false, false, false, true],
+            ),
+            (
+                Role::Editor,
+                [true, true, false, false, false, false, false],
+            ),
+            (
+                Role::Publisher,
+                [true, true, false, false, true, true, false],
+            ),
         ];
         for (role, expected) in table {
             let actual = [
@@ -89,6 +106,7 @@ mod tests {
                 ManageMembers,
                 Review,
                 Publish,
+                ManageDestinations,
             ]
             .map(|action| allows(role, action));
             assert_eq!(actual, expected, "{role:?}");

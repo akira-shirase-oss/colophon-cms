@@ -79,6 +79,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Linux hands outgoing connections ports from 32768 to 60999, which includes every port the
+      # stack and its test servers listen on (53900 and up); with a dozen servers started back to
+      # back and k6's thousands of connections, one eventually took 58090 first ("address in
+      # use", twice). Keep outgoing ports below them.
+      - name: Keep outgoing ports below the stack's
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="20000 50999"
       - name: ShellCheck
         run: >-
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt
@@ -99,7 +105,7 @@ jobs:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
         run: cargo test --workspace --locked -- --ignored --test-threads=1
-      - name: Crash tests F01 and F02 (the server killed before and after a commit)
+      - name: Crash tests F01, F02 and F03 (the server killed before and after a commit, the worker after announcing)
         env:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
@@ -114,7 +120,7 @@ jobs:
         run: scripts/testbed.sh
       - name: The Studio against the real server (scripts/studio.sh)
         run: scripts/studio.sh
-      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, who may create projects, changesets, public delivery, drafts, content types, the Studio)
+      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, who may create projects, changesets, public delivery, publishing with the worker, drafts, content types, the Studio)
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=200000 P99_MS=50 KEEP=0 scripts/load.sh health throughput
@@ -125,6 +131,7 @@ jobs:
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh projects throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh changesets throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=50000 P99_MS=200 KEEP=0 scripts/load.sh delivery throughput
+          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=500 KEEP=0 scripts/load.sh publishing throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh entries throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh content-types throughput
           PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=50000 P99_MS=50 KEEP=0 scripts/load.sh studio throughput

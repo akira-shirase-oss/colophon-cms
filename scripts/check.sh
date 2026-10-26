@@ -49,7 +49,7 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
   scripts/stack.sh check
   # These stop and restart stack services, so one at a time.
   cargo test --workspace --locked -- --ignored --test-threads=1
-  # F01 and F02: the server killed before and after a commit (needs the fault points).
+  # F01, F02 and F03: the server killed before and after a commit, the worker after announcing (needs the fault points).
   cargo test -p colophon-server --features fault-injection --test faults --locked -- --ignored --test-threads=1
   if command -v npm >/dev/null; then
     scripts/testbed.sh
@@ -66,6 +66,7 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh projects throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh changesets throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=50000 P99_MS=200 KEEP=0 scripts/load.sh delivery throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=500 KEEP=0 scripts/load.sh publishing throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh entries throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh content-types throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=50000 P99_MS=50 KEEP=0 scripts/load.sh studio throughput
