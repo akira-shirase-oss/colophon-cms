@@ -1,5 +1,6 @@
 //! A JSON Pointer (RFC 6901) built up while walking a document.
 
+#[derive(Clone)]
 pub(crate) struct Pointer {
     text: String,
     marks: Vec<usize>,
