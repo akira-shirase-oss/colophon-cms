@@ -12,7 +12,10 @@
 
 <p><a href={resolve('/')}>← Projects</a></p>
 <h1>Content</h1>
-<p><a href={resolve('/projects/[project]/members', { project })} data-testid="members-link">Members and invitations</a></p>
+<p>
+	<a href={resolve('/projects/[project]/members', { project })} data-testid="members-link">Members and invitations</a> ·
+	<a href={resolve('/projects/[project]/changesets', { project })} data-testid="changesets-link">Changesets</a>
+</p>
 
 {#if types.isPending}
 	<p class="muted">Loading…</p>
