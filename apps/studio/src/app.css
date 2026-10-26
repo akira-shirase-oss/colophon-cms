@@ -1,0 +1,127 @@
+/* The Studio's styles: the design system (D-053) and nothing else. Tailwind doesn't scan
+ * dependencies, so name the package whose components use its classes. */
+@import '@colophon/ui/styles.css';
+@source '../../../packages/ui/src';
+
+/* Rich text, in the editor and in previews: the reading face, generous measure, callouts in the
+ * registration colours, placeholder images as dashed frames until media arrives (P4). */
+@layer components {
+	.prose-colophon {
+		font-family: var(--font-serif);
+		font-size: 1.0625rem;
+		line-height: 1.7;
+		color: var(--foreground);
+		max-width: 68ch;
+	}
+	.prose-colophon > * + * {
+		margin-top: 0.85em;
+	}
+	.prose-colophon h2,
+	.prose-colophon h3,
+	.prose-colophon h4 {
+		font-weight: 600;
+		line-height: 1.25;
+		letter-spacing: -0.01em;
+		margin-top: 1.5em;
+	}
+	.prose-colophon h2 {
+		font-size: 1.5rem;
+	}
+	.prose-colophon h3 {
+		font-size: 1.25rem;
+	}
+	.prose-colophon h4 {
+		font-size: 1.0625rem;
+	}
+	.prose-colophon a {
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		text-decoration-color: var(--proof);
+	}
+	.prose-colophon ul {
+		list-style: disc;
+		padding-left: 1.4em;
+	}
+	.prose-colophon ol {
+		list-style: decimal;
+		padding-left: 1.4em;
+	}
+	.prose-colophon blockquote {
+		border-left: 2px solid var(--proof);
+		padding-left: 1em;
+		font-style: italic;
+		color: var(--muted-foreground);
+	}
+	.prose-colophon code {
+		font-family: var(--font-mono);
+		font-size: 0.85em;
+		background: var(--muted);
+		border-radius: 0.25rem;
+		padding: 0.1em 0.3em;
+	}
+	.prose-colophon pre {
+		font-family: var(--font-mono);
+		font-size: 0.8125rem;
+		line-height: 1.6;
+		background: var(--muted);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		padding: 0.85em 1em;
+		overflow-x: auto;
+	}
+	.prose-colophon pre code {
+		background: none;
+		padding: 0;
+	}
+	.prose-colophon hr {
+		border: 0;
+		border-top: 1px dotted var(--border);
+		margin: 1.75em 0;
+	}
+	.prose-colophon aside[data-callout],
+	.prose-colophon .callout {
+		font-family: var(--font-sans);
+		font-size: 0.9375rem;
+		border-left: 3px solid var(--live);
+		background: var(--live-soft);
+		color: var(--live-ink);
+		border-radius: 0 var(--radius-md) var(--radius-md) 0;
+		padding: 0.6em 1em;
+	}
+	.prose-colophon aside[data-tone='tip'],
+	.prose-colophon .callout-tip {
+		border-left-color: var(--draft);
+		background: var(--draft-soft);
+		color: var(--draft-ink);
+	}
+	.prose-colophon aside[data-tone='warning'],
+	.prose-colophon .callout-warning {
+		border-left-color: var(--pending);
+		background: var(--pending-soft);
+		color: var(--pending-ink);
+	}
+	.prose-colophon aside a,
+	.prose-colophon .callout a {
+		color: inherit;
+	}
+	.prose-colophon figure[data-colophon-image] {
+		padding: 2rem 1rem;
+		border: 1.5px dashed var(--border);
+		border-radius: var(--radius-lg);
+		text-align: center;
+		font-family: var(--font-sans);
+		font-size: 0.875rem;
+		color: var(--muted-foreground);
+	}
+	.prose-colophon figure.ProseMirror-selectednode {
+		border-color: var(--ring);
+	}
+	.prose-colophon img {
+		max-width: 100%;
+		height: auto;
+		border-radius: var(--radius-md);
+	}
+	.prose-colophon.tiptap {
+		outline: none;
+	}
+}

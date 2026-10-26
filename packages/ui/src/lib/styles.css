@@ -1,0 +1,228 @@
+/*
+ * Colophon's design system (D-053): Tailwind CSS v4, shadcn-svelte components, and tokens of its
+ * own. The look is a printed page: warm paper and blue-black ink, an editorial serif for titles,
+ * mono for release numbers and hashes, dotted rules between rows, and status colours taken from a
+ * printer's registration marks (cyan for live and verified, yellow for pending, magenta for
+ * attention). Dark mode is a darkroom: warm near-black, paper-coloured type.
+ *
+ * Apps import this file and add `@source` for this package's components (Tailwind doesn't scan
+ * dependencies).
+ */
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn-svelte/tailwind.css';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/newsreader';
+@import '@fontsource-variable/jetbrains-mono';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+	--radius: 0.625rem;
+
+	/* Paper and ink. */
+	--background: oklch(0.985 0.004 85);
+	--foreground: oklch(0.22 0.018 265);
+	--card: oklch(1 0 0);
+	--card-foreground: var(--foreground);
+	--popover: oklch(1 0 0);
+	--popover-foreground: var(--foreground);
+	--primary: oklch(0.24 0.02 265);
+	--primary-foreground: oklch(0.985 0.004 85);
+	--secondary: oklch(0.955 0.006 85);
+	--secondary-foreground: var(--foreground);
+	--muted: oklch(0.955 0.006 85);
+	--muted-foreground: oklch(0.47 0.015 265);
+	--accent: oklch(0.94 0.008 85);
+	--accent-foreground: var(--foreground);
+	--destructive: oklch(0.55 0.2 20);
+	--border: oklch(0.9 0.008 85);
+	--input: oklch(0.88 0.01 85);
+	/* Focus is a blue ink: red on a field would read as an error. */
+	--ring: oklch(0.52 0.13 258);
+
+	/* The brand's proof red, used sparingly: the mark, links in prose, quotations. */
+	--proof: oklch(0.58 0.17 30);
+
+	/* Registration colours for states: the mark (a dot, an icon), a soft ground for pills, and
+	 * an ink dark enough to read on that ground. */
+	--live: oklch(0.6 0.11 205);
+	--live-soft: oklch(0.95 0.03 205);
+	--live-ink: oklch(0.43 0.08 215);
+	--pending: oklch(0.74 0.15 75);
+	--pending-soft: oklch(0.96 0.05 90);
+	--pending-ink: oklch(0.46 0.09 65);
+	--attention: oklch(0.58 0.2 350);
+	--attention-soft: oklch(0.95 0.035 350);
+	--attention-ink: oklch(0.47 0.17 355);
+	--draft: oklch(0.62 0.01 265);
+	--draft-soft: oklch(0.945 0.005 265);
+	--draft-ink: oklch(0.42 0.015 265);
+
+	/* The shell: a warm grey frame around a white page. */
+	--sidebar: oklch(0.955 0.007 85);
+	--sidebar-foreground: oklch(0.3 0.015 265);
+	--sidebar-primary: var(--primary);
+	--sidebar-primary-foreground: var(--primary-foreground);
+	--sidebar-accent: oklch(0.915 0.01 85);
+	--sidebar-accent-foreground: var(--foreground);
+	--sidebar-border: oklch(0.89 0.008 85);
+	--sidebar-ring: var(--ring);
+}
+
+.dark {
+	--background: oklch(0.17 0.008 60);
+	--foreground: oklch(0.93 0.012 85);
+	--card: oklch(0.205 0.008 60);
+	--card-foreground: var(--foreground);
+	--popover: oklch(0.22 0.008 60);
+	--popover-foreground: var(--foreground);
+	--primary: oklch(0.93 0.012 85);
+	--primary-foreground: oklch(0.19 0.01 60);
+	--secondary: oklch(0.25 0.008 60);
+	--secondary-foreground: var(--foreground);
+	--muted: oklch(0.25 0.008 60);
+	--muted-foreground: oklch(0.7 0.012 85);
+	--accent: oklch(0.27 0.01 60);
+	--accent-foreground: var(--foreground);
+	--destructive: oklch(0.65 0.19 20);
+	--border: oklch(0.3 0.01 60);
+	--input: oklch(0.33 0.01 60);
+	--ring: oklch(0.72 0.12 258);
+	--proof: oklch(0.66 0.16 32);
+	--live: oklch(0.74 0.11 205);
+	--live-soft: oklch(0.29 0.04 210);
+	--live-ink: oklch(0.86 0.07 205);
+	--pending: oklch(0.82 0.14 85);
+	--pending-soft: oklch(0.3 0.05 80);
+	--pending-ink: oklch(0.88 0.1 88);
+	--attention: oklch(0.72 0.17 350);
+	--attention-soft: oklch(0.29 0.06 350);
+	--attention-ink: oklch(0.86 0.09 350);
+	--draft: oklch(0.66 0.01 85);
+	--draft-soft: oklch(0.27 0.006 60);
+	--draft-ink: oklch(0.84 0.01 85);
+	--sidebar: oklch(0.145 0.007 60);
+	--sidebar-foreground: oklch(0.85 0.012 85);
+	--sidebar-primary: var(--primary);
+	--sidebar-primary-foreground: var(--primary-foreground);
+	--sidebar-accent: oklch(0.23 0.008 60);
+	--sidebar-accent-foreground: var(--foreground);
+	--sidebar-border: oklch(0.26 0.008 60);
+	--sidebar-ring: var(--ring);
+}
+
+/* More contrast when the system asks for it: text, inks and rules move, grounds stay. `:root`
+ * would also beat `.dark` here (same specificity, later), so light is `:root:not(.dark)`. */
+@media (prefers-contrast: more) {
+	:root:not(.dark) {
+		--foreground: oklch(0.16 0.02 265);
+		--muted-foreground: oklch(0.33 0.02 265);
+		--border: oklch(0.6 0.01 85);
+		--input: oklch(0.5 0.01 85);
+		--sidebar-foreground: oklch(0.2 0.015 265);
+		--live-ink: oklch(0.33 0.07 215);
+		--pending-ink: oklch(0.34 0.07 65);
+		--attention-ink: oklch(0.37 0.15 355);
+		--draft-ink: oklch(0.3 0.015 265);
+	}
+	.dark {
+		--foreground: oklch(0.98 0.008 85);
+		--muted-foreground: oklch(0.86 0.01 85);
+		--border: oklch(0.55 0.01 60);
+		--input: oklch(0.62 0.01 60);
+		--sidebar-foreground: oklch(0.95 0.01 85);
+		--live-ink: oklch(0.93 0.05 205);
+		--pending-ink: oklch(0.94 0.07 88);
+		--attention-ink: oklch(0.93 0.06 350);
+		--draft-ink: oklch(0.93 0.008 85);
+	}
+}
+
+@theme inline {
+	--font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-serif: 'Newsreader Variable', ui-serif, Georgia, serif;
+	--font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
+
+	--radius-sm: calc(var(--radius) * 0.6);
+	--radius-md: calc(var(--radius) * 0.8);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) * 1.4);
+	--radius-2xl: calc(var(--radius) * 1.8);
+	--radius-3xl: calc(var(--radius) * 2.4);
+
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+	--color-proof: var(--proof);
+	--color-live: var(--live);
+	--color-live-soft: var(--live-soft);
+	--color-live-ink: var(--live-ink);
+	--color-pending: var(--pending);
+	--color-pending-soft: var(--pending-soft);
+	--color-pending-ink: var(--pending-ink);
+	--color-attention: var(--attention);
+	--color-attention-soft: var(--attention-soft);
+	--color-attention-ink: var(--attention-ink);
+	--color-draft: var(--draft);
+	--color-draft-soft: var(--draft-soft);
+	--color-draft-ink: var(--draft-ink);
+	--color-sidebar: var(--sidebar);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+	html {
+		@apply bg-sidebar;
+	}
+	body {
+		@apply bg-sidebar font-sans text-foreground antialiased;
+		font-feature-settings: 'cv11', 'ss01';
+	}
+	/* Release numbers, hashes and counts line up. */
+	.tabular {
+		font-variant-numeric: tabular-nums;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			animation-duration: 0.01ms !important;
+			transition-duration: 0.01ms !important;
+		}
+	}
+}
+
+@layer components {
+	/* A printed-page rule between rows. */
+	.rule-dotted {
+		border-bottom: 1px dotted var(--border);
+	}
+	.dark .rule-dotted {
+		border-bottom-color: oklch(0.35 0.01 60);
+	}
+}

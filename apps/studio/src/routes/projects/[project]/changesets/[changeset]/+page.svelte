@@ -1,28 +1,47 @@
 <!--
-  One changeset (D-044): the exact revisions it pins, where it stands, and the actions that move
-  it on. Every action names the hash on screen, so nobody approves a version they didn't see: if
-  the changeset changed in the meantime, the page shows the current one and says so.
+  One changeset (D-044): the exact revisions it pins and what each changes for readers, where it
+  stands, and the actions that move it on. Every action names the hash on screen, so nobody
+  approves a version they didn't see: if the changeset changed meanwhile, the page shows the
+  current one and says so.
 -->
 <script lang="ts">
+	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
+	import MessageSquareIcon from '@lucide/svelte/icons/message-square';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
-	import { Button } from '@colophon/ui';
-	import { ApiError, changesetAction, getChangeset, getProject, listReleases, newKey, publishChangeset, type Changeset } from '#lib/api.ts';
-	import { STATE_LABEL } from '#lib/changesets.ts';
+	import { Badge } from '@colophon/ui/ui/badge';
+	import { Button } from '@colophon/ui/ui/button';
+	import { Label } from '@colophon/ui/ui/label';
+	import { Skeleton } from '@colophon/ui/ui/skeleton';
+	import { Textarea } from '@colophon/ui/ui/textarea';
+	import { ApiError, type Changeset, changesetAction, getChangeset, newKey, publishChangeset } from '#lib/api.ts';
+	import ItemDiff from '#lib/ItemDiff.svelte';
+	import { ago, projectQuery, releasesQuery } from '#lib/queries.ts';
+	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
+	import PageHeader from '#lib/shell/PageHeader.svelte';
+	import Problem from '#lib/shell/Problem.svelte';
 
 	const project = $derived(page.params.project ?? '');
 	const id = $derived(page.params.changeset ?? '');
 	const queryClient = useQueryClient();
 	const set = createQuery(() => ({ queryKey: ['changeset', project, id], queryFn: () => getChangeset(project, id) }));
 	// The role comes from the project itself: me().projects lists at most 1,000 projects.
-	const mine = createQuery(() => ({ queryKey: ['project', project], queryFn: () => getProject(project) }));
+	const mine = createQuery(() => projectQuery(project));
 	const role = $derived(mine.data?.role);
 	const reviewer = $derived(role === 'owner' || role === 'publisher');
 	// Publishing names the release it follows: the latest one this page has seen.
-	const releases = createQuery(() => ({ queryKey: ['releases', project], queryFn: () => listReleases(project) }));
+	const releases = createQuery(() => releasesQuery(project));
 	// One key per publish attempt: pressing Publish again after a lost answer is safe.
 	let publishKey = newKey();
+	// Which items show their comparison; the first few open by default.
+	let open = $state<Record<string, boolean>>({});
+
+	let comment = $state('');
+	let error = $state('');
+	let notice = $state('');
+	let busy = $state(false);
+	const STALE = 'This changeset changed since you loaded it. Here is the current version: check it, then try again.';
 
 	async function publish(shown: Changeset) {
 		const base = releases.data?.generation;
@@ -38,7 +57,7 @@
 				notice = 'Another release was published first. Check what is live now, then publish again.';
 				publishKey = newKey();
 			} else if (failure instanceof ApiError && failure.reason === 'stale_changeset') {
-				notice = 'This changeset changed since you loaded it. Here is the current version: check it, then try again.';
+				notice = STALE;
 			} else {
 				error = failure instanceof ApiError ? failure.message : String(failure);
 			}
@@ -47,15 +66,11 @@
 			await Promise.all([
 				queryClient.invalidateQueries({ queryKey: ['changeset', project, id] }),
 				queryClient.invalidateQueries({ queryKey: ['releases', project] }),
-				queryClient.invalidateQueries({ queryKey: ['changesets', project] })
+				queryClient.invalidateQueries({ queryKey: ['changesets', project] }),
+				queryClient.invalidateQueries({ queryKey: ['entries', project] })
 			]);
 		}
 	}
-
-	let comment = $state('');
-	let error = $state('');
-	let notice = $state('');
-	let busy = $state(false);
 
 	async function act(shown: Changeset, action: 'submit' | 'refresh' | 'reviews', decision?: 'approve' | 'request_changes') {
 		busy = true;
@@ -68,7 +83,7 @@
 			if (decision !== undefined) comment = '';
 		} catch (failure) {
 			if (failure instanceof ApiError && failure.reason === 'stale_changeset') {
-				notice = 'This changeset changed since you loaded it. Here is the current version: check it, then try again.';
+				notice = STALE;
 			} else {
 				error = failure instanceof ApiError ? failure.message : String(failure);
 			}
@@ -79,146 +94,167 @@
 		}
 	}
 
-	const when = (at: string) => new Date(at).toLocaleString();
+	const STEPS = ['Pinned', 'Submitted', 'Approved', 'Published'] as const;
+	function reached(shown: Changeset): number {
+		switch (shown.status.state) {
+			case 'published':
+				return 4;
+			case 'approved':
+				return 3;
+			case 'awaiting_review':
+			case 'changes_requested':
+			case 'approval_expired':
+				return 2;
+			default:
+				return 1;
+		}
+	}
 </script>
 
 <svelte:head><title>{set.data?.title ?? 'Changeset'} · Colophon Studio</title></svelte:head>
 
-<p><a href={resolve('/projects/[project]/changesets', { project })}>← Changesets</a></p>
 {#if set.isPending}
-	<p class="muted">Loading…</p>
+	<Skeleton class="mb-8 h-10 w-1/2" />
+	<Skeleton class="h-64 w-full rounded-xl" />
 {:else if set.isError}
-	<p role="alert">{set.error.message}</p>
+	<Problem error={set.error} />
 {:else}
 	{@const shown = set.data}
-	<h1>{shown.title}</h1>
-	<p class="status" data-testid="changeset-status" data-state={shown.status.state}>
-		<strong>{STATE_LABEL[shown.status.state]}</strong>
-		{#if shown.status.state === 'approved'}
-			by {shown.status.by}{#if shown.status.self_review}<span class="flag" data-testid="self-review"> (reviewed their own changeset)</span>{/if}
-		{:else if shown.status.state === 'changes_requested'}
-			by {shown.status.by}
-		{:else if shown.status.state === 'published'}
-			as <a href={resolve('/projects/[project]/releases', { project })} data-testid="release-link">release {shown.status.generation}</a>
-		{/if}
-	</p>
-	<p class="muted small">Version <code title={shown.hash}>{shown.hash.slice(7, 19)}</code></p>
-	{#if notice}<p role="status" class="notice" data-testid="changeset-notice">{notice}</p>{/if}
-	{#if error}<p role="alert" class="error">{error}</p>{/if}
-
-	<h2>Entries</h2>
-	<ul class="items" data-testid="changeset-items">
-		{#each shown.items as item (item.entry_id)}
-			<li>
-				<a href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.collection, entry: item.entry_id })}>{item.title}</a>
-				<small class="muted">{item.collection}</small>
-				{#if item.kind === 'unpublish'}<span class="flag" data-testid="unpublish">unpublish</span>{/if}
-				{#if item.edited}
-					<span class="flag" data-testid="edited"
-						>{#if item.kind === 'publish'}edited since pinned{:else if item.current_revision_id === null}no longer published{:else}a newer
-							version was published{/if}</span
-					>
+	<PageHeader title={shown.title}>
+		{#snippet meta()}
+			<span data-testid="changeset-status" data-state={shown.status.state} class="inline-flex flex-wrap items-center gap-2">
+				<ChangesetBadge state={shown.status.state} />
+				{#if shown.status.state === 'approved'}
+					<span>by {shown.status.by}</span>
+					{#if shown.status.self_review}<Badge variant="attention" data-testid="self-review">reviewed their own changeset</Badge>{/if}
+				{:else if shown.status.state === 'changes_requested'}
+					<span>by {shown.status.by}</span>
+				{:else if shown.status.state === 'published'}
+					<span>as <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases', { project })} data-testid="release-link">release {shown.status.generation}</a></span>
 				{/if}
+			</span>
+			<span aria-hidden="true">·</span>
+			<span>Version <code class="font-mono text-xs" title={shown.hash}>{shown.hash.slice(7, 19)}</code></span>
+		{/snippet}
+		{#snippet actions()}
+			{#if shown.status.state === 'stale'}
+				<Button onclick={() => act(shown, 'refresh')} disabled={busy}>Refresh to the current versions</Button>
+			{:else if shown.status.state === 'open'}
+				<Button onclick={() => act(shown, 'submit')} disabled={busy}>Submit for review</Button>
+			{:else if shown.status.state === 'approved' && reviewer}
+				<Button onclick={() => publish(shown)} disabled={busy || releases.data === undefined}>Publish</Button>
+			{/if}
+		{/snippet}
+	</PageHeader>
+
+	<ol class="mb-8 grid grid-cols-4 gap-2" aria-label="Progress">
+		{#each STEPS as step, index (step)}
+			<li class="grid gap-1.5">
+				<span class="h-1 rounded-full {index < reached(shown) ? 'bg-foreground' : 'bg-border'}"></span>
+				<span class="text-xs {index < reached(shown) ? 'text-foreground' : 'text-muted-foreground'}">{step}</span>
 			</li>
 		{/each}
-	</ul>
+	</ol>
 
-	<div class="actions">
-		{#if shown.status.state === 'stale'}
-			<Button onclick={() => act(shown, 'refresh')} disabled={busy}>Refresh to the current versions</Button>
-		{:else if shown.status.state === 'open'}
-			<Button onclick={() => act(shown, 'submit')} disabled={busy}>Submit for review</Button>
-		{:else if shown.status.state === 'approved' && reviewer}
-			<Button onclick={() => publish(shown)} disabled={busy || releases.data === undefined}>Publish</Button>
-		{/if}
-	</div>
+	{#if notice}<p role="status" class="mb-4 rounded-lg bg-pending-soft px-4 py-3 text-sm text-pending-ink" data-testid="changeset-notice">{notice}</p>{/if}
+	{#if error}<p role="alert" class="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>{/if}
 
-	{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale' && shown.status.state !== 'published'}
-		<section class="review" aria-label="Review">
-			<h2>Review</h2>
-			<label class="field">
-				Comment (optional)
-				<textarea bind:value={comment} rows="3" maxlength="2000"></textarea>
-			</label>
-			<div class="actions">
-				<Button onclick={() => act(shown, 'reviews', 'approve')} disabled={busy}>Approve this version</Button>
-				<Button variant="outlined" onclick={() => act(shown, 'reviews', 'request_changes')} disabled={busy}>Request changes</Button>
-			</div>
+	<div class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
+		<section aria-labelledby="items-heading">
+			<h2 id="items-heading" class="mb-3 text-base font-semibold">Entries <span class="font-normal text-muted-foreground tabular">{shown.items.length}</span></h2>
+			<ul class="space-y-3" data-testid="changeset-items">
+				{#each shown.items as item, index (item.entry_id)}
+					{@const expanded = open[item.entry_id] ?? index < 3}
+					<li class="overflow-hidden rounded-xl border border-border bg-card">
+						<div class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
+							<span class="min-w-0 flex-1">
+								<a class="block truncate font-medium hover:underline" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.collection, entry: item.entry_id })}
+									>{item.title}</a
+								>
+								<span class="text-xs text-muted-foreground">{item.collection} · <span class="font-mono">{item.content_hash.slice(7, 15)}</span></span>
+							</span>
+							{#if item.kind === 'unpublish'}
+								<Badge variant="attention" data-testid="unpublish">unpublish</Badge>
+							{:else if item.published_revision_id === null}
+								<Badge variant="live">new</Badge>
+							{:else}
+								<Badge variant="pending">update</Badge>
+							{/if}
+							{#if item.edited}
+								<Badge variant="attention" data-testid="edited"
+									>{#if item.kind === 'publish'}edited since pinned{:else if item.current_revision_id === null}no longer published{:else}a newer version was published{/if}</Badge
+								>
+							{/if}
+							<Button
+								variant="ghost"
+								size="xs"
+								aria-expanded={expanded}
+								aria-controls="diff-{item.entry_id}"
+								onclick={() => (open[item.entry_id] = !expanded)}
+							>
+								Changes<ChevronDownIcon class="transition-transform {expanded ? 'rotate-180' : ''}" />
+							</Button>
+						</div>
+						{#if expanded}
+							<div id="diff-{item.entry_id}" class="border-t border-dotted border-border bg-background/60 px-4 py-4">
+								<ItemDiff {project} {item} />
+							</div>
+						{/if}
+					</li>
+				{/each}
+			</ul>
 		</section>
-	{/if}
 
-	<h2>History</h2>
-	<ul class="items" data-testid="changeset-reviews">
-		{#each shown.reviews as review (review.id)}
-			<li class:old={!review.current}>
-				<strong>{review.decision === 'approve' ? 'Approved' : 'Changes requested'}</strong>
-				by {review.reviewer_name ?? review.reviewer_id}, {when(review.created_at)}
-				{#if !review.current}<small class="muted"> on an earlier version</small>{/if}
-				{#if review.comment}<blockquote>{review.comment}</blockquote>{/if}
-			</li>
-		{:else}
-			<li class="muted">No reviews yet.</li>
-		{/each}
-	</ul>
+		<div class="space-y-8">
+			{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale' && shown.status.state !== 'published'}
+				<section class="rounded-xl border border-border bg-card p-4 shadow-xs" aria-label="Review">
+					<h2 class="text-base font-semibold">Review</h2>
+					<p class="mt-1 text-sm text-muted-foreground">You approve version <code class="font-mono text-xs">{shown.hash.slice(7, 19)}</code>, exactly as shown.</p>
+					<div class="mt-4 grid gap-1.5">
+						<Label for="review-comment">Comment (optional)</Label>
+						<Textarea id="review-comment" bind:value={comment} rows={3} maxlength={2000} />
+					</div>
+					<div class="mt-3 grid gap-2">
+						<Button onclick={() => act(shown, 'reviews', 'approve')} disabled={busy}>Approve this version</Button>
+						<Button variant="outline" onclick={() => act(shown, 'reviews', 'request_changes')} disabled={busy}>Request changes</Button>
+					</div>
+				</section>
+			{/if}
+
+			<section aria-labelledby="history-heading">
+				<h2 id="history-heading" class="mb-3 text-base font-semibold">History</h2>
+				<ol class="space-y-3 border-l border-dotted border-border pl-5" data-testid="changeset-reviews">
+					{#each shown.reviews as review (review.id)}
+						<li class="relative text-sm" class:opacity-70={!review.current}>
+							<span class="absolute top-1.5 -left-[1.6rem] size-2.5 rounded-full border-2 border-background {review.decision === 'approve' ? 'bg-live' : 'bg-attention'}" aria-hidden="true"></span>
+							<p>
+								<strong class="font-medium">{review.decision === 'approve' ? 'Approved' : 'Changes requested'}</strong>
+								by {review.reviewer_name ?? review.reviewer_id}
+							</p>
+							<p class="text-xs text-muted-foreground" title={new Date(review.created_at).toLocaleString()}>
+								{ago(review.created_at)}{#if !review.current}<span> · on an earlier version</span>{/if}
+							</p>
+							{#if review.comment}
+								<blockquote class="mt-2 flex gap-2 rounded-lg bg-muted px-3 py-2 text-sm">
+									<MessageSquareIcon class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />{review.comment}
+								</blockquote>
+							{/if}
+						</li>
+					{/each}
+					{#if shown.submitted_at}
+						<li class="relative text-sm">
+							<span class="absolute top-1.5 -left-[1.6rem] size-2.5 rounded-full border-2 border-background bg-pending" aria-hidden="true"></span>
+							<p>Submitted for review</p>
+							<p class="text-xs text-muted-foreground">{ago(shown.submitted_at)}</p>
+						</li>
+					{/if}
+					<li class="relative text-sm">
+						<span class="absolute top-1.5 -left-[1.6rem] size-2.5 rounded-full border-2 border-background bg-draft" aria-hidden="true"></span>
+						<p>Pinned</p>
+						<p class="text-xs text-muted-foreground">{ago(shown.created_at)}</p>
+					</li>
+				</ol>
+			</section>
+		</div>
+	</div>
 {/if}
-
-<style>
-	.muted {
-		color: var(--md-sys-color-on-surface-variant);
-	}
-	.small {
-		font: var(--md-sys-typescale-body-small);
-	}
-	.status {
-		font: var(--md-sys-typescale-title-medium);
-	}
-	.flag {
-		color: var(--md-sys-color-tertiary);
-		font: var(--md-sys-typescale-label-large);
-	}
-	.notice {
-		padding: 0.5rem 0.75rem;
-		border-radius: var(--md-sys-shape-corner-small, 8px);
-		background: var(--md-sys-color-tertiary-container);
-		color: var(--md-sys-color-on-tertiary-container);
-	}
-	.error {
-		color: var(--md-sys-color-error);
-	}
-	.items {
-		display: grid;
-		gap: 0.5rem;
-		padding-left: 1.25rem;
-		max-width: 44rem;
-	}
-	.old {
-		opacity: 0.75;
-	}
-	.actions {
-		display: flex;
-		gap: 0.75rem;
-		margin: 1rem 0;
-	}
-	.review {
-		max-width: 40rem;
-	}
-	.field {
-		display: grid;
-		gap: 0.25rem;
-		font: var(--md-sys-typescale-body-small);
-		color: var(--md-sys-color-on-surface-variant);
-	}
-	textarea {
-		font: var(--md-sys-typescale-body-large);
-		color: var(--md-sys-color-on-surface);
-		background: transparent;
-		border: 1px solid var(--md-sys-color-outline);
-		border-radius: var(--md-sys-shape-corner-extra-small, 4px);
-		padding: 0.5rem 0.75rem;
-	}
-	blockquote {
-		margin: 0.25rem 0 0;
-		padding-left: 0.75rem;
-		border-left: 3px solid var(--md-sys-color-outline-variant);
-	}
-</style>

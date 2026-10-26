@@ -1,5 +1,0 @@
-{
-  "$comment": "Colophon's brand seed (O-016). Change it here and run `npm run generate -w @colophon/ui`; CI fails if tokens.css is stale or any role pair loses contrast.",
-  "seed": "#2f5bd3",
-  "success": "#2e7d32"
-}

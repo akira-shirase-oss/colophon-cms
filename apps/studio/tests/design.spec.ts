@@ -1,48 +1,44 @@
-// Step 0.7: the Material 3 design system on the Studio's first screen. Accessibility in every
-// theme, keyboard behaviour, appearance choices, and no requests to anyone else's servers.
+// Step 3.5: the design system (D-053) on the Studio's playground. Accessibility in light and dark,
+// with and without the system's "more contrast"; keyboard behaviour; the appearance choice; and
+// no requests to anyone else's servers.
 
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page, test } from '@playwright/test';
 import { openFixture } from './helpers.ts';
 
-const THEMES = [
-	{ theme: 'light', contrast: 'standard' },
-	{ theme: 'dark', contrast: 'standard' },
-	{ theme: 'light', contrast: 'high' },
-	{ theme: 'dark', contrast: 'high' }
-] as const;
-
-async function setAppearance(page: Page, theme: string, contrast: string) {
+async function choose(page: Page, mode: 'Light' | 'Dark' | 'System') {
 	await page.getByRole('button', { name: 'Appearance' }).click();
-	await page.getByRole('menuitemradio', { name: theme[0]?.toUpperCase() + theme.slice(1) }).first().click();
-	await page.getByRole('button', { name: 'Appearance' }).click();
-	const contrastItems = page.getByRole('menuitemradio', { name: contrast[0]?.toUpperCase() + contrast.slice(1) });
-	await contrastItems.last().click();
+	await page.getByRole('menuitemradio', { name: mode }).click();
 }
 
 async function axe(page: Page) {
-	const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+	const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
 	return results.violations.map((violation) => `${violation.id}: ${violation.help} (${violation.nodes.map((node) => node.target.join(' ')).join(', ')})`);
 }
 
-for (const { theme, contrast } of THEMES) {
-	test(`no accessibility violations: ${theme}, ${contrast} contrast`, async ({ page }) => {
-		await page.goto('/studio/playground');
-		await setAppearance(page, theme, contrast);
-		await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
-		await openFixture(page, 'valid/12-blog-post');
-		expect(await axe(page), 'editor').toEqual([]);
-		await page.getByRole('tab', { name: 'Preview' }).click();
-		expect(await axe(page), 'preview').toEqual([]);
-		await page.getByRole('button', { name: 'Image', exact: true }).click();
-		await expect(page.getByRole('dialog')).toBeVisible();
-		expect(await axe(page), 'image dialog').toEqual([]);
-	});
+const token = (page: Page, name: string) =>
+	page.evaluate((property) => getComputedStyle(document.documentElement).getPropertyValue(property).trim(), name);
+
+for (const mode of ['Light', 'Dark'] as const) {
+	for (const contrast of ['no-preference', 'more'] as const) {
+		test(`no accessibility violations: ${mode.toLowerCase()}, ${contrast === 'more' ? 'more' : 'standard'} contrast`, async ({ page }) => {
+			await page.emulateMedia({ contrast });
+			await page.goto('/studio/playground');
+			await choose(page, mode);
+			await expect(page.locator('html')).toHaveClass(mode === 'Dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);
+			await openFixture(page, 'valid/12-blog-post');
+			expect(await axe(page), 'editor').toEqual([]);
+			await page.getByRole('tab', { name: 'Preview' }).click();
+			expect(await axe(page), 'preview').toEqual([]);
+			await page.getByRole('button', { name: 'Image', exact: true }).click();
+			await expect(page.getByRole('dialog')).toBeVisible();
+			expect(await axe(page), 'image dialog').toEqual([]);
+		});
+	}
 }
 
-test('the formatting toolbar is one tab stop, with arrow keys inside it', async ({ page }) => {
+test('the formatting toolbar is one tab stop, with arrow keys inside it that wrap', async ({ page }) => {
 	await page.goto('/studio/playground');
-	await page.getByRole('button', { name: 'Appearance' }).focus();
 	await page.getByRole('toolbar', { name: 'Formatting' }).getByRole('button').first().focus();
 	await expect(page.getByTitle('Bold (⌘B)')).toBeFocused();
 	await page.keyboard.press('ArrowRight');
@@ -55,24 +51,29 @@ test('the formatting toolbar is one tab stop, with arrow keys inside it', async 
 	expect(tabbable).toBe(1);
 });
 
-test('appearance choices change the colours and survive a reload', async ({ page }) => {
+test('the appearance choice changes the colours and survives a reload', async ({ page }) => {
 	await page.goto('/studio/playground');
-	// Material keeps surfaces fixed across contrast levels and moves text and outlines instead, so
-	// the outline colour is the one that changes in every step below.
-	const surface = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--md-sys-color-outline').trim());
-	await setAppearance(page, 'light', 'standard');
-	const light = await surface();
-	await setAppearance(page, 'dark', 'standard');
-	const dark = await surface();
+	await choose(page, 'Light');
+	const light = await token(page, '--background');
+	await choose(page, 'Dark');
+	await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+	const dark = await token(page, '--background');
 	expect(dark).not.toBe(light);
-	await setAppearance(page, 'dark', 'high');
-	await expect(page.locator('html')).toHaveAttribute('data-contrast', 'high');
-	const darkHigh = await surface();
-	expect(darkHigh).not.toBe(dark);
 	await page.reload();
-	await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-	await expect(page.locator('html')).toHaveAttribute('data-contrast', 'high');
-	expect(await surface()).toBe(darkHigh);
+	await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+	expect(await token(page, '--background')).toBe(dark);
+	// "System" follows the operating system's scheme.
+	await choose(page, 'System');
+	await page.emulateMedia({ colorScheme: 'light' });
+	await expect(page.locator('html')).not.toHaveClass(/\bdark\b/);
+});
+
+test('asking the system for more contrast darkens secondary text without a setting', async ({ page }) => {
+	await page.goto('/studio/playground');
+	await choose(page, 'Light');
+	const standard = await token(page, '--muted-foreground');
+	await page.emulateMedia({ contrast: 'more' });
+	expect(await token(page, '--muted-foreground')).not.toBe(standard);
 });
 
 test('the image dialog closes on Escape and gives focus back', async ({ page }) => {
@@ -86,7 +87,7 @@ test('the image dialog closes on Escape and gives focus back', async ({ page }) 
 	await expect(opener).toBeFocused();
 });
 
-test('the Studio makes no requests to anyone else: the font is self-hosted', async ({ page, baseURL }) => {
+test('the Studio makes no requests to anyone else: the fonts are self-hosted', async ({ page, baseURL }) => {
 	const foreign: string[] = [];
 	page.on('request', (request) => {
 		if (!request.url().startsWith(baseURL ?? '') && !request.url().startsWith('data:')) foreign.push(request.url());
@@ -96,6 +97,6 @@ test('the Studio makes no requests to anyone else: the font is self-hosted', asy
 	await page.getByRole('tab', { name: 'Preview' }).click();
 	await page.waitForLoadState('networkidle');
 	expect(foreign).toEqual([]);
-	const font = await page.evaluate(() => getComputedStyle(document.body).fontFamily);
-	expect(font).toContain('Roboto Flex');
+	expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toContain('Inter Variable');
+	expect(await page.evaluate(() => document.fonts.check('16px "Newsreader Variable"'))).toBe(true);
 });
