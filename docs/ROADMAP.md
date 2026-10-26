@@ -93,8 +93,8 @@ OpenAPI document (D-027).
 claimed impossible), F05 (an old delivery after a newer release is blocked and recorded as superseded); two
 concurrent releases on one base generation cannot both win.
 
-**Steps:** 2.1 approving the exact change: changesets that pin exact revisions and their content-type versions,
-submitted for review, and approvals bound to the changeset's hash, so any later edit makes them stale · 2.2 one
+**Steps:** 2.1 approving the exact change (done: D-044; changesets pin exact revisions and their content-type
+versions, approvals bind to the changeset's hash, and any later edit makes them stale) · 2.2 one
 release, one number: publishing an approved changeset commits a release with the next generation, publication history
 as non-overlapping intervals, `/content/v1` reads from published projections, and two releases racing on one generation
 can't both win · 2.3 work that survives a crash: the outbox, the worker's leases, attempt generations, retries and

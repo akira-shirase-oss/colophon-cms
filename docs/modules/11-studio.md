@@ -54,6 +54,10 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   Content-type slugs `members` and `settings` are reserved, so these pages can sit beside collections (D-042).
   Since step 1.8 (D-043), the home page lets an administrator create a project, with the slug following the name
   until edited, and tells everyone else to ask a project's owner for an invitation.
+  Since step 2.1 (D-044): `/studio/projects/{project}/changesets` lists changesets with their state and makes new ones
+  from picked entries; `…/changesets/{id}` shows the pinned entries (marking any edited since), submits, refreshes
+  and, for owners and publishers, approves or asks for changes to the version on screen. If the changeset changed
+  meanwhile, the page shows the current version and says so instead of acting on it. Its test runs that in two tabs.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 
