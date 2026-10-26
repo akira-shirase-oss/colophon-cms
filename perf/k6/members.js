@@ -32,6 +32,10 @@ const scenarios = {
 if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.keys(scenarios).join(', ')}`);
 
 const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`] };
+// Reported per kind of request, so a tail can be traced to its cause; only the overall p99 fails a run.
+for (const endpoint of ['members', 'lookup', 'role', 'invite']) {
+  thresholds[`http_req_duration{endpoint:${endpoint}}`] = ['p(99)<60000'];
+}
 if (SCENARIO === 'steady') {
   thresholds.dropped_iterations = [`count<=${Math.floor(RATE * durationSeconds(DURATION) * 0.0001)}`];
 }
