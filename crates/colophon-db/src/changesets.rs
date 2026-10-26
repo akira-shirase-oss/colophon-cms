@@ -51,6 +51,8 @@ pub struct Head {
     pub submitted_at: Option<OffsetDateTime>,
     /// When it last changed.
     pub updated_at: OffsetDateTime,
+    /// The release it was published as, if it has been (D-045).
+    pub published: Option<i64>,
 }
 
 /// One pinned entry, as a changeset view shows it.
@@ -165,7 +167,7 @@ fn head(
     created_by: Uuid,
     created_at: OffsetDateTime,
     submitted: (Option<Uuid>, Option<OffsetDateTime>),
-    updated_at: OffsetDateTime,
+    changed: (OffsetDateTime, Option<i64>),
 ) -> Head {
     Head {
         id,
@@ -175,15 +177,20 @@ fn head(
         created_at,
         submitted_by: submitted.0,
         submitted_at: submitted.1,
-        updated_at,
+        updated_at: changed.0,
+        published: changed.1,
     }
 }
 
 /// The changeset, read without a lock.
 pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, DbError> {
     let row = sqlx::query!(
-        "SELECT title, hash, created_by, created_at, submitted_by, submitted_at, updated_at
-         FROM changesets WHERE project_id = $1 AND environment_id = $2 AND id = $3",
+        r#"SELECT c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at, c.updated_at,
+                  r.generation AS "published?"
+           FROM changesets c
+           LEFT JOIN releases r ON r.project_id = c.project_id AND r.environment_id = c.environment_id
+                               AND r.changeset_id = c.id
+           WHERE c.project_id = $1 AND c.environment_id = $2 AND c.id = $3"#,
         tx.project,
         tx.environment,
         id
@@ -199,7 +206,7 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, 
             row.created_by,
             row.created_at,
             (row.submitted_by, row.submitted_at),
-            row.updated_at,
+            (row.updated_at, row.published),
         )
     }))
 }
@@ -207,9 +214,13 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, 
 /// The changeset, locked until the transaction ends: refreshes and reviews queue on it.
 pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, DbError> {
     let row = sqlx::query!(
-        "SELECT title, hash, created_by, created_at, submitted_by, submitted_at, updated_at
-         FROM changesets WHERE project_id = $1 AND environment_id = $2 AND id = $3
-         FOR UPDATE",
+        r#"SELECT c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at, c.updated_at,
+                  r.generation AS "published?"
+           FROM changesets c
+           LEFT JOIN releases r ON r.project_id = c.project_id AND r.environment_id = c.environment_id
+                               AND r.changeset_id = c.id
+           WHERE c.project_id = $1 AND c.environment_id = $2 AND c.id = $3
+           FOR UPDATE OF c"#,
         tx.project,
         tx.environment,
         id
@@ -225,7 +236,7 @@ pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>,
             row.created_by,
             row.created_at,
             (row.submitted_by, row.submitted_at),
-            row.updated_at,
+            (row.updated_at, row.published),
         )
     }))
 }
@@ -382,7 +393,7 @@ pub async fn reviews(
 pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> {
     let rows = sqlx::query!(
         r#"SELECT c.id, c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at,
-                  c.updated_at,
+                  c.updated_at, rel.generation AS "published?",
                   counts.items AS "items!", counts.stale AS "stale!",
                   latest.id AS "review_id?", latest.reviewer_id AS "reviewer_id?",
                   latest.reviewer_name, latest.decision AS "decision?", latest.seq AS "seq?",
@@ -405,6 +416,8 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
                ORDER BY v.seq DESC
                LIMIT 1
            ) latest ON true
+           LEFT JOIN releases rel ON rel.project_id = c.project_id AND rel.environment_id = c.environment_id
+                                 AND rel.changeset_id = c.id
            WHERE c.project_id = $1 AND c.environment_id = $2
            ORDER BY c.id DESC
            LIMIT 100"#,
@@ -452,7 +465,7 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
                     row.created_by,
                     row.created_at,
                     (row.submitted_by, row.submitted_at),
-                    row.updated_at,
+                    (row.updated_at, row.published),
                 ),
                 items: row.items,
                 stale: row.stale,

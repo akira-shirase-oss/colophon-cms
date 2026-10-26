@@ -8,5 +8,6 @@ export const STATE_LABEL: Record<ChangesetState, string> = {
 	awaiting_review: 'Awaiting review',
 	changes_requested: 'Changes requested',
 	approved: 'Approved',
-	approval_expired: 'Approval expired'
+	approval_expired: 'Approval expired',
+	published: 'Published'
 };

@@ -72,7 +72,7 @@ create → conflict → review → publish scenario produce equivalent durable r
 | `{P}/schemas`, `/migrations` | Discover, validate, plan, apply, inspect; apply needs an approved current plan and migration permission. Built in step 1.5 as `{P}/content-types` (D-040): list, create, get with `ETag: "v<n>"`, and update with `If-Match`, accepted only for changes that keep stored entries valid (`needs_migration` otherwise); owners and developers only. Migrations later |
 | `{P}/collections/{collection}/entries` | List and create; get, update and archive by ID; updates need the expected revision. Built in step 1.2 for the `articles` collection (D-034): list (cursor), create, get with `ETag`, save with `If-Match`, and `…/{entry}/revisions`; archive later |
 | `{P}/entries/{id}/revisions`, `/comments` | History, compare, restore as a new draft, revision-bound comments |
-| `{P}/changesets`, `/reviews`, `/releases` | Prepare, validate, request review, approve, publish, schedule, cancel, inspect, roll back as a new generation. Built in step 2.1 (D-044): `{P}/changesets` list and create (idempotent; 1 to 100 entries, each pinned at its current revision), `{P}/changesets/{id}` with `ETag: "sha256:…"`, and `…/submit`, `…/refresh` and `…/reviews` (`{"decision", "comment"}`, owners and publishers), each needing `If-Match` with the hash (409 `stale_changeset` otherwise) |
+| `{P}/changesets`, `/reviews`, `/releases` | Prepare, validate, request review, approve, publish, schedule, cancel, inspect, roll back as a new generation. Built in step 2.1 (D-044): `{P}/changesets` list and create (idempotent; 1 to 100 entries, each pinned at its current revision), `{P}/changesets/{id}` with `ETag: "sha256:…"`, and `…/submit`, `…/refresh` and `…/reviews` (`{"decision", "comment"}`, owners and publishers), each needing `If-Match` with the hash (409 `stale_changeset` otherwise). Built in step 2.2 (D-045): `…/publish` (`{"base_generation"}`, `If-Match` and `Idempotency-Key`; 409 `generation_moved` if another release committed first) and `{P}/releases`, newest first, with `Colophon-Generation` |
 | `{P}/assets`, `/upload-intents` | Create an intent, complete verification, inspect, list references, request deletion |
 | `{P}/agents`, `/jobs` | Scoped credentials, proposals, bounded bulk work, status, authorized cancellation |
 | `{P}/destinations`, `/deliveries` | Configure and test integrations; inspect failures; retry or reconcile safely |
@@ -180,7 +180,7 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 1. **P0:** skeleton, error envelope, request IDs, health.
 2. **P1:** projects (step 1.1, done); entries, revisions, preconditions, idempotency and pagination (step 1.2,
    done); content types (step 1.5, done); members and invitations (step 1.7, done); environments, migrations, and the generated OpenAPI document.
-3. **P2:** changesets and reviews (step 2.1, done); releases, jobs.
+3. **P2:** changesets and reviews (step 2.1, done); releases (step 2.2, done); jobs.
 4. **P3:** destinations and deliveries.
 5. **P4:** assets, history and rollback.
 6. **P5:** agents and machine credentials.

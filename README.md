@@ -38,7 +38,9 @@
 > owner. Step 1.8 is done: the operator makes the first administrator once, from a terminal, and only administrators
 > create projects. With it, the first milestone's proof gate is met. Step 2.1 is done: a changeset pins the exact
 > versions of the entries in it, and an approval counts only for that exact set; edit anything afterwards and it has
-> to be approved again.
+> to be approved again. Step 2.2 is done: publishing an approved changeset is one numbered release, two releases on
+> the same base can't both commit, and anyone can read what's published, past releases included, through a database
+> role that can't see drafts.
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 

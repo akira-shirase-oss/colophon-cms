@@ -197,6 +197,16 @@ pub enum ApiError {
         /// Its current hash, as `sha256:<hex>`.
         current: String,
     },
+    /// A release was prepared on a generation the environment has moved past: another release
+    /// committed first. The response's `Colophon-Generation` header names the current one
+    /// (D-045).
+    #[error(
+        "another release committed first: the environment is now at generation {current}; look again, then publish"
+    )]
+    GenerationMoved {
+        /// The environment's generation now.
+        current: i64,
+    },
     /// An `Idempotency-Key` was used before for a different request.
     #[error("this Idempotency-Key was already used for a different request")]
     IdempotencyKeyReused,
@@ -272,6 +282,7 @@ impl ApiError {
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
+            | Self::GenerationMoved { .. }
             | Self::IdempotencyKeyReused => StatusCode::CONFLICT,
             Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -297,6 +308,7 @@ impl ApiError {
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
+            | Self::GenerationMoved { .. }
             | Self::IdempotencyKeyReused => ErrorCode::Conflict,
             Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
@@ -325,6 +337,10 @@ impl ApiError {
             }),
             Self::StaleChangeset { .. } => Some(ErrorDetails {
                 reason: "stale_changeset",
+                pointer: String::new(),
+            }),
+            Self::GenerationMoved { .. } => Some(ErrorDetails {
+                reason: "generation_moved",
                 pointer: String::new(),
             }),
             Self::IdempotencyKeyReused => Some(ErrorDetails {
@@ -403,6 +419,11 @@ impl IntoResponse for ApiError {
                 if let Ok(etag) = HeaderValue::from_str(&format!("\"{current}\"")) {
                     response.headers_mut().insert(header::ETAG, etag);
                 }
+            }
+            Self::GenerationMoved { current } => {
+                response
+                    .headers_mut()
+                    .insert(crate::delivery::GENERATION, HeaderValue::from(current));
             }
             _ => {}
         }
