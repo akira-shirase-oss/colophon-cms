@@ -101,6 +101,12 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Migrate the stack's database
         run: scripts/migrate.sh
+      # Before the stack tests: the site test runs the reference site's runner (apps/web) with Node.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
       - name: Tests that need the stack (they stop and restart its services)
         # Compiled against the live, migrated schema rather than .sqlx/: catches stale query data.
         env:
@@ -112,11 +118,6 @@ jobs:
           SQLX_OFFLINE: "false"
           DATABASE_URL: postgres://colophon:colophon-dev@127.0.0.1:55432/colophon
         run: cargo test -p colophon-server --features fault-injection --test faults --locked -- --ignored --test-threads=1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
       - run: npx -w @colophon/testbed playwright install --with-deps chromium
       - name: Testbed in Chromium (scripts/testbed.sh)
         run: scripts/testbed.sh

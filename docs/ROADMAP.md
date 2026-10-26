@@ -129,8 +129,8 @@ public demo:** recorded crash loop plus a live site with receipts.
 `/content/v1` with the generation always resolved from Postgres, single-flight fills, a Postgres fallback when the
 cache is down, ETags with 304s, CDN cache policies and tags; F06, F08, L04) · 3.2 taking it back (D-049, D-050; unpublish with
 tombstones, origin revocation through historical URLs, purge jobs through a fake CDN; F07) · 3.3 a receipt for every
-publish (in progress: D-051; probes, evidence scoped to the locations checked, the Studio's receipt timeline) · 3.4 my own site, running
-on Colophon (the reference blog with a generation marker and the build-and-promote adapter) · 3.5 the first public
+publish (D-051; probes, evidence scoped to the locations checked, the Studio's receipt timeline) · 3.4 my own site, running
+on Colophon (in progress: D-052; the reference blog with a generation marker and the build-and-promote adapter) · 3.5 the first public
 demo (docs skeleton, simulator cache and delivery faults, the mixed-release checker, a recorded crash loop).
 
 ## P4: Time travel and media
