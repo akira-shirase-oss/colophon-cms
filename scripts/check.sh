@@ -61,6 +61,7 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     PATH="$PATH:$HOME/.local/bin" TOTAL=200000 P99_MS=50 KEEP=0 scripts/load.sh health throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=100000 P99_MS=50 KEEP=0 scripts/load.sh rich-text throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh session throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh cli throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh entries throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh content-types throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=50000 P99_MS=50 KEEP=0 scripts/load.sh studio throughput
