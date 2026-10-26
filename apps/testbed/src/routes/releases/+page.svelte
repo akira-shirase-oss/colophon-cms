@@ -14,6 +14,12 @@
 		entries: number;
 		unpublished: number;
 		purge: string;
+		label: string;
+		locations: number;
+	}
+	interface Receipt extends Release {
+		deliveries: { name: string; kind: string; state: string }[];
+		observations: { location: string; observed_generation: number | null; http_status: number | null }[];
 	}
 	interface Summary {
 		id: string;
@@ -33,6 +39,8 @@
 	let message = $state('');
 	let readAt = $state('');
 	let readEntry = $state('');
+	let receiptOf = $state('');
+	let receipt = $state('');
 	let delivered = $state('');
 
 	const api = $derived(`/api/v1/projects/${projectId}/environments/production`);
@@ -87,13 +95,27 @@
 			: `HTTP ${response.status}, generation ${response.headers.get('colophon-generation') ?? '?'}: ${titles}`;
 	}
 
+	async function readReceipt(event: SubmitEvent) {
+		event.preventDefault();
+		const reply = await call('GET', `${api}/releases/${receiptOf.trim()}`);
+		if (reply.status !== 200) {
+			receipt = describe(reply);
+			return;
+		}
+		const shown = (reply.body as { data: Receipt }).data;
+		const parts = shown.deliveries.map((delivery) => `${delivery.name} ${delivery.state}`).join(', ');
+		const seen = shown.observations.map((look) => `${look.location} saw ${look.observed_generation ?? 'none'} (HTTP ${look.http_status ?? '-'})`);
+		receipt = `${shown.label} at ${shown.locations}; ${parts || 'no destinations'}; ${seen.length} looks${seen.length > 0 ? `, last: ${seen[seen.length - 1]}` : ''}`;
+	}
+
 	onMount(loadProjects);
 </script>
 
 <h1>Releases</h1>
 <p class="lede">
 	Publishing through the real API (D-045): commit an approved changeset as the release after a base generation, see a stale base
-	refused, and read <code>/content/v1</code> with no cookie, at the latest release or pinned to an earlier one.
+	refused, and read <code>/content/v1</code> with no cookie, at the latest release or pinned to an earlier one. Each release has
+	a label and a receipt (D-051): what its destinations did and what its probes saw.
 </p>
 
 {#if signedIn === false}
@@ -113,7 +135,9 @@
 			<li>
 				generation {release.generation}: {release.title} ({release.entries} changed{release.unpublished > 0
 					? `, ${release.unpublished} unpublished`
-					: ''}){release.purge === 'none' ? '' : `, purge ${release.purge}`}
+					: ''}){release.purge === 'none' ? '' : `, purge ${release.purge}`}, {release.label}{release.label === 'verified'
+					? ` at ${release.locations}`
+					: ''}
 			</li>
 		{/each}
 	</ol>
@@ -138,6 +162,12 @@
 		<button type="submit">Read published articles</button>
 	</form>
 	{#if delivered}<p data-testid="delivered">{delivered}</p>{/if}
+
+	<form onsubmit={readReceipt}>
+		<label class="field">Receipt of generation <input bind:value={receiptOf} name="receipt-of" /></label>
+		<button type="submit">Read receipt</button>
+	</form>
+	{#if receipt}<p data-testid="receipt">{receipt}</p>{/if}
 {/if}
 
 <style>

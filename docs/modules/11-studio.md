@@ -175,7 +175,10 @@ Internal job terminology stays behind a technical detail drawer for developers.
    type (step 1.5, done). The formatting toolbar from the playground, sign-out, search, and a content-type designer
    (today definitions are written as JSON through the API and the testbed) come next.
 3. **P2:** review and publish.
-4. **P3:** publishing labels and the receipt timeline.
+4. **P3:** publishing labels and the receipt timeline. Step 3.3 (D-051): each release on the Releases page shows its
+   label (*Published in CMS*, *Website update pending*, *Verified at N locations*, *Needs attention*), linking to its
+   receipt: each destination's part and every probe look, oldest first. Probes are added with the other
+   destinations, optionally pinned to a location.
 5. **P4:** history, time-travel slider, media picker, preview.
 6. **P5:** developer area for tokens; the optional AI panel.
 7. **P6:** polish and the usability test.

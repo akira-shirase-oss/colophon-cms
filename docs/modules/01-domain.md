@@ -128,6 +128,8 @@ invariant. Production adapters and the simulator both run this code unchanged.
 
 ### Delivery and job state machines (spec §14, §16)
 - Destination delivery: `pending → dispatched → observed`, or `retrying | failed | uncertain | superseded`.
+- Built in step 3.3 (D-051): `colophon_domain::receipt` (`probe`, `marker`, `label`). A destination is done for a
+  release once a job of its at that release or later succeeded; only probes verify, and only at the locations seen.
 - Evidence type: release generation, marker or response hash, observation location, timestamp, errors.
 - Job states: `pending | running | retrying | succeeded | failed | uncertain | cancelled | superseded`.
 - Retry policy as data: 10 s attempt deadline, ≤ 5 attempts, capped backoff with jitter, 1 h lifetime.

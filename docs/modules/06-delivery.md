@@ -130,6 +130,12 @@ These are policies to test, not a global 30-second consistency guarantee.
 - Observations are scoped: with one probe location the UI says *verified at 1 location*, never *verified* (O-012).
 - A fresh API response does not prove that a statically generated page rebuilt. The site adapter checks the deployed
   page's own marker ([web](15-web-blog.md)).
+- Built in step 3.3 (D-051): probe destinations. A probe reads the `Colophon-Generation` header or a
+  `<meta name="colophon-generation" content="N">` marker, passes on that release or a later one, and leaves an
+  observation for every look (location, generation seen, status, body hash, error). Workers have a location
+  (`COLOPHON_WORKER_LOCATION`), and a probe may be pinned to one. Each release has one label from
+  `colophon_domain::receipt::label`, and `GET …/releases/{generation}` is its receipt
+  (`crates/colophon-server/tests/receipts.rs`, against a fake site; verified at 2 locations with a second worker).
 
 ### Preview origin (spec §06)
 - A separate, sandboxed origin validates the 15-minute capability ([auth](03-auth.md)) on every protected fetch.

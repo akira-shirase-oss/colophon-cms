@@ -21,6 +21,7 @@
 		type Release,
 		setDestinationEnabled
 	} from '#lib/api.ts';
+	import { labelText } from '#lib/receipts.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const queryClient = useQueryClient();
@@ -32,7 +33,8 @@
 	const releases = createQuery(() => ({
 		queryKey: ['releases', project],
 		queryFn: () => listReleases(project),
-		refetchInterval: (query) => (query.state.data?.releases.some((release) => release.purge === 'pending') ? 2_000 : false)
+		refetchInterval: (query) =>
+			query.state.data?.releases.some((release) => release.purge === 'pending' || release.label === 'pending') ? 2_000 : false
 	}));
 	// Deliveries settle on their own; look again every few seconds while any is still going.
 	const jobs = createQuery(() => ({
@@ -72,6 +74,7 @@
 	let kind = $state<Destination['kind']>('webhook');
 	let name = $state('');
 	let url = $state('');
+	let location = $state('');
 	let error = $state('');
 	let busy = $state(false);
 
@@ -80,9 +83,10 @@
 		busy = true;
 		error = '';
 		try {
-			await createDestination(project, kind, name, url);
+			await createDestination(project, kind, name, url, kind === 'probe' && location.trim() !== '' ? location.trim() : null);
 			name = '';
 			url = '';
+			location = '';
 			await queryClient.invalidateQueries({ queryKey: ['destinations', project] });
 		} catch (failure) {
 			error = failure instanceof ApiError ? failure.message : String(failure);
@@ -120,6 +124,13 @@
 			<li data-generation={release.generation}>
 				<strong>Release {release.generation}</strong>:
 				<a href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: release.changeset_id })}>{release.title}</a>
+				<a
+					class="label"
+					data-testid="label"
+					data-label={release.label}
+					href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(release.generation) })}
+					>{labelText(release)}</a
+				>
 				<small class="muted">
 					{release.entries}
 					{release.entries === 1 ? 'entry' : 'entries'} changed,{#if release.unpublished > 0}
@@ -158,11 +169,16 @@
 			<ul class="list" data-testid="destinations">
 				{#each destinations.data as destination (destination.id)}
 					<li>
-						<strong>{destination.name}</strong> <small class="muted">{destination.kind === 'cdn' ? 'CDN' : 'webhook'}</small>
+						<strong>{destination.name}</strong>
+						<small class="muted"
+							>{destination.kind === 'cdn' ? 'CDN' : destination.kind === 'probe' ? 'probe' : 'webhook'}{destination.location
+								? ` at ${destination.location}`
+								: ''}</small
+						>
 						<code>{destination.url}</code>
 						<label class="check">
 							<input type="checkbox" checked={destination.enabled} onchange={(event) => toggle(destination.id, event.currentTarget.checked)} />
-							{destination.kind === 'cdn' ? 'Purge on release' : 'Announce releases'}
+							{destination.kind === 'cdn' ? 'Purge on release' : destination.kind === 'probe' ? 'Check each release' : 'Announce releases'}
 						</label>
 					</li>
 				{:else}
@@ -176,10 +192,19 @@
 				<select id="destination-kind" bind:value={kind}>
 					<option value="webhook">Webhook: hears about each release</option>
 					<option value="cdn">CDN: purges what each release changed</option>
+					<option value="probe">Probe: checks the site shows each release</option>
 				</select>
 			</div>
+			{#if kind === 'probe'}
+				<TextField label="Location (optional; only workers there run it)" bind:value={location} maxlength={63} />
+			{/if}
 			<TextField label="Destination name" bind:value={name} required maxlength={100} />
-			<TextField label={kind === 'cdn' ? 'Purge URL (https)' : 'Webhook URL (https)'} bind:value={url} required type="url" />
+			<TextField
+				label={kind === 'cdn' ? 'Purge URL (https)' : kind === 'probe' ? 'URL to check (https)' : 'Webhook URL (https)'}
+				bind:value={url}
+				required
+				type="url"
+			/>
 			{#if error}<p role="alert" class="error">{error}</p>{/if}
 			<div><Button type="submit" disabled={busy}>Add destination</Button></div>
 		</form>
@@ -207,6 +232,19 @@
 		display: grid;
 		gap: 0.75rem;
 		max-width: 32rem;
+	}
+	.label {
+		font: var(--md-sys-typescale-label-medium);
+		padding: 0.125rem 0.5rem;
+		margin-left: 0.25rem;
+		border-radius: var(--md-sys-shape-corner-small, 8px);
+		background: var(--md-sys-color-secondary-container);
+		color: var(--md-sys-color-on-secondary-container);
+		text-decoration: none;
+	}
+	.label[data-label='needs_attention'] {
+		background: var(--md-sys-color-error-container);
+		color: var(--md-sys-color-on-error-container);
 	}
 	.choice {
 		display: grid;
