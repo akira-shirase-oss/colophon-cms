@@ -1,0 +1,20 @@
+{
+  "name": "@colophon/web",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The reference site: a static blog built from one Colophon release, every page marked with it, promoted atomically, and a runner that rebuilds on each release's announcement.",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "runner": "node src/runner.ts"
+  },
+  "dependencies": {
+    "@colophon/content-renderer": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

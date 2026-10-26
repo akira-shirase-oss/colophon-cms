@@ -107,9 +107,22 @@ A fast, prerendered blog built from a release manifest pinned to one generation:
 - Lighthouse-style performance and accessibility budgets.
 - Template install and upgrade tests with customized content.
 
+## Built so far
+
+Step 3.4 (D-052), `apps/web`, run by Node 24 from TypeScript source:
+- `build.ts`: one release, every read pinned to it; home, articles, `/colophon` and 404, every page marked once.
+- `promote.ts`: verify, then promote with one symlink rename under a lock; an older release is refused (X08), a build
+  that fails its check never goes live (B3).
+- `runner.ts`: a webhook destination and the site's server in one process; builds the newest release announced.
+- Tests: `apps/web/test` (pinned reads, escaping, verify, X08, racing promotions, path traversal) and
+  `crates/colophon-server/tests/site.rs` (publish → announce → build → promote → a probe reads the marker → the
+  receipt says *verified at 1 location*; an article taken down is gone from the rebuilt site).
+- Not yet: hosting on the internet (O-012), the template manifest and its install/upgrade, feeds and sitemaps (P4).
+
 ## Build order
 
-1. **P3:** schemas, pages, pinned build, marker, `/colophon` page, build-verify-promote, live deployment.
+1. **P3:** schemas, pages, pinned build, marker, `/colophon` page, build-verify-promote, live deployment. Step 3.4
+   built everything but the live deployment.
 2. **P4:** feeds, sitemaps, language alternates, slug redirects.
 
 ## Open decisions

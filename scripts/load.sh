@@ -14,8 +14,9 @@
 # invitation lookups, role changes and new invitations), projects (who may create projects:
 # refused creations and /me), changesets (reading, listing, reviewing and creating changesets),
 # delivery (anonymous /content/v1 reads, latest and pinned), publishing (whole publishes, five
-# requests each, with the worker announcing every release to a local receiver; needs node) or
-# studio (the Studio's static files; builds the Studio first).
+# requests each, with the worker announcing every release to a local receiver; needs node),
+# studio (the Studio's static files; builds the Studio first) or site (the reference site's pages,
+# served by its runner while a release is published every two seconds; needs node).
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090),
@@ -38,7 +39,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|cli|members|projects|changesets|delivery|publishing|entries|content-types|studio throughput|steady [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|cli|members|projects|changesets|delivery|publishing|entries|content-types|studio|site throughput|steady [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -57,7 +58,7 @@ port="${LOAD_PORT:-58090}"
 if [[ "$scenario" == "steady" ]]; then default_vus=256; else default_vus=64; fi
 VUS="${VUS:-$default_vus}"
 case "$endpoint" in
-  session | projects | delivery) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
+  session | projects | delivery | site) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
   # Half its requests list entries (a content type lookup too): about 2,000/s at most here, so
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
   cli | members | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
@@ -74,6 +75,8 @@ base_url="http://127.0.0.1:$port"
 work=$(mktemp -d)
 server_pid=""
 receiver_pid=""
+site_pid=""
+site_port="${SITE_PORT:-58097}"
 receiver_port="${RECEIVER_PORT:-58096}"
 # shellcheck disable=SC2329 # invoked by the EXIT trap below
 cleanup() {
@@ -84,6 +87,10 @@ cleanup() {
   if [[ -n "$receiver_pid" ]]; then
     kill "$receiver_pid" 2>/dev/null || true
     wait "$receiver_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$site_pid" ]]; then
+    kill "$site_pid" 2>/dev/null || true
+    wait "$site_pid" 2>/dev/null || true
   fi
   if [[ -n "${SERVER_LOG:-}" && -f "$work/server.log" ]]; then cp "$work/server.log" "$SERVER_LOG"; fi
   rm -rf "$work"
@@ -106,6 +113,15 @@ if [[ "$endpoint" == "publishing" ]]; then
   command -v node >/dev/null || { echo "error: the publishing scenario needs node" >&2; exit 1; }
   node perf/receiver/receiver.mjs "$receiver_port" >"$work/receiver.log" 2>&1 &
   receiver_pid=$!
+fi
+
+# The site scenario's runner: builds each release it hears about and serves it (apps/web). It
+# adopts the project the scenario creates from the first announcement.
+if [[ "$endpoint" == "site" ]]; then
+  command -v node >/dev/null || { echo "error: the site scenario needs node" >&2; exit 1; }
+  SITE_API="$base_url" SITE_ROOT="$work/site" SITE_LISTEN="127.0.0.1:$site_port" \
+    node apps/web/src/runner.ts >"$work/site.log" 2>&1 &
+  site_pid=$!
 fi
 
 # The load-test server: the local stack's settings, its own port, and warnings-only logging,
@@ -152,7 +168,7 @@ k6_status=0
   -e BASE_URL="$base_url" -e PUBLIC_URL="http://localhost:$port" -e SCENARIO="$scenario" \
   -e TOTAL="${TOTAL:-1000000}" -e VUS="$VUS" \
   -e RATE="$RATE" -e DURATION="${DURATION:-60s}" \
-  -e P99_MS="$P99_MS" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" \
+  -e P99_MS="$P99_MS" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
   "perf/k6/$endpoint.js" || k6_status=$?
 
 sleep 1.5
