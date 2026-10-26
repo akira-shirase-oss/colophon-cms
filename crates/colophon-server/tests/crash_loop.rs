@@ -76,8 +76,10 @@ struct ProjectState {
 #[derive(Debug, Default)]
 struct Counts {
     kills: u64,
+    /// Requests cut off by a kill, whatever step they were.
+    cut: u64,
+    /// Publishes answered from their first commit when sent again.
     replayed: u64,
-    resent: u64,
 }
 
 fn base(project: &str) -> String {
@@ -187,7 +189,7 @@ async fn step(session: &Session, state: &mut ProjectState, counts: &mut Counts) 
     )
     .await
     else {
-        counts.resent += 1;
+        counts.cut += 1;
         return false;
     };
     assert_eq!(
@@ -230,6 +232,7 @@ async fn publish_until(
             .await
             .is_err()
         {
+            counts.cut += 1;
             return;
         }
     }
@@ -307,22 +310,16 @@ async fn killing_the_server_and_worker_loses_and_doubles_nothing() {
     let mut published = 0;
     for state in &states {
         // Every acknowledged publish is a release at the generation the client was told, each
-        // changeset once, generations 1..N.
-        let listed = call(
-            &owner,
-            Method::GET,
-            &format!("{}/releases", base(&state.id)),
-            None,
-            &[],
+        // changeset once, generations 1..N. (From the database: the API lists the newest 100.)
+        let releases: Vec<(i64, uuid::Uuid)> = sqlx::query_as(
+            "SELECT generation, changeset_id FROM releases WHERE project_id = $1::uuid ORDER BY generation",
         )
+        .bind(&state.id)
+        .fetch_all(&database)
         .await
-        .expect("request");
-        let releases = listed.body["data"].as_array().cloned().expect("releases");
-        let generations: Vec<i64> = releases
-            .iter()
-            .filter_map(|r| r["generation"].as_i64())
-            .collect();
-        let expected: Vec<i64> = (1..=state.generation).rev().collect();
+        .expect("releases");
+        let generations: Vec<i64> = releases.iter().map(|(generation, _)| *generation).collect();
+        let expected: Vec<i64> = (1..=state.generation).collect();
         assert_eq!(
             generations, expected,
             "{}: generations are 1..{}",
@@ -330,26 +327,25 @@ async fn killing_the_server_and_worker_loses_and_doubles_nothing() {
         );
         assert_eq!(
             state.acknowledged.len(),
-            generations.len(),
+            releases.len(),
             "{}: every release was acknowledged once",
             state.id
         );
         for (generation, path) in &state.acknowledged {
-            let release = releases
-                .iter()
-                .find(|r| r["generation"] == *generation)
-                .expect("acknowledged release exists");
             let changeset = path.rsplit('/').next().expect("an id");
+            let (_, stored) = releases
+                .iter()
+                .find(|(g, _)| g == generation)
+                .expect("the acknowledged release exists");
             assert_eq!(
-                release["changeset_id"], changeset,
+                stored.to_string(),
+                changeset,
                 "{}: generation {generation} is the acknowledged changeset",
                 state.id
             );
         }
-        let mut changesets: Vec<&str> = releases
-            .iter()
-            .filter_map(|r| r["changeset_id"].as_str())
-            .collect();
+        let mut changesets: Vec<uuid::Uuid> =
+            releases.iter().map(|(_, changeset)| *changeset).collect();
         changesets.sort_unstable();
         changesets.dedup();
         assert_eq!(
@@ -409,22 +405,19 @@ async fn killing_the_server_and_worker_loses_and_doubles_nothing() {
         );
 
         // Every announcement finished delivered or superseded.
-        let jobs = call(
-            &owner,
-            Method::GET,
-            &format!("{}/jobs", base(&state.id)),
-            None,
-            &[],
+        let unfinished: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT status, count(*) FROM jobs WHERE project_id = $1::uuid AND status NOT IN ('succeeded', 'superseded') GROUP BY status",
         )
+        .bind(&state.id)
+        .fetch_all(&database)
         .await
-        .expect("request");
-        for job in jobs.body["data"].as_array().cloned().unwrap_or_default() {
-            assert!(
-                matches!(job["status"].as_str(), Some("succeeded" | "superseded")),
-                "{}: {job}",
-                state.id
-            );
-        }
+        .expect("jobs");
+        assert_eq!(
+            unfinished,
+            Vec::new(),
+            "{}: announcements not delivered or superseded",
+            state.id
+        );
 
         // Delivery at generation g serves exactly g entries: one new entry per release.
         for generation in [1, state.generation / 2, state.generation]
@@ -455,9 +448,9 @@ async fn killing_the_server_and_worker_loses_and_doubles_nothing() {
     keys.sort_unstable();
     keys.dedup();
     println!(
-        "crash loop: {} kills, {published} releases acknowledged and checked, {} publishes resent after a kill ({} replayed), {total} announcements received ({} repeats of a key)",
+        "crash loop: {} kills, {published} releases acknowledged and checked, {} requests cut off by a kill, {} publishes answered from their first commit when sent again, {total} announcements received ({} repeats of a key)",
         counts.kills,
-        counts.resent,
+        counts.cut,
         counts.replayed,
         total - keys.len()
     );
