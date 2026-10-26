@@ -135,9 +135,12 @@ if (( ready == 0 )); then
   exit 1
 fi
 
+# The database the server uses: `colophon`, or COLOPHON_TEST_DATABASE's (scripts/local-env.sh
+# checked it is a plain name).
+database="${COLOPHON_TEST_DATABASE:-colophon}"
 db_transactions() {
   docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -XAtqc \
-    "select xact_commit + xact_rollback from pg_stat_database where datname = 'colophon'"
+    "select xact_commit + xact_rollback from pg_stat_database where datname = '$database'"
 }
 sleep 1.5 # let Postgres publish its statistics
 tx_before=$(db_transactions)

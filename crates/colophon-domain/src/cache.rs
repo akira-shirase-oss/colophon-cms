@@ -21,6 +21,38 @@
 /// never served as the new one.
 pub const RENDER_VERSION: u32 = 1;
 
+/// The most tags one purge names. A run of releases that changed more purges the whole
+/// environment instead: coarser, and still bounded.
+pub const MAX_PURGE_TAGS: usize = 30;
+
+/// The tags to purge after releases of `project`'s `environment` changed `entries` (collection,
+/// entry): each entry's tag, which reaches every generation's answer for it, and each
+/// collection's, which reaches every listing that held it (F06, F07). More than
+/// [`MAX_PURGE_TAGS`] and it is the environment's tag alone. Empty when nothing changed.
+pub fn purge_tags(project: u128, environment: u128, entries: &[(String, u128)]) -> Vec<String> {
+    // Tags never depend on the generation: any scope of the environment names them.
+    let scope = Scope {
+        project,
+        environment,
+        epoch: 0,
+        generation: 0,
+        unpublished: 0,
+    };
+    let mut tags: Vec<String> = Vec::new();
+    for (collection, entry) in entries {
+        for tag in scope.entry_tags(collection, *entry).into_iter().skip(2) {
+            if !tags.contains(&tag) {
+                tags.push(tag);
+            }
+        }
+    }
+    if tags.len() > MAX_PURGE_TAGS {
+        return vec![scope.environment_tag()];
+    }
+    tags.sort();
+    tags
+}
+
 /// Where an answer was read: everything a key or tag starts from. Ids are UUIDs as 128-bit
 /// numbers, written as fixed-width hex, so the only free text in a key is the collection name,
 /// which comes last and so can't be mistaken for another field.
@@ -184,6 +216,43 @@ mod tests {
         assert_eq!(at_3.list_tags("articles").len(), 3);
         // Tags don't depend on the generation: a purge finds every release's answers.
         assert_eq!(scope(4).list_tags("articles"), at_3.list_tags("articles"));
+    }
+
+    #[test]
+    fn a_purge_names_each_entry_and_collection_once_and_stays_bounded() {
+        let (project, environment) = (format!("{:032x}", 1), format!("{:032x}", 14));
+        let env = format!("colophon:p:{project}:e:{environment}");
+        let changed = [
+            ("articles".to_owned(), 7),
+            ("articles".to_owned(), 8),
+            ("events".to_owned(), 9),
+        ];
+        assert_eq!(
+            purge_tags(1, 14, &changed),
+            [
+                format!("{env}:c:articles"),
+                format!("{env}:c:events"),
+                format!("{env}:n:{:032x}", 7),
+                format!("{env}:n:{:032x}", 8),
+                format!("{env}:n:{:032x}", 9),
+            ]
+        );
+        assert!(purge_tags(1, 14, &[]).is_empty(), "nothing changed");
+        let many: Vec<(String, u128)> = (0..40)
+            .map(|entry| ("articles".to_owned(), entry))
+            .collect();
+        assert_eq!(
+            purge_tags(1, 14, &many),
+            [env],
+            "too many: the environment instead"
+        );
+        // The tags a purge names are the ones answers carry.
+        let answer = scope(5).entry_tags("articles", 7);
+        assert!(
+            purge_tags(1, 14, &changed[..1])
+                .iter()
+                .all(|tag| answer.contains(tag))
+        );
     }
 
     #[test]

@@ -33,6 +33,10 @@ pub struct Release {
     pub entries: i64,
     /// How many entries it unpublished.
     pub unpublished: i64,
+    /// Whether its changes have been purged from the environment's CDNs (D-050): `none` (no CDN
+    /// job covers it), `accepted` (every CDN with one accepted a purge covering it), `pending`
+    /// (one is still trying) or `failed`.
+    pub purge: String,
 }
 
 /// What [`commit`] did.
@@ -296,7 +300,21 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Release>, DbError> 
                      AND p.valid_from = r.generation) AS "entries!",
                   (SELECT count(*) FROM tombstones t
                    WHERE t.project_id = r.project_id AND t.environment_id = r.environment_id
-                     AND t.generation = r.generation) AS "unpublished!"
+                     AND t.generation = r.generation) AS "unpublished!",
+                  -- A CDN's purge covers every release since its last successful one, so any
+                  -- success at this generation or later covers this release.
+                  (SELECT CASE WHEN count(*) = 0 THEN 'none'
+                               WHEN bool_and(done) THEN 'accepted'
+                               WHEN bool_or(open) THEN 'pending'
+                               ELSE 'failed' END
+                   FROM (SELECT bool_or(j.status = 'succeeded') AS done,
+                                bool_or(j.status IN ('pending', 'retrying', 'running')) AS open
+                         FROM jobs j
+                         JOIN destinations d ON d.project_id = j.project_id AND d.environment_id = j.environment_id
+                                            AND d.id = j.destination_id AND d.kind = 'cdn'
+                         WHERE j.project_id = r.project_id AND j.environment_id = r.environment_id
+                           AND j.generation >= r.generation
+                         GROUP BY j.destination_id) cdns) AS "purge!"
            FROM releases r
            JOIN changesets c ON c.project_id = r.project_id AND c.environment_id = r.environment_id
                             AND c.id = r.changeset_id

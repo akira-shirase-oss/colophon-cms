@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "WITH due AS (\n             SELECT j.project_id, j.environment_id, j.id\n             FROM jobs j\n             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())\n                    OR (j.status = 'running' AND j.lease_expires_at < now()))\n               AND j.deadline_at > now()\n               AND NOT EXISTS (\n                   SELECT 1 FROM jobs busy\n                   WHERE busy.project_id = j.project_id AND busy.environment_id = j.environment_id\n                     AND busy.destination_id = j.destination_id AND busy.status = 'running'\n                     AND busy.lease_expires_at >= now() AND busy.id <> j.id\n               )\n             ORDER BY j.next_attempt_at\n             LIMIT $3\n             FOR UPDATE OF j SKIP LOCKED\n         )\n         UPDATE jobs j SET status = 'running', lease_owner = $1,\n                           lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),\n                           lease_generation = j.lease_generation + 1, attempts = j.attempts + 1, updated_at = now()\n         FROM due, destinations d\n         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id\n           AND d.project_id = j.project_id AND d.environment_id = j.environment_id AND d.id = j.destination_id\n         RETURNING j.project_id, j.environment_id, j.id, j.destination_id, d.url, j.generation, j.idempotency_key,\n                   j.attempts, j.lease_generation, j.deadline_at",
+  "query": "WITH due AS (\n             SELECT j.project_id, j.environment_id, j.id\n             FROM jobs j\n             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())\n                    OR (j.status = 'running' AND j.lease_expires_at < now()))\n               AND j.deadline_at > now()\n               AND NOT EXISTS (\n                   SELECT 1 FROM jobs busy\n                   WHERE busy.project_id = j.project_id AND busy.environment_id = j.environment_id\n                     AND busy.destination_id = j.destination_id AND busy.status = 'running'\n                     AND busy.lease_expires_at >= now() AND busy.id <> j.id\n               )\n             ORDER BY j.next_attempt_at\n             LIMIT $3\n             FOR UPDATE OF j SKIP LOCKED\n         )\n         UPDATE jobs j SET status = 'running', lease_owner = $1,\n                           lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),\n                           lease_generation = j.lease_generation + 1, attempts = j.attempts + 1, updated_at = now()\n         FROM due, destinations d\n         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id\n           AND d.project_id = j.project_id AND d.environment_id = j.environment_id AND d.id = j.destination_id\n         RETURNING j.project_id, j.environment_id, j.id, j.destination_id, d.kind, d.url, j.generation,\n                   j.idempotency_key, j.attempts, j.lease_generation, j.deadline_at",
   "describe": {
     "columns": [
       {
@@ -49,6 +49,17 @@
       },
       {
         "ordinal": 4,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "destinations",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
         "name": "url",
         "type_info": "Text",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "generation",
         "type_info": "Int8",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "idempotency_key",
         "type_info": "Text",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "attempts",
         "type_info": "Int4",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "lease_generation",
         "type_info": "Int4",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "deadline_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -131,8 +142,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "6c07038c1ebdd021430205d384f74cbd6919eede4a263542171f0fab53ebb947"
+  "hash": "60c875d6543248481acfbdf2541fa7b3b6e0bb785a2c097d691c0b8884e30c6e"
 }

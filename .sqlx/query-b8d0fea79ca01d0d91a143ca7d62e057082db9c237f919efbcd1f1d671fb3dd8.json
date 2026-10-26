@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.generation, r.epoch, r.changeset_id, c.title, r.changeset_hash, r.review_id,\n                  r.published_by, i.display_name AS published_by_name, r.published_at,\n                  (SELECT count(*) FROM publications p\n                   WHERE p.project_id = r.project_id AND p.environment_id = r.environment_id\n                     AND p.valid_from = r.generation) AS \"entries!\",\n                  (SELECT count(*) FROM tombstones t\n                   WHERE t.project_id = r.project_id AND t.environment_id = r.environment_id\n                     AND t.generation = r.generation) AS \"unpublished!\"\n           FROM releases r\n           JOIN changesets c ON c.project_id = r.project_id AND c.environment_id = r.environment_id\n                            AND c.id = r.changeset_id\n           JOIN identities i ON i.id = r.published_by\n           WHERE r.project_id = $1 AND r.environment_id = $2\n           ORDER BY r.generation DESC\n           LIMIT 100",
+  "query": "SELECT r.generation, r.epoch, r.changeset_id, c.title, r.changeset_hash, r.review_id,\n                  r.published_by, i.display_name AS published_by_name, r.published_at,\n                  (SELECT count(*) FROM publications p\n                   WHERE p.project_id = r.project_id AND p.environment_id = r.environment_id\n                     AND p.valid_from = r.generation) AS \"entries!\",\n                  (SELECT count(*) FROM tombstones t\n                   WHERE t.project_id = r.project_id AND t.environment_id = r.environment_id\n                     AND t.generation = r.generation) AS \"unpublished!\",\n                  -- A CDN's purge covers every release since its last successful one, so any\n                  -- success at this generation or later covers this release.\n                  (SELECT CASE WHEN count(*) = 0 THEN 'none'\n                               WHEN bool_and(done) THEN 'accepted'\n                               WHEN bool_or(open) THEN 'pending'\n                               ELSE 'failed' END\n                   FROM (SELECT bool_or(j.status = 'succeeded') AS done,\n                                bool_or(j.status IN ('pending', 'retrying', 'running')) AS open\n                         FROM jobs j\n                         JOIN destinations d ON d.project_id = j.project_id AND d.environment_id = j.environment_id\n                                            AND d.id = j.destination_id AND d.kind = 'cdn'\n                         WHERE j.project_id = r.project_id AND j.environment_id = r.environment_id\n                           AND j.generation >= r.generation\n                         GROUP BY j.destination_id) cdns) AS \"purge!\"\n           FROM releases r\n           JOIN changesets c ON c.project_id = r.project_id AND c.environment_id = r.environment_id\n                            AND c.id = r.changeset_id\n           JOIN identities i ON i.id = r.published_by\n           WHERE r.project_id = $1 AND r.environment_id = $2\n           ORDER BY r.generation DESC\n           LIMIT 100",
   "describe": {
     "columns": [
       {
@@ -113,6 +113,12 @@
         "name": "unpublished!",
         "type_info": "Int8",
         "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "purge!",
+        "type_info": "Text",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -132,8 +138,9 @@
       true,
       false,
       null,
+      null,
       null
     ]
   },
-  "hash": "be44eac790994e2b6451ccc80528774f4d71f90de2cc76673f66785614b53f78"
+  "hash": "b8d0fea79ca01d0d91a143ca7d62e057082db9c237f919efbcd1f1d671fb3dd8"
 }

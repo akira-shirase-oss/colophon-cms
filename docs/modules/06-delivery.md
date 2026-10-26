@@ -105,6 +105,10 @@ These are policies to test, not a global 30-second consistency guarantee.
   after correctness tests pass.
 - The Cloudflare adapter purges by tag within documented plan limits. A successful purge response and sampled reads are
   different evidence (spec §15).
+- Built in step 3.2, part 2 (D-050): CDN destinations and purge jobs. A purge names each changed entry's tag and its
+  collection's (at most 30 tags, else the environment's), covers every release since that CDN's last successful purge,
+  and the releases list reports each release's purge state. The Cloudflare adapter (credentials, plan limits) is
+  step 3.4.
 
 ### Unpublish and revocation (spec §14, §15)
 - Unpublish writes a tombstone and marks the entry revoked for origin access, including historical generation URLs.
@@ -116,7 +120,9 @@ These are policies to test, not a global 30-second consistency guarantee.
   earlier publication of the entry `revoked_in`; delivery never serves a revoked publication, and a read of the entry
   is 410 `gone` (`no-store`) at every generation until it is published again. Cache keys name the environment's
   `last_unpublish`, so answers cached before a takedown are never served again (F07 at the origin,
-  `crates/colophon-server/tests/cache.rs`). Purges come in part 2.
+  `crates/colophon-server/tests/cache.rs`). Part 2 (D-050) purges it from CDNs: the release reports its purge as
+  pending, accepted or failed, and the Studio shows *removal pending at the CDN* until it is accepted
+  (`crates/colophon-server/tests/purges.rs`, against a fake CDN that caches by `Cache-Tag`).
 
 ### Evidence probes (spec §14)
 - Probes fetch configured URLs from configured locations and look for the release's generation marker or response hash.
@@ -190,7 +196,7 @@ These are policies to test, not a global 30-second consistency guarantee.
 1. **P2:** the public API from published projections without a cache; pinned reads (step 2.2, done).
 2. **P3:** cache layer, CDN headers, tags, Cloudflare purge, probes, unpublish and revocation. Step 3.1 (D-048): the
    cache layer, CDN headers and tags; F06, F08 and L04 in `crates/colophon-server/tests/cache.rs`. Step 3.2 (in
-   progress, D-049): unpublish, tombstones and origin revocation; then purge jobs through a fake CDN.
+   progress, D-049, D-050): unpublish, tombstones and origin revocation; purge jobs through a fake CDN.
 3. **P4:** time-travel queries for the Studio slider, the preview origin, sitemaps, feeds and redirects.
 
 ## Open decisions

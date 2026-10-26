@@ -442,6 +442,9 @@ export interface Release {
 	entries: number;
 	/** Entries it took down. */
 	unpublished: number;
+	/** Whether the environment's CDNs accepted a purge covering it (D-050); until then, copies they
+	 *  hold may still be served. */
+	purge: 'none' | 'pending' | 'accepted' | 'failed';
 }
 
 /** The environment's releases, newest first, and its current generation. */
@@ -469,7 +472,8 @@ export async function publishChangeset(
 /** Where a project's releases are announced (D-046). */
 export interface Destination {
 	id: string;
-	kind: 'webhook';
+	/** A webhook hears each release; a CDN is told what to purge (D-050). */
+	kind: 'webhook' | 'cdn';
 	name: string;
 	url: string;
 	enabled: boolean;
@@ -495,8 +499,8 @@ export async function listDestinations(project: string): Promise<Destination[]> 
 	return ((await (await send('GET', `${base(project)}/destinations`)).json()) as { data: Destination[] }).data;
 }
 
-export async function createDestination(project: string, name: string, url: string): Promise<Destination> {
-	return ((await (await send('POST', `${base(project)}/destinations`, { name, url })).json()) as { data: Destination }).data;
+export async function createDestination(project: string, kind: Destination['kind'], name: string, url: string): Promise<Destination> {
+	return ((await (await send('POST', `${base(project)}/destinations`, { kind, name, url })).json()) as { data: Destination }).data;
 }
 
 export async function setDestinationEnabled(project: string, id: string, enabled: boolean): Promise<void> {

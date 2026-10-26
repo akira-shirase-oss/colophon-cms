@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT collection AS \"collection!\", entry_id AS \"entry_id!\" FROM (\n               SELECT collection, entry_id FROM publications\n               WHERE project_id = $1 AND environment_id = $2 AND valid_from > $3 AND valid_from <= $4\n               UNION\n               SELECT collection, entry_id FROM publications\n               WHERE project_id = $1 AND environment_id = $2 AND valid_to > $3 AND valid_to <= $4\n               UNION\n               SELECT collection, entry_id FROM tombstones\n               WHERE project_id = $1 AND environment_id = $2 AND generation > $3 AND generation <= $4\n           ) changed\n           ORDER BY collection, entry_id\n           LIMIT $5",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "collection!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "entry_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "9ba77785e4dc28995dbce50b874551429c016e802d39b4e1cf331fb1070f4ebd"
+}

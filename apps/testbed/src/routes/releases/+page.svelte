@@ -13,6 +13,7 @@
 		title: string;
 		entries: number;
 		unpublished: number;
+		purge: string;
 	}
 	interface Summary {
 		id: string;
@@ -112,7 +113,7 @@
 			<li>
 				generation {release.generation}: {release.title} ({release.entries} changed{release.unpublished > 0
 					? `, ${release.unpublished} unpublished`
-					: ''})
+					: ''}){release.purge === 'none' ? '' : `, purge ${release.purge}`}
 			</li>
 		{/each}
 	</ol>

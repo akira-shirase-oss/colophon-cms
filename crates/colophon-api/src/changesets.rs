@@ -800,6 +800,9 @@ pub(crate) struct ReleaseView {
     entries: i64,
     /// Entries it took down.
     unpublished: i64,
+    /// `none`, `pending`, `accepted` or `failed`: whether the environment's CDNs accepted a purge
+    /// covering it (D-050). Until then, copies they hold may still be served.
+    purge: String,
 }
 
 /// `GET {P}/releases`: the newest 100, with the environment's current generation.
@@ -828,6 +831,7 @@ pub(crate) async fn releases(
                 published_at: rfc3339(row.published_at)?,
                 entries: row.entries,
                 unpublished: row.unpublished,
+                purge: row.purge,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;

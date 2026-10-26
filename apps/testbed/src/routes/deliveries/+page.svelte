@@ -10,6 +10,7 @@
 	}
 	interface Destination {
 		id: string;
+		kind: string;
 		name: string;
 		url: string;
 		enabled: boolean;
@@ -29,6 +30,8 @@
 	let projectId = $state('');
 	let destinations = $state<Destination[]>([]);
 	let jobs = $state<Job[]>([]);
+	// Free text, so a kind the API doesn't know can be tried too.
+	let kind = $state('webhook');
 	let name = $state('');
 	let url = $state('');
 	let message = $state('');
@@ -60,7 +63,7 @@
 		event.preventDefault();
 		const reply = await call('POST', `${api}/destinations`, {
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
-			body: JSON.stringify({ name, url })
+			body: JSON.stringify({ kind, name, url })
 		});
 		message = reply.status === 201 ? 'added' : describe(reply);
 		await load();
@@ -71,8 +74,9 @@
 
 <h1>Deliveries</h1>
 <p class="lede">
-	Where releases are announced, through the real API (D-046): add a webhook destination, publish on the Releases page, and watch
-	each release's job move from pending to delivered, retried or failed. Every attempt carries the same idempotency key.
+	Where releases are delivered, through the real API (D-046, D-050): add a webhook, which hears about each release, or a CDN,
+	which is asked to purge what each release changed; publish on the Releases page, and watch each release's job move from
+	pending to delivered, retried or failed. Every attempt carries the same idempotency key.
 </p>
 
 {#if signedIn === false}
@@ -88,8 +92,9 @@
 	</label>
 
 	<form onsubmit={add}>
+		<label class="field">Kind (webhook or cdn) <input bind:value={kind} name="kind" /></label>
 		<label class="field">Destination name <input bind:value={name} name="name" /></label>
-		<label class="field">Webhook URL <input bind:value={url} name="url" /></label>
+		<label class="field">URL <input bind:value={url} name="url" /></label>
 		<button type="submit">Add destination</button>
 	</form>
 	{#if message}<p data-testid="message">{message}</p>{/if}
@@ -97,7 +102,7 @@
 	<h2>Destinations</h2>
 	<ul data-testid="destinations">
 		{#each destinations as destination (destination.id)}
-			<li>{destination.name}: <code>{destination.url}</code>{destination.enabled ? '' : ' (off)'}</li>
+			<li>{destination.name} ({destination.kind}): <code>{destination.url}</code>{destination.enabled ? '' : ' (off)'}</li>
 		{/each}
 	</ul>
 

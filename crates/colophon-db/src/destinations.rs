@@ -1,5 +1,6 @@
-//! Where a project's releases are announced (docs/modules/05-worker.md; D-046). Owners and
-//! developers configure them; the API checks that and the address before calling these.
+//! Where a project's releases are delivered (docs/modules/05-worker.md; D-046, D-050): a webhook
+//! hears each release; a CDN is told what to purge. Owners and developers configure them; the API
+//! checks that and the address before calling these.
 
 use sqlx::types::time::OffsetDateTime;
 use uuid::Uuid;
@@ -11,7 +12,7 @@ use crate::{DbError, scope::ProjectTransaction};
 pub struct Destination {
     /// Its id.
     pub id: Uuid,
-    /// `webhook`.
+    /// `webhook` or `cdn`.
     pub kind: String,
     /// A name for people.
     pub name: String,
@@ -23,20 +24,22 @@ pub struct Destination {
     pub created_at: OffsetDateTime,
 }
 
-/// Adds a webhook destination.
+/// Adds a destination of `kind` (`webhook` or `cdn`).
 pub async fn create(
     tx: &mut ProjectTransaction,
+    kind: &str,
     name: &str,
     url: &str,
 ) -> Result<Destination, DbError> {
     sqlx::query_as!(
         Destination,
         "INSERT INTO destinations (project_id, environment_id, id, kind, name, url, created_by)
-         VALUES ($1, $2, $3, 'webhook', $4, $5, $6)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id, kind, name, url, enabled, created_at",
         tx.project,
         tx.environment,
         Uuid::now_v7(),
+        kind,
         name,
         url,
         tx.identity

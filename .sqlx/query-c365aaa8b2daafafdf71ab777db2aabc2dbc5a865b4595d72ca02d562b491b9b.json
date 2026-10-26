@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n                   SELECT 1 FROM jobs\n                   WHERE project_id = $1 AND environment_id = $2 AND destination_id = $3\n                     AND generation > $4 AND status <> 'superseded'\n               ) AS \"newer!\",\n               coalesce((SELECT max(generation) FROM jobs\n                         WHERE project_id = $1 AND environment_id = $2 AND destination_id = $3\n                           AND generation < $4 AND status = 'succeeded'), 0) AS \"since!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "newer!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "since!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "c365aaa8b2daafafdf71ab777db2aabc2dbc5a865b4595d72ca02d562b491b9b"
+}
