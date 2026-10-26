@@ -261,6 +261,13 @@ pub async fn get(
 /// A collection's entries, newest first, starting after `before` when given: at most `limit`,
 /// capped at one more than [`MAX_PAGE`] so a caller can ask for an extra row to learn whether
 /// another page follows.
+///
+/// Each entry's draft is looked up on its own (`LATERAL … LIMIT 1`, which Postgres can't fold
+/// into a join and reorder), so the only plan walks the collection's entries newest first and
+/// stops at `limit`, with one key lookup each. As a plain join, statistics gathered while the
+/// tables were nearly empty let Postgres scan every revision for every entry instead: in a CI
+/// load test that grew them to 512 entries in seconds, one page took 288 ms to throw away 523,776
+/// rows.
 pub async fn list(
     tx: &mut ProjectTransaction,
     collection: &str,
@@ -272,8 +279,13 @@ pub async fn list(
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
                 r.content_hash, r.title
          FROM entries e
-         JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id
-                         AND r.id = e.draft_revision_id
+         CROSS JOIN LATERAL (
+             SELECT r.id, r.base_revision_id, r.author_id, r.created_at, r.content_hash, r.title
+             FROM revisions r
+             WHERE r.project_id = e.project_id AND r.environment_id = e.environment_id
+               AND r.id = e.draft_revision_id
+             LIMIT 1
+         ) r
          WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
            AND ($4::uuid IS NULL OR e.id < $4)
          ORDER BY e.id DESC
