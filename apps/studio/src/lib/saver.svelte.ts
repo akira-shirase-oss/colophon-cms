@@ -9,7 +9,7 @@
 
 import { serialize } from '@colophon/editor';
 import { ApiError, type Article, type Draft, getArticle, type Loaded, newKey, saveArticle } from './api.ts';
-import { forget, keep } from './drafts.ts';
+import { forget, keep, type Kept, type Sent } from './drafts.ts';
 
 export type SaveStatus =
 	| 'saved'
@@ -62,6 +62,10 @@ export class Saver {
 	#key = '';
 	#keyFor = '';
 	#retries = 0;
+	/** The request sent and not yet answered: kept on the device so a reload can resend it. */
+	#sent: Sent | null = null;
+	/** After reopening: the newest edits, applied once the resent request is answered. */
+	#newest: Article | null = null;
 
 	constructor(
 		readonly project: string,
@@ -74,10 +78,27 @@ export class Saver {
 		this.#latest = loaded.draft.content;
 	}
 
-	/** Edits kept on this device from an earlier visit, on top of revision `base`. Returns what
-	 *  the editor should show: the kept edits if they build on the current revision, otherwise
-	 *  the server's (and the conflict screen opens). */
-	restore(article: Article, base: string, server: Draft): Article {
+	/** Edits kept on this device from an earlier visit. Returns what the editor should show.
+	 *
+	 *  If a save was in flight when the page went away, it is sent again first, exactly, key
+	 *  included: if it committed, the server replays it rather than storing it twice. Otherwise
+	 *  kept edits on the current revision are restored and saved, and kept edits on an older
+	 *  revision open the conflict screen. */
+	restore(kept: Kept, server: Draft): Article {
+		const { article, base, sent } = kept;
+		if (sent !== undefined) {
+			this.etag = sent.base;
+			this.#latest = sent.article;
+			this.#newest = article;
+			this.#key = sent.key;
+			this.#keyFor = `${sent.base}\n${sent.article.title}\n${serialize(sent.article.body)}`;
+			// The base's content is unknown here; nothing compares equal to it until the answer.
+			this.#saved = { title: '\u0000', body: sent.article.body };
+			this.message = 'Restored unsaved changes from this device.';
+			this.status = 'unsaved';
+			this.saveNow();
+			return article;
+		}
 		if (same(article, this.#saved)) {
 			forget(this.project, this.entry);
 			return this.#saved;
@@ -94,21 +115,31 @@ export class Saver {
 		return this.#saved;
 	}
 
+	#keep(base: string, article: Article): void {
+		this.keptOnDevice = keep(this.project, this.entry, {
+			base,
+			article,
+			at: new Date().toISOString(),
+			...(this.#sent === null ? {} : { sent: this.#sent })
+		});
+	}
+
 	/** Records the editor's current content. */
 	edit(article: Article): void {
 		this.#latest = article;
+		this.#newest = null;
 		if (this.conflict !== null) {
 			this.conflict = { ...this.conflict, mine: article };
-			this.keptOnDevice = keep(this.project, this.entry, { base: this.conflict.etag, article, at: new Date().toISOString() });
+			this.#keep(this.conflict.etag, article);
 			return;
 		}
-		if (!this.#inFlight && same(article, this.#saved)) {
+		if (!this.#inFlight && this.#sent === null && same(article, this.#saved)) {
 			clearTimeout(this.#timer);
 			forget(this.project, this.entry);
 			this.status = 'saved';
 			return;
 		}
-		this.keptOnDevice = keep(this.project, this.entry, { base: this.etag, article, at: new Date().toISOString() });
+		this.#keep(this.etag, article);
 		if (this.status === 'signed-out') return;
 		if (!this.#inFlight && this.status !== 'retrying') this.status = 'unsaved';
 		this.#schedule(this.status === 'retrying' ? RETRY_MS[0] ?? 1_000 : DEBOUNCE_MS);
@@ -129,7 +160,7 @@ export class Saver {
 		this.conflict = null;
 		this.message = '';
 		this.status = 'unsaved';
-		this.keptOnDevice = keep(this.project, this.entry, { base: this.etag, article: this.#latest, at: new Date().toISOString() });
+		this.#keep(this.etag, this.#latest);
 		this.saveNow();
 	}
 
@@ -176,20 +207,28 @@ export class Saver {
 		}
 		this.#inFlight = true;
 		if (this.status !== 'retrying') this.status = 'saving';
+		// Kept before it leaves, so a reload can send this exact request again.
+		this.#sent = { base: this.etag, key: this.#key, article };
+		this.#keep(this.etag, this.#newest ?? this.#latest);
 		try {
 			const result = await saveArticle(this.project, this.entry, article, this.etag, this.#key);
+			this.#sent = null;
 			this.etag = result.etag;
 			this.#saved = result.draft.content;
 			this.#retries = 0;
 			this.#keyFor = '';
-			this.message = '';
+			this.message = this.#newest === null ? '' : this.message;
 			this.onSaved(result);
+			if (this.#newest !== null) {
+				this.#latest = this.#newest;
+				this.#newest = null;
+			}
 			if (same(this.#latest, this.#saved)) {
 				this.status = 'saved';
 				forget(this.project, this.entry);
 			} else {
 				this.status = 'unsaved';
-				this.keptOnDevice = keep(this.project, this.entry, { base: this.etag, article: this.#latest, at: new Date().toISOString() });
+				this.#keep(this.etag, this.#latest);
 				this.#schedule(DEBOUNCE_MS);
 			}
 		} catch (error) {
@@ -209,7 +248,28 @@ export class Saver {
 			case 'conflict':
 				try {
 					const theirs = await getArticle(this.project, this.entry);
-					this.conflict = { theirs: theirs.draft, etag: theirs.etag, mine: this.#latest, restored: false };
+					const sent = this.#sent;
+					this.#sent = null;
+					const mine = this.#newest ?? this.#latest;
+					this.#newest = null;
+					this.#latest = mine;
+					// The current version is what this editor sent: an earlier attempt committed.
+					if (same(theirs.draft.content, mine) || (sent !== null && same(theirs.draft.content, sent.article))) {
+						this.etag = theirs.etag;
+						this.#saved = theirs.draft.content;
+						this.onSaved(theirs);
+						if (same(mine, this.#saved)) {
+							this.status = 'saved';
+							forget(this.project, this.entry);
+						} else {
+							this.status = 'unsaved';
+							this.#keep(this.etag, mine);
+							this.#schedule(DEBOUNCE_MS);
+						}
+						return;
+					}
+					// The editor already shows `mine`, the newest edits, even after a reopen.
+					this.conflict = { theirs: theirs.draft, etag: theirs.etag, mine, restored: false };
 					this.status = 'conflict';
 					this.message = 'Someone saved a newer version while you were editing.';
 				} catch {
@@ -225,6 +285,7 @@ export class Saver {
 				return;
 			case 'refused':
 			case 'not-found':
+				this.#sent = null;
 				this.status = 'refused';
 				this.message = error.message;
 				return;

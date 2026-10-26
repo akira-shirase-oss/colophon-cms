@@ -211,3 +211,64 @@ test('edits kept on this device expire after 30 days', async ({ page }) => {
 	await expect(page.getByRole('textbox', { name: 'Article body' })).not.toContainText('Too old to restore.');
 	expect(await page.evaluate((key) => localStorage.getItem(key), `colophon:unsaved:${project}:${entry}`)).toBeNull();
 });
+
+test('a save that committed just before a reload is resent with its key on reopening, not stored twice', async ({ page }) => {
+	// Found by the simulator (new-key-after-crash, D-039): reopening used to compare the kept
+	// edit with the draft, and when someone had saved on top in between, offered "keep mine",
+	// which stored the already-committed edit a second time.
+	await signIn(page);
+	const project = await newProject(page);
+	const path = await newArticle(page, project, 'Reload mid-save');
+
+	// The first save reaches the server and commits; its answer is dropped, and the page reloads
+	// before the editor can retry.
+	let committed: () => void = () => {};
+	const done = new Promise<void>((resolve) => (committed = resolve));
+	await page.route('**/collections/articles/entries/*', async (route) => {
+		if (route.request().method() !== 'PUT') return route.continue();
+		const response = await route.fetch();
+		expect(response.status()).toBe(200);
+		await route.abort('connectionreset');
+		committed();
+	});
+	await typeInBody(page, 'Committed, answer lost.');
+	await done;
+	await page.unrouteAll({ behavior: 'ignoreErrors' });
+
+	// Meanwhile someone else saves on top of the committed edit.
+	const entry = path.split('/').at(-1) ?? '';
+	const saved = await page.evaluate(
+		async ([project, entry]) => {
+			const url = `/api/v1/projects/${project}/environments/production/collections/articles/entries/${entry}`;
+			const current = await fetch(url);
+			const draft = ((await current.json()) as { data: { content: { body: unknown } } }).data;
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const response = await fetch(url, {
+				method: 'PUT',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-CSRF-Token': csrf,
+					'If-Match': current.headers.get('etag') ?? '',
+					'Idempotency-Key': crypto.randomUUID()
+				},
+				body: JSON.stringify({ title: 'Changed by someone else', body: draft.content.body })
+			});
+			return response.status;
+		},
+		[project, entry]
+	);
+	expect(saved).toBe(200);
+
+	const answers: { key: string | undefined; replayed: string | undefined }[] = [];
+	page.on('response', (response) => {
+		if (response.request().method() === 'PUT') {
+			answers.push({ key: response.request().headers()['idempotency-key'], replayed: response.headers()['idempotent-replayed'] });
+		}
+	});
+	await page.goto(path);
+	await expect(status(page)).toHaveAttribute('data-status', 'saved');
+	await expect(page.getByTestId('conflict')).toHaveCount(0);
+	expect(answers[0]?.replayed, 'the reopened page resent the same request and got the recorded answer').toBe('true');
+	// The first revision, the committed edit once, and the other person's save: nothing twice.
+	await expect(page.getByTestId('history').locator('li')).toHaveCount(3);
+});

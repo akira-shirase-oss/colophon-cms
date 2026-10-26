@@ -343,6 +343,7 @@ dependencies = [
 name = "colophon-db"
 version = "0.0.0"
 dependencies = [
+ "colophon-sim",
  "sqlx",
  "thiserror",
  "time",
@@ -380,6 +381,10 @@ dependencies = [
  "url",
  "uuid",
 ]
+
+[[package]]
+name = "colophon-sim"
+version = "0.0.0"
 
 [[package]]
 name = "combine"

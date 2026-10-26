@@ -17,6 +17,9 @@ cargo clippy -p colophon-server --features fault-injection --all-targets --locke
 cargo test --workspace --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 scripts/check-architecture.sh
+scripts/check-architecture.sh colophon-sim
+# The simulator: 2,000 seeded runs of editors, lost answers and crashes (docs/modules/10-sim.md).
+cargo run --quiet --release --locked -p colophon-sim -- --seeds 2000
 
 if command -v cargo-deny >/dev/null || [[ -x "$HOME/.cargo/bin/cargo-deny" ]]; then
   PATH="$PATH:$HOME/.cargo/bin" cargo deny check

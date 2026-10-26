@@ -27,7 +27,9 @@
 > Step 1.2 is done: drafts that can't be lost. Revisions are never changed, a save on a stale revision is refused, and a
 > server killed just before or just after a save neither loses an acknowledged draft nor saves it twice. Step 1.3 is
 > done: the Studio edits real drafts, autosaves, keeps unsaved edits on the device, and when two people edit the same
-> article it shows both versions and lets the editor choose instead of overwriting anyone.
+> article it shows both versions and lets the editor choose instead of overwriting anyone. Step 1.4 is done: a
+> deterministic simulator runs thousands of seeded schedules of colliding editors, lost answers and crashes, catches
+> every planted bug, agrees with PostgreSQL save for save, and found a real double-save case in the Studio (fixed).
 > Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 

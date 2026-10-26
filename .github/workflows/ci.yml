@@ -43,6 +43,9 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - run: scripts/check-architecture.sh
+      - run: scripts/check-architecture.sh colophon-sim
+      - name: Simulator sweep (2,000 seeds; a failure prints the seed to replay)
+        run: cargo run --quiet --release --locked -p colophon-sim -- --seeds 2000
 
   frontend:
     name: frontend (types, editor unit tests, Studio in Chromium)

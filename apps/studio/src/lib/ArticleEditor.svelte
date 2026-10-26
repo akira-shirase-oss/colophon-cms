@@ -94,7 +94,7 @@
 
 	onMount(() => {
 		const local = kept(project, entry);
-		show(local === null ? initial.draft.content : saver.restore(local.article, local.base, initial.draft));
+		show(local === null ? initial.draft.content : saver.restore(local, initial.draft));
 		const onKey = (event: KeyboardEvent) => {
 			if ((event.metaKey || event.ctrlKey) && event.key === 's') {
 				event.preventDefault();

@@ -9,8 +9,10 @@ page, and the signed-in load scenario `perf/k6/session.js` (D-031 to D-033). Ste
 insert-only revisions in the built-in `articles` collection, saves with `If-Match`, idempotent writes, the crash tests
 F01 and F02, the testbed's Entries page and `perf/k6/entries.js` (D-034 to D-036). Step 1.3 is done: the server
 serves the Studio at `/studio`; the Studio edits real drafts with autosave, a device copy of unsaved edits, and a
-conflict screen (`apps/studio/tests/server/`, `scripts/studio.sh`, `perf/k6/studio.js`; D-037, D-038). Next is step
-1.4, the first simulator run. See `docs/ROADMAP.md`.
+conflict screen (`apps/studio/tests/server/`, `scripts/studio.sh`, `perf/k6/studio.js`; D-037, D-038). Step 1.4 is
+done: `crates/colophon-sim`, a deterministic simulator with mutation checks and a differential test against Postgres
+(D-039); replay a failing seed with `cargo run -p colophon-sim -- --seed N --trace`. Next is step 1.5, content types.
+See `docs/ROADMAP.md`.
 
 ## Read first
 

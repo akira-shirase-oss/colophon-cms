@@ -156,7 +156,12 @@ These mirror domain invariants D1–D11 ([domain](01-domain.md)) and worker inva
 
 ## Build order
 
-1. **P1:** scheduler, virtual clock, store model, editor actors, S1, S8, determinism test.
+1. **P1:** scheduler, store model, editor actors, S1, S8, determinism test (step 1.4, done: D-039). Built:
+   `crates/colophon-sim` (a `SplitMix64` seed, a single-threaded scheduler, the store model, editors that collide,
+   retry, crash and reopen like the Studio's saver), the checks S1 (no acknowledged save lost or stored twice), S8 and
+   K (no key reused for a different request), four mutations each caught on the first seed, and
+   `crates/colophon-db/tests/differential.rs`, which replays runs against Postgres and requires the same answers. The
+   virtual clock arrives with leases and schedules (P2), the first thing that needs time.
 2. **P2:** releases, outbox, workers, faulty adapters, S2–S4, S6, S7; first crash loop.
 3. **P3:** delivery, cache and evidence, S5, S9; the consistency checker; recorded demo.
 4. **P4:** operator restore with new epochs; deletion-ledger replay.
@@ -164,7 +169,5 @@ These mirror domain invariants D1–D11 ([domain](01-domain.md)) and worker inva
 
 ## Open decisions
 
-- **O-011:** a hand-written scheduler, or an existing deterministic-simulation crate (evaluate with the rust-mastery
-  chapter 15 checklist).
-- **O-005:** synchronous vs async domain ports. A synchronous, I/O-free core makes the simulator much simpler.
-- The seed budget per pull request, and the nightly size.
+- The nightly sweep's size, once there is a nightly job. Pull requests run 2,000 seeds × 400 steps (D-039).
+- O-011 (hand-written scheduler) is closed by D-039, and O-005 (synchronous ports) by D-028.

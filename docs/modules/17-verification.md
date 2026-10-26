@@ -80,7 +80,9 @@ don't contain the points (D-036). F04's database half (two concurrent saves on o
 loser's revision is never stored) is in `crates/colophon-db/tests/entries.rs`, and the testbed shows it in two browser
 tabs. **Since step 1.3** F04 also runs end to end in the Studio (`apps/studio/tests/server/`): two browsers, the
 later save opens the conflict screen, and neither choice loses an accepted edit; the browser also re-sends a save whose
-answer was dropped and gets the replayed result (F02 from the client's side).
+answer was dropped and gets the replayed result (F02 from the client's side). **Since step 1.4** the simulator
+(`crates/colophon-sim`) runs F01, F02 and F04 under thousands of seeded schedules with lost requests, lost answers and
+crashed clients, and `crates/colophon-db/tests/differential.rs` checks its model against Postgres.
 
 ### Load-test cases (spec §29)
 
