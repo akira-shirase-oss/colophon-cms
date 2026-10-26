@@ -115,6 +115,55 @@ async fn an_invitation_brings_someone_in_and_their_role_decides_what_they_may_do
         StatusCode::NOT_FOUND,
         "an invitation works once"
     );
+    let invitations = format!("/api/v1/projects/{project}/invitations");
+
+    // An owner can't use an invitation to their own project, and a revoked one is gone.
+    let spare = call(
+        &owner,
+        Method::POST,
+        &invitations,
+        Some(&json!({"role": "publisher", "label": "Spare"})),
+        &[],
+    )
+    .await
+    .expect("request");
+    let spare_token = spare.body["data"]["link"]
+        .as_str()
+        .and_then(|link| link.split_once('#'))
+        .map(|(_, token)| token.to_owned())
+        .expect("a token");
+    let mine = call(
+        &owner,
+        Method::POST,
+        "/api/v1/invitations/accept",
+        Some(&json!({"token": spare_token})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(mine.status, StatusCode::CONFLICT, "already a member");
+    let spare_id = spare.body["data"]["id"].as_str().expect("an id");
+    assert_eq!(
+        status(
+            &owner,
+            Method::DELETE,
+            &format!("{invitations}/{spare_id}"),
+            None
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    let revoked = call(
+        &guest,
+        Method::POST,
+        "/api/v1/invitations/lookup",
+        Some(&json!({"token": spare_token})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(revoked.status, StatusCode::NOT_FOUND, "revoked");
+
     let listed = call(&guest, Method::GET, &members(&project), None, &[])
         .await
         .expect("request");
@@ -147,7 +196,7 @@ async fn an_invitation_brings_someone_in_and_their_role_decides_what_they_may_do
         status(
             &guest,
             Method::POST,
-            &format!("/api/v1/projects/{project}/invitations"),
+            &invitations,
             Some(&json!({"role": "owner", "label": "me again"}))
         )
         .await,
