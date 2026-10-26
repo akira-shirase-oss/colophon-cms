@@ -127,25 +127,37 @@ jobs:
         run: |
           docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d colophon \
             -c "ALTER SYSTEM SET session_preload_libraries = 'auto_explain'" \
-            -c "ALTER SYSTEM SET auto_explain.log_min_duration = '250ms'" \
+            -c "ALTER SYSTEM SET auto_explain.log_min_duration = '40ms'" \
             -c "ALTER SYSTEM SET auto_explain.log_analyze = on" \
-            -c "ALTER SYSTEM SET auto_explain.sample_rate = 0.05" \
+            -c "ALTER SYSTEM SET auto_explain.sample_rate = 0.25" \
             -c "SELECT pg_reload_conf()"
       - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, who may create projects, changesets, public delivery, publishing with the worker, drafts, content types, the Studio)
+        # Endpoints that never touch the database run back to back (throughput): their p99 has
+        # threefold headroom even on the slowest runner seen, and health's requests a second say
+        # how fast this runner is. Database-backed endpoints run at a fixed rate (steady), about
+        # half what the slowest runner seen managed back to back, against the same p99 thresholds:
+        # back to back, 64 clients waiting on each answer make the average latency 64 divided by
+        # throughput (Little's law), so the p99 measured the runner, not the code. Step 2.4's runs
+        # showed it: changesets did 1,916 requests a second (p99 79 ms) on an EPYC 9V45 and 783
+        # (p99 276 ms) on an EPYC 7763, where health did 44,243 and 18,613; plain 2.3 code failed the
+        # same way. A fixed rate still fails on a slower query (p99) or lost capacity (k6 drops
+        # iterations it can't start on time; more than 0.01% fails the run).
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=200000 P99_MS=50 KEEP=0 scripts/load.sh health throughput
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=100000 P99_MS=50 KEEP=0 scripts/load.sh rich-text throughput
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh session throughput
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh cli throughput
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh members throughput
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh projects throughput
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh changesets throughput
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=50000 P99_MS=200 KEEP=0 scripts/load.sh delivery throughput
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=20000 P99_MS=500 KEEP=0 scripts/load.sh publishing throughput
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh entries throughput
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh content-types throughput
-          PATH="$RUNNER_TEMP/bin:$PATH" TOTAL=50000 P99_MS=50 KEEP=0 scripts/load.sh studio throughput
+          export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 DURATION=20s
+          TOTAL=200000 P99_MS=50 scripts/load.sh health throughput
+          TOTAL=100000 P99_MS=50 scripts/load.sh rich-text throughput
+          RATE=1000 P99_MS=200 scripts/load.sh session steady
+          RATE=1000 P99_MS=200 scripts/load.sh cli steady
+          RATE=1000 P99_MS=200 scripts/load.sh members steady
+          RATE=1000 P99_MS=200 scripts/load.sh projects steady
+          RATE=400 P99_MS=200 scripts/load.sh changesets steady
+          RATE=1500 P99_MS=200 scripts/load.sh delivery steady
+          # RATE counts publishes here, five requests each.
+          RATE=60 P99_MS=500 scripts/load.sh publishing steady
+          RATE=400 P99_MS=500 scripts/load.sh entries steady
+          RATE=400 P99_MS=500 scripts/load.sh content-types steady
+          TOTAL=50000 P99_MS=50 scripts/load.sh studio throughput
       - name: Service logs, and what the database was doing
         if: failure()
         run: |
@@ -155,7 +167,8 @@ jobs:
             -c "SELECT pid, usename, state, now() - xact_start AS open_for, left(query, 80) AS query FROM pg_stat_activity WHERE datname = 'colophon' ORDER BY xact_start NULLS LAST" \
             -c "SELECT relname, n_live_tup, n_dead_tup, last_autovacuum, last_autoanalyze FROM pg_stat_user_tables ORDER BY n_dead_tup DESC LIMIT 15" \
             || true
-          docker compose -f deploy/compose.yaml logs --no-color postgres | grep -A60 "Query Text" | head -400 || true
+          docker compose -f deploy/compose.yaml logs --no-color postgres | sed 's/^postgres-1  | //' \
+            | awk '/ plan:$/ { left = 75 } left > 0 { print; left-- }' | head -900 || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:

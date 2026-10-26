@@ -187,6 +187,14 @@ export async function me(): Promise<Me | null> {
 }
 
 /** Administrators only (D-043); the creator becomes the project's owner. */
+/**
+ * One project the signed-in person belongs to, with their role in it. Pages read the role from
+ * here, not from `me().projects`, which lists at most 1,000 projects.
+ */
+export async function getProject(project: string): Promise<Project> {
+	return ((await (await send('GET', `/api/v1/projects/${project}`)).json()) as { data: Project }).data;
+}
+
 export async function createProject(slug: string, name: string): Promise<Project> {
 	return ((await (await send('POST', '/api/v1/projects', { slug, name })).json()) as { data: Project }).data;
 }
