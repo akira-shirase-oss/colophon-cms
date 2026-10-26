@@ -12,18 +12,19 @@
 		ApiError,
 		createDestination,
 		deliveryUrl,
+		getProject,
 		type Job,
 		listDestinations,
 		listJobs,
 		listReleases,
-		me,
 		setDestinationEnabled
 	} from '#lib/api.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const queryClient = useQueryClient();
-	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
-	const role = $derived(who.data?.projects.find((mine) => mine.id === project)?.role);
+	// The role comes from the project itself: me().projects lists at most 1,000 projects.
+	const mine = createQuery(() => ({ queryKey: ['project', project], queryFn: () => getProject(project) }));
+	const role = $derived(mine.data?.role);
 	const manages = $derived(role === 'owner' || role === 'developer');
 	const releases = createQuery(() => ({ queryKey: ['releases', project], queryFn: () => listReleases(project) }));
 	// Deliveries settle on their own; look again every few seconds while any is still going.
