@@ -89,10 +89,42 @@ operation, and the cross-project and identity test families from spec §27 pass.
 | Agent service account | Explicit project/environment/collection/action scopes; draft-only by default, with expiry and quotas |
 | Public reader | Published public projections only; no access to drafts or private assets |
 
+Built in step 1.7 (D-042), for people:
+
+| Role | Read | Write content | Change content types | Manage members |
+|---|---|---|---|---|
+| Owner | yes | yes | yes | yes |
+| Developer | yes | yes | yes | no |
+| Editor | yes | yes | no | no |
+| Publisher | yes | yes | no | no |
+
+- Any member lists the members (`GET /api/v1/projects/{project}/members`) and may leave; owners change roles (`PUT`)
+  and remove people (`DELETE …/members/{identity}`).
+- A project never loses its last owner: `colophon_db::members` locks the owners `FOR UPDATE` before changing one, and
+  the deferred trigger `memberships_keep_an_owner` (migration 0005) refuses any commit that would leave none. The API
+  answers 409.
+- An owner's role is re-checked under that lock before a member change, and under a share lock on their own membership
+  before creating or revoking an invitation: an owner demoted while their request runs gets 403, not the old role's
+  rights. Content writes act on the role read when their transaction began.
+- The cost of that lock: changes to one project's members queue. In `perf/k6/members.js`, 100 role changes a second
+  on one project wait a median 34 ms (p99 81 ms), and invitations, which take a share lock on their owner's row, wait
+  behind them; at 10 role changes a second, they take 4.5 ms like any other request.
+- Publishers can't publish yet: publishing arrives in P2, and with it the difference between editor and publisher.
+
 ### Invitations (spec §04)
 - Single-use, expiring after a configurable period (default 72 hours).
 - Bound to the authenticated, verified identity that accepts them.
 - The invitee sees the project name, role and capabilities before accepting.
+- Built in step 1.7 (D-042):
+  - owners create (`POST …/invitations` with `{"role", "label"}`), list and revoke them;
+  - the answer that creates one is the only place its link, `/studio/invite#<token>`, appears. Only the token's
+    SHA-256 hash is stored, and the fragment never reaches a server;
+  - `POST /api/v1/invitations/lookup` shows the holder the project's name, the role and who invited them, and
+    `POST /api/v1/invitations/accept` joins. Both take the token in the body;
+  - an expired, revoked or used invitation is 404; someone already in the project gets 409, and the invitation stays
+    unused;
+  - the Studio's `/studio/invite` keeps the token in this tab's session storage across sign-in and takes it out of
+    the address bar.
 
 ### Machine credentials (P5)
 - Built early, for people (step 1.6, D-041): **personal access tokens for the CLI**, issued by a device sign-in that a
@@ -106,6 +138,9 @@ operation, and the cross-project and identity test families from spec §27 pass.
 
 ### The policy function
 - `authorize(principal, action, resource) -> Decision`, deny by default.
+- Its first form, built in step 1.7: `colophon_domain::policy::allows(role, action)` over `Read`, `WriteContent`,
+  `ChangeContentTypes` and `ManageMembers`. Every handler asks it (`members::require` in the API); an unknown stored
+  role denies everything. Principals other than people and resource-level checks arrive with machine credentials.
 - It checks object ownership, project, environment, action and field policy on **every** read and mutation.
 - Publish, export, schema change and secret administration need explicit permission.
 - Hidden resources answer like missing ones (consistent 404), so IDs can't be probed.
@@ -177,11 +212,26 @@ operation, and the cross-project and identity test families from spec §27 pass.
   - the server's configuration tests: the development client secret is refused off loopback;
   - `apps/testbed/tests/session.spec.ts`: two browsers; a project created by one is invisible to the other;
   - `perf/k6/session.js`: every request authenticated by cookie, at least 1,000,000 requests per full run.
+- **Since step 1.7 (D-042):**
+  - `crates/colophon-domain`: the policy table, every role against every action;
+  - `crates/colophon-db/tests/members.rs`: an invitation joins once and shows its project only to its holder;
+    revoked and expired invitations are dead; the last owner can be neither demoted nor removed; two owners demoting
+    each other at the same moment leave one owner; an owner demoted while their request runs can neither promote nor
+    remove anyone; another project's owner can neither see nor revoke these
+    invitations;
+  - `crates/colophon-server/tests/members.rs`, against the real binary with two people signed in through Keycloak:
+    invite, look up, accept once; an owner can't join their own project twice; revoked links are gone; an editor
+    writes content but can't change types, invite or promote themselves; a developer can change types; the last
+    owner can't step down until there's a second; leaving hides the project;
+  - `apps/studio/tests/server/members.spec.ts` and `apps/testbed/tests/members.spec.ts`: the same story in two real
+    browsers, with axe on every Studio page;
+  - `perf/k6/members.js`: member lists, invitation lookups, role changes and new invitations, at least 1,000,000
+    requests per full run.
 
 ## Build order
 
-1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin and cross-project denial for projects (step 1.1, done); bootstrap,
-   roles, invitations and the policy function.
+1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin and cross-project denial for projects (step 1.1, done); roles,
+   invitations and the policy function (step 1.7, done); the owner bootstrap (step 1.8).
 2. **P2:** approval permissions and self-review recording.
 3. **P4:** preview capabilities.
 4. **P5:** machine credentials, device-authorization login, quotas, kill switch.

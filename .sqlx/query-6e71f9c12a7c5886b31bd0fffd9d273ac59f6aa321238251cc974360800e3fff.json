@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM memberships WHERE project_id = $1 AND identity_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6e71f9c12a7c5886b31bd0fffd9d273ac59f6aa321238251cc974360800e3fff"
+}

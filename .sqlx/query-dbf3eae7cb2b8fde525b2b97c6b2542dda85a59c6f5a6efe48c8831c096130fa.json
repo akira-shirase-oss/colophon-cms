@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE memberships SET role = $3 WHERE project_id = $1 AND identity_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dbf3eae7cb2b8fde525b2b97c6b2542dda85a59c6f5a6efe48c8831c096130fa"
+}

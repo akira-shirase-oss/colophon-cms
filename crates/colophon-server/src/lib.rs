@@ -31,6 +31,13 @@ pub async fn run(
 ) -> anyhow::Result<ShutdownOutcome> {
     let readiness = Readiness::new(config.role.as_str(), config.cache_url.is_some());
 
+    // Bind before anything connects out: an outgoing connection opened first (the probes', the
+    // pool's) can be given this very port as its local one, and the bind then fails with
+    // "address in use" (seen once in CI). Once bound, the port isn't handed out that way.
+    let listener = TcpListener::bind(config.listen_addr)
+        .await
+        .with_context(|| format!("binding {}", config.listen_addr))?;
+
     let pool = colophon_db::connect_lazy(
         config.database_url.expose(),
         PoolSettings {
@@ -54,9 +61,6 @@ pub async fn run(
         supervisor.spawn(Dependency::Cache, probe, config.probe_interval);
     }
 
-    let listener = TcpListener::bind(config.listen_addr)
-        .await
-        .with_context(|| format!("binding {}", config.listen_addr))?;
     let local_addr = listener.local_addr().context("reading the bound address")?;
     tracing::info!(
         %local_addr,

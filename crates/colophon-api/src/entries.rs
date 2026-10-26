@@ -319,6 +319,11 @@ pub(crate) async fn create(
     let key = idempotency_key(&headers)?;
     let Json(value) = body?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    crate::members::require(
+        &tx.role,
+        colophon_domain::policy::Action::WriteContent,
+        "your role can't write content in this project",
+    )?;
     let (content_type, version) = content_type(&mut tx, &path.collection).await?;
     let (content, hash) = validate(&value, &content_type)?;
     let request = request_hash(&[CREATE, &path.collection, content.canonical_json()]);
@@ -351,6 +356,11 @@ pub(crate) async fn save(
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let Json(value) = body?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    crate::members::require(
+        &tx.role,
+        colophon_domain::policy::Action::WriteContent,
+        "your role can't write content in this project",
+    )?;
     let (content_type, version) = content_type(&mut tx, &path.collection).await?;
     let (content, hash) = validate(&value, &content_type)?;
     let request = request_hash(&[

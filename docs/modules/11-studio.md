@@ -48,8 +48,10 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   `/api` routed to Rust on the same origin.
 - As built (step 1.3, D-037): `colophon-server` serves a build from `COLOPHON_STUDIO_DIR` at `/studio`, with the
   app's `200.html` for client-side routes, year-long caching for hashed assets and revalidation for pages. Screens so
-  far: Projects (`/studio/`), Articles (`/studio/projects/{project}`), the editor
-  (`/studio/projects/{project}/articles/{entry}`), and the editor playground (`/studio/playground`).
+  far: Projects (`/studio/`), a project's content types (`/studio/projects/{project}`), a collection
+  (`…/{collection}`), the editor (`…/{collection}/{entry}`), Members (`…/members`), joining a project
+  (`/studio/invite`), approving a terminal (`/studio/device`), and the editor playground (`/studio/playground`).
+  Content-type slugs `members` and `settings` are reserved, so these pages can sit beside collections (D-042).
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 
@@ -144,6 +146,11 @@ Internal job terminology stays behind a technical detail drawer for developers.
   on reopening and replayed, with no conflict and no second copy (the case the simulator found, D-039).
 - Since step 1.6: `/studio/device` approves a terminal's sign-in (D-041); its test allows a device and uses the token it
   produces.
+- Since step 1.7 (D-042): `/studio/projects/{project}/members` lists members, and lets owners change roles, remove
+  people, and create and revoke invitation links (each shown once). `/studio/invite` reads the token from the link's
+  fragment, keeps it across sign-in, shows the project, role and inviter, and joins only on Join. Its test runs the
+  whole story in two browsers: invite, sign in from the link, join, an editor with nothing to manage, the last owner
+  refused, a revoked link, leaving; axe finds nothing on either page.
 - Automated accessibility checks on every screen.
 - Budgets for bundle size, startup on a mobile network profile, and input latency. These are recorded separately from
   backend numbers (spec §28).

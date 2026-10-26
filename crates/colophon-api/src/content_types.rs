@@ -8,7 +8,9 @@
 //!   required), allowed only if every stored entry stays valid; anything else is refused with
 //!   `needs_migration`.
 //!
-//! Any member may read them; only the project's owners and developers may change them.
+//! Any member may read them; only the project's owners and developers may change them. The
+//! slugs in [`RESERVED_SLUGS`] name Studio pages beside a project's collections, so no content
+//! type may take them (D-042).
 
 use axum::{
     Json,
@@ -31,6 +33,9 @@ use crate::{
     session::SignedIn,
     shape::{Data, Page},
 };
+
+/// Studio pages that sit beside a project's collections, at `/studio/projects/{project}/{slug}`.
+const RESERVED_SLUGS: [&str; 2] = ["members", "settings"];
 
 const CREATE: &str = "content_type.create";
 const UPDATE: &str = "content_type.update";
@@ -106,13 +111,11 @@ fn if_match(headers: &HeaderMap) -> Result<i32, ApiError> {
 }
 
 fn may_change(tx: &ProjectTransaction) -> Result<(), ApiError> {
-    if matches!(tx.role.as_str(), "owner" | "developer") {
-        Ok(())
-    } else {
-        Err(ApiError::Forbidden(
-            "only a project's owners and developers can change its content types",
-        ))
-    }
+    crate::members::require(
+        &tx.role,
+        colophon_domain::policy::Action::ChangeContentTypes,
+        "only a project's owners and developers can change its content types",
+    )
 }
 
 fn respond(status: StatusCode, body: String, version: i32, replayed: bool) -> Response {
@@ -223,6 +226,13 @@ pub(crate) async fn create(
         pointer: "/slug",
         message: error.to_string(),
     })?;
+    if RESERVED_SLUGS.contains(&slug.as_str()) {
+        return Err(ApiError::InvalidField {
+            reason: "reserved_slug",
+            pointer: "/slug",
+            message: format!("\"{slug}\" is the name of a Studio page; choose another slug"),
+        });
+    }
     let definition = ContentType::parse(&body.definition).map_err(|refusal| {
         ApiError::Invalid(colophon_domain::schema::Refusal {
             pointer: format!("/definition{}", refusal.pointer),

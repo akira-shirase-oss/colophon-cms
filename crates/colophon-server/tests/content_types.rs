@@ -85,6 +85,19 @@ async fn a_content_type_is_defined_and_its_entries_follow_it() {
         invalid.body["error"]["details"]["pointer"],
         "/definition/fields/0/type"
     );
+    let reserved = call(
+        &editor,
+        Method::POST,
+        &types(&project),
+        Some(&json!({"slug": "members", "definition": posts()})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        reserved.body["error"]["details"]["reason"], "reserved_slug",
+        "a Studio page's name"
+    );
 
     // Entries follow the type.
     let post = call(

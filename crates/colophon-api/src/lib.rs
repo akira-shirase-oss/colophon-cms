@@ -12,6 +12,7 @@ mod entries;
 pub mod error;
 mod fault;
 pub mod health;
+mod members;
 pub mod middleware;
 mod projects;
 mod rich_text;
@@ -55,6 +56,21 @@ pub fn routes(state: AppState) -> Router {
             get(projects::list).post(projects::create),
         )
         .route("/api/v1/projects/{project}", get(projects::get))
+        .route("/api/v1/projects/{project}/members", get(members::list))
+        .route(
+            "/api/v1/projects/{project}/members/{identity}",
+            axum::routing::put(members::change).delete(members::remove),
+        )
+        .route(
+            "/api/v1/projects/{project}/invitations",
+            get(members::invitations).post(members::invite),
+        )
+        .route(
+            "/api/v1/projects/{project}/invitations/{invitation}",
+            axum::routing::delete(members::revoke),
+        )
+        .route("/api/v1/invitations/lookup", post(members::lookup))
+        .route("/api/v1/invitations/accept", post(members::accept))
         .route(
             "/api/v1/projects/{project}/environments/{environment}/content-types",
             get(content_types::list).post(content_types::create),
