@@ -30,8 +30,8 @@ async fn enter(pool: &PgPool, identity: Uuid, project: Uuid) -> ProjectTransacti
         .expect("a member")
 }
 
-/// A project with `destinations` webhooks and one committed release; the project.
-async fn released(db: &TestDb, destination_count: usize) -> Uuid {
+/// A project with `destinations` webhooks and one committed release; alice and the project.
+async fn released_by(db: &TestDb, destination_count: usize) -> (Uuid, Uuid) {
     let alice = db.administrator("alice").await;
     let project = projects::create(&db.app, alice, "alpha", "Alpha")
         .await
@@ -47,6 +47,19 @@ async fn released(db: &TestDb, destination_count: usize) -> Uuid {
         .await
         .expect("destination");
     }
+    tx.commit().await.expect("commit");
+    release(db, alice, project, 0).await;
+    (alice, project)
+}
+
+/// A project with `destinations` webhooks and one committed release; the project.
+async fn released(db: &TestDb, destination_count: usize) -> Uuid {
+    released_by(db, destination_count).await.1
+}
+
+/// Commits one more release, of a new article, in `project` on `base`.
+async fn release(db: &TestDb, alice: Uuid, project: Uuid, base: i64) {
+    let mut tx = enter(&db.app, alice, project).await;
     let entry = Uuid::now_v7();
     entries::create(
         &mut tx,
@@ -78,11 +91,10 @@ async fn released(db: &TestDb, destination_count: usize) -> Uuid {
         .await
         .expect("reviews")[0]
         .id;
-    releases::commit(&mut tx, 0, changeset, &[2; 32], review, HOUR)
+    releases::commit(&mut tx, base, changeset, &[2; 32], review, HOUR)
         .await
         .expect("released");
     tx.commit().await.expect("commit");
-    project
 }
 
 fn succeeded() -> Finish<'static> {
@@ -222,5 +234,41 @@ async fn a_job_past_its_deadline_fails_and_the_worker_role_sees_no_drafts() {
             "{statement}: {error:?}"
         );
     }
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn one_announcement_is_in_flight_per_destination() {
+    let db = TestDb::new().await;
+    let (alice, project) = released_by(&db, 1).await;
+    let first = jobs::claim(&db.app, "worker-a", Duration::from_millis(400), 10)
+        .await
+        .expect("claim");
+    assert_eq!((first.len(), first[0].generation), (1, 1));
+
+    // Release 2 commits while release 1 is still being sent: its announcement waits.
+    release(&db, alice, project, 1).await;
+    assert!(
+        jobs::claim(&db.app, "worker-b", Duration::from_secs(30), 10)
+            .await
+            .expect("claim")
+            .is_empty(),
+        "the destination has an announcement in flight under a live lease"
+    );
+
+    // Once the lease runs out both are claimable; the older one is never sent after the newer.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let both = jobs::claim(&db.app, "worker-b", Duration::from_secs(30), 10)
+        .await
+        .expect("claim");
+    let older = both.iter().find(|job| job.generation == 1).expect("release 1 again");
+    let newer = both.iter().find(|job| job.generation == 2).expect("release 2");
+    assert_eq!(
+        jobs::prepare(&db.app, older).await.expect("prepare"),
+        None,
+        "superseded by release 2"
+    );
+    assert!(jobs::prepare(&db.app, newer).await.expect("prepare").is_some());
     db.drop().await;
 }

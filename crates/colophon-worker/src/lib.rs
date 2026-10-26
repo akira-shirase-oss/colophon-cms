@@ -33,6 +33,9 @@ pub struct Settings {
     pub poll: Duration,
     /// How long a claim lasts; longer than an attempt.
     pub lease: Duration,
+    /// Each attempt's deadline (`colophon_domain::job::ATTEMPT_DEADLINE_SECS` by default);
+    /// shorter than the lease.
+    pub attempt: Duration,
     /// The most attempts in flight at once.
     pub slots: usize,
     /// Whether destinations may be private addresses (a development server on loopback only).
@@ -81,7 +84,7 @@ impl Worker {
     /// A worker over `pool`.
     pub fn new(pool: PgPool, settings: Settings) -> Result<Self, BuildError> {
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(job::ATTEMPT_DEADLINE_SECS))
+            .timeout(settings.attempt)
             .connect_timeout(Duration::from_secs(5))
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("colophon/", env!("CARGO_PKG_VERSION")))
@@ -158,8 +161,9 @@ impl Worker {
                     },
                 };
                 let worker = Arc::clone(&self);
+                let claimed_at = std::time::Instant::now();
                 tracker.spawn(async move {
-                    worker.attempt(job).await;
+                    worker.attempt(job, claimed_at).await;
                     drop(held);
                 });
             }
@@ -170,7 +174,7 @@ impl Worker {
     }
 
     /// One attempt at one job, from the supersession check to the record of its outcome.
-    async fn attempt(&self, job: Claimed) {
+    async fn attempt(&self, job: Claimed, claimed_at: std::time::Instant) {
         let announcement = match jobs::prepare(&self.pool, &job).await {
             Ok(Some(announcement)) => announcement,
             Ok(None) => {
@@ -189,6 +193,12 @@ impl Worker {
                 return;
             }
         };
+        // Never send so late that the lease could run out with the request still on its way: the
+        // next holder must not race this one (D-047). The job is claimed again once it does.
+        if claimed_at.elapsed() + self.settings.attempt >= self.settings.lease {
+            tracing::warn!(job = %job.id, "gave up before sending: too close to the lease's end");
+            return;
+        }
         let outcome = self.post(&job, &announcement).await;
         fault::point("worker:after-dispatch");
         let attempts = u32::try_from(job.attempts).unwrap_or(u32::MAX);

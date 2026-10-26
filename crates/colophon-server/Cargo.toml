@@ -28,6 +28,8 @@ tracing-subscriber.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+# The crash loop checks publication history with the domain's own rule (tests/crash_loop.rs).
+colophon-domain.workspace = true
 # Cookies only for the Keycloak side of the sign-in test; Colophon's cookies are checked by hand.
 reqwest = { workspace = true, features = ["cookies"] }
 uuid.workspace = true
