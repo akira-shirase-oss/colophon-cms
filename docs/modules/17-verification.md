@@ -249,7 +249,7 @@ without an artifact.
 ## Build order
 
 1. **P0:** CI pull-request tier.
-2. **P1–P2:** F01–F05.
+2. **P1–P2:** F01–F05; the first real-process crash loop (`tests/crash_loop.rs`, step 2.4).
 3. **P3:** F06–F08, L01–L04.
 4. **P4:** L14, X07, X13 (preview).
 5. **P5:** F11, L08, X12.
