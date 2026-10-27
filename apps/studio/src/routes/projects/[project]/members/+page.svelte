@@ -9,9 +9,11 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import UserPlusIcon from '@lucide/svelte/icons/user-plus';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
 	import * as Table from '@colophon/ui/ui/table';
+	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import FormRow from '#lib/shell/FormRow.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -157,7 +159,7 @@
 						<Table.Cell class="pl-4">
 							<span class="flex items-center gap-3">
 								<span class="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium" aria-hidden="true">{initials(name)}</span>
-								<span class="font-medium">{name}{#if self}<span class="font-normal text-muted-foreground"> (you)</span>{/if}</span>
+								<span class="font-medium">{name}{#if self}&nbsp;<span class="font-normal text-muted-foreground">(you)</span>{/if}</span>
 							</span>
 						</Table.Cell>
 						<Table.Cell>
@@ -189,8 +191,24 @@
 	</div>
 {/if}
 
+{#if people.data && people.data.length === 1 && (pending.data ?? []).length === 0}
+	<div class="mt-6">
+		<EmptyState icon={UserPlusIcon} title="It's just you so far" testid="members-alone">
+			{#if manages}
+				Invite the people you write with. Each gets a link that works once, with the role you choose: Editor to write, Publisher to approve and
+				publish.
+			{:else}
+				Someone who manages members can invite more people.
+			{/if}
+			{#snippet action()}
+				{#if manages}<Button variant="outline" onclick={() => document.getElementById('invite-label')?.focus()}>Invite someone</Button>{/if}
+			{/snippet}
+		</EmptyState>
+	</div>
+{/if}
+
 {#if manages}
-	<section class="mt-12 max-w-4xl" aria-labelledby="invite-heading">
+	<section class="mt-12 max-w-4xl scroll-mt-20" aria-labelledby="invite-heading" id="invite">
 		<h2 id="invite-heading" class="mb-1 text-base font-semibold">Invite someone</h2>
 		<p class="mb-4 text-sm text-muted-foreground">The link is shown once, works once, and expires on its own.</p>
 		<form onsubmit={invite} aria-label="Invite someone">
@@ -238,7 +256,7 @@
 						>
 					</li>
 				{:else}
-					<li class="px-4 py-6 text-center text-sm text-muted-foreground">None.</li>
+					<li class="px-4 py-6 text-center text-sm text-muted-foreground">None. Links you make appear here until they're used, revoked or expire.</li>
 				{/each}
 			</ul>
 		{/if}

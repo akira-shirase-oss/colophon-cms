@@ -13,14 +13,16 @@ import { expect, test } from '@playwright/test';
 import { newProject, signIn, violations } from './helpers.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
-const SITE = 'http://127.0.0.1:58094';
+// COLOPHON_STUDIO_SITE_PORT moves it, like the server's port, so two checkouts can run at once.
+const SITE_LISTEN = `127.0.0.1:${process.env['COLOPHON_STUDIO_SITE_PORT'] ?? '58094'}`;
+const SITE = `http://${SITE_LISTEN}`;
 
 /** Starts the site runner for `project`; stop it and remove its folder with the returned function. */
 function runner(project: string, api: string): () => void {
 	const root = mkdtempSync(join(tmpdir(), 'colophon-site-'));
 	const child: ChildProcess = spawn(process.execPath, [join(repo, 'apps/web/src/runner.ts')], {
 		cwd: repo,
-		env: { ...process.env, SITE_API: api, SITE_PROJECT: project, SITE_ROOT: root, SITE_LISTEN: '127.0.0.1:58094' },
+		env: { ...process.env, SITE_API: api, SITE_PROJECT: project, SITE_ROOT: root, SITE_LISTEN },
 		stdio: 'ignore'
 	});
 	return () => {
@@ -42,14 +44,14 @@ test('an article published in the Studio is live on the site, verified, and acce
 
 		// The site hears about releases, and a probe checks the live home page.
 		await page.goto(`/studio/projects/${project}/settings`);
-		await page.getByLabel('Destination name').fill('Site build');
+		await page.getByLabel('Connection name').fill('Site build');
 		await page.getByLabel('Webhook URL (https)').fill(`${SITE}/hook`);
-		await page.getByRole('button', { name: 'Add destination' }).click();
+		await page.getByRole('button', { name: 'Add website connection' }).click();
 		await expect(page.getByTestId('destinations')).toContainText('Site build');
 		await page.getByLabel('Kind').selectOption('probe');
-		await page.getByLabel('Destination name').fill('Live site');
+		await page.getByLabel('Connection name').fill('Live site');
 		await page.getByLabel('URL to check (https)').fill(`${SITE}/`);
-		await page.getByRole('button', { name: 'Add destination' }).click();
+		await page.getByRole('button', { name: 'Add website connection' }).click();
 		await expect(page.getByTestId('destinations')).toContainText('Live site');
 
 		// An approved changeset of one article, made through the API; published in the Studio.

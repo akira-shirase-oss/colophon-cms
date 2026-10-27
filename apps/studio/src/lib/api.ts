@@ -15,6 +15,9 @@ export interface Project {
 	role_name: string;
 	/** What that role allows; only when one project is read (D-058). */
 	permissions?: Grant[];
+	/** Whether whoever sends a publish request may approve it themselves (D-044), so one click
+	 *  can publish (D-059); only when one project is read. */
+	self_review?: boolean;
 }
 
 /** Something a member may try to do (D-058). */
@@ -56,6 +59,9 @@ export interface Me {
 	display_name: string | null;
 	/** Whether they may create projects (D-043). */
 	administrator: boolean;
+	/** The installation as a whole: until it has an administrator, the setup code the server
+	 *  printed when it started makes the first one (D-060). */
+	installation: { has_administrator: boolean };
 	projects: Project[];
 }
 
@@ -200,6 +206,12 @@ export function signInUrl(returnTo: string): string {
 	return `/auth/login?return_to=${encodeURIComponent(returnTo)}`;
 }
 
+/** Where "Create an account" goes: the identity provider's own sign-up form, then back here
+ *  signed in. An account grants nothing by itself (D-043). */
+export function signUpUrl(returnTo: string): string {
+	return `/auth/login?start=create&return_to=${encodeURIComponent(returnTo)}`;
+}
+
 /** Every request gives up after this long and counts as "no answer": a save is then retried with
  *  the same key, so nothing waits forever (invariant ST4). */
 export const REQUEST_TIMEOUT_MS = 15_000;
@@ -273,6 +285,13 @@ export async function me(): Promise<Me | null> {
  */
 export async function getProject(project: string): Promise<Project> {
 	return ((await (await send('GET', `/api/v1/projects/${project}`)).json()) as { data: Project }).data;
+}
+
+/** Makes the caller the installation's first administrator with the setup code its server printed
+ *  (D-060). Refused with reason `setup_code_invalid`, `already_set_up`, or status 429 (too many
+ *  attempts; the message says how long to wait). The code goes in the body, never a URL. */
+export async function claimSetup(code: string): Promise<void> {
+	await send('POST', '/api/v1/setup', { code });
 }
 
 /** Administrators only (D-043); the creator becomes the project's owner. */

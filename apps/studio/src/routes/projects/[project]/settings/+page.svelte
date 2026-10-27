@@ -1,11 +1,13 @@
 <!--
-  A project's settings: what it is and where its content can be read, its content types, its
-  roles (D-058), and, for people whose role manages them, the destinations every release is
-  announced to (D-046, D-050, D-051): webhooks that rebuild sites, CDNs to purge, and probes that
-  check what readers actually get. Each section asks the role for its own permission.
+  A project's settings, the developer area (D-059, rule 5): what it is and where its content can
+  be read, its content types, its roles (D-058), and, for people whose role manages them, its
+  website connections (destinations, D-046, D-050, D-051): a site rebuild (webhook), a CDN clear
+  (purge), and a site check (probe) that confirms what readers actually get. Each section asks the
+  role for its own permission.
 -->
 <script lang="ts">
 	import CopyIcon from '@lucide/svelte/icons/copy';
+	import GlobeIcon from '@lucide/svelte/icons/globe';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -27,9 +29,11 @@
 	} from '#lib/api.ts';
 	import { slugify } from '#lib/content.ts';
 	import { destinationsQuery, projectQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
+	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import FormRow from '#lib/shell/FormRow.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
+	import { CONNECTION_KIND } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const queryClient = useQueryClient();
@@ -151,7 +155,6 @@
 		}
 	}
 
-	const KIND = { webhook: 'Webhook', cdn: 'CDN', probe: 'Probe' } as const;
 	const ACTION = { webhook: 'Announce releases', cdn: 'Purge on release', probe: 'Check each release' } as const;
 	const select =
 		'h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40';
@@ -171,7 +174,7 @@
 		<FormRow label="Name">
 			<p class="text-sm">{mine.data.name}</p>
 		</FormRow>
-		<FormRow label="Slug" hint="Used in the CLI.">
+		<FormRow label="URL name" hint="Used in addresses and the command line.">
 			<p class="text-sm">{mine.data.slug}</p>
 		</FormRow>
 		<FormRow label="Project id">
@@ -293,25 +296,25 @@
 		{/if}
 	</section>
 
-	<section class="mt-12 max-w-4xl" aria-label="Destinations">
-		<h2 class="mb-1 text-base font-semibold">Destinations</h2>
+	<section class="mt-12 max-w-4xl scroll-mt-20" aria-label="Website connections" id="website-connections">
+		<h2 class="mb-1 text-base font-semibold">Website connections</h2>
 		<p class="mb-4 text-sm text-muted-foreground">
-			Every release is announced to each enabled webhook, once, with a key it can use to drop repeats. Each enabled CDN is asked to purge what
-			the release changed, and each probe checks that the website really shows it.
+			What happens to your website after each release. A site rebuild tells your site a release is out (a webhook, sent once, with a key it can use to
+			drop repeats); a CDN clear asks your CDN to drop the copies the release changed; a site check reads the live site to confirm readers see it.
 		</p>
 		{#if !managesDestinations}
 			<p class="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="destinations-hidden">
-				Your role doesn't manage destinations, so they stay hidden: their addresses may carry secrets.
+				Your role doesn't manage website connections, so they stay hidden: their addresses may carry secrets.
 			</p>
 		{:else}
 			{#if destinations.data}
-				<ul class="mb-8 overflow-hidden rounded-xl border border-border bg-card" data-testid="destinations">
+				<ul class="mb-8 overflow-hidden rounded-xl border border-border bg-card" class:hidden={destinations.data.length === 0} data-testid="destinations">
 					{#each destinations.data as destination (destination.id)}
 						<li class="rule-dotted flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 last:border-b-0">
 							<span class="min-w-0 flex-1">
 								<span class="flex items-center gap-2">
 									<strong class="font-medium">{destination.name}</strong>
-									<Badge variant="secondary">{KIND[destination.kind]}{destination.location ? ` at ${destination.location}` : ''}</Badge>
+									<Badge variant="secondary">{CONNECTION_KIND[destination.kind].name}{destination.location ? ` at ${destination.location}` : ''}</Badge>
 								</span>
 								<code class="block truncate font-mono text-xs text-muted-foreground">{destination.url}</code>
 							</span>
@@ -325,18 +328,27 @@
 								{ACTION[destination.kind]}
 							</label>
 						</li>
-					{:else}
-						<li class="px-4 py-6 text-center text-sm text-muted-foreground">None yet.</li>
 					{/each}
 				</ul>
+				{#if destinations.data.length === 0}
+					<div class="mb-8">
+						<EmptyState icon={GlobeIcon} title="No website connections yet" testid="connections-empty">
+							Connect your website so each release rebuilds it, clears its CDN, or is checked on the live site. Until then, releases are published in
+							Colophon and your site reads them whenever it asks.
+							{#snippet action()}
+								<Button variant="outline" onclick={() => document.getElementById('destination-name')?.focus()}>Add a website connection</Button>
+							{/snippet}
+						</EmptyState>
+					</div>
+				{/if}
 			{/if}
 			<form onsubmit={add} aria-label="New destination">
-				<h3 class="mb-4 text-sm font-semibold">Add a destination</h3>
-				<FormRow label="Kind" for="destination-kind">
+				<h3 class="mb-4 text-sm font-semibold">Add a website connection</h3>
+				<FormRow label="Kind" hint={CONNECTION_KIND[kind].detail} for="destination-kind">
 					<select id="destination-kind" class="{select} max-w-md" bind:value={kind}>
-						<option value="webhook">Webhook: hears about each release</option>
-						<option value="cdn">CDN: purges what each release changed</option>
-						<option value="probe">Probe: checks the site shows each release</option>
+						<option value="webhook">{CONNECTION_KIND.webhook.name} (webhook)</option>
+						<option value="cdn">{CONNECTION_KIND.cdn.name} (purge)</option>
+						<option value="probe">{CONNECTION_KIND.probe.name} (probe)</option>
 					</select>
 				</FormRow>
 				{#if kind === 'probe'}
@@ -344,7 +356,7 @@
 						<Input id="destination-location" class="max-w-md" bind:value={location} maxlength={63} />
 					</FormRow>
 				{/if}
-				<FormRow label="Destination name" for="destination-name">
+				<FormRow label="Connection name" for="destination-name">
 					<Input id="destination-name" class="max-w-md" bind:value={name} required maxlength={100} />
 				</FormRow>
 				<FormRow
@@ -355,7 +367,7 @@
 					<Input id="destination-url" class="max-w-md font-mono" bind:value={url} required type="url" />
 				</FormRow>
 				{#if error}<p role="alert" class="mb-4 text-sm text-destructive">{error}</p>{/if}
-				<div class="flex justify-end"><Button type="submit" disabled={busy}>Add destination</Button></div>
+				<div class="flex justify-end"><Button type="submit" disabled={busy}>Add website connection</Button></div>
 			</form>
 		{/if}
 	</section>

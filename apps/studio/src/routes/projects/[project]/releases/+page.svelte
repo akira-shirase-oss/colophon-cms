@@ -1,6 +1,7 @@
 <!--
   A project's releases (D-045, D-046): each one numbered, what it published, who published it, its
-  label, and how its announcement to each destination went. Destinations are set up in Settings.
+  label, and how each website connection (destination) heard about it. Connections are set up in
+  Settings; addresses for developers are in the Technical details.
 -->
 <script lang="ts">
 	import ArrowUpRightIcon from '@lucide/svelte/icons/arrow-up-right';
@@ -8,15 +9,19 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery } from '@tanstack/svelte-query';
+	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { deliveryUrl, type Job, listJobs, listReleases, type Release } from '#lib/api.ts';
-	import { ago } from '#lib/queries.ts';
+	import { ago, typesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import ReleaseLabel from '#lib/shell/ReleaseLabel.svelte';
+	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
 
 	const project = $derived(page.params.project ?? '');
+	const types = createQuery(() => typesQuery(project));
+	const firstType = $derived(types.data?.find((type) => type.slug !== 'articles') ?? types.data?.[0]);
 	// A CDN purge and a probe settle on their own: look again while one is pending.
 	const releases = createQuery(() => ({
 		queryKey: ['releases', project],
@@ -66,7 +71,8 @@
 
 <PageHeader title="Releases">
 	{#snippet description()}
-		Every publish is a numbered release. Its label says what is proven: in the CMS, on its way to the website, or verified where a probe looked.
+		Every publish is a numbered release. Its label says what is proven: published in Colophon, on its way to your website, or checked on the live
+		site.
 	{/snippet}
 </PageHeader>
 
@@ -80,15 +86,17 @@
 			Nothing is published yet.
 		{:else}
 			<span>Live: release {releases.data.generation}.</span>
-			<span class="text-muted-foreground">Anyone can read it at</span>
-			<a class="inline-flex items-center gap-1 font-mono text-xs underline underline-offset-2" href={deliveryUrl(project, 'articles')} data-testid="delivery-link" data-sveltekit-reload
-				>{deliveryUrl(project, 'articles')}<ArrowUpRightIcon class="size-3" aria-hidden="true" /></a
-			>
+			<span class="text-muted-foreground">Your website reads it from Colophon's public address, with no sign-in.</span>
 		{/if}
 	</p>
 
 	{#if releases.data.releases.length === 0}
-		<EmptyState icon={PackageCheckIcon} title="No releases yet">Publish an approved changeset to make release No. 1.</EmptyState>
+		<EmptyState icon={PackageCheckIcon} title="Nothing is live yet" testid="releases-empty">
+			Each time something is published it becomes a numbered release, with a receipt of what reached your website. Publish an entry to make release 1.
+			{#snippet action()}
+				{#if firstType}<Button href={resolve('/projects/[project]/[collection]', { project, collection: firstType.slug })}>Go to {firstType.definition.name}</Button>{/if}
+			{/snippet}
+		</EmptyState>
 	{:else}
 		<ol class="stagger space-y-3" reversed data-testid="releases">
 			{#each releases.data.releases as release, index (release.generation)}
@@ -130,4 +138,14 @@
 			{/each}
 		</ol>
 	{/if}
+	<TechnicalDetails class="mt-8">
+		<p>Releases are generations: each publish takes the next one, and a reader's request can pin one with <span class="font-mono">?generation=n</span>.</p>
+		{#each types.data ?? [] as type (type.slug)}
+			<p>
+				<a class="inline-flex items-center gap-1 font-mono underline underline-offset-2" href={deliveryUrl(project, type.slug)} data-testid="delivery-link" data-sveltekit-reload
+					>{deliveryUrl(project, type.slug)}<ArrowUpRightIcon class="size-3" aria-hidden="true" /></a
+				>
+			</p>
+		{/each}
+	</TechnicalDetails>
 {/if}

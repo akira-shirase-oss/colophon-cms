@@ -5,7 +5,7 @@
 <script lang="ts">
 	import type { FieldChange } from './diff.ts';
 
-	let { changes, before = 'Live', after = 'Pinned' }: { changes: FieldChange[]; before?: string; after?: string } = $props();
+	let { changes, before = 'Live', after = 'This request' }: { changes: FieldChange[]; before?: string; after?: string } = $props();
 
 	const changed = $derived(changes.filter((change) => change.changed));
 	const same = $derived(changes.length - changed.length);
