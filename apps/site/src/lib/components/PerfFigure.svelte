@@ -1,6 +1,7 @@
 <!-- One load result, with what it measured, where, when and on which commit, and a link to its file. -->
 <script lang="ts">
 	import ArrowUpRightIcon from '@lucide/svelte/icons/arrow-up-right';
+	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { GITHUB_COMMIT } from '#lib/site.ts';
 	import type { Figure } from '#lib/server/perf.ts';
@@ -40,7 +41,12 @@
 			<dd class="figure mt-1">{number.format(result.failed)}</dd>
 		</div>
 	</dl>
-	<p class="mt-4 text-sm leading-relaxed text-muted-foreground">{figure.measured}</p>
+	<details class="group mt-4 text-sm">
+		<summary class="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-4 focus-visible:ring-ring/25 [&::-webkit-details-marker]:hidden">
+			<ChevronRightIcon class="size-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />What this run measured
+		</summary>
+		<p class="mt-2 leading-relaxed text-muted-foreground">{figure.measured}</p>
+	</details>
 	<p class="mt-auto pt-4 text-xs text-muted-foreground">
 		{result.date.slice(0, 10)} · commit <a class="font-mono underline underline-offset-2 hover:text-foreground" href={GITHUB_COMMIT(result.commit)}>{result.commit}</a> ·
 		<span class="font-mono">{result.machine.id}</span> ·
