@@ -101,7 +101,7 @@ invariant. Production adapters and the simulator both run this code unchanged.
 
 ### Slugs and locales
 - Slugs are unique per project + environment + collection (+ locale, once locales exist), among drafts and among
-  open publications; the database enforces both (D-054, migration 0015). The server refuses a slug that isn't one;
+  open publications; the database enforces both (D-054, migration 0016). The server refuses a slug that isn't one;
   the Studio normalizes as the editor types.
 - One logical entry groups its locale variants. Each variant has its own slug, draft and publication history.
 - Locale fallback is an explicit project policy, none by default. A fallback resolves only to published revisions and

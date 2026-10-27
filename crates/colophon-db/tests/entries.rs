@@ -115,7 +115,31 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
         .expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].revision.title, "Second");
+    // Search reads the entry's copy of its draft's title (migration 0015), which moved with it.
+    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"))
+        .await
+        .expect("search");
+    assert_eq!(found.len(), 1);
+    assert!(
+        entries::list(&mut tx, ARTICLES, None, 20, Some("First"))
+            .await
+            .expect("search")
+            .is_empty(),
+        "an older version's title doesn't match"
+    );
     drop(tx); // closing the pool waits for every connection to come back
+    let owner = db.owner().await;
+    let (mismatched,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM entries e
+         JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id
+                         AND r.id = e.draft_revision_id
+         WHERE e.draft_title <> r.title",
+    )
+    .fetch_one(&owner)
+    .await
+    .expect("count");
+    assert_eq!(mismatched, 0, "draft_title always copies the draft's title");
+    owner.close().await;
     db.drop().await;
 }
 

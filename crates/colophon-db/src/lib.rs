@@ -82,7 +82,7 @@ pub enum DbError {
     #[error("already exists")]
     Conflict,
     /// An entry's slug is another entry's draft or published slug in the same collection
-    /// (migration 0015, D-054).
+    /// (migration 0016, D-054).
     #[error("the slug is taken")]
     SlugTaken,
     /// Applying migrations failed.
