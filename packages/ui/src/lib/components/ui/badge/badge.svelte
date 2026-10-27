@@ -1,6 +1,8 @@
 <script lang="ts" module>
 	import { type VariantProps, tv } from "tailwind-variants";
 
+	// Pills. The four states (live, pending, attention, draft) always pair their colour with a
+	// word, and usually a dot or an icon: colour is never the only signal.
 	export const badgeVariants = tv({
 		base: "group/badge inline-flex w-fit shrink-0 items-center justify-center gap-1.5 overflow-hidden whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors focus-visible:ring-4 focus-visible:ring-ring/25 aria-invalid:border-destructive [&>svg]:pointer-events-none [&>svg]:size-3",
 		variants: {

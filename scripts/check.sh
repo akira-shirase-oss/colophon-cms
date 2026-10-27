@@ -48,6 +48,24 @@ if [[ "${QUICK:-0}" == "1" ]]; then
   echo "note: QUICK=1, skipping the integration checks that CI runs" >&2
 elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; then
   scripts/stack.sh check
+  # A fresh database for everything below, as CI has. Every run adds projects and revisions, and a
+  # database that keeps them grows until saves slow down (5 GB on 2026-10-27: entries p99 52 ms
+  # fresh, 184 ms there) and pickers that list 1,000 projects lose the ones a test just made.
+  # COLOPHON_TEST_DATABASE names another database instead, created if it is missing.
+  psql_admin() {
+    docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -d postgres -XAtqc "$1"
+  }
+  if [[ -z "${COLOPHON_TEST_DATABASE:-}" ]]; then
+    export COLOPHON_TEST_DATABASE=colophon_check
+    psql_admin "DROP DATABASE IF EXISTS colophon_check WITH (FORCE)" >/dev/null
+  elif [[ ! "$COLOPHON_TEST_DATABASE" =~ ^[a-z][a-z0-9_]{0,62}$ ]]; then
+    echo "error: COLOPHON_TEST_DATABASE must be a plain database name" >&2
+    exit 2
+  fi
+  if [[ -z "$(psql_admin "SELECT 1 FROM pg_database WHERE datname = '$COLOPHON_TEST_DATABASE'")" ]]; then
+    psql_admin "CREATE DATABASE $COLOPHON_TEST_DATABASE" >/dev/null
+  fi
+  scripts/migrate.sh
   # These stop and restart stack services, so one at a time.
   cargo test --workspace --locked -- --ignored --test-threads=1
   # F01, F02 and F03: the server killed before and after a commit, the worker after announcing (needs the fault points).
