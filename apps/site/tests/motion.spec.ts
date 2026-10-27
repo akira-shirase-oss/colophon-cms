@@ -90,6 +90,8 @@ test.describe('with motion', () => {
 			await page.emulateMedia({ colorScheme: scheme });
 			await page.goto('/');
 			await page.locator('[data-story]').scrollIntoViewIfNeeded();
+			// The prerendered page starts on the story's final frame, so wait for it to start, then to end.
+			await expect(page.locator('[data-story]')).toHaveAttribute('data-started');
 			await expect(page.locator('[data-story]')).toHaveAttribute('data-phase', 'final', { timeout: 10_000 });
 			await scrollThrough(page);
 			await page.waitForTimeout(1500);

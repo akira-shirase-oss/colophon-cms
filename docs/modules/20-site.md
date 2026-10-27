@@ -8,7 +8,7 @@
 |---|---|
 | Milestones | P3 (first version, alongside the docs skeleton); kept current at every step |
 | Proposed owner | Claude builds; the maintainer owns the words and the taste |
-| Depends on | [ui](14-ui.md) (tokens and components, as they are), SvelteKit with the static adapter, markdown-it and smol-toml at build time only; reads `CHANGELOG.md`, `perf/results/*.json` and the build log's posts |
+| Depends on | [ui](14-ui.md) (components, with the site's own token values over them), SvelteKit with the static adapter, Inter and Fragment Mono from `@fontsource` (self-hosted), markdown-it and smol-toml at build time only; reads `CHANGELOG.md`, `perf/results/*.json`, `src/lib/data/roadmap.ts` and the build log's posts |
 | Used by | people deciding whether to look closer: editors, developers, contributors, portfolio readers |
 | Spec | §18 (no uncited claims), §35 (open-source hygiene) |
 
@@ -25,7 +25,8 @@ another origin, and content that can't drift from its sources because it is read
 
 ## Responsibilities
 
-- Pages: home, product, compare, roadmap, changelog, blog (index and one page per post), open source, 404.
+- Pages: home, product, compare, roadmap, changelog, blog (index and one page per post), open source, 404, all on one
+  layout measured from a reference (see *Look*).
 - The changelog page, from `CHANGELOG.md` at the repository root.
 - The blog, from the build log's posts copied unchanged into `apps/site/src/content/blog`.
 - Load figures, from `perf/results/*.json`.
@@ -50,27 +51,78 @@ another origin, and content that can't drift from its sources because it is read
 
 ### Look
 
-The design system as it is (D-056): warm paper, white cards on `shadow-soft` and `shadow-float`, black pill primary
-buttons, outline pills, the burnt-orange accent only as `.glow`, `.haze` and `text-brand-ink`, the display classes and
-the state badges (green done, amber building, grey planned, always with a word). One site-local size, `.display-hero`,
-is the display cut one step larger. Product pictures are HTML compositions of the Studio's real states and words (a
-receipt *Verified at 1 location*, the autosaving editor, an approved publish request, a roles matrix marked
-*Planned · R*), labelled as illustrations. Layouts take their patterns from SaaS site templates (a hero over a product
-visual, a bento of promises, a numbered how-it-works row, figure cards, comparison tables, a changelog timeline, a
-milestone-grouped post index, a sitemap footer), not their text or images.
+On 2026-10-27 the maintainer asked for the site to be rebuilt on a reference layout, "pixel to pixel": the Dreelio
+template's home, blog index and post pages (a commercial Framer template, dreelio.framer.website). Its layout,
+measurements and motion are reproduced in the site's own code; none of its text, images, mockups, icons, logo,
+people or font files are used. The Studio keeps D-056's look; this one is the site's alone.
+
+**Where the numbers came from.** Playwright loaded the reference at 1,440, 1,200, 810 and 390px, scrolled it so its
+entrances ran, and read the computed styles and boxes of every text and surface, the inline transforms of its
+animations frame by frame, and its hover states. The condensed result (breakpoints, measure, type scale, colours,
+radii, shadows, bar, buttons, each section's geometry, the motion curves) is the spec the code follows, and a script
+measures the same elements on both pages at all four widths. At 1,440 the headline (76px, top at 160), the hero
+(1,020px), the showcase (1,072 by 700), the feature rows (588 by 695 pictures, 202 by 48 tags), the bento (524 by 559
+and 341 by 304 cells), the quote (64/92.8px), the pricing cards (498, and 578 against 581) and the footer card (1,072
+by 399 against 395) match to within a few pixels, and the hero window's transformed box to within one. What differs
+is content: Colophon's words wrap differently, and there are three community cards and three footer columns.
+
+**Tokens** (`src/app.css`, the site's one token source): the design system's token names with the reference's values,
+for the site only, light and dark. Ink `#1a1615`, copy `#453f3d`, captions `#66615f` (a step darker than the
+reference's `#757170`, which fails AA on the bluest part of the page), eyebrows `#614a44`; a page ground that runs from
+paper through sand to sky; a sky-to-sand band behind every page's first screen; glass cards (white at 70%, blurred)
+and sand cards (`#f0eae5`), 24px corners, shadows only on icons and frames. Post labels use the reference's hues,
+deepened until white text passes AA. Dark is the same layout at night: a deep blue band over warm dusk, glass on
+near-black, white pills. Breakpoints are the reference's: `tb` from 810px, `dt` from 1,200px. The measure is 1,072px,
+with 40px gutters on a tablet and 16 on a phone; sections are 160px apart on a desktop, 96 on a tablet, 80 on a phone;
+a heading sits 56px above its content on a desktop and 40 below that.
+
+**Type.** Inter in its text cut with its default letter forms: it matches the reference's measured widths within 1%
+(the reference's computed family is Open Runde, a rounded derivative of Inter with the same metrics). Fragment Mono
+for code. Headings are 600 with -3% tracking: 76, 58 and 40px for the h1 at the three layouts, 52, 44 and 28 for an
+h2, then 40, 32, 28 and 20px; copy is 20/30 and 18/27; eyebrows are 15px uppercase; buttons are 55px pills (18 by 24px
+of padding) whose label rolls up on hover.
+
+**The home page**, in the reference's order: the hero (headline, lead, two pills, the Studio's window in a frame); a
+strip of the open-source projects Colophon is built on; the showcase (the Studio on a desktop, the reference site on a
+phone, as tabs); two feature rows (writing, publishing) with true tags and panels of the Studio's real states; the
+bento of guarantees (two cells with live graphics, three with icons, each with its status); the quote; the pricing
+cards; the four newest posts; where to follow along; the footer. Its content keeps the site's rules:
+
+| Reference section | Here | Why |
+|---|---|---|
+| Logo marquee of customers | Text wordmarks of the projects in the stack | W3: no customer logos |
+| Testimonial and review cards | The question in `docs/WHY.md`; sentences copied from build-log posts, each linked to its post | W3, W9 |
+| Three plans, a billing switch, "Save 20%" | Done, under way and planned, from `src/lib/data/roadmap.ts`; the switch shows the milestone now or next; a line says there are no prices | There is nothing to buy and no hosted version |
+| Follower counts | Each place's address | W3 |
+| Photographs and clouds | HTML illustrations of the Studio and the site; step-number covers for posts; clouds drawn with gradients | Not ours to copy |
+
+The flow diagram, the API panes and the load figures have no place in that layout, so they are on the product page.
+The blog index is the reference's: the newest post as a wide card in the band, then every post as a card, grouped by
+milestone. A post is a centred title, lead and byline over its cover, the post in a 660px column, and three more posts.
 
 ### Motion and live graphics
 
-The home page is mostly things to watch: the hero plays out a publish (typing, the save, the approved publish request,
-the receipt checking off to *Verified at 1 location*), a data-flow diagram carries a dot from the Studio through the API,
-PostgreSQL's one transaction and the worker to the destinations, an asymmetric bento shows each guarantee as a small
-graphic of real behaviour (`src/lib/bento`), tabs show real API answers (status lines, headers, error envelopes from
-`crates/colophon-api`), and a chart shows every load run. `src/lib/motion.ts` switches a graphic on only while it is in
-view (`data-run`: armed, on, off) and gives spotlights the pointer position; no animation library. Loops are 8 to 12
-seconds and mostly at rest; reveals run once. Only transform and opacity animate. The prerendered HTML, readers
-without JavaScript and readers who ask for reduced motion get every graphic's resting frame; decorative graphics are
-`aria-hidden` and carry a sentence instead. Patterns taken (not code) from Aceternity UI's bento grid, card spotlight
-and glowing effect, Magic UI's animated beam, and Supabase's product bento (loops paused until relevant).
+The reference's motion, sampled from its frames, rebuilt with CSS and `src/lib/motion.ts` (no animation library),
+moving only transform, opacity and filter:
+
+- **Headline:** each word rises 10px out of a 10px blur over 1.2s (an ease-out quart), 50ms after the one before; the
+  lead follows 100ms behind; the buttons fade in over 650ms from 740ms. Pure CSS, declared only under `html.js` with
+  motion allowed.
+- **The hero's window** lies back (`perspective(1000px) translateY(-80px) scale(0.8) rotateX(20deg)`) while its top
+  is at the viewport's foot and stands up as the page scrolls its own height further (`scrollLinked`); on load it
+  eases from lying back to where the scroll puts it. Inside, the Studio plays out a publish: typing, the save, the
+  approved publish request, the receipt checking off to *Verified at 1 location*.
+- **Sections** rise 64px and fade in once, on a curve sampled from the reference (34% at 13%, 80% at 34%, 94% at
+  51% of a second; `reveal`). Only something below the fold is ever armed, so nothing on screen blinks out.
+- **Feature panels** rise 60px into place as their row scrolls through the screen.
+- **The strip** of projects drifts left at 50px a second with faded edges, only while on screen.
+- **The bar** is clear over the band; once the page scrolls, a glass pill fades in behind it and its ends draw in.
+- **Hover:** pill labels roll up one line (260ms); primary pills go to 85% ink; nav links get a white wash; covers
+  grow 14.5% over 600ms; footer links darken over 400ms.
+
+Bento graphics run only while in view (`data-run`: armed, on, off). The prerendered HTML, readers without JavaScript
+and readers who ask for reduced motion get every final frame: words in place, the window flat, sections where they
+belong, the strip still. Decorative pictures are `aria-hidden` and carry a sentence instead.
 
 ### Build
 
@@ -92,6 +144,7 @@ doesn't try to build another app's pages; any other broken internal link or miss
 | W6 | Every page passes axe (WCAG 2.1 AA) in light and dark and fits a 320px screen. |
 | W7 | The licence is described as proposed, not confirmed, until O-014 closes. |
 | W8 | Under reduced motion nothing animates and every graphic shows its final frame; a graphic shows only real behaviour or real numbers, with its status. |
+| W9 | A quote on the site is copied word for word from a file in the repository or a build-log post and names its source; the build fails if it drifts. |
 
 ## Interfaces
 
@@ -119,10 +172,15 @@ navigation; one blog entry per post file, canonical links, byte-for-byte copies;
 `CHANGELOG.md`'s, in order; feed and sitemap contents; statuses on every feature; the licence's wording; the appearance
 menu; the phone menu with axe; no sideways scrolling at 320px. `apps/site/tests/motion.spec.ts`: under reduced motion no
 graphic switches on and nothing animates, and the hero shows its last frame; with motion the story plays, rests and
-replays, axe passes in light and dark while graphics run, loops pause off screen, and the slider, API tabs and backlog
-filter work from the keyboard. `tests/screenshots.spec.ts` saves every page at 1440 and
-390 wide, light and dark, when `SITE_SHOTS_DIR` is set. The site serves no requests of its own, so D-018's testbed page
-and load scenario don't apply.
+replays, axe passes in light and dark while graphics run, loops pause off screen, every bento cell has a status and
+every picture its words, and the slider, API tabs and backlog filter work from the keyboard.
+`apps/site/tests/look.spec.ts`: the home page's sections in the reference's order; its key measurements at 1,440px;
+quote cards that link to the posts they were copied from; Inter and Fragment Mono, self-hosted; the showcase's tabs
+and the milestones' switch from the keyboard; with motion, the headline word by word, the window standing up as the
+page scrolls, a section rising in once and resting, the bar turning into a pill and the strip drifting; under reduced
+motion and without JavaScript, final frames only. `tests/screenshots.spec.ts` saves every page at 1440 and 390 wide,
+light and dark, when `SITE_SHOTS_DIR` is set. The site serves no requests of its own, so D-018's testbed page and load
+scenario don't apply.
 
 ## Build order
 
