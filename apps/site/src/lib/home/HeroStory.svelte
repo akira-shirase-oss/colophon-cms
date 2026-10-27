@@ -1,5 +1,6 @@
 <!--
-  The hero's product visual as a short story of what Colophon does: a draft is typed and saved as
+  The hero's product visual, drawn as the Studio's window (its sidebar's real sections and words)
+  inside the reference's dashboard frame, playing a short story of what Colophon does: a draft is typed and saved as
   version 7, a publish request is approved for exactly those versions and published as release 42,
   and the receipt checks off Saved, Published in CMS, Website update pending and Verified at 1
   location, ending on the evidence it kept. Then it rests; Replay plays it again.
@@ -16,7 +17,8 @@
 	import ClockIcon from '@lucide/svelte/icons/clock';
 	import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
 	import ShieldCheckIcon from '@lucide/svelte/icons/shield-check';
-	import { inView, pointerVars, reducedMotion } from '#lib/motion.ts';
+	import Mark from '#lib/components/Mark.svelte';
+	import { inView, reducedMotion } from '#lib/motion.ts';
 
 	const TITLE = 'Spring menu';
 	const ROWS = [
@@ -99,106 +101,138 @@
 </script>
 
 <div
-	class="story glow relative isolate overflow-hidden rounded-[2rem] px-4 py-8 sm:px-8 sm:py-12 lg:py-14"
+	class="story relative isolate h-full w-full overflow-hidden rounded-[20px] bg-card text-left"
 	data-story
 	data-phase={beat === Beat.Final ? 'final' : beat}
 	data-started={started ? '' : undefined}
-	{@attach pointerVars}
 	{@attach inView((state) => {
 		if (state === 'on' && !started) play();
 	}, 0.2)}
 >
-	<div aria-hidden="true" class="relative z-10 mx-auto grid max-w-5xl items-center gap-4 sm:grid-cols-2 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,25rem)_minmax(0,1fr)] lg:gap-6">
-		<!-- The draft: the title is typed, then the save lands. -->
-		<div class="tilt rounded-3xl border border-border/60 bg-card p-5 text-left shadow-float sm:col-start-1 lg:rotate-[-2deg] lg:translate-x-6" style="--depth: 10">
-			<div class="flex items-center justify-between gap-3">
-				<p class="eyebrow">Articles · Draft</p>
-				<span class="beat pop inline-flex items-center gap-1.5 rounded-full bg-live-soft px-2.5 py-0.5 text-xs font-medium text-live-ink" data-on={at(Beat.Saved)}>
-					<CheckIcon class="size-3" />Saved · version 7
+	<div aria-hidden="true" class="app grid h-full grid-cols-[11rem_minmax(0,1fr)]">
+		<!-- The Studio's sidebar, with its real sections and words. -->
+		<div class="sidebar flex flex-col gap-1 border-r border-border px-3 py-4">
+			<div class="flex items-center gap-2 px-1 pb-3">
+				<span class="grid size-7 place-items-center rounded-lg border border-border bg-card"><Mark size={13} /></span>
+				<span class="min-w-0 leading-tight">
+					<span class="block truncate text-[0.8125rem] font-semibold">Demo project</span>
+					<span class="block truncate text-[0.6875rem] text-muted-foreground">demo</span>
 				</span>
 			</div>
-			<p class="mt-4 text-[0.6875rem] font-medium text-muted-foreground">Title</p>
-			<div class="mt-1 flex h-10 items-center rounded-xl border bg-card px-3 text-sm font-medium shadow-hairline {beat === Beat.Typing ? 'border-ring' : 'border-input'}">
-				<span class="title-text whitespace-pre">{TITLE.slice(0, typed)}</span><span class="caret" data-on={beat <= Beat.Typing}></span>
-			</div>
-			<p class="mt-3 hidden text-[0.6875rem] font-medium text-muted-foreground sm:block">Body</p>
-			<div class="mt-1 hidden space-y-2 rounded-xl border border-input bg-card px-3 py-3 shadow-hairline sm:block">
-				<span class="block h-2 w-11/12 rounded-full bg-muted"></span>
-				<span class="block h-2 w-10/12 rounded-full bg-muted"></span>
-				<span class="block h-2 w-7/12 rounded-full bg-muted"></span>
-			</div>
-			<p class="mt-3 text-xs text-muted-foreground">A copy of unsaved edits stays on this device.</p>
+			<span class="side-item">Overview</span>
+			<span class="side-item">Search<kbd class="ml-auto rounded border border-border px-1 font-sans text-[0.625rem] text-muted-foreground">⌘K</kbd></span>
+			<span class="side-label">Content</span>
+			<span class="side-item active">Articles<span class="ml-auto text-[0.6875rem] text-muted-foreground tabular">3</span></span>
+			<span class="side-label">Publishing</span>
+			<span class="side-item">Changesets<span class="ml-auto rounded-full bg-pending-soft px-1.5 text-[0.625rem] text-pending-ink tabular">1</span></span>
+			<span class="side-item">Releases<span class="ml-auto text-[0.6875rem] text-muted-foreground tabular">No. 42</span></span>
+			<span class="side-label">Project</span>
+			<span class="side-item">Members</span>
+			<span class="side-item">Settings</span>
 		</div>
 
-		<!-- The receipt: four steps, checked off as they happen. -->
-		<div class="tilt rounded-3xl border border-border/60 bg-card p-5 text-left shadow-float sm:row-span-2 sm:col-start-2 sm:row-start-1 sm:p-6 lg:row-span-1" style="--depth: 4">
-			<div class="flex items-center gap-3">
-				<span class="figure grid size-10 place-items-center rounded-xl bg-brand-soft text-[0.9375rem] font-semibold text-brand-ink">42</span>
-				<div class="min-w-0">
-					<p class="text-sm font-semibold">Release 42</p>
-					<p class="text-xs text-muted-foreground">production · 3 entries</p>
-				</div>
+		<div class="flex min-w-0 flex-col">
+			<!-- The top bar: where you are, and the title search. -->
+			<div class="flex h-14 items-center gap-3 border-b border-border px-5">
+				<span class="text-[0.8125rem] text-muted-foreground">Articles <span class="px-1">/</span> <span class="text-foreground">Spring menu</span></span>
+				<span class="ml-auto flex h-8 w-48 items-center gap-2 rounded-full border border-border px-3 text-[0.75rem] text-muted-foreground">Search titles<kbd class="ml-auto font-sans text-[0.625rem]">⌘K</kbd></span>
+				<span class="grid size-8 place-items-center rounded-full bg-primary text-[0.6875rem] font-semibold text-primary-foreground">ED</span>
 			</div>
-			<!-- The release's one label; all four are stacked in one place, so changing it moves nothing. -->
-			<div class="labels mt-4 grid justify-items-start">
-				{#each LABELS as candidate (candidate.text)}
-					<span
-						class="label beat pop inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap"
-						data-tone={candidate.tone}
-						data-on={label.text === candidate.text}
-					>
-						{#if candidate.tone === 'live'}<BadgeCheckIcon class="size-3" />{:else if candidate.tone === 'pending'}<ClockIcon class="size-3" />{:else}<CircleDashedIcon
-								class="size-3"
-							/>{/if}{candidate.text}
-					</span>
-				{/each}
-			</div>
-			<ol class="mt-5 grid">
-				{#each steps as step, index (step.label)}
-					<li class="relative grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3 pb-4 last:pb-0" data-step={step.state}>
-						{#if index < steps.length - 1}
-							<span class="absolute top-7 bottom-0 left-[0.8125rem] w-px bg-border"></span>
-							<span class="rail absolute top-7 bottom-0 left-[0.8125rem] w-px origin-top bg-live"></span>
-						{/if}
-						<span class="dot relative grid size-7 place-items-center rounded-full border">
-							<span class="tick"><CheckIcon class="size-3.5" strokeWidth={2.5} /></span>
-							<span class="wait absolute size-2 rounded-full bg-pending"></span>
+
+			<div class="grid flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1.18fr)_minmax(0,1fr)] items-start gap-4 bg-background/60 p-4">
+				<!-- The draft: the title is typed, then the save lands. -->
+				<div class="rounded-2xl border border-border bg-card p-4">
+					<div class="flex items-center justify-between gap-2">
+						<p class="text-[0.75rem] font-medium text-muted-foreground">Articles · Draft</p>
+						<span class="beat pop inline-flex items-center gap-1 rounded-full bg-live-soft px-2 py-0.5 text-[0.6875rem] font-medium whitespace-nowrap text-live-ink" data-on={at(Beat.Saved)}>
+							<CheckIcon class="size-3" />Saved · version 7
 						</span>
-						<div class="step-text pt-0.5">
-							<p class="text-sm font-medium">{step.label}</p>
-							<p class="text-xs text-muted-foreground">{step.detail}</p>
-						</div>
-					</li>
-				{/each}
-			</ol>
-			<div class="beat rise-in mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4 text-xs text-muted-foreground" data-on={at(Beat.Final)}>
-				<span>Evidence kept: release, location, time, body hash</span>
-				<code class="font-mono">sha256:9f2c…e41a</code>
-			</div>
-		</div>
+					</div>
+					<p class="mt-4 text-[0.6875rem] font-medium text-muted-foreground">Title</p>
+					<div class="mt-1 flex h-9 items-center rounded-xl border bg-card px-3 text-[0.8125rem] font-medium {beat === Beat.Typing ? 'border-ring' : 'border-input'}">
+						<span class="title-text whitespace-pre">{TITLE.slice(0, typed)}</span><span class="caret" data-on={beat <= Beat.Typing}></span>
+					</div>
+					<p class="mt-3 text-[0.6875rem] font-medium text-muted-foreground">Body</p>
+					<div class="mt-1 space-y-2 rounded-xl border border-input bg-card px-3 py-3">
+						<span class="block h-2 w-11/12 rounded-full bg-muted"></span>
+						<span class="block h-2 w-10/12 rounded-full bg-muted"></span>
+						<span class="block h-2 w-7/12 rounded-full bg-muted"></span>
+						<span class="block h-2 w-9/12 rounded-full bg-muted"></span>
+					</div>
+					<p class="mt-3 text-[0.75rem] leading-snug text-muted-foreground">A copy of unsaved edits stays on this device.</p>
+				</div>
 
-		<!-- The publish request: rows light up, the approval lands, Publish is pressed. -->
-		<div class="tilt hidden rounded-3xl border border-border/60 bg-card p-5 text-left shadow-float sm:col-start-1 sm:block lg:col-start-3 lg:row-start-1 lg:translate-y-10 lg:-translate-x-6 lg:rotate-2" style="--depth: 14">
-			<div class="flex items-center justify-between gap-3">
-				<p class="text-sm font-semibold">Publish request</p>
-				<span class="beat pop inline-flex items-center gap-1.5 rounded-full bg-live-soft px-2.5 py-0.5 text-xs font-medium text-live-ink" data-on={at(Beat.Approved)}>
-					<ShieldCheckIcon class="size-3" />Approved
-				</span>
-			</div>
-			<ul class="mt-4 divide-y divide-border overflow-hidden rounded-2xl border border-border">
-				{#each ROWS as row, index (row.title)}
-					<li class="row relative flex items-center justify-between gap-3 px-3 py-2 text-sm" style="--i: {index}" data-on={at(Beat.Rows)}>
-						<span class="truncate">{row.title}</span>
-						<span class="figure shrink-0 text-xs text-muted-foreground">version {row.version}</span>
-					</li>
-				{/each}
-			</ul>
-			<p class="mt-3 text-xs text-muted-foreground">Approved for these exact versions. Edit one, and it needs approving again.</p>
-			<div class="mt-4 flex items-center justify-between gap-3">
-				<code class="font-mono text-[0.6875rem] text-muted-foreground">hash 4be1…07c2</code>
-				<span class="press inline-flex h-9 items-center rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground shadow-press" data-on={beat === Beat.Pressed}>
-					Publish
-				</span>
+				<!-- The receipt: four steps, checked off as they happen. -->
+				<div class="rounded-2xl border border-border bg-card p-4">
+					<div class="flex items-center gap-3">
+						<span class="figure grid size-9 place-items-center rounded-xl bg-brand-soft text-[0.875rem] font-semibold text-brand-ink">42</span>
+						<div class="min-w-0">
+							<p class="text-[0.8125rem] font-semibold">Release 42</p>
+							<p class="text-[0.6875rem] text-muted-foreground">production · 3 entries</p>
+						</div>
+					</div>
+					<!-- The release's one label; all four are stacked in one place, so changing it moves nothing. -->
+					<div class="labels mt-3 grid justify-items-start">
+						{#each LABELS as candidate (candidate.text)}
+							<span
+								class="label beat pop inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.6875rem] font-medium whitespace-nowrap"
+								data-tone={candidate.tone}
+								data-on={label.text === candidate.text}
+							>
+								{#if candidate.tone === 'live'}<BadgeCheckIcon class="size-3" />{:else if candidate.tone === 'pending'}<ClockIcon class="size-3" />{:else}<CircleDashedIcon
+										class="size-3"
+									/>{/if}{candidate.text}
+							</span>
+						{/each}
+					</div>
+					<ol class="mt-4 grid">
+						{#each steps as step, index (step.label)}
+							<li class="relative grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2.5 pb-3 last:pb-0" data-step={step.state}>
+								{#if index < steps.length - 1}
+									<span class="absolute top-6 bottom-0 left-[0.6875rem] w-px bg-border"></span>
+									<span class="rail absolute top-6 bottom-0 left-[0.6875rem] w-px origin-top bg-live"></span>
+								{/if}
+								<span class="dot relative grid size-6 place-items-center rounded-full border">
+									<span class="tick"><CheckIcon class="size-3" strokeWidth={2.5} /></span>
+									<span class="wait absolute size-2 rounded-full bg-pending"></span>
+								</span>
+								<div class="step-text">
+									<p class="text-[0.8125rem] font-medium">{step.label}</p>
+									<p class="text-[0.6875rem] leading-snug text-muted-foreground">{step.detail}</p>
+								</div>
+							</li>
+						{/each}
+					</ol>
+					<div class="beat rise-in mt-4 flex flex-wrap items-center justify-between gap-1 border-t border-border pt-3 text-[0.6875rem] text-muted-foreground" data-on={at(Beat.Final)}>
+						<span>Evidence kept: release, location, time, body hash</span>
+						<code class="font-mono">sha256:9f2c…e41a</code>
+					</div>
+				</div>
+
+				<!-- The publish request: rows light up, the approval lands, Publish is pressed. -->
+				<div class="rounded-2xl border border-border bg-card p-4">
+					<div class="flex items-center justify-between gap-2">
+						<p class="text-[0.8125rem] font-semibold">Publish request</p>
+						<span class="beat pop inline-flex items-center gap-1 rounded-full bg-live-soft px-2 py-0.5 text-[0.6875rem] font-medium text-live-ink" data-on={at(Beat.Approved)}>
+							<ShieldCheckIcon class="size-3" />Approved
+						</span>
+					</div>
+					<ul class="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border">
+						{#each ROWS as row, index (row.title)}
+							<li class="row relative flex items-center justify-between gap-2 px-3 py-2 text-[0.8125rem]" style="--i: {index}" data-on={at(Beat.Rows)}>
+								<span class="truncate">{row.title}</span>
+								<span class="figure shrink-0 text-[0.6875rem] text-muted-foreground">version {row.version}</span>
+							</li>
+						{/each}
+					</ul>
+					<p class="mt-3 text-[0.75rem] leading-snug text-muted-foreground">Approved for these exact versions. Edit one, and it needs approving again.</p>
+					<div class="mt-4 flex items-center justify-between gap-2">
+						<code class="font-mono text-[0.6875rem] text-muted-foreground">hash 4be1…07c2</code>
+						<span class="press inline-flex h-8 items-center rounded-full bg-primary px-4 text-[0.8125rem] font-semibold text-primary-foreground" data-on={beat === Beat.Pressed}>
+							Publish
+						</span>
+					</div>
+				</div>
 			</div>
 		</div>
 	</div>
@@ -210,7 +244,7 @@
 	</p>
 	<button
 		type="button"
-		class="replay absolute right-3 bottom-3 z-20 inline-flex h-8 items-center gap-1.5 rounded-full border border-border/70 bg-card/90 px-3 text-xs font-medium shadow-soft outline-none hover:bg-card focus-visible:ring-4 focus-visible:ring-ring/25 sm:right-5 sm:bottom-5"
+		class="replay absolute right-4 bottom-4 z-20 inline-flex h-9 items-center gap-1.5 rounded-full bg-primary px-4 text-[0.8125rem] font-semibold text-primary-foreground outline-none hover:bg-primary/85 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 		data-on={started && beat === Beat.Final}
 		onclick={play}
 	>
@@ -390,35 +424,30 @@
 		}
 	}
 
-	/* Depth: the cards lean toward the pointer and lift on hover; a soft light follows it. */
-	@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
-		.tilt {
-			transform: perspective(1100px) rotateX(calc(var(--py, 0) * -3deg)) rotateY(calc(var(--px, 0) * 4deg))
-				translate3d(calc(var(--px, 0) * var(--depth) * 1px), calc(var(--py, 0) * var(--depth) * 1px + var(--lift, 0px)), 0);
-			transition:
-				transform 500ms cubic-bezier(0.2, 0.8, 0.2, 1),
-				box-shadow 300ms ease;
-			will-change: transform;
-		}
-		.tilt:hover {
-			--lift: -6px;
-		}
-		.story::after {
-			content: '';
-			position: absolute;
-			inset: 0;
-			z-index: 0;
-			pointer-events: none;
-			background: radial-gradient(320px circle at var(--mx, 50%) var(--my, 50%), oklch(1 0 0 / 0.38), transparent 70%);
-			opacity: 0;
-			transition: opacity 400ms ease;
-		}
-		.story:global([data-pointer])::after {
-			opacity: 1;
-		}
-		:global(.dark) .story::after {
-			background: radial-gradient(320px circle at var(--mx, 50%) var(--my, 50%), oklch(0.75 0.12 50 / 0.22), transparent 70%);
-		}
+	/* The sidebar of the Studio, in miniature. */
+	.side-item {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		border-radius: 0.5rem;
+		padding: 0.375rem 0.5rem;
+		font-size: 0.8125rem;
+		color: var(--ink-2);
+	}
+	.side-item.active {
+		background: var(--accent);
+		color: var(--foreground);
+		font-weight: 500;
+	}
+	.side-label {
+		margin-top: 0.625rem;
+		padding: 0.25rem 0.5rem;
+		font-size: 0.6875rem;
+		font-weight: 500;
+		color: var(--muted-foreground);
+	}
+	.sidebar {
+		background: var(--background);
 	}
 
 	@media (prefers-reduced-motion: reduce) {

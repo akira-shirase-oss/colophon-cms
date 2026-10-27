@@ -9,9 +9,9 @@
 			<div class="flex items-center justify-between gap-3">
 				<span class="font-mono text-[0.8125rem] font-medium">colophon-server</span>
 				<span class="stack text-[0.6875rem] font-medium">
-					<span class="pill run live" data-tone="live"><i></i>running</span>
-					<span class="pill killed live" data-tone="attention"><i></i>killed</span>
-					<span class="pill restarting live" data-tone="pending"><i></i>restarting</span>
+					<span class="state-pill run live" data-tone="live"><i></i>running</span>
+					<span class="state-pill killed live" data-tone="attention"><i></i>killed</span>
+					<span class="state-pill restarting live" data-tone="pending"><i></i>restarting</span>
 				</span>
 			</div>
 			<p class="mt-3 text-[0.6875rem] text-muted-foreground">Saves of “Spring menu”</p>
@@ -43,37 +43,37 @@
 	.stack > * {
 		grid-area: 1 / 1;
 	}
-	.pill {
+	.state-pill {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.375rem;
 		border-radius: 999px;
 		padding: 0.125rem 0.625rem;
 	}
-	.pill i {
+	.state-pill i {
 		width: 0.375rem;
 		height: 0.375rem;
 		border-radius: 999px;
 	}
-	.pill[data-tone='live'] {
+	.state-pill[data-tone='live'] {
 		background: var(--live-soft);
 		color: var(--live-ink);
 	}
-	.pill[data-tone='live'] i {
+	.state-pill[data-tone='live'] i {
 		background: var(--live);
 	}
-	.pill[data-tone='attention'] {
+	.state-pill[data-tone='attention'] {
 		background: var(--attention-soft);
 		color: var(--attention-ink);
 	}
-	.pill[data-tone='attention'] i {
+	.state-pill[data-tone='attention'] i {
 		background: var(--attention);
 	}
-	.pill[data-tone='pending'] {
+	.state-pill[data-tone='pending'] {
 		background: var(--pending-soft);
 		color: var(--pending-ink);
 	}
-	.pill[data-tone='pending'] i {
+	.state-pill[data-tone='pending'] i {
 		background: var(--pending);
 	}
 
