@@ -1,7 +1,14 @@
 <script lang="ts">
-	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
-	import { Button } from '@colophon/ui/ui/button';
 	import PageIntro from '#lib/components/PageIntro.svelte';
+	import PerfFigure from '#lib/components/PerfFigure.svelte';
+	import Pill from '#lib/components/Pill.svelte';
+	import SectionHeading from '#lib/components/SectionHeading.svelte';
+	import ApiPanes from '#lib/home/ApiPanes.svelte';
+	import FlowDiagram from '#lib/home/FlowDiagram.svelte';
+	import RunsChart from '#lib/home/RunsChart.svelte';
+	import { reveal } from '#lib/motion.ts';
+	import { GITHUB_FILE, LAPTOP_CAVEAT } from '#lib/site.ts';
+	import type { PageProps } from './$types';
 	import Seo from '#lib/components/Seo.svelte';
 	import StatusBadge from '#lib/components/StatusBadge.svelte';
 	import { FEATURE_GROUPS } from '#lib/data/features.ts';
@@ -18,6 +25,8 @@
 	const all = FEATURE_GROUPS.flatMap((group) => group.features);
 	const tally = (kind: StatusKind) => all.filter((feature) => feature.status.kind === kind).length;
 	const KINDS: StatusKind[] = ['done', 'building', 'planned'];
+
+	let { data }: PageProps = $props();
 </script>
 
 <Seo
@@ -28,7 +37,7 @@
 <PageIntro badge="Product" title="Everything it does, and everything it will">
 	<p>Each feature is done (merged, with its proof), building (a step in progress) or planned (with its milestone).</p>
 	{#snippet aside()}
-		<dl class="grid grid-cols-3 gap-3 rounded-3xl border border-border/70 bg-card p-5 shadow-soft">
+		<dl class="glass grid grid-cols-3 gap-6 rounded-3xl px-8 py-6 text-left">
 			{#each KINDS as kind (kind)}
 				<div class="space-y-2">
 					<dt><StatusBadge {kind} /></dt>
@@ -39,18 +48,18 @@
 	{/snippet}
 </PageIntro>
 
-<div class="shell mt-10">
-	<nav aria-label="Feature groups" class="flex flex-wrap gap-2">
+<div class="shell mt-16">
+	<nav aria-label="Feature groups" class="flex flex-wrap justify-center gap-3">
 		{#each FEATURE_GROUPS as group (group.id)}
-			<Button variant="outline" size="sm" href="#{group.id}">{group.title}</Button>
+			<a href="#{group.id}" class="tag outline-none hover:bg-[var(--tertiary-hover)] focus-visible:ring-2 focus-visible:ring-ring">{group.title}</a>
 		{/each}
 	</nav>
 
 	{#each FEATURE_GROUPS as group, index (group.id)}
-		<section aria-labelledby={group.id} class="mt-20 grid gap-8 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:gap-12">
+		<section aria-labelledby={group.id} class="mt-20 grid gap-8 dt:mt-24 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:gap-12">
 			<div class="space-y-4 lg:sticky lg:top-24 lg:self-start">
-				<p class="eyebrow text-brand-ink">0{index + 1}</p>
-				<h2 id={group.id} class="display-2">{group.title}</h2>
+				<p class="t-eyebrow">0{index + 1}</p>
+				<h2 id={group.id} class="t-h2">{group.title}</h2>
 				<p class="text-[0.9375rem] leading-relaxed text-pretty text-muted-foreground">{group.lead}</p>
 				<div class="grid gap-3 pt-2">
 					{#if group.id === 'writing'}
@@ -84,7 +93,7 @@
 			</div>
 			<ul class="grid gap-3 sm:grid-cols-2">
 				{#each group.features as feature (feature.name)}
-					<li class="flex flex-col rounded-3xl border border-border/70 bg-card p-5 shadow-hairline" data-status={feature.status.kind}>
+					<li class="flex flex-col glass rounded-3xl p-5" data-status={feature.status.kind}>
 						<StatusBadge kind={feature.status.kind} at={feature.status.at} />
 						<h3 class="mt-3 text-[0.9375rem] font-semibold">{feature.name}</h3>
 						<p class="mt-1.5 text-sm leading-relaxed text-muted-foreground">{feature.detail}</p>
@@ -94,11 +103,67 @@
 		</section>
 	{/each}
 
-	<section aria-labelledby="next" class="mt-24 flex flex-col items-start justify-between gap-6 rounded-[2rem] border border-border/70 bg-card p-8 shadow-soft sm:flex-row sm:items-center">
-		<div>
-			<h2 id="next" class="title">When does the planned part arrive?</h2>
-			<p class="mt-1 text-[0.9375rem] text-muted-foreground">The roadmap orders the milestones and estimates them, as guesses, at about 9 to 12 months to v0.1.</p>
+	<!-- What a publish does, as a data flow. -->
+	<section aria-labelledby="flow" class="section" {@attach reveal}>
+		<SectionHeading id="flow" eyebrow="How it works" title="From publish to proof" align="center">
+			One request, one transaction, then outside work that survives a crash.
+		</SectionHeading>
+		<div class="mt-14"><FlowDiagram /></div>
+		<p class="sr-only">
+			A publish request goes from the Studio, the command line or an agent to colophon-server, which checks permissions and commits release 42 and
+			its three delivery jobs in one PostgreSQL transaction. colophon-worker claims each job under a lease and calls out with a stable idempotency
+			key: the webhook is delivered, the CDN purge is accepted, and the probe sees release 42 on the live page, so the release is verified at 1
+			location.
+		</p>
+	</section>
+
+	<!-- Real answers from the API. -->
+	<section aria-labelledby="api" class="section" {@attach reveal}>
+		<SectionHeading id="api" eyebrow="The API" title="Answers that say what they are" align="center">
+			Every read names its release; every refusal says why, with a stable code.
+		</SectionHeading>
+		<div class="mt-14"><ApiPanes /></div>
+	</section>
+
+	<!-- Real numbers, each from a committed file. -->
+	<section aria-labelledby="proof" class="section" {@attach reveal}>
+		<SectionHeading id="proof" eyebrow="Proof, not adjectives" title="Every number comes with its file" align="center">
+			All {data.resultCount} load results are committed; {data.failedCount} missed their own thresholds and are kept.
+		</SectionHeading>
+		<div class="mt-14"><RunsChart runs={data.runs} /></div>
+		<div class="mt-6 grid gap-6 tb:grid-cols-2 dt:grid-cols-6">
+			<div class="dt:col-span-3"><PerfFigure figure={data.figures.site} emphasis /></div>
+			<div class="dt:col-span-3"><PerfFigure figure={data.figures.delivery} emphasis /></div>
+			<div class="dt:col-span-2"><PerfFigure figure={data.figures.publishing} /></div>
+			<div class="dt:col-span-2"><PerfFigure figure={data.figures.entriesFresh} /></div>
+			<div class="dt:col-span-2"><PerfFigure figure={data.figures.entriesLarge} /></div>
 		</div>
-		<Button href="/roadmap/">See the roadmap<ArrowRightIcon data-icon="inline-end" aria-hidden="true" /></Button>
+		<p class="t-small mx-auto mt-6 max-w-3xl text-center">{LAPTOP_CAVEAT}</p>
+
+		<dl class="mt-14 grid gap-6 tb:grid-cols-3">
+			<div class="sand rounded-3xl p-8">
+				<dt class="t-body">Planted bugs in the publishing simulator, each caught within 200 seeds</dt>
+				<dd class="figure t-h3 mt-3">8</dd>
+				<dd class="t-small mt-2">D-047, <a class="underline underline-offset-2" href={GITHUB_FILE('docs/modules/10-sim.md')}>module 10</a></dd>
+			</div>
+			<div class="sand rounded-3xl p-8">
+				<dt class="t-body">Seeds of the save simulator on every pull request, 400 steps each</dt>
+				<dd class="figure t-h3 mt-3">2,000</dd>
+				<dd class="t-small mt-2">D-039, <a class="underline underline-offset-2" href={GITHUB_FILE('.github/workflows/ci.yml')}>CI workflow</a></dd>
+			</div>
+			<div class="sand rounded-3xl p-8">
+				<dt class="t-body">Times the crash loop kills the server and worker in every CI run</dt>
+				<dd class="figure t-h3 mt-3">12</dd>
+				<dd class="t-small mt-2">D-047, <span class="font-mono">tests/crash_loop.rs</span></dd>
+			</div>
+		</dl>
+	</section>
+
+	<section aria-labelledby="next" class="section glass flex flex-col items-start justify-between gap-6 rounded-3xl p-8 tb:flex-row tb:items-center">
+		<div>
+			<h2 id="next" class="t-h5">When does the planned part arrive?</h2>
+			<p class="t-body mt-2">The roadmap orders the milestones and estimates them, as guesses, at about 9 to 12 months to v0.1.</p>
+		</div>
+		<Pill label="See the roadmap" href="/roadmap/" />
 	</section>
 </div>
