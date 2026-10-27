@@ -45,6 +45,7 @@ impl Content {
             content: &self.text,
             content_hash: &self.hash,
             title: &self.title,
+            slug: None,
             schema_version: 1,
         }
     }

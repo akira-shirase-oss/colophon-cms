@@ -25,7 +25,9 @@ use axum::{
     response::Response,
 };
 use colophon_db::{
+    DbError,
     changesets::{self, Head, Pin},
+    content_types,
     idempotency::{self, Claim},
     releases::{self, Committed},
     scope::ProjectTransaction,
@@ -733,6 +735,16 @@ pub(crate) async fn publish(
         }
     }
     let head = locked(&mut tx, &path.changeset, &expected).await?;
+    // No content type in these collections changes between reading the items and committing:
+    // what goes live is what was a draft when any change checked the collection (D-055).
+    for collection in changesets::collections(&mut tx, head.id)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        content_types::lock_for_write(&mut tx, &collection)
+            .await
+            .map_err(ApiError::from_db)?;
+    }
     let items = changesets::items(&mut tx, head.id)
         .await
         .map_err(ApiError::from_db)?;
@@ -754,7 +766,14 @@ pub(crate) async fn publish(
         std::time::Duration::from_secs(colophon_domain::job::LIFETIME_SECS.unsigned_abs()),
     )
     .await
-    .map_err(ApiError::from_db)?;
+    .map_err(|error| match error {
+        DbError::SlugTaken => ApiError::SlugTaken {
+            pointer: String::new(),
+            message: "an entry in this changeset has a slug that another entry still publishes; publish that entry's new slug first, or in the same changeset".to_owned(),
+            holder: None,
+        },
+        other => ApiError::from_db(other),
+    })?;
     let (generation, epoch, changed, unpublished) = match committed {
         Committed::Done {
             generation,

@@ -92,7 +92,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 | Publishing | One of five labels (below), plus the delivery-receipt timeline |
 | History | Who changed what, human or agent attribution, revision comparison, restore as a new revision |
 | Time travel | A release slider: view the site or an entry as it was at generation N; roll back as a new release |
-| Developer area | Schemas (read-only or safe additions), destinations, machine credentials |
+| Developer area | Schemas, destinations, machine credentials. Since step 3.6 (D-054, D-055) the content-type builder at Settings → Content types (`/studio/projects/{project}/settings/types/{type}`, `TypeBuilder.svelte`): rename the type and its fields, add fields of every type, change limits and requiredness, remove fields; the server decides what is safe, and a refusal lists the entries in the way with links. Field ids and types and the title field are fixed once saved. Slug fields get a "From title" suggestion in the editor (`slugify`, matching the server's rule) |
 | AI panel (optional, P5) | Suggest, improve or draft; shows sources, unsupported claims and the diff; accept or reject |
 
 ### Publishing labels (spec §05)

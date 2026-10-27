@@ -91,3 +91,22 @@ export function storedValue(field: FieldDefinition, form: FormValue | undefined)
 			return text;
 	}
 }
+
+/** The most characters in a slug, as the server allows (D-054). */
+export const MAX_SLUG_CHARS = 120;
+
+/** The server's slug rule: lowercase ASCII letters and digits, in groups joined by single hyphens. */
+export const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+/** A slug suggested from text, such as a title: accents dropped, everything else that isn't a
+ *  letter or digit becomes one hyphen. The server never does this; it refuses what doesn't match
+ *  [`SLUG_PATTERN`], so what is stored is what the editor saw. `''` when nothing is left. */
+export function slugify(text: string): string {
+	const plain = text
+		.normalize('NFKD')
+		.replace(/\p{M}+/gu, '')
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '');
+	return plain.slice(0, MAX_SLUG_CHARS).replace(/-+$/, '');
+}

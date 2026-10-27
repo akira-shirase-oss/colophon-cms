@@ -6,8 +6,9 @@
 <script lang="ts">
 	import { Input } from '@colophon/ui/ui/input';
 	import { Textarea } from '@colophon/ui/ui/textarea';
+	import { Button } from '@colophon/ui/ui/button';
 	import type { FieldDefinition } from './api.ts';
-	import type { FormValue } from './content.ts';
+	import { type FormValue, MAX_SLUG_CHARS, slugify } from './content.ts';
 
 	let {
 		fields,
@@ -34,7 +35,20 @@
 			if (field.min !== undefined && field.max !== undefined) parts.push(`From ${field.min} to ${field.max}.`);
 		}
 		if (field.type === 'datetime') parts.push('Your local time.');
+		if (field.type === 'slug') parts.push('Lowercase letters, digits and hyphens; unique in this collection.');
 		return parts.join(' ');
+	}
+
+	/** The slug `field` would get from its source field's current text, or '' if there is none. */
+	function suggestion(field: FieldDefinition): string {
+		if (field.type !== 'slug' || field.source === undefined) return '';
+		const source = form[field.source];
+		return typeof source === 'string' ? slugify(source) : '';
+	}
+
+	function suggest(field: FieldDefinition) {
+		form[field.id] = suggestion(field);
+		onchange();
 	}
 	const select =
 		'h-9 w-full rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40';
@@ -89,6 +103,29 @@
 					</select>
 				{:else if field.type === 'datetime'}
 					<Input id={input} type="datetime-local" step="1" class="max-w-72" bind:value={form[field.id] as string} oninput={onchange} />
+				{:else if field.type === 'slug'}
+					<div class="flex max-w-xl items-center gap-2">
+						<Input
+							id={input}
+							class="font-mono"
+							maxlength={MAX_SLUG_CHARS}
+							autocomplete="off"
+							spellcheck="false"
+							bind:value={form[field.id] as string}
+							oninput={onchange}
+						/>
+						{#if field.source !== undefined}
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={suggestion(field) === '' || suggestion(field) === form[field.id]}
+								onclick={() => suggest(field)}
+							>
+								From {fields.find((other) => other.id === field.source)?.label ?? field.source}
+							</Button>
+						{/if}
+					</div>
 				{/if}
 			{/if}
 		</div>

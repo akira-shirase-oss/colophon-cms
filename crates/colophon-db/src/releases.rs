@@ -146,9 +146,11 @@ pub async fn commit(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)?;
+    // A slug another entry still publishes fails `publications_live_slug`: `SlugTaken`, and the
+    // whole release rolls back (D-054).
     let opened = sqlx::query!(
-        "INSERT INTO publications (project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, valid_from)
-         SELECT i.project_id, i.environment_id, i.entry_id, r.id, r.collection, r.title, r.content, r.content_hash, $4
+        "INSERT INTO publications (project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, slug, valid_from)
+         SELECT i.project_id, i.environment_id, i.entry_id, r.id, r.collection, r.title, r.content, r.content_hash, r.slug, $4
          FROM changeset_items i
          JOIN revisions r ON r.project_id = i.project_id AND r.environment_id = i.environment_id
                          AND r.id = i.revision_id

@@ -5,14 +5,25 @@
 -->
 <script lang="ts">
 	import CopyIcon from '@lucide/svelte/icons/copy';
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
-	import { ApiError, createDestination, deliveryUrl, type Destination, setDestinationEnabled } from '#lib/api.ts';
-	import { destinationsQuery, projectQuery } from '#lib/queries.ts';
+	import {
+		ApiError,
+		createContentType,
+		createDestination,
+		deliveryUrl,
+		type Destination,
+		newKey,
+		setDestinationEnabled
+	} from '#lib/api.ts';
+	import { slugify } from '#lib/content.ts';
+	import { destinationsQuery, projectQuery, typesQuery } from '#lib/queries.ts';
 	import FormRow from '#lib/shell/FormRow.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -23,6 +34,43 @@
 	const mine = createQuery(() => projectQuery(project));
 	const manages = $derived(mine.data?.role === 'owner' || mine.data?.role === 'developer');
 	const destinations = createQuery(() => ({ ...destinationsQuery(project), enabled: manages }));
+	const types = createQuery(() => typesQuery(project));
+
+	// A new content type: a name, the URL name its entries live under, and a title field to start.
+	let typeName = $state('');
+	let typeSlug = $state('');
+	let typeSlugTouched = $state(false);
+	let typeError = $state('');
+	let typeBusy = $state(false);
+	let typeKey = newKey();
+	const suggestedSlug = $derived(slugify(typeName).slice(0, 63).replace(/-+$/, ''));
+	const effectiveSlug = $derived(typeSlugTouched ? typeSlug : suggestedSlug);
+
+	async function addType(event: SubmitEvent) {
+		event.preventDefault();
+		typeBusy = true;
+		typeError = '';
+		try {
+			const created = await createContentType(
+				project,
+				effectiveSlug,
+				{
+					name: typeName.trim(),
+					title_field: 'title',
+					fields: [{ id: 'title', label: 'Title', type: 'text', required: true, max_chars: 200, multiline: false }]
+				},
+				typeKey
+			);
+			typeKey = newKey();
+			await queryClient.invalidateQueries({ queryKey: ['types', project] });
+			toast.success(`Created ${created.type.definition.name}`);
+			await goto(resolve('/projects/[project]/settings/types/[type]', { project, type: created.type.slug }));
+		} catch (failure) {
+			typeError = failure instanceof ApiError ? failure.message : String(failure);
+		} finally {
+			typeBusy = false;
+		}
+	}
 
 	let kind = $state<Destination['kind']>('webhook');
 	let name = $state('');
@@ -102,6 +150,58 @@
 				<Button variant="ghost" size="icon-xs" aria-label="Copy the public API address" onclick={() => copy(publicUrl)}><CopyIcon /></Button>
 			</div>
 		</FormRow>
+	</section>
+
+	<section class="mt-12 max-w-4xl" aria-labelledby="types-title">
+		<h2 id="types-title" class="mb-1 text-base font-semibold">Content types</h2>
+		<p class="mb-4 text-sm text-muted-foreground">
+			The kinds of content this project holds and their fields. Changes that could break saved entries are checked against them first.
+		</p>
+		{#if types.data}
+			<ul class="mb-6 overflow-hidden rounded-xl border border-border bg-card" data-testid="content-types">
+				{#each types.data as item (item.slug)}
+					<li class="rule-dotted last:border-b-0">
+						<a
+							class="flex items-center gap-4 px-4 py-3 hover:bg-accent"
+							href={resolve('/projects/[project]/settings/types/[type]', { project, type: item.slug })}
+						>
+							<span class="min-w-0 flex-1">
+								<strong class="font-medium">{item.definition.name}</strong>
+								<span class="block text-xs text-muted-foreground">
+									{item.definition.fields.length} field{item.definition.fields.length === 1 ? '' : 's'} · version {item.version}
+								</span>
+							</span>
+							<span class="text-sm text-muted-foreground">{manages ? 'Edit' : 'View'}</span>
+						</a>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		{#if manages}
+			<form onsubmit={addType} aria-label="New content type">
+				<h3 class="mb-4 text-sm font-semibold">Add a content type</h3>
+				<FormRow label="Name" hint="For example Pages, Authors or Recipes." for="type-name">
+					<Input id="type-name" class="max-w-md" bind:value={typeName} required maxlength={100} />
+				</FormRow>
+				<FormRow label="URL name" hint="Where its entries live in addresses. It can't change later." for="type-slug">
+					<Input
+						id="type-slug"
+						class="max-w-md font-mono"
+						value={effectiveSlug}
+						oninput={(event) => {
+							typeSlugTouched = true;
+							typeSlug = event.currentTarget.value;
+						}}
+						required
+						maxlength={63}
+					/>
+				</FormRow>
+				{#if typeError}<p role="alert" class="mb-4 text-sm text-destructive">{typeError}</p>{/if}
+				<div class="flex justify-end">
+					<Button type="submit" disabled={typeBusy || typeName.trim() === '' || effectiveSlug === ''}>Create and add fields</Button>
+				</div>
+			</form>
+		{/if}
 	</section>
 
 	<section class="mt-12 max-w-4xl" aria-label="Destinations">

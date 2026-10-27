@@ -42,6 +42,8 @@ pub struct Published {
     pub collection: String,
     /// Its title.
     pub title: String,
+    /// Its slug, if its content type has a slug field and it sets one (D-054).
+    pub slug: Option<String>,
     /// Its canonical JSON.
     pub content: String,
     /// The content's hash.
@@ -124,7 +126,7 @@ impl DeliveryTransaction {
     ) -> Result<Vec<Published>, DbError> {
         sqlx::query_as!(
             Published,
-            "SELECT entry_id, revision_id, collection, title, content, content_hash, valid_from
+            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from
              FROM publications
              WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND environment_id = $1 AND collection = $2
@@ -153,7 +155,7 @@ impl DeliveryTransaction {
     ) -> Result<Option<Published>, DbError> {
         sqlx::query_as!(
             Published,
-            "SELECT entry_id, revision_id, collection, title, content, content_hash, valid_from
+            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from
              FROM publications
              WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND environment_id = $1 AND collection = $2 AND entry_id = $3
