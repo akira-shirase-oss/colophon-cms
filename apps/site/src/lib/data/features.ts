@@ -169,7 +169,7 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
 			{ name: 'Projects that can’t see each other', detail: 'Isolated by PostgreSQL row-level security, not by application checks alone.', status: done('P1') },
 			{ name: 'Four built-in roles', detail: 'Owner, developer, editor and publisher, decided by one policy table.', status: done('P1') },
 			{ name: 'Invitations', detail: 'Single-use links; a project can never lose its last owner.', status: done('P1') },
-			{ name: 'Custom roles', detail: 'A permission matrix of collections and actions, edited by owners (D-058).', status: planned('R') },
+			{ name: 'Custom roles', detail: 'A permission matrix of collections and actions, edited by owners (D-058).', status: building('R') },
 			{ name: 'Field-level and “only their own” permissions', detail: 'A role can be limited to some fields, or to the entries its members created.', status: planned('R') },
 			{ name: 'API tokens', detail: 'Read-only, full access or a custom permission set, hashed and expiring.', status: planned('R') },
 			{ name: 'Audit log', detail: 'Every role, membership and token change, append-only.', status: planned('R') }
