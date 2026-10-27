@@ -2,7 +2,8 @@
   The home page's first screen, after the reference's hero: a sky-to-sand band, a two-line
   headline whose words arrive one by one out of a blur, a lead, two pills, and the product in a
   framed window that lies back in perspective and stands up as the page scrolls (perspective(1000px)
-  translateY(-80px) scale(0.8) rotateX(20deg) at its start, flat after 700px of scrolling; on load
+  translateY(-80px) scale(0.8) rotateX(20deg) while its top is at the viewport's foot, flat once
+  the page has scrolled its height further, as the reference's does; on load
   it eases from its start to where the scroll puts it). Without JavaScript or with reduced motion
   the words are simply there and the window is flat.
 -->
@@ -36,8 +37,8 @@
 				started = performance.now();
 				raf = requestAnimationFrame(settle);
 			} else if (!raf) tilt = target;
-		},
-		{ start: 1, distance: 700, offset: 20 }
+		}
+		// The reference's range: from the window's top at the viewport's foot, over its own height.
 	);
 	$effect(() => {
 		// No IntersectionObserver, no scroll link: stand the window up rather than leave it tilted.
@@ -65,8 +66,8 @@
 		</div>
 	</div>
 
-	<div class="shell relative mt-14 tb:mt-16 dt:mt-20" {@attach follow}>
-		<div class="window-size mx-auto max-tb:mx-0">
+	<div class="shell relative mt-[60px] tb:mt-16" {@attach follow}>
+		<div class="window-size max-tb:mx-0">
 			<div class="window frame-line rounded-[20px]" style={moving ? `--tilt: ${tilt?.toFixed(4)}` : undefined}>
 				<div class="window-scale"><HeroStory /></div>
 			</div>
@@ -86,25 +87,34 @@
 		}
 	}
 
-	/* The window: 1,028 by 620 on a desktop; 714 by 476 below, its contents drawn at desktop size
-	   and scaled, as the reference does. */
+	/* The window: 1,072 by 700 on a desktop, 730 by 500 on a tablet, 700 by 477 on a phone (where
+	   it runs off the right edge), its contents drawn at desktop width and scaled, as the reference's. */
 	.window-size {
-		width: 714px;
-		height: 476px;
+		width: 700px;
+		height: 477px;
 	}
 	.window-scale {
-		width: 1028px;
-		height: 685px;
-		transform: scale(0.6946);
+		width: 1072px;
+		height: 730px;
+		transform: scale(0.653);
 		transform-origin: 0 0;
+	}
+	@media (min-width: 50.625rem) {
+		.window-size {
+			width: 100%;
+			height: 500px;
+		}
+		.window-scale {
+			height: 734px;
+			transform: scale(0.681);
+		}
 	}
 	@media (min-width: 75rem) {
 		.window-size {
-			width: 1028px;
-			height: 620px;
+			height: 700px;
 		}
 		.window-scale {
-			height: 620px;
+			height: 700px;
 			transform: none;
 		}
 	}

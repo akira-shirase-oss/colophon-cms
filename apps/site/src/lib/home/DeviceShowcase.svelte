@@ -86,6 +86,7 @@
 												<p class="text-[0.9375rem] font-semibold text-foreground">This week’s soup</p>
 												<p>Pea and mint, with bread from the bakery next door.</p>
 												<p class="h-2 w-11/12 rounded-full bg-muted"></p>
+												<p class="h-2 w-10/12 rounded-full bg-muted"></p>
 												<p class="h-2 w-8/12 rounded-full bg-muted"></p>
 											</div>
 										</div>
@@ -198,7 +199,7 @@
 	}
 	.studio-stage {
 		width: 880px;
-		height: 540px;
+		height: 480px;
 		transform: translate(-50%, calc(-50% - 44px)) scale(0.37);
 	}
 	.site-stage {
