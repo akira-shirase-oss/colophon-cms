@@ -47,8 +47,15 @@ CREATE UNIQUE INDEX schedules_one_pending ON schedules (project_id, environment_
     WHERE state = 'scheduled';
 -- What is due, across projects, for workers.
 CREATE INDEX schedules_due ON schedules (run_at) WHERE state = 'scheduled';
--- A project's schedules, newest first.
-CREATE INDEX schedules_recent ON schedules (project_id, environment_id, created_at DESC);
+-- An environment's pending schedules in time order, and its finished ones newest first: a list
+-- reads both, bounded, instead of sorting every schedule it ever had.
+CREATE INDEX schedules_pending ON schedules (project_id, environment_id, run_at)
+    WHERE state = 'scheduled';
+CREATE INDEX schedules_finished ON schedules (project_id, environment_id, finished_at DESC)
+    WHERE state <> 'scheduled';
+CREATE INDEX schedules_finished_of_changeset
+    ON schedules (project_id, environment_id, changeset_id, finished_at DESC)
+    WHERE state <> 'scheduled';
 
 ALTER TABLE schedules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE schedules FORCE ROW LEVEL SECURITY;

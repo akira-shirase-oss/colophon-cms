@@ -85,14 +85,65 @@ pub struct NewSchedule<'a> {
     pub run_at: OffsetDateTime,
 }
 
-/// The most schedules [`list`] returns.
-pub const LIST_LIMIT: i64 = 200;
+/// The most pending schedules a list returns, in time order.
+pub const PENDING_LIMIT: i64 = 100;
 
+/// The most finished schedules a list returns, newest first.
+pub const FINISHED_LIMIT: i64 = 20;
+
+/// Pending schedules in time order, then the most recently finished; of one changeset, or of the
+/// whole environment. Each half reads its own partial index and is bounded, however many
+/// schedules the environment ever had.
 async fn read(
     tx: &mut ProjectTransaction,
-    id: Option<Uuid>,
     changeset: Option<Uuid>,
 ) -> Result<Vec<Schedule>, DbError> {
+    sqlx::query_as!(
+        Schedule,
+        r#"(SELECT s.id AS "id!", s.changeset_id AS "changeset_id!", c.title AS "title!",
+                   s.changeset_hash AS "changeset_hash!", s.local_time AS "local_time!",
+                   s.time_zone AS "time_zone!", s.choice, s.run_at AS "run_at!", s.state AS "state!",
+                   s.reason, s.generation, s.started_at, s.finished_at,
+                   s.scheduled_by AS "scheduled_by!", i.display_name AS scheduled_by_name,
+                   s.created_at AS "created_at!"
+            FROM schedules s
+            JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id
+                             AND c.id = s.changeset_id
+            JOIN identities i ON i.id = s.scheduled_by
+            WHERE s.project_id = $1 AND s.environment_id = $2 AND s.state = 'scheduled'
+              AND ($3::uuid IS NULL OR s.changeset_id = $3)
+            ORDER BY s.run_at, s.id
+            LIMIT $4)
+           UNION ALL
+           (SELECT s.id, s.changeset_id, c.title, s.changeset_hash, s.local_time, s.time_zone,
+                   s.choice, s.run_at, s.state, s.reason, s.generation, s.started_at,
+                   s.finished_at, s.scheduled_by, i.display_name, s.created_at
+            FROM schedules s
+            JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id
+                             AND c.id = s.changeset_id
+            JOIN identities i ON i.id = s.scheduled_by
+            WHERE s.project_id = $1 AND s.environment_id = $2 AND s.state <> 'scheduled'
+              AND ($3::uuid IS NULL OR s.changeset_id = $3)
+            ORDER BY s.finished_at DESC, s.id
+            LIMIT $5)"#,
+        tx.project,
+        tx.environment,
+        changeset,
+        PENDING_LIMIT,
+        FINISHED_LIMIT
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// The environment's pending schedules in time order, then its most recently finished ones.
+pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Schedule>, DbError> {
+    read(tx, None).await
+}
+
+/// One schedule.
+pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Schedule>, DbError> {
     sqlx::query_as!(
         Schedule,
         r#"SELECT s.id, s.changeset_id, c.title, s.changeset_hash, s.local_time, s.time_zone,
@@ -102,38 +153,22 @@ async fn read(
            JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id
                             AND c.id = s.changeset_id
            JOIN identities i ON i.id = s.scheduled_by
-           WHERE s.project_id = $1 AND s.environment_id = $2
-             AND ($3::uuid IS NULL OR s.id = $3)
-             AND ($4::uuid IS NULL OR s.changeset_id = $4)
-           ORDER BY s.state <> 'scheduled', s.run_at DESC, s.id
-           LIMIT $5"#,
+           WHERE s.project_id = $1 AND s.environment_id = $2 AND s.id = $3"#,
         tx.project,
         tx.environment,
-        id,
-        changeset,
-        LIST_LIMIT
+        id
     )
-    .fetch_all(&mut *tx.transaction)
+    .fetch_optional(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)
 }
 
-/// The environment's schedules: pending ones first, then the rest, latest time first.
-pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Schedule>, DbError> {
-    read(tx, None, None).await
-}
-
-/// One schedule.
-pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Schedule>, DbError> {
-    Ok(read(tx, Some(id), None).await?.pop())
-}
-
-/// A changeset's schedules, pending first.
+/// A changeset's pending schedule, if it has one, then its most recently finished ones.
 pub async fn of_changeset(
     tx: &mut ProjectTransaction,
     changeset: Uuid,
 ) -> Result<Vec<Schedule>, DbError> {
-    read(tx, None, Some(changeset)).await
+    read(tx, Some(changeset)).await
 }
 
 /// What [`create`] did.

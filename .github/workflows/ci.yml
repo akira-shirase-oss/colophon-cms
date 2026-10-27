@@ -138,7 +138,7 @@ jobs:
             -c "ALTER SYSTEM SET log_lock_waits = on" \
             -c "ALTER SYSTEM SET deadlock_timeout = '50ms'" \
             -c "SELECT pg_reload_conf()"
-      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, custom roles, who may create projects, changesets, public delivery, publishing with the worker, drafts, content types, the Studio)
+      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, custom roles, schedules, who may create projects, changesets, public delivery, publishing with the worker, drafts, content types, the Studio)
         # Endpoints that never touch the database run back to back (throughput): their p99 has
         # threefold headroom even on the slowest runner seen, and health's requests a second say
         # how fast this runner is. Database-backed endpoints run at a fixed rate (steady), about
@@ -158,6 +158,7 @@ jobs:
           RATE=1000 P99_MS=200 scripts/load.sh cli steady
           RATE=1000 P99_MS=200 scripts/load.sh members steady
           RATE=1000 P99_MS=200 scripts/load.sh roles steady
+          RATE=1000 P99_MS=200 scripts/load.sh schedules steady
           RATE=1000 P99_MS=200 scripts/load.sh projects steady
           RATE=400 P99_MS=200 scripts/load.sh changesets steady
           RATE=1500 P99_MS=200 scripts/load.sh delivery steady

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT s.id, s.changeset_id, c.title, s.changeset_hash, s.local_time, s.time_zone,\n                  s.choice, s.run_at, s.state, s.reason, s.generation, s.started_at, s.finished_at,\n                  s.scheduled_by, i.display_name AS scheduled_by_name, s.created_at\n           FROM schedules s\n           JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id\n                            AND c.id = s.changeset_id\n           JOIN identities i ON i.id = s.scheduled_by\n           WHERE s.project_id = $1 AND s.environment_id = $2\n             AND ($3::uuid IS NULL OR s.id = $3)\n             AND ($4::uuid IS NULL OR s.changeset_id = $4)\n           ORDER BY s.state <> 'scheduled', s.run_at DESC, s.id\n           LIMIT $5",
+  "query": "SELECT s.id, s.changeset_id, c.title, s.changeset_hash, s.local_time, s.time_zone,\n                  s.choice, s.run_at, s.state, s.reason, s.generation, s.started_at, s.finished_at,\n                  s.scheduled_by, i.display_name AS scheduled_by_name, s.created_at\n           FROM schedules s\n           JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id\n                            AND c.id = s.changeset_id\n           JOIN identities i ON i.id = s.scheduled_by\n           WHERE s.project_id = $1 AND s.environment_id = $2 AND s.id = $3",
   "describe": {
     "columns": [
       {
@@ -184,9 +184,7 @@
       "Left": [
         "Uuid",
         "Uuid",
-        "Uuid",
-        "Uuid",
-        "Int8"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -208,5 +206,5 @@
       false
     ]
   },
-  "hash": "f82e22095ca579298462d06fdf92f20dbac816d3161b42c749d96bde06ade724"
+  "hash": "5cf8b44f5652253fcda60f23478bb654cc54f1fb47d4b61528147ea3d5547572"
 }
