@@ -201,7 +201,10 @@ expired-approval scheduling).
 
 - Localization: locale variants with their own slugs, drafts and publication history (spec §06), the locale switcher,
   fallbacks as explicit policy.
-- Scheduled publishing and unpublishing, with time zones and missed schedules shown as delayed (spec §17).
+- Scheduled publishing and unpublishing, with time zones and missed schedules shown as delayed (spec §17). Built
+  first, on the maintainer's request (D-060, branch `e/schedules`): publish requests scheduled in an IANA zone, DST
+  edges chosen explicitly, run as their author by the worker with every publish check, published once or blocked
+  with the reason, delayed when late, cancellable.
 - Review stages (Strapi's review workflows) on top of changesets; assignees; comments on fields and entries; tasks.
 - Live presence and collaboration (O-017); duplicate, bulk actions, saved views, the history slider.
 - Live queries, after Convex: the Studio's lists, drafts, changesets and receipts update as PostgreSQL commits, from one

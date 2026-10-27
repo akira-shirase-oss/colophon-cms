@@ -152,6 +152,11 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - At execution, authority, approval, revision hashes and dependencies are rechecked. Edited content blocks the release
   rather than silently changing it.
 - A late execution is labelled *delayed*.
+- Built (D-060): `colophon_domain::schedule::resolve(local, zone, choice)` resolves with jiff's bundled tz database
+  and refuses a time the clocks show twice (`Ambiguous`) or skip (`Skipped`) with both candidate instants unless a
+  choice is given; `check_window` keeps it in the future, within a year and a day, and before the approval expires
+  (`APPROVAL_LIFETIME_SECS`); `delayed` is a start more than `DELAY_GRACE_SECS` (60) late. States: scheduled,
+  published, blocked, cancelled. Tested on New York's and London's 2026 changes.
 
 ### Idempotency
 - Key semantics are scope + actor + operation + key + request hash.
