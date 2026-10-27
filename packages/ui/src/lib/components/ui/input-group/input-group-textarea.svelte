@@ -14,7 +14,7 @@
 <Textarea
 	bind:ref
 	data-slot="input-group-control"
-	class={cn("border-0 bg-transparent py-2.5 ring-0 focus-visible:ring-0 aria-invalid:ring-0 dark:bg-transparent flex-1 resize-none", className)}
+	class={cn("border-0 bg-transparent shadow-none py-2.5 ring-0 focus-visible:ring-0 aria-invalid:ring-0 dark:bg-transparent flex-1 resize-none", className)}
 	bind:value
 	{...props}
 />

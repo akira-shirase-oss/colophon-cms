@@ -1,22 +1,21 @@
 <script lang="ts" module>
 	import { type VariantProps, tv } from "tailwind-variants";
 
-	// Pills. The four registration states (live, pending, attention, draft) always pair their
-	// colour with a word, and usually a dot or an icon: colour is never the only signal.
 	export const badgeVariants = tv({
-		base: "gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium leading-4 transition-colors [&>svg]:size-3! group/badge inline-flex w-fit shrink-0 items-center justify-center overflow-hidden whitespace-nowrap focus-visible:ring-[3px] focus-visible:ring-ring/40 [&>svg]:pointer-events-none",
+		base: "group/badge inline-flex w-fit shrink-0 items-center justify-center gap-1.5 overflow-hidden whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors focus-visible:ring-4 focus-visible:ring-ring/25 aria-invalid:border-destructive [&>svg]:pointer-events-none [&>svg]:size-3",
 		variants: {
 			variant: {
-				default: "border-transparent bg-primary text-primary-foreground [a]:hover:bg-primary/90",
+				default: "border-transparent bg-primary text-primary-foreground [a]:hover:bg-primary/88",
 				secondary: "border-transparent bg-secondary text-secondary-foreground [a]:hover:bg-accent",
-				destructive: "border-transparent bg-destructive/10 text-destructive",
-				outline: "border-border text-foreground [a]:hover:bg-muted",
-				ghost: "border-transparent text-muted-foreground hover:text-foreground",
+				destructive: "border-transparent bg-attention-soft text-attention-ink",
+				outline: "border-border bg-card text-foreground [a]:hover:bg-accent",
+				ghost: "border-transparent text-muted-foreground [a]:hover:text-foreground",
 				link: "border-transparent text-foreground underline-offset-4 hover:underline",
 				live: "border-transparent bg-live-soft text-live-ink",
 				pending: "border-transparent bg-pending-soft text-pending-ink",
 				attention: "border-transparent bg-attention-soft text-attention-ink",
 				draft: "border-transparent bg-draft-soft text-draft-ink",
+				brand: "border-transparent bg-brand-soft text-brand-ink",
 			},
 		},
 		defaultVariants: {
