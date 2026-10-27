@@ -1,6 +1,6 @@
 <!--
   One changeset (D-044): the exact revisions it pins and what each changes for readers, where it
-  stands, and the actions that move it on. Every action names the hash on screen, so nobody
+  stands, the actions that move it on, and its schedule (D-060). Every action names the hash on screen, so nobody
   approves a version they didn't see: if the changeset changed meanwhile, the page shows the
   current one and says so.
 -->
@@ -17,6 +17,7 @@
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { ApiError, type Changeset, changesetAction, getChangeset, may, newKey, publishChangeset } from '#lib/api.ts';
 	import ItemDiff from '#lib/ItemDiff.svelte';
+	import SchedulePanel from '#lib/SchedulePanel.svelte';
 	import { ago, projectQuery, releasesQuery } from '#lib/queries.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
@@ -208,6 +209,9 @@
 		</section>
 
 		<div class="space-y-8">
+			{#if shown.status.state !== 'open' && shown.status.state !== 'stale'}
+				<SchedulePanel {project} changeset={shown} canSchedule={publisher} />
+			{/if}
 			{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale' && shown.status.state !== 'published'}
 				<section class="rounded-xl border border-border bg-card p-4 shadow-xs" aria-label="Review">
 					<h2 class="text-base font-semibold">Review</h2>
