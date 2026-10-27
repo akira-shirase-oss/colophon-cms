@@ -7,6 +7,9 @@
 // "No lost accepted revision" (END_GOAL) is a check, not a hope: a VU is the only writer of its
 // article, so every read must return exactly the revision that VU's last save was given. A
 // search must return only titles that contain what was searched for.
+// Every request is named by its route (a `name` tag, which k6 also uses as the `url` tag), so k6
+// keeps one series per route. Unnamed, each revision read made a new series: on 2026-10-27 k6 grew
+// past 1.7 GB and slowed down while the server sat mostly idle.
 // Same SCENARIO, TOTAL, VUS, RATE, DURATION and P99_MS settings as health.js; scripts/load.sh
 // gives this endpoint RATE 500 and P99_MS 250.
 
@@ -104,21 +107,21 @@ export default function (data) {
       Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json',
       'If-Match': etag, 'Idempotency-Key': key(),
     };
-    const res = http.put(url, article(`Article by VU ${__VU}`, `Iteration ${__ITER}`), { headers, redirects: 0, tags: { endpoint: 'save' } });
+    const res = http.put(url, article(`Article by VU ${__VU}`, `Iteration ${__ITER}`), { headers, redirects: 0, tags: { endpoint: 'save', name: 'entries/{entry}' } });
     const saved = check(res, {
       'save 200': (r) => r.status === 200,
       'save gives a new ETag': (r) => typeof r.headers['Etag'] === 'string' && r.headers['Etag'] !== etag,
     });
     if (saved) etag = res.headers['Etag'];
   } else if (roll < 3) {
-    const res = http.get(`${data.base}?limit=20`, Object.assign({ tags: { endpoint: 'list' } }, read));
+    const res = http.get(`${data.base}?limit=20`, Object.assign({ tags: { endpoint: 'list', name: 'entries?limit' } }, read));
     check(res, {
       'list 200': (r) => r.status === 200,
       'list is a page': (r) => r.body.indexOf('{"data":[') === 0,
     });
   } else if (roll < 4) {
     const q = `VU ${__VU}`;
-    const res = http.get(`${data.base}?q=${encodeURIComponent(q)}`, Object.assign({ tags: { endpoint: 'search' } }, read));
+    const res = http.get(`${data.base}?q=${encodeURIComponent(q)}`, Object.assign({ tags: { endpoint: 'search', name: 'entries?q' } }, read));
     check(res, {
       'search 200': (r) => r.status === 200,
       'search finds only matching titles': (r) => {
@@ -128,13 +131,13 @@ export default function (data) {
     });
   } else if (roll < 5) {
     const revision = etag.replace(/"/g, '');
-    const res = http.get(`${url}/revisions/${revision}`, Object.assign({ tags: { endpoint: 'revision' } }, read));
+    const res = http.get(`${url}/revisions/${revision}`, Object.assign({ tags: { endpoint: 'revision', name: 'entries/{entry}/revisions/{revision}' } }, read));
     check(res, {
       'revision 200': (r) => r.status === 200,
       'revision is the one asked for': (r) => r.json('data.revision.id') === revision,
     });
   } else {
-    const res = http.get(url, Object.assign({ tags: { endpoint: 'read' } }, read));
+    const res = http.get(url, Object.assign({ tags: { endpoint: 'read', name: 'entries/{entry}' } }, read));
     check(res, {
       'read 200': (r) => r.status === 200,
       'read returns the last accepted save': (r) => r.headers['Etag'] === etag,
