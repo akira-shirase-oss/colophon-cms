@@ -10,6 +10,7 @@
 
 mod fault;
 pub mod guard;
+pub mod schedules;
 
 use std::{sync::Arc, time::Duration};
 

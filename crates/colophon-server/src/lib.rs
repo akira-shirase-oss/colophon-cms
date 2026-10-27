@@ -25,7 +25,7 @@ use shutdown::ShutdownTiming;
 const CLEANUP_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Starts the worker for the worker and all roles (D-046): it claims delivery jobs from the same
-/// database until `cancel` fires. Private destinations are only reachable from a development
+/// database, and runs schedules as they fall due (D-060), until `cancel` fires. Private destinations are only reachable from a development
 /// server bound to loopback.
 fn start_worker(
     config: &Config,
@@ -58,9 +58,12 @@ fn start_worker(
     .context("configuring the worker's database pool")?;
     let worker = colophon_worker::Worker::new(worker_pool.clone(), settings)
         .context("starting the worker")?;
+    // Schedules (D-060) run beside the deliveries, on the same pool and poll.
+    let scheduler =
+        colophon_worker::schedules::Scheduler::new(worker_pool.clone(), config.worker_poll);
     let cancel = cancel.clone();
     Ok(Some(tokio::spawn(async move {
-        Arc::new(worker).run(cancel).await;
+        tokio::join!(Arc::new(worker).run(cancel.clone()), scheduler.run(cancel));
         worker_pool.close().await;
     })))
 }
