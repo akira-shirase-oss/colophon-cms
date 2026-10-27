@@ -79,20 +79,35 @@
 			const value = storedValue(field, form[field.id] ?? formValue(field, content[field.id]));
 			if (value !== undefined) content[field.id] = value;
 		}
-		for (const field of definition.fields) {
-			if (field.type === 'slug' && field.required && field.source !== undefined && content[field.id] === undefined) {
-				const source = content[field.source];
-				content[field.id] = typeof source === 'string' ? slugify(source) : '';
-			}
-		}
+		// A URL name made here from the title; if another entry has it, the next free one ("-2", "-3"…),
+		// as the server's uniqueness rule (D-054) asks. It can be changed in the editor.
+		const made = definition.fields.find(
+			(field) => field.type === 'slug' && field.required && field.source !== undefined && content[field.id] === undefined
+		);
+		const base = made?.type === 'slug' && made.source !== undefined && typeof content[made.source] === 'string' ? slugify(content[made.source] as string) : '';
 		try {
-			const loaded = await createEntry(project, collection, content, key);
-			key = newKey();
-			creating = false;
-			form = {};
-			await goto(resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: loaded.draft.id }));
+			for (let attempt = 1; ; attempt += 1) {
+				if (made !== undefined) content[made.id] = attempt === 1 ? base : `${base}-${attempt}`;
+				try {
+					const loaded = await createEntry(project, collection, content, key);
+					key = newKey();
+					creating = false;
+					form = {};
+					await goto(resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: loaded.draft.id }));
+					return;
+				} catch (failure) {
+					if (!(made !== undefined && failure instanceof ApiError && failure.reason === 'slug_taken' && attempt < 9)) throw failure;
+					// A refused create left nothing behind; the next try is a different request.
+					key = newKey();
+				}
+			}
 		} catch (failure) {
-			error = failure instanceof ApiError ? failure.message : String(failure);
+			error =
+				failure instanceof ApiError && failure.reason === 'slug_taken'
+					? 'Another entry already uses that URL name. Give this one a different title.'
+					: failure instanceof ApiError
+						? failure.message
+						: String(failure);
 		} finally {
 			busy = false;
 		}

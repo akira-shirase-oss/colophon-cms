@@ -43,6 +43,13 @@
 	}));
 	const connections = createQuery(() => ({ ...destinationsQuery(project), enabled: managesConnections }));
 
+	// Read together, never behind a short-circuit (svelte-query only updates what has been read).
+	const counts = $derived({
+		members: members.data?.length ?? 0,
+		invitations: invitations.data?.length ?? 0,
+		connections: connections.data?.length ?? 0
+	});
+
 	// The overview is drawn again for each project, so these are read once per project.
 	// svelte-ignore state_referenced_locally
 	let hidden = $state(isHidden(identity, project));
@@ -75,6 +82,8 @@
 		const entryHref = latest
 			? resolve('/projects/[project]/[collection]/[entry]', { project, collection: latest.type.slug, entry: latest.entry.id })
 			: write;
+		const writes = main !== undefined && may(mine, 'content.create', main.slug);
+		const asks = main !== undefined && may(mine, 'content.update', main.slug);
 		const list: Item[] = [
 			{
 				id: 'write',
@@ -91,7 +100,7 @@
 						detail: 'Press Publish on it: it goes live as a numbered release.',
 						done: releases.length > 0,
 						href: entryHref,
-						action: 'Open it'
+						action: latest ? 'Open it' : 'Write'
 					}
 				: {
 						id: 'publish',
@@ -99,15 +108,15 @@
 						detail: 'Press Ask for review on it: a publisher approves it and puts it live.',
 						done: sentForReview || releases.length > 0,
 						href: entryHref,
-						action: 'Open it'
+						action: latest ? 'Open it' : 'Write'
 					}
-		];
+		].filter((item) => (item.id === 'write' ? writes : item.id === 'publish' ? selfPublish || asks : true));
 		if (managesConnections) {
 			list.push({
 				id: 'connect',
 				title: 'Connect your website',
 				detail: 'So each release rebuilds your site, clears its CDN, or is checked on the live site.',
-				done: (connections.data ?? []).length > 0,
+				done: counts.connections > 0,
 				href: resolve('/projects/[project]/settings', { project }) + '#website-connections',
 				action: 'Connect'
 			});
@@ -117,7 +126,7 @@
 				id: 'invite',
 				title: 'Invite a teammate',
 				detail: 'They get a link that works once, with the role you choose.',
-				done: (members.data ?? []).length > 1 || (invitations.data ?? []).length > 0,
+				done: counts.members > 1 || counts.invitations > 0,
 				href: resolve('/projects/[project]/members', { project }) + '#invite',
 				action: 'Invite'
 			});

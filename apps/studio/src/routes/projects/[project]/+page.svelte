@@ -50,7 +50,10 @@
 	);
 	const newest = $derived([...all].sort((a, b) => b.entry.updated_at.localeCompare(a.entry.updated_at)));
 	const recent = $derived(newest.slice(0, 8));
-	const loaded = $derived(types.data !== undefined && lists.every((list) => list.data !== undefined));
+	// Each query's data is read before any is tested: svelte-query only updates what has been read,
+	// so a `.data` first read behind a short-circuit can stay empty for good (see ItemDiff.svelte).
+	const answers = $derived([mine.data, who.data, sets.data, releases.data, types.data, ...lists.map((list) => list.data)]);
+	const loaded = $derived(answers.every((answer) => answer !== undefined));
 	// Where a first entry goes: a type the project added (Pages), else Articles.
 	const main = $derived((types.data ?? []).find((type) => type.slug !== 'articles') ?? types.data?.[0]);
 </script>
@@ -70,7 +73,7 @@
 {#if mine.isError}
 	<Problem error={mine.error} />
 {:else}
-	{#if mine.data && who.data && loaded && sets.data && releases.data}
+	{#if loaded && mine.data && who.data && sets.data && releases.data}
 		{#key project}
 			<FirstRun
 				{project}

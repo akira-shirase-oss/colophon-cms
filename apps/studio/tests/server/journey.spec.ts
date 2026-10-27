@@ -182,6 +182,14 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await screen(owner, 'receipt');
 	});
 
+	await test.step('a second article with the same title gets the next free URL name', async () => {
+		await owner.goto(`${new URL(owner.url()).pathname.replace(/\/releases\/.*$/, '')}/articles?new=1`);
+		await owner.getByLabel('Title', { exact: true }).fill('Hello, readers');
+		await owner.getByRole('button', { name: 'Create', exact: true }).click();
+		await expect(owner.getByRole('textbox', { name: 'URL name' })).toHaveValue('hello-readers-2');
+		await expect(owner.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
+	});
+
 	await test.step('they invite a teammate', async () => {
 		await owner.getByTestId('members-link').click();
 		await expect(owner.getByTestId('members-alone')).toBeVisible();
@@ -255,6 +263,23 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await expect(owner.getByTestId('changeset-status')).toHaveAttribute('data-state', 'published');
 		await expect(owner.getByTestId('release-link')).toHaveText('release 2');
 		await screen(owner, 'approved-and-published');
+	});
+
+	await test.step('publish requests read on a phone, without sideways scrolling (D-059, rule 7)', async () => {
+		const phone = await (await browser.newContext({ baseURL: ORIGIN, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
+		const request = new URL(owner.url()).pathname;
+		await phone.context().addCookies(await owner.context().cookies());
+		for (const path of [request, request.replace(/\/changesets\/.*$/, '/changesets')]) {
+			await phone.goto(path);
+			await phone.waitForLoadState('networkidle');
+			const overflow = await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+			expect(overflow, `${path} scrolls sideways on a phone`).toBeLessThanOrEqual(0);
+		}
+		await phone.goto(request);
+		// Opened directly, a published request's comparison once stayed "Loading…" for good.
+		await expect(phone.getByTestId('diff')).toBeVisible();
+		await screen(phone, 'phone-publish-request');
+		await phone.context().close();
 	});
 
 	await test.step('hidden, the checklist stays hidden', async () => {

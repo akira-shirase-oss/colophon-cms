@@ -41,8 +41,10 @@ export async function violations(page: Page): Promise<string[]> {
 
 /**
  * Internal terms (D-059) in what the page shows or reads out: text, `aria-label`s, `title`s and
- * placeholders of visible elements, outside the Technical details drawer. One line per finding.
- * Settings is the developer area, where these words may stay; don't call this there.
+ * placeholders of visible elements, outside the Technical details drawer and what people wrote
+ * themselves (`data-user-content`: a project called "Changesets testbed" is theirs to name). One
+ * line per finding. Settings is the developer area, where these words may stay; don't call this
+ * there.
  */
 export async function internalTerms(page: Page): Promise<string[]> {
 	const { INTERNAL_TERMS } = await import('../../src/lib/words.ts');
@@ -50,7 +52,8 @@ export async function internalTerms(page: Page): Promise<string[]> {
 		const pattern = new RegExp(source, 'i');
 		const found: string[] = [];
 		const shown = (element: Element) =>
-			element.closest('[data-technical], script, style, template') === null && element.checkVisibility({ visibilityProperty: true });
+			element.closest('[data-technical], [data-user-content], script, style, template') === null &&
+			element.checkVisibility({ visibilityProperty: true });
 		const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
 		for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
 			const parent = node.parentElement;

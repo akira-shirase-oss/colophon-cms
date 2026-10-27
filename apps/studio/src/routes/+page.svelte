@@ -146,7 +146,7 @@
 						class="lift group flex h-full flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-xs outline-none hover:border-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/40"
 					>
 						<span class="flex size-9 items-center justify-center rounded-lg bg-secondary text-sm font-semibold">{project.name.slice(0, 1).toUpperCase()}</span>
-						<span>
+						<span data-user-content>
 							<span class="block font-medium">{project.name}</span>
 							<span class="text-xs text-muted-foreground">{project.slug}</span>
 						</span>
