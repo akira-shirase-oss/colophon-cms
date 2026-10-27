@@ -113,7 +113,7 @@ Built in step 1.7 (D-042), for people:
 
 - Any member lists the members (`GET /api/v1/projects/{project}/members`) and may leave; people whose role has
   `members.manage` (owners, by default) change roles (`PUT`) and remove people (`DELETE …/members/{identity}`).
-- Since step R.2 (D-058), owners define roles of their own. `{P}/roles` lists and reads them (any member: anyone can
+- Since step R.2 (D-058), owners define roles of their own. `/api/v1/projects/{project}/roles` (a project's roles, not an environment's) lists and reads them (any member: anyone can
   see what a role means before it's given to them), creates them (`POST`), changes them (`PUT` with `If-Match:
   "v<version>"`; a stale version is 409 `stale_role` with the current `ETag`) and deletes them (`DELETE` with
   `If-Match`). Writes need `roles.manage`, checked against the caller's role as it is now. Migration 0018 adds a

@@ -1,5 +1,5 @@
--- Scheduled publishing (D-060; spec "Scheduled publishing", §17, case X07). docs/modules/02-db.md,
--- 05-worker.md.
+-- Scheduled publishing (D-060; spec §06 "Scheduled publishing", §14, case X07 in §31).
+-- docs/modules/02-db.md, 05-worker.md.
 --
 -- A schedule publishes one approved changeset at a chosen time. It keeps what its author chose
 -- (the local date and time, the IANA time zone, and the choice an ambiguous or skipped local time

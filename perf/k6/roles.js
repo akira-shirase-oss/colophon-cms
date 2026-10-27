@@ -27,14 +27,15 @@ function durationSeconds(text) {
   return parseInt(match[1], 10) * (match[2] === 'm' ? 60 : 1);
 }
 
-// One role to edit per virtual user that can exist, plus the four built-in roles and the desk,
-// within a project's 100 roles: steady runs grow to at most 95 virtual users.
-const MAX_VUS = Math.min(VUS * 2, 95);
-const EDITORS = SCENARIO === 'steady' ? MAX_VUS : VUS;
-if (EDITORS > 95) throw new Error(`at most 95 virtual users can each edit a role of their own; VUS is ${VUS}`);
+// One role to edit for each of the first 95 virtual users (with the four built-in roles and the
+// desk, a project's 100); any beyond them make the same requests but list roles instead of
+// editing. (Capping the virtual users at 95 instead made a slow CI runner fall behind: at 1,000/s
+// and 135 ms a request, a steady run needs about 135.)
+const MAX_VUS = SCENARIO === 'steady' ? VUS * 2 : VUS;
+const EDITORS = Math.min(MAX_VUS, 95);
 const scenarios = {
   throughput: { executor: 'shared-iterations', vus: VUS, iterations: TOTAL, maxDuration: '20m' },
-  steady: { executor: 'constant-arrival-rate', rate: RATE, timeUnit: '1s', duration: DURATION, preAllocatedVUs: Math.min(VUS, MAX_VUS), maxVUs: MAX_VUS },
+  steady: { executor: 'constant-arrival-rate', rate: RATE, timeUnit: '1s', duration: DURATION, preAllocatedVUs: VUS, maxVUs: MAX_VUS },
 };
 if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.keys(scenarios).join(', ')}`);
 
@@ -113,7 +114,7 @@ export default function (data) {
       'project 200': (r) => r.status === 200,
       "the desk's permissions": (r) => r.json('data.role') === 'desk' && r.json('data.permissions').length === 2,
     });
-  } else if (slot < 8) {
+  } else if (slot < 8 || __VU > EDITORS) {
     const res = http.get(`${data.base}/roles`, { headers: data.owner, redirects: 0, tags: { endpoint: 'roles' } });
     check(res, { 'roles 200': (r) => r.status === 200 && r.json('data.#') === EDITORS + 5 });
   } else {

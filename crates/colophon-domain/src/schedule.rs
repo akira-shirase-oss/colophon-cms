@@ -1,4 +1,4 @@
-//! Scheduled publishing (D-060; spec §06 "Scheduled publishing", §17, case X07).
+//! Scheduled publishing (D-060; spec §06 "Scheduled publishing", §14, case X07 in §31).
 //!
 //! A schedule keeps what its author chose, a local date and time in an IANA time zone, together
 //! with the instant that resolves to and the approved hash it publishes. A local time the clocks

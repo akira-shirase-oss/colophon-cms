@@ -150,7 +150,7 @@ recorded crash loop).
 
 - `domain`: permissions as data (action, subject, fields, condition) and one pure evaluator; the four D-042 roles as
   seeded defaults with unchanged powers.
-- `db`: roles, permissions and role ids on memberships (migration 0016), API tokens with hashes and expiry, an
+- `db`: roles and permissions as data, memberships naming a role by key (migration 0017), API tokens with hashes and expiry, an
   append-only audit log of role, membership and token changes; idempotency records stored for locality and cheap
   retention (time-ordered keys or daily partitions), since saves slow down 3.5x as that table grows (COMPARISON.md).
 - `api`: one authorization call in every handler; field-level refusals on writes and field-level projections on reads;
@@ -201,7 +201,7 @@ expired-approval scheduling).
 
 - Localization: locale variants with their own slugs, drafts and publication history (spec §06), the locale switcher,
   fallbacks as explicit policy.
-- Scheduled publishing and unpublishing, with time zones and missed schedules shown as delayed (spec §17). Built
+- Scheduled publishing and unpublishing, with time zones and missed schedules shown as delayed (spec §06, §14). Built
   first, on the maintainer's request (D-060, branch `e/schedules`): publish requests scheduled in an IANA zone, DST
   edges chosen explicitly, run as their author by the worker with every publish check, published once or blocked
   with the reason, delayed when late, cancellable.

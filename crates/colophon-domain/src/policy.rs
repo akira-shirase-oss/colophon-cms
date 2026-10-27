@@ -452,15 +452,17 @@ impl Policy {
     /// | publisher | ✓ | | | ✓ |
     pub fn builtin(role: Role) -> Self {
         use Action::{
-            ContentCreate, ContentPublish, ContentRead, ContentReview, ContentUpdate,
-            DestinationsManage, MembersManage, RolesManage, SchemaChange, TokensManage,
+            ContentCreate, ContentDelete, ContentPublish, ContentRead, ContentReview,
+            ContentUpdate, DestinationsManage, MembersManage, RolesManage, SchemaChange,
+            TokensManage,
         };
         let mut actions = vec![ContentRead, ContentCreate, ContentUpdate];
         if matches!(role, Role::Owner | Role::Developer) {
             actions.extend([SchemaChange, DestinationsManage]);
         }
         if role == Role::Owner {
-            actions.extend([MembersManage, RolesManage, TokensManage]);
+            // Every permission (D-058), deleting included: nobody could grant it otherwise.
+            actions.extend([MembersManage, RolesManage, TokensManage, ContentDelete]);
         }
         if matches!(role, Role::Owner | Role::Publisher) {
             actions.extend([ContentReview, ContentPublish]);
@@ -573,7 +575,8 @@ mod tests {
                 assert_eq!(actual, expected, "{role:?} in {collection:?}");
             }
         }
-        // New actions: only owners manage roles and tokens; nobody deletes yet.
+        // New actions: only owners manage roles and tokens, and only owners delete (no route
+        // deletes yet), and the owner role holds every action there is.
         for role in Role::ALL {
             let policy = Policy::builtin(role);
             assert_eq!(
@@ -584,7 +587,18 @@ mod tests {
                 policy.allows(Action::TokensManage, None),
                 role == Role::Owner
             );
-            assert!(!policy.allows(Action::ContentDelete, Some("articles")));
+            assert_eq!(
+                policy.allows(Action::ContentDelete, Some("articles")),
+                role == Role::Owner
+            );
+        }
+    }
+
+    #[test]
+    fn the_owner_role_holds_every_action() {
+        let owner = Policy::builtin(Role::Owner);
+        for action in Action::ALL {
+            assert!(owner.allows(action, None), "{action:?}");
         }
     }
 
