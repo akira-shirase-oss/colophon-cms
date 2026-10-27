@@ -160,9 +160,7 @@ impl ScheduleError {
 /// Resolves `local` (`YYYY-MM-DDTHH:MM`, seconds optional) in the IANA time zone `zone`. A time
 /// the clocks show twice or skip needs `choice`; anywhere else, a choice is ignored.
 pub fn resolve(local: &str, zone: &str, choice: Option<Choice>) -> Result<Resolved, ScheduleError> {
-    let civil: DateTime = local
-        .parse()
-        .map_err(|_| ScheduleError::InvalidLocalTime)?;
+    let civil: DateTime = local.parse().map_err(|_| ScheduleError::InvalidLocalTime)?;
     let tz = TimeZone::get(zone).map_err(|_| ScheduleError::UnknownZone)?;
     let ambiguous = tz.to_ambiguous_zoned(civil);
     let at = |how: Disambiguation| {
@@ -242,8 +240,8 @@ mod tests {
         assert_eq!(resolved.local, "2026-11-03T09:00:00");
         assert_eq!(resolved.choice, None);
         // A choice where none is needed is ignored.
-        let ignored = resolve("2026-11-03T09:00:30", "Europe/London", Some(Choice::Later))
-            .expect("resolves");
+        let ignored =
+            resolve("2026-11-03T09:00:30", "Europe/London", Some(Choice::Later)).expect("resolves");
         assert_eq!(ignored.at, utc("2026-11-03T09:00:30Z"));
         assert_eq!(ignored.choice, None);
     }
@@ -255,8 +253,12 @@ mod tests {
         let (earlier, later) = (utc("2026-11-01T05:30:00Z"), utc("2026-11-01T06:30:00Z"));
         assert_eq!(refused, Err(ScheduleError::Ambiguous { earlier, later }));
         assert_eq!(
-            resolve("2026-11-01T01:30", "America/New_York", Some(Choice::Earlier))
-                .map(|r| (r.at, r.choice)),
+            resolve(
+                "2026-11-01T01:30",
+                "America/New_York",
+                Some(Choice::Earlier)
+            )
+            .map(|r| (r.at, r.choice)),
             Ok((earlier, Some(Choice::Earlier)))
         );
         assert_eq!(
@@ -289,16 +291,37 @@ mod tests {
     #[test]
     fn nonsense_is_refused_by_name() {
         for (local, zone, error) in [
-            ("2026-13-01T09:00", "Europe/London", ScheduleError::InvalidLocalTime),
-            ("tomorrow at nine", "Europe/London", ScheduleError::InvalidLocalTime),
-            ("2026-11-03T09:00", "Mars/Olympus_Mons", ScheduleError::UnknownZone),
+            (
+                "2026-13-01T09:00",
+                "Europe/London",
+                ScheduleError::InvalidLocalTime,
+            ),
+            (
+                "tomorrow at nine",
+                "Europe/London",
+                ScheduleError::InvalidLocalTime,
+            ),
+            (
+                "2026-11-03T09:00",
+                "Mars/Olympus_Mons",
+                ScheduleError::UnknownZone,
+            ),
             ("2026-11-03T09:00", "", ScheduleError::UnknownZone),
         ] {
-            assert_eq!(resolve(local, zone, None), Err(error), "{local} in {zone:?}");
+            assert_eq!(
+                resolve(local, zone, None),
+                Err(error),
+                "{local} in {zone:?}"
+            );
         }
         assert_eq!(Choice::parse("earlier"), Some(Choice::Earlier));
         assert_eq!(Choice::parse("Earlier"), None);
-        for state in [State::Scheduled, State::Published, State::Blocked, State::Cancelled] {
+        for state in [
+            State::Scheduled,
+            State::Published,
+            State::Blocked,
+            State::Cancelled,
+        ] {
             assert_eq!(State::parse(state.as_str()), Some(state));
         }
     }
@@ -307,7 +330,10 @@ mod tests {
     fn the_window_is_the_future_within_a_year_and_the_approval() {
         let now = utc("2026-10-27T12:00:00Z");
         let expires = now + 7 * 24 * 60 * 60;
-        assert_eq!(check_window(now, now, expires), Err(ScheduleError::InThePast));
+        assert_eq!(
+            check_window(now, now, expires),
+            Err(ScheduleError::InThePast)
+        );
         assert_eq!(check_window(now + 1, now, expires), Ok(()));
         assert_eq!(
             check_window(expires, now, expires),
