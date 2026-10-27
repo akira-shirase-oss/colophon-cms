@@ -1,0 +1,178 @@
+/* The site's styles: the design system (D-056) and a few things only the site needs. Tailwind
+ * doesn't scan dependencies, so name the package whose components use its classes. */
+@import '@colophon/ui/styles.css';
+@source '../../../packages/ui/src';
+
+@layer base {
+	html {
+		scroll-padding-top: 5rem;
+	}
+	/* Section anchors land below the sticky header. */
+	:target {
+		scroll-margin-top: 5rem;
+	}
+}
+
+@layer components {
+	/* The page's measure: wide enough for a bento, with a 20px gutter on a phone. */
+	.shell {
+		width: 100%;
+		max-width: 72rem;
+		margin-inline: auto;
+		padding-inline: 1.25rem;
+	}
+	@media (min-width: 640px) {
+		.shell {
+			padding-inline: 2rem;
+		}
+	}
+
+	/* The home page's headline: the design system's display cut, one size up. */
+	.display-hero {
+		font-size: clamp(2.5rem, 1.35rem + 4.2vw, 4.5rem);
+		line-height: 1.02;
+		letter-spacing: -0.045em;
+		font-weight: 540;
+	}
+
+	/* A link inside running text: ink, with the accent underneath. */
+	.text-link {
+		color: var(--foreground);
+		text-decoration: underline;
+		text-decoration-color: var(--brand);
+		text-decoration-thickness: 1.5px;
+		text-underline-offset: 3px;
+		border-radius: 0.25rem;
+	}
+	.text-link:hover {
+		text-decoration-color: var(--foreground);
+	}
+
+	/* Long-form writing (the build log): Inter at a comfortable measure. */
+	.prose-site {
+		font-size: 1.0625rem;
+		line-height: 1.75;
+		color: var(--foreground);
+		max-width: 68ch;
+	}
+	.prose-site > * + * {
+		margin-top: 1em;
+	}
+	.prose-site h2 {
+		font-size: 1.5rem;
+		line-height: 1.25;
+		letter-spacing: -0.02em;
+		font-weight: 600;
+		margin-top: 2.2em;
+	}
+	.prose-site h3 {
+		font-size: 1.1875rem;
+		line-height: 1.3;
+		letter-spacing: -0.015em;
+		font-weight: 600;
+		margin-top: 1.8em;
+	}
+	.prose-site a {
+		text-decoration: underline;
+		text-decoration-color: var(--brand);
+		text-decoration-thickness: 1.5px;
+		text-underline-offset: 3px;
+	}
+	.prose-site a:hover {
+		text-decoration-color: var(--foreground);
+	}
+	.prose-site ul {
+		list-style: disc;
+		padding-left: 1.4em;
+	}
+	.prose-site ol {
+		list-style: decimal;
+		padding-left: 1.4em;
+	}
+	.prose-site li + li {
+		margin-top: 0.45em;
+	}
+	.prose-site li::marker {
+		color: var(--muted-foreground);
+	}
+	.prose-site strong {
+		font-weight: 600;
+	}
+	.prose-site blockquote {
+		border-left: 2px solid var(--brand);
+		padding-left: 1em;
+		color: var(--muted-foreground);
+	}
+	.prose-site code {
+		font-family: var(--font-mono);
+		font-size: 0.86em;
+		background: var(--muted);
+		border: 1px solid var(--border);
+		border-radius: 0.375rem;
+		padding: 0.05em 0.35em;
+		overflow-wrap: anywhere;
+	}
+	.prose-site pre {
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		line-height: 1.6;
+		background: var(--muted);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		padding: 0.9em 1.1em;
+		overflow-x: auto;
+	}
+	.prose-site pre code {
+		background: none;
+		border: 0;
+		padding: 0;
+	}
+	.prose-site hr {
+		border: 0;
+		border-top: 1px solid var(--border);
+		margin: 2em 0;
+	}
+
+	/* Motion: small and quick; the design system's reduced-motion rule turns all of it off. */
+	.lift {
+		transition:
+			transform 160ms ease,
+			box-shadow 160ms ease;
+	}
+	.lift:hover {
+		transform: translateY(-2px);
+		box-shadow: var(--shadow-float);
+	}
+	.breathe {
+		animation: breathe 1.6s ease-in-out infinite;
+	}
+	.rise {
+		animation: rise 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+		animation-delay: calc(var(--i, 0) * 70ms);
+	}
+
+	/* The theme switch: the new theme is clipped in as a growing circle (ThemeMenu). */
+	::view-transition-old(root),
+	::view-transition-new(root) {
+		animation: none;
+		mix-blend-mode: normal;
+	}
+	::view-transition-new(root) {
+		z-index: 1;
+	}
+	.theme-icon {
+		transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
+	}
+}
+
+@keyframes breathe {
+	50% {
+		opacity: 0.35;
+	}
+}
+@keyframes rise {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+}

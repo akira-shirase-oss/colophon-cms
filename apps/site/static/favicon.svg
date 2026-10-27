@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 292 310">
+  <style>path { fill: #1c1a18 } @media (prefers-color-scheme: dark) { path { fill: #f4f2ee } }</style>
+  <!-- The Colophon mark (docs/brand/colophon-mark.svg), a recreation until the original files are added. -->
+  <path d="M87 0H232L292 60L232 120L194 82H130L87 125V185L130 228H194L232 190L292 250L232 310H87L0 223V87Z"/>
+</svg>
