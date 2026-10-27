@@ -4,8 +4,11 @@ import { defineConfig, devices } from '@playwright/test';
 
 // Playwright starts its own colophon-server (release build, local stack) and a preview of the
 // built testbed, on ports of their own so they never collide with a dev server.
-const SERVER_PORT = 58091;
-const TESTBED_PORT = 58101;
+// COLOPHON_TESTBED_SERVER_PORT and COLOPHON_TESTBED_PORT move them, so two checkouts can run at
+// once (the server port's callback must be registered in deploy/keycloak's realm, and the testbed
+// built with VITE_COLOPHON_SERVER_ORIGIN naming it).
+const SERVER_PORT = Number(process.env['COLOPHON_TESTBED_SERVER_PORT'] ?? 58091);
+const TESTBED_PORT = Number(process.env['COLOPHON_TESTBED_PORT'] ?? 58101);
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 
 /** deploy/local.env, the single source of the server's local settings. With COLOPHON_TEST_DATABASE
