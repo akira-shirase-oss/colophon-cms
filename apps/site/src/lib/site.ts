@@ -12,10 +12,14 @@ export const BUILD_LOG = 'https://404human.dev/colophon/';
 /** The project's account on X, where steps are announced. */
 export const X_ACCOUNT = 'https://x.com/akirashiraseoss';
 
-// The docs are a separate app (apps/docs), served under /docs on the same host. Links to them are
-// marked rel="external" so this site's prerenderer doesn't try to build them.
+// The docs are a separate app (apps/docs), built for /docs on the same host. Links to them are
+// marked rel="external" so this site's prerenderer doesn't try to build them; the docs' tests check
+// that every address here is one of their pages.
 export const DOCS = '/docs/';
-export const QUICKSTART = '/docs/quickstart/';
+export const QUICKSTART = '/docs/get-started/quickstart/';
+/** The docs' rendering of CHANGELOG.md and its Atom feed. */
+export const DOCS_CHANGELOG = '/docs/changelog/';
+export const CHANGELOG_FEED = '/docs/changelog/feed.xml';
 
 /** The machine every load result so far was measured on (perf/results/*.json). */
 export const MACHINE = 'apple-m2-pro-12c';

@@ -5,7 +5,7 @@
 	import PageIntro from '#lib/components/PageIntro.svelte';
 	import Seo from '#lib/components/Seo.svelte';
 	import { longDate } from '#lib/blog.ts';
-	import { BUILD_LOG, GITHUB_COMMIT, GITHUB_FILE } from '#lib/site.ts';
+	import { BUILD_LOG, CHANGELOG_FEED, DOCS_CHANGELOG, GITHUB_COMMIT, GITHUB_FILE } from '#lib/site.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -24,6 +24,10 @@
 	<p>
 		Every step merged into <code class="font-mono text-[0.9em]">main</code>, newest first, from the repository’s own history: {count} entries, read at build time from
 		<a class="text-link" href={GITHUB_FILE('CHANGELOG.md')}>CHANGELOG.md</a>. There are no version numbers yet: v0.1 is not out.
+	</p>
+	<p>
+		The docs show the same file with <a class="text-link" href={DOCS_CHANGELOG} rel="external">release notes and upgrade guides</a>, and an
+		<a class="text-link" href={CHANGELOG_FEED} rel="external">Atom feed</a> of every merged step.
 	</p>
 </PageIntro>
 
@@ -85,7 +89,7 @@
 									{#if entry.decisions}
 										<div class="flex gap-1.5">
 											<dt>Decisions</dt>
-											<dd><a class="underline underline-offset-2 hover:text-foreground" href={GITHUB_FILE('docs/DECISIONS.md')}>{entry.decisions}</a></dd>
+											<dd><a class="underline underline-offset-2 hover:text-foreground" href={GITHUB_FILE('docs/DECISIONS.md')}>{entry.decisions.replaceAll('`', '')}</a></dd>
 										</div>
 									{/if}
 									{#if entry.buildLog}
@@ -110,6 +114,19 @@
 	.changelog-body :global(p),
 	.changelog-body :global(li) {
 		color: var(--muted-foreground);
+	}
+	/* Keep a Changelog's groups inside an entry: Added, Changed, Fixed… */
+	.changelog-body :global(h4) {
+		margin-top: 1.1em;
+		font-size: 0.75rem;
+		line-height: 1rem;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--eyebrow);
+	}
+	.changelog-body :global(h4 + ul) {
+		margin-top: 0.4em;
 	}
 	.changelog-body {
 		max-width: none;

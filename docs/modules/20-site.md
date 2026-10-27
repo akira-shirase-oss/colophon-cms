@@ -66,8 +66,9 @@ and 341 by 304 cells), the quote (64/92.8px), the pricing cards (498, and 578 ag
 by 399 against 395) match to within a few pixels, and the hero window's transformed box to within one. What differs
 is content: Colophon's words wrap differently, and there are three community cards and three footer columns.
 
-**Tokens** (`src/app.css`, the site's one token source): the design system's token names with the reference's values,
-for the site only, light and dark. Ink `#1a1615`, copy `#453f3d`, captions `#66615f` (a step darker than the
+**Tokens** (`packages/site-theme/src/theme.css`, the one token source the site and the docs share; `src/app.css`
+imports it after the design system and adds only the site's page grounds, sections, article column, bento and motion):
+the design system's token names with the reference's values, light and dark. Ink `#1a1615`, copy `#453f3d`, captions `#66615f` (a step darker than the
 reference's `#757170`, which fails AA on the bluest part of the page), eyebrows `#614a44`; a page ground that runs from
 paper through sand to sky; a sky-to-sand band behind every page's first screen; glass cards (white at 70%, blurred)
 and sand cards (`#f0eae5`), 24px corners, shadows only on icons and frames. Post labels use the reference's hues,
@@ -153,7 +154,12 @@ doesn't try to build another app's pages; any other broken internal link or miss
 - `npm run dev -w @colophon/site` (127.0.0.1:58300), `npm run build`, `npm run preview` (58301).
 - `npm run import-blog -w @colophon/site [source]`, or `COLOPHON_BUILD_LOG_DIR`, to refresh the posts.
 - `CHANGELOG.md`'s shape: `## <section>`, `### <step> · <title>`, then `- **Merged:** <date> · <commits>` (or
-  `- **Status:**` and `- **Branch:**` while unmerged), `- **Decisions:**`, `- **Build log:**`, then the body.
+  `- **Status:**` and `- **Branch:**` while unmerged), `- **Decisions:**`, `- **Build log:**`, optionally
+  `- **Proof:**`, then the changes under Keep a Changelog's groups (`#### Added`, `#### Changed`, `#### Fixed`…).
+  Anchors are `#step-<step>`; a step that appears twice (`Fix`) adds its title. The docs render the same file at
+  `/docs/changelog/` with an Atom feed (`/docs/changelog/feed.xml`), which the changelog page links to.
+- Links into the docs (`DOCS`, `QUICKSTART`, `DOCS_CHANGELOG`, `CHANGELOG_FEED` in `src/lib/site.ts`): the docs'
+  tests fail if one isn't a docs page.
 
 ## Failure modes
 
@@ -164,7 +170,7 @@ doesn't try to build another app's pages; any other broken internal link or miss
 | A post lacks a title or a date | The import script and the build fail |
 | A post is added to the build log but not imported | The blog test fails when the source sits next to the checkout; CI, which has no source, checks the copies only |
 | An internal link or anchor breaks | Prerendering fails |
-| The docs aren't deployed at `/docs/` | Those links 404 on the host; nothing here can detect it |
+| The docs aren't deployed at `/docs/` | Those links 404 on the host; the docs are built for `/docs` and their tests check every address the site links to |
 
 ## Tests and evidence
 

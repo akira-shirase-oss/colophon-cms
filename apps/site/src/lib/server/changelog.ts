@@ -66,6 +66,7 @@ function parseEntry(heading: string, lines: string[]): ChangelogEntry {
 	}
 	const buildLog = meta.get('Build log')?.replace(/^<|>$/g, '') ?? null;
 	return {
+		// Made unique in parseChangelog: a step that appears twice ("Fix") gets its title too.
 		id: `step-${slug(step)}`,
 		step,
 		title,
@@ -118,6 +119,12 @@ export function parseChangelog(text: string): Changelog {
 		}
 	}
 	flushEntry();
+	// Anchors are `step-<step>` (`#step-3-5`); a step that appears more than once ("Fix") also takes
+	// its title, so every anchor is unique. The docs' parser (apps/docs) makes the same anchors.
+	const all = sections.flatMap((item) => item.entries);
+	const count = new Map<string, number>();
+	for (const entry of all) count.set(entry.id, (count.get(entry.id) ?? 0) + 1);
+	for (const entry of all) if ((count.get(entry.id) ?? 0) > 1) entry.id = `${entry.id}-${slug(entry.title)}`;
 	return { introHtml: renderMarkdown(intro.join('\n')), sections };
 }
 
