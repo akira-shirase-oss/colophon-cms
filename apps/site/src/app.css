@@ -151,6 +151,53 @@
 		animation-delay: calc(var(--i, 0) * 70ms);
 	}
 
+	/* Bento cells (src/lib/bento): a quiet stage of dots for the graphic, a spotlight that
+	 * follows the pointer, and an edge that glows nearest the pointer. Hover only; nothing moves
+	 * under reduced motion (motion.ts doesn't set the variables then). */
+	.spot {
+		position: relative;
+		isolation: isolate;
+	}
+	.stage-dots {
+		background-color: color-mix(in oklch, var(--muted) 55%, var(--card));
+		background-image: radial-gradient(color-mix(in oklch, var(--foreground) 9%, transparent) 1px, transparent 1.2px);
+		background-size: 14px 14px;
+	}
+	.spot::before,
+	.spot::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		pointer-events: none;
+		opacity: 0;
+		transition: opacity 300ms ease;
+		z-index: 2;
+	}
+	.spot::after {
+		background: radial-gradient(360px circle at var(--mx, 50%) var(--my, 50%), color-mix(in oklch, var(--brand) 9%, transparent), transparent 65%);
+	}
+	.spot::before {
+		padding: 1px;
+		background: radial-gradient(220px circle at var(--mx, 50%) var(--my, 50%), var(--brand), transparent 70%);
+		mask:
+			linear-gradient(#000 0 0) content-box exclude,
+			linear-gradient(#000 0 0);
+	}
+	.spot[data-pointer]::before,
+	.spot[data-pointer]::after {
+		opacity: 1;
+	}
+
+	/* A graphic's animations are declared under [data-run] (motion.ts). Loops (`live`) hold their
+	 * first frame while armed, run on screen and pause off it; one-time reveals (`reveal`) hold
+	 * while armed and then always finish, so nothing is left half-faded. Without data-run, every
+	 * graphic shows its resting frame. */
+	[data-run]:not([data-run='on']) .live,
+	[data-run='armed'] .reveal {
+		animation-play-state: paused !important;
+	}
+
 	/* The theme switch: the new theme is clipped in as a growing circle (ThemeMenu). */
 	::view-transition-old(root),
 	::view-transition-new(root) {
@@ -162,6 +209,13 @@
 	}
 	.theme-icon {
 		transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	[data-run] *,
+	.breathe {
+		animation: none !important;
 	}
 }
 

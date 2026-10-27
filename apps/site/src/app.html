@@ -5,6 +5,8 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="color-scheme" content="light dark" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
+		<!-- With JavaScript, the hero's story starts from its first frame instead of flashing its end (src/lib/home/HeroStory.svelte). -->
+		<script>document.documentElement.classList.add('js');</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
