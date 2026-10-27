@@ -5,6 +5,8 @@
 //! takes away more than they hold. An invitation's token is a capability: holding it is what lets
 //! a signed-in person see the project's name and join it.
 
+use std::collections::HashMap;
+
 use colophon_domain::policy::{Action, Policy};
 use sqlx::{PgPool, types::time::OffsetDateTime};
 use uuid::Uuid;
@@ -124,23 +126,87 @@ async fn lock_owners(tx: &mut MemberTransaction) -> Result<Vec<Uuid>, DbError> {
     .map_err(DbError::from_query)
 }
 
-/// The role `identity` holds, locked until the transaction ends, and what it allows.
-async fn held(tx: &mut MemberTransaction, identity: Uuid) -> Result<Option<Policy>, DbError> {
-    let role = sqlx::query_scalar!(
-        "SELECT role FROM memberships WHERE project_id = $1 AND identity_id = $2 FOR UPDATE",
+/// What a member change needs, read under the locks that keep it true until commit: the caller's
+/// role and the target's (both memberships locked; every member change first queues on the owners,
+/// so the order can't deadlock), and the role being given (key-share locked, so it can't be deleted
+/// first). Two round trips under the owner lock, because every change to one project's members
+/// waits on that lock.
+struct Standing {
+    caller: Option<Policy>,
+    target: Option<Policy>,
+    /// `None` when no role is being given, or the project has no such role.
+    granted: Option<Policy>,
+}
+
+async fn standing(
+    tx: &mut MemberTransaction,
+    identity: Uuid,
+    granted: Option<&str>,
+) -> Result<Standing, DbError> {
+    let held = sqlx::query!(
+        "SELECT identity_id, role FROM memberships
+         WHERE project_id = $1 AND identity_id = ANY($2)
+         FOR UPDATE",
         tx.project,
-        identity
+        &[tx.identity, identity][..]
     )
-    .fetch_optional(&mut *tx.transaction)
+    .fetch_all(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)?;
-    let Some(role) = role else { return Ok(None) };
-    roles::policy_of(tx, &role)
-        .await?
-        .ok_or(DbError::Corrupt(
-            "a member holds a role the project doesn't have",
-        ))
-        .map(Some)
+    let role_of = |who: Uuid| {
+        held.iter()
+            .find(|row| row.identity_id == who)
+            .map(|row| row.role.clone())
+    };
+    let (caller_role, target_role) = (role_of(tx.identity), role_of(identity));
+    let mut keys: Vec<String> = [caller_role.clone(), target_role.clone()]
+        .into_iter()
+        .flatten()
+        .chain(granted.map(str::to_owned))
+        .collect();
+    keys.sort();
+    keys.dedup();
+    let rows = sqlx::query!(
+        r#"SELECT r.key,
+                  coalesce(p.actions, '{}') AS "actions!",
+                  coalesce(p.subjects, '{}') AS "subjects!",
+                  coalesce(p.fields, '{}') AS "fields!: Vec<Option<String>>",
+                  coalesce(p.conditions, '{}') AS "conditions!: Vec<Option<String>>"
+           FROM roles r
+           LEFT JOIN LATERAL (
+               SELECT array_agg(action ORDER BY action, subject) AS actions,
+                      array_agg(subject ORDER BY action, subject) AS subjects,
+                      array_agg(array_to_string(fields, ',') ORDER BY action, subject) AS fields,
+                      array_agg(condition ORDER BY action, subject) AS conditions
+               FROM role_permissions
+               WHERE project_id = r.project_id AND role_key = r.key
+           ) p ON true
+           WHERE r.project_id = $1 AND r.key = ANY($2)
+           FOR KEY SHARE OF r"#,
+        tx.project,
+        &keys
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    let mut policies = HashMap::with_capacity(rows.len());
+    for row in rows {
+        let policy = scope::policy(row.actions, row.subjects, row.fields, row.conditions)?;
+        policies.insert(row.key, policy);
+    }
+    let held_policy = |role: Option<String>| {
+        role.map(|role| {
+            policies.get(&role).cloned().ok_or(DbError::Corrupt(
+                "a member holds a role the project doesn't have",
+            ))
+        })
+        .transpose()
+    };
+    Ok(Standing {
+        caller: held_policy(caller_role)?,
+        target: held_policy(target_role)?,
+        granted: granted.and_then(|role| policies.get(role).cloned()),
+    })
 }
 
 /// Changes `identity`'s role to `role`, refusing to take the last owner away, or to act for a
@@ -151,13 +217,14 @@ pub async fn change_role(
     role: &str,
 ) -> Result<Change, DbError> {
     let owners = lock_owners(tx).await?;
-    let Some(caller) = current_policy(tx).await? else {
+    let standing = standing(tx, identity, Some(role)).await?;
+    let Some(caller) = standing.caller else {
         return Ok(Change::NotPermitted);
     };
-    let Some(current) = held(tx, identity).await? else {
+    let Some(current) = standing.target else {
         return Ok(Change::NotFound);
     };
-    let Some(granted) = roles::policy_of(tx, role).await? else {
+    let Some(granted) = standing.granted else {
         return Ok(Change::UnknownRole);
     };
     if !(caller.allows(Action::MembersManage, None)
@@ -187,10 +254,11 @@ pub async fn change_role(
 pub async fn remove(tx: &mut MemberTransaction, identity: Uuid) -> Result<Change, DbError> {
     let owners = lock_owners(tx).await?;
     if identity != tx.identity {
-        let Some(caller) = current_policy(tx).await? else {
+        let standing = standing(tx, identity, None).await?;
+        let Some(caller) = standing.caller else {
             return Ok(Change::NotPermitted);
         };
-        let Some(current) = held(tx, identity).await? else {
+        let Some(current) = standing.target else {
             return Ok(Change::NotFound);
         };
         if !(caller.allows(Action::MembersManage, None) && caller.covers(&current)) {
