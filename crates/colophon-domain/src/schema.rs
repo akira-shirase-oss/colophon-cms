@@ -193,7 +193,7 @@ fn plain_text(text: &str, max: usize) -> bool {
     (1..=max).contains(&length) && !text.chars().any(char::is_control) && text.trim() == text
 }
 
-fn is_field_id(text: &str) -> bool {
+pub(crate) fn is_field_id(text: &str) -> bool {
     let bytes = text.as_bytes();
     (1..=64).contains(&bytes.len())
         && bytes.first().is_some_and(u8::is_ascii_lowercase)

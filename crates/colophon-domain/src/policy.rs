@@ -54,6 +54,20 @@ pub enum RoleError {
         "field lists and conditions arrive with step R.3; until they are enforced, they are refused rather than ignored"
     )]
     NotYetEnforced,
+    /// A field list on an action that isn't about fields.
+    #[error("only content.read, content.create and content.update can be limited to some fields")]
+    FieldsNotApplicable,
+    /// A field list that is empty, too long, or names something that isn't a field id.
+    #[error("a field list names 1 to 100 field ids, like title or body")]
+    InvalidFields,
+    /// The own condition on an action it can't apply to.
+    #[error(
+        "only content.read, content.update and content.delete can be limited to the member's own entries"
+    )]
+    ConditionNotApplicable,
+    /// A condition that isn't `own`.
+    #[error("the one condition is own: entries the member created")]
+    UnknownCondition,
 }
 
 impl RoleError {
@@ -68,6 +82,10 @@ impl RoleError {
             Self::ProjectWide => "project_wide_action",
             Self::TooManyPermissions => "too_many_permissions",
             Self::NotYetEnforced => "not_yet_enforced",
+            Self::FieldsNotApplicable => "fields_not_applicable",
+            Self::InvalidFields => "invalid_fields",
+            Self::ConditionNotApplicable => "condition_not_applicable",
+            Self::UnknownCondition => "unknown_condition",
         }
     }
 }
@@ -304,6 +322,46 @@ impl Permission {
         })
     }
 
+    /// [`Permission::parse`], narrowed to some fields and to the member's own entries (step R.3).
+    /// Field lists apply to reading, creating and updating content; `own` to reading, updating and
+    /// deleting it (a member's own entries are the ones they created).
+    pub fn parse_narrowed(
+        action: &str,
+        subject: &str,
+        fields: Option<&[String]>,
+        condition: Option<&str>,
+    ) -> Result<Self, RoleError> {
+        let mut permission = Self::parse(action, subject)?;
+        if let Some(fields) = fields {
+            if !matches!(
+                permission.action,
+                Action::ContentRead | Action::ContentCreate | Action::ContentUpdate
+            ) {
+                return Err(RoleError::FieldsNotApplicable);
+            }
+            let mut list: Vec<String> = fields.to_vec();
+            list.sort();
+            list.dedup();
+            if !(1..=100).contains(&list.len())
+                || !list.iter().all(|field| crate::schema::is_field_id(field))
+            {
+                return Err(RoleError::InvalidFields);
+            }
+            permission.fields = Some(list);
+        }
+        if let Some(condition) = condition {
+            let condition = Condition::parse(condition).ok_or(RoleError::UnknownCondition)?;
+            if !matches!(
+                permission.action,
+                Action::ContentRead | Action::ContentUpdate | Action::ContentDelete
+            ) {
+                return Err(RoleError::ConditionNotApplicable);
+            }
+            permission.condition = Some(condition);
+        }
+        Ok(permission)
+    }
+
     /// `action` everywhere, on every field, without a condition.
     pub const fn everywhere(action: Action) -> Self {
         Self {
@@ -354,10 +412,35 @@ pub struct Policy {
 
 impl Policy {
     /// A policy of exactly these permissions.
-    pub fn new(mut permissions: Vec<Permission>) -> Self {
-        permissions.sort();
-        permissions.dedup();
-        Self { permissions }
+    /// A policy of exactly these permissions. Permissions for one action, subject and condition
+    /// merge into one, with the union of their fields (or every field, if any allows all): a role
+    /// holds at most one such permission, as the database stores it (migration 0021).
+    pub fn new(permissions: Vec<Permission>) -> Self {
+        let mut merged: Vec<Permission> = Vec::with_capacity(permissions.len());
+        for permission in permissions {
+            match merged.iter_mut().find(|held| {
+                held.action == permission.action
+                    && held.subject == permission.subject
+                    && held.condition == permission.condition
+            }) {
+                None => merged.push(permission),
+                Some(held) => {
+                    held.fields = match (held.fields.take(), permission.fields) {
+                        (Some(mut one), Some(other)) => {
+                            one.extend(other);
+                            one.sort();
+                            one.dedup();
+                            Some(one)
+                        }
+                        _ => None,
+                    };
+                }
+            }
+        }
+        merged.sort();
+        Self {
+            permissions: merged,
+        }
     }
 
     /// The permissions, sorted.
@@ -753,6 +836,91 @@ mod tests {
             !own_articles.covers(&titles),
             "own entries don't cover anyone's titles"
         );
+    }
+
+    #[test]
+    fn narrowed_permissions_parse_only_where_they_apply_and_merge() {
+        let titles = ["title".to_owned()];
+        assert_eq!(
+            Permission::parse_narrowed("content.update", "articles", Some(&titles), None),
+            Ok(narrowed(
+                Action::ContentUpdate,
+                "articles",
+                Some(&["title"]),
+                false
+            ))
+        );
+        assert_eq!(
+            Permission::parse_narrowed("content.update", "*", None, Some("own"))
+                .map(|p| p.condition),
+            Ok(Some(Condition::Own))
+        );
+        for (action, fields, condition, error) in [
+            (
+                "content.publish",
+                Some(&titles[..]),
+                None,
+                RoleError::FieldsNotApplicable,
+            ),
+            (
+                "content.read",
+                Some(&[][..]),
+                None,
+                RoleError::InvalidFields,
+            ),
+            (
+                "content.read",
+                Some(&["Title".to_owned()][..]),
+                None,
+                RoleError::InvalidFields,
+            ),
+            (
+                "content.publish",
+                None,
+                Some("own"),
+                RoleError::ConditionNotApplicable,
+            ),
+            (
+                "content.create",
+                None,
+                Some("own"),
+                RoleError::ConditionNotApplicable,
+            ),
+            (
+                "content.read",
+                None,
+                Some("mine"),
+                RoleError::UnknownCondition,
+            ),
+        ] {
+            assert_eq!(
+                Permission::parse_narrowed(action, "articles", fields, condition),
+                Err(error),
+                "{action} {fields:?} {condition:?}"
+            );
+        }
+        // One action, subject and condition: one permission, with the union of fields.
+        let merged = Policy::new(vec![
+            narrowed(Action::ContentRead, "articles", Some(&["title"]), false),
+            narrowed(
+                Action::ContentRead,
+                "articles",
+                Some(&["body", "title"]),
+                false,
+            ),
+            narrowed(Action::ContentRead, "articles", None, true),
+        ]);
+        assert_eq!(merged.permissions().len(), 2);
+        assert_eq!(
+            merged.fields(Action::ContentRead, "articles", false),
+            Some(only(&["body", "title"]))
+        );
+        let widened = Policy::new(vec![
+            narrowed(Action::ContentRead, "articles", Some(&["title"]), false),
+            narrowed(Action::ContentRead, "articles", None, false),
+        ]);
+        assert_eq!(widened.permissions().len(), 1);
+        assert!(widened.allows(Action::ContentRead, Some("articles")));
     }
 
     #[test]
