@@ -14,8 +14,8 @@
     "import-blog": "node scripts/import-blog.ts"
   },
   "dependencies": {
+    "@colophon/site-theme": "0.0.0",
     "@colophon/ui": "0.0.0",
-    "@fontsource/fragment-mono": "5.3.0",
     "@lucide/svelte": "1.62.0",
     "mode-watcher": "1.1.0"
   },

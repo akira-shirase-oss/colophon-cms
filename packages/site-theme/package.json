@@ -1,0 +1,16 @@
+{
+  "name": "@colophon/site-theme",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The public look shared by Colophon's website (apps/site) and docs (apps/docs): one stylesheet of tokens, type, pills, glass and the warm brown dark theme, layered over the design system (@colophon/ui).",
+  "type": "module",
+  "exports": {
+    "./theme.css": "./src/theme.css"
+  },
+  "dependencies": {
+    "@fontsource/fragment-mono": "5.3.0"
+  },
+  "peerDependencies": {
+    "@colophon/ui": "0.0.0"
+  }
+}

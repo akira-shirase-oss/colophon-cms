@@ -13,6 +13,7 @@
     "test": "npm run build && playwright test"
   },
   "dependencies": {
+    "@colophon/site-theme": "0.0.0",
     "@colophon/ui": "0.0.0",
     "@lucide/svelte": "1.62.0",
     "mode-watcher": "1.1.0"

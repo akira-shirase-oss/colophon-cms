@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const PORT = 58301;
+// 58301 by default; COLOPHON_SITE_TEST_PORT moves it when that port is taken.
+const PORT = Number(process.env['COLOPHON_SITE_TEST_PORT'] ?? 58301);
 
 export default defineConfig({
 	testDir: 'tests',
