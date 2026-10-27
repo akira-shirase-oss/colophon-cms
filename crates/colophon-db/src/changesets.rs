@@ -70,6 +70,8 @@ pub struct Item {
     /// (different once someone edits it); for `unpublish`, the published one (none once nothing
     /// is).
     pub current_revision_id: Option<Uuid>,
+    /// The revision readers get now, if the entry is published: what the item changes from.
+    pub published_revision_id: Option<Uuid>,
 }
 
 impl Item {
@@ -295,7 +297,10 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
                        ELSE (SELECT p.revision_id FROM publications p
                              WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id
                                AND p.entry_id = i.entry_id AND p.valid_to IS NULL)
-                  END AS current_revision_id
+                  END AS current_revision_id,
+                  (SELECT p.revision_id FROM publications p
+                   WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id
+                     AND p.entry_id = i.entry_id AND p.valid_to IS NULL) AS published_revision_id
          FROM changeset_items i
          CROSS JOIN LATERAL (
              SELECT r.collection, r.content_hash, r.schema_version, r.title
@@ -334,6 +339,7 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
             },
             title: row.title,
             current_revision_id: row.current_revision_id,
+            published_revision_id: row.published_revision_id,
         })
         .collect())
 }

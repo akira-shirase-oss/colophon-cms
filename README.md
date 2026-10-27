@@ -104,7 +104,7 @@ model, flows, consistency guarantees, capacity model and failure handling.
 | Server | Rust (edition 2024): Axum, Tokio, Tower, SQLx; one binary with API and worker roles |
 | Data | PostgreSQL 18 (authoritative); Valkey, a Redis-protocol cache (disposable); S3-compatible object storage (Garage locally) |
 | Frontends | SvelteKit + TypeScript: the Studio (single-page app), the reference blog (prerendered), the docs (mdsvex + Pagefind) |
-| Design system | Material Design 3 tokens generated from one seed, components on Bits UI primitives, Roboto Flex (self-hosted) |
+| Design system | Colophon's own: OKLCH tokens, Tailwind CSS v4, owned shadcn-svelte components on Bits UI, Inter (self-hosted) |
 | Editor | Tiptap / ProseMirror, stored as validated, versioned JSON, never HTML |
 | Identity | OIDC with Keycloak as the reference provider; sessions enforced by Rust and Postgres |
 | Delivery | Cloudflare CDN adapter: tag purge and evidence probes |

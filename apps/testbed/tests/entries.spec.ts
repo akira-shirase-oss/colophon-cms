@@ -79,3 +79,42 @@ test('two tabs edit one article: the later save is refused, and nothing is lost'
 	await expect(second.getByTestId('history').locator('li')).toHaveCount(2);
 	await context.close();
 });
+
+test('titles are searched with wildcards taken literally, and any revision reads back with its content', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	await openEntries(page, projectId);
+	for (const [title, text] of [
+		['Field notes', 'From the field.'],
+		['Kitchen sink', 'Everything.']
+	] as const) {
+		await page.getByLabel('New title').fill(title);
+		await page.getByLabel('New text').fill(text);
+		await page.getByRole('button', { name: 'Create article' }).click();
+		await expect(page.getByTestId('message')).toHaveText(`created ${title}`);
+	}
+	await expect(page.getByTestId('entries').locator('li[data-state="draft"]')).toHaveCount(2);
+
+	const search = async (text: string) => {
+		await page.getByLabel('Search titles').fill(text);
+		await page.getByRole('button', { name: 'Search', exact: true }).click();
+	};
+	await search('NOTES');
+	await expect(page.getByTestId('search-results').locator('li')).toHaveText(['Field notes']);
+	// As a wildcard, `_` would match the space in "Kitchen sink".
+	await search('n_sink');
+	await expect(page.getByTestId('search-status')).toHaveText('200');
+	await expect(page.getByTestId('search-results').locator('li')).toHaveCount(0);
+	await search('x'.repeat(101));
+	await expect(page.getByTestId('search-status')).toHaveText('400');
+
+	// "Kitchen sink" is open after creating it: save a second revision, then read the first.
+	await page.getByLabel('Title', { exact: true }).fill('Kitchen sink, revised');
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(page.getByTestId('history').locator('li')).toHaveCount(2);
+	await page.getByTestId('history').locator('li').last().getByRole('button', { name: 'Read' }).click();
+	await expect(page.getByTestId('revision-content')).toHaveAttribute('data-status', '200');
+	await expect(page.getByTestId('revision-content')).toContainText('Kitchen sink');
+	await expect(page.getByTestId('revision-content')).toContainText('Everything.');
+	await expect(page.getByTestId('revision-content')).not.toContainText('revised');
+});

@@ -1,11 +1,13 @@
 <script lang="ts">
-	import '@colophon/ui/tokens.css';
-	import '@colophon/ui/base.css';
-	import { resolve } from '$app/paths';
+	import '../app.css';
+	import { page } from '$app/state';
 	import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
-	import { AppearanceMenu, TopAppBar } from '@colophon/ui';
+	import { ModeWatcher } from 'mode-watcher';
+	import { Toaster } from '@colophon/ui/ui/sonner';
+	import * as Tooltip from '@colophon/ui/ui/tooltip';
 	import { ApiError } from '#lib/api.ts';
 	import mark from '#lib/colophon-mark.svg';
+	import Frame from '#lib/shell/Frame.svelte';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
@@ -20,6 +22,8 @@
 			}
 		}
 	});
+	// A project's pages draw their own shell, with its sidebar; every other page gets the plain frame.
+	const inProject = $derived(page.route.id?.startsWith('/projects/[project]') ?? false);
 </script>
 
 <svelte:head>
@@ -27,54 +31,14 @@
 	<title>Colophon Studio</title>
 </svelte:head>
 
-<TopAppBar>
-	{#snippet title()}
-		<a class="home" href={resolve('/')}>
-			<img src={mark} alt="" width="22" height="24" class="mark" />
-			<span>Colophon Studio</span>
-		</a>
-		<span class="tag" title="Colophon is not released yet">preview</span>
-	{/snippet}
-	{#snippet trailing()}
-		<AppearanceMenu />
-	{/snippet}
-</TopAppBar>
-
-<main>
-	<QueryClientProvider client={queryClient}>
-		{@render children()}
-	</QueryClientProvider>
-</main>
-
-<style>
-	.home {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-		color: inherit;
-		text-decoration: none;
-	}
-	.mark {
-		flex: none;
-	}
-	:global([data-theme='dark']) .mark {
-		filter: invert(1);
-	}
-	@media (prefers-color-scheme: dark) {
-		:global(:root:not([data-theme='light'])) .mark {
-			filter: invert(1);
-		}
-	}
-	.tag {
-		font: var(--md-sys-typescale-label-medium);
-		color: var(--md-sys-color-on-surface-variant);
-		padding: 0.125rem 0.5rem;
-		border-radius: var(--md-sys-shape-corner-small);
-		background: var(--md-sys-color-surface-container-highest);
-	}
-	main {
-		max-width: 80rem;
-		margin: 0 auto;
-		padding: 1.5rem 1rem 3rem;
-	}
-</style>
+<ModeWatcher defaultMode="system" />
+<QueryClientProvider client={queryClient}>
+	<Tooltip.Provider delayDuration={300}>
+		{#if inProject}
+			{@render children()}
+		{:else}
+			<Frame>{@render children()}</Frame>
+		{/if}
+	</Tooltip.Provider>
+</QueryClientProvider>
+<Toaster position="bottom-right" />

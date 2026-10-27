@@ -60,6 +60,7 @@ test('a changeset is approved as the exact version on screen, and an edit makes 
 
 	await page.goto(`/studio/projects/${project}`);
 	await page.getByTestId('changesets-link').click();
+	await page.getByRole('button', { name: 'New changeset' }).click();
 	await page.getByLabel('Title', { exact: true }).fill('Launch week');
 	await page.getByLabel('Spring launch', { exact: true }).check();
 	await page.getByLabel('Pricing page', { exact: true }).check();

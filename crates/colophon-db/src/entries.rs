@@ -68,7 +68,12 @@ pub struct Summary {
     pub updated_at: OffsetDateTime,
     /// The current draft revision.
     pub revision: Revision,
+    /// The revision readers get now, and the release it went out in, if it is published.
+    pub published: Option<(Uuid, i64)>,
 }
+
+/// The longest title search accepted.
+pub const MAX_SEARCH: usize = 100;
 
 /// What a save did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -273,11 +278,22 @@ pub async fn list(
     collection: &str,
     before: Option<Uuid>,
     limit: i64,
+    search: Option<&str>,
 ) -> Result<Vec<Summary>, DbError> {
+    // A title search matches anywhere in the draft's title, case-insensitively; its own `%`, `_`
+    // and `\` match themselves.
+    let pattern = search.map(|text| {
+        let escaped = text
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        format!("%{escaped}%")
+    });
     let rows = sqlx::query!(
-        "SELECT e.id, e.updated_at,
+        r#"SELECT e.id, e.updated_at,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
-                r.content_hash, r.title
+                r.content_hash, r.title, live.revision_id AS "published_revision_id?",
+                live.valid_from AS "published_in?"
          FROM entries e
          CROSS JOIN LATERAL (
              SELECT r.id, r.base_revision_id, r.author_id, r.created_at, r.content_hash, r.title
@@ -286,15 +302,24 @@ pub async fn list(
                AND r.id = e.draft_revision_id
              LIMIT 1
          ) r
+         LEFT JOIN LATERAL (
+             SELECT p.revision_id, p.valid_from
+             FROM publications p
+             WHERE p.project_id = e.project_id AND p.environment_id = e.environment_id
+               AND p.entry_id = e.id AND p.valid_to IS NULL
+             LIMIT 1
+         ) live ON true
          WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
            AND ($4::uuid IS NULL OR e.id < $4)
+           AND ($6::text IS NULL OR r.title ILIKE $6)
          ORDER BY e.id DESC
-         LIMIT $5",
+         LIMIT $5"#,
         tx.project,
         tx.environment,
         collection,
         before,
-        limit.clamp(1, MAX_PAGE + 1)
+        limit.clamp(1, MAX_PAGE + 1),
+        pattern
     )
     .fetch_all(&mut *tx.transaction)
     .await
@@ -312,6 +337,7 @@ pub async fn list(
                 content_hash: row.content_hash,
                 title: row.title,
             },
+            published: row.published_revision_id.zip(row.published_in),
         })
         .collect())
 }
@@ -339,4 +365,39 @@ pub async fn history(
     .fetch_all(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)
+}
+
+/// One revision of `entry` in `collection`, with its canonical content, if it exists here: what a
+/// review shows side by side.
+pub async fn revision(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    entry_id: Uuid,
+    revision_id: Uuid,
+) -> Result<Option<(Revision, String)>, DbError> {
+    let row = sqlx::query!(
+        "SELECT id, base_revision_id, author_id, created_at, content_hash, title, content FROM revisions
+         WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3 AND id = $4 AND collection = $5",
+        tx.project,
+        tx.environment,
+        entry_id,
+        revision_id,
+        collection
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(row.map(|row| {
+        (
+            Revision {
+                id: row.id,
+                base_revision_id: row.base_revision_id,
+                author_id: row.author_id,
+                created_at: row.created_at,
+                content_hash: row.content_hash,
+                title: row.title,
+            },
+            row.content,
+        )
+    }))
 }

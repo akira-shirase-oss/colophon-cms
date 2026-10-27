@@ -124,11 +124,11 @@ test('an unsafe link is refused with an explanation; a safe one is applied', asy
 	await page.keyboard.type('click me');
 	await page.keyboard.press('ControlOrMeta+a');
 	await page.getByRole('button', { name: 'Link' }).click();
-	await page.getByLabel('Link').fill('javascript:alert(1)');
+	await page.getByLabel('Link address').fill('javascript:alert(1)');
 	await page.getByRole('button', { name: 'Apply' }).click();
 	await expect(page.getByRole('alert')).toContainText('Only https:, http: and mailto: links');
 	expect(await stored(page)).not.toContain('"link"');
-	await page.getByLabel('Link').fill('https://example.com/docs');
+	await page.getByLabel('Link address').fill('https://example.com/docs');
 	await page.getByRole('button', { name: 'Apply' }).click();
 	expect(await stored(page)).toContain('"marks":[{"type":"link","attrs":{"href":"https://example.com/docs"}}]');
 });

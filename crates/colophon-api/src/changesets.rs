@@ -134,6 +134,8 @@ pub(crate) struct ItemView {
     /// The entry moved on since it was pinned: edited, or (for `unpublish`) published anew or
     /// already taken down.
     edited: bool,
+    /// The revision readers get now, if published: what this item changes from.
+    published_revision_id: Option<Uuid>,
 }
 
 #[derive(Serialize)]
@@ -302,6 +304,7 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
                 content_hash: content_hash(&item.pin.content_hash),
                 schema_version: item.pin.schema_version,
                 current_revision_id: item.current_revision_id,
+                published_revision_id: item.published_revision_id,
             })
             .collect(),
         reviews: reviews

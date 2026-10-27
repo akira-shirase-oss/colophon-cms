@@ -109,7 +109,7 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
         .map(|revision| (revision.id, revision.base_revision_id))
         .collect();
     assert_eq!(history, [(second.id, Some(first)), (first, None)]);
-    let listed = entries::list(&mut tx, ARTICLES, None, 20)
+    let listed = entries::list(&mut tx, ARTICLES, None, 20, None)
         .await
         .expect("list");
     assert_eq!(listed.len(), 1);

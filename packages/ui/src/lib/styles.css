@@ -1,0 +1,319 @@
+/*
+ * Colophon's design system (D-056): Tailwind CSS v4, every shadcn-svelte component, and tokens of
+ * its own. Quiet and warm: off-white paper, near-black ink, hairline warm-grey rules, white cards
+ * that float on soft shadows, black pill buttons, and one accent, a burnt orange, that appears as
+ * a soft glow (orange to peach to rose) and in charts, never as body text. Headings use Inter's
+ * display cut (its optical-size axis) with tight tracking; numbers are tabular. Status colours
+ * are plain: green for live, amber for pending, red for attention, grey for draft. Dark mode is
+ * a warm near-black with white pills.
+ *
+ * Apps import this file and add `@source` for this package's components (Tailwind doesn't scan
+ * dependencies).
+ */
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn-svelte/tailwind.css';
+@import '@fontsource-variable/inter/opsz.css';
+@import '@fontsource-variable/jetbrains-mono';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+	--radius: 0.75rem;
+
+	/* Paper and ink. */
+	--background: oklch(0.986 0.003 75);
+	--foreground: oklch(0.19 0.004 60);
+	--card: oklch(1 0 0);
+	--card-foreground: var(--foreground);
+	--popover: oklch(1 0 0);
+	--popover-foreground: var(--foreground);
+	--primary: oklch(0.17 0.003 60);
+	--primary-foreground: oklch(0.99 0.002 75);
+	--secondary: oklch(0.966 0.004 75);
+	--secondary-foreground: var(--foreground);
+	--muted: oklch(0.966 0.004 75);
+	--muted-foreground: oklch(0.49 0.006 60);
+	--accent: oklch(0.955 0.005 75);
+	--accent-foreground: var(--foreground);
+	--destructive: oklch(0.54 0.2 27);
+	--border: oklch(0.925 0.004 75);
+	--input: oklch(0.912 0.004 75);
+	--ring: oklch(0.58 0.17 42);
+
+	/* The accent: a burnt orange for marks, charts and the glow; a deeper one when it is text. */
+	--brand: oklch(0.68 0.18 42);
+	--brand-ink: oklch(0.5 0.15 40);
+	--brand-soft: oklch(0.96 0.03 55);
+	--glow-1: oklch(0.72 0.17 45);
+	--glow-2: oklch(0.9 0.06 60);
+	--glow-3: oklch(0.84 0.1 345);
+
+	/* States: a mark (a dot, an icon), a soft ground for pills, and an ink that reads on it. */
+	--live: oklch(0.66 0.16 150);
+	--live-soft: oklch(0.965 0.035 150);
+	--live-ink: oklch(0.44 0.11 150);
+	--pending: oklch(0.77 0.15 75);
+	--pending-soft: oklch(0.97 0.045 85);
+	--pending-ink: oklch(0.47 0.1 65);
+	--attention: oklch(0.6 0.2 27);
+	--attention-soft: oklch(0.965 0.025 25);
+	--attention-ink: oklch(0.49 0.17 27);
+	--draft: oklch(0.65 0.005 60);
+	--draft-soft: oklch(0.955 0.003 75);
+	--draft-ink: oklch(0.44 0.006 60);
+
+	/* The shell: paper around white pages. */
+	--sidebar: oklch(0.975 0.004 75);
+	--sidebar-foreground: oklch(0.3 0.005 60);
+	--sidebar-primary: var(--primary);
+	--sidebar-primary-foreground: var(--primary-foreground);
+	--sidebar-accent: oklch(0.94 0.005 75);
+	--sidebar-accent-foreground: var(--foreground);
+	--sidebar-border: oklch(0.92 0.004 75);
+	--sidebar-ring: var(--ring);
+
+	/* Charts: the accent first, then quieter companions. */
+	--chart-1: oklch(0.68 0.18 42);
+	--chart-2: oklch(0.55 0.02 60);
+	--chart-3: oklch(0.66 0.16 150);
+	--chart-4: oklch(0.77 0.15 75);
+	--chart-5: oklch(0.7 0.12 345);
+
+	/* Elevation: hairline-and-haze, never a hard drop. */
+	--shadow-hairline: 0 1px 2px oklch(0.2 0.01 60 / 0.05);
+	--shadow-soft: 0 1px 2px oklch(0.2 0.01 60 / 0.04), 0 6px 20px -8px oklch(0.2 0.01 60 / 0.1);
+	--shadow-float: 0 1px 2px oklch(0.2 0.01 60 / 0.04), 0 32px 64px -24px oklch(0.35 0.05 40 / 0.28);
+	--shadow-press: 0 1px 1px oklch(0 0 0 / 0.2), 0 8px 18px -8px oklch(0 0 0 / 0.45);
+}
+
+.dark {
+	--background: oklch(0.16 0.004 60);
+	--foreground: oklch(0.96 0.003 75);
+	--card: oklch(0.2 0.004 60);
+	--card-foreground: var(--foreground);
+	--popover: oklch(0.21 0.004 60);
+	--popover-foreground: var(--foreground);
+	--primary: oklch(0.97 0.002 75);
+	--primary-foreground: oklch(0.17 0.003 60);
+	--secondary: oklch(0.245 0.004 60);
+	--secondary-foreground: var(--foreground);
+	--muted: oklch(0.245 0.004 60);
+	--muted-foreground: oklch(0.72 0.005 75);
+	--accent: oklch(0.27 0.005 60);
+	--accent-foreground: var(--foreground);
+	--destructive: oklch(0.68 0.18 27);
+	--border: oklch(0.29 0.005 60);
+	--input: oklch(0.33 0.005 60);
+	--ring: oklch(0.72 0.16 45);
+	--brand: oklch(0.72 0.17 45);
+	--brand-ink: oklch(0.78 0.13 50);
+	--brand-soft: oklch(0.27 0.04 45);
+	--glow-1: oklch(0.55 0.15 42);
+	--glow-2: oklch(0.32 0.05 50);
+	--glow-3: oklch(0.42 0.09 345);
+	--live: oklch(0.74 0.15 150);
+	--live-soft: oklch(0.27 0.045 150);
+	--live-ink: oklch(0.86 0.1 150);
+	--pending: oklch(0.82 0.14 80);
+	--pending-soft: oklch(0.29 0.05 75);
+	--pending-ink: oklch(0.89 0.1 85);
+	--attention: oklch(0.7 0.17 27);
+	--attention-soft: oklch(0.28 0.06 27);
+	--attention-ink: oklch(0.87 0.08 27);
+	--draft: oklch(0.65 0.005 75);
+	--draft-soft: oklch(0.26 0.004 60);
+	--draft-ink: oklch(0.85 0.004 75);
+	--sidebar: oklch(0.14 0.004 60);
+	--sidebar-foreground: oklch(0.86 0.004 75);
+	--sidebar-primary: var(--primary);
+	--sidebar-primary-foreground: var(--primary-foreground);
+	--sidebar-accent: oklch(0.22 0.005 60);
+	--sidebar-accent-foreground: var(--foreground);
+	--sidebar-border: oklch(0.24 0.005 60);
+	--sidebar-ring: var(--ring);
+	--chart-1: oklch(0.72 0.17 45);
+	--chart-2: oklch(0.7 0.01 75);
+	--chart-3: oklch(0.74 0.15 150);
+	--chart-4: oklch(0.82 0.14 80);
+	--chart-5: oklch(0.74 0.11 345);
+	--shadow-hairline: 0 1px 2px oklch(0 0 0 / 0.3);
+	--shadow-soft: 0 1px 2px oklch(0 0 0 / 0.3), 0 8px 24px -10px oklch(0 0 0 / 0.5);
+	--shadow-float: 0 1px 2px oklch(0 0 0 / 0.3), 0 32px 64px -24px oklch(0 0 0 / 0.7);
+	--shadow-press: 0 1px 1px oklch(0 0 0 / 0.3), 0 8px 18px -8px oklch(0 0 0 / 0.6);
+}
+
+/* More contrast when the system asks for it: text, inks and rules move, grounds stay. `:root`
+ * would also beat `.dark` here (same specificity, later), so light is `:root:not(.dark)`. */
+@media (prefers-contrast: more) {
+	:root:not(.dark) {
+		--foreground: oklch(0.13 0.003 60);
+		--muted-foreground: oklch(0.34 0.006 60);
+		--border: oklch(0.6 0.005 75);
+		--input: oklch(0.5 0.005 75);
+		--sidebar-foreground: oklch(0.18 0.004 60);
+		--live-ink: oklch(0.33 0.09 150);
+		--pending-ink: oklch(0.35 0.08 65);
+		--attention-ink: oklch(0.38 0.15 27);
+		--draft-ink: oklch(0.32 0.006 60);
+		--brand-ink: oklch(0.4 0.13 40);
+	}
+	.dark {
+		--foreground: oklch(0.99 0.002 75);
+		--muted-foreground: oklch(0.87 0.004 75);
+		--border: oklch(0.55 0.005 60);
+		--input: oklch(0.62 0.005 60);
+		--sidebar-foreground: oklch(0.96 0.003 75);
+		--live-ink: oklch(0.93 0.07 150);
+		--pending-ink: oklch(0.94 0.07 88);
+		--attention-ink: oklch(0.93 0.05 27);
+		--draft-ink: oklch(0.94 0.003 75);
+		--brand-ink: oklch(0.88 0.09 55);
+	}
+}
+
+@theme inline {
+	--font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
+
+	--radius-sm: calc(var(--radius) * 0.5);
+	--radius-md: calc(var(--radius) * 0.75);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) * 1.33);
+	--radius-2xl: calc(var(--radius) * 1.67);
+	--radius-3xl: calc(var(--radius) * 2);
+	--radius-4xl: calc(var(--radius) * 2.5);
+
+	--shadow-hairline: var(--shadow-hairline);
+	--shadow-soft: var(--shadow-soft);
+	--shadow-float: var(--shadow-float);
+	--shadow-press: var(--shadow-press);
+
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+	--color-brand: var(--brand);
+	--color-brand-ink: var(--brand-ink);
+	--color-brand-soft: var(--brand-soft);
+	--color-live: var(--live);
+	--color-live-soft: var(--live-soft);
+	--color-live-ink: var(--live-ink);
+	--color-pending: var(--pending);
+	--color-pending-soft: var(--pending-soft);
+	--color-pending-ink: var(--pending-ink);
+	--color-attention: var(--attention);
+	--color-attention-soft: var(--attention-soft);
+	--color-attention-ink: var(--attention-ink);
+	--color-draft: var(--draft);
+	--color-draft-soft: var(--draft-soft);
+	--color-draft-ink: var(--draft-ink);
+	--color-chart-1: var(--chart-1);
+	--color-chart-2: var(--chart-2);
+	--color-chart-3: var(--chart-3);
+	--color-chart-4: var(--chart-4);
+	--color-chart-5: var(--chart-5);
+	--color-sidebar: var(--sidebar);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+	html {
+		@apply bg-background;
+	}
+	body {
+		@apply bg-background font-sans text-foreground antialiased;
+		/* Inter's display cut at large sizes, its straight-sided digits and disambiguated forms. */
+		font-optical-sizing: auto;
+		font-feature-settings: 'cv11', 'ss01';
+	}
+	h1,
+	h2,
+	h3 {
+		text-wrap: balance;
+	}
+	/* Release numbers, hashes, counts and figures line up. */
+	.tabular {
+		font-variant-numeric: tabular-nums;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			animation-duration: 0.01ms !important;
+			transition-duration: 0.01ms !important;
+		}
+	}
+}
+
+@layer components {
+	/* Display type: tight, the way large Inter is meant to be set. */
+	.display-1 {
+		font-size: clamp(2.25rem, 1.6rem + 2.4vw, 3.25rem);
+		line-height: 1.04;
+		letter-spacing: -0.04em;
+		font-weight: 540;
+	}
+	.display-2 {
+		font-size: clamp(1.75rem, 1.4rem + 1.2vw, 2.25rem);
+		line-height: 1.1;
+		letter-spacing: -0.032em;
+		font-weight: 540;
+	}
+	.title {
+		font-size: 1.25rem;
+		line-height: 1.3;
+		letter-spacing: -0.018em;
+		font-weight: 600;
+	}
+	.figure {
+		font-variant-numeric: tabular-nums;
+		letter-spacing: -0.035em;
+		font-weight: 450;
+	}
+	.eyebrow {
+		font-size: 0.75rem;
+		line-height: 1rem;
+		font-weight: 500;
+		color: var(--muted-foreground);
+	}
+	/* A rule between rows. */
+	.rule-dotted {
+		border-bottom: 1px solid var(--border);
+	}
+	/* The accent's glow: soft fields of orange, peach and rose over paper. */
+	.glow {
+		background:
+			radial-gradient(60% 55% at 18% 12%, var(--glow-1) 0%, transparent 70%),
+			radial-gradient(55% 60% at 92% 96%, var(--glow-3) 0%, transparent 70%),
+			radial-gradient(70% 70% at 70% 30%, var(--glow-2) 0%, transparent 75%),
+			var(--background);
+	}
+	/* The faintest warmth in a corner of a plain page. */
+	.haze {
+		background: radial-gradient(40% 40% at 0% 0%, var(--brand-soft) 0%, transparent 70%), var(--background);
+	}
+}

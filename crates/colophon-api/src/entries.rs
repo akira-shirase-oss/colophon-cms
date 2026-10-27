@@ -117,13 +117,39 @@ struct SummaryView {
     id: Uuid,
     updated_at: String,
     revision: RevisionView,
+    /// What readers get now, if the entry is published: so a list can say draft, live or
+    /// changed since it went live.
+    published: Option<LiveView>,
 }
 
-/// `?limit=&cursor=` for lists.
+#[derive(Serialize)]
+struct LiveView {
+    revision_id: Uuid,
+    /// The release it went out in.
+    generation: i64,
+}
+
+/// `?limit=&cursor=&q=` for lists; `q` searches titles.
 #[derive(Deserialize)]
 pub(crate) struct ListQuery {
     limit: Option<i64>,
     cursor: Option<String>,
+    q: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RevisionPath {
+    project: String,
+    environment: String,
+    collection: String,
+    entry: String,
+    revision: String,
+}
+
+#[derive(Serialize)]
+struct RevisionContentView {
+    revision: RevisionView,
+    content: Box<serde_json::value::RawValue>,
 }
 
 pub(crate) fn rfc3339(at: OffsetDateTime) -> Result<String, ApiError> {
@@ -453,9 +479,20 @@ pub(crate) async fn list(
         .map(|cursor| after_cursor(&path, project, cursor))
         .transpose()?;
     // One more than the page, to know whether another page follows.
-    let mut rows: Vec<Summary> = entries::list(&mut tx, &path.collection, before, limit + 1)
-        .await
-        .map_err(ApiError::from_db)?;
+    let search = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    if search.is_some_and(|text| text.chars().count() > entries::MAX_SEARCH) {
+        return Err(ApiError::InvalidHeader(
+            "a search is at most 100 characters",
+        ));
+    }
+    let mut rows: Vec<Summary> =
+        entries::list(&mut tx, &path.collection, before, limit + 1, search)
+            .await
+            .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     let more = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);
     rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
@@ -469,10 +506,41 @@ pub(crate) async fn list(
                 id: row.entry_id,
                 updated_at: rfc3339(row.updated_at)?,
                 revision: RevisionView::new(row.revision)?,
+                published: row.published.map(|(revision_id, generation)| LiveView {
+                    revision_id,
+                    generation,
+                }),
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
     let body = serde_json::to_string(&Page { data, next_cursor }).map_err(ApiError::internal)?;
+    Ok(json(StatusCode::OK, body, None, false))
+}
+
+/// `GET {P}/collections/{collection}/entries/{entry}/revisions/{revision}`: one revision with its
+/// content, for comparing versions.
+pub(crate) async fn revision(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<RevisionPath>,
+) -> Result<Response, ApiError> {
+    let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
+    let revision = Uuid::try_parse(&path.revision).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let found = entries::revision(&mut tx, &path.collection, entry, revision)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let (revision, content) = found;
+    let body = serde_json::to_string(&crate::shape::Data {
+        data: RevisionContentView {
+            revision: RevisionView::new(revision)?,
+            content: serde_json::value::RawValue::from_string(content)
+                .map_err(ApiError::internal)?,
+        },
+    })
+    .map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, None, false))
 }
 

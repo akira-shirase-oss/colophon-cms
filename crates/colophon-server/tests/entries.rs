@@ -363,6 +363,11 @@ async fn nobody_outside_the_project_can_read_or_write_its_entries() {
         (Method::GET, entries(&project), None),
         (Method::GET, path.clone(), None),
         (Method::GET, format!("{path}/revisions"), None),
+        (
+            Method::GET,
+            format!("{path}/revisions/{}", etag.trim_matches('"')),
+            None,
+        ),
         (Method::POST, entries(&project), Some(article("Mine", "x"))),
         (Method::PUT, path.clone(), Some(article("Mine", "x"))),
     ];
@@ -414,4 +419,158 @@ async fn nobody_outside_the_project_can_read_or_write_its_entries() {
         .await
         .expect("request");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+fn titles(reply: &common::Reply) -> Vec<String> {
+    reply.body["data"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .filter_map(|entry| entry["revision"]["title"].as_str().map(str::to_owned))
+        .collect()
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_list_searches_draft_titles_and_wildcards_match_only_themselves() {
+    let _server = Server::start().await;
+    let editor = sign_in("dev-owner").await;
+    let project = project(&editor).await;
+    for title in ["Field notes", "Release notes: 100% done", "Kitchen sink"] {
+        create(&editor, &project, title).await;
+    }
+    let search = async |q: &str| {
+        let reply = call(
+            &editor,
+            Method::GET,
+            &format!("{}?q={q}", entries(&project)),
+            None,
+            &[],
+        )
+        .await
+        .expect("request");
+        if reply.status == StatusCode::OK {
+            (reply.status, titles(&reply))
+        } else {
+            (reply.status, Vec::new())
+        }
+    };
+    let found = |titles: &[&str]| -> (StatusCode, Vec<String>) {
+        (
+            StatusCode::OK,
+            titles.iter().map(|title| (*title).to_owned()).collect(),
+        )
+    };
+    // Case-insensitive, anywhere in the title. As wildcards, `s%d` would match both notes and
+    // `n_sink` the sink.
+    assert_eq!(
+        search("NOTES").await,
+        found(&["Release notes: 100% done", "Field notes"])
+    );
+    assert_eq!(search("100%25").await, found(&["Release notes: 100% done"]));
+    assert_eq!(search("s%25d").await, found(&[]));
+    assert_eq!(search("n_sink").await, found(&[]));
+    assert_eq!(
+        search("%20%20").await.1.len(),
+        3,
+        "a blank search lists everything"
+    );
+    assert_eq!(
+        search(&"x".repeat(101)).await.0,
+        StatusCode::BAD_REQUEST,
+        "a search is bounded"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_list_says_what_is_live_and_the_live_revision_reads_back() {
+    let _server = Server::start().await;
+    let editor = sign_in("dev-owner").await;
+    let project = project(&editor).await;
+    let (field, field_etag) = create(&editor, &project, "Field notes").await;
+    let (kitchen, _) = create(&editor, &project, "Kitchen sink").await;
+    let first_revision = field_etag.trim_matches('"').to_owned();
+    let generation = common::release(
+        &editor,
+        &project,
+        &json!({"title": "Field notes", "entries": [field]}),
+    )
+    .await;
+    let edited = call(
+        &editor,
+        Method::PUT,
+        &format!("{}/{field}", entries(&project)),
+        Some(&article("Field notes, revised", "Hello again")),
+        &[("if-match", &field_etag), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+
+    // Every row says what readers get now: the published entry names its live revision, which
+    // the edit has moved on from.
+    let all = call(&editor, Method::GET, &entries(&project), None, &[])
+        .await
+        .expect("request");
+    let row = |id: &str| {
+        all.body["data"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .find(|entry| entry["id"] == id)
+            .expect("listed")
+            .clone()
+    };
+    let live = row(&field);
+    assert_eq!(live["published"]["revision_id"], first_revision.as_str());
+    assert_eq!(live["published"]["generation"], generation);
+    assert_ne!(
+        live["revision"]["id"],
+        first_revision.as_str(),
+        "changed since"
+    );
+    assert!(row(&kitchen)["published"].is_null(), "a draft isn't live");
+
+    // The live revision reads back with its own content, for comparing.
+    let path = format!("{}/{field}/revisions", entries(&project));
+    let old = call(
+        &editor,
+        Method::GET,
+        &format!("{path}/{first_revision}"),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(old.status, StatusCode::OK, "{}", old.body);
+    assert_eq!(old.body["data"]["revision"]["title"], "Field notes");
+    assert_eq!(old.body["data"]["content"], article("Field notes", "Hello"));
+    // A revision of another entry, or none at all, isn't found under this one.
+    for target in [
+        format!("{}/{kitchen}/revisions/{first_revision}", entries(&project)),
+        format!("{path}/01a17000-0000-7000-8000-000000000000"),
+        format!("{path}/not-a-uuid"),
+    ] {
+        let reply = call(&editor, Method::GET, &target, None, &[])
+            .await
+            .expect("request");
+        assert_eq!(reply.status, StatusCode::NOT_FOUND, "{target}");
+    }
+
+    // A changeset item says which revision it changes from.
+    let set = call(
+        &editor,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/environments/production/changesets"),
+        Some(&json!({"title": "Revise", "entries": [field]})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(set.status, StatusCode::CREATED, "{}", set.body);
+    assert_eq!(
+        set.body["data"]["items"][0]["published_revision_id"],
+        first_revision.as_str()
+    );
 }

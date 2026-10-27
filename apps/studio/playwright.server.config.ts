@@ -32,7 +32,9 @@ export default defineConfig({
 	timeout: 60_000,
 	use: {
 		baseURL: `http://localhost:${PORT}`,
-		trace: 'retain-on-failure'
+		trace: 'retain-on-failure',
+		// Checks run on settled pages; the theme-switch test opts back into motion.
+		reducedMotion: 'reduce'
 	},
 	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 	webServer: {

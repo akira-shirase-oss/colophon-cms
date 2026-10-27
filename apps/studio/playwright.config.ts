@@ -12,7 +12,9 @@ export default defineConfig({
 	reporter: [['list']],
 	use: {
 		baseURL: `http://127.0.0.1:${PORT}`,
-		trace: 'retain-on-failure'
+		trace: 'retain-on-failure',
+		// Checks run on settled pages; the theme-switch test opts back into motion.
+		reducedMotion: 'reduce'
 	},
 	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 	webServer: {

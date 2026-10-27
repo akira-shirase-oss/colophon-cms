@@ -74,6 +74,23 @@ export interface Summary {
 	id: string;
 	updated_at: string;
 	revision: Revision;
+	/** What readers get now, if published, and the release it went out in. */
+	published: { revision_id: string; generation: number } | null;
+}
+
+/** Where an entry stands for readers: never published (or taken down), live as drafted, or
+ *  changed since it went live. */
+export type EntryState = 'draft' | 'live' | 'changed';
+
+export function entryState(summary: Pick<Summary, 'revision' | 'published'>): EntryState {
+	if (summary.published === null) return 'draft';
+	return summary.published.revision_id === summary.revision.id ? 'live' : 'changed';
+}
+
+/** One page of a list, and the cursor for the next, if any. */
+export interface Page<T> {
+	data: T[];
+	next_cursor: string | null;
 }
 
 /** A draft and the ETag that names its revision, for the next save's `If-Match`. */
@@ -186,7 +203,6 @@ export async function me(): Promise<Me | null> {
 	}
 }
 
-/** Administrators only (D-043); the creator becomes the project's owner. */
 /**
  * One project the signed-in person belongs to, with their role in it. Pages read the role from
  * here, not from `me().projects`, which lists at most 1,000 projects.
@@ -195,6 +211,7 @@ export async function getProject(project: string): Promise<Project> {
 	return ((await (await send('GET', `/api/v1/projects/${project}`)).json()) as { data: Project }).data;
 }
 
+/** Administrators only (D-043); the creator becomes the project's owner. */
 export async function createProject(slug: string, name: string): Promise<Project> {
 	return ((await (await send('POST', '/api/v1/projects', { slug, name })).json()) as { data: Project }).data;
 }
@@ -208,7 +225,26 @@ export async function getContentType(project: string, collection: string): Promi
 }
 
 export async function listEntries(project: string, collection: string): Promise<Summary[]> {
-	return ((await (await send('GET', `${entries(project, collection)}?limit=100`)).json()) as { data: Summary[] }).data;
+	return (await searchEntries(project, collection)).data;
+}
+
+/** Up to 100 entries, newest first; `q` searches draft titles (at most 100 characters). */
+export async function searchEntries(project: string, collection: string, q = '', cursor: string | null = null): Promise<Page<Summary>> {
+	const query = new URLSearchParams({ limit: '100' });
+	if (q.trim() !== '') query.set('q', q.trim());
+	if (cursor !== null) query.set('cursor', cursor);
+	return (await (await send('GET', `${entries(project, collection)}?${query}`)).json()) as Page<Summary>;
+}
+
+/** One revision with its content, for comparing versions. */
+export async function getRevision(
+	project: string,
+	collection: string,
+	entry: string,
+	revision: string
+): Promise<{ revision: Revision; content: Content }> {
+	const path = `${entries(project, collection)}/${entry}/revisions/${revision}`;
+	return ((await (await send('GET', path)).json()) as { data: { revision: Revision; content: Content } }).data;
 }
 
 export async function getEntry(project: string, collection: string, entry: string): Promise<Loaded> {
@@ -360,6 +396,8 @@ export interface ChangesetItem {
 	current_revision_id: string | null;
 	/** The entry moved on since it was pinned. */
 	edited: boolean;
+	/** The revision readers get now, if published: what this item changes from. */
+	published_revision_id: string | null;
 }
 
 export interface ChangesetReview {

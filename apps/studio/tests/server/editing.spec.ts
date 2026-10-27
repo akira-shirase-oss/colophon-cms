@@ -7,6 +7,7 @@ import { newProject, signIn, violations } from './helpers.ts';
 /** Creates an article through the Studio; returns the editor's path. */
 async function newArticle(page: Page, project: string, title: string): Promise<string> {
 	await page.goto(`/studio/projects/${project}/articles`);
+	await page.getByRole('button', { name: 'New entry' }).click();
 	await page.getByLabel('Title', { exact: true }).fill(title);
 	await page.getByRole('button', { name: 'Create', exact: true }).click();
 	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
@@ -273,7 +274,8 @@ test('an entry of a content type you define: every kind of field, saved and read
 	expect(created).toBe(201);
 
 	await page.goto(`/studio/projects/${project}`);
-	await page.getByRole('link', { name: 'Events' }).click();
+	await page.getByTestId('nav-collections').getByRole('link', { name: 'Events' }).click();
+	await page.getByRole('button', { name: 'New entry' }).click();
 	await page.getByLabel('Name', { exact: true }).fill('Launch night');
 	await page.getByLabel('Starts at').fill('2026-11-20T18:30');
 	await page.getByLabel('Kind').selectOption('Workshop');

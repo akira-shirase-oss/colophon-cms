@@ -7,7 +7,7 @@
 |---|---|
 | Milestones | P0 (Tiptap spike), P1 (list, editor, autosave, conflicts), P2 (review, publish), P3 (receipts), P4 (history, time travel, media, preview), P5 (tokens, optional AI panel), P6 (polish, usability test) |
 | Proposed owner | Claude |
-| Depends on | api (`/api/v1`), sdk, ui (Material Design 3 tokens on Bits UI, D-011, D-025), content-renderer; SvelteKit + TypeScript + Vite, TanStack Query (D-030), Tiptap |
+| Depends on | api (`/api/v1`), sdk, ui (Colophon's design system on Tailwind CSS and shadcn-svelte, D-053), content-renderer; SvelteKit + TypeScript + Vite, TanStack Query (D-030), Tiptap |
 | Used by | editors, reviewers, publishers, developers (developer area) |
 | Spec | §04, §05, §06, §14 |
 
@@ -32,8 +32,9 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 - The media picker and preview.
 - The developer area.
 - Editing safety and accessibility.
-- Applying the Material Design 3 system from [ui](14-ui.md) consistently: navigation rail or drawer, top app bar,
-  surface containers for panels, snackbars for acknowledgements, and dialogs only for decisions that need one.
+- Applying the design system from [ui](14-ui.md) consistently (D-053): the inset sidebar shell, page headers, tables,
+  form rows with the label on the left, state pills that always carry a word, toasts for acknowledgements, and dialogs
+  only for decisions or short forms.
 
 ## Not its job
 
@@ -63,6 +64,16 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   links the public `/content/v1` address. Since step 2.3 (D-046), each release shows how its announcement to each
   destination went (refreshing while any is still under way), and owners and developers add destinations and turn
   them on or off there.
+  Since step 3.5 (D-053): every project page sits in one shell: a sidebar with a project switcher, each collection
+  with its entry count, changesets awaiting review, releases, members and settings, and at its foot the live release
+  and its label; breadcrumbs; and a command palette (⌘K) that finds entries by title across collections. The
+  Overview shows the live release, what's waiting for review, entries by state and recent edits. A collection is a
+  table with title search (the API's `q`, so it finds beyond the first page) and Draft / Changed / Live filters; an
+  entry's state compares its draft with its published revision. The editor puts each field in a row, gives rich text
+  the playground's formatting toolbar, shows save status and live state beside the fields, and compares any revision
+  with the draft. A changeset shows, for every item, what changes for readers: a word-level comparison from the live
+  revision to the pinned one (new entries are all additions; unpublishing shows what goes). Destinations moved to
+  `…/settings`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 
@@ -172,13 +183,14 @@ Internal job terminology stays behind a technical detail drawer for developers.
 1. **P0:** the Tiptap spike (custom blocks, paste, image placeholder, undo/redo, serialization). Built in step 0.4:
    `packages/editor` and `apps/studio`; documents open only if they survive the editor byte for byte (D-022).
 2. **P1:** content list, editor, autosave, conflict screen (step 1.3, done: D-037, D-038); entries of any content
-   type (step 1.5, done). The formatting toolbar from the playground, sign-out, search, and a content-type designer
-   (today definitions are written as JSON through the API and the testbed) come next.
+   type (step 1.5, done). Sign-out and a content-type designer (today definitions are written as JSON through the API
+   and the testbed) come next; the formatting toolbar and search arrived in step 3.5.
 3. **P2:** review and publish.
 4. **P3:** publishing labels and the receipt timeline. Step 3.3 (D-051): each release on the Releases page shows its
    label (*Published in CMS*, *Website update pending*, *Verified at N locations*, *Needs attention*), linking to its
    receipt: each destination's part and every probe look, oldest first. Probes are added with the other
-   destinations, optionally pinned to a location.
+   destinations, optionally pinned to a location. Step 3.5 (D-053): the redesign above, with the formatting toolbar,
+   search, entry states, revision comparison and review diffs. Step 3.6: the content-type designer.
 5. **P4:** history, time-travel slider, media picker, preview.
 6. **P5:** developer area for tokens; the optional AI panel.
 7. **P6:** polish and the usability test.
