@@ -129,8 +129,24 @@ Built in step 1.7 (D-042), for people:
   keep 0017's foreign key; invitations don't, because accepted, revoked and expired ones are history, so inviting
   holds a shared advisory lock on the role instead (in memory, not on the role's row, which hundreds of invitations
   a second would contend for) and deleting takes it exclusively and counts pending invitations.
-- **Field lists and conditions are refused** (422 `not_yet_enforced`) until step R.3 enforces them: stored but
-  unenforced, they would look like restrictions that aren't there.
+- Since step R.3, **a permission can be narrowed**: `"fields": [...]` on `content.read`, `content.create` and
+  `content.update`, and `"condition": "own"` (entries the member created) on `content.read`, `content.update` and
+  `content.delete`; anything else is 422 (`fields_not_applicable`, `invalid_fields`, `condition_not_applicable`,
+  `unknown_condition`), and migration 0021's checks refuse it in the database too. A role holds one permission per
+  action, subject and condition (the domain merges field lists), so "titles of any article" and "every field of their
+  own articles" sit side by side.
+- `Policy::fields(action, collection, own)` decides per entry: every permission that applies adds its fields, one
+  without a list allows all. `Policy::allows` now means every field of every entry, so a narrow permission never
+  grants collection-wide power, and `covers` is exact for fields and `own`.
+- Entries enforce it (`colophon_api::visibility`): a read leaves out what the role can't read (`hidden_fields`) and
+  marks what it can read but not change (`locked_fields`); an entry it can't read at all is 404; a list holds only
+  the caller's own entries when that is all the role may read, with titles blank where the title field is hidden;
+  revisions and history the same. Creating may only set fields the role may create. Saving puts back every field
+  the saver can't read exactly as stored, refuses one sent with a different value, and refuses any change to a
+  field the role can't change (422 `field_not_permitted`, pointing at the field), measured against the immutable
+  revision the editor started from. A publish request may pin an entry only if the role may change it.
+- The Studio's editor leaves hidden fields out and never sends them, shows locked ones disabled, and says which; a
+  role's page lists limited permissions in words and keeps them when the grid is saved.
 - Creating a role queues on the project's owner role row (`FOR NO KEY UPDATE`), so the count can't race past 100
   roles a project; changing or deleting one locks only that role.
 - A member change locks the owners, the caller and the target in one statement, in identity order, so changes to
@@ -322,7 +338,7 @@ Built in step 1.7 (D-042), for people:
 1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin and cross-project denial for projects (step 1.1, done); roles,
    invitations and the policy function (step 1.7, done); the owner bootstrap (step 1.8, done).
 2. **R:** roles as data (R.1, done), custom roles and the Studio's role editor (R.2, done), field-level permissions and `own`
-   conditions (R.3), API tokens and the audit log (R.4); docs/ROADMAP.md, D-058.
+   conditions (R.3, done), API tokens and the audit log (R.4); docs/ROADMAP.md, D-058.
 3. **P2:** approval permissions and self-review recording.
 4. **P4:** preview capabilities.
 5. **P5:** machine credentials, device-authorization login, quotas, kill switch.
