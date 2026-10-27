@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, created_by)\n         VALUES ($1, $2, $3, $4, $5, $6)\n         RETURNING created_at, updated_at",
+  "query": "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, created_by)\n         VALUES ($1, $2, $3, $4, $5, $6, $7)\n         RETURNING created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -33,6 +33,7 @@
         "Uuid",
         "Text",
         "Uuid",
+        "Text",
         "Uuid"
       ]
     },
@@ -41,5 +42,5 @@
       false
     ]
   },
-  "hash": "5c949e4247f45345a00136a7f2d7c0333f88f862e38ccb340f023e9fbfeef8fe"
+  "hash": "61418493fe3ea5f4859f91a4cc1a56cf165046817d5395d0e9e459e2aa7cda34"
 }

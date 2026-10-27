@@ -156,6 +156,22 @@ pub struct EntryInTheWay {
     pub problem: Option<Problem>,
 }
 
+/// A refusal that depends on stored entries (D-054, D-055): what is wrong, where, and the entries
+/// in the way. Boxed in [`ApiError`], so every `Result` in the API stays small.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InTheWay {
+    /// The refusal's code: `slug_taken`, `needs_migration`.
+    pub reason: &'static str,
+    /// JSON Pointer into the request body; empty if the body has none.
+    pub pointer: String,
+    /// What is wrong, for people.
+    pub message: String,
+    /// The first [`MAX_ENTRIES_IN_THE_WAY`] entries in the way.
+    pub entries: Vec<EntryInTheWay>,
+    /// How many there are, when the server counted them.
+    pub total: Option<u64>,
+}
+
 /// Why stored content doesn't fit a content type: the refusal it would get.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Problem {
@@ -259,29 +275,13 @@ pub enum ApiError {
     /// An `Idempotency-Key` was used before for a different request.
     #[error("this Idempotency-Key was already used for a different request")]
     IdempotencyKeyReused,
-    /// A slug is another entry's, as its draft's slug or its published one (D-054). `holder`
-    /// names that entry when a precheck found it; a write that lost a race to it can't.
-    #[error("{message}")]
-    SlugTaken {
-        /// JSON Pointer to the slug in the request body; empty if the body has none.
-        pointer: String,
-        /// What is wrong, for people.
-        message: String,
-        /// The entry that has the slug.
-        holder: Option<EntryInTheWay>,
-    },
-    /// A content type change would make stored drafts or publications invalid (D-055).
-    #[error("{message}")]
-    NeedsMigration {
-        /// The change in the way.
-        refusal: Refusal,
-        /// What is wrong, for people.
-        message: String,
-        /// The first [`MAX_ENTRIES_IN_THE_WAY`] entries in the way.
-        entries: Vec<EntryInTheWay>,
-        /// How many there are.
-        total: u64,
-    },
+    /// A slug is another entry's, as its draft's slug or its published one (D-054). The entries
+    /// name that entry when a precheck found it; a write that lost a race to it can't. 409.
+    #[error("{}", .0.message)]
+    SlugTaken(Box<InTheWay>),
+    /// A content type change would make stored drafts or publications invalid (D-055). 422.
+    #[error("{}", .0.message)]
+    NeedsMigration(Box<InTheWay>),
     /// A field of the request body was refused.
     #[error("{message}")]
     InvalidField {
@@ -334,13 +334,28 @@ impl ApiError {
     pub fn from_db(error: DbError) -> Self {
         match error {
             DbError::Busy => Self::Busy,
-            DbError::SlugTaken => Self::SlugTaken {
-                pointer: String::new(),
-                message: "another entry in this collection has the same slug, as a draft or published".to_owned(),
-                holder: None,
-            },
+            DbError::SlugTaken => Self::slug_taken(
+                "",
+                "another entry in this collection has the same slug, as a draft or published",
+                None,
+            ),
             other => Self::internal(other),
         }
+    }
+
+    /// 409 `slug_taken`, naming `holder` when it is known.
+    pub fn slug_taken(
+        pointer: impl Into<String>,
+        message: impl Into<String>,
+        holder: Option<EntryInTheWay>,
+    ) -> Self {
+        Self::SlugTaken(Box::new(InTheWay {
+            reason: "slug_taken",
+            pointer: pointer.into(),
+            message: message.into(),
+            entries: holder.into_iter().collect(),
+            total: None,
+        }))
     }
 
     /// HTTP status for this error. Total over the variants, so every new variant must choose.
@@ -356,7 +371,7 @@ impl ApiError {
             Self::InvalidRichText(_)
             | Self::Invalid(_)
             | Self::InvalidField { .. }
-            | Self::NeedsMigration { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            | Self::NeedsMigration(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::InvalidHeader(_) => StatusCode::BAD_REQUEST,
             Self::PreconditionRequired(_) => StatusCode::PRECONDITION_REQUIRED,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -367,7 +382,7 @@ impl ApiError {
             | Self::StaleChangeset { .. }
             | Self::GenerationMoved { .. }
             | Self::IdempotencyKeyReused
-            | Self::SlugTaken { .. } => StatusCode::CONFLICT,
+            | Self::SlugTaken(_) => StatusCode::CONFLICT,
             Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -384,7 +399,7 @@ impl ApiError {
             Self::InvalidRichText(_)
             | Self::Invalid(_)
             | Self::InvalidField { .. }
-            | Self::NeedsMigration { .. } => ErrorCode::ValidationFailed,
+            | Self::NeedsMigration(_) => ErrorCode::ValidationFailed,
             Self::PreconditionRequired(_) => ErrorCode::PreconditionRequired,
             Self::Unauthorized => ErrorCode::Unauthorized,
             Self::Forbidden(_) => ErrorCode::Forbidden,
@@ -396,7 +411,7 @@ impl ApiError {
             | Self::StaleChangeset { .. }
             | Self::GenerationMoved { .. }
             | Self::IdempotencyKeyReused
-            | Self::SlugTaken { .. } => ErrorCode::Conflict,
+            | Self::SlugTaken(_) => ErrorCode::Conflict,
             Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
@@ -410,7 +425,9 @@ impl ApiError {
                 rejection.code.as_str(),
                 rejection.pointer.clone(),
             )),
-            Self::Invalid(refusal) => Some(ErrorDetails::new(refusal.code, refusal.pointer.clone())),
+            Self::Invalid(refusal) => {
+                Some(ErrorDetails::new(refusal.code, refusal.pointer.clone()))
+            }
             Self::StaleRevision { .. } => Some(ErrorDetails::new("stale_revision", "")),
             Self::StaleVersion { .. } => Some(ErrorDetails::new("stale_version", "")),
             Self::StaleChangeset { .. } => Some(ErrorDetails::new("stale_changeset", "")),
@@ -419,21 +436,10 @@ impl ApiError {
             Self::InvalidField {
                 reason, pointer, ..
             } => Some(ErrorDetails::new(reason, *pointer)),
-            Self::SlugTaken {
-                pointer, holder, ..
-            } => Some(ErrorDetails {
-                entries: holder.iter().cloned().collect(),
-                ..ErrorDetails::new("slug_taken", pointer.clone())
-            }),
-            Self::NeedsMigration {
-                refusal,
-                entries,
-                total,
-                ..
-            } => Some(ErrorDetails {
-                entries: entries.clone(),
-                total: Some(*total),
-                ..ErrorDetails::new(refusal.code, refusal.pointer.clone())
+            Self::SlugTaken(way) | Self::NeedsMigration(way) => Some(ErrorDetails {
+                entries: way.entries.clone(),
+                total: way.total,
+                ..ErrorDetails::new(way.reason, way.pointer.clone())
             }),
             _ => None,
         };

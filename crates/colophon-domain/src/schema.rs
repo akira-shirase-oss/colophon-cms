@@ -504,6 +504,53 @@ fn enum_values(object: &Map<String, Value>, pointer: &Pointer) -> Result<Vec<Str
     Ok(values)
 }
 
+/// The slug rules of a definition (D-054): at most one slug field, and a `source` that names one of
+/// the definition's single-line text fields.
+fn check_slug_fields(fields: &[Field]) -> Result<(), Refusal> {
+    let pointer_to = |index: usize, key: &str| {
+        let mut pointer = at(&Pointer::new(), "fields");
+        pointer.push_index(index);
+        at(&pointer, key)
+    };
+    let mut slugs = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| matches!(field.kind, FieldKind::Slug { .. }));
+    if let (Some(_), Some((second, _))) = (slugs.next(), slugs.next()) {
+        return Err(refuse(
+            "duplicate_slug",
+            &pointer_to(second, "type"),
+            "a content type has at most one slug field",
+        ));
+    }
+    for (index, field) in fields.iter().enumerate() {
+        let FieldKind::Slug {
+            source: Some(source),
+        } = &field.kind
+        else {
+            continue;
+        };
+        let single_line = fields.iter().any(|other| {
+            other.id == *source
+                && matches!(
+                    other.kind,
+                    FieldKind::Text {
+                        multiline: false,
+                        ..
+                    }
+                )
+        });
+        if !single_line {
+            return Err(refuse(
+                "invalid_source",
+                &pointer_to(index, "source"),
+                "`source` must name a single-line text field of this content type",
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl ContentType {
     /// The built-in content type every project starts with: a title and a rich-text body. Its
     /// canonical content is byte for byte what articles stored before content types existed.
@@ -579,43 +626,9 @@ impl ContentType {
                     format!("`{}` is used by two fields", field.id),
                 ));
             }
-            let is_slug = |field: &Field| matches!(field.kind, FieldKind::Slug { .. });
-            if is_slug(&field) && fields.iter().any(is_slug) {
-                return Err(refuse(
-                    "duplicate_slug",
-                    &at(&pointer, "type"),
-                    "a content type has at most one slug field",
-                ));
-            }
             fields.push(field);
         }
-        for (index, field) in fields.iter().enumerate() {
-            let FieldKind::Slug {
-                source: Some(source),
-            } = &field.kind
-            else {
-                continue;
-            };
-            let single_line = fields.iter().any(|other| {
-                other.id == *source
-                    && matches!(
-                        other.kind,
-                        FieldKind::Text {
-                            multiline: false,
-                            ..
-                        }
-                    )
-            });
-            if !single_line {
-                let mut pointer = at(&root, "fields");
-                pointer.push_index(index);
-                return Err(refuse(
-                    "invalid_source",
-                    &at(&pointer, "source"),
-                    "`source` must name a single-line text field of this content type",
-                ));
-            }
-        }
+        check_slug_fields(&fields)?;
         let title_field = object
             .get("title_field")
             .and_then(Value::as_str)
@@ -1426,23 +1439,53 @@ mod tests {
                 .canonical_json()
                 .to_owned()
         };
-        let fits = stored(json!({"headline": "Hi", "summary": "S", "body": body(), "section": "News"}));
+        let fits =
+            stored(json!({"headline": "Hi", "summary": "S", "body": body(), "section": "News"}));
         assert_eq!(next.accepts(&fits), Ok(()));
         let cases = [
-            (json!({"headline": "Hi", "summary": "S", "body": body(), "rating": 3}), "unknown_field", "/rating"),
-            (json!({"headline": "Hi", "body": body()}), "missing_field", "/summary"),
-            (json!({"headline": "Hi", "summary": "S", "body": body(), "section": "Guides"}), "not_an_option", "/section"),
+            (
+                json!({"headline": "Hi", "summary": "S", "body": body(), "rating": 3}),
+                "unknown_field",
+                "/rating",
+            ),
+            (
+                json!({"headline": "Hi", "body": body()}),
+                "missing_field",
+                "/summary",
+            ),
+            (
+                json!({"headline": "Hi", "summary": "S", "body": body(), "section": "Guides"}),
+                "not_an_option",
+                "/section",
+            ),
         ];
         for (content, code, pointer) in cases {
-            let refusal = next.accepts(&stored(content.clone())).expect_err("in the way");
-            assert_eq!((refusal.code, refusal.pointer.as_str()), (code, pointer), "{content}");
+            let refusal = next
+                .accepts(&stored(content.clone()))
+                .expect_err("in the way");
+            assert_eq!(
+                (refusal.code, refusal.pointer.as_str()),
+                (code, pointer),
+                "{content}"
+            );
         }
-        assert_eq!(next.accepts("{").map_err(|refusal| refusal.code), Err("unreadable"));
+        assert_eq!(
+            next.accepts("{").map_err(|refusal| refusal.code),
+            Err("unreadable")
+        );
     }
 
     #[test]
     fn slugs_are_url_names_and_content_reports_its_slug() {
-        for good in ["a", "my-first-post", "2026-10-27", "x1-y2-z3", &"a".repeat(MAX_SLUG_CHARS)] {
+        let longest = "a".repeat(MAX_SLUG_CHARS);
+        let too_long = "a".repeat(MAX_SLUG_CHARS + 1);
+        for good in [
+            "a",
+            "my-first-post",
+            "2026-10-27",
+            "x1-y2-z3",
+            longest.as_str(),
+        ] {
             assert!(is_slug(good), "{good}");
         }
         for bad in [
@@ -1455,7 +1498,7 @@ mod tests {
             "a_b",
             "a b",
             "a/b",
-            &"a".repeat(MAX_SLUG_CHARS + 1),
+            too_long.as_str(),
         ] {
             assert!(!is_slug(bad), "{bad}");
         }
@@ -1479,7 +1522,10 @@ mod tests {
         let refusal = ty
             .validate(&json!({"title": "T", "slug": "Hello World"}))
             .expect_err("not a slug");
-        assert_eq!((refusal.code, refusal.pointer.as_str()), ("invalid_slug", "/slug"));
+        assert_eq!(
+            (refusal.code, refusal.pointer.as_str()),
+            ("invalid_slug", "/slug")
+        );
         let without = ContentType::articles()
             .validate(&json!({"title": "T", "body": body()}))
             .expect("valid");

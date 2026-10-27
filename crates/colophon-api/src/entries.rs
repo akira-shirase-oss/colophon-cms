@@ -331,17 +331,21 @@ async fn slug_free(
         .iter()
         .find(|field| matches!(field.kind, FieldKind::Slug { .. }))
         .map_or("", |field| field.id.as_str());
-    let state = if holder.published { "published" } else { "draft" };
-    Err(ApiError::SlugTaken {
-        pointer: format!("/{field}"),
-        message: format!("\"{slug}\" is already the slug of another entry ({state})"),
-        holder: Some(EntryInTheWay {
+    let state = if holder.published {
+        "published"
+    } else {
+        "draft"
+    };
+    Err(ApiError::slug_taken(
+        format!("/{field}"),
+        format!("\"{slug}\" is already the slug of another entry ({state})"),
+        Some(EntryInTheWay {
             entry: holder.entry_id,
             title: holder.title,
             state,
             problem: None,
         }),
-    })
+    ))
 }
 
 /// Validates content against its content type: the canonical content and its hash.
@@ -446,7 +450,14 @@ pub(crate) async fn save(
     if let Some(replay) = claim(&mut tx, SAVE, key, &request).await? {
         return Ok(replay);
     }
-    slug_free(&mut tx, &path.collection, &content_type, &content, Some(entry)).await?;
+    slug_free(
+        &mut tx,
+        &path.collection,
+        &content_type,
+        &content,
+        Some(entry),
+    )
+    .await?;
     let revision = NewRevision {
         id: Uuid::now_v7(),
         content: content.canonical_json(),

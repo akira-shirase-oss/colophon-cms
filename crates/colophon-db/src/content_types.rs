@@ -162,31 +162,40 @@ pub async fn update(
 /// publication there will be until the next change (D-055). Waiting counts against the
 /// statement timeout, like any query.
 pub async fn lock_for_write(tx: &mut ProjectTransaction, collection: &str) -> Result<(), DbError> {
-    lock(tx, collection, "pg_advisory_xact_lock_shared").await
+    lock(
+        tx,
+        collection,
+        "SELECT 1 FROM pg_advisory_xact_lock_shared($1, hashtext($2::text || '/' || $3::text || '/' || $4))",
+    )
+    .await
 }
 
 /// The exclusive side of [`lock_for_write`], for a content type change.
 pub async fn lock_for_change(tx: &mut ProjectTransaction, collection: &str) -> Result<(), DbError> {
-    lock(tx, collection, "pg_advisory_xact_lock").await
+    lock(
+        tx,
+        collection,
+        "SELECT 1 FROM pg_advisory_xact_lock($1, hashtext($2::text || '/' || $3::text || '/' || $4))",
+    )
+    .await
 }
 
+/// Runs one of the two lock statements above. `hashtext` names the collection in 32 bits: a
+/// collision only makes two collections wait for each other's changes; it never lets a change and
+/// a write overlap.
 async fn lock(
     tx: &mut ProjectTransaction,
     collection: &str,
-    function: &'static str,
+    statement: &'static str,
 ) -> Result<(), DbError> {
-    // hashtext names the collection in 32 bits. A collision only makes two collections wait for
-    // each other's changes; it never lets a change and a write overlap.
-    sqlx::query(&format!(
-        "SELECT 1 FROM {function}($1, hashtext($2::text || '/' || $3::text || '/' || $4))"
-    ))
-    .bind(LOCK_CLASS)
-    .bind(tx.project)
-    .bind(tx.environment)
-    .bind(collection)
-    .execute(&mut *tx.transaction)
-    .await
-    .map_err(DbError::from_query)?;
+    sqlx::query(statement)
+        .bind(LOCK_CLASS)
+        .bind(tx.project)
+        .bind(tx.environment)
+        .bind(collection)
+        .execute(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query)?;
     Ok(())
 }
 

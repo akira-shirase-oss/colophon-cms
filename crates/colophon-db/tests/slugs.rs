@@ -301,7 +301,11 @@ async fn a_change_checks_every_draft_and_every_publication_that_isn_t_a_draft() 
     let mut made = Vec::new();
     for index in 0..5 {
         let title = format!("Entry {index}");
-        made.push(create(&mut tx, "articles", &title, None).await.expect("created"));
+        made.push(
+            create(&mut tx, "articles", &title, None)
+                .await
+                .expect("created"),
+        );
     }
     // Two published; one of them then gets a new draft, so its publication is a second revision.
     let ids: Vec<Uuid> = made.iter().map(|(entry, _)| *entry).collect();
@@ -330,7 +334,10 @@ async fn a_change_checks_every_draft_and_every_publication_that_isn_t_a_draft() 
         }
     }
     assert_eq!(seen.len(), 6);
-    assert!(seen.contains(&made[0].1), "the published, superseded revision");
+    assert!(
+        seen.contains(&made[0].1),
+        "the published, superseded revision"
+    );
     tx.commit().await.expect("commit");
     db.drop().await;
 }

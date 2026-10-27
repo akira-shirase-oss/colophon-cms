@@ -314,7 +314,10 @@ async fn a_narrowing_change_goes_through_when_nothing_stored_is_in_the_way() {
 
     // Nobody uses `done`: removing it is fine.
     let mut without_done = notes();
-    without_done["fields"].as_array_mut().expect("a list").remove(2);
+    without_done["fields"]
+        .as_array_mut()
+        .expect("a list")
+        .remove(2);
     let removed = put(without_done.clone(), "\"v1\"").await;
     assert_eq!(removed.status, StatusCode::OK, "{}", removed.body);
 
@@ -322,10 +325,19 @@ async fn a_narrowing_change_goes_through_when_nothing_stored_is_in_the_way() {
     let mut required = without_done.clone();
     required["fields"][1]["required"] = json!(true);
     let refused = put(required.clone(), "\"v2\"").await;
-    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", refused.body);
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.body
+    );
     let details = &refused.body["error"]["details"];
     assert_eq!(
-        (&details["reason"], &details["total"], &details["entries"][0]["title"]),
+        (
+            &details["reason"],
+            &details["total"],
+            &details["entries"][0]["title"]
+        ),
         (&json!("needs_migration"), &json!(1), &json!("Two"))
     );
     assert_eq!(details["entries"][0]["problem"]["reason"], "missing_field");
@@ -351,7 +363,12 @@ async fn a_narrowing_change_goes_through_when_nothing_stored_is_in_the_way() {
     into_slug["fields"][1] = json!({"id": "tag", "label": "Tag", "type": "slug", "required": true});
     let into = put(into_slug, "\"v3\"").await;
     assert_eq!(into.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(into.body["error"]["details"]["total"], Value::Null, "{}", into.body);
+    assert_eq!(
+        into.body["error"]["details"]["total"],
+        Value::Null,
+        "{}",
+        into.body
+    );
 }
 
 fn pages() -> Value {
@@ -385,9 +402,15 @@ async fn a_slug_belongs_to_one_entry_and_reaches_the_public_api() {
         let owner = &owner;
         let path = entries(&project, "pages");
         async move {
-            call(owner, Method::POST, &path, Some(&body), &[("idempotency-key", &key())])
-                .await
-                .expect("request")
+            call(
+                owner,
+                Method::POST,
+                &path,
+                Some(&body),
+                &[("idempotency-key", &key())],
+            )
+            .await
+            .expect("request")
         }
     };
     let about = make(json!({"title": "About", "slug": "about"})).await;
@@ -406,7 +429,10 @@ async fn a_slug_belongs_to_one_entry_and_reaches_the_public_api() {
 
     let not_a_slug = make(json!({"title": "About us", "slug": "About Us"})).await;
     assert_eq!(not_a_slug.status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(not_a_slug.body["error"]["details"]["reason"], "invalid_slug");
+    assert_eq!(
+        not_a_slug.body["error"]["details"]["reason"],
+        "invalid_slug"
+    );
 
     // Published, the slug is in the public API.
     common::release(

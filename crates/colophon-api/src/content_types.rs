@@ -36,7 +36,7 @@ use uuid::Uuid;
 use crate::{
     ApiError, AppState,
     entries::{content_hash, idempotency_key, json, open, request_hash, rfc3339, sha256},
-    error::{EntryInTheWay, MAX_ENTRIES_IN_THE_WAY, Problem},
+    error::{EntryInTheWay, InTheWay, MAX_ENTRIES_IN_THE_WAY, Problem},
     session::SignedIn,
     shape::{Data, Page},
 };
@@ -230,7 +230,11 @@ async fn check_stored(
                     entries.push(EntryInTheWay {
                         entry: stored.entry_id,
                         title: stored.title,
-                        state: if stored.published { "published" } else { "draft" },
+                        state: if stored.published {
+                            "published"
+                        } else {
+                            "draft"
+                        },
                         problem: Some(Problem {
                             reason: problem.code,
                             pointer: problem.pointer,
@@ -247,16 +251,21 @@ async fn check_stored(
     if total == 0 {
         return Ok(());
     }
-    let noun = if total == 1 { "entry is" } else { "entries are" };
-    Err(ApiError::NeedsMigration {
+    let noun = if total == 1 {
+        "entry is"
+    } else {
+        "entries are"
+    };
+    Err(ApiError::NeedsMigration(Box::new(InTheWay {
+        reason: refusal.code,
         message: format!(
             "{}: {total} {noun} in the way; change them first, or keep the old definition",
             refusal.message
         ),
-        refusal,
+        pointer: refusal.pointer,
         entries,
-        total,
-    })
+        total: Some(total),
+    })))
 }
 
 /// `GET {P}/content-types`.
