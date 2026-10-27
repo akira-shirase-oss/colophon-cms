@@ -146,6 +146,18 @@ test.describe('with motion', () => {
 		await expect.poll(() => ground.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
 	});
 
+	test('a pill’s label rolls up on hover, and its copy is hidden from assistive technology', async ({ page }) => {
+		await page.setViewportSize({ width: 1440, height: 900 });
+		await page.goto('/');
+		const pill = page.locator('section[aria-labelledby="hero-title"] .pill-primary');
+		await expect(pill).toHaveAccessibleName('Read the quickstart');
+		const first = pill.locator('.roll > span').first();
+		await pill.hover();
+		await expect.poll(() => first.evaluate((element) => new DOMMatrix(getComputedStyle(element).transform).m42)).toBe(-19);
+		await page.mouse.move(5, 500);
+		await expect.poll(() => first.evaluate((element) => new DOMMatrix(getComputedStyle(element).transform).m42)).toBe(0);
+	});
+
 	test('the strip of projects drifts while on screen', async ({ page }) => {
 		await page.goto('/');
 		const track = page.locator('section[aria-labelledby="built-on"] .track');
