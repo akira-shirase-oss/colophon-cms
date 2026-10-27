@@ -286,3 +286,21 @@ export const CONVEX: { idea: string; colophon: string; when: string }[] = [
 	{ idea: 'Deterministic functions', colophon: 'Already how the simulator works (D-039)', when: 'done (P1)' },
 	{ idea: 'Indexes declared in the schema', colophon: 'The query API filters and sorts only on fields a content type declares as indexed', when: 'D' }
 ];
+
+/** The backlog by status, and its planned rows by the milestone that builds them. */
+export function parityCounts() {
+	const count = (kind: StatusKind) => PARITY.filter((row) => row.kind === kind).length;
+	const milestones = new Map<string, number>();
+	for (const row of PARITY) {
+		if (row.kind !== 'planned') continue;
+		const id = /^(P\d|[A-Z])\b/.exec(row.colophon)?.[1];
+		if (id) milestones.set(id, (milestones.get(id) ?? 0) + 1);
+	}
+	const ORDER = ['R', 'M', 'P4', 'E', 'D', 'P5'];
+	return {
+		done: count('done'),
+		building: count('building'),
+		planned: count('planned'),
+		milestones: ORDER.filter((id) => milestones.has(id)).map((id) => ({ id, count: milestones.get(id) ?? 0 }))
+	};
+}

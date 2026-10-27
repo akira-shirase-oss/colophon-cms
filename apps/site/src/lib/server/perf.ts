@@ -91,3 +91,16 @@ export const figures = {
 		'Each iteration creates an article, pins it into a publish request, submits, approves and publishes it (five requests), while the worker announces every release to a webhook, purges a CDN and probes the public API. Every announcement and purge carried a distinct key, and every listed release was verified at one location.'
 	)
 } satisfies Record<string, Figure>;
+
+/** Every result, oldest first, for the chart of runs. */
+export const runs = Object.entries(files)
+	.map(([path, result]) => ({
+		file: path.split('/').pop() ?? path,
+		endpoint: result.endpoint,
+		scenario: result.scenario,
+		date: result.date,
+		rps: result.rps,
+		p99: result.latency_ms.p99,
+		ok: result.thresholds_passed
+	}))
+	.sort((a, b) => a.date.localeCompare(b.date));
