@@ -1,7 +1,8 @@
 <!--
-  Custom roles (milestone R, D-058; planned): a role's permissions as a matrix of collections and
+  Custom roles (milestone R, D-058; building): a role's permissions as a matrix of collections and
   actions, with "own" for entries the person created. A pointer toggles two cells, slowly, in a
-  nine-second loop. Nothing here exists yet; the card says Planned.
+  nine-second loop. Step R.1 stored roles as data; editing them comes with R.2, so the card says
+  Building.
 -->
 <script lang="ts">
 	const ACTIONS = ['read', 'create', 'update', 'publish'];

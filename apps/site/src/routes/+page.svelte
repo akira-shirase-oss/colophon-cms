@@ -146,14 +146,14 @@
 			Reads pinned to any release work today; the slider and rollback come in P4.
 		</BentoCard>
 		<BentoCard
-			kind="planned"
+			kind="building"
 			at="R"
 			title="Roles you define"
 			alt="a permission matrix for a custom role; cells toggle between allowed, not allowed and only their own."
 			class="lg:col-span-2"
 		>
 			{#snippet graphic()}<RolesGraphic />{/snippet}
-			Custom roles, field-level and “own entries” rules, API tokens, an audit log.
+			Roles are data now; custom roles, field-level and “own entries” rules, API tokens and an audit log come next.
 		</BentoCard>
 		<BentoCard
 			kind="building"

@@ -15,7 +15,7 @@ tests = 251
 goal = "Give the Studio a design of its own and the editing pieces it was missing, without slowing anything down or breaking accessibility."
 built = "A design system on every shadcn-svelte component with Colophon's own tokens, a page that shows all of it, title search, live and changed states on every entry, version comparison, review diffs, and a sign-in page to match."
 proof = ["all text passes WCAG AA, and AAA in high contrast", "77 Studio tests in Chromium and 21 against the real server", "a million draft requests at 1,785 a second on a fresh database"]
-code = "akira-shirase-oss/colophon-cms · main @ d1c9bd7"
+code = "akira-shirase-oss/colophon-cms · main @ 065e614"
 +++
 
 Step 3.4 left me with a CMS that works but looks like a developer's tool. Before my own site goes public on it, the
@@ -57,6 +57,11 @@ place where I write has to be somewhere I want to be.
   to 1.7 GB. The rest was my local database, grown to 5 GB by weeks of test runs: saves were 3.5 times slower on it
   than on a fresh one. The full checks now always start from a fresh database, as CI does, and that growth is a real
   finding for production to fix.
+- **I merged it and CI went red.** Title search looked up each entry's latest draft to read its title, which was
+  fine on my laptop and 157 ms a search on CI's smaller machine, so the load smoke failed. Lowering the test's rate
+  didn't help either. Each entry now keeps its own copy of its draft title, with a trigram index; on CI the same smoke ran
+  at 401 requests a second, the slowest 1% under 5 ms
+  ([CI run](https://github.com/akira-shirase-oss/colophon-cms/actions/runs/40531804396)).
 - **One flaky test.** A testbed test timed out once in three runs while the machine was very busy; I haven't found
   why yet.
 

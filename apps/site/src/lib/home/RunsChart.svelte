@@ -27,7 +27,10 @@
 
 <figure class="rounded-3xl border border-border/70 bg-card p-5 shadow-soft sm:p-6" {@attach inView()}>
 	<figcaption class="flex flex-wrap items-baseline justify-between gap-2">
-		<span class="text-[0.9375rem] font-semibold">Every load run, kept</span>
+		<span class="flex flex-col">
+			<span class="text-[0.9375rem] font-semibold">Every load run, kept</span>
+			<span class="font-mono text-xs text-muted-foreground">bar height: requests a second, log scale</span>
+		</span>
 		<span class="flex items-center gap-3 font-mono text-xs text-muted-foreground">
 			<span class="inline-flex items-center gap-1.5"><i class="size-2 rounded-sm bg-chart-2"></i>{runs.length - missed} passed</span>
 			<span class="inline-flex items-center gap-1.5"><i class="size-2 rounded-sm bg-attention"></i>{missed} missed their thresholds</span>
