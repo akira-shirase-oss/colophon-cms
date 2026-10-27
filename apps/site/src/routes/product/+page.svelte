@@ -6,11 +6,14 @@
 	import StatusBadge from '#lib/components/StatusBadge.svelte';
 	import { FEATURE_GROUPS } from '#lib/data/features.ts';
 	import { STATUS_MEANING, type StatusKind } from '#lib/status.ts';
-	import EditorCard from '#lib/visuals/EditorCard.svelte';
-	import LabelStates from '#lib/visuals/LabelStates.svelte';
-	import PublishRequestCard from '#lib/visuals/PublishRequestCard.svelte';
-	import ReleaseSlider from '#lib/visuals/ReleaseSlider.svelte';
-	import RolesMatrix from '#lib/visuals/RolesMatrix.svelte';
+	import CrashGraphic from '#lib/bento/CrashGraphic.svelte';
+	import DiffGraphic from '#lib/bento/DiffGraphic.svelte';
+	import MigrationGraphic from '#lib/bento/MigrationGraphic.svelte';
+	import ProbeGraphic from '#lib/bento/ProbeGraphic.svelte';
+	import RolesGraphic from '#lib/bento/RolesGraphic.svelte';
+	import SliderGraphic from '#lib/bento/SliderGraphic.svelte';
+	import Stage from '#lib/bento/Stage.svelte';
+	import Terminal from '#lib/components/Terminal.svelte';
 
 	const all = FEATURE_GROUPS.flatMap((group) => group.features);
 	const tally = (kind: StatusKind) => all.filter((feature) => feature.status.kind === kind).length;
@@ -23,10 +26,7 @@
 />
 
 <PageIntro badge="Product" title="Everything it does, and everything it will">
-	<p>
-		Grouped like the parity backlog in the comparison with Strapi and Sanity. Each feature carries one label: done means merged with its tests, a
-		page in the test app and a load scenario; building means a step in progress; planned names the milestone that will build it.
-	</p>
+	<p>Each feature is done (merged, with its proof), building (a step in progress) or planned (with its milestone).</p>
 	{#snippet aside()}
 		<dl class="grid grid-cols-3 gap-3 rounded-3xl border border-border/70 bg-card p-5 shadow-soft">
 			{#each KINDS as kind (kind)}
@@ -52,17 +52,33 @@
 				<p class="eyebrow text-brand-ink">0{index + 1}</p>
 				<h2 id={group.id} class="display-2">{group.title}</h2>
 				<p class="text-[0.9375rem] leading-relaxed text-pretty text-muted-foreground">{group.lead}</p>
-				<div class="hidden pt-4 lg:block">
+				<div class="grid gap-3 pt-2">
 					{#if group.id === 'writing'}
-						<EditorCard />
+						<Stage alt="colophon-server is killed with kill -9 while version 7 is saving; after the restart, the retry with the same key is saved once."><CrashGraphic /></Stage>
+					{:else if group.id === 'modelling'}
+						<div><StatusBadge kind="building" at="3.6" /></div>
+						<Stage alt="making a field required is refused with 422 needs_migration, naming the stored entries in the way."><MigrationGraphic /></Stage>
 					{:else if group.id === 'publishing'}
-						<PublishRequestCard />
-						<LabelStates class="mt-4" />
+						<Stage alt="a probe finds the release marker on the live site: Verified at 1 location." class="h-52"><ProbeGraphic /></Stage>
+						<Stage alt="an approval bound to version 7 goes stale when version 8 is saved: 409 stale_changeset." class="h-52"><DiffGraphic /></Stage>
 					{:else if group.id === 'time-travel'}
-						<ReleaseSlider />
-						<p class="mt-2 text-xs text-muted-foreground">Illustration of a planned screen.</p>
+						<div><StatusBadge kind="planned" at="P4" /></div>
+						<Stage alt="a release slider" interactive class="h-52"><SliderGraphic /></Stage>
 					{:else if group.id === 'access'}
-						<RolesMatrix />
+						<div><StatusBadge kind="planned" at="R" /></div>
+						<Stage alt="a permission matrix for a custom role, toggling cells."><RolesGraphic /></Stage>
+					{:else if group.id === 'developers'}
+						<Terminal
+							title="Public reads, from any HTTP client"
+							lines={[
+								{ cmd: 'curl -i "$CMS/content/v1/$PROJECT/production/articles?limit=20"' },
+								{ out: 'HTTP/1.1 200 OK' },
+								{ out: 'colophon-generation: 42' },
+								{ out: 'etag: "8f14e45fceea167a5a36dedd4bea2543"' },
+								{ out: 'colophon-cache: hit' },
+								{ out: '{"data": [ … ], "next_cursor": "…"}' }
+							]}
+						/>
 					{/if}
 				</div>
 			</div>

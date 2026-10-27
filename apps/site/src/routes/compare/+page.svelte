@@ -5,11 +5,23 @@
 	import PageIntro from '#lib/components/PageIntro.svelte';
 	import Seo from '#lib/components/Seo.svelte';
 	import StatusBadge from '#lib/components/StatusBadge.svelte';
-	import { CONVEX, DIFFERENT_ON_PURPOSE, EVIDENCE, PARITY, TABLES } from '#lib/data/compare.ts';
+	import ParityGraphic from '#lib/bento/ParityGraphic.svelte';
+	import Stage from '#lib/bento/Stage.svelte';
+	import { CONVEX, DIFFERENT_ON_PURPOSE, EVIDENCE, PARITY, TABLES, parityCounts } from '#lib/data/compare.ts';
 	import { GITHUB_FILE } from '#lib/site.ts';
 	import type { StatusKind } from '#lib/status.ts';
 
 	const tally = (kind: StatusKind) => PARITY.filter((row) => row.kind === kind).length;
+	const counts = parityCounts();
+	// The backlog's filter: every row, or only one status.
+	const FILTERS: { value: StatusKind | 'all'; label: string }[] = [
+		{ value: 'all', label: 'All' },
+		{ value: 'done', label: 'Done' },
+		{ value: 'building', label: 'Building' },
+		{ value: 'planned', label: 'Planned' }
+	];
+	let filter = $state<StatusKind | 'all'>('all');
+	const shown = $derived(PARITY.filter((row) => filter === 'all' || row.kind === filter));
 </script>
 
 <Seo
@@ -19,10 +31,14 @@
 
 <PageIntro badge="Compare" title="Colophon, Strapi and Sanity">
 	<p>
-		Since D-057, Colophon’s goal is every feature Strapi and Sanity offer, built at its own bar of proof. This page records what each does, how
-		Colophon does it or will, and where Colophon works differently on purpose. Today Colophon has {tally('done')} of the {PARITY.length} backlog
-		rows done, {tally('building')} building and {tally('planned')} planned.
+		The goal since D-057: every feature Strapi and Sanity offer, at Colophon’s bar of proof. {tally('done')} of {PARITY.length} backlog rows are
+		done, {tally('building')} building, {tally('planned')} planned.
 	</p>
+	{#snippet aside()}
+		<div class="w-full lg:w-[26rem]">
+			<Stage alt="the parity backlog by status, and its planned rows by milestone." class="h-48"><ParityGraphic {...counts} /></Stage>
+		</div>
+	{/snippet}
 </PageIntro>
 
 <div class="shell mt-10">
@@ -98,10 +114,19 @@
 
 	<section aria-labelledby="backlog" class="mt-20">
 		<h2 id="backlog" class="display-2">The parity backlog</h2>
-		<p class="mt-3 max-w-3xl text-[0.9375rem] leading-relaxed text-muted-foreground">
-			Who offers what today, and when Colophon builds it. Done means merged with its proof; a letter or P-number names the milestone that will build
-			it. {EVIDENCE.backlog}
-		</p>
+		<p class="mt-3 max-w-3xl text-[0.9375rem] leading-relaxed text-muted-foreground">Who offers what today, and when Colophon builds it. {EVIDENCE.backlog}</p>
+		<div role="group" aria-label="Show rows" class="mt-5 inline-flex flex-wrap gap-1 rounded-full border border-border/70 bg-card p-1 shadow-hairline">
+			{#each FILTERS as option (option.value)}
+				<button
+					type="button"
+					aria-pressed={filter === option.value}
+					onclick={() => (filter = option.value)}
+					class="rounded-full px-3.5 py-1.5 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-4 focus-visible:ring-ring/25 aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+				>
+					{option.label}<span class="figure ml-1.5 text-xs opacity-100">{option.value === 'all' ? PARITY.length : tally(option.value)}</span>
+				</button>
+			{/each}
+		</div>
 		<!-- A table wider than a phone scrolls sideways; a scrollable region must be reachable by keyboard (axe: scrollable-region-focusable). -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<div class="mt-6 overflow-x-auto rounded-3xl border border-border/70 bg-card shadow-soft" role="region" aria-label="The parity backlog, scrollable" tabindex="0">
@@ -115,8 +140,8 @@
 					</tr>
 				</thead>
 				<tbody class="divide-y divide-border align-top">
-					{#each PARITY as row (row.feature)}
-						<tr>
+					{#each shown as row (row.feature)}
+						<tr data-kind={row.kind}>
 							<th scope="row" class="px-4 py-3 font-medium">{row.feature}</th>
 							<td class="px-4 py-3 text-muted-foreground">{#if row.strapi === '–'}<span aria-label="Not offered">–</span>{:else}{row.strapi}{/if}</td>
 							<td class="px-4 py-3 text-muted-foreground">{#if row.sanity === '–'}<span aria-label="Not offered">–</span>{:else}{row.sanity}{/if}</td>
