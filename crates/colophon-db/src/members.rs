@@ -1,14 +1,17 @@
 //! Members and invitations (docs/modules/03-auth.md, "Roles and memberships", "Invitations";
-//! D-042). Changes run inside an owner's [`MemberTransaction`]; the policy check (who may)
-//! happens before, in the API. An invitation's token is a capability: holding it is what lets a
-//! signed-in person see the project's name and join it.
+//! D-042, D-058). The API checks the role read when the transaction began; role changes and
+//! removals check again here, under the locks that keep it true until commit, what the caller's
+//! role allows now: managing members, and every power of the roles involved, so nobody gives or
+//! takes away more than they hold. An invitation's token is a capability: holding it is what lets
+//! a signed-in person see the project's name and join it.
 
-use colophon_domain::policy::Policy;
+use colophon_domain::policy::{Action, Policy};
 use sqlx::{PgPool, types::time::OffsetDateTime};
 use uuid::Uuid;
 
 use crate::{
     DbError,
+    roles::{self, OWNER},
     scope::{self, MemberTransaction, Scope},
 };
 
@@ -34,9 +37,12 @@ pub enum Change {
     NotFound,
     /// Refused: the project would have no owner left.
     LastOwner,
-    /// Refused: the caller is no longer an owner. The role read when their transaction began was
-    /// stale, because a demotion was committing at the same moment.
-    NotOwner,
+    /// Refused: the caller's role, as it is now, doesn't manage members, or lacks a power of a
+    /// role involved. The role read when their transaction began may have been stale, because a
+    /// change to it was committing at the same moment.
+    NotPermitted,
+    /// Refused: the project has no role with that key.
+    UnknownRole,
 }
 
 /// A pending invitation, as its project's owners see it.
@@ -114,21 +120,52 @@ async fn lock_owners(tx: &mut MemberTransaction) -> Result<Vec<Uuid>, DbError> {
     .map_err(DbError::from_query)
 }
 
-/// Changes `identity`'s role, refusing to take the last owner away, or to act for a caller who
-/// stopped being an owner after their transaction began.
+/// The role `identity` holds, locked until the transaction ends, and what it allows.
+async fn held(tx: &mut MemberTransaction, identity: Uuid) -> Result<Option<Policy>, DbError> {
+    let role = sqlx::query_scalar!(
+        "SELECT role FROM memberships WHERE project_id = $1 AND identity_id = $2 FOR UPDATE",
+        tx.project,
+        identity
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    let Some(role) = role else { return Ok(None) };
+    roles::policy_of(tx, &role)
+        .await?
+        .ok_or(DbError::Corrupt(
+            "a member holds a role the project doesn't have",
+        ))
+        .map(Some)
+}
+
+/// Changes `identity`'s role to `role`, refusing to take the last owner away, or to act for a
+/// caller whose role, as it is now, doesn't cover it.
 pub async fn change_role(
     tx: &mut MemberTransaction,
     identity: Uuid,
     role: &str,
 ) -> Result<Change, DbError> {
     let owners = lock_owners(tx).await?;
-    if !owners.contains(&tx.identity) {
-        return Ok(Change::NotOwner);
+    let Some(caller) = current_policy(tx).await? else {
+        return Ok(Change::NotPermitted);
+    };
+    let Some(current) = held(tx, identity).await? else {
+        return Ok(Change::NotFound);
+    };
+    let Some(granted) = roles::policy_of(tx, role).await? else {
+        return Ok(Change::UnknownRole);
+    };
+    if !(caller.allows(Action::MembersManage, None)
+        && caller.covers(&current)
+        && caller.covers(&granted))
+    {
+        return Ok(Change::NotPermitted);
     }
-    if role != "owner" && owners == [identity] {
+    if role != OWNER && owners == [identity] {
         return Ok(Change::LastOwner);
     }
-    let changed = sqlx::query!(
+    sqlx::query!(
         "UPDATE memberships SET role = $3 WHERE project_id = $1 AND identity_id = $2",
         tx.project,
         identity,
@@ -137,19 +174,24 @@ pub async fn change_role(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)?;
-    Ok(if changed.rows_affected() == 0 {
-        Change::NotFound
-    } else {
-        Change::Done
-    })
+    Ok(Change::Done)
 }
 
 /// Removes `identity` from the project, refusing to remove the last owner. Anyone may remove
-/// themselves; removing someone else needs the caller to still be an owner.
+/// themselves; removing someone else needs the caller's role, as it is now, to manage members and
+/// to cover the role they hold.
 pub async fn remove(tx: &mut MemberTransaction, identity: Uuid) -> Result<Change, DbError> {
     let owners = lock_owners(tx).await?;
-    if identity != tx.identity && !owners.contains(&tx.identity) {
-        return Ok(Change::NotOwner);
+    if identity != tx.identity {
+        let Some(caller) = current_policy(tx).await? else {
+            return Ok(Change::NotPermitted);
+        };
+        let Some(current) = held(tx, identity).await? else {
+            return Ok(Change::NotFound);
+        };
+        if !(caller.allows(Action::MembersManage, None) && caller.covers(&current)) {
+            return Ok(Change::NotPermitted);
+        }
     }
     if owners == [identity] {
         return Ok(Change::LastOwner);
@@ -182,30 +224,17 @@ pub async fn current_policy(tx: &mut MemberTransaction) -> Result<Option<Policy>
     .await
     .map_err(DbError::from_query)?;
     let Some(role) = role else { return Ok(None) };
-    let rows = sqlx::query!(
-        r#"SELECT action, subject, array_to_string(fields, ',') AS "fields?", condition
-           FROM role_permissions WHERE project_id = $1 AND role_key = $2"#,
-        tx.project,
-        role
-    )
-    .fetch_all(&mut *tx.transaction)
-    .await
-    .map_err(DbError::from_query)?;
-    let mut actions = Vec::with_capacity(rows.len());
-    let mut subjects = Vec::with_capacity(rows.len());
-    let mut fields = Vec::with_capacity(rows.len());
-    let mut conditions = Vec::with_capacity(rows.len());
-    for row in rows {
-        actions.push(row.action);
-        subjects.push(row.subject);
-        fields.push(row.fields);
-        conditions.push(row.condition);
-    }
-    crate::scope::policy(actions, subjects, fields, conditions).map(Some)
+    roles::policy_of(tx, &role)
+        .await?
+        .ok_or(DbError::Corrupt(
+            "a member holds a role the project doesn't have",
+        ))
+        .map(Some)
 }
 
 /// Stores an invitation to the transaction's project, made by its identity; only the token's
-/// hash.
+/// hash. The caller has read the role with [`roles::policy_of`] in this transaction, whose lock
+/// keeps it from being deleted before this commits.
 pub async fn invite(
     tx: &mut MemberTransaction,
     token_hash: &[u8; 32],

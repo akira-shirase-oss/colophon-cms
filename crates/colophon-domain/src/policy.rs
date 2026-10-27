@@ -6,6 +6,101 @@
 //! stored with it for milestone R's later steps and don't narrow anything yet. Every project
 //! starts with the four built-in roles of D-042, whose permissions ([`Policy::builtin`]) give
 //! exactly the powers that table gave.
+//!
+//! Since step R.2, owners define more roles. Nobody can hand out power they don't hold
+//! ([`Policy::covers`]), and a permission arrives through [`Permission::parse`], which refuses
+//! field lists and conditions until step R.3 enforces them.
+
+use crate::project::Slug;
+
+/// The most permissions one role holds: every action on every collection of a large project.
+pub const MAX_PERMISSIONS: usize = 500;
+
+/// The most roles a project has, the built-in ones included.
+pub const MAX_ROLES: usize = 100;
+
+/// Why a role, or one of its permissions, was refused. Stable codes for the API's details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RoleError {
+    /// Not 1 to 63 lowercase letters, digits and hyphens starting with a letter.
+    #[error(
+        "a role's key is 1 to 63 lowercase letters, digits and hyphens, starting with a letter"
+    )]
+    InvalidKey,
+    /// Blank, too long, or with control characters.
+    #[error("a role's name is 1 to 100 characters, without control characters")]
+    InvalidName,
+    /// Too long, or with control characters.
+    #[error("a role's description is at most 500 characters, without control characters")]
+    InvalidDescription,
+    /// Not one of [`Action::ALL`].
+    #[error(
+        "an action is one of content.read, content.create, content.update, content.delete, content.review, content.publish, schema.change, members.manage, roles.manage, destinations.manage and tokens.manage"
+    )]
+    UnknownAction,
+    /// Neither `*` nor a collection's slug.
+    #[error("a permission applies to `*` or to one collection's slug")]
+    InvalidSubject,
+    /// A project-wide action named one collection.
+    #[error(
+        "members, roles, destinations and tokens belong to the whole project, so their permissions apply to `*`"
+    )]
+    ProjectWide,
+    /// More than [`MAX_PERMISSIONS`].
+    #[error("a role has at most 500 permissions")]
+    TooManyPermissions,
+    /// A field list or a condition, which nothing enforces before step R.3.
+    #[error(
+        "field lists and conditions arrive with step R.3; until they are enforced, they are refused rather than ignored"
+    )]
+    NotYetEnforced,
+}
+
+impl RoleError {
+    /// The code clients branch on.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::InvalidKey => "invalid_role_key",
+            Self::InvalidName => "invalid_role_name",
+            Self::InvalidDescription => "invalid_role_description",
+            Self::UnknownAction => "unknown_action",
+            Self::InvalidSubject => "invalid_subject",
+            Self::ProjectWide => "project_wide_action",
+            Self::TooManyPermissions => "too_many_permissions",
+            Self::NotYetEnforced => "not_yet_enforced",
+        }
+    }
+}
+
+/// Whether `text` is a role key: `^[a-z][a-z0-9-]{0,62}$`, the rule the database checks.
+pub fn is_role_key(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    (1..=63).contains(&bytes.len())
+        && bytes.first().is_some_and(u8::is_ascii_lowercase)
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
+}
+
+/// A role's name, trimmed: 1 to 100 characters without control characters.
+pub fn role_name(text: &str) -> Result<&str, RoleError> {
+    let name = text.trim();
+    if (1..=100).contains(&name.chars().count()) && !name.chars().any(char::is_control) {
+        Ok(name)
+    } else {
+        Err(RoleError::InvalidName)
+    }
+}
+
+/// A role's description, trimmed: at most 500 characters without control characters.
+pub fn role_description(text: &str) -> Result<&str, RoleError> {
+    let description = text.trim();
+    if description.chars().count() <= 500 && !description.chars().any(char::is_control) {
+        Ok(description)
+    } else {
+        Err(RoleError::InvalidDescription)
+    }
+}
 
 /// A built-in role, seeded in every project (D-042).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -184,6 +279,31 @@ pub struct Permission {
 }
 
 impl Permission {
+    /// A permission as a client sends it: an action's name and `*` or a collection's slug.
+    /// Project-wide actions apply to `*` only, so a stored permission always means what it says.
+    pub fn parse(action: &str, subject: &str) -> Result<Self, RoleError> {
+        let action = Action::parse(action).ok_or(RoleError::UnknownAction)?;
+        let subject = if subject == "*" {
+            Subject::All
+        } else {
+            Subject::Collection(
+                Slug::parse(subject)
+                    .map_err(|_| RoleError::InvalidSubject)?
+                    .as_str()
+                    .to_owned(),
+            )
+        };
+        if !action.per_collection() && subject != Subject::All {
+            return Err(RoleError::ProjectWide);
+        }
+        Ok(Self {
+            action,
+            subject,
+            fields: None,
+            condition: None,
+        })
+    }
+
     /// `action` everywhere, on every field, without a condition.
     pub const fn everywhere(action: Action) -> Self {
         Self {
@@ -238,6 +358,19 @@ impl Policy {
             actions.extend([ContentReview, ContentPublish]);
         }
         Self::new(actions.into_iter().map(Permission::everywhere).collect())
+    }
+
+    /// Whether a holder of this policy may hand out `other`: as a role they create or edit, or
+    /// by giving someone a role. Nobody grants what they can't do themselves, so no chain of
+    /// grants ends with more power than it started with.
+    pub fn covers(&self, other: &Self) -> bool {
+        other.permissions.iter().all(|permission| {
+            let collection = match &permission.subject {
+                Subject::All => None,
+                Subject::Collection(slug) => Some(slug.as_str()),
+            };
+            self.allows(permission.action, collection)
+        })
     }
 
     /// Whether this policy lets its holder perform `action`, in `collection` when the action is
@@ -343,6 +476,115 @@ mod tests {
         assert!(!policy.allows(Action::MembersManage, Some("pages")));
         assert!(!policy.allows(Action::MembersManage, None));
         assert!(!Policy::default().allows(Action::ContentRead, Some("pages")));
+    }
+
+    #[test]
+    fn nobody_hands_out_power_they_do_not_hold() {
+        let owner = Policy::builtin(Role::Owner);
+        for role in Role::ALL {
+            assert!(
+                owner.covers(&Policy::builtin(role)),
+                "owner covers {role:?}"
+            );
+            assert!(
+                Policy::builtin(role).covers(&Policy::builtin(role)),
+                "{role:?} covers itself"
+            );
+        }
+        let editor = Policy::builtin(Role::Editor);
+        assert!(!editor.covers(&Policy::builtin(Role::Publisher)));
+        assert!(!editor.covers(&owner));
+        assert!(!Policy::builtin(Role::Developer).covers(&Policy::builtin(Role::Publisher)));
+        assert!(
+            editor.covers(&Policy::default()),
+            "an empty role is anyone's to give"
+        );
+
+        let pages = |action| Permission {
+            subject: Subject::Collection("pages".to_owned()),
+            ..Permission::everywhere(action)
+        };
+        let pages_editor = Policy::new(vec![
+            pages(Action::ContentRead),
+            pages(Action::ContentUpdate),
+        ]);
+        assert!(
+            editor.covers(&pages_editor),
+            "everywhere covers one collection"
+        );
+        assert!(
+            !pages_editor.covers(&editor),
+            "one collection doesn't cover everywhere"
+        );
+        assert!(
+            !pages_editor.covers(&Policy::new(vec![Permission {
+                subject: Subject::Collection("articles".to_owned()),
+                ..Permission::everywhere(Action::ContentRead)
+            }])),
+            "nor another collection"
+        );
+    }
+
+    #[test]
+    fn permissions_parse_as_they_are_stored_or_not_at_all() {
+        assert_eq!(
+            Permission::parse("content.update", "pages"),
+            Ok(Permission {
+                subject: Subject::Collection("pages".to_owned()),
+                ..Permission::everywhere(Action::ContentUpdate)
+            })
+        );
+        assert_eq!(
+            Permission::parse("members.manage", "*"),
+            Ok(Permission::everywhere(Action::MembersManage))
+        );
+        for (action, subject, error) in [
+            ("content.everything", "*", RoleError::UnknownAction),
+            ("Content.Read", "*", RoleError::UnknownAction),
+            ("content.read", "", RoleError::InvalidSubject),
+            ("content.read", "Pages", RoleError::InvalidSubject),
+            ("content.read", "-pages", RoleError::InvalidSubject),
+            ("content.read", "**", RoleError::InvalidSubject),
+            ("members.manage", "pages", RoleError::ProjectWide),
+            ("tokens.manage", "articles", RoleError::ProjectWide),
+        ] {
+            assert_eq!(
+                Permission::parse(action, subject),
+                Err(error),
+                "{action} on {subject:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn role_keys_names_and_descriptions() {
+        for good in ["editor", "copy-desk", "a", "r2", &"a".repeat(63)] {
+            assert!(is_role_key(good), "{good:?}");
+        }
+        for bad in [
+            "",
+            "2nd",
+            "-desk",
+            "Copy",
+            "copy desk",
+            "copy_desk",
+            &"a".repeat(64),
+        ] {
+            assert!(!is_role_key(bad), "{bad:?}");
+        }
+        assert_eq!(role_name("  Copy desk "), Ok("Copy desk"));
+        assert_eq!(role_name("   "), Err(RoleError::InvalidName));
+        assert_eq!(role_name(&"x".repeat(101)), Err(RoleError::InvalidName));
+        assert_eq!(role_name("a\u{7}b"), Err(RoleError::InvalidName));
+        assert_eq!(role_description(""), Ok(""));
+        assert_eq!(
+            role_description(&"x".repeat(501)),
+            Err(RoleError::InvalidDescription)
+        );
+        assert_eq!(
+            role_description("line\nbreak"),
+            Err(RoleError::InvalidDescription)
+        );
     }
 
     #[test]

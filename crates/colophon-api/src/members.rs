@@ -1,13 +1,15 @@
-//! Members and invitations (docs/modules/03-auth.md; D-042):
+//! Members and invitations (docs/modules/03-auth.md; D-042, D-058):
 //!
 //! - `GET    /api/v1/projects/{project}/members`: any member;
-//! - `PUT    /api/v1/projects/{project}/members/{identity}`: `{"role"}`, owners only;
-//! - `DELETE /api/v1/projects/{project}/members/{identity}`: owners, or a member leaving;
+//! - `PUT    /api/v1/projects/{project}/members/{identity}`: `{"role"}`, `members.manage`;
+//! - `DELETE /api/v1/projects/{project}/members/{identity}`: `members.manage`, or a member
+//!   leaving;
 //! - `GET    /api/v1/projects/{project}/invitations`, `POST` (`{"role", "label"}`) and
-//!   `DELETE …/invitations/{id}`: owners only;
+//!   `DELETE …/invitations/{id}`: `members.manage`;
 //! - `POST   /api/v1/invitations/lookup` and `/accept`: `{"token"}`, anyone signed in.
 //!
-//! A project never loses its last owner (409). The invitation token is returned once, in a link
+//! A role is any of the project's roles, by key. Nobody gives, takes away or offers a role with a
+//! power their own role lacks (403). A project never loses its last owner (409). The invitation token is returned once, in a link
 //! that carries it after `#`, which browsers never send to a server; lookups and acceptance take
 //! it in the body, so it never appears in a request line or a log.
 
@@ -21,9 +23,10 @@ use axum::{
 use colophon_auth::tokens;
 use colophon_db::{
     members::{self, Accepted, Change, Invitation, Member},
+    roles,
     scope::{self, MemberTransaction},
 };
-use colophon_domain::policy::{Action, Policy, Role};
+use colophon_domain::policy::{Action, Policy, is_role_key};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -53,7 +56,7 @@ pub(crate) fn require(
     }
 }
 
-async fn open(
+pub(crate) async fn open(
     state: &AppState,
     caller: SignedIn,
     project: &str,
@@ -69,7 +72,7 @@ async fn open(
 /// The caller's role as of now, for a change that must not act on a role read a moment ago (a
 /// demotion committing at the same time). Role changes and removals get the same guarantee from
 /// the owner lock inside `colophon_db::members`.
-async fn fresh_policy(tx: &mut MemberTransaction) -> Result<Policy, ApiError> {
+pub(crate) async fn fresh_policy(tx: &mut MemberTransaction) -> Result<Policy, ApiError> {
     Ok(members::current_policy(tx)
         .await
         .map_err(ApiError::from_db)?
@@ -122,7 +125,7 @@ impl InvitationView {
 
 #[derive(Deserialize)]
 pub(crate) struct ProjectPath {
-    project: String,
+    pub(crate) project: String,
 }
 
 #[derive(Deserialize)]
@@ -159,12 +162,24 @@ pub(crate) struct TokenBody {
     token: String,
 }
 
-fn parse_role(text: &str) -> Result<Role, ApiError> {
-    Role::parse(text).ok_or_else(|| ApiError::InvalidField {
-        reason: "invalid_role",
+fn parse_role(text: &str) -> Result<&str, ApiError> {
+    if is_role_key(text) {
+        Ok(text)
+    } else {
+        Err(ApiError::InvalidField {
+            reason: "invalid_role",
+            pointer: "/role",
+            message: "a role is one of the project's roles, by its key, such as editor".to_owned(),
+        })
+    }
+}
+
+fn unknown_role() -> ApiError {
+    ApiError::InvalidField {
+        reason: "unknown_role",
         pointer: "/role",
-        message: "a role is owner, developer, editor or publisher".to_owned(),
-    })
+        message: "this project has no role with that key".to_owned(),
+    }
 }
 
 fn change_result(change: Change) -> Result<StatusCode, ApiError> {
@@ -172,9 +187,10 @@ fn change_result(change: Change) -> Result<StatusCode, ApiError> {
         Change::Done => Ok(StatusCode::NO_CONTENT),
         Change::NotFound => Err(ApiError::NotFound),
         Change::LastOwner => Err(ApiError::Conflict("a project must keep at least one owner")),
-        Change::NotOwner => Err(ApiError::Forbidden(
-            "you are no longer an owner of this project",
+        Change::NotPermitted => Err(ApiError::Forbidden(
+            "your role can't make this change: it gives or takes away only roles whose every power it has",
         )),
+        Change::UnknownRole => Err(unknown_role()),
     }
 }
 
@@ -213,9 +229,9 @@ pub(crate) async fn change(
         &tx.policy,
         Action::MembersManage,
         None,
-        "only a project's owners can change roles",
+        "only people whose role manages members can change roles",
     )?;
-    let outcome = members::change_role(&mut tx, identity, role.as_str())
+    let outcome = members::change_role(&mut tx, identity, role)
         .await
         .map_err(ApiError::from_db)?;
     if outcome == Change::Done {
@@ -238,7 +254,7 @@ pub(crate) async fn remove(
             &tx.policy,
             Action::MembersManage,
             None,
-            "only a project's owners can remove members",
+            "only people whose role manages members can remove them",
         )?;
     }
     let outcome = members::remove(&mut tx, identity)
@@ -261,7 +277,7 @@ pub(crate) async fn invitations(
         &tx.policy,
         Action::MembersManage,
         None,
-        "only a project's owners can see its invitations",
+        "only people whose role manages members can see invitations",
     )?;
     let rows = members::invitations(&mut tx)
         .await
@@ -296,25 +312,30 @@ pub(crate) async fn invite(
         });
     }
     let mut tx = open(&state, caller, &path.project).await?;
+    let fresh = fresh_policy(&mut tx).await?;
     require(
-        &fresh_policy(&mut tx).await?,
+        &fresh,
         Action::MembersManage,
         None,
-        "only a project's owners can invite people",
+        "only people whose role manages members can invite",
     )?;
+    // Read with a lock that keeps the role from being deleted before the invitation commits.
+    let offered = roles::policy_of(&mut tx, role)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or_else(unknown_role)?;
+    if !fresh.covers(&offered) {
+        return Err(ApiError::Forbidden(
+            "you can only invite people to roles whose every power your own role has",
+        ));
+    }
     let token = tokens::random_token()
         .map_err(|_| ApiError::internal(std::io::Error::other("no secure random source")))?;
     let expires_at = OffsetDateTime::now_utc()
         + time::Duration::try_from(INVITATION_LIFETIME).unwrap_or(time::Duration::DAY);
-    let invitation = members::invite(
-        &mut tx,
-        &tokens::hash(&token),
-        role.as_str(),
-        label,
-        expires_at,
-    )
-    .await
-    .map_err(ApiError::from_db)?;
+    let invitation = members::invite(&mut tx, &tokens::hash(&token), role, label, expires_at)
+        .await
+        .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     let origin = services
         .trusted_origins
@@ -342,7 +363,7 @@ pub(crate) async fn revoke(
         &fresh_policy(&mut tx).await?,
         Action::MembersManage,
         None,
-        "only a project's owners can revoke invitations",
+        "only people whose role manages members can revoke invitations",
     )?;
     if members::revoke(&mut tx, id)
         .await

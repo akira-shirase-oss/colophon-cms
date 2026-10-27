@@ -21,6 +21,7 @@ pub mod middleware;
 mod projects;
 mod receipts;
 mod rich_text;
+mod roles;
 pub mod session;
 mod shape;
 pub mod state;
@@ -74,6 +75,14 @@ pub fn routes(state: AppState) -> Router {
         .route(
             "/api/v1/projects/{project}/invitations/{invitation}",
             axum::routing::delete(members::revoke),
+        )
+        .route(
+            "/api/v1/projects/{project}/roles",
+            get(roles::list).post(roles::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/roles/{role}",
+            get(roles::get).put(roles::update).delete(roles::delete),
         )
         .route("/api/v1/invitations/lookup", post(members::lookup))
         .route("/api/v1/invitations/accept", post(members::accept))

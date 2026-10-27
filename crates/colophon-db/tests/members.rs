@@ -228,7 +228,7 @@ async fn the_last_owner_can_be_neither_demoted_nor_removed() {
         members::change_role(&mut tx, bob, "editor")
             .await
             .expect("change"),
-        Change::NotOwner,
+        Change::NotPermitted,
         "having stepped down, Alice manages no one"
     );
     tx.commit().await.expect("commit");
@@ -339,8 +339,8 @@ async fn an_owner_demoted_mid_request_can_no_longer_manage_members() {
     assert_eq!(
         (promoted, removed, policy),
         (
-            Change::NotOwner,
-            Change::NotOwner,
+            Change::NotPermitted,
+            Change::NotPermitted,
             Some(Policy::builtin(Role::Editor))
         ),
         "a stale owner role grants nothing, and the fresh policy is the editor's"
