@@ -52,7 +52,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   far: Projects (`/studio/`), a project's content types (`/studio/projects/{project}`), a collection
   (`…/{collection}`), the editor (`…/{collection}/{entry}`), Members (`…/members`), joining a project
   (`/studio/invite`), approving a terminal (`/studio/device`), and the editor playground (`/studio/playground`).
-  Content-type slugs `members` and `settings` are reserved, so these pages can sit beside collections (D-042).
+  Content-type slugs `members`, `settings`, `changesets` and `releases` are reserved, so these pages can sit beside collections (D-042; `RESERVED_SLUGS` in `crates/colophon-api/src/content_types.rs`).
   Since step 1.8 (D-043), the home page lets an administrator create a project, with the slug following the name
   until edited, and tells everyone else to ask a project's owner for an invitation.
   Since step 2.1 (D-044): `/studio/projects/{project}/changesets` lists changesets with their state and makes new ones

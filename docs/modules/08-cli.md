@@ -138,8 +138,8 @@ colophon export --env production --out export-directory
 | Situation | Behaviour |
 |---|---|
 | Network lost mid-request | Retry with the same idempotency key; report the recorded result |
-| Server returns 409 | Exit 4 with the conflict description in the JSON result |
-| Server unavailable | Exit 5; `retryable: true` in the result |
+| Server returns 409 | Exit 4 with the conflict description in the JSON result (planned: today every command except `doctor` writes `error: …` to stderr and prints no JSON when it fails) |
+| Server unavailable | Exit 5; `retryable: true` in the result (planned, as above) |
 | Missing `--env` on publish | Exit 2 before any request is sent |
 | `--wait` times out | Exit 5 with the last observed state; the accepted work continues |
 
@@ -153,13 +153,15 @@ colophon export --env production --out export-directory
 
 ## Build order
 
-1. **P1:** `login` (a device sign-in approved in the Studio), `whoami`, `logout`, `content create`, `content list`,
-   `--json`, exit codes (step 1.6, done).
-2. **P2:** `release validate|publish|status`, `jobs inspect`.
-3. **P3:** `doctor`, `integration test`.
-4. **P5:** scoped machine credentials, `--jsonl`, `content import`, `export`, `content get --generation`,
+1. **P0:** `doctor` (step 0.3, done).
+2. **P1:** `login` (a device sign-in approved in the Studio), `whoami`, `logout`, `content create`, `content list`,
+   `--json`, exit codes (step 1.6, done); `admin bootstrap` and `admin migrate`, moved forward from P6 (step 1.8, done).
+3. **Planned for P2, not built:** `release validate|publish|status`, `jobs inspect`. P2 shipped publishing through the
+   API and the Studio only; these commands are carried forward.
+4. **P3:** `integration test`.
+5. **P5:** scoped machine credentials, `--jsonl`, `content import`, `export`, `content get --generation`,
    `release history`.
-5. **P6:** `init`, `migrate plan|apply`, `admin`.
+6. **P6:** `init`, `migrate plan|apply`, the rest of `admin`.
 
 ## Open decisions
 
