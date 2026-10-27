@@ -1,6 +1,6 @@
 # Colophon CMS: agent instructions
 
-**Status (2026-10-25): milestone P1 in progress.** P0 is complete: steps 0.1 to 0.7 built the pinned toolchain and
+**Status (2026-10-27): milestone P3 in progress.** P0 is complete: steps 0.1 to 0.7 built the pinned toolchain and
 workspace, the local stack in `deploy/`, the error envelope and health checks, `apps/testbed` and the k6 harness in
 `perf/`, the rich-text format with its editor, validator and renderer, and `packages/ui` with the Studio's first screen
 (D-013 to D-030). Step 1.1 is done: OpenID Connect sign-in through Keycloak (`colophon-auth`), server-side sessions with
@@ -31,8 +31,14 @@ copy as `colophon_delivery` (migration 0008, `colophon_db::{releases, delivery}`
 posts webhooks with a stable idempotency key to public addresses only (migration 0009, F03 in `tests/faults.rs`,
 F05 in `tests/worker.rs`, `perf/k6/publishing.js` with `perf/receiver/`; D-046). Step 2.4 is done: the simulator's
 publishing scenario (`colophon-sim --scenario publishing`), one announcement in flight per destination (migration
-0010), and the real-process crash loop (`tests/crash_loop.rs`; D-047). P2 is done; next is P3, proving it reached the
-site.
+0010), and the real-process crash loop (`tests/crash_loop.rs`; D-047). P2 is done. P3, proving it reached the site: step 3.1 is done, a
+generation-keyed Valkey cache for `/content/v1` with the generation always read from Postgres, single-flight fills, a
+Postgres fallback and ETags (migration 0011; D-048). Step 3.2 is done: unpublish with tombstones and origin revocation,
+and CDN purge jobs (migrations 0012, 0013; D-049, D-050). Step 3.3 is done: probes and a receipt for every publish,
+evidence scoped to the locations checked (migration 0014; D-051). Step 3.4 is done: the reference site in `apps/web`,
+built from one release and promoted atomically (D-052, `perf/k6/site.js`). Step 3.5 is done: title search, entry states,
+revision comparison and review diffs, and the design system: every shadcn-svelte component in `packages/ui` on
+Colophon's tokens (D-053, D-056), shown at `/studio/design`. Next is step 3.6: slugs and the content-type builder.
 
 ## Read first
 
