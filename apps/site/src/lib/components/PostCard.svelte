@@ -40,7 +40,7 @@
 				<span class="flex items-center gap-4">
 					<span class="grid size-[3.25rem] shrink-0 place-items-center rounded-full bg-card shadow-[var(--shadow-icon)]"><Mark size={20} /></span>
 					<span>
-						<span class="block text-base leading-6 font-medium">The build log · step {post.step}</span>
+						<span class="block text-base leading-6 font-medium">Build log · step {post.step}</span>
 						<time class="t-small block" datetime={post.date}>{longDate(post.date)}</time>
 					</span>
 				</span>

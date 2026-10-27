@@ -1,21 +1,21 @@
 <!--
   The reference's testimonial, without a testimonial (W3): the big quote is the question Colophon
   exists to answer, quoted from docs/WHY.md, and the cards under it are sentences copied word for
-  word from the build log, each linked to its post (checked against the posts at build time, in
-  +page.server.ts). The row scrolls sideways, with faded edges.
+  word from the build log, each linked to its post (both checked against their sources at build
+  time, in +page.server.ts; W9). The row scrolls sideways, with faded edges.
 -->
 <script lang="ts">
 	import Mark from '#lib/components/Mark.svelte';
 	import { reveal } from '#lib/motion.ts';
 	import { GITHUB_FILE } from '#lib/site.ts';
 
-	let { quotes }: { quotes: { text: string; slug: string; title: string; step: string }[] } = $props();
+	let { question, quotes }: { question: string; quotes: { text: string; slug: string; title: string; step: string }[] } = $props();
 </script>
 
 <section aria-labelledby="question" class="section" {@attach reveal}>
 	<figure class="shell text-center">
 		<blockquote>
-			<h2 id="question" class="t-quote mx-auto max-w-[56.25rem]">“I published it, so why isn’t the site updated?”</h2>
+			<h2 id="question" class="t-quote mx-auto max-w-[56.25rem]">“{question}”</h2>
 		</blockquote>
 		<figcaption class="mt-5 flex flex-col items-center">
 			<span class="grid size-16 place-items-center rounded-full bg-card shadow-[var(--shadow-icon)]"><Mark size={26} /></span>

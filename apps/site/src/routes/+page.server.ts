@@ -1,5 +1,10 @@
+import why from '../../../../docs/WHY.md?raw';
 import { posts, summaries } from '#lib/server/blog.ts';
 import type { PageServerLoad } from './$types';
+
+// The big quote: the question docs/WHY.md says Colophon exists to answer. The build fails if the
+// file stops saying it.
+const QUESTION = 'I published it, so why isn’t the site updated?';
 
 // Sentences for the quote row, copied word for word from build-log posts. The build fails if one
 // stops being in its post, so the row can't drift into words nobody wrote.
@@ -16,6 +21,7 @@ const QUOTES = [
 const plain = (text: string) => text.replaceAll('’', "'");
 
 export const load: PageServerLoad = () => {
+	if (!plain(why).includes(plain(QUESTION))) throw new Error(`the quote "${QUESTION}" is not in docs/WHY.md`);
 	const quotes = QUOTES.map((quote) => {
 		const post = posts.find((candidate) => candidate.slug === quote.slug);
 		if (!post) throw new Error(`quote row: no post ${quote.slug}`);
@@ -24,5 +30,5 @@ export const load: PageServerLoad = () => {
 		}
 		return { ...quote, title: post.shortTitle, step: post.step };
 	});
-	return { posts: summaries().slice(0, 4), quotes };
+	return { posts: summaries().slice(0, 4), quotes, question: QUESTION };
 };

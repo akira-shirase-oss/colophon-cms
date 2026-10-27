@@ -56,7 +56,7 @@
 					<a href="/" class="inline-flex items-center gap-1.5 rounded-full text-xl leading-6 font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring">
 						<Mark size={22} />Colophon<span class="sr-only">, home</span>
 					</a>
-					<p class="t-body mt-4">An open-source CMS that can prove what it published. Pre-release.</p>
+					<p class="t-body mt-4">An open-source CMS that can prove what it published. Pre‑release.</p>
 					<ul class="mt-6 flex gap-3">
 						<li>
 							<a href={GITHUB} aria-label="Colophon on GitHub" class="social grid size-10 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">

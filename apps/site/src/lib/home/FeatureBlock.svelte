@@ -40,7 +40,7 @@
 <div class="row flex flex-col gap-10 dt:gap-16 {flip ? 'dt:flex-row-reverse' : 'dt:flex-row'}" {@attach reveal}>
 	<figure class="picture relative order-2 overflow-hidden rounded-3xl dt:order-none dt:w-[36.75rem] dt:shrink-0" {@attach follow}>
 		<div class="panel absolute inset-x-5 top-10 bottom-0 overflow-hidden rounded-[20px] bg-card tb:inset-x-10 tb:bottom-10" style={rise === null ? undefined : `--rise: ${rise.toFixed(4)}`} aria-hidden="true">
-			{@render picture()}
+			<div class="panel-inner">{@render picture()}</div>
 		</div>
 		<figcaption class="sr-only">Illustration: {alt}</figcaption>
 	</figure>
@@ -75,5 +75,18 @@
 	}
 	.panel {
 		transform: translateY(calc(var(--rise, 0) * 60px));
+	}
+	/* On a phone the panel is drawn at its desktop width and scaled down, as the reference's is. */
+	@media (max-width: 50.6rem) {
+		.panel-inner {
+			width: 508px;
+			transform: scale(0.626);
+			transform-origin: 0 0;
+		}
+	}
+	@media (max-width: 22.4rem) {
+		.panel-inner {
+			transform: scale(0.49);
+		}
 	}
 </style>

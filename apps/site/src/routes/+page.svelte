@@ -122,7 +122,7 @@
 	</div>
 </section>
 
-<QuoteSection quotes={data.quotes} />
+<QuoteSection question={data.question} quotes={data.quotes} />
 
 <MilestonePlans />
 

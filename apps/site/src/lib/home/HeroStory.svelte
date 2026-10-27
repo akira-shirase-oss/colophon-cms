@@ -377,8 +377,9 @@
 	[data-step='active'] .rail {
 		transform: scaleY(0);
 	}
+	/* A step not reached yet reads in the caption grey, which still passes AA, rather than faded. */
 	[data-step='todo'] .step-text {
-		opacity: 0.45;
+		color: var(--muted-foreground);
 	}
 	[data-step='active'] .dot {
 		border-color: var(--pending);
@@ -416,7 +417,7 @@
 			opacity: 0;
 		}
 		:global(html.js) .story:not([data-started]) .step-text {
-			opacity: 0.45;
+			color: var(--muted-foreground);
 		}
 		:global(html.js) .story:not([data-started]) li:last-child .dot {
 			background: var(--card);
