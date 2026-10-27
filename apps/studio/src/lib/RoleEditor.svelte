@@ -42,17 +42,26 @@
 	// The editor's copy, keyed on the role's version by the page: a save starts a fresh copy.
 	// svelte-ignore state_referenced_locally
 	const saved = role;
-	const initial = saved.permissions.map((grant) => key(grant.action, grant.subject));
+	// The grid edits plain permissions; ones limited to some fields or to a member's own entries
+	// (step R.3) are kept apart, listed in words, and saved exactly as they are.
+	const limited = (grant: Grant) => grant.fields !== undefined || grant.condition !== undefined;
+	const initial = saved.permissions.filter((grant) => !limited(grant)).map((grant) => key(grant.action, grant.subject));
+	const initialLimits = JSON.stringify(saved.permissions.filter(limited));
 	let name = $state(saved.name);
 	let description = $state(saved.description);
 	let grants = $state(new Set<string>(initial));
+	let limits = $state<Grant[]>(saved.permissions.filter(limited));
 	let error = $state('');
 	let stale = $state(false);
 	let busy = $state(false);
 	let confirming = $state(false);
 
 	const dirty = $derived(
-		name !== saved.name || description !== saved.description || grants.size !== initial.length || initial.some((grant) => !grants.has(grant))
+		name !== saved.name ||
+			description !== saved.description ||
+			grants.size !== initial.length ||
+			initial.some((grant) => !grants.has(grant)) ||
+			JSON.stringify(limits) !== initialLimits
 	);
 	const rows = $derived([
 		{ subject: '*', name: 'Everything', hint: 'Every content type, including ones added later.' },
@@ -68,10 +77,45 @@
 	}
 
 	function permissions(): Grant[] {
-		return [...grants].map((grant) => {
+		const plain = [...grants].map((grant) => {
 			const [action, subject] = grant.split('|') as [Action, string];
 			return { action, subject };
 		});
+		return [...plain, ...limits];
+	}
+
+	/** Work on content that can be limited, in plain words: fields for seeing, creating and
+	 *  editing; a member's own entries for seeing, editing and deleting. */
+	const LIMITABLE: { action: Action; label: string; fields: boolean; own: boolean }[] = [
+		{ action: 'content.read', label: 'See', fields: true, own: true },
+		{ action: 'content.create', label: 'Create', fields: true, own: false },
+		{ action: 'content.update', label: 'Edit', fields: true, own: true }
+	];
+	let limitAction = $state<Action>('content.update');
+	let limitSubject = $state('*');
+	let limitOwn = $state(true);
+	let limitFields = $state<string[]>([]);
+	const limitKind = $derived(LIMITABLE.find((kind) => kind.action === limitAction));
+	const limitTypeFields = $derived(
+		limitSubject === '*'
+			? [...new Set(types.flatMap((type) => type.definition.fields.map((field) => field.id)))]
+			: (types.find((type) => type.slug === limitSubject)?.definition.fields.map((field) => field.id) ?? [])
+	);
+
+	function describe(grant: Grant): string {
+		const what = LIMITABLE.find((kind) => kind.action === grant.action)?.label ?? grant.action;
+		const where = grant.subject === '*' ? 'every content type' : (types.find((type) => type.slug === grant.subject)?.definition.name ?? grant.subject);
+		const fields = grant.fields ? `, only ${grant.fields.join(', ')}` : '';
+		const own = grant.condition === 'own' ? ', only their own entries' : '';
+		return `${what}: ${where}${fields}${own}`;
+	}
+
+	function addLimit() {
+		const own = limitOwn && (limitKind?.own ?? false);
+		const fields = limitFields.length > 0 ? [...limitFields].sort() : undefined;
+		if (!own && fields === undefined) return;
+		limits = [...limits, { action: limitAction, subject: limitSubject, ...(fields ? { fields } : {}), ...(own ? { condition: 'own' as const } : {}) }];
+		limitFields = [];
 	}
 
 	async function save(event: SubmitEvent) {
@@ -172,6 +216,60 @@
 			</tbody>
 		</table>
 	</div>
+
+	<h2 class="mt-8 mb-1 text-base font-semibold" id="limited-heading">Limited permissions</h2>
+	<p class="mb-4 text-sm text-muted-foreground">
+		Narrower than the grid: only some fields, or only the entries a member created themselves. For example, edit the titles of any article and
+		every field of their own.
+	</p>
+	<ul class="mb-4 overflow-hidden rounded-xl border border-border bg-card" aria-labelledby="limited-heading" data-testid="limited-permissions">
+		{#each limits as grant, index (`${grant.action}|${grant.subject}|${grant.condition ?? ''}|${index}`)}
+			<li class="rule-dotted flex items-center gap-3 px-4 py-3 text-sm last:border-b-0">
+				<span class="min-w-0 flex-1">{describe(grant)}</span>
+				{#if editable}
+					<Button variant="ghost" size="sm" onclick={() => (limits = limits.filter((_, at) => at !== index))} aria-label="Remove {describe(grant)}">Remove</Button>
+				{/if}
+			</li>
+		{:else}
+			<li class="px-4 py-3 text-sm text-muted-foreground">None.</li>
+		{/each}
+	</ul>
+	{#if editable}
+		<fieldset class="mb-2 grid gap-3 rounded-xl border border-dashed border-border p-4" aria-label="Add a limited permission">
+			<div class="flex flex-wrap gap-3">
+				<label class="grid gap-1 text-sm">
+					What
+					<select class="h-9 rounded-md border border-input bg-card px-2 text-sm" bind:value={limitAction}>
+						{#each LIMITABLE as kind (kind.action)}<option value={kind.action}>{kind.label}</option>{/each}
+					</select>
+				</label>
+				<label class="grid gap-1 text-sm">
+					Where
+					<select class="h-9 rounded-md border border-input bg-card px-2 text-sm" bind:value={limitSubject} onchange={() => (limitFields = [])}>
+						<option value="*">Every content type</option>
+						{#each types as type (type.slug)}<option value={type.slug}>{type.definition.name}</option>{/each}
+					</select>
+				</label>
+				{#if limitKind?.own}
+					<label class="flex items-end gap-2 pb-2 text-sm">
+						<input type="checkbox" class="size-4 accent-primary" bind:checked={limitOwn} />
+						Only their own entries
+					</label>
+				{/if}
+			</div>
+			<div class="flex flex-wrap gap-x-4 gap-y-2 text-sm" role="group" aria-label="Only these fields (none ticked means every field)">
+				{#each limitTypeFields as field (field)}
+					<label class="flex items-center gap-1.5">
+						<input type="checkbox" class="size-4 accent-primary" value={field} bind:group={limitFields} />
+						<code class="font-mono text-xs">{field}</code>
+					</label>
+				{/each}
+			</div>
+			<div>
+				<Button variant="secondary" size="sm" onclick={addLimit} disabled={!(limitOwn && limitKind?.own) && limitFields.length === 0}>Add this limit</Button>
+			</div>
+		</fieldset>
+	{/if}
 
 	<h2 class="mt-8 mb-1 text-base font-semibold">The whole project</h2>
 	<p class="mb-4 text-sm text-muted-foreground">Powers over people, roles and connections, which aren't about one content type.</p>

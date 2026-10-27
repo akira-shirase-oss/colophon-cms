@@ -60,8 +60,15 @@
 	// The component is keyed on the entry, so the props it starts with are the ones it keeps.
 	// svelte-ignore state_referenced_locally
 	const definition = type.definition;
-	const plain = definition.fields.filter((field) => field.type !== 'rich_text');
-	const rich = definition.fields.filter((field) => field.type === 'rich_text');
+	// What the person's role hides or locks (D-058, step R.3): hidden fields are never shown or
+	// sent, so a save can't erase them; locked ones are shown, disabled.
+	// svelte-ignore state_referenced_locally
+	const hidden = new Set(initial.draft.hidden_fields ?? []);
+	// svelte-ignore state_referenced_locally
+	const locked = initial.draft.locked_fields ?? [];
+	const visible = definition.fields.filter((field) => !hidden.has(field.id));
+	const plain = visible.filter((field) => field.type !== 'rich_text');
+	const rich = visible.filter((field) => field.type === 'rich_text');
 	// svelte-ignore state_referenced_locally
 	let latest = $state.raw<Draft>(initial.draft);
 	// svelte-ignore state_referenced_locally
@@ -83,7 +90,7 @@
 
 	function current(): Content {
 		const content: Content = {};
-		for (const field of definition.fields) {
+		for (const field of visible) {
 			const editor = editors[field.id];
 			const value = field.type === 'rich_text' ? editor && toStored(editor.getJSON()) : storedValue(field, form[field.id]);
 			if (value !== undefined) content[field.id] = value;
@@ -104,6 +111,7 @@
 					editorProps: {
 						attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': field.label, class: 'prose-colophon min-h-64' }
 					},
+					editable: !locked.includes(field.id),
 					onUpdate: changed
 				});
 			} catch (error) {
@@ -274,7 +282,13 @@
 		</div>
 
 		<div role="tabpanel" id="panel-content" aria-labelledby="tab-content" hidden={tab !== 'content'}>
-			<FieldInputs fields={plain} bind:form titleField={definition.title_field} onchange={changed} />
+			{#if hidden.size > 0 || locked.length > 0}
+				<p class="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="role-limits">
+					{#if hidden.size > 0}Your role doesn’t show {[...hidden].join(', ')}; saving keeps {hidden.size === 1 ? 'it' : 'them'} as {hidden.size === 1 ? 'it is' : 'they are'}.{/if}
+					{#if locked.length > 0}Your role can read but not change {locked.join(', ')}.{/if}
+				</p>
+			{/if}
+			<FieldInputs fields={plain} bind:form titleField={definition.title_field} onchange={changed} {locked} />
 			{#each rich as field (field.id)}
 				<div class="py-5">
 					<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
