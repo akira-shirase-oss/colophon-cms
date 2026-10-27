@@ -1,19 +1,25 @@
 # Roadmap
 
-Seven milestones, each named after what it proves. Estimates assume ~45 hours/week (D-010) and are guesses, not
+Eleven milestones, each named after what it proves. Since D-057 the product goal is every feature Strapi and Sanity
+offer ([COMPARISON.md](COMPARISON.md)), built at Colophon's bar: the four lettered milestones carry that parity work and
+sit between the numbered ones in the order below. Estimates assume ~45 hours/week (D-010) and are guesses, not
 measurements. A milestone is done when its **proof gate** passes with stored evidence, not when its screens exist.
 
-| # | Milestone | Proof gate | Estimate |
+| Order | Milestone | Proof gate | Estimate |
 |---|---|---|---|
 | P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI is green | 1–2 weeks |
 | P1 | Never lose an edit | F01, F02, F04; cross-project denial; first simulator runs | 3–5 weeks |
 | P2 | Publish exactly once | F03, F05; concurrent releases; simulator covers the outbox; first crash loop | 3–4 weeks |
 | P3 | Prove it reached the site | F06–F08, L01–L04, mixed-release checker; **first public demo** | 3–4 weeks |
-| P4 | Time travel and media | Rollback, pinned reads, revocation, upload fault tests | 2–3 weeks |
+| R | Roles and permissions | Every action × role × field × condition decided by one evaluator; no permission check bypassed in the API, CLI or Studio | 2–3 weeks |
+| M | Content modelling parity | Relations, components, lists, blocks and single types round-trip and stay valid through schema changes | 4–6 weeks |
+| P4 | Time travel and media | Rollback, pinned reads, revocation, upload fault tests, the media library | 3–4 weeks |
+| E | Editorial parity | Localization, scheduling, review stages, comments, tasks and live collaboration without a lost edit | 5–7 weeks |
+| D | Developer parity | Query API, GraphQL, SDK, API tokens, import from Strapi and Sanity, extension points | 4–5 weeks |
 | P5 | Safe automation | Zero unauthorized actions in the eval set; interrupted bulk job resumes (X12) | 3–4 weeks |
 | P6 | Operate it | F09–F14, L05–L13, 24-hour soak, restore drill; **v0.1 release** | 3–4 weeks |
 
-Total: about **4–6 months** to v0.1, with the first public demo around month 3.
+Total: about **9–12 months** to v0.1, with the first public demo at the end of P3.
 
 ---
 
@@ -131,10 +137,49 @@ cache is down, ETags with 304s, CDN cache policies and tags; F06, F08, L04) · 3
 tombstones, origin revocation through historical URLs, purge jobs through a fake CDN; F07) · 3.3 a receipt for every
 publish (D-051; probes, evidence scoped to the locations checked, the Studio's receipt timeline) · 3.4 my own site, running
 on Colophon (D-052; the reference blog with a generation marker and the build-and-promote adapter) · 3.5 the Studio, designed
-(D-053; the design system, entry states, title search, revision comparison, review diffs, the sign-in theme) · 3.6 content
-modelling in the Studio (a content-type builder with safe changes, and the editing that still goes through the API) · 3.7 my
-site goes live, and the first public demo (docs skeleton, simulator cache and delivery faults, the mixed-release checker, a
+(D-053, D-056; the design system, entry states, title search, revision comparison, review diffs, the sign-in theme) · 3.6
+content modelling in the Studio (slugs, a content-type builder whose changes are checked against stored content; D-054,
+D-055) · 3.7 the non-technical path (D-059: plain words from one glossary, one-click publish, a first-run checklist,
+teaching empty states, developer settings out of the way, phone-friendly review) · 3.8 my site goes live, and the first
+public demo (docs skeleton, simulator cache and delivery faults, the mixed-release checker, a
 recorded crash loop).
+
+## R: Roles and permissions (D-058)
+
+**Goal:** owners decide exactly who may do what, down to a field, and every path enforces it the same way.
+
+- `domain`: permissions as data (action, subject, fields, condition) and one pure evaluator; the four D-042 roles as
+  seeded defaults with unchanged powers.
+- `db`: roles, permissions and role ids on memberships (migration 0016), API tokens with hashes and expiry, an
+  append-only audit log of role, membership and token changes; idempotency records stored for locality and cheap
+  retention (time-ordered keys or daily partitions), since saves slow down 3.5x as that table grows (COMPARISON.md).
+- `api`: one authorization call in every handler; field-level refusals on writes and field-level projections on reads;
+  `own` conditions; read-only, full-access and custom API tokens.
+- `studio`: Settings → Roles with a permission matrix (collections × actions, fields, "only their own"), the role
+  picker on members and invitations, actions hidden when not permitted (the server still decides).
+- `sim`: random roles and permissions against the evaluator; the API's decisions match it.
+
+**Proof gate:** the evaluator's decision table is exhaustive for the built-in roles and property-tested for random
+roles; every route has a denial test; field and condition tests for create, update, read and publish; a token can do
+exactly what its permission set allows; a load scenario with custom roles shows the evaluator costs no regression.
+
+**Steps:** R.1 roles as data, behaviour unchanged · R.2 custom roles and the Studio's role editor · R.3 field-level
+permissions and `own` conditions · R.4 API tokens and the audit log.
+
+## M: Content modelling parity
+
+**Goal:** the shapes Strapi and Sanity model (relations, reusable groups, lists, page builders, singletons) are content
+types here, validated in Rust and kept valid as they change.
+
+- Field types: references (one and many, with the other side listed), components/objects (nested fields), bounded
+  lists of any type, block lists (Strapi's dynamic zones, Sanity's arrays of objects), email, URL, date, time, JSON,
+  Markdown, colour; single types; field descriptions, defaults, groups and tabs; validation by pattern, uniqueness,
+  length and value, and conditional fields.
+- Migrations with a plan, a dry run, approval and per-entry outcomes for the changes D-055 refuses.
+- The Studio's builder covers every type; the editor renders nested and repeated fields; references pick from search.
+
+**Proof gate:** every type round-trips byte for byte; references never dangle (database-enforced); a migration that
+fails halfway resumes without duplicates; the simulator covers schema changes racing saves.
 
 ## P4: Time travel and media
 
@@ -149,6 +194,36 @@ recorded crash loop).
 **Proof gate:** rollback and pinned-read tests; revoked content stays unavailable through historical generations;
 malicious upload fixtures are rejected; L14 (large media workload keeps editing responsive); X07 (daylight-saving and
 expired-approval scheduling).
+
+## E: Editorial parity
+
+**Goal:** everything an editorial team does in Strapi or Sanity, with nothing lost and every change attributed.
+
+- Localization: locale variants with their own slugs, drafts and publication history (spec §06), the locale switcher,
+  fallbacks as explicit policy.
+- Scheduled publishing and unpublishing, with time zones and missed schedules shown as delayed (spec §17).
+- Review stages (Strapi's review workflows) on top of changesets; assignees; comments on fields and entries; tasks.
+- Live presence and collaboration (O-017); duplicate, bulk actions, saved views, the history slider.
+- Live queries, after Convex: the Studio's lists, drafts, changesets and receipts update as PostgreSQL commits, from one
+  listener per server fanned out to bounded sessions, every page read at one snapshot (COMPARISON.md).
+- Visual preview: the site renders a draft through a short-lived capability (spec §06), with click-to-edit.
+
+**Proof gate:** two editors editing at once never lose an acknowledged edit; a schedule missed during downtime is
+reported as delayed, never on time; locale variants publish independently; comments and tasks follow permissions.
+
+## D: Developer parity
+
+**Goal:** developers get what Strapi's and Sanity's APIs give them, through the same authorization.
+
+- Query API: filters, sorting, pagination, field selection and reference population on drafts (for permitted callers)
+  and on published content; Sanity-style perspectives (published, drafts, a release). Queries use only indexes the
+  content type declares, and Studio and draft reads get the delivery cache's always-consistent rule (after Convex).
+- GraphQL over the same queries and permissions; OpenAPI for REST; the TypeScript SDK with generated types.
+- Webhooks by event (entry, release, media, schema), import from Strapi and Sanity exports with a dry run, export.
+- Extension points instead of plugins (D-057): custom field types as data, Studio panels in sandboxed iframes.
+
+**Proof gate:** every query is permission-filtered (no field or entry leaks across roles); GraphQL and REST answer the
+same; an import of the Strapi and Sanity reference datasets round-trips; load scenarios for queries and GraphQL.
 
 ## P5: Safe automation (≈ spec M4)
 
@@ -181,9 +256,9 @@ independent install. **v0.1 release.**
 
 ## After v0.1
 
-Only once the core is proven: the localization UI, a schema designer, Strapi/Sanity/Payload import adapters, a
-business template with forms, and possibly a commerce showcase ("100 buyers, 1 item, exactly one wins", spec X01).
-See [modules/parked.md](modules/parked.md).
+A business template with forms, and possibly a commerce showcase ("100 buyers, 1 item, exactly one wins", spec X01).
+Localization, the schema designer and Strapi/Sanity import moved into milestones E, M and D (D-057). See
+[modules/parked.md](modules/parked.md).
 
 ## Mapping to the spec's milestones
 
