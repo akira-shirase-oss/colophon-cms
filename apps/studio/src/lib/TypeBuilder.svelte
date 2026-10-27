@@ -248,7 +248,7 @@
 	</ol>
 
 	{#if editable}
-		<form class="flex flex-wrap items-end gap-3" onsubmit={add} aria-label="New field">
+		<form class="flex flex-wrap items-end gap-3" onsubmit={add} aria-label="Add a field">
 			<label class="grid gap-1.5 text-sm">
 				<span class="font-medium">New field</span>
 				<Input class="w-64" placeholder="Label" bind:value={newLabel} maxlength={100} />
