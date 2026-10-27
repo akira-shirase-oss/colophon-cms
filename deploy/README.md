@@ -24,7 +24,12 @@ Needs Docker with Compose, plus `curl`, `jq` and `openssl`. The first `up` downl
 The Keycloak realm (`keycloak/colophon-realm.json`) has one client, `colophon-server` (secret
 `colophon-dev-client-secret`). It allows only the Authorization Code flow with PKCE (S256), and only the redirect URIs
 `http://localhost:{58000,58090,58091,58092,58093}/auth/callback` (the development server, the load test, the
-testbed, the server's integration tests, and the Studio's): the password grant and the implicit flow are off. After editing the realm, run
+testbed, the server's integration tests, and the Studio's), plus `58400` to `58405` (step 3.7: `scripts/first-run.sh` on
+58400, and a second checkout's test runs, moved there with `COLOPHON_TEST_ORIGIN`, `COLOPHON_STUDIO_PORT`,
+`COLOPHON_TESTBED_SERVER_PORT` and `LOAD_PORT`): the password grant and the implicit flow are off. Since step 3.7 the
+realm allows **self-registration**: its sign-in page offers "Register", and `/auth/login?start=create` opens the form
+directly (`prompt=create`). Accounts made there are ordinary users with no projects; email isn't verified (no mail
+server). After editing the realm, run
 `docker compose -f deploy/compose.yaml up -d --force-recreate keycloak`. Keycloak keeps no data of its
 own, so `down` followed by `up` resets it to that file.
 
