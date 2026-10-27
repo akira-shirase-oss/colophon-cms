@@ -1,8 +1,8 @@
 //! `POST /api/v1/rich-text/validate`: the server's verdict on a rich-text document, so the
-//! Studio, the testbed and scripts can check a document before saving it. Saving itself
-//! (milestone P1) runs the same validator; this endpoint never stores anything.
+//! Studio, the testbed and scripts can check a document before saving it. Saving runs the same
+//! validator; this endpoint never stores anything.
 //!
-//! Like everything under `/api/v1`, it will require authentication from milestone P1.
+//! It needs no sign-in: it reads nothing and stores nothing, so it answers anyone the same way.
 
 use axum::{
     Json,
