@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE schedules SET state = 'published', generation = $4, started_at = $5,\n                                      finished_at = $5\n                 WHERE project_id = $1 AND environment_id = $2 AND id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d9ac5cae7a5c449b292af3ac056821b5fc1c11f95add2eb834d883baea0d9155"
+}

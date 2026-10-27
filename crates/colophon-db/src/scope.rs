@@ -207,3 +207,32 @@ pub async fn begin_in_project(
         policy: member.policy,
     }))
 }
+
+/// [`begin_as_member`], in an environment named by id (a schedule falling due knows its
+/// environment's id, not the slug a request uses). `None` if either check fails.
+pub async fn begin_in_environment(
+    pool: &PgPool,
+    identity: Uuid,
+    project: Uuid,
+    environment: Uuid,
+) -> Result<Option<ProjectTransaction>, DbError> {
+    let Some(mut member) = begin_as_member(pool, identity, project).await? else {
+        return Ok(None);
+    };
+    let found = sqlx::query_scalar!(
+        "SELECT id FROM environments WHERE project_id = $1 AND id = $2",
+        project,
+        environment
+    )
+    .fetch_optional(&mut *member.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(found.map(|environment| ProjectTransaction {
+        transaction: member.transaction,
+        identity,
+        project,
+        environment,
+        role: member.role,
+        policy: member.policy,
+    }))
+}
