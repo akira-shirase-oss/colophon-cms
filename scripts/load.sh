@@ -11,7 +11,8 @@
 # entries (drafts: reads, lists and If-Match saves, each read checked against the last save),
 # content-types (the same for entries of a seven-field type, plus reads of its definition),
 # cli (requests authenticated by a bearer token, as the CLI sends them), members (member lists,
-# invitation lookups, role changes and new invitations), projects (who may create projects:
+# invitation lookups, role changes and new invitations), roles (requests by a member holding a
+# custom role, the caller's permissions, role lists and versioned role edits), projects (who may create projects:
 # refused creations and /me), changesets (reading, listing, reviewing and creating changesets),
 # delivery (anonymous /content/v1 reads, latest and pinned), publishing (whole publishes, five
 # requests each, with the worker announcing every release to a local receiver; needs node),
@@ -39,7 +40,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|cli|members|projects|changesets|delivery|publishing|entries|content-types|studio|site throughput|steady [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|cli|members|roles|projects|changesets|delivery|publishing|entries|content-types|studio|site throughput|steady [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -61,7 +62,7 @@ case "$endpoint" in
   session | projects | delivery | site) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
   # Half its requests list entries (a content type lookup too): about 2,000/s at most here, so
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
-  cli | members | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
+  cli | members | roles | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
   entries | content-types) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
   studio) RATE="${RATE:-5000}" P99_MS="${P99_MS:-25}" ;;
   # RATE counts publishes here, five requests each, and every request writes and commits: on the

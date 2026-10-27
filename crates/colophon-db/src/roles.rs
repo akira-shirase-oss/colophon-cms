@@ -1,9 +1,10 @@
 //! A project's roles (docs/modules/03-auth.md, "Roles and memberships"; D-058, step R.2).
 //!
 //! Any member reads them. Writes run after the API has checked `roles.manage` and that the
-//! caller holds every power they grant ([`Policy::covers`]), and they queue on the project's owner
-//! role row, so two changes to one project's roles never interleave. The owner role is fixed:
-//! these functions say so before trying, and migration 0018 refuses it anyway.
+//! caller holds every power they grant ([`Policy::covers`]). Creating one queues on the project's
+//! owner role row, so the count of roles can't race past [`MAX_ROLES`]; changing or deleting one
+//! locks only that role, whose version decides which of two concurrent edits wins. The owner role
+//! is fixed: these functions say so before trying, and migration 0018 refuses it anyway.
 
 use colophon_domain::policy::{MAX_ROLES, Policy};
 use sqlx::types::time::OffsetDateTime;
@@ -183,9 +184,9 @@ pub async fn policy_of(tx: &mut MemberTransaction, key: &str) -> Result<Option<P
     crate::scope::policy(actions, subjects, fields, conditions).map(Some)
 }
 
-/// Queues this transaction behind any other change to the project's roles. `NO KEY UPDATE`, so
-/// it doesn't wait for (or block) the key-share locks that member changes and invitations take on
-/// the owner role, which would let a role deletion and a member change wait for each other.
+/// Queues this transaction behind any other creation of a role in the project. `NO KEY UPDATE`,
+/// so it doesn't wait for (or block) the key-share locks that member changes and invitations take
+/// on the owner role.
 async fn lock(tx: &mut MemberTransaction) -> Result<(), DbError> {
     sqlx::query_scalar!(
         "SELECT 1 AS locked FROM roles WHERE project_id = $1 AND key = 'owner' FOR NO KEY UPDATE",
@@ -278,7 +279,7 @@ pub async fn update(
     if key == OWNER {
         return Ok(Written::Fixed);
     }
-    lock(tx).await?;
+    // The UPDATE locks the role's row: a concurrent edit waits, then finds the version moved.
     let moved = sqlx::query_scalar!(
         "UPDATE roles SET name = $3, description = $4, version = version + 1, updated_at = now()
          WHERE project_id = $1 AND key = $2 AND version = $5
@@ -330,7 +331,6 @@ pub async fn delete(
     if key == OWNER {
         return Ok(Removed::Fixed);
     }
-    lock(tx).await?;
     // Locking the row waits for memberships and invitations being made to name it (they hold a
     // key-share lock on it); the counts below, a separate statement, then see them.
     let current = sqlx::query_scalar!(
