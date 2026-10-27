@@ -16,8 +16,7 @@ The public website renders this file at build time (`apps/site`), so this file i
 - **Branch:** `p3/3.6-modelling`
 - **Decisions:** D-054, D-055 (on the branch, not merged)
 
-Nothing from this step is on `main` yet; the branch holds work in progress that doesn't compile yet (`10f3c65`). What it
-is building:
+Nothing from this step is on `main` yet; its work in progress is on the branch. What it is building:
 
 - A **slug field type** (a "URL name" in the Studio): 1 to 120 lowercase letters and digits joined by single hyphens,
   refused rather than rewritten when it isn't one, and unique per collection among drafts and among what is published,
@@ -28,11 +27,13 @@ is building:
 - The branch also carries the scope decisions (`63e82cb`): every Strapi and Sanity feature at Colophon's bar of proof
   (D-057), roles and permissions as data (D-058), non-technical editors first (D-059), and `docs/COMPARISON.md`.
 
+## P3 · Prove it reached the site
+
 ### 3.5 · The Studio, designed
 
-- **Status:** merging
-- **Branch:** `p3/3.5-design`
+- **Merged:** 2026-10-27 · `d1c9bd7`
 - **Decisions:** D-053, D-056
+- **Build log:** <https://404human.dev/colophon/checkpoint-3-5/>
 
 - Title search, a live state on entry lists, revision reads and review diffs in the API and the Studio.
 - The design system: every shadcn-svelte component, owned in `packages/ui` and restyled on Colophon's own tokens
@@ -41,10 +42,10 @@ is building:
   with every token and component.
 - A contrast test computed from the token values: 124 text-on-ground checks pass at WCAG AA, and AAA under the
   system's "more contrast" setting.
+- Load runs name every request by its route, and `scripts/check.sh` runs its integration checks on a fresh database,
+  as CI does.
 - Two entries load runs that missed the regression gate are kept as evidence, and one finding: on a local database
   grown to 5 GB, saves ran at 1,149/s with a p99 of 183.8 ms, against 1,785/s and 52.4 ms on a fresh one.
-
-## P3 · Prove it reached the site
 
 ### 3.4 · My own site, running on Colophon
 

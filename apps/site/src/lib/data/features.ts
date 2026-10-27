@@ -47,8 +47,8 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
 			},
 			{
 				name: 'Title search, entry states, version comparison',
-				detail: 'Find entries by title, see draft, live or changed at a glance, and compare versions side by side.',
-				status: building('3.5')
+				detail: 'Find entries by title, see draft, live or changed at a glance, compare versions, and review exact diffs.',
+				status: done('P3')
 			},
 			{
 				name: 'Plain words and one obvious path',

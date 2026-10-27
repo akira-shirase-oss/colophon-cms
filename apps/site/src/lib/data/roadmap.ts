@@ -92,7 +92,7 @@ export const MILESTONES: Milestone[] = [
 			{ id: '3.2', title: 'Taking it back', kind: 'done' },
 			{ id: '3.3', title: 'A receipt for every publish', kind: 'done' },
 			{ id: '3.4', title: 'My own site, running on Colophon (locally)', kind: 'done' },
-			{ id: '3.5', title: 'The Studio, designed', kind: 'building', note: 'merging' },
+			{ id: '3.5', title: 'The Studio, designed', kind: 'done' },
 			{ id: '3.6', title: 'Content modelling in the Studio: slugs and the content-type builder', kind: 'building', note: 'building' },
 			{ id: '3.7', title: 'The non-technical path: plain words, one-click publish, a first-run checklist', kind: 'planned' },
 			{ id: '3.8', title: 'The site goes live, and the first public demo', kind: 'planned' }
