@@ -75,6 +75,12 @@ pub async fn create(
     .execute(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
+    // The built-in roles first: a membership names one of the project's roles (migration 0017).
+    sqlx::query("SELECT 1 FROM colophon_seed_roles($1)")
+        .bind(id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
     sqlx::query!(
         "INSERT INTO memberships (project_id, identity_id, role) VALUES ($1, $2, 'owner')",
         id,

@@ -3,6 +3,7 @@
 //! happens before, in the API. An invitation's token is a capability: holding it is what lets a
 //! signed-in person see the project's name and join it.
 
+use colophon_domain::policy::Policy;
 use sqlx::{PgPool, types::time::OffsetDateTime};
 use uuid::Uuid;
 
@@ -168,18 +169,39 @@ pub async fn remove(tx: &mut MemberTransaction, identity: Uuid) -> Result<Change
     })
 }
 
-/// The caller's role now, holding their membership until the transaction ends: the role read when
-/// the transaction began may be stale, and a change to it that is in flight is waited for. `None`
-/// if they were just removed.
-pub async fn current_role(tx: &mut MemberTransaction) -> Result<Option<String>, DbError> {
-    sqlx::query_scalar!(
+/// What the caller's role allows now, holding their membership until the transaction ends: the
+/// policy read when the transaction began may be stale, and a change to the role that is in flight
+/// is waited for. `None` if they were just removed.
+pub async fn current_policy(tx: &mut MemberTransaction) -> Result<Option<Policy>, DbError> {
+    let role = sqlx::query_scalar!(
         "SELECT role FROM memberships WHERE project_id = $1 AND identity_id = $2 FOR SHARE",
         tx.project,
         tx.identity
     )
     .fetch_optional(&mut *tx.transaction)
     .await
-    .map_err(DbError::from_query)
+    .map_err(DbError::from_query)?;
+    let Some(role) = role else { return Ok(None) };
+    let rows = sqlx::query!(
+        r#"SELECT action, subject, array_to_string(fields, ',') AS "fields?", condition
+           FROM role_permissions WHERE project_id = $1 AND role_key = $2"#,
+        tx.project,
+        role
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    let mut actions = Vec::with_capacity(rows.len());
+    let mut subjects = Vec::with_capacity(rows.len());
+    let mut fields = Vec::with_capacity(rows.len());
+    let mut conditions = Vec::with_capacity(rows.len());
+    for row in rows {
+        actions.push(row.action);
+        subjects.push(row.subject);
+        fields.push(row.fields);
+        conditions.push(row.condition);
+    }
+    crate::scope::policy(actions, subjects, fields, conditions).map(Some)
 }
 
 /// Stores an invitation to the transaction's project, made by its identity; only the token's

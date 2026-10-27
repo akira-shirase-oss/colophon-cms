@@ -8,6 +8,8 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# The adapter implements the domain's ports (ARCHITECTURE.md): roles load as its policies (D-058).
+colophon-domain.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
 time.workspace = true
@@ -17,8 +19,6 @@ uuid.workspace = true
 [dev-dependencies]
 # The differential test replays simulated runs against Postgres (tests/differential.rs).
 colophon-sim.workspace = true
-# The built-in definitions must equal the domain's canonical form (tests/content_types.rs).
-colophon-domain.workspace = true
 
 [lints]
 workspace = true

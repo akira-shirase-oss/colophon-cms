@@ -1,0 +1,57 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT m.role,\n                  coalesce(p.actions, '{}') AS \"actions!\",\n                  coalesce(p.subjects, '{}') AS \"subjects!\",\n                  coalesce(p.fields, '{}') AS \"fields!: Vec<Option<String>>\",\n                  coalesce(p.conditions, '{}') AS \"conditions!: Vec<Option<String>>\"\n           FROM memberships m\n           LEFT JOIN LATERAL (\n               SELECT array_agg(action ORDER BY action, subject) AS actions,\n                      array_agg(subject ORDER BY action, subject) AS subjects,\n                      array_agg(array_to_string(fields, ',') ORDER BY action, subject) AS fields,\n                      array_agg(condition ORDER BY action, subject) AS conditions\n               FROM role_permissions\n               WHERE project_id = m.project_id AND role_key = m.role\n           ) p ON true\n           WHERE m.project_id = $1 AND m.identity_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "role",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "memberships",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "actions!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "subjects!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "fields!: Vec<Option<String>>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "conditions!: Vec<Option<String>>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "dcbc6604b80bae111bb265d960335ae33ae1c0d54105b01347646e1a61eff408"
+}

@@ -6,6 +6,7 @@
 //! settings are transaction-local (`set_config(..., true)`), so they end with the transaction and
 //! can't leak into the next request that borrows the same pooled connection.
 
+use colophon_domain::policy::{Action, Condition, Permission, Policy, Subject};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -49,6 +50,8 @@ pub struct ProjectTransaction {
     pub environment: Uuid,
     /// The identity's role in the project.
     pub role: String,
+    /// What that role may do (D-058).
+    pub policy: Policy,
 }
 
 impl ProjectTransaction {
@@ -69,6 +72,8 @@ pub struct MemberTransaction {
     pub project: Uuid,
     /// The identity's role in the project.
     pub role: String,
+    /// What that role may do (D-058).
+    pub policy: Policy,
 }
 
 impl MemberTransaction {
@@ -94,8 +99,24 @@ pub async fn begin_as_member(
         },
     )
     .await?;
-    let role = sqlx::query_scalar!(
-        "SELECT role FROM memberships WHERE project_id = $1 AND identity_id = $2",
+    // The role and its permissions in one statement and one pass over them, as parallel arrays
+    // in one order (D-058).
+    let member = sqlx::query!(
+        r#"SELECT m.role,
+                  coalesce(p.actions, '{}') AS "actions!",
+                  coalesce(p.subjects, '{}') AS "subjects!",
+                  coalesce(p.fields, '{}') AS "fields!: Vec<Option<String>>",
+                  coalesce(p.conditions, '{}') AS "conditions!: Vec<Option<String>>"
+           FROM memberships m
+           LEFT JOIN LATERAL (
+               SELECT array_agg(action ORDER BY action, subject) AS actions,
+                      array_agg(subject ORDER BY action, subject) AS subjects,
+                      array_agg(array_to_string(fields, ',') ORDER BY action, subject) AS fields,
+                      array_agg(condition ORDER BY action, subject) AS conditions
+               FROM role_permissions
+               WHERE project_id = m.project_id AND role_key = m.role
+           ) p ON true
+           WHERE m.project_id = $1 AND m.identity_id = $2"#,
         project,
         identity
     )
@@ -103,7 +124,16 @@ pub async fn begin_as_member(
     .await
     .map_err(DbError::from_query)?;
     // Returning drops the transaction, which rolls it back.
-    let Some(role) = role else { return Ok(None) };
+    let Some(member) = member else {
+        return Ok(None);
+    };
+    let policy = policy(
+        member.actions,
+        member.subjects,
+        member.fields,
+        member.conditions,
+    )?;
+    let role = member.role;
     sqlx::query!(
         "SELECT set_config('app.project_id', $1, true) AS project_scope",
         project.to_string()
@@ -116,7 +146,38 @@ pub async fn begin_as_member(
         identity,
         project,
         role,
+        policy,
     }))
+}
+
+/// A role's permissions from the arrays `begin_as_member` reads. A stored action or condition the
+/// code doesn't know is corrupt data, not a permission to skip.
+pub(crate) fn policy(
+    actions: Vec<String>,
+    subjects: Vec<String>,
+    fields: Vec<Option<String>>,
+    conditions: Vec<Option<String>>,
+) -> Result<Policy, DbError> {
+    let permissions = actions
+        .into_iter()
+        .zip(subjects)
+        .zip(fields.into_iter().zip(conditions))
+        .map(|((action, subject), (fields, condition))| {
+            Ok(Permission {
+                action: Action::parse(&action)
+                    .ok_or(DbError::Corrupt("a role permission has an unknown action"))?,
+                subject: Subject::parse(&subject),
+                fields: fields.map(|list| list.split(',').map(str::to_owned).collect()),
+                condition: match condition {
+                    None => None,
+                    Some(name) => Some(Condition::parse(&name).ok_or(DbError::Corrupt(
+                        "a role permission has an unknown condition",
+                    ))?),
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, DbError>>()?;
+    Ok(Policy::new(permissions))
 }
 
 /// [`begin_as_member`], then resolves the environment slug. `None` if either check fails.
@@ -143,5 +204,6 @@ pub async fn begin_in_project(
         project,
         environment,
         role: member.role,
+        policy: member.policy,
     }))
 }

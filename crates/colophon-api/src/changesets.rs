@@ -376,11 +376,28 @@ async fn locked(tx: &mut ProjectTransaction, id: &str, expected: &str) -> Result
     Ok(head)
 }
 
-fn may_write(tx: &ProjectTransaction) -> Result<(), ApiError> {
-    require(
-        &tx.role,
-        Action::WriteContent,
-        "you can't change content in this project",
+/// Refuses unless the caller's role allows `action` in every one of `collections` (D-058).
+fn require_in<'a>(
+    tx: &ProjectTransaction,
+    action: Action,
+    collections: impl IntoIterator<Item = &'a str>,
+    why: &'static str,
+) -> Result<(), ApiError> {
+    collections
+        .into_iter()
+        .try_for_each(|collection| require(&tx.policy, action, Some(collection), why))
+}
+
+/// Refuses unless the caller may change content in every collection `changeset` touches.
+async fn may_write(tx: &mut ProjectTransaction, changeset: Uuid) -> Result<(), ApiError> {
+    let collections = changesets::collections(tx, changeset)
+        .await
+        .map_err(ApiError::from_db)?;
+    require_in(
+        tx,
+        Action::ContentUpdate,
+        collections.iter().map(String::as_str),
+        "your role can't change content in this changeset",
     )
 }
 
@@ -417,16 +434,8 @@ pub(crate) async fn list(
     }))
 }
 
-/// `POST {P}/changesets`.
-pub(crate) async fn create(
-    State(state): State<AppState>,
-    caller: SignedIn,
-    Path(path): Path<ListPath>,
-    headers: HeaderMap,
-    body_json: Result<Json<NewChangeset>, JsonRejection>,
-) -> Result<Response, ApiError> {
-    let key = idempotency_key(&headers)?;
-    let Json(new) = body_json?;
+/// A new changeset's title, entries to publish and entries to unpublish, checked for shape.
+fn checked(new: &NewChangeset) -> Result<(&str, Vec<Uuid>, Vec<Uuid>), ApiError> {
     let title = new.title.trim();
     if !(1..=200).contains(&title.chars().count()) || title.chars().any(char::is_control) {
         return Err(ApiError::InvalidField {
@@ -459,8 +468,21 @@ pub(crate) async fn create(
             ),
         });
     }
+    Ok((title, entries, unpublish))
+}
+
+/// `POST {P}/changesets`.
+pub(crate) async fn create(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<ListPath>,
+    headers: HeaderMap,
+    body_json: Result<Json<NewChangeset>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let key = idempotency_key(&headers)?;
+    let Json(new) = body_json?;
+    let (title, entries, unpublish) = checked(&new)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_write(&tx)?;
     let sorted = |list: &[Uuid]| {
         let mut ids: Vec<String> = list.iter().map(Uuid::to_string).collect();
         ids.sort();
@@ -508,6 +530,12 @@ pub(crate) async fn create(
         });
     }
     pins.extend(taken_down);
+    require_in(
+        &tx,
+        Action::ContentUpdate,
+        pins.iter().map(|pin| pin.collection.as_str()),
+        "your role can't change content in this changeset",
+    )?;
     let id = Uuid::now_v7();
     changesets::create(&mut tx, id, title, &pins, &hash_of(&pins))
         .await
@@ -551,8 +579,8 @@ pub(crate) async fn submit(
 ) -> Result<Response, ApiError> {
     let expected = if_match(&headers)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_write(&tx)?;
     let head = locked(&mut tx, &path.changeset, &expected).await?;
+    may_write(&mut tx, head.id).await?;
     changesets::submit(&mut tx, head.id)
         .await
         .map_err(ApiError::from_db)?;
@@ -568,8 +596,8 @@ pub(crate) async fn refresh(
 ) -> Result<Response, ApiError> {
     let expected = if_match(&headers)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_write(&tx)?;
     let head = locked(&mut tx, &path.changeset, &expected).await?;
+    may_write(&mut tx, head.id).await?;
     let items = changesets::items(&mut tx, head.id)
         .await
         .map_err(ApiError::from_db)?;
@@ -628,12 +656,16 @@ pub(crate) async fn review(
         });
     }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    require(
-        &tx.role,
-        Action::Review,
-        "only a project's owners and publishers can review changesets",
-    )?;
     let head = locked(&mut tx, &path.changeset, &expected).await?;
+    let collections = changesets::collections(&mut tx, head.id)
+        .await
+        .map_err(ApiError::from_db)?;
+    require_in(
+        &tx,
+        Action::ContentReview,
+        collections.iter().map(String::as_str),
+        "your role can't review changes to this content",
+    )?;
     if head.submitted_by.is_none() {
         return Err(ApiError::Conflict(
             "this changeset hasn't been submitted for review yet",
@@ -695,16 +727,19 @@ fn publishable(status: &Status) -> Result<(), ApiError> {
 /// Takes the content-type lock of every collection in `changeset`, shared and in order, before its
 /// items are read: no content type there changes between reading them and committing, so what goes
 /// live is what was a draft when any change checked the collection (D-055).
-async fn lock_collections(tx: &mut ProjectTransaction, changeset: Uuid) -> Result<(), ApiError> {
-    for collection in changesets::collections(tx, changeset)
+async fn lock_collections(
+    tx: &mut ProjectTransaction,
+    changeset: Uuid,
+) -> Result<Vec<String>, ApiError> {
+    let collections = changesets::collections(tx, changeset)
         .await
-        .map_err(ApiError::from_db)?
-    {
-        content_types::lock_for_write(tx, &collection)
+        .map_err(ApiError::from_db)?;
+    for collection in &collections {
+        content_types::lock_for_write(tx, collection)
             .await
             .map_err(ApiError::from_db)?;
     }
-    Ok(())
+    Ok(collections)
 }
 
 /// `POST {P}/changesets/{changeset}/publish`: commits the approved changeset as the release after
@@ -727,11 +762,6 @@ pub(crate) async fn publish(
         });
     }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    require(
-        &tx.role,
-        Action::Publish,
-        "only a project's owners and publishers can publish",
-    )?;
     let request = request_hash(&[
         PUBLISH,
         &path.changeset,
@@ -750,7 +780,13 @@ pub(crate) async fn publish(
         }
     }
     let head = locked(&mut tx, &path.changeset, &expected).await?;
-    lock_collections(&mut tx, head.id).await?;
+    let collections = lock_collections(&mut tx, head.id).await?;
+    require_in(
+        &tx,
+        Action::ContentPublish,
+        collections.iter().map(String::as_str),
+        "your role can't publish this content",
+    )?;
     let items = changesets::items(&mut tx, head.id)
         .await
         .map_err(ApiError::from_db)?;

@@ -153,8 +153,23 @@ Built in step 1.7 (D-042), for people:
 - `authorize(principal, action, resource) -> Decision`, deny by default.
 - Its first form, built in step 1.7: `colophon_domain::policy::allows(role, action)` over `Read`, `WriteContent`,
   `ChangeContentTypes` and `ManageMembers`; step 2.1 adds `Review` and step 2.2 `Publish`, both for owners and
-  publishers (D-044, D-045); step 2.3 `ManageDestinations`, for owners and developers (D-046). Every handler asks it (`members::require` in the API); an unknown stored
-  role denies everything. Principals other than people and resource-level checks arrive with machine credentials.
+  publishers (D-044, D-045); step 2.3 `ManageDestinations`, for owners and developers (D-046).
+- Since step R.1 (D-058), roles are data. `roles` and `role_permissions` (migration 0017) hold each project's roles;
+  a permission is an action (`content.read`, `content.create`, `content.update`, `content.delete`, `content.review`,
+  `content.publish`, `schema.change`, `members.manage`, `roles.manage`, `destinations.manage`, `tokens.manage`), a
+  subject (`*` or one collection's slug), and a field list and `own` condition stored for step R.3.
+  `colophon_seed_roles` gives every project the four built-in roles with D-042's powers, and owners now also hold
+  `roles.manage` and `tokens.manage`, which no route uses yet.
+- `scope::begin_as_member` reads the caller's membership and their role's permissions in one statement (a lateral
+  aggregate, one pass over `role_permissions`), so every `MemberTransaction` and `ProjectTransaction` carries a
+  `Policy`. A stored action or condition the code doesn't know is `DbError::Corrupt`, never a skipped permission.
+- `Policy::allows(action, collection)` is the one evaluator, with no I/O: deny unless a permission for that action
+  names `*` or that collection. Every handler asks it through `members::require`: entries check `content.read`,
+  `content.create` or `content.update` for their own collection; a changeset checks `content.update`, and its review
+  `content.review`, for every collection it pins; publishing checks `content.publish` for each, after locking them;
+  content types check `schema.change` for theirs. A collection-wide check passes `None` and holds only for `*`.
+  Project-wide actions (members, roles, destinations, tokens) can't be granted for one collection.
+- Principals other than people and resource-level checks arrive with machine credentials (R.4, P5).
 - It checks object ownership, project, environment, action and field policy on **every** read and mutation.
 - Publish, export, schema change and secret administration need explicit permission.
 - Hidden resources answer like missing ones (consistent 404), so IDs can't be probed.
@@ -240,7 +255,10 @@ Built in step 1.7 (D-042), for people:
   - `apps/testbed/tests/session.spec.ts`: two browsers; a project created by one is invisible to the other;
   - `perf/k6/session.js`: every request authenticated by cookie, at least 1,000,000 requests per full run.
 - **Since step 1.7 (D-042):**
-  - `crates/colophon-domain`: the policy table, every role against every action;
+  - `crates/colophon-domain`: the policy table, every role against every action (since R.1, in every collection and
+    collection-wide, plus collection-scoped permissions and name round trips);
+  - `crates/colophon-db/tests/roles.rs` (R.1): a new project's seeded roles equal `Policy::builtin`, the creator's
+    transaction carries the owner's policy, and a membership naming an unknown role is refused;
   - `crates/colophon-db/tests/members.rs`: an invitation joins once and shows its project only to its holder;
     revoked and expired invitations are dead; the last owner can be neither demoted nor removed; two owners demoting
     each other at the same moment leave one owner; an owner demoted while their request runs can neither promote nor
@@ -259,9 +277,11 @@ Built in step 1.7 (D-042), for people:
 
 1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin and cross-project denial for projects (step 1.1, done); roles,
    invitations and the policy function (step 1.7, done); the owner bootstrap (step 1.8, done).
-2. **P2:** approval permissions and self-review recording.
-3. **P4:** preview capabilities.
-4. **P5:** machine credentials, device-authorization login, quotas, kill switch.
+2. **R:** roles as data (R.1, done), custom roles and the Studio's role editor (R.2), field-level permissions and `own`
+   conditions (R.3), API tokens and the audit log (R.4); docs/ROADMAP.md, D-058.
+3. **P2:** approval permissions and self-review recording.
+4. **P4:** preview capabilities.
+5. **P5:** machine credentials, device-authorization login, quotas, kill switch.
 
 ## Open decisions
 
