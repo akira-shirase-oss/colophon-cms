@@ -111,8 +111,33 @@ Built in step 1.7 (D-042), for people:
 | Editor | yes | yes | no | no |
 | Publisher | yes | yes | no | no |
 
-- Any member lists the members (`GET /api/v1/projects/{project}/members`) and may leave; owners change roles (`PUT`)
-  and remove people (`DELETE …/members/{identity}`).
+- Any member lists the members (`GET /api/v1/projects/{project}/members`) and may leave; people whose role has
+  `members.manage` (owners, by default) change roles (`PUT`) and remove people (`DELETE …/members/{identity}`).
+- Since step R.2 (D-058), owners define roles of their own. `{P}/roles` lists and reads them (any member: anyone can
+  see what a role means before it's given to them), creates them (`POST`), changes them (`PUT` with `If-Match:
+  "v<version>"`; a stale version is 409 `stale_role` with the current `ETag`) and deletes them (`DELETE` with
+  `If-Match`). Writes need `roles.manage`, checked against the caller's role as it is now. Migration 0018 adds a
+  version to each role.
+- **Nobody hands out more than they hold** (`Policy::covers`): creating, changing or deleting a role needs every
+  power of the role before and after; giving someone a role, or removing them, needs `members.manage` and every
+  power of both their old role and the new one, re-checked under the owner lock; inviting needs every power of the
+  role offered. So a role that manages members but can't change content types can't demote a developer, promote
+  itself to owner, or remove an owner.
+- **The owner role is fixed**: the API answers 409, and migration 0018's triggers refuse any update or delete of it
+  or its permissions, even by a direct write as the application's login.
+- **A role in use can't be deleted** (409 `role_in_use`, naming how many members and pending invitations): members
+  keep 0017's foreign key; invitations don't, because accepted, revoked and expired ones are history, so inviting
+  takes a key-share lock on the role instead and deleting locks it and counts pending invitations.
+- **Field lists and conditions are refused** (422 `not_yet_enforced`) until step R.3 enforces them: stored but
+  unenforced, they would look like restrictions that aren't there.
+- Creating a role queues on the project's owner role row (`FOR NO KEY UPDATE`, which doesn't block the key-share
+  locks member changes take), so the count can't race past 100 roles a project; changing or deleting one locks only
+  that role. A changed role holds from its holders' next request; a request already running acts on the permissions
+  it read, as content writes act on the role read when their transaction began.
+- `GET /api/v1/projects/{project}` returns the caller's role name and permissions, and the Studio decides what to
+  offer with `may(action, collection)`, the same rule as `Policy::allows`, instead of comparing role names. Settings
+  shows every role and edits one as a grid in plain words (See, Create, Edit, Approve, Publish, Change fields; for
+  "Everything" and each content type) plus the whole project's powers.
 - A project never loses its last owner: `colophon_db::members` locks the owners `FOR UPDATE` before changing one, and
   the deferred trigger `memberships_keep_an_owner` (migration 0005) refuses any commit that would leave none. The API
   answers 409.
@@ -258,7 +283,18 @@ Built in step 1.7 (D-042), for people:
   - `crates/colophon-domain`: the policy table, every role against every action (since R.1, in every collection and
     collection-wide, plus collection-scoped permissions and name round trips);
   - `crates/colophon-db/tests/roles.rs` (R.1): a new project's seeded roles equal `Policy::builtin`, the creator's
-    transaction carries the owner's policy, and a membership naming an unknown role is refused;
+    transaction carries the owner's policy, and a membership naming an unknown role is refused; (R.2) a role is
+    created, changed only at its version, holds from its holder's next transaction, and is deleted only once unused;
+    the owner role refuses a direct write; a revoked invitation doesn't hold a role; a member manager can't demote a
+    developer, promote himself, or remove an owner, but can give his own role;
+  - `crates/colophon-server/tests/permissions.rs` (R.2), against the real binary: a role the owner defines decides
+    what its holder may do from their next request; `stale_role`, `role_in_use`, the fixed owner role; unknown
+    actions, project-wide actions on a collection, field lists and conditions refused; escalation refused over HTTP;
+  - `apps/studio/tests/server/permissions.spec.ts` and `apps/testbed/tests/roles.spec.ts` (R.2): make a role, tick
+    what it may do, lose a stale save in a second tab, invite someone who holds exactly it, a held role that can't be
+    deleted, the fixed owner role, axe on every Studio page;
+  - `perf/k6/roles.js` (R.2): a custom role's member listing articles, their permissions, role lists and versioned
+    edits;
   - `crates/colophon-db/tests/members.rs`: an invitation joins once and shows its project only to its holder;
     revoked and expired invitations are dead; the last owner can be neither demoted nor removed; two owners demoting
     each other at the same moment leave one owner; an owner demoted while their request runs can neither promote nor
@@ -277,7 +313,7 @@ Built in step 1.7 (D-042), for people:
 
 1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin and cross-project denial for projects (step 1.1, done); roles,
    invitations and the policy function (step 1.7, done); the owner bootstrap (step 1.8, done).
-2. **R:** roles as data (R.1, done), custom roles and the Studio's role editor (R.2), field-level permissions and `own`
+2. **R:** roles as data (R.1, done), custom roles and the Studio's role editor (R.2, done), field-level permissions and `own`
    conditions (R.3), API tokens and the audit log (R.4); docs/ROADMAP.md, D-058.
 3. **P2:** approval permissions and self-review recording.
 4. **P4:** preview capabilities.
