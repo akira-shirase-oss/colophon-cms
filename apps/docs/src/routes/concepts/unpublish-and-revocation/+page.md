@@ -6,7 +6,7 @@ Taking content back is harder than publishing it: copies spread. Colophon makes 
 
 ## A takedown is a reviewed release
 
-Unpublishing is a changeset item of kind `unpublish` (`POST …/changesets` takes `unpublish: [ids]` beside `entries`). The item pins the revision that is currently published, so the reviewer approves taking down exactly what readers see; it goes stale if another revision is published meanwhile. Publishing it is an ordinary release with its own generation. Agents, when they arrive, can't skip that review either.
+Unpublishing is a changeset item of kind `unpublish` (`POST …/changesets` takes `unpublish: [ids]` beside `entries`, each entry in one list only). The item pins the revision that is currently published, so the reviewer approves taking down exactly what readers see; it goes stale if another revision is published meanwhile, or if nothing is published any more. Publishing it is an ordinary release with its own generation, which needs `content.publish` like any other ([Publish requests](/concepts/publish-requests/)). Agents, when they arrive, can't skip that review either.
 
 ## What the release does
 
@@ -17,7 +17,9 @@ In the release's transaction, for each unpublished entry:
 3. every earlier publication of the entry is marked `revoked_in` that generation;
 4. the environment records the generation as its latest unpublish.
 
-From then on, delivery skips revoked publications in lists, and a read of the entry, at any generation, is `410 Gone` with `Cache-Control: no-store`, never cached. Because cache keys name the latest unpublish, every answer cached before it is retired at once. History rows stay: the record of what was published, and when, isn't rewritten. Publishing the entry again opens a new publication after the tombstone.
+From then on, delivery skips revoked publications in lists, and a read of the entry, at any generation, is `410 Gone` with `Cache-Control: no-store`, never cached. Because cache keys name the latest unpublish, every answer cached before it is retired at once ([Caching and delivery](/concepts/caching-and-delivery/)). History rows stay: the record of what was published, and when, isn't rewritten. Publishing the entry again opens a new publication after the tombstone, delivered from its own generation on.
+
+On the step 3.6 branch, closing the publication also releases the entry's published URL name, because only open publications hold one; its draft keeps its URL name until someone changes it, so no other entry of the collection can take it meanwhile. <Status building="3.6" />
 
 ## CDN purges
 
@@ -37,7 +39,12 @@ Copies in browsers, readers' downloads, screenshots and anything already fetched
 
 F07 (an entry unpublished while old caches exist: the origin denies it at every generation, the purge is tracked and remaining exposure is visible) runs end to end with a fake CDN (`crates/colophon-server/tests/purges.rs` and `cache.rs`).
 
-Not yet: an emergency takedown that skips review, which would need an online authorization path and no shared cache <Status planned="not scheduled" />; authenticated purges for a real CDN, whose Cloudflare adapter keeps credentials in the environment, never the database <Status planned="P3" />.
+## Not built yet
+
+- An emergency takedown that skips review, which would need an online authorization path and no shared cache. <Status planned="not scheduled" />
+- Purges for a real CDN. The fake CDN needs no authentication; a Cloudflare adapter, with credentials from the environment and never the database, is on P3's list in the roadmap. Module 06 placed it in step 3.4, which shipped the reference site without it. <Status planned="P3" />
+
+The editor's side is [Taking something down](/editors/taking-down/).
 
 ## Design
 

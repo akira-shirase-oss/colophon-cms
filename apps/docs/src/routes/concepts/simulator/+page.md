@@ -10,7 +10,7 @@ The bugs that matter most in a publishing system are timing bugs: an answer lost
 - **The real rules.** The domain crate is synchronous and does no I/O, so the simulator drives the same functions the server uses, with a virtual clock and an in-memory model of the store.
 - **Actors that behave like the real clients**: editors that save like the Studio (expected revisions, idempotency keys, a device copy), publishers racing on the release they saw, workers that claim under leases and crash at any step, and a receiver behind a network that loses requests and answers, duplicates and refuses.
 - **Invariants after every step.** A run stops at the first broken one and prints its seed.
-- **No dependencies.** A few hundred lines anyone can read, rather than a framework, because this is the one crate whose determinism matters most.
+- **No dependencies.** A few hundred lines anyone can read, rather than a framework, because this is the one crate whose determinism matters most (D-039).
 
 ## Replaying a failure
 
@@ -36,7 +36,7 @@ cargo run -p colophon-sim -- --seeds 200 --mutation skip-base-check
 cargo run -p colophon-sim -- --scenario publishing --seeds 200 --mutation parallel-sends
 ```
 
-With a planted bug, the sweep should fail: it exits 1 and prints the seed that caught it. Editing has four (`skip-base-check`, `forget-keys`, `leak-across-projects`, `new-key-after-crash`); publishing has eight (`ignore-base`, `keep-open-interval`, `stale-lease-finalizes`, `parallel-sends`, `no-supersede-check`, `outbox-after-commit`, `publish-forgets-key`, `sends-late`). The crate's tests fail if any of them goes uncaught (each within 200 seeds), and a differential test replays runs against real PostgreSQL to keep the model honest.
+With a planted bug, the sweep should fail: it exits 1 and prints the seed that caught it. Editing has four (`skip-base-check`, `forget-keys`, `leak-across-projects`, `new-key-after-crash`); publishing has eight (`ignore-base`, `keep-open-interval`, `stale-lease-finalizes`, `parallel-sends`, `no-supersede-check`, `outbox-after-commit`, `publish-forgets-key`, `sends-late`). The crate's tests fail if any of them goes uncaught (each within 200 seeds), and a differential test (`crates/colophon-db/tests/differential.rs`) replays runs against real PostgreSQL to keep the model honest.
 
 ## What it found
 
@@ -47,7 +47,14 @@ With a planted bug, the sweep should fail: it exits 1 and prints the seed that c
 
 The simulator models PostgreSQL and the network; it doesn't run them. That is what the real tests are for: the crash tests kill the real binary at named points, and the crash loop kills the whole server with `SIGKILL` at random moments against the real stack ([Crash tests](/operations/crash-tests/)).
 
-Still to come: delivery, cache and evidence faults in the simulator, and a checker that no reader saw a mixed release <Status planned="P3" />; restore and recovery epochs <Status planned="P6" />.
+The simulator doesn't model content-type changes, URL names or roles yet: the step 3.6 and R.2 branches test those against PostgreSQL and the real server instead.
+
+## Still to come
+
+- Delivery, cache and evidence faults in the simulator, and a checker that no reader saw a mixed release (step 3.8). <Status planned="P3" />
+- Random roles and permissions checked against the evaluator, with the API's decisions matching it. <Status planned="R" />
+- Schema changes racing saves. <Status planned="M" />
+- Restore and recovery epochs. <Status planned="P6" />
 
 ## Design
 

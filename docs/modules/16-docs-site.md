@@ -80,42 +80,56 @@ clearly labels what is implemented vs planned.
 
 ## Built so far
 
-The P3 skeleton, on branch `site/docs` (not yet merged):
+On branch `site/docs` (not yet merged), rebuilt on 2026-10-27 in the website's look:
 
 - **`apps/docs`** (`@colophon/docs`): SvelteKit with the static adapter, every page prerendered to `<address>/index.html`
-  (trailing slashes, so any static host serves it as it is), TypeScript strict, Markdown pages through mdsvex 0.12.8,
-  and the design system as is (`@colophon/ui/styles.css`, its components, mode-watcher for light and dark). Dev
-  server on `127.0.0.1:58310`; `npm run preview -w @colophon/docs` serves `build/` on `127.0.0.1:58311` with a small
-  static server (`scripts/serve.js`), because Vite's preview doesn't serve the Pagefind index written after the build.
-- **Information architecture** (`src/lib/nav.ts`, the one site map): Get started (what Colophon is, a developer
-  quickstart, status and roadmap), For editors (seven guides in D-059's plain words, with a table mapping them to
-  the Studio's current words), Concepts (eleven pages, from revisions to the simulator), Reference (API conventions,
-  every route, the error envelope and codes, the delivery API, the CLI, the rich-text format, webhooks), Operations
-  (the local stack, configuration, load testing, crash tests, and a planned page for backups and upgrades).
-- **Capability labels (DS1):** every page carries one, from the site map, never from the page: *Implemented*,
-  *Building · step*, *Planned · milestone*, plus *Overview* for pages that introduce others and *Design document*
-  for the rendered design documents, which mix built and planned. Parts of a page that differ carry an inline label
-  (`<Status planned="P4" />`). A Markdown page missing from the site map fails the build.
-- **Design documents rendered from the files:** `docs/*.md`, `docs/modules/*.md`, `docs/formats/*.md` and
-  `docs/brand/README.md` are read and rendered at build time with unified (remark-gfm), so there is no copy to
-  drift. Links between them stay on the site, other repository links go to GitHub, and heading ids match GitHub's.
-- **Load results from the files:** the load-testing page reads every `perf/results/*.json` at build time and shows
-  each run with its machine, commit and k6 threshold outcome, misses included. The site has no other performance
-  figures.
-- **Search:** Pagefind 1.5.2 (MIT) indexes the built pages after `vite build`; the site's own dialog (⌘K, Ctrl+K or
-  /) loads its index from the same origin. Nothing loads from another origin: fonts, styles, scripts and the index
-  are all served by the site.
-- **Code blocks:** highlighted at build time by Shiki with a CSS-variables theme mapped onto the design tokens, so
-  every code colour is a token the contrast test covers; each has a copy button. Blocks marked `runnable` are
-  checked: every command in them must exist in the repository.
-- **Tests** (`npm run test -w @colophon/docs`, Playwright; it builds the site first, so `scripts/frontend.sh`'s
-  `npm test --workspaces` runs them too): every built page renders with no console
-  errors or warnings, one h1, a capability label and no request to another origin; a crawl from the front page
-  finds every page and every link and `#fragment` resolves; axe (WCAG 2.1 AA) passes in light and dark on a sample
-  of each section, the search dialog and the phone navigation sheet; pages reflow at 320 px without sideways
-  scrolling; search finds known pages, including the design documents; every runnable command exists (scripts and
-  their subcommands, npm scripts, crates, features, test files, CLI subcommands and flags, simulator flags); and the
-  references list every error code, CLI command and route the code defines.
+  (trailing slashes), TypeScript strict, Markdown pages through mdsvex 0.12.8. Built for the base path `/docs`
+  (`COLOPHON_DOCS_BASE`), because the website links to `/docs/` on its own host (module 20); links written in a page
+  as `/concepts/…` get the base path at build time, and `site:/roadmap/` becomes a link to the website. Dev server on
+  `127.0.0.1:58310`; `npm run preview -w @colophon/docs` serves `build/` under `/docs/` on `127.0.0.1:58311`
+  (`scripts/serve.js`; `--with-site` also serves the website's build at `/`, as one host would).
+- **The website's look, shared, not copied:** `packages/site-theme` (`@colophon/site-theme`) holds the tokens (light,
+  and the warm brown dark theme the maintainer chose), Inter and Fragment Mono, the type scale, pills, chips, glass and
+  the theme switch's transition; both `apps/site/src/app.css` and `apps/docs/src/app.css` import it right after the
+  design system. The docs' header is the website's glass pill (mark, "Docs", the sections as tabs, search, the website,
+  GitHub, the one-button light/dark switch), the footer is the website's card, and every page carries a "Pre-release,
+  not for production" banner. The theme switch, the mark and the brand icons are the website's files; a test fails if
+  they, the shared imports or the status words drift.
+- **Information architecture** (`src/lib/nav.ts`, the one site map): Get started (what Colophon is, run it locally,
+  the first project, article and publish with its receipt), For editors (in D-059's plain words), Concepts (fourteen
+  pages, including scheduled publishing and onboarding while they are built), Developer reference (API conventions,
+  all routes, one page per area with every route's who, headers, bodies and errors, the error envelope with every
+  code and reason, the delivery API, the CLI, rich text, webhooks), Operations (requirements, the local stack, every
+  setting, health checks, the worker, every migration, backups, crash tests), Resources (security model, performance,
+  roadmap and status, FAQ, glossary) and Updates (the changelog, release notes, upgrade guides), then the design
+  documents.
+- **Statuses in the website's words (DS1):** every page carries *Done · step*, *Building · step or branch* or
+  *Planned · milestone*, from the site map, plus *Overview* for pages that introduce others and *Design document*
+  for the rendered design documents. Parts of a page that differ carry an inline label (`<Status planned="R.3" />`).
+  Pages describe the newest branch (`r/r.2-custom-roles`, which contains main, 3.6 and R.1), with what isn't merged
+  labelled Building.
+- **Changelog and release notes** (docs/RELEASES.md): `/docs/changelog/` renders `CHANGELOG.md` (Keep a Changelog
+  groups inside each step, an anchor per milestone and per step) with an Atom feed of merged steps at
+  `/docs/changelog/feed.xml`; the website renders the same file at `/changelog/`. Release notes per milestone
+  (`docs/releases/p0.md` …, from `docs/templates/release-notes.md`) render at `/docs/releases/…`, their "All changes"
+  replaced at build time by the milestone's section of the changelog; upgrade guides per range of migrations
+  (`docs/upgrading/*.md`, from the template) at `/docs/upgrading/…`.
+- **Rendered from the files:** the design documents, the release notes and the upgrade guides are read and rendered
+  at build time with unified (remark-gfm), so there is no copy to drift. The performance page reads every
+  `perf/results/*.json`, with its machine, date, commit and threshold outcome, misses included.
+- **Search:** Pagefind 1.5.2 indexes every built page, the changelog included, after `vite build`; the site's own
+  dialog (⌘K, Ctrl+K or /) loads its index from the same origin and answers long pages with the heading that
+  matched (a changelog entry, a route). Nothing loads from another origin.
+- **Tests** (`npm run test -w @colophon/docs`, Playwright, after a build): every page renders with no console errors
+  or warnings, one h1, a status label, the banner and no request to another origin; a crawl from the front page finds
+  every page, every link and `#fragment` resolves, and every link to the website names one of its pages, and every
+  docs address the website links to exists; axe (WCAG 2.1 AA) passes on every page in light and in dark, and in the
+  search dialog and the phone navigation; every page reflows at 320 px; the theme switch is one button and survives a
+  reload; the shared look; search finds pages, a changelog entry and the design documents; the changelog page lists
+  every section and entry of `CHANGELOG.md` with their anchors, the feed every merged step, and each release note its
+  milestone's section; every documented route exists in the router on the newest branch (read with `git show`) and
+  every route there is documented, branch-only ones as Building; the errors page lists every code and every reason
+  the code can put in `details`; every runnable command exists; the CLI page lists every command.
 
 Not done yet: versioned docs (spec §19), executing the examples in CI (today they are checked to exist, not run),
 deep-dive write-ups, troubleshooting and security-reporting pages, and hosting.

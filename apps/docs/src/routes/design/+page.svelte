@@ -5,12 +5,13 @@
 <script lang="ts">
 	import PageFrame from '#lib/components/PageFrame.svelte';
 	import { REPOSITORY } from '#lib/nav.ts';
+	import { href } from '#lib/paths.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 
 	const groups = $derived(
-		(['Project', 'Modules', 'Formats', 'Brand'] as const).map((group) => ({ group, docs: data.design.filter((doc) => doc.group === group) }))
+		(['Project', 'Modules', 'Formats', 'Brand'] as const).map((group) => ({ group, docs: data.repo.design.filter((doc) => doc.group === group) }))
 	);
 	const toc = $derived(groups.filter(({ docs }) => docs.length > 0).map(({ group }) => ({ depth: 2 as const, id: group.toLowerCase(), text: group })));
 </script>
@@ -24,12 +25,13 @@
 	{toc}
 >
 	<p>
-		These pages are the files in <a href="{REPOSITORY}/tree/main/docs">docs/</a>, rendered when this site is built, so they never drift from the repository. They are
+		These pages are the files in <a href="{REPOSITORY}/tree/main/docs" rel="external">docs/</a>, rendered when this site is built, so they never drift from the repository. They are
 		<strong>design documents</strong>: each one records a plan and, as steps land, what was built. Read them for the reasons behind a behaviour; read the guides,
-		whose labels say what exists, for what you can use today.
+		whose labels say what exists, for what you can use today. They are <code>main</code>'s versions: decisions and module changes made on branches that aren't merged
+		yet (D-054 to D-059, for example) are on GitHub, on their branch, and the guides link there.
 	</p>
 	<p>
-		When they disagree, the order of authority is the one in <code>AGENTS.md</code>: <a href="/design/decisions/">the decisions</a>, then the module documents, then
+		When they disagree, the order of authority is the one in <code>AGENTS.md</code>: <a href={href('/design/decisions/')}>the decisions</a>, then the module documents, then
 		the architecture and the end goal, then the master specification (kept in <code>docs/spec/</code> on GitHub and not rendered here).
 	</p>
 	{#each groups as { group, docs } (group)}
@@ -37,7 +39,7 @@
 			<h2 id={group.toLowerCase()}>{group}</h2>
 			<ul>
 				{#each docs as doc (doc.href)}
-					<li><a href={doc.href}>{doc.title}</a> <span class="text-sm text-muted-foreground">({doc.source})</span></li>
+					<li><a href={href(doc.href)}>{doc.title}</a> <span class="text-sm text-muted-foreground">({doc.source})</span></li>
 				{/each}
 			</ul>
 		{/if}

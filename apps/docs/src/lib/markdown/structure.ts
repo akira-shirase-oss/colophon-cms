@@ -86,3 +86,38 @@ export function scrollingTables() {
 		});
 	};
 }
+
+/**
+ * A rehype plugin: links written for the docs become the addresses a browser needs. A docs path
+ * (`/concepts/`) gets the base path (`/docs/concepts/`); `site:/roadmap/` is a page of the website
+ * on the same host, marked `rel="external"` so SvelteKit's router and prerenderer leave it to the
+ * browser. Anything else (`https:`, `#anchor`) is left alone.
+ */
+export function addresses(options: { docs: (path: string) => string; site: (path: string) => string }) {
+	return (tree: Node) => {
+		walk(tree, (node) => {
+			if (node.type !== 'element' || node.tagName !== 'a') return;
+			const href = node.properties?.['href'];
+			if (typeof href !== 'string') return;
+			if (href.startsWith('site:')) {
+				node.properties = { ...node.properties, href: options.site(href.slice('site:'.length)), rel: ['external'] };
+			} else if (href.startsWith('/') && !href.startsWith('//')) {
+				node.properties = { ...node.properties, href: options.docs(href) };
+			}
+		});
+	};
+}
+
+/**
+ * A rehype plugin: GitHub's task lists (`- [ ] step`) become disabled checkboxes with no label, which
+ * a screen reader announces as "checkbox, unlabelled". Each gets a name that says its state; the
+ * item's text follows it.
+ */
+export function taskLists() {
+	return (tree: Node) => {
+		walk(tree, (node) => {
+			if (node.type !== 'element' || node.tagName !== 'input' || node.properties?.['type'] !== 'checkbox') return;
+			node.properties = { ...node.properties, ariaLabel: node.properties['checked'] ? 'Done' : 'To do' };
+		});
+	};
+}

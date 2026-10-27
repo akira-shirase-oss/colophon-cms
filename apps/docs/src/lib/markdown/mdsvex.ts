@@ -4,12 +4,13 @@
 import { fileURLToPath } from 'node:url';
 import { mdsvex, type MdsvexOptions } from 'mdsvex';
 import { highlight } from './highlight.ts';
-import { headings, scrollingTables } from './structure.ts';
+import { docsPath, sitePath } from './addresses.ts';
+import { addresses, headings, scrollingTables, taskLists } from './structure.ts';
 
 // The plugins walk plain objects (structure.ts), so they fit mdsvex's bundled remark as well as
 // unified 11; only the two versions' type declarations disagree.
 const remarkPlugins = [[headings, { frontmatter: true }]] as unknown as NonNullable<MdsvexOptions['remarkPlugins']>;
-const rehypePlugins = [scrollingTables] as unknown as NonNullable<MdsvexOptions['rehypePlugins']>;
+const rehypePlugins = [scrollingTables, taskLists, [addresses, { docs: docsPath, site: sitePath }]] as unknown as NonNullable<MdsvexOptions['rehypePlugins']>;
 
 export function markdown() {
 	return mdsvex({

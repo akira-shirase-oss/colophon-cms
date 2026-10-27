@@ -1,17 +1,18 @@
 <!--
-  Load testing: how to run it, and every result kept in perf/results/, read from the files when
+  Performance: how load tests run, and every result kept in perf/results/, read from the files when
   the site is built. The only performance figures on this site are these, each with its machine,
   commit and what was measured (module 16: no uncited speed claims).
 -->
 <script lang="ts">
 	import PageFrame from '#lib/components/PageFrame.svelte';
 	import { blobUrl, pageAt } from '#lib/nav.ts';
+	import { href } from '#lib/paths.ts';
 	import type { LoadResult } from '#lib/server/perf.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 
-	const entry = pageAt('/operations/load-testing/');
+	const entry = pageAt('/resources/performance/');
 	const number = new Intl.NumberFormat('en-GB');
 	const ms = (value: number) => `${value < 10 ? value.toFixed(2) : value < 100 ? value.toFixed(1) : number.format(Math.round(value))} ms`;
 
@@ -86,7 +87,7 @@
 	</div>
 {/snippet}
 
-<PageFrame title={entry?.title ?? 'Load testing'} description={entry?.description} capability={{ kind: 'implemented' }} source={entry?.source ?? ''} {toc}>
+<PageFrame title={entry?.title ?? 'Performance'} description={entry?.description} capability={entry?.capability ?? { kind: 'done' }} source={entry?.source ?? ''} {toc}>
 	<blockquote>
 		<p>
 			<strong>Laptop numbers are evidence about the code on that machine, not production capacity.</strong> Every figure on this page comes from a file in
@@ -102,7 +103,7 @@
 	</p>
 
 	<h2 id="running-a-load-test">Running a load test</h2>
-	<p>It needs the <a href="/operations/local-stack/">local stack</a>, the pinned Rust toolchain, Docker, <code>jq</code>, <code>curl</code> and k6:</p>
+	<p>It needs the <a href={href('/operations/local-stack/')}>local stack</a>, the pinned Rust toolchain, Docker, <code>jq</code>, <code>curl</code> and k6:</p>
 	{@html data.install}
 	{@html data.usage}
 	<p>
@@ -133,8 +134,9 @@
 
 	<h2 id="every-kept-result">Every kept result</h2>
 	<p>
-		All {data.results.length} result files, newest first, including the {missed} runs that missed their thresholds. Some runs were repeated after a fix; both are kept, and the
-		commit messages say why.
+		All {data.results.length} result files on <code>main</code>, newest first, including the {missed} runs that missed their thresholds. Some runs were repeated after a fix; both
+		are kept, and the commit messages say why. Runs kept on branches that aren't merged (R.1's signed-in session runs, R.2's custom-roles scenario
+		<code>perf/k6/roles.js</code>) appear here when their step merges.
 	</p>
 	{@render table(data.results, 'Every kept load run, newest first')}
 </PageFrame>

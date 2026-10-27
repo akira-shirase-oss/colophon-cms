@@ -12,6 +12,7 @@
 	import { page } from '$app/state';
 	import type { TocEntry } from '#lib/markdown/structure.ts';
 	import { type Capability, editUrl, neighbours, SECTIONS } from '#lib/nav.ts';
+	import { href, within } from '#lib/paths.ts';
 	import CapabilityLabel from './CapabilityLabel.svelte';
 	import Toc from './Toc.svelte';
 
@@ -40,7 +41,7 @@
 		children: Snippet;
 	} = $props();
 
-	const here = $derived(page.url.pathname);
+	const here = $derived(within(page.url.pathname));
 	const order = $derived((page.data['order'] as { href: string; title: string }[] | undefined) ?? []);
 	const around = $derived(neighbours(order, here));
 	const sectionTitle = $derived(section ?? SECTIONS.find((candidate) => candidate.pages.some((item) => item.href === here))?.title);
@@ -96,10 +97,10 @@
 
 <div class="grid gap-x-12 xl:grid-cols-[minmax(0,1fr)_13.5rem]">
 	<article class="page-enter min-w-0 {wide ? 'max-w-none' : 'max-w-[46rem]'}" data-pagefind-body>
-		<header class="mb-8 space-y-3">
-			{#if sectionTitle}<p class="text-sm font-medium text-brand-ink" data-pagefind-ignore>{sectionTitle}</p>{/if}
-			<h1 class="display-2" data-pagefind-meta="title">{title}</h1>
-			{#if description}<p class="text-[1.0625rem] leading-relaxed text-pretty text-muted-foreground">{description}</p>{/if}
+		<header class="mb-10 space-y-3">
+			{#if sectionTitle}<p class="text-xs leading-4 font-semibold tracking-wide text-[color:var(--eyebrow)] uppercase" data-pagefind-ignore>{sectionTitle}</p>{/if}
+			<h1 class="t-h4" data-pagefind-meta="title">{title}</h1>
+			{#if description}<p class="t-lead text-pretty">{description}</p>{/if}
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 pt-1" data-pagefind-ignore>
 				<CapabilityLabel {capability} />
 				{#if note}<span class="text-sm text-muted-foreground">{@render note()}</span>{/if}
@@ -107,8 +108,8 @@
 		</header>
 
 		{#if toc.length > 1}
-			<details class="mb-8 rounded-2xl border border-border bg-card px-4 py-3 shadow-hairline xl:hidden" data-pagefind-ignore>
-				<summary class="cursor-pointer text-sm font-medium outline-none select-none focus-visible:ring-[3px] focus-visible:ring-ring/40">On this page</summary>
+			<details class="mb-8 rounded-3xl bg-[var(--chip)] px-5 py-3.5 xl:hidden" data-pagefind-ignore>
+				<summary class="cursor-pointer text-sm font-semibold outline-none select-none focus-visible:ring-2 focus-visible:ring-ring">On this page</summary>
 				<div class="mt-3"><Toc entries={toc} label="On this page (folded)" /></div>
 			</details>
 		{/if}
@@ -117,10 +118,10 @@
 			{@render children()}
 		</div>
 
-		<footer class="mt-14 space-y-6 border-t border-border pt-6" data-pagefind-ignore>
+		<footer class="mt-16 space-y-6 border-t border-[color:var(--line)] pt-6" data-pagefind-ignore>
 			<a
 				href={editUrl(source)}
-				class="inline-flex items-center gap-1.5 rounded-md text-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/40"
+				class="inline-flex items-center gap-1.5 rounded-md text-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
 				rel="external"
 			>
 				<SquarePenIcon class="size-4" aria-hidden="true" />Edit this page on GitHub
@@ -129,24 +130,24 @@
 				<nav aria-label="Previous and next pages" class="grid gap-3 sm:grid-cols-2">
 					{#if around.previous}
 						<a
-							href={around.previous.href}
+							href={href(around.previous.href)}
 							rel="prev"
-							class="group rounded-2xl border border-border bg-card p-4 shadow-hairline outline-none hover:shadow-soft focus-visible:ring-[3px] focus-visible:ring-ring/40"
+							class="neighbour group rounded-3xl p-5 outline-none focus-visible:ring-2 focus-visible:ring-ring"
 						>
 							<span class="flex items-center gap-1.5 text-xs text-muted-foreground"><ArrowLeftIcon class="size-3.5" aria-hidden="true" />Previous</span>
-							<span class="mt-1 block font-medium">{around.previous.title}</span>
+							<span class="mt-1 block font-semibold tracking-tight text-foreground">{around.previous.title}</span>
 						</a>
 					{:else}
 						<span class="hidden sm:block"></span>
 					{/if}
 					{#if around.next}
 						<a
-							href={around.next.href}
+							href={href(around.next.href)}
 							rel="next"
-							class="group rounded-2xl border border-border bg-card p-4 text-right shadow-hairline outline-none hover:shadow-soft focus-visible:ring-[3px] focus-visible:ring-ring/40"
+							class="neighbour group rounded-3xl p-5 text-right outline-none focus-visible:ring-2 focus-visible:ring-ring"
 						>
 							<span class="flex items-center justify-end gap-1.5 text-xs text-muted-foreground">Next<ArrowRightIcon class="size-3.5" aria-hidden="true" /></span>
-							<span class="mt-1 block font-medium">{around.next.title}</span>
+							<span class="mt-1 block font-semibold tracking-tight text-foreground">{around.next.title}</span>
 						</a>
 					{/if}
 				</nav>
@@ -163,3 +164,13 @@
 		</aside>
 	{/if}
 </div>
+
+<style>
+	.neighbour {
+		background: var(--chip);
+		transition: background-color 200ms ease;
+	}
+	.neighbour:hover {
+		background: var(--chip-hover);
+	}
+</style>

@@ -26,13 +26,13 @@
 
 {#if entries.length > 0}
 	<nav aria-label={label}>
-		<p class="mb-2 text-xs font-semibold tracking-tight">{label}</p>
-		<ul class="space-y-1 border-l border-border text-[0.8125rem] leading-snug">
+		<p class="mb-2 text-xs font-semibold tracking-tight text-foreground">{label}</p>
+		<ul class="space-y-1 border-l border-[color:var(--line)] text-[0.8125rem] leading-snug">
 			{#each entries as entry (entry.id)}
 				<li>
 					<a
 						href="#{entry.id}"
-						class="-ml-px block border-l py-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40 {entry.depth === 3
+						class="-ml-px block border-l py-0.5 [overflow-wrap:anywhere] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring {entry.depth === 3
 							? 'pl-6'
 							: 'pl-3'} {active === entry.id ? 'border-foreground font-medium text-foreground' : 'border-transparent'}"
 						aria-current={active === entry.id ? 'location' : undefined}>{entry.text}</a

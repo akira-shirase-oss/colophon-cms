@@ -8,13 +8,14 @@
 	import { page } from '$app/state';
 	import type { TocEntry } from '#lib/markdown/structure.ts';
 	import { pageAt } from '#lib/nav.ts';
+	import { within } from '#lib/paths.ts';
 	import PageFrame from './PageFrame.svelte';
 
 	let { toc = [], children }: { toc?: TocEntry[]; children: Snippet } = $props();
 
 	const entry = $derived.by(() => {
-		const found = pageAt(page.url.pathname);
-		if (!found) throw new Error(`${page.url.pathname} is not in lib/nav.ts: add it there with its capability label`);
+		const found = pageAt(within(page.url.pathname));
+		if (!found) throw new Error(`${page.url.pathname} is not in lib/nav.ts: add it there with its status`);
 		return found;
 	});
 </script>
