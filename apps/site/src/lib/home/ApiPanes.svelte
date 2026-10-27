@@ -143,7 +143,7 @@
 	}
 </script>
 
-<div class="overflow-hidden rounded-3xl border border-border/70 bg-card shadow-soft" {@attach inView()}>
+<div class="overflow-hidden glass rounded-3xl" {@attach inView()}>
 	<div role="tablist" aria-label="API answers" class="flex gap-1 overflow-x-auto border-b border-border/70 bg-muted/50 p-1.5">
 		{#each PANES as candidate, index (candidate.id)}
 			<button

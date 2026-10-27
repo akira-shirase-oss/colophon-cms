@@ -1,6 +1,5 @@
 <script lang="ts">
 	import ArrowUpRightIcon from '@lucide/svelte/icons/arrow-up-right';
-	import { Button } from '@colophon/ui/ui/button';
 	import Inline from '#lib/components/Inline.svelte';
 	import PageIntro from '#lib/components/PageIntro.svelte';
 	import Seo from '#lib/components/Seo.svelte';
@@ -42,8 +41,8 @@
 </PageIntro>
 
 <div class="shell mt-10">
-	<aside aria-labelledby="evidence" class="rounded-3xl border border-border/70 bg-card p-6 shadow-soft sm:p-8">
-		<h2 id="evidence" class="title">What this is based on</h2>
+	<aside aria-labelledby="evidence" class="glass rounded-3xl p-6 sm:p-8">
+		<h2 id="evidence" class="t-h6">What this is based on</h2>
 		<ul class="mt-4 grid gap-2 text-[0.9375rem] leading-relaxed text-muted-foreground">
 			<li><span class="font-medium text-foreground">Checked {EVIDENCE.checked}.</span> Strapi: {EVIDENCE.strapi}. Sanity: {EVIDENCE.sanity}.</li>
 			<li>{EVIDENCE.note}</li>
@@ -56,22 +55,22 @@
 		</p>
 	</aside>
 
-	<nav aria-label="On this page" class="mt-10 flex flex-wrap gap-2">
+	<nav aria-label="On this page" class="mt-12 flex flex-wrap justify-center gap-3">
 		{#each TABLES as table (table.id)}
-			<Button variant="outline" size="sm" href="#{table.id}" class="h-auto min-h-9 max-w-full shrink py-2 text-left whitespace-normal">{table.title}</Button>
+			<a href="#{table.id}" class="tag max-w-full text-left outline-none hover:bg-[var(--tertiary-hover)] focus-visible:ring-2 focus-visible:ring-ring">{table.title}</a>
 		{/each}
-		<Button variant="outline" size="sm" href="#different">Different on purpose</Button>
-		<Button variant="outline" size="sm" href="#backlog">Parity backlog</Button>
-		<Button variant="outline" size="sm" href="#convex">From Convex</Button>
+		<a href="#different" class="tag outline-none hover:bg-[var(--tertiary-hover)] focus-visible:ring-2 focus-visible:ring-ring">Different on purpose</a>
+		<a href="#backlog" class="tag outline-none hover:bg-[var(--tertiary-hover)] focus-visible:ring-2 focus-visible:ring-ring">Parity backlog</a>
+		<a href="#convex" class="tag outline-none hover:bg-[var(--tertiary-hover)] focus-visible:ring-2 focus-visible:ring-ring">From Convex</a>
 	</nav>
 
 	{#each TABLES as table (table.id)}
 		<section aria-labelledby={table.id} class="mt-16">
-			<h2 id={table.id} class="display-2">{table.title}</h2>
+			<h2 id={table.id} class="t-h2">{table.title}</h2>
 			{#if table.lead}<p class="mt-3 max-w-3xl text-[0.9375rem] leading-relaxed text-muted-foreground">{table.lead}</p>{/if}
 			<!-- A table wider than a phone scrolls sideways; a scrollable region must be reachable by keyboard (axe: scrollable-region-focusable). -->
 			<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-			<div class="mt-6 overflow-x-auto rounded-3xl border border-border/70 bg-card shadow-soft" role="region" aria-label="{table.title}, scrollable" tabindex="0">
+			<div class="mt-6 overflow-x-auto glass rounded-3xl" role="region" aria-label="{table.title}, scrollable" tabindex="0">
 				<table class="w-full min-w-[46rem] text-left text-sm">
 					<thead class="border-b border-border bg-muted/50 text-xs text-muted-foreground">
 						<tr>
@@ -101,10 +100,10 @@
 	{/each}
 
 	<section aria-labelledby="different" class="mt-20">
-		<h2 id="different" class="display-2">Done differently, on purpose</h2>
+		<h2 id="different" class="t-h2">Done differently, on purpose</h2>
 		<ul class="mt-6 grid gap-4 md:grid-cols-3">
 			{#each DIFFERENT_ON_PURPOSE as item (item.title)}
-				<li class="rounded-3xl border border-border/70 bg-card p-6 shadow-hairline">
+				<li class="glass rounded-3xl p-6">
 					<h3 class="text-[0.9375rem] font-semibold">{item.title}</h3>
 					<p class="mt-2 text-sm leading-relaxed text-muted-foreground">{item.text}</p>
 				</li>
@@ -113,15 +112,15 @@
 	</section>
 
 	<section aria-labelledby="backlog" class="mt-20">
-		<h2 id="backlog" class="display-2">The parity backlog</h2>
+		<h2 id="backlog" class="t-h2">The parity backlog</h2>
 		<p class="mt-3 max-w-3xl text-[0.9375rem] leading-relaxed text-muted-foreground">Who offers what today, and when Colophon builds it. {EVIDENCE.backlog}</p>
-		<div role="group" aria-label="Show rows" class="mt-5 inline-flex flex-wrap gap-1 rounded-full border border-border/70 bg-card p-1 shadow-hairline">
+		<div role="group" aria-label="Show rows" class="mt-5 inline-flex flex-wrap gap-1 rounded-full bg-chip p-1">
 			{#each FILTERS as option (option.value)}
 				<button
 					type="button"
 					aria-pressed={filter === option.value}
 					onclick={() => (filter = option.value)}
-					class="rounded-full px-3.5 py-1.5 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-4 focus-visible:ring-ring/25 aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+					class="min-h-10 rounded-full px-4 py-2 text-base font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:shadow-[var(--shadow-frame)]"
 				>
 					{option.label}<span class="figure ml-1.5 text-xs opacity-100">{option.value === 'all' ? PARITY.length : tally(option.value)}</span>
 				</button>
@@ -129,7 +128,7 @@
 		</div>
 		<!-- A table wider than a phone scrolls sideways; a scrollable region must be reachable by keyboard (axe: scrollable-region-focusable). -->
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-		<div class="mt-6 overflow-x-auto rounded-3xl border border-border/70 bg-card shadow-soft" role="region" aria-label="The parity backlog, scrollable" tabindex="0">
+		<div class="mt-6 overflow-x-auto glass rounded-3xl" role="region" aria-label="The parity backlog, scrollable" tabindex="0">
 			<table class="w-full min-w-[44rem] text-left text-sm" data-testid="parity">
 				<thead class="border-b border-border bg-muted/50 text-xs text-muted-foreground">
 					<tr>
@@ -158,7 +157,7 @@
 	</section>
 
 	<section aria-labelledby="convex" class="mt-20">
-		<h2 id="convex" class="display-2">What Colophon borrows from Convex</h2>
+		<h2 id="convex" class="t-h2">What Colophon borrows from Convex</h2>
 		<p class="mt-3 max-w-3xl text-[0.9375rem] leading-relaxed text-muted-foreground">
 			Convex is not a CMS, but its engine is built for fast, always-consistent reads, and several of its ideas fit Colophon’s invariants. Read on
 			2026-10-27 from Convex’s own write-up and docs and a self-hosted demo. Not taken: running user code inside the database, and a custom
@@ -166,7 +165,7 @@
 		</p>
 		<ul class="mt-6 grid gap-3 md:grid-cols-2">
 			{#each CONVEX as item (item.idea)}
-				<li class="rounded-3xl border border-border/70 bg-card p-5 shadow-hairline">
+				<li class="glass rounded-3xl p-5">
 					<p class="text-xs text-muted-foreground">{item.when.startsWith('done') ? 'Already: ' + item.when : 'Milestone ' + item.when}</p>
 					<h3 class="mt-1 text-[0.9375rem] font-semibold">{item.idea}</h3>
 					<p class="mt-1.5 text-sm leading-relaxed text-muted-foreground">{item.colophon}</p>

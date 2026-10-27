@@ -7,7 +7,7 @@
 		$props();
 </script>
 
-<figure class="overflow-hidden rounded-3xl border border-border/70 bg-card shadow-soft">
+<figure class="overflow-hidden glass rounded-3xl">
 	<div class="stage-dots relative {className}" aria-hidden={interactive ? undefined : 'true'} {@attach inView()}>
 		{@render children()}
 	</div>

@@ -28,9 +28,9 @@
 		{#each MILESTONES as milestone (milestone.id)}
 			<li id={milestone.id.toLowerCase()} data-testid="milestone" data-status={milestone.kind}>
 				<article
-					class="grid gap-6 rounded-3xl border bg-card p-6 shadow-soft sm:p-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] {milestone.kind === 'building'
+					class="grid gap-6 glass rounded-3xl border p-6 sm:p-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] {milestone.kind === 'building'
 						? 'border-pending ring-4 ring-pending-soft'
-						: 'border-border/70'}"
+						: 'border-transparent'}"
 				>
 					<div>
 						<div class="flex flex-wrap items-center gap-3">
@@ -45,7 +45,7 @@
 							<StatusBadge kind={milestone.kind} at={milestone.label} />
 							<span class="text-sm text-muted-foreground">Estimate: {milestone.estimate}</span>
 						</div>
-						<h2 class="display-2 mt-4">{milestone.name}</h2>
+						<h2 class="t-h2 mt-4">{milestone.name}</h2>
 						<p class="mt-3 text-[0.9375rem] leading-relaxed text-muted-foreground">{milestone.goal}</p>
 						<div class="mt-5 rounded-2xl border border-border bg-background p-4">
 							<h3 class="eyebrow">Proof gate</h3>

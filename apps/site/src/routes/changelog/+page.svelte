@@ -45,7 +45,7 @@
 		{#each sections as section (section.id)}
 			<section aria-labelledby={section.id} class="mb-16">
 				<div class="mb-6 flex flex-wrap items-center gap-3">
-					<h2 id={section.id} class="display-2">{section.unreleased ? 'Unreleased, in progress' : section.title}</h2>
+					<h2 id={section.id} class="t-h2">{section.unreleased ? 'Unreleased, in progress' : section.title}</h2>
 					{#if section.unreleased}<Badge variant="pending">Not merged</Badge>{/if}
 				</div>
 				<ol class="relative grid gap-6 border-l border-border pl-6 sm:pl-8">
@@ -55,7 +55,7 @@
 								class="absolute top-6 -left-[1.6875rem] grid size-3 place-items-center rounded-full ring-4 ring-background sm:-left-[2.1875rem] {entry.status === 'merged' ? 'bg-live' : 'bg-pending'}"
 								aria-hidden="true"
 							></span>
-							<article class="rounded-3xl border border-border/70 bg-card p-6 shadow-soft sm:p-7">
+							<article class="glass rounded-3xl p-6 sm:p-7">
 								<div class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
 									<span class="figure rounded-full bg-primary px-2.5 py-0.5 text-xs font-medium text-primary-foreground">{entry.step}</span>
 									{#if entry.status === 'merged'}
@@ -66,7 +66,7 @@
 										{#if entry.branch}<code class="font-mono text-xs">{entry.branch}</code>{/if}
 									{/if}
 								</div>
-								<h3 class="title mt-3" data-testid="changelog-title">{entry.title}</h3>
+								<h3 class="t-h6 mt-3" data-testid="changelog-title">{entry.title}</h3>
 								<div class="prose-site changelog-body mt-3 text-[0.9375rem]">
 									<!-- CHANGELOG.md, rendered at build time with raw HTML escaped (src/lib/server/markdown.ts). -->
 									{@html entry.html}

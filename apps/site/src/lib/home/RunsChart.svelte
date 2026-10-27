@@ -25,7 +25,7 @@
 	const missed = $derived(runs.filter((run) => !run.ok).length);
 </script>
 
-<figure class="rounded-3xl border border-border/70 bg-card p-5 shadow-soft sm:p-6" {@attach inView()}>
+<figure class="glass rounded-3xl p-5 sm:p-6" {@attach inView()}>
 	<figcaption class="flex flex-wrap items-baseline justify-between gap-2">
 		<span class="flex flex-col">
 			<span class="text-[0.9375rem] font-semibold">Every load run, kept</span>

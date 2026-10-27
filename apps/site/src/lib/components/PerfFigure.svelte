@@ -12,7 +12,7 @@
 	const p99 = $derived(result.latency_ms.p99.toFixed(1));
 </script>
 
-<article class="flex h-full flex-col rounded-3xl border border-border/70 bg-card p-6 shadow-soft">
+<article class="flex h-full flex-col glass rounded-3xl p-6">
 	<div class="flex items-start justify-between gap-3">
 		<h3 class="text-[0.9375rem] font-semibold">{figure.title}</h3>
 		{#if !result.thresholds_passed}
