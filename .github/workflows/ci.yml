@@ -162,7 +162,13 @@ jobs:
           RATE=1500 P99_MS=200 scripts/load.sh delivery steady
           # RATE counts publishes here, five requests each.
           RATE=60 P99_MS=500 scripts/load.sh publishing steady
-          RATE=400 P99_MS=500 scripts/load.sh entries steady
+          # Step 3.5 made the drafts mix heavier (title searches walk the collection, lists read
+          # each entry's live state, revision reads are new): at 400/s a runner whose health ran
+          # 21,982/s fell behind (p99 1.47 s on every endpoint, 224 iterations dropped; run
+          # 40526045207), while the same code passed its million-request run locally. 300/s until a
+          # back-to-back run on the slowest runner sets it at half, as above; END_GOAL's draft
+          # workload is 20 writes and 100 reads a second.
+          RATE=300 P99_MS=500 scripts/load.sh entries steady
           RATE=400 P99_MS=500 scripts/load.sh content-types steady
           TOTAL=50000 P99_MS=50 scripts/load.sh studio throughput
       - name: Service logs, and what the database was doing
