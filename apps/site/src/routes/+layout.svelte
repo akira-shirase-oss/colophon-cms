@@ -15,7 +15,7 @@
 
 <ModeWatcher defaultMode="system" />
 <Tooltip.Provider delayDuration={250}>
-	<div class="flex min-h-svh flex-col">
+	<div class="page-ground relative flex min-h-svh flex-col overflow-x-clip">
 		<SiteHeader />
 		<main id="content" tabindex="-1" class="flex-1 outline-none">
 			{@render children()}

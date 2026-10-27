@@ -1,4 +1,4 @@
-<!-- A section's eyebrow, title and lead. -->
+<!-- A section's eyebrow, title and lead, after the reference's: uppercase eyebrow, 20px, then the title. -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
@@ -11,10 +11,10 @@
 	}: { id: string; eyebrow?: string; title: string; align?: 'left' | 'center'; children?: Snippet } = $props();
 </script>
 
-<div class="max-w-2xl space-y-3 {align === 'center' ? 'mx-auto text-center' : ''}">
-	{#if eyebrow}<p class="eyebrow text-brand-ink">{eyebrow}</p>{/if}
-	<h2 {id} class="display-2">{title}</h2>
+<div class={align === 'center' ? 'mx-auto max-w-[50rem] text-center' : 'max-w-[42rem]'}>
+	{#if eyebrow}<p class="t-eyebrow mb-4 tb:mb-5">{eyebrow}</p>{/if}
+	<h2 {id} class="t-h2">{title}</h2>
 	{#if children}
-		<div class="text-[1.0625rem] leading-relaxed text-pretty text-muted-foreground">{@render children()}</div>
+		<div class="t-body-lg mt-4 text-pretty">{@render children()}</div>
 	{/if}
 </div>

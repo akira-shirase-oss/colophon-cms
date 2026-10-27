@@ -1,20 +1,28 @@
-<!-- The top of an inner page: a badge, the page's one h1, and a lead, over a faint warmth. -->
+<!--
+  The top of an inner page, after the reference's blog index: a sky-to-sand band with a small
+  label, the page's one h1 and a lead, centred; then, inside the band, whatever the page shows
+  first (a figure, a featured post).
+-->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { Badge } from '@colophon/ui/ui/badge';
 
-	let { badge = '', title, children, aside }: { badge?: string; title: string; children?: Snippet; aside?: Snippet } = $props();
+	let {
+		badge = '',
+		title,
+		children,
+		aside,
+		below
+	}: { badge?: string; title: string; children?: Snippet; aside?: Snippet; below?: Snippet } = $props();
 </script>
 
-<header class="haze border-b border-border">
-	<div class="shell grid gap-8 py-14 sm:py-20 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-		<div class="max-w-3xl space-y-5">
-			{#if badge}<Badge variant="brand">{badge}</Badge>{/if}
-			<h1 class="display-1">{title}</h1>
-			{#if children}
-				<div class="max-w-2xl space-y-3 text-[1.0625rem] leading-relaxed text-pretty text-muted-foreground">{@render children()}</div>
-			{/if}
-		</div>
-		{#if aside}<div>{@render aside()}</div>{/if}
+<header class="hero-ground pt-32 pb-16 tb:pt-[9.5rem] dt:pt-40 dt:pb-20">
+	<div class="shell text-center">
+		{#if badge}<p class="chip">{badge}</p>{/if}
+		<h1 class="t-h1 mx-auto mt-4 max-w-[49.5rem]">{title}</h1>
+		{#if children}
+			<div class="t-lead mx-auto mt-4 max-w-[43.75rem] space-y-3 text-pretty">{@render children()}</div>
+		{/if}
+		{#if aside}<div class="mt-10 flex justify-center">{@render aside()}</div>{/if}
 	</div>
+	{#if below}<div class="shell mt-16">{@render below()}</div>{/if}
 </header>

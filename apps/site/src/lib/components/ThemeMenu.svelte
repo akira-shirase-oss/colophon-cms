@@ -9,7 +9,6 @@
 	import SunIcon from '@lucide/svelte/icons/sun';
 	import { tick } from 'svelte';
 	import { setMode, userPrefersMode } from 'mode-watcher';
-	import { buttonVariants } from '@colophon/ui/ui/button';
 	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 
 	const CHOICES = [
@@ -46,7 +45,11 @@
 </script>
 
 <DropdownMenu.Root bind:open>
-	<DropdownMenu.Trigger bind:ref={trigger} class="{buttonVariants({ variant: 'ghost', size: 'icon-sm' })} relative" aria-label="Appearance">
+	<DropdownMenu.Trigger
+		bind:ref={trigger}
+		class="relative grid size-10 place-items-center rounded-full text-foreground outline-none hover:bg-[var(--tertiary-hover)] focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-[18px]"
+		aria-label="Appearance"
+	>
 		<SunIcon class="theme-icon scale-100 rotate-0 dark:scale-0 dark:-rotate-90" />
 		<MoonIcon class="theme-icon absolute scale-0 rotate-90 dark:scale-100 dark:rotate-0" />
 	</DropdownMenu.Trigger>
