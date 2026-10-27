@@ -97,14 +97,15 @@ pub async fn create(
     revision: NewRevision<'_>,
 ) -> Result<Draft, DbError> {
     let entry = sqlx::query!(
-        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_title, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING created_at, updated_at",
         tx.project,
         tx.environment,
         entry_id,
         collection,
         revision.id,
+        revision.title,
         tx.identity
     )
     .fetch_one(&mut *tx.transaction)
@@ -159,14 +160,15 @@ pub async fn save(
     let created_at =
         insert_revision(tx, entry_id, &current.collection, Some(expected), revision).await?;
     let moved = sqlx::query_scalar!(
-        "UPDATE entries SET draft_revision_id = $4, updated_at = now()
+        "UPDATE entries SET draft_revision_id = $4, draft_title = $6, updated_at = now()
          WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND draft_revision_id = $5
          RETURNING updated_at",
         tx.project,
         tx.environment,
         entry_id,
         revision.id,
-        expected
+        expected,
+        revision.title
     )
     .fetch_optional(&mut *tx.transaction)
     .await
@@ -281,7 +283,8 @@ pub async fn list(
     search: Option<&str>,
 ) -> Result<Vec<Summary>, DbError> {
     // A title search matches anywhere in the draft's title, case-insensitively; its own `%`, `_`
-    // and `\` match themselves.
+    // and `\` match themselves. It filters on the entry's copy of the title (migration 0015), so
+    // only matching entries look up their draft revision.
     let pattern = search.map(|text| {
         let escaped = text
             .replace('\\', "\\\\")
@@ -311,7 +314,7 @@ pub async fn list(
          ) live ON true
          WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
            AND ($4::uuid IS NULL OR e.id < $4)
-           AND ($6::text IS NULL OR r.title ILIKE $6)
+           AND ($6::text IS NULL OR e.draft_title ILIKE $6)
          ORDER BY e.id DESC
          LIMIT $5"#,
         tx.project,
