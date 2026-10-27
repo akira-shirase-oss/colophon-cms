@@ -65,7 +65,7 @@
 
 <style>
 	.picture {
-		height: 436px;
+		height: 443px;
 		background: var(--visual-ground);
 	}
 	@media (min-width: 50.625rem) {

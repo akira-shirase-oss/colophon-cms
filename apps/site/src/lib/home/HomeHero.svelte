@@ -54,7 +54,7 @@
 		<h1 id="hero-title" class="t-h1 mx-auto max-w-[49.5rem]">
 			{#each titleWords as word, index (index)}<span class="word-in inline-block" style="--w: {index}">{word}</span>{index < titleWords.length - 1 ? ' ' : ''}{/each}
 		</h1>
-		<p class="t-lead mx-auto mt-4 max-w-[49.5rem]">
+		<p class="t-lead mx-auto mt-4 max-w-[43.75rem]">
 			{#each leadWords as word, index (index)}<span class="word-in inline-block" style="--w: {index}; --w0: 100ms">{word}</span>{index < leadWords.length - 1 ? ' ' : ''}{/each}
 		</p>
 		<div class="fade-in mt-10 flex flex-col justify-center gap-2 tb:flex-row" style="--fade-delay: 740ms">

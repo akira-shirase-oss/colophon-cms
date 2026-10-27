@@ -16,7 +16,7 @@
 		title,
 		alt = '',
 		class: className = '',
-		stage = 'h-60',
+		stage = 'h-52 tb:h-[253px] dt:h-60',
 		icon,
 		graphic,
 		children
@@ -38,22 +38,22 @@
 
 <article class="sand flex flex-col rounded-3xl p-8 {className}" data-testid="bento-card" {@attach inView()}>
 	{#if graphic}
-		<div class="flex items-start justify-between gap-4">
+		<div class="flex flex-col-reverse items-start gap-3 tb:flex-row tb:justify-between tb:gap-4">
 			<h3 class="t-h5 max-w-[28rem]">{title}</h3>
-			<span class="shrink-0 pt-1.5"><StatusBadge {kind} {at} /></span>
+			<span class="shrink-0 tb:pt-1.5"><StatusBadge {kind} {at} /></span>
 		</div>
-		<div class="stage-dots bento-stage relative mt-8 -mx-4 overflow-hidden {stage} dt:mt-16" aria-hidden="true">
+		<div class="stage-dots bento-stage relative mt-6 -mx-4 overflow-hidden {stage} tb:mt-16" aria-hidden="true">
 			{@render graphic()}
 		</div>
 		<p class="sr-only">Illustration: {alt}</p>
-		<div class="t-body-lg mt-6 text-pretty [&_strong]:font-semibold [&_strong]:text-foreground">{@render children()}</div>
+		<div class="t-body-lg mt-8 text-pretty [&_strong]:font-semibold [&_strong]:text-foreground">{@render children()}</div>
 	{:else}
 		{@const Icon = icon}
 		<div class="flex items-start justify-between gap-4">
 			<span class="grid size-14 place-items-center rounded-full bg-card shadow-[var(--shadow-icon)]">{#if Icon}<Icon class="size-6" />{/if}</span>
 			<StatusBadge {kind} {at} />
 		</div>
-		<h3 class="t-h6 mt-12 dt:mt-[4.25rem]">{title}</h3>
+		<h3 class="t-h6 mt-8 tb:mt-[4.25rem]">{title}</h3>
 		<div class="t-body mt-4 text-pretty">{@render children()}</div>
 	{/if}
 </article>

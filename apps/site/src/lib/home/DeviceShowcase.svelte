@@ -41,7 +41,7 @@
 		<h2 id="devices" class="t-h2">Write in the Studio,<br class="max-tb:hidden" /> read it on your site</h2>
 	</div>
 
-	<div class="showcase relative mt-14 overflow-hidden rounded-3xl" data-testid="device-showcase">
+	<div class="showcase relative mt-10 overflow-hidden rounded-3xl dt:mt-14" data-testid="device-showcase">
 		{#each VIEWS as view (view.id)}
 			<div
 				role="tabpanel"

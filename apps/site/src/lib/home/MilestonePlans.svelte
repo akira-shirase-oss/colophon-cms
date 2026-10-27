@@ -59,7 +59,7 @@
 </script>
 
 {#snippet checklist(items: Item[])}
-	<ul class="grid gap-4">
+	<ul class="mt-5 grid gap-4">
 		{#each items as item (item.text)}
 			<li class="t-body-lg flex items-start gap-3">
 				{#if item.kind === 'done'}
@@ -81,19 +81,19 @@
 		<h2 id="where" class="t-h2">Where it stands,<br class="max-tb:hidden" /> and what comes next</h2>
 	</div>
 
-	<div class="mt-14 grid items-end gap-6 dt:grid-cols-3">
-		<article class="glass flex flex-col gap-8 rounded-3xl p-8" data-status="done">
+	<div class="mt-10 grid items-end gap-6 dt:mt-14 dt:grid-cols-3">
+		<article class="glass flex flex-col rounded-3xl p-8" data-status="done">
 			<div>
 				<p class="text-lg leading-[1.4] font-medium text-ink-2">Milestones P0 to P2</p>
 				<p class="t-h3 mt-1">{STATUS_WORD.done}</p>
-				<p class="t-body-lg mt-6">Foundation, safe drafts, one-time publishing.</p>
+				<p class="t-body-lg mt-6">Merged, with their proof.</p>
 			</div>
 			{@render checklist(DONE_ITEMS)}
-			<Pill label="Read the changelog" href="/changelog/" variant="secondary" class="w-full" />
+			<Pill label="Read the changelog" href="/changelog/" variant="secondary" class="mt-8 w-full" />
 		</article>
 
-		<article class="highlight flex flex-col gap-8 rounded-3xl p-8" data-status={middle.kind}>
-			<div role="group" aria-label="Show the milestone" class="switch grid grid-cols-2 rounded-full p-1">
+		<article class="highlight flex flex-col rounded-3xl p-8" data-status={middle.kind}>
+			<div role="group" aria-label="Show the milestone" class="switch mb-8 grid grid-cols-2 rounded-full p-1">
 				<button type="button" aria-pressed={showing === 'now'} onclick={() => (showing = 'now')} class="switch-option">Now</button>
 				<button type="button" aria-pressed={showing === 'next'} onclick={() => (showing = 'next')} class="switch-option">Next</button>
 			</div>
@@ -106,17 +106,17 @@
 				<p class="t-body-lg mt-6">{middle.name}.</p>
 			</div>
 			{@render checklist(middleItems)}
-			<Pill label="See the roadmap" href="/roadmap/#{middle.id.toLowerCase()}" class="w-full" />
+			<Pill label="See the roadmap" href="/roadmap/#{middle.id.toLowerCase()}" class="mt-8 w-full" />
 		</article>
 
-		<article class="glass flex flex-col gap-8 rounded-3xl p-8" data-status="planned">
+		<article class="glass flex flex-col rounded-3xl p-8" data-status="planned">
 			<div>
 				<p class="text-lg leading-[1.4] font-medium text-ink-2">Milestones {later[0]?.id} to {later.at(-1)?.id}</p>
 				<p class="t-h3 mt-1">{STATUS_WORD.planned}</p>
-				<p class="t-body-lg mt-6">Parity with Strapi and Sanity, then v0.1.</p>
+				<p class="t-body-lg mt-6">Parity first, then v0.1.</p>
 			</div>
 			{@render checklist(LATER_ITEMS)}
-			<Pill label="See the comparison" href="/compare/" variant="secondary" class="w-full" />
+			<Pill label="See the comparison" href="/compare/" variant="secondary" class="mt-8 w-full" />
 		</article>
 	</div>
 

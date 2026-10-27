@@ -89,7 +89,7 @@
 		<p class="t-eyebrow mb-5">What it guarantees</p>
 		<h2 id="promises" class="t-h2">Built around what<br class="max-tb:hidden" /> is hard to fake</h2>
 	</div>
-	<div class="mt-14 grid gap-6 dt:grid-cols-6">
+	<div class="mt-10 grid gap-6 dt:mt-14 dt:grid-cols-6">
 		<BentoCard
 			kind="done"
 			at="P1, P2"
@@ -133,7 +133,7 @@
 		<h2 id="journal" class="t-h2">Every step,<br class="max-tb:hidden" /> written up as it happened</h2>
 	</div>
 	{#if featured}
-		<div class="mt-14"><PostCard post={featured} variant="wide" /></div>
+		<div class="mt-10 dt:mt-14"><PostCard post={featured} variant="wide" /></div>
 	{/if}
 	<ul class="mt-6 grid gap-6 dt:grid-cols-3">
 		{#each recent as post (post.slug)}

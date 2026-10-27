@@ -56,7 +56,7 @@
 			</div>
 			<ul class="mt-8 grid gap-x-6 gap-y-10 tb:grid-cols-2 dt:grid-cols-3">
 				{#each posts as post (post.slug)}
-					<li data-testid="blog-post"><PostCard {post} /></li>
+					<li data-testid="blog-post"><PostCard {post} dated /></li>
 				{/each}
 			</ul>
 		</section>

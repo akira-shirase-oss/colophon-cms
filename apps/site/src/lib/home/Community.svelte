@@ -42,9 +42,9 @@
 		<p class="t-eyebrow mb-5">Community</p>
 		<h2 id="loop" class="t-h2">Follow along</h2>
 	</div>
-	<ul class="mt-14 grid gap-6 dt:grid-cols-3">
+	<ul class="mt-10 grid gap-6 tb:grid-cols-2 dt:mt-14 dt:grid-cols-3">
 		{#each PLACES as place (place.id)}
-			<li class="glass flex flex-col gap-8 rounded-3xl p-8">
+			<li class="glass flex flex-col gap-8 rounded-3xl p-8 {place.id === 'x' ? 'tb:col-span-2 dt:col-span-1' : ''}">
 				<div class="flex items-start justify-between gap-4">
 					<span class="grid size-16 place-items-center rounded-2xl {place.id === 'x' ? 'bg-[#000] text-white' : 'bg-card text-foreground shadow-[var(--shadow-icon)]'}">
 						{#if place.id === 'log'}<BookOpenIcon class="size-7" aria-hidden="true" />{:else}<BrandIcon name={place.id} size={28} />{/if}

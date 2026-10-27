@@ -70,7 +70,7 @@
 						</li>
 					</ul>
 				</div>
-				<div class="grid gap-10 tb:grid-cols-3 tb:gap-8">
+				<div class="grid grid-cols-2 gap-x-6 gap-y-10 tb:grid-cols-3 tb:gap-8">
 					{#each COLUMNS as column (column.title)}
 						<nav aria-label={column.title} class="tb:w-[8.375rem]">
 							<h2 class="t-label text-[0.9375rem] text-foreground">{column.title}</h2>
