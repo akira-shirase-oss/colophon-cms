@@ -115,14 +115,13 @@ impl Scope {
     }
 
     /// Only a name that could be a collection gets a tag of its own: tags go into a response
-    /// header, and a made-up name in a URL mustn't put arbitrary text there.
+    /// header, and a made-up name in a URL mustn't put arbitrary text there. "Could be a
+    /// collection" is exactly a collection's slug rule, hyphens included: a narrower rule left
+    /// collections like `release-notes` without a tag, so purges missed their list pages.
     fn collection_tag(&self, collection: &str) -> Option<String> {
-        let bytes = collection.as_bytes();
-        let plausible = (1..=64).contains(&bytes.len())
-            && bytes
-                .iter()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_');
-        plausible.then(|| format!("{}:c:{collection}", self.environment_tag()))
+        crate::project::Slug::parse(collection)
+            .is_ok()
+            .then(|| format!("{}:c:{collection}", self.environment_tag()))
     }
 }
 
@@ -214,6 +213,16 @@ mod tests {
             ]
         );
         assert_eq!(at_3.list_tags("articles").len(), 3);
+        // A collection with a hyphen in its name gets its tag too (it didn't, and purges missed
+        // its lists); a name no collection could have doesn't.
+        assert_eq!(
+            at_3.list_tags("release-notes").last(),
+            Some(&format!(
+                "colophon:p:{project}:e:{environment}:c:release-notes"
+            ))
+        );
+        assert_eq!(at_3.list_tags("Not a slug").len(), 2);
+        assert_eq!(at_3.list_tags("-edge").len(), 2);
         // Tags don't depend on the generation: a purge finds every release's answers.
         assert_eq!(scope(4).list_tags("articles"), at_3.list_tags("articles"));
     }
