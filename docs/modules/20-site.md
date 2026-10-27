@@ -71,8 +71,10 @@ for the site only, light and dark. Ink `#1a1615`, copy `#453f3d`, captions `#666
 reference's `#757170`, which fails AA on the bluest part of the page), eyebrows `#614a44`; a page ground that runs from
 paper through sand to sky; a sky-to-sand band behind every page's first screen; glass cards (white at 70%, blurred)
 and sand cards (`#f0eae5`), 24px corners, shadows only on icons and frames. Post labels use the reference's hues,
-deepened until white text passes AA. Dark is the same layout at night: a deep blue band over warm dusk, glass on
-near-black, white pills. Breakpoints are the reference's: `tb` from 810px, `dt` from 1,200px. The measure is 1,072px,
+deepened until white text passes AA. The milestone under way is a flat card like its neighbours, marked only by its
+outline. Dark keeps to warm browns, at the maintainer's request: a warm near-black page and band, dark-brown cards,
+white pills, and the orange accent (not blue) for the current milestone's outline and the focus ring; no blue except
+what means something. Breakpoints are the reference's: `tb` from 810px, `dt` from 1,200px. The measure is 1,072px,
 with 40px gutters on a tablet and 16 on a phone; sections are 160px apart on a desktop, 96 on a tablet, 80 on a phone;
 a heading sits 56px above its content on a desktop and 40 below that.
 

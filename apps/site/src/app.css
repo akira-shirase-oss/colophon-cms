@@ -67,7 +67,8 @@
 	--tertiary: rgb(255 255 255 / 0.1);
 	--tertiary-hover: rgb(255 255 255 / 0.2);
 	--highlight-line: #84b9ef;
-	--highlight-ground: linear-gradient(#b7d5f1 15%, #f4e6da 100%);
+	--highlight-width: 5px;
+	--highlight-fill: var(--glass);
 	--hero-ground: linear-gradient(#9cc1e7 0%, #eddfd0 100%);
 	--page-ground: linear-gradient(#fafafa 0%, #f9f8f8 36%, #f4f1ee 45%, #f4f1ee 51%, #e2ecf6 73%, #a7cbf2 125%);
 	--visual-ground: linear-gradient(#9cc1e7 0%, #c9d6e4 55%, #eddfd0 100%);
@@ -85,7 +86,8 @@
 	--label-failure: #b8461f;
 }
 
-/* Dark: the same layout at night: a deep blue sky over warm dusk, glass on near-black, white pills. */
+/* Dark: warm browns only (the maintainer's choice): a warm near-black page, dark-brown cards, white
+ * pills, the orange accent for what is current. No blue except where it means something. */
 .dark {
 	--background: #121110;
 	--foreground: #f4f1ee;
@@ -103,7 +105,7 @@
 	--accent-foreground: #f4f1ee;
 	--border: #34302c;
 	--input: #3a3531;
-	--ring: #8ab8ea;
+	--ring: #e8916c;
 	--brand: #e07a55;
 	--brand-ink: #f0a383;
 	--brand-soft: #3a241b;
@@ -116,17 +118,18 @@
 	--chip: #2a2622;
 	--chip-hover: #332e29;
 	--line: #3a3531;
-	--sky: #23364d;
+	--sky: #2a221b;
 	--frame-line: rgb(255 255 255 / 0.12);
 	--nav-glass: rgb(28 25 23 / 0.6);
 	--nav-edge: rgb(255 255 255 / 0.1);
 	--tertiary: rgb(255 255 255 / 0.06);
 	--tertiary-hover: rgb(255 255 255 / 0.12);
-	--highlight-line: #4f86c0;
-	--highlight-ground: linear-gradient(#1d2d42 15%, #2a211b 100%);
-	--hero-ground: linear-gradient(#1b2a3c 0%, #2a221b 100%);
-	--page-ground: linear-gradient(#131211 0%, #131211 36%, #171411 45%, #171411 51%, #111822 73%, #0e1c2e 125%);
-	--visual-ground: linear-gradient(#1d2d42 0%, #232530 55%, #2a221b 100%);
+	--highlight-line: var(--brand);
+	--highlight-width: 2px;
+	--highlight-fill: #26201b;
+	--hero-ground: linear-gradient(#1c1714 0%, #2a221b 100%);
+	--page-ground: linear-gradient(#131211 0%, #141210 36%, #171411 45%, #171411 51%, #151210 73%, #120f0d 125%);
+	--visual-ground: linear-gradient(#2b231d 0%, #241e19 55%, #1e1915 100%);
 	--cloud: rgb(255 255 255 / 0.035);
 	--shadow-frame: 0 4px 50px rgb(0 0 0 / 0.35);
 	--shadow-icon: 0 4px 40px rgb(0 0 0 / 0.45);
@@ -136,7 +139,7 @@
 
 	--label-latest: #7a5d55;
 	--label-release: #0b7f45;
-	--label-experiment: #1d68b3;
+	--label-experiment: #8f5b14;
 	--label-failure: #b8461f;
 }
 

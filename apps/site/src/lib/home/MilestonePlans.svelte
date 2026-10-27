@@ -50,7 +50,7 @@
 	// Five lines, like its neighbours: the last two milestones share one.
 	const LATER_ITEMS: Item[] = [
 		...later.slice(0, -2).map((milestone) => ({ text: `${SHORT[milestone.id] ?? milestone.name} · ${milestone.id}`, kind: milestone.kind })),
-		...(later.length >= 2 ? [{ text: `Automation, operations · ${later.at(-2)!.id}, ${later.at(-1)!.id}`, kind: later.at(-1)!.kind }] : [])
+		...(later.length >= 2 ? [{ text: `Automation, ops · ${later.at(-2)!.id}, ${later.at(-1)!.id}`, kind: later.at(-1)!.kind }] : [])
 	];
 
 	let showing = $state<'now' | 'next'>('now');
@@ -126,9 +126,13 @@
 </section>
 
 <style>
+	/* The milestone under way: a flat card like its neighbours, marked by its outline (blue in
+	   light, the orange accent in dark; app.css). */
 	.highlight {
-		background: var(--highlight-ground);
-		box-shadow: inset 0 0 0 5px var(--highlight-line);
+		background: var(--highlight-fill);
+		box-shadow: inset 0 0 0 var(--highlight-width) var(--highlight-line);
+		-webkit-backdrop-filter: blur(10px);
+		backdrop-filter: blur(10px);
 	}
 	.switch {
 		background: var(--chip);

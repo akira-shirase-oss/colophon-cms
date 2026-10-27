@@ -44,16 +44,17 @@
 	:global(.dark) .cover {
 		color: #f4f1ee;
 	}
+	/* Dark keeps to warm browns: umber, sand, rust and clay. */
 	:global(.dark) [data-tone='sky'] .ground {
-		background: linear-gradient(160deg, #1f3550 0%, #24303d 55%, #2c241d 100%);
+		background: linear-gradient(160deg, #3a2c22 0%, #2e241d 55%, #251e19 100%);
 	}
 	:global(.dark) [data-tone='sand'] .ground {
-		background: linear-gradient(160deg, #3a2f26 0%, #2f2620 60%, #261f1a 100%);
+		background: linear-gradient(160deg, #3d3226 0%, #322920 60%, #28211b 100%);
 	}
 	:global(.dark) [data-tone='dusk'] .ground {
-		background: linear-gradient(160deg, #3a2f4a 0%, #33283a 55%, #2d231f 100%);
+		background: linear-gradient(160deg, #432a20 0%, #35241c 55%, #2a1f19 100%);
 	}
 	:global(.dark) [data-tone='sea'] .ground {
-		background: linear-gradient(160deg, #1d3d3a 0%, #22332f 55%, #2a2820 100%);
+		background: linear-gradient(160deg, #3b3324 0%, #2f291e 55%, #26211a 100%);
 	}
 </style>
