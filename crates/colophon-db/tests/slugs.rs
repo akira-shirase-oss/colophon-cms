@@ -93,7 +93,7 @@ async fn alpha(db: &TestDb) -> (Uuid, Uuid) {
     (alice, project)
 }
 
-/// Every entry's `draft_slug` is its draft revision's slug (migration 0015's promise, which no
+/// Every entry's `draft_slug` is its draft revision's slug (migration 0016's promise, which no
 /// foreign key enforces).
 async fn assert_draft_slugs_match(db: &TestDb) {
     let owner = db.owner().await;
