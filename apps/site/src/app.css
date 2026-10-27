@@ -618,7 +618,7 @@
 		}
 	}
 
-	/* The theme switch: the new theme is clipped in as a growing circle (ThemeMenu). */
+	/* The theme switch: the new theme is clipped in as a growing circle (ThemeToggle). */
 	::view-transition-old(root),
 	::view-transition-new(root) {
 		animation: none;

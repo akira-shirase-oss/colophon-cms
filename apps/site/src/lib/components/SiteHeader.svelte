@@ -12,7 +12,7 @@
 	import BrandIcon from './BrandIcon.svelte';
 	import Mark from './Mark.svelte';
 	import Pill from './Pill.svelte';
-	import ThemeMenu from './ThemeMenu.svelte';
+	import ThemeToggle from './ThemeToggle.svelte';
 
 	let menu = $state(false);
 	let scrolled = $state(false);
@@ -80,7 +80,7 @@
 			</nav>
 
 			<div class="right relative flex items-center gap-2" data-nav-part>
-				<ThemeMenu />
+				<ThemeToggle />
 				<a
 					href={GITHUB}
 					class="hidden size-10 place-items-center rounded-full text-foreground outline-none hover:bg-[var(--tertiary-hover)] focus-visible:ring-2 focus-visible:ring-ring dt:grid"

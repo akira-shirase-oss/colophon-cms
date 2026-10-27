@@ -140,17 +140,22 @@ test('the licence is described as proposed, not confirmed', async ({ page }) => 
 
 test.describe('with motion', () => {
 	test.use({ reducedMotion: 'no-preference' });
-	test('the appearance choice changes the theme and survives a reload', async ({ page }) => {
-		await page.emulateMedia({ colorScheme: 'light' });
+	test('one button switches between light and dark, and the choice survives a reload', async ({ page }) => {
+		// Until it's pressed, the site follows the system.
+		await page.emulateMedia({ colorScheme: 'dark' });
 		await page.goto('/');
-		await page.getByRole('button', { name: 'Appearance' }).click();
-		await page.getByRole('menuitemradio', { name: 'Dark' }).click();
+		const toggle = page.getByRole('button', { name: 'Dark mode' });
 		await expect(page.locator('html')).toHaveClass(/\bdark\b/);
-		await page.reload();
-		await expect(page.locator('html')).toHaveClass(/\bdark\b/);
-		await page.getByRole('button', { name: 'Appearance' }).click();
-		await page.getByRole('menuitemradio', { name: 'System' }).click();
+		await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+		await toggle.click();
 		await expect(page.locator('html')).not.toHaveClass(/\bdark\b/);
+		await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+		await page.reload();
+		await expect(page.locator('html')).not.toHaveClass(/\bdark\b/);
+		await page.getByRole('button', { name: 'Dark mode' }).click();
+		await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+		// No menu any more: one press, one switch.
+		await expect(page.getByRole('menuitemradio')).toHaveCount(0);
 	});
 });
 
