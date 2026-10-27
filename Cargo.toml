@@ -43,6 +43,9 @@ tower-http = { version = "0.7.1", features = ["request-id", "trace", "timeout", 
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 time = { version = "0.3.55", default-features = false, features = ["std"] }
+# Scheduled publishing resolves local times in IANA time zones (D-060); the bundled database
+# makes every machine resolve them the same way, with no I/O.
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 url = { version = "2.5.8", default-features = false, features = ["std"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 

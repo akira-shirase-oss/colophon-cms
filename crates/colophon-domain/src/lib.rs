@@ -19,4 +19,5 @@ pub mod project;
 pub mod receipt;
 pub mod release;
 pub mod rich_text;
+pub mod schedule;
 pub mod schema;
