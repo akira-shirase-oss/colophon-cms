@@ -260,12 +260,14 @@ async fn a_release_never_publishes_a_slug_another_entry_still_publishes() {
 async fn a_content_type_change_waits_for_the_writes_under_way() {
     let db = TestDb::new().await;
     let (alice, project) = alpha(&db).await;
-    let mut writer = enter(&db.app, alice, project).await;
+    // Three transactions at once: a pool of their own (db.app has one connection).
+    let pool = db.app_pool(4).await;
+    let mut writer = enter(&pool, alice, project).await;
     content_types::lock_for_write(&mut writer, "articles")
         .await
         .expect("shared");
     // A second writer shares the lock.
-    let mut other = enter(&db.app, alice, project).await;
+    let mut other = enter(&pool, alice, project).await;
     tokio::time::timeout(
         Duration::from_secs(2),
         content_types::lock_for_write(&mut other, "articles"),
@@ -275,9 +277,9 @@ async fn a_content_type_change_waits_for_the_writes_under_way() {
     .expect("shared");
     drop(other);
 
-    let pool = db.app.clone();
+    let changer = pool.clone();
     let change = tokio::spawn(async move {
-        let mut tx = enter(&pool, alice, project).await;
+        let mut tx = enter(&changer, alice, project).await;
         content_types::lock_for_change(&mut tx, "articles")
             .await
             .expect("exclusive");
@@ -289,6 +291,7 @@ async fn a_content_type_change_waits_for_the_writes_under_way() {
         .await
         .expect("the change goes ahead once the writer is done")
         .expect("joined");
+    pool.close().await;
     db.drop().await;
 }
 
