@@ -122,19 +122,22 @@ test.describe('with motion', () => {
 	});
 });
 
-test('every bento card has a status and words for its picture', async ({ page }) => {
+test('every bento card has a status, and every picture has words', async ({ page }) => {
 	await page.goto('/');
+	// The reference's bento: two wide cells with live pictures, three narrow ones with icons.
 	const cards = page.getByTestId('bento-card');
-	await expect(cards).toHaveCount(8);
+	await expect(cards).toHaveCount(5);
+	await expect(cards.filter({ has: page.locator('.stage-dots') })).toHaveCount(2);
 	for (const card of await cards.all()) {
 		await expect(card.locator('[data-status]')).toHaveCount(1);
-		const interactive = (await card.locator('input[type=range]').count()) > 0;
-		if (!interactive) await expect(card.locator('.sr-only', { hasText: 'Illustration:' })).toHaveCount(1);
+		const pictured = (await card.locator('.stage-dots').count()) > 0;
+		await expect(card.locator('.sr-only', { hasText: 'Illustration:' })).toHaveCount(pictured ? 1 : 0);
 	}
 });
 
+// The slider and the API panes moved from the home page to the product page with the new look.
 test('the release slider works from the keyboard', async ({ page }) => {
-	await page.goto('/');
+	await page.goto('/product/');
 	const slider = page.getByRole('slider', { name: /Viewing release/ });
 	await slider.focus();
 	await page.keyboard.press('End');
@@ -145,7 +148,7 @@ test('the release slider works from the keyboard', async ({ page }) => {
 });
 
 test('the API panes are tabs: arrow keys move between them, and each shows its answer', async ({ page }) => {
-	await page.goto('/');
+	await page.goto('/product/');
 	const read = page.getByRole('tab', { name: 'Read' });
 	await read.click();
 	await expect(page.getByRole('tabpanel')).toContainText('colophon-generation: 42');

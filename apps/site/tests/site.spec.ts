@@ -67,7 +67,7 @@ test('no page requests anything from another origin', async ({ page, baseURL }) 
 	await expect(page).toHaveURL(/\/blog\/$/);
 	await page.waitForLoadState('networkidle');
 	expect(foreign).toEqual([]);
-	// One typeface, self-hosted.
+	// Inter for text, self-hosted (code is set in Fragment Mono, also self-hosted; look.spec.ts).
 	expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toContain('Inter Variable');
 });
 
