@@ -59,6 +59,19 @@ receipt *Verified at 1 location*, the autosaving editor, an approved publish req
 visual, a bento of promises, a numbered how-it-works row, figure cards, comparison tables, a changelog timeline, a
 milestone-grouped post index, a sitemap footer), not their text or images.
 
+### Motion and live graphics
+
+The home page is mostly things to watch: the hero plays out a publish (typing, the save, the approved publish request,
+the receipt checking off to *Verified at 1 location*), a data-flow diagram carries a dot from the Studio through the API,
+PostgreSQL's one transaction and the worker to the destinations, an asymmetric bento shows each guarantee as a small
+graphic of real behaviour (`src/lib/bento`), tabs show real API answers (status lines, headers, error envelopes from
+`crates/colophon-api`), and a chart shows every load run. `src/lib/motion.ts` switches a graphic on only while it is in
+view (`data-run`: armed, on, off) and gives spotlights the pointer position; no animation library. Loops are 8 to 12
+seconds and mostly at rest; reveals run once. Only transform and opacity animate. The prerendered HTML, readers
+without JavaScript and readers who ask for reduced motion get every graphic's resting frame; decorative graphics are
+`aria-hidden` and carry a sentence instead. Patterns taken (not code) from Aceternity UI's bento grid, card spotlight
+and glowing effect, Magic UI's animated beam, and Supabase's product bento (loops paused until relevant).
+
 ### Build
 
 SvelteKit with `@sveltejs/adapter-static`: every route prerendered with trailing slashes; `404.html` is the fallback a
@@ -78,6 +91,7 @@ doesn't try to build another app's pages; any other broken internal link or miss
 | W5 | The changelog and the blog are rendered from their sources at build time; they are never edited on the site. |
 | W6 | Every page passes axe (WCAG 2.1 AA) in light and dark and fits a 320px screen. |
 | W7 | The licence is described as proposed, not confirmed, until O-014 closes. |
+| W8 | Under reduced motion nothing animates and every graphic shows its final frame; a graphic shows only real behaviour or real numbers, with its status. |
 
 ## Interfaces
 
@@ -103,7 +117,10 @@ doesn't try to build another app's pages; any other broken internal link or miss
 errors and no axe violations in light and dark; no request to another origin across every page and a client-side
 navigation; one blog entry per post file, canonical links, byte-for-byte copies; changelog entries equal to
 `CHANGELOG.md`'s, in order; feed and sitemap contents; statuses on every feature; the licence's wording; the appearance
-menu; the phone menu with axe; no sideways scrolling at 320px. `tests/screenshots.spec.ts` saves every page at 1440 and
+menu; the phone menu with axe; no sideways scrolling at 320px. `apps/site/tests/motion.spec.ts`: under reduced motion no
+graphic switches on and nothing animates, and the hero shows its last frame; with motion the story plays, rests and
+replays, axe passes in light and dark while graphics run, loops pause off screen, and the slider, API tabs and backlog
+filter work from the keyboard. `tests/screenshots.spec.ts` saves every page at 1440 and
 390 wide, light and dark, when `SITE_SHOTS_DIR` is set. The site serves no requests of its own, so D-018's testbed page
 and load scenario don't apply.
 
