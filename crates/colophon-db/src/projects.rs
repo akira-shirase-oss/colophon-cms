@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{
     DbError,
-    scope::{self, Scope},
+    scope::{self, MemberTransaction, Scope},
 };
 
 /// A project as one of its members sees it.
@@ -18,8 +18,10 @@ pub struct Project {
     pub slug: String,
     /// Its display name.
     pub name: String,
-    /// The asking identity's role in it.
+    /// The asking identity's role in it, by key.
     pub role: String,
+    /// That role's name, for people (D-058: it may be one the project's owners defined).
+    pub role_name: String,
 }
 
 /// Creates a project with a `production` environment holding the built-in articles content type,
@@ -95,6 +97,7 @@ pub async fn create(
         slug: slug.to_owned(),
         name: name.to_owned(),
         role: "owner".to_owned(),
+        role_name: "Owner".to_owned(),
     })
 }
 
@@ -120,8 +123,9 @@ pub(crate) async fn list_in(
 ) -> Result<Vec<Project>, DbError> {
     sqlx::query_as!(
         Project,
-        "SELECT p.id, p.slug, p.name, m.role FROM projects p
+        "SELECT p.id, p.slug, p.name, m.role, r.name AS role_name FROM projects p
          JOIN memberships m ON m.project_id = p.id AND m.identity_id = $1
+         JOIN roles r ON r.project_id = m.project_id AND r.key = m.role
          ORDER BY p.name, p.id
          LIMIT 1000",
         identity
@@ -143,8 +147,9 @@ pub async fn get(pool: &PgPool, identity: Uuid, id: Uuid) -> Result<Option<Proje
     .await?;
     let project = sqlx::query_as!(
         Project,
-        "SELECT p.id, p.slug, p.name, m.role FROM projects p
+        "SELECT p.id, p.slug, p.name, m.role, r.name AS role_name FROM projects p
          JOIN memberships m ON m.project_id = p.id AND m.identity_id = $1
+         JOIN roles r ON r.project_id = m.project_id AND r.key = m.role
          WHERE p.id = $2",
         identity,
         id
@@ -154,4 +159,20 @@ pub async fn get(pool: &PgPool, identity: Uuid, id: Uuid) -> Result<Option<Proje
     .map_err(DbError::from_query)?;
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(project)
+}
+
+/// The project of a member's transaction, as that member sees it.
+pub async fn describe(tx: &mut MemberTransaction) -> Result<Project, DbError> {
+    sqlx::query_as!(
+        Project,
+        "SELECT p.id, p.slug, p.name, m.role, r.name AS role_name FROM projects p
+         JOIN memberships m ON m.project_id = p.id AND m.identity_id = $1
+         JOIN roles r ON r.project_id = m.project_id AND r.key = m.role
+         WHERE p.id = $2",
+        tx.identity,
+        tx.project
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
 }

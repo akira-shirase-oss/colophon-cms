@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT p.id, p.slug, p.name, m.role FROM projects p\n         JOIN memberships m ON m.project_id = p.id AND m.identity_id = $1\n         WHERE p.id = $2",
+  "query": "SELECT p.id, p.slug, p.name, m.role, r.name AS role_name FROM projects p\n         JOIN memberships m ON m.project_id = p.id AND m.identity_id = $1\n         JOIN roles r ON r.project_id = m.project_id AND r.key = m.role\n         ORDER BY p.name, p.id\n         LIMIT 1000",
   "describe": {
     "columns": [
       {
@@ -46,11 +46,21 @@
             "name": "role"
           }
         }
+      },
+      {
+        "ordinal": 4,
+        "name": "role_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "name"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid",
         "Uuid"
       ]
     },
@@ -58,8 +68,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "872daacbe5aa73263de80925b97ffc900cc7e2fee71a7b589a1898e202d4a423"
+  "hash": "7e7175b818ee49ddfa3f50ee03b8f6122b7f6f67aa8dbfcd9470bcb5c8148239"
 }

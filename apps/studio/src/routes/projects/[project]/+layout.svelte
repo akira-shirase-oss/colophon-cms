@@ -49,7 +49,8 @@
 		'/projects/[project]/releases/[generation]': 'Releases',
 		'/projects/[project]/members': 'Members',
 		'/projects/[project]/settings': 'Settings',
-		'/projects/[project]/settings/types/[type]': 'Settings'
+		'/projects/[project]/settings/types/[type]': 'Settings',
+		'/projects/[project]/settings/roles/[role]': 'Settings'
 	};
 	const collectionName = $derived(
 		types.data?.find((type) => type.slug === page.params.collection)?.definition.name ?? page.params.collection ?? ''
@@ -75,6 +76,7 @@
 			trail.push({ label: section, href: detail ? href : undefined });
 			if (route.endsWith('[generation]')) trail.push({ label: `Release ${page.params.generation}` });
 			if (route.endsWith('[changeset]')) trail.push({ label: 'Changeset' });
+			if (route.endsWith('[role]')) trail.push({ label: `Role ${page.params.role ?? ''}` });
 			if (route.endsWith('[type]')) {
 				trail.push({ label: types.data?.find((type) => type.slug === page.params.type)?.definition.name ?? page.params.type ?? '' });
 			}

@@ -38,6 +38,18 @@ pub(crate) struct PermissionView {
     subject: String,
 }
 
+/// A policy's permissions as the API shows them: `{"action", "subject"}`, sorted.
+pub(crate) fn permission_views(policy: &Policy) -> Vec<PermissionView> {
+    policy
+        .permissions()
+        .iter()
+        .map(|permission| PermissionView {
+            action: permission.action.as_str(),
+            subject: permission.subject.as_str().to_owned(),
+        })
+        .collect()
+}
+
 #[derive(Serialize)]
 pub(crate) struct RoleView {
     key: String,
@@ -57,15 +69,7 @@ impl RoleView {
     fn new(role: StoredRole) -> Result<Self, ApiError> {
         Ok(Self {
             fixed: role.key == roles::OWNER,
-            permissions: role
-                .policy
-                .permissions()
-                .iter()
-                .map(|permission| PermissionView {
-                    action: permission.action.as_str(),
-                    subject: permission.subject.as_str().to_owned(),
-                })
-                .collect(),
+            permissions: permission_views(&role.policy),
             key: role.key,
             name: role.name,
             description: role.description,

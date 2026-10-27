@@ -9,7 +9,43 @@ export interface Project {
 	id: string;
 	slug: string;
 	name: string;
+	/** The caller's role, by key. */
 	role: Role;
+	/** That role's name, for people. */
+	role_name: string;
+	/** What that role allows; only when one project is read (D-058). */
+	permissions?: Grant[];
+}
+
+/** Something a member may try to do (D-058). */
+export type Action =
+	| 'content.read'
+	| 'content.create'
+	| 'content.update'
+	| 'content.delete'
+	| 'content.review'
+	| 'content.publish'
+	| 'schema.change'
+	| 'members.manage'
+	| 'roles.manage'
+	| 'destinations.manage'
+	| 'tokens.manage';
+
+/** One permission: an action, on `*` or one collection. */
+export interface Grant {
+	action: Action;
+	subject: string;
+}
+
+/**
+ * Whether the caller's role allows `action`, in `collection` when it's about one; `undefined`
+ * asks for it everywhere. The same rule as the server's `Policy::allows`, so the Studio only
+ * offers what will work; the server still decides every request.
+ */
+export function may(project: Pick<Project, 'permissions'> | undefined, action: Action, collection?: string): boolean {
+	return (project?.permissions ?? []).some(
+		(grant) => grant.action === action && (grant.subject === '*' || (collection !== undefined && grant.subject === collection))
+	);
 }
 
 export interface Me {
@@ -200,7 +236,7 @@ async function send(method: string, path: string, body?: unknown, headers: Recor
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
 			throw new ApiError('not-found', message, 404);
-		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version'):
+		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version' || reason === 'stale_role'):
 			throw new ApiError('conflict', message, 409, reason, response.headers.get('etag'), details);
 		case response.status >= 500 || response.status === 429:
 			throw new ApiError('retry', message, response.status, reason);
@@ -348,18 +384,52 @@ export async function approveDevice(code: string): Promise<void> {
 	await send('POST', '/auth/device/approve', { user_code: code });
 }
 
-/** What a member may do in a project (D-042): owners everything, developers all but members,
- *  editors and publishers content. */
-export type Role = 'owner' | 'developer' | 'editor' | 'publisher';
-export const ROLES: readonly Role[] = ['owner', 'developer', 'editor', 'publisher'];
+/** A role, by its key: one of the four every project starts with, or one its owners defined
+ *  (D-042, D-058). */
+export type Role = string;
 
-/** What each role may do, in a few words, for the members and invitation pages. */
-export const ROLE_SUMMARY: Record<Role, string> = {
-	owner: 'everything, including who belongs',
-	developer: 'content and content types',
-	editor: 'content',
-	publisher: 'content (publishing comes later)'
-};
+/** A project's role, as Settings shows and edits it. */
+export interface RoleDefinition {
+	key: string;
+	name: string;
+	description: string;
+	built_in: boolean;
+	/** The owner role: every permission, never changed or deleted. */
+	fixed: boolean;
+	version: number;
+	permissions: Grant[];
+	members: number;
+	invitations: number;
+	updated_at: string;
+}
+
+/** What creating or changing a role sends. */
+export interface RoleInput {
+	name: string;
+	description: string;
+	permissions: Grant[];
+}
+
+const roles = (project: string) => `/api/v1/projects/${project}/roles`;
+
+export async function listRoles(project: string): Promise<RoleDefinition[]> {
+	return ((await (await send('GET', roles(project))).json()) as { data: RoleDefinition[] }).data;
+}
+
+export async function createRole(project: string, key: string, role: RoleInput): Promise<RoleDefinition> {
+	return ((await (await send('POST', roles(project), { key, ...role })).json()) as { data: RoleDefinition }).data;
+}
+
+/** Refused with a conflict when someone changed the role since `version`. */
+export async function updateRole(project: string, key: string, version: number, role: RoleInput): Promise<RoleDefinition> {
+	const response = await send('PUT', `${roles(project)}/${key}`, role, { 'If-Match': `"v${version}"` });
+	return ((await response.json()) as { data: RoleDefinition }).data;
+}
+
+/** Refused while members hold the role or pending invitations offer it. */
+export async function deleteRole(project: string, key: string, version: number): Promise<void> {
+	await send('DELETE', `${roles(project)}/${key}`, undefined, { 'If-Match': `"v${version}"` });
+}
 
 export interface Member {
 	identity_id: string;
@@ -383,6 +453,8 @@ export interface Offer {
 	project_id: string;
 	project_name: string;
 	role: Role;
+	role_name: string;
+	role_description: string;
 	invited_by: string | null;
 	expires_at: string;
 }
@@ -394,12 +466,13 @@ export async function listMembers(project: string): Promise<Member[]> {
 	return ((await (await send('GET', members(project))).json()) as { data: Member[] }).data;
 }
 
-/** Owners only; refused when it would leave the project without an owner. */
+/** Needs `members.manage` and every power of both roles; refused when it would leave the project
+ *  without an owner. */
 export async function changeRole(project: string, identity: string, role: Role): Promise<void> {
 	await send('PUT', `${members(project)}/${identity}`, { role });
 }
 
-/** An owner removing someone, or anyone removing themselves (leaving). */
+/** Someone who manages members removing someone, or anyone removing themselves (leaving). */
 export async function removeMember(project: string, identity: string): Promise<void> {
 	await send('DELETE', `${members(project)}/${identity}`);
 }

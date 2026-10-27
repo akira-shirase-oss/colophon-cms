@@ -67,8 +67,12 @@ pub struct Offer {
     pub project_id: Uuid,
     /// The project's name.
     pub project_name: String,
-    /// The role it grants.
+    /// The role it grants, by key.
     pub role: String,
+    /// That role's name, for people.
+    pub role_name: String,
+    /// What that role is for.
+    pub role_description: String,
     /// The name of the person who invited them.
     pub invited_by: Option<String>,
     /// When it stops working.
@@ -314,15 +318,25 @@ pub async fn offer(
         },
     )
     .await?;
-    let project_name =
-        sqlx::query_scalar!("SELECT name FROM projects WHERE id = $1", found.project_id)
-            .fetch_one(&mut *transaction)
-            .await
-            .map_err(DbError::from_query)?;
+    let named = sqlx::query!(
+        "SELECT p.name AS project_name, r.name AS role_name, r.description AS role_description
+         FROM projects p JOIN roles r ON r.project_id = p.id AND r.key = $2
+         WHERE p.id = $1",
+        found.project_id,
+        found.role
+    )
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
     transaction.commit().await.map_err(DbError::from_query)?;
+    // A pending invitation's role can't be deleted (colophon_db::roles), so this is only `None`
+    // for an invitation that is no longer any use.
+    let Some(named) = named else { return Ok(None) };
     Ok(Some(Offer {
         project_id: found.project_id,
-        project_name,
+        project_name: named.project_name,
+        role_name: named.role_name,
+        role_description: named.role_description,
         role: found.role,
         invited_by: found.invited_by,
         expires_at: found.expires_at,

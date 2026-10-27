@@ -42,7 +42,6 @@
 		)
 	);
 	const recent = $derived([...all].sort((a, b) => b.entry.updated_at.localeCompare(a.entry.updated_at)).slice(0, 8));
-	const ROLE_WORD = { owner: 'Owner', developer: 'Developer', editor: 'Editor', publisher: 'Publisher' } as const;
 </script>
 
 <svelte:head><title>{mine.data?.name ?? 'Overview'} · Colophon Studio</title></svelte:head>
@@ -52,7 +51,7 @@
 		{#if mine.data}
 			<span>{mine.data.slug}</span>
 			<span aria-hidden="true">·</span>
-			<span>{ROLE_WORD[mine.data.role]}</span>
+			<span>{mine.data.role_name}</span>
 		{/if}
 	{/snippet}
 </PageHeader>

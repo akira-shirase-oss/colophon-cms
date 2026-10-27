@@ -381,6 +381,8 @@ pub(crate) struct OfferView {
     project_id: Uuid,
     project_name: String,
     role: String,
+    role_name: String,
+    role_description: String,
     invited_by: Option<String>,
     expires_at: String,
 }
@@ -410,6 +412,8 @@ pub(crate) async fn lookup(
             project_id: offer.project_id,
             project_name: offer.project_name,
             role: offer.role,
+            role_name: offer.role_name,
+            role_description: offer.role_description,
             invited_by: offer.invited_by,
             expires_at: rfc3339(offer.expires_at)?,
         },

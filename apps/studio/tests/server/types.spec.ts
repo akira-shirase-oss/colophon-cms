@@ -34,7 +34,7 @@ test('an owner builds a content type in Settings, and its entries get URL names'
 	await signIn(page);
 	const project = await newProject(page);
 	await page.goto(`/studio/projects/${project}/settings`);
-	await page.getByLabel('Name', { exact: true }).fill('Recipes');
+	await page.locator('#type-name').fill('Recipes');
 	await expect(page.getByLabel('URL name')).toHaveValue('recipes');
 	await page.getByRole('button', { name: 'Create and add fields' }).click();
 	await expect(page.getByRole('heading', { level: 1, name: 'Recipes' })).toBeVisible();
