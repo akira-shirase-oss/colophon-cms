@@ -27,7 +27,7 @@ use colophon_db::{
     scope::{self, ProjectTransaction},
 };
 use colophon_domain::{
-    policy::Action,
+    policy::{Action, Fields},
     schema::{Content, ContentType, FieldKind},
 };
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,7 @@ use crate::{
     fault,
     session::{SignedIn, services},
     shape::{Data, Page},
+    visibility::{self, Access},
 };
 
 /// The header that carries an idempotency key.
@@ -98,23 +99,50 @@ struct DraftView {
     id: Uuid,
     collection: String,
     created_at: String,
+    created_by: Uuid,
     updated_at: String,
     revision: RevisionView,
-    /// The stored canonical JSON, embedded as is: re-serializing could reorder its keys.
+    /// The stored canonical JSON, embedded as is: re-serializing could reorder its keys. Only the
+    /// fields the caller's role may read (D-058, step R.3).
     content: Box<RawValue>,
+    /// The content type's fields left out because the caller's role can't read them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    hidden_fields: Vec<String>,
+    /// Fields the caller's role can read but not change: an editor shows them locked.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    locked_fields: Vec<String>,
 }
 
 impl DraftView {
-    fn new(draft: Draft) -> Result<Self, ApiError> {
+    /// The draft as the caller may see it: `None` if their role can't read it.
+    fn shown(draft: Draft, access: &Access, content_type: &ContentType) -> Result<Self, ApiError> {
+        let read = access.read.as_ref().ok_or(ApiError::NotFound)?;
+        let fields = field_ids(content_type);
+        let (content, hidden_fields) = visibility::project(draft.content, read, &fields)?;
+        let mut revision = draft.revision;
+        if !read.includes(content_type.title_field()) {
+            revision.title = String::new();
+        }
         Ok(Self {
             id: draft.entry_id,
             collection: draft.collection,
             created_at: rfc3339(draft.created_at)?,
+            created_by: draft.created_by,
             updated_at: rfc3339(draft.updated_at)?,
-            revision: RevisionView::new(draft.revision)?,
-            content: RawValue::from_string(draft.content).map_err(ApiError::internal)?,
+            revision: RevisionView::new(revision)?,
+            content: RawValue::from_string(content).map_err(ApiError::internal)?,
+            locked_fields: visibility::locked(access, &fields),
+            hidden_fields,
         })
     }
+}
+
+fn field_ids(content_type: &ContentType) -> Vec<String> {
+    content_type
+        .fields()
+        .iter()
+        .map(|field| field.id.clone())
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -352,13 +380,40 @@ async fn slug_free(
 }
 
 /// Refuses unless the caller's role may read entries of `collection` (D-058).
+/// Refuses unless the caller's role may read some entries of `collection`: anyone's, or at least
+/// their own.
 fn may_read(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError> {
-    crate::members::require(
-        &tx.policy,
-        Action::ContentRead,
-        Some(collection),
-        "your role can't read entries here",
-    )
+    let some = [false, true].into_iter().any(|own| {
+        tx.policy
+            .fields(Action::ContentRead, collection, own)
+            .is_some()
+    });
+    if some {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden("your role can't read entries here"))
+    }
+}
+
+/// The fields of `entry` the caller's role may read, and its content type; an entry it may not
+/// read at all is not found, as if it didn't exist.
+async fn readable(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    entry: Uuid,
+) -> Result<(Fields, ContentType), ApiError> {
+    let created_by = entries::creators(tx, &[entry])
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .find(|(_, found, _)| found == collection)
+        .map(|(_, _, created_by)| created_by)
+        .ok_or(ApiError::NotFound)?;
+    let read = Access::of(&tx.policy, tx.identity, collection, created_by)
+        .read
+        .ok_or(ApiError::NotFound)?;
+    let (content_type, _) = content_type(tx, collection).await?;
+    Ok((read, content_type))
 }
 
 /// Validates content against its content type: the canonical content and its hash.
@@ -374,13 +429,10 @@ async fn finish(
     operation: &str,
     key: &str,
     status: StatusCode,
-    draft: Draft,
+    view: DraftView,
 ) -> Result<Response, ApiError> {
-    let revision = draft.revision.id;
-    let body = serde_json::to_string(&Data {
-        data: DraftView::new(draft)?,
-    })
-    .map_err(ApiError::internal)?;
+    let revision = view.revision.id;
+    let body = serde_json::to_string(&Data { data: view }).map_err(ApiError::internal)?;
     idempotency::complete(&mut tx, operation, key, status.as_u16(), &body)
         .await
         .map_err(ApiError::from_db)?;
@@ -401,17 +453,17 @@ pub(crate) async fn create(
     let key = idempotency_key(&headers)?;
     let Json(value) = body?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    crate::members::require(
-        &tx.policy,
-        Action::ContentCreate,
-        Some(&path.collection),
-        "your role can't create entries here",
-    )?;
+    // A new entry is the creator's own.
+    let create = tx
+        .policy
+        .fields(Action::ContentCreate, &path.collection, true)
+        .ok_or(ApiError::Forbidden("your role can't create entries here"))?;
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
     let (content_type, version) = content_type(&mut tx, &path.collection).await?;
     let (content, hash) = validate(&value, &content_type)?;
+    visibility::only_permitted_fields(content.canonical_json(), &create)?;
     let request = request_hash(&[CREATE, &path.collection, content.canonical_json()]);
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);
@@ -428,7 +480,9 @@ pub(crate) async fn create(
     let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision)
         .await
         .map_err(ApiError::from_db)?;
-    finish(tx, CREATE, key, StatusCode::CREATED, draft).await
+    let access = Access::of(&tx.policy, tx.identity, &path.collection, draft.created_by);
+    let view = DraftView::shown(draft, &access, &content_type)?;
+    finish(tx, CREATE, key, StatusCode::CREATED, view).await
 }
 
 /// `PUT {P}/collections/{collection}/entries/{entry}`.
@@ -444,17 +498,45 @@ pub(crate) async fn save(
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let Json(value) = body?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    crate::members::require(
-        &tx.policy,
-        Action::ContentUpdate,
-        Some(&path.collection),
-        "your role can't change entries here",
-    )?;
+    if [false, true].into_iter().all(|own| {
+        tx.policy
+            .fields(Action::ContentUpdate, &path.collection, own)
+            .is_none()
+    }) {
+        return Err(ApiError::Forbidden("your role can't change entries here"));
+    }
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
     let (content_type, version) = content_type(&mut tx, &path.collection).await?;
+    // What this caller may do with this entry, by whose it is (D-058, step R.3).
+    let created_by = entries::creators(&mut tx, &[entry])
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .find(|(_, collection, _)| *collection == path.collection)
+        .map(|(_, _, created_by)| created_by)
+        .ok_or(ApiError::NotFound)?;
+    let access = Access::of(&tx.policy, tx.identity, &path.collection, created_by);
+    let read = access.read.clone().ok_or(ApiError::NotFound)?;
+    let update = access
+        .update
+        .clone()
+        .ok_or(ApiError::Forbidden("your role can't change this entry"))?;
+    // The version the editor started from; revisions never change. A stale one is reported by
+    // the save itself.
+    let stored = entries::revision(&mut tx, &path.collection, entry, expected)
+        .await
+        .map_err(ApiError::from_db)?
+        .map(|(_, content)| content);
+    let value = match &stored {
+        Some(stored) => visibility::restore_hidden(value, stored, &read)?,
+        None => value,
+    };
     let (content, hash) = validate(&value, &content_type)?;
+    if let Some(stored) = &stored {
+        visibility::only_permitted_changes(content.canonical_json(), stored, &update)?;
+    }
     let request = request_hash(&[
         SAVE,
         &path.collection,
@@ -486,7 +568,10 @@ pub(crate) async fn save(
         .await
         .map_err(ApiError::from_db)?
     {
-        Saved::Saved(draft) => finish(tx, SAVE, key, StatusCode::OK, draft).await,
+        Saved::Saved(draft) => {
+            let view = DraftView::shown(*draft, &access, &content_type)?;
+            finish(tx, SAVE, key, StatusCode::OK, view).await
+        }
         Saved::Stale { current } => Err(ApiError::StaleRevision { current }),
         Saved::NotFound => Err(ApiError::NotFound),
     }
@@ -505,10 +590,12 @@ pub(crate) async fn get(
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
+    let (content_type, _) = content_type(&mut tx, &path.collection).await?;
+    let access = Access::of(&tx.policy, tx.identity, &path.collection, draft.created_by);
     tx.commit().await.map_err(ApiError::from_db)?;
     let revision = draft.revision.id;
     let body = serde_json::to_string(&Data {
-        data: DraftView::new(draft)?,
+        data: DraftView::shown(draft, &access, &content_type)?,
     })
     .map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, Some(revision), false))
@@ -566,10 +653,33 @@ pub(crate) async fn list(
             "a search is at most 100 characters",
         ));
     }
-    let mut rows: Vec<Summary> =
-        entries::list(&mut tx, &path.collection, before, limit + 1, search)
-            .await
-            .map_err(ApiError::from_db)?;
+    // Only their own entries, when that is all the role may read (D-058, step R.3); and titles
+    // only where the role may read the title field.
+    let anyone = tx
+        .policy
+        .fields(Action::ContentRead, &path.collection, false);
+    let only_by = anyone.is_none().then_some(tx.identity);
+    let title_field = match anyone {
+        Some(Fields::All) => None,
+        _ => Some(
+            content_type(&mut tx, &path.collection)
+                .await?
+                .0
+                .title_field()
+                .to_owned(),
+        ),
+    };
+    let mut rows: Vec<Summary> = entries::list(
+        &mut tx,
+        &path.collection,
+        before,
+        limit + 1,
+        search,
+        only_by,
+    )
+    .await
+    .map_err(ApiError::from_db)?;
+    let (policy, identity) = (tx.policy.clone(), tx.identity);
     tx.commit().await.map_err(ApiError::from_db)?;
     let more = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);
     rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
@@ -578,7 +688,13 @@ pub(crate) async fn list(
         .flatten();
     let data = rows
         .into_iter()
-        .map(|row| {
+        .map(|mut row| {
+            if let Some(title_field) = &title_field {
+                let read = Access::of(&policy, identity, &path.collection, row.created_by).read;
+                if !read.is_some_and(|read| read.includes(title_field)) {
+                    row.revision.title = String::new();
+                }
+            }
             Ok(SummaryView {
                 id: row.entry_id,
                 updated_at: rfc3339(row.updated_at)?,
@@ -605,12 +721,17 @@ pub(crate) async fn revision(
     let revision = Uuid::try_parse(&path.revision).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_read(&tx, &path.collection)?;
+    let (read, content_type) = readable(&mut tx, &path.collection, entry).await?;
     let found = entries::revision(&mut tx, &path.collection, entry, revision)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
     tx.commit().await.map_err(ApiError::from_db)?;
-    let (revision, content) = found;
+    let (mut revision, content) = found;
+    let (content, _) = visibility::project(content, &read, &field_ids(&content_type))?;
+    if !read.includes(content_type.title_field()) {
+        revision.title = String::new();
+    }
     let body = serde_json::to_string(&crate::shape::Data {
         data: RevisionContentView {
             revision: RevisionView::new(revision)?,
@@ -631,6 +752,7 @@ pub(crate) async fn history(
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_read(&tx, &path.collection)?;
+    let (read, content_type) = readable(&mut tx, &path.collection, entry).await?;
     let revisions = entries::history(&mut tx, &path.collection, entry, entries::MAX_PAGE)
         .await
         .map_err(ApiError::from_db)?;
@@ -639,9 +761,15 @@ pub(crate) async fn history(
     if revisions.is_empty() {
         return Err(ApiError::NotFound);
     }
+    let titles = read.includes(content_type.title_field());
     let data = revisions
         .into_iter()
-        .map(RevisionView::new)
+        .map(|mut revision| {
+            if !titles {
+                revision.title = String::new();
+            }
+            RevisionView::new(revision)
+        })
         .collect::<Result<Vec<_>, ApiError>>()?;
     let body = serde_json::to_string(&Data { data }).map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, None, false))
