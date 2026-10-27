@@ -127,12 +127,20 @@ Built in step 1.7 (D-042), for people:
   or its permissions, even by a direct write as the application's login.
 - **A role in use can't be deleted** (409 `role_in_use`, naming how many members and pending invitations): members
   keep 0017's foreign key; invitations don't, because accepted, revoked and expired ones are history, so inviting
-  takes a key-share lock on the role instead and deleting locks it and counts pending invitations.
+  holds a shared advisory lock on the role instead (in memory, not on the role's row, which hundreds of invitations
+  a second would contend for) and deleting takes it exclusively and counts pending invitations.
 - **Field lists and conditions are refused** (422 `not_yet_enforced`) until step R.3 enforces them: stored but
   unenforced, they would look like restrictions that aren't there.
-- Creating a role queues on the project's owner role row (`FOR NO KEY UPDATE`, which doesn't block the key-share
-  locks member changes take), so the count can't race past 100 roles a project; changing or deleting one locks only
-  that role. A changed role holds from its holders' next request; a request already running acts on the permissions
+- Creating a role queues on the project's owner role row (`FOR NO KEY UPDATE`), so the count can't race past 100
+  roles a project; changing or deleting one locks only that role.
+- A member change locks the owners, the caller and the target in one statement, in identity order, so changes to
+  one project's members queue and can't deadlock. An owner skips reading role permissions (the owner role holds every
+  one, and 0018 keeps it so); anyone else's change reads the roles involved in one more query. Measured on the
+  reference laptop with `perf/k6/members.js` at 1,000 requests a second (100 role changes and 100 invitations a
+  second on one project): uncontended, a role change takes 4.2 ms against 4.0 ms before R.2; under that load,
+  medians of 9 to 23 ms for role changes and 8 to 15 ms for invitations, against 27 to 47 and 7 to 30 before. A first
+  version that read each role separately under the lock took 0.8 ms more per change, and the queue it fed grew
+  medians to 190 and 440 ms. A changed role holds from its holders' next request; a request already running acts on the permissions
   it read, as content writes act on the role read when their transaction began.
 - `GET /api/v1/projects/{project}` returns the caller's role name and permissions, and the Studio decides what to
   offer with `may(action, collection)`, the same rule as `Policy::allows`, instead of comparing role names. Settings

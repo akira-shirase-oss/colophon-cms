@@ -1,18 +1,19 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT 1 AS found FROM roles WHERE project_id = $1 AND key = $2 FOR KEY SHARE",
+  "query": "SELECT 1 AS \"locked!\" FROM pg_advisory_xact_lock($1, hashtext($2::text || '/' || $3))",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "found",
+        "name": "locked!",
         "type_info": "Int4",
         "origin": "Expression"
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid",
+        "Int4",
+        "Text",
         "Text"
       ]
     },
@@ -20,5 +21,5 @@
       null
     ]
   },
-  "hash": "d271f511034398921ea371763787b499f289f5c56e4d350c8a1c02a1c5818f57"
+  "hash": "1cfa53b9fa77d3fa020658d72eb2c412db643352768ce07e60f8750f4019efd8"
 }

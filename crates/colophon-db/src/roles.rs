@@ -14,6 +14,11 @@ use crate::{DbError, scope::MemberTransaction};
 /// The role nobody may change.
 pub const OWNER: &str = "owner";
 
+/// The first key of the advisory locks that keep a role from being deleted while an invitation is
+/// made to name it (`R`, `L`). PostgreSQL keeps two-key advisory locks apart from one-key ones, and
+/// content types use another class.
+const LOCK_CLASS: i32 = 0x524C;
+
 /// A role, with who uses it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredRole {
@@ -147,41 +152,28 @@ pub async fn get(tx: &mut MemberTransaction, key: &str) -> Result<Option<StoredR
     Ok(read(tx, Some(key)).await?.pop())
 }
 
-/// What the role with this key allows, holding a key-share lock on it until the transaction
-/// ends, so it can't be deleted while a membership or an invitation is made to name it. `None` if
-/// the project has no such role.
+/// Keeps the role with this key from being deleted until the transaction ends: the shared side of
+/// an advisory lock that [`delete`] takes exclusively. In memory, not on the role's row, so many
+/// invitations at once don't contend on one hot row. `hashtext` names the role in 32 bits: a
+/// collision only makes a deletion wait for an unrelated invitation.
+pub async fn hold(tx: &mut MemberTransaction, key: &str) -> Result<(), DbError> {
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "held!" FROM pg_advisory_xact_lock_shared($1, hashtext($2::text || '/' || $3))"#,
+        LOCK_CLASS,
+        tx.project.to_string(),
+        key
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(())
+}
+
+/// What the role with this key allows, [held](hold) until the transaction ends. `None` if the
+/// project has no such role.
 pub async fn policy_of(tx: &mut MemberTransaction, key: &str) -> Result<Option<Policy>, DbError> {
-    let found = sqlx::query_scalar!(
-        "SELECT 1 AS found FROM roles WHERE project_id = $1 AND key = $2 FOR KEY SHARE",
-        tx.project,
-        key
-    )
-    .fetch_optional(&mut *tx.transaction)
-    .await
-    .map_err(DbError::from_query)?;
-    if found.is_none() {
-        return Ok(None);
-    }
-    let rows = sqlx::query!(
-        r#"SELECT action, subject, array_to_string(fields, ',') AS "fields?", condition
-           FROM role_permissions WHERE project_id = $1 AND role_key = $2"#,
-        tx.project,
-        key
-    )
-    .fetch_all(&mut *tx.transaction)
-    .await
-    .map_err(DbError::from_query)?;
-    let mut actions = Vec::with_capacity(rows.len());
-    let mut subjects = Vec::with_capacity(rows.len());
-    let mut fields = Vec::with_capacity(rows.len());
-    let mut conditions = Vec::with_capacity(rows.len());
-    for row in rows {
-        actions.push(row.action);
-        subjects.push(row.subject);
-        fields.push(row.fields);
-        conditions.push(row.condition);
-    }
-    crate::scope::policy(actions, subjects, fields, conditions).map(Some)
+    hold(tx, key).await?;
+    Ok(read(tx, Some(key)).await?.pop().map(|role| role.policy))
 }
 
 /// Queues this transaction behind any other creation of a role in the project. `NO KEY UPDATE`,
@@ -331,8 +323,9 @@ pub async fn delete(
     if key == OWNER {
         return Ok(Removed::Fixed);
     }
-    // Locking the row waits for memberships and invitations being made to name it (they hold a
-    // key-share lock on it); the counts below, a separate statement, then see them.
+    // Locking the row waits for memberships being made to name it (their foreign key holds a
+    // key-share lock on it), and the exclusive advisory lock for invitations being made to name it
+    // (they [hold](hold) it); the counts below, a separate statement, then see both.
     let current = sqlx::query_scalar!(
         "SELECT version FROM roles WHERE project_id = $1 AND key = $2 FOR UPDATE",
         tx.project,
@@ -347,6 +340,15 @@ pub async fn delete(
     if current != expected {
         return Ok(Removed::Stale { current });
     }
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1, hashtext($2::text || '/' || $3))"#,
+        LOCK_CLASS,
+        tx.project.to_string(),
+        key
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
     let used = sqlx::query!(
         r#"SELECT (SELECT count(*) FROM memberships
                    WHERE project_id = $1 AND role = $2) AS "members!",

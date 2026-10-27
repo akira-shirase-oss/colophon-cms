@@ -7,8 +7,9 @@
 --
 -- A role someone holds can't be deleted: memberships keep their foreign key (0017). Invitations
 -- lose theirs, because accepted, revoked and expired invitations are history and mustn't pin a
--- role forever; instead, inviting takes a key-share lock on the role it offers, and deleting a
--- role locks it and refuses while a pending invitation offers it (colophon_db::roles).
+-- role forever; instead, inviting holds a shared advisory lock on the role it offers, and deleting
+-- a role takes it exclusively and refuses while a pending invitation offers it
+-- (colophon_db::roles).
 
 ALTER TABLE roles
     ADD COLUMN version integer NOT NULL DEFAULT 1 CHECK (version >= 1),

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT identity_id, role FROM memberships\n         WHERE project_id = $1 AND identity_id = ANY($2)\n         FOR UPDATE",
+  "query": "SELECT identity_id, role FROM memberships\n         WHERE project_id = $1 AND (role = 'owner' OR identity_id = ANY($2))\n         ORDER BY identity_id\n         FOR UPDATE",
   "describe": {
     "columns": [
       {
@@ -37,5 +37,5 @@
       false
     ]
   },
-  "hash": "75664a22a4f00c0340d5d91ec587717a38623c32bdaf129d8334c9d617ea094d"
+  "hash": "37babc64a5a990632377885cba1326ca7bf15970c7b8b60730feb341c3549371"
 }

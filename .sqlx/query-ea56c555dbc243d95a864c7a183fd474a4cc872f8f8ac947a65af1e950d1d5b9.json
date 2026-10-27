@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.key,\n                  coalesce(p.actions, '{}') AS \"actions!\",\n                  coalesce(p.subjects, '{}') AS \"subjects!\",\n                  coalesce(p.fields, '{}') AS \"fields!: Vec<Option<String>>\",\n                  coalesce(p.conditions, '{}') AS \"conditions!: Vec<Option<String>>\"\n           FROM roles r\n           LEFT JOIN LATERAL (\n               SELECT array_agg(action ORDER BY action, subject) AS actions,\n                      array_agg(subject ORDER BY action, subject) AS subjects,\n                      array_agg(array_to_string(fields, ',') ORDER BY action, subject) AS fields,\n                      array_agg(condition ORDER BY action, subject) AS conditions\n               FROM role_permissions\n               WHERE project_id = r.project_id AND role_key = r.key\n           ) p ON true\n           WHERE r.project_id = $1 AND r.key = ANY($2)\n           FOR KEY SHARE OF r",
+  "query": "SELECT r.key,\n                  coalesce(p.actions, '{}') AS \"actions!\",\n                  coalesce(p.subjects, '{}') AS \"subjects!\",\n                  coalesce(p.fields, '{}') AS \"fields!: Vec<Option<String>>\",\n                  coalesce(p.conditions, '{}') AS \"conditions!: Vec<Option<String>>\"\n           FROM roles r\n           LEFT JOIN LATERAL (\n               SELECT array_agg(action ORDER BY action, subject) AS actions,\n                      array_agg(subject ORDER BY action, subject) AS subjects,\n                      array_agg(array_to_string(fields, ',') ORDER BY action, subject) AS fields,\n                      array_agg(condition ORDER BY action, subject) AS conditions\n               FROM role_permissions\n               WHERE project_id = r.project_id AND role_key = r.key\n           ) p ON true\n           WHERE r.project_id = $1 AND r.key = ANY($2)",
   "describe": {
     "columns": [
       {
@@ -53,5 +53,5 @@
       null
     ]
   },
-  "hash": "84f49700c7d403ce5521764e3a94a70093e83f649d990460eafea4559c02d7ea"
+  "hash": "ea56c555dbc243d95a864c7a183fd474a4cc872f8f8ac947a65af1e950d1d5b9"
 }

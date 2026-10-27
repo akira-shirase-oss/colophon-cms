@@ -23,7 +23,6 @@ use axum::{
 use colophon_auth::tokens;
 use colophon_db::{
     members::{self, Accepted, Change, Invitation, Member},
-    roles,
     scope::{self, MemberTransaction},
 };
 use colophon_domain::policy::{Action, Policy, is_role_key};
@@ -312,18 +311,19 @@ pub(crate) async fn invite(
         });
     }
     let mut tx = open(&state, caller, &path.project).await?;
-    let fresh = fresh_policy(&mut tx).await?;
+    // The caller's role as it is now and the role offered, in one locking read: the role can't be
+    // deleted before the invitation commits.
+    let (fresh, offered) = members::offering(&mut tx, role)
+        .await
+        .map_err(ApiError::from_db)?;
+    let fresh = fresh.unwrap_or_default();
     require(
         &fresh,
         Action::MembersManage,
         None,
         "only people whose role manages members can invite",
     )?;
-    // Read with a lock that keeps the role from being deleted before the invitation commits.
-    let offered = roles::policy_of(&mut tx, role)
-        .await
-        .map_err(ApiError::from_db)?
-        .ok_or_else(unknown_role)?;
+    let offered = offered.ok_or_else(unknown_role)?;
     if !fresh.covers(&offered) {
         return Err(ApiError::Forbidden(
             "you can only invite people to roles whose every power your own role has",
