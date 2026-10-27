@@ -258,6 +258,30 @@ fn printed_only_to_the_terminal(code: &str, outputs: &[(String, String)], seen: 
     assert_eq!(printed, 1, "printed once, by the start that issued it");
 }
 
+/// The owner of `project` may publish, and may approve their own publish request (D-044), so the
+/// Studio offers one-click publishing (D-059).
+async fn owner_publishes_in_one_click(seen: &mut Seen, owner: &Session, project: &str) {
+    let view = seen
+        .call(
+            owner,
+            Method::GET,
+            &format!("/api/v1/projects/{project}"),
+            None,
+        )
+        .await;
+    assert_eq!(view.body["data"]["role"], "owner");
+    assert_eq!(view.body["data"]["self_review"], true, "{}", view.body);
+    assert!(
+        view.body["data"]["permissions"]
+            .as_array()
+            .is_some_and(|grants| grants
+                .iter()
+                .any(|grant| grant["action"] == "content.publish" && grant["subject"] == "*")),
+        "{}",
+        view.body
+    );
+}
+
 #[tokio::test]
 #[ignore = "needs the stack and its Keycloak"]
 async fn a_setup_code_from_the_terminal_makes_the_first_administrator_once() {
@@ -332,6 +356,8 @@ async fn a_setup_code_from_the_terminal_makes_the_first_administrator_once() {
         )
         .await;
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let id = made.body["data"]["id"].as_str().expect("an id");
+    owner_publishes_in_one_click(&mut seen, &editor, id).await;
 
     // Nobody else becomes an administrator with it, or with anything else.
     for attempt in [code.as_str(), wrong.as_str()] {

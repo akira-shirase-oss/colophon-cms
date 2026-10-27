@@ -65,6 +65,11 @@ pub(crate) struct OnePath {
     changeset: String,
 }
 
+/// Whether a project needs someone other than the submitter to approve (D-044). Projects can't
+/// require it yet: the rule is in place in the domain for when project settings can. The project
+/// view reports it, so the Studio's one-click publish follows the same rule (D-059).
+pub(crate) const REQUIRE_DIFFERENT_REVIEWER: bool = false;
+
 /// `{"title": "Launch posts", "entries": ["…", "…"], "unpublish": ["…"]}`: entries to publish and
 /// entries to take down; either may be left out.
 #[derive(Deserialize)]
@@ -249,8 +254,7 @@ fn decide(head: &Head, edited: usize, reviews: &[colophon_db::changesets::Review
         stale_items: edited,
         reviews: &reviews,
         now: unix(OffsetDateTime::now_utc()),
-        // Projects can't require a different reviewer yet; the rule is in place for when they can.
-        require_different_reviewer: false,
+        require_different_reviewer: REQUIRE_DIFFERENT_REVIEWER,
         published: head.published,
     })
 }

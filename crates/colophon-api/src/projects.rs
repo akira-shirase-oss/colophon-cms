@@ -33,6 +33,10 @@ pub(crate) struct ProjectView {
     role_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     permissions: Option<Vec<PermissionView>>,
+    /// Whether someone who submits a publish request may approve it themselves (D-044): then one
+    /// click publishes it (D-059). Only when one project is read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    self_review: Option<bool>,
 }
 
 impl From<projects::Project> for ProjectView {
@@ -44,6 +48,7 @@ impl From<projects::Project> for ProjectView {
             role: project.role,
             role_name: project.role_name,
             permissions: None,
+            self_review: None,
         }
     }
 }
@@ -147,6 +152,7 @@ pub(crate) async fn get(
     Ok(Json(Data {
         data: ProjectView {
             permissions: Some(permissions),
+            self_review: Some(!crate::changesets::REQUIRE_DIFFERENT_REVIEWER),
             ..ProjectView::from(project)
         },
     }))
