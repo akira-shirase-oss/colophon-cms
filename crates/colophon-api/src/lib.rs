@@ -22,6 +22,7 @@ mod projects;
 mod receipts;
 mod rich_text;
 mod roles;
+mod schedules;
 pub mod session;
 mod shape;
 pub mod state;
@@ -138,6 +139,18 @@ fn publishing() -> Router<AppState> {
         .route(
             "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/reviews",
             post(changesets::review),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/schedule",
+            post(schedules::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/schedules",
+            get(schedules::list),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/schedules/{schedule}",
+            axum::routing::delete(schedules::cancel),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/publish",

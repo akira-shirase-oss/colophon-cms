@@ -311,7 +311,7 @@ fn body(view: &ChangesetView) -> Result<String, ApiError> {
 }
 
 /// The hash in `If-Match`, as `sha256:<hex>`.
-fn if_match(headers: &HeaderMap) -> Result<String, ApiError> {
+pub(crate) fn if_match(headers: &HeaderMap) -> Result<String, ApiError> {
     let value = headers.get(header::IF_MATCH).ok_or(ApiError::PreconditionRequired(
         "this needs an If-Match header with the changeset's ETag, so you act on what you looked at",
     ))?;
@@ -677,7 +677,7 @@ pub(crate) struct PublishedView {
 }
 
 /// Refuses to publish anything but an approved changeset, saying what it needs instead.
-fn publishable(status: &Status) -> Result<(), ApiError> {
+pub(crate) fn publishable(status: &Status) -> Result<(), ApiError> {
     match status {
         Status::Approved { .. } => Ok(()),
         Status::Published { .. } => Err(ApiError::Conflict(
@@ -696,7 +696,7 @@ fn publishable(status: &Status) -> Result<(), ApiError> {
 }
 
 /// The bytes of a `sha256:<hex>` `ETag`; anything else is no hash at all, which matches nothing.
-fn hash_bytes(etag: &str) -> Vec<u8> {
+pub(crate) fn hash_bytes(etag: &str) -> Vec<u8> {
     etag.strip_prefix("sha256:")
         .and_then(|hex| {
             (0..hex.len())
