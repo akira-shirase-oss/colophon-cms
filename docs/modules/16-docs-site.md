@@ -108,7 +108,8 @@ The P3 skeleton, on branch `site/docs` (not yet merged):
 - **Code blocks:** highlighted at build time by Shiki with a CSS-variables theme mapped onto the design tokens, so
   every code colour is a token the contrast test covers; each has a copy button. Blocks marked `runnable` are
   checked: every command in them must exist in the repository.
-- **Tests** (`npm run test -w @colophon/docs`, Playwright, after a build): every built page renders with no console
+- **Tests** (`npm run test -w @colophon/docs`, Playwright; it builds the site first, so `scripts/frontend.sh`'s
+  `npm test --workspaces` runs them too): every built page renders with no console
   errors or warnings, one h1, a capability label and no request to another origin; a crawl from the front page
   finds every page and every link and `#fragment` resolves; axe (WCAG 2.1 AA) passes in light and dark on a sample
   of each section, the search dialog and the phone navigation sheet; pages reflow at 320 px without sideways

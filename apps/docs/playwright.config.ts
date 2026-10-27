@@ -2,8 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 const PORT = 58311;
 
-// The built site (npm run build -w @colophon/docs), served as a static host would serve it, with
-// the Pagefind index the build wrote.
+// The built site, served as a static host would serve it, with the Pagefind index the build wrote.
+// `npm run test` builds it first, so the tests always check the current source.
 export default defineConfig({
 	testDir: 'tests',
 	fullyParallel: true,
