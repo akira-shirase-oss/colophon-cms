@@ -1,4 +1,4 @@
-// Load scenario for setup codes on a set-up installation (step 3.7, D-060). setup() signs in the
+// Load scenario for setup codes on a set-up installation (step 3.7, D-061). setup() signs in the
 // bootstrapped administrator (dev-owner) and someone who isn't (dev-editor). Nine requests in
 // twenty are dev-editor presenting a setup code (a different one each time), each of which must
 // be refused with 409 `already_set_up`: once anyone is an administrator the server refuses before

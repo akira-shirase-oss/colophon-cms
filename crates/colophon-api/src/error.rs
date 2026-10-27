@@ -296,7 +296,7 @@ pub enum ApiError {
     /// An `Idempotency-Key` was used before for a different request.
     #[error("this Idempotency-Key was already used for a different request")]
     IdempotencyKeyReused,
-    /// The installation has an administrator already: setup codes no longer do anything (D-060).
+    /// The installation has an administrator already: setup codes no longer do anything (D-061).
     #[error("this installation already has an administrator; ask them to invite you to a project")]
     AlreadySetUp,
     /// Too many attempts lately; the response's `Retry-After` says how many seconds to wait.

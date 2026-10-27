@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A brand-new Colophon installation, for trying the first-run journey by hand (step 3.7, D-060):
+# A brand-new Colophon installation, for trying the first-run journey by hand (step 3.7, D-061):
 # the server with the Studio and the worker on http://localhost:58400, against an empty database
 # of its own (colophon_first_run, or COLOPHON_TEST_DATABASE) that nobody has bootstrapped. The
 # server prints a setup code to this terminal; sign up in the Studio, enter the code, and you are

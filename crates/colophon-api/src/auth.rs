@@ -232,7 +232,7 @@ pub(crate) struct Me {
 #[derive(Serialize)]
 pub(crate) struct Installation {
     /// Whether anyone is an administrator yet. Until someone is, the setup code the server prints
-    /// when it starts makes the first one (`POST /api/v1/setup`, D-060).
+    /// when it starts makes the first one (`POST /api/v1/setup`, D-061).
     has_administrator: bool,
 }
 

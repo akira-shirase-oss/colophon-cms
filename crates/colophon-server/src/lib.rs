@@ -77,7 +77,7 @@ async fn stop_worker(cancel: &CancellationToken, worker: Option<tokio::task::Joi
     }
 }
 
-/// Issues and prints a fresh installation's setup code (D-060), from the processes that serve
+/// Issues and prints a fresh installation's setup code (D-061), from the processes that serve
 /// the Studio; a no-op task once the installation has an administrator.
 fn start_setup_code(
     config: &Config,

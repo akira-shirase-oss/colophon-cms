@@ -1,5 +1,5 @@
 //! Setting up an installation from the web: one-time setup codes (docs/modules/03-auth.md,
-//! "Owner bootstrap"; D-060, amending D-043). While nobody is an administrator, the server issues
+//! "Owner bootstrap"; D-061, amending D-043). While nobody is an administrator, the server issues
 //! a code at start-up and prints it to its own terminal; a signed-in person who presents it
 //! becomes the first administrator. The application role reaches the tables only through the
 //! functions of migration 0020, which refuse everything once an administrator exists.

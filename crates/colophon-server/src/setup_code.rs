@@ -1,4 +1,4 @@
-//! The setup code (D-060, amending D-043). While the installation has no administrator, a server
+//! The setup code (D-061, amending D-043). While the installation has no administrator, a server
 //! that serves the API issues one code when it starts, stores only its hash, and prints the code
 //! to standard error, its own terminal: never to the structured log, which may be shipped
 //! elsewhere. A signed-in person who enters it in the Studio becomes the first administrator.

@@ -192,7 +192,7 @@ pub struct Identity {
     /// Whether it is one of the installation's administrators (D-043).
     pub administrator: bool,
     /// Whether the installation has an administrator at all: until it does, a setup code from the
-    /// server's terminal makes the first one (D-060).
+    /// server's terminal makes the first one (D-061).
     pub installation_set_up: bool,
 }
 

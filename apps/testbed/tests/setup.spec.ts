@@ -1,4 +1,4 @@
-// Setup codes and sign-up through the testbed (step 3.7, D-060), against the real server. This
+// Setup codes and sign-up through the testbed (step 3.7, D-061), against the real server. This
 // suite's installation was bootstrapped by scripts/migrate.sh, so every code is refused with 409
 // `already_set_up`, before any rate limit or comparison; signed out, presenting one is 401; and the
 // sign-up link opens Keycloak's own registration form. Making the first administrator with a code

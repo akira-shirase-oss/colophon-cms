@@ -81,7 +81,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 - Choose an enabled template, the site name, a language and brand settings.
 - The editor's starting screen offers *Create article*, *Upload media* and *Ask AI* (the last only if automation is
   enabled). It never shows database or cache settings.
-- As built in step 3.7 (D-059, D-060), from sign-up to a first release:
+- As built in step 3.7 (D-059, D-061), from sign-up to a first release:
   - **The front door** (`/studio/`): signed out, *Sign in* and *Create an account* (the identity provider's own
     sign-up form, `/auth/login?start=create`). On an installation with no administrator, a signed-in person sees
     *Finish setting up Colophon*: a field for the setup code the server printed to its terminal, and, in Technical
@@ -194,7 +194,7 @@ Internal job terminology stays behind a technical detail drawer for developers.
   on reopening and replayed, with no conflict and no second copy (the case the simulator found, D-039).
 - Since step 1.6: `/studio/device` approves a terminal's sign-in (D-041); its test allows a device and uses the token it
   produces.
-- Since step 3.7 (D-059, D-060): `tests/server/journey.spec.ts` runs the whole first-run journey on a new
+- Since step 3.7 (D-059, D-061): `tests/server/journey.spec.ts` runs the whole first-run journey on a new
   installation (its own database, migrated and never bootstrapped, and its own server on port 58402, whose setup
   code it reads from the server's standard error): a new person signs up, enters a wrong code then the right one,
   creates a project from the blog starting point, writes an article (its URL name made from the title), publishes it

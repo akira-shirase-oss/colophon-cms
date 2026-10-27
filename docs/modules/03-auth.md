@@ -75,7 +75,7 @@ operation, and the cross-project and identity test families from spec §27 pass.
   - `/me` shows the subject (what to bootstrap with) and whether you're an administrator; `colophon whoami` prints
     both;
   - more administrators need a grant flow, planned with project administration.
-- Since step 3.7 (D-060, amending D-043), a fresh installation can also be set up from the Studio:
+- Since step 3.7 (D-061, amending D-043), a fresh installation can also be set up from the Studio:
   - while nobody is an administrator, a server that serves the API issues a **setup code** at start-up
     (`colophon-server`'s `setup_code` module): 100 random bits as `XXXXX-XXXXX-XXXXX-XXXXX` in Crockford's
     base-32 (`colophon_auth::tokens::setup_code`), valid for an hour, stored as its SHA-256 hash only, and printed
@@ -246,7 +246,7 @@ Built in step 1.7 (D-042), for people:
 | A4 | Revocation is checked before each later operation by the revoked principal. |
 | A5 | Agents are draft-only unless a scoped, revocable, opt-in permission says otherwise; nobody approves their own permission escalation. |
 | A6 | Hidden and missing resources are indistinguishable to unauthorized callers. |
-| A7 | Bootstrap runs once and is then disabled, whether by the command or a setup code (D-060); the development identity never runs on a public bind. |
+| A7 | Bootstrap runs once and is then disabled, whether by the command or a setup code (D-061); the development identity never runs on a public bind. |
 | A8 | Tokens and session secrets are stored hashed, compared in constant time, and never logged. |
 
 ## Interfaces
@@ -284,7 +284,7 @@ Built in step 1.7 (D-042), for people:
   paths (spec §13).
 - **Invitations:** expired, reused, or accepted by a different identity.
 - **Bootstrap:** fails once it is complete; the development identity refuses a public bind.
-- **Since step 3.7 (D-060):**
+- **Since step 3.7 (D-061):**
   - `crates/colophon-db/tests/setup.rs`: only a hash is stored and the application login can neither read the
     codes nor write `installation`, `administrators` or the attempts; a code makes one administrator once and then
     nobody else; an expired code is dead; lifetimes outside a minute to a day are refused; at most ten codes are

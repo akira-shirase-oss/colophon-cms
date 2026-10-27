@@ -1,4 +1,4 @@
-//! A fresh installation's setup code (D-060, amending D-043), against the real binary and a
+//! A fresh installation's setup code (D-061, amending D-043), against the real binary and a
 //! database of its own that nobody has bootstrapped: the server prints a code to standard error
 //! when it starts, and only there; a signed-in person who enters it becomes the first
 //! administrator, once; the code expires, attempts are rate-limited, and once anyone is an

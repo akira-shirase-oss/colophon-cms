@@ -37,7 +37,7 @@ const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 /// Characters in a setup code: 20 of Crockford's alphabet, 100 random bits.
 pub const SETUP_CODE_CHARS: usize = 20;
 
-/// A one-time setup code (D-060): 100 bits from the operating system's secure random source, as
+/// A one-time setup code (D-061): 100 bits from the operating system's secure random source, as
 /// four groups of five characters, `7K3QD-…`, for a person to copy from the server's terminal.
 pub fn setup_code() -> Result<String, aws_lc_rs::error::Unspecified> {
     let mut bytes = [0_u8; SETUP_CODE_CHARS];

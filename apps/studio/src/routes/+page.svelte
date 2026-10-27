@@ -1,6 +1,6 @@
 <!--
   The Studio's front door (step 3.7, D-059): signed out, sign in or create an account; signed in
-  on an installation nobody has set up yet, enter the setup code its server printed (D-060);
+  on an installation nobody has set up yet, enter the setup code its server printed (D-061);
   then your projects. An administrator with none is offered their first; anyone else learns that
   projects are joined by invitation, and what to ask for.
 -->
@@ -27,7 +27,7 @@
 	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
 	let creating = $state(false);
 
-	// The setup code (D-060): typed or pasted from the server's terminal.
+	// The setup code (D-061): typed or pasted from the server's terminal.
 	let code = $state('');
 	let setupError = $state('');
 	let setupBusy = $state(false);

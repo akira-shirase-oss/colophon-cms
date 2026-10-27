@@ -1,4 +1,4 @@
-//! Setup codes against real PostgreSQL (D-060, amending D-043): only a hash is stored and the
+//! Setup codes against real PostgreSQL (D-061, amending D-043): only a hash is stored and the
 //! application login can't read it from the table; a code makes one administrator, once, and
 //! expires; attempts are rate-limited per person and in all; and once anyone is an administrator
 //! (by a code or by `colophon admin bootstrap`), nothing is issued, attempted or claimed. Needs

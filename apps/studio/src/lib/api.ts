@@ -60,7 +60,7 @@ export interface Me {
 	/** Whether they may create projects (D-043). */
 	administrator: boolean;
 	/** The installation as a whole: until it has an administrator, the setup code the server
-	 *  printed when it started makes the first one (D-060). */
+	 *  printed when it started makes the first one (D-061). */
 	installation: { has_administrator: boolean };
 	projects: Project[];
 }
@@ -288,7 +288,7 @@ export async function getProject(project: string): Promise<Project> {
 }
 
 /** Makes the caller the installation's first administrator with the setup code its server printed
- *  (D-060). Refused with reason `setup_code_invalid`, `already_set_up`, or status 429 (too many
+ *  (D-061). Refused with reason `setup_code_invalid`, `already_set_up`, or status 429 (too many
  *  attempts; the message says how long to wait). The code goes in the body, never a URL. */
 export async function claimSetup(code: string): Promise<void> {
 	await send('POST', '/api/v1/setup', { code });

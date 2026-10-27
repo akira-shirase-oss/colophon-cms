@@ -1,4 +1,4 @@
-// The first-run journey (step 3.7, D-059, D-060), on a brand-new installation: its own database,
+// The first-run journey (step 3.7, D-059, D-061), on a brand-new installation: its own database,
 // migrated and never bootstrapped, and its own server, whose setup code is read from its terminal
 // as an operator would. A new person makes an account, becomes the administrator with the code,
 // creates a project from the blog starting point, writes and publishes the first article in one

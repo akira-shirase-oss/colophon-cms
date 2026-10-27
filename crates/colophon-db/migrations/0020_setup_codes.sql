@@ -1,5 +1,5 @@
 -- Milestone P3, step 3.7: the first administrator, from the Studio, with a code only the operator
--- can read. docs/modules/03-auth.md ("Owner bootstrap"), D-060 (amends D-043).
+-- can read. docs/modules/03-auth.md ("Owner bootstrap"), D-061 (amends D-043).
 --
 -- While an installation has no administrator, colophon-server issues a one-time setup code when
 -- it starts and prints it to its own terminal, never to its structured log. A signed-in person

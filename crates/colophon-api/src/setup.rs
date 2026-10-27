@@ -1,6 +1,6 @@
 //! `POST /api/v1/setup`: a signed-in person presents the setup code the server printed to its
 //! terminal, and becomes the installation's first administrator (docs/modules/03-auth.md, "Owner
-//! bootstrap"; D-060, amending D-043).
+//! bootstrap"; D-061, amending D-043).
 //!
 //! Every property of the code is held here or below: the caller must be signed in (and, with a
 //! cookie, send the CSRF token from a trusted origin); attempts are rate-limited in Postgres

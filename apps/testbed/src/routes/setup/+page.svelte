@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { call, csrfToken, detailsOf, envelopeOf } from '#lib/api.ts';
 
-	// Step 3.7, D-060: a fresh installation's setup code and the identity provider's sign-up form,
+	// Step 3.7, D-061: a fresh installation's setup code and the identity provider's sign-up form,
 	// through the real API. On an installation that already has an administrator (this suite's,
 	// which scripts/migrate.sh bootstraps), every code is refused with 409 `already_set_up`.
 	const SERVER = import.meta.env['VITE_COLOPHON_SERVER_ORIGIN'] ?? 'http://localhost:58000';

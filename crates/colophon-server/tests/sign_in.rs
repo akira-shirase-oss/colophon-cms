@@ -181,7 +181,7 @@ async fn a_callback_works_once_and_only_in_the_browser_that_started_it() {
 }
 
 /// A person who makes an account at the provider through `/auth/login?start=create` comes back
-/// signed in, and the account grants them nothing (D-043, D-060): no projects, no administrator,
+/// signed in, and the account grants them nothing (D-043, D-061): no projects, no administrator,
 /// and a project of their own refused.
 #[tokio::test]
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
