@@ -88,6 +88,7 @@
 			title="Kill it at any moment, lose nothing"
 			alt="colophon-server is killed with kill -9 while version 7 is saving; it restarts, and the retry with the same key is saved once, with versions 5 and 6 untouched."
 			class="md:col-span-2 lg:col-span-4"
+			stage="h-60"
 		>
 			{#snippet graphic()}<CrashGraphic />{/snippet}
 			Fault tests F01 to F05 on the real binary, and a crash loop with twelve SIGKILLs per CI run.
