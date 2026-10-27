@@ -1,4 +1,4 @@
-/* The Studio's styles: the design system (D-053) and nothing else. Tailwind doesn't scan
+/* The Studio's styles: the design system (D-056) and nothing else. Tailwind doesn't scan
  * dependencies, so name the package whose components use its classes. */
 @import '@colophon/ui/styles.css';
 @source '../../../packages/ui/src';
@@ -36,7 +36,7 @@
 	.prose-colophon a {
 		text-decoration: underline;
 		text-underline-offset: 3px;
-		text-decoration-color: var(--proof);
+		text-decoration-color: var(--brand);
 	}
 	.prose-colophon ul {
 		list-style: disc;
@@ -47,7 +47,7 @@
 		padding-left: 1.4em;
 	}
 	.prose-colophon blockquote {
-		border-left: 2px solid var(--proof);
+		border-left: 2px solid var(--brand);
 		padding-left: 1em;
 		color: var(--muted-foreground);
 	}

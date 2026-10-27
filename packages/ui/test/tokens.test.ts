@@ -1,4 +1,4 @@
-// The design system's colours (D-053) keep their promises: every text colour reads on every
+// The design system's colours (D-056) keep their promises: every text colour reads on every
 // ground it is used on, at WCAG AA, and at AAA when the system asks for more contrast; focus
 // rings stand out; and the stylesheet stays self-contained (no fonts or files from elsewhere).
 
@@ -44,6 +44,8 @@ const TEXT: [string, string[]][] = [
 	['pending-ink', ['pending-soft', 'card']],
 	['attention-ink', ['attention-soft', 'card']],
 	['draft-ink', ['draft-soft', 'card']],
+	// The accent as text (links, figures in the accent): never the bright --brand itself.
+	['brand-ink', ['background', 'card', 'brand-soft']],
 	['destructive', ['card', 'background']]
 ];
 
