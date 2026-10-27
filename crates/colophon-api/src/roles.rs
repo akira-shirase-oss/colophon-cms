@@ -9,8 +9,8 @@
 //!
 //! Writes need `roles.manage`, checked against the caller's role as it is now, and a caller can
 //! only create, change or delete a role whose every power they hold themselves. The owner role
-//! is fixed (409). A permission is `{"action": "content.update", "subject": "pages"}`; field
-//! lists and conditions are refused until step R.3 enforces them.
+//! is fixed (409). A permission is `{"action": "content.update", "subject": "pages"}`, narrowed
+//! by `"fields": ["title"]` and `"condition": "own"` where they apply (step R.3).
 
 use axum::{
     Json,
@@ -20,8 +20,8 @@ use axum::{
 };
 use colophon_db::roles::{self, Removed, StoredRole, Written};
 use colophon_domain::policy::{
-    Action, MAX_PERMISSIONS, Permission, Policy, RoleError, is_role_key, role_description,
-    role_name,
+    Action, Condition, MAX_PERMISSIONS, Permission, Policy, RoleError, is_role_key,
+    role_description, role_name,
 };
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +36,12 @@ use crate::{
 pub(crate) struct PermissionView {
     action: &'static str,
     subject: String,
+    /// Only these fields (step R.3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fields: Option<Vec<String>>,
+    /// `own`: only entries the member created (step R.3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    condition: Option<&'static str>,
 }
 
 /// A policy's permissions as the API shows them: `{"action", "subject"}`, sorted.
@@ -46,6 +52,8 @@ pub(crate) fn permission_views(policy: &Policy) -> Vec<PermissionView> {
         .map(|permission| PermissionView {
             action: permission.action.as_str(),
             subject: permission.subject.as_str().to_owned(),
+            fields: permission.fields.clone(),
+            condition: permission.condition.map(Condition::as_str),
         })
         .collect()
 }
@@ -88,17 +96,17 @@ pub(crate) struct RolePath {
     role: String,
 }
 
-/// `{"action": "content.update", "subject": "pages"}`. `fields` and `condition` are read so they
-/// can be refused by name rather than as unknown fields.
+/// `{"action": "content.update", "subject": "pages", "fields": ["title"], "condition": "own"}`;
+/// `fields` and `condition` are optional (step R.3).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PermissionBody {
     action: String,
     subject: String,
     #[serde(default)]
-    fields: Option<serde_json::Value>,
+    fields: Option<Vec<String>>,
     #[serde(default)]
-    condition: Option<serde_json::Value>,
+    condition: Option<String>,
 }
 
 /// `POST` body.
@@ -139,11 +147,12 @@ fn policy(permissions: &[PermissionBody]) -> Result<Policy, ApiError> {
         .iter()
         .enumerate()
         .map(|(index, body)| {
-            let parsed = if body.fields.is_some() || body.condition.is_some() {
-                Err(RoleError::NotYetEnforced)
-            } else {
-                Permission::parse(&body.action, &body.subject)
-            };
+            let parsed = Permission::parse_narrowed(
+                &body.action,
+                &body.subject,
+                body.fields.as_deref(),
+                body.condition.as_deref(),
+            );
             parsed.map_err(|error| ApiError::InvalidField {
                 reason: error.code(),
                 pointer: "/permissions",

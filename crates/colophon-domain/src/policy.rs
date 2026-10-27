@@ -7,9 +7,9 @@
 //! starts with the four built-in roles of D-042, whose permissions ([`Policy::builtin`]) give
 //! exactly the powers that table gave.
 //!
-//! Since step R.2, owners define more roles. Nobody can hand out power they don't hold
-//! ([`Policy::covers`]), and a permission arrives through [`Permission::parse`], which refuses
-//! field lists and conditions until step R.3 enforces them.
+//! Since step R.2, owners define more roles, and nobody can hand out power they don't hold
+//! ([`Policy::covers`]). Since step R.3, a permission can be narrowed to some fields and to the
+//! member's own entries ([`Permission::parse_narrowed`], [`Policy::fields`]).
 
 use crate::project::Slug;
 
@@ -49,11 +49,6 @@ pub enum RoleError {
     /// More than [`MAX_PERMISSIONS`].
     #[error("a role has at most 500 permissions")]
     TooManyPermissions,
-    /// A field list or a condition, which nothing enforces before step R.3.
-    #[error(
-        "field lists and conditions arrive with step R.3; until they are enforced, they are refused rather than ignored"
-    )]
-    NotYetEnforced,
     /// A field list on an action that isn't about fields.
     #[error("only content.read, content.create and content.update can be limited to some fields")]
     FieldsNotApplicable,
@@ -81,7 +76,6 @@ impl RoleError {
             Self::InvalidSubject => "invalid_subject",
             Self::ProjectWide => "project_wide_action",
             Self::TooManyPermissions => "too_many_permissions",
-            Self::NotYetEnforced => "not_yet_enforced",
             Self::FieldsNotApplicable => "fields_not_applicable",
             Self::InvalidFields => "invalid_fields",
             Self::ConditionNotApplicable => "condition_not_applicable",

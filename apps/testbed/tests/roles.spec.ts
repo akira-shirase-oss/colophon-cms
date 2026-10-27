@@ -1,6 +1,6 @@
 // Roles owners define, through the testbed (D-058, step R.2): create a role with permissions,
-// change it at its version, lose to a stale version, have field lists and the owner role
-// refused, and delete it once nobody holds it.
+// change it at its version, lose to a stale version, have a field list where it can't apply and
+// the owner role refused, and delete it once nobody holds it.
 
 import { expect, type Page, test } from '@playwright/test';
 import { signIn } from './sign-in.ts';
@@ -39,9 +39,9 @@ test('create a role, change it at its version, refuse what is not enforced, dele
 	await expect(page.getByTestId('message')).toHaveText('409 conflict (stale_role)');
 
 	await page.getByLabel('Version (If-Match)').fill('2');
-	await page.getByLabel('Permissions (JSON)').fill('[{"action": "content.read", "subject": "articles", "fields": ["title"]}]');
+	await page.getByLabel('Permissions (JSON)').fill('[{"action": "content.publish", "subject": "articles", "fields": ["title"]}]');
 	await page.getByRole('button', { name: 'Save' }).click();
-	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (not_yet_enforced)');
+	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (fields_not_applicable)');
 
 	await page.getByLabel('Key').fill('owner');
 	await page.getByLabel('Permissions (JSON)').fill('[]');

@@ -361,15 +361,33 @@ fn require_in<'a>(
 
 /// Refuses unless the caller may change content in every collection `changeset` touches.
 async fn may_write(tx: &mut ProjectTransaction, changeset: Uuid) -> Result<(), ApiError> {
-    let collections = changesets::collections(tx, changeset)
+    let entries: Vec<Uuid> = changesets::items(tx, changeset)
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .map(|item| item.pin.entry_id)
+        .collect();
+    may_change_entries(tx, &entries).await
+}
+
+/// Refuses unless the caller's role may change every one of `entries`: anyone's, or their own
+/// where that is what it allows (D-058, step R.3). Pinning an entry asks for it to be published.
+async fn may_change_entries(tx: &mut ProjectTransaction, entries: &[Uuid]) -> Result<(), ApiError> {
+    let creators = colophon_db::entries::creators(tx, entries)
         .await
         .map_err(ApiError::from_db)?;
-    require_in(
-        tx,
-        Action::ContentUpdate,
-        collections.iter().map(String::as_str),
-        "your role can't change content in this changeset",
-    )
+    let allowed = creators.iter().all(|(_, collection, created_by)| {
+        crate::visibility::Access::of(&tx.policy, tx.identity, collection, *created_by)
+            .update
+            .is_some()
+    });
+    if allowed {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden(
+            "your role can't change content in this changeset",
+        ))
+    }
 }
 
 /// `GET {P}/changesets`.
@@ -501,12 +519,8 @@ pub(crate) async fn create(
         });
     }
     pins.extend(taken_down);
-    require_in(
-        &tx,
-        Action::ContentUpdate,
-        pins.iter().map(|pin| pin.collection.as_str()),
-        "your role can't change content in this changeset",
-    )?;
+    let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
+    may_change_entries(&mut tx, &pinned).await?;
     let id = Uuid::now_v7();
     changesets::create(&mut tx, id, title, &pins, &hash_of(&pins))
         .await

@@ -84,7 +84,8 @@ pub(crate) fn locked(access: &Access, fields: &[String]) -> Vec<String> {
 }
 
 /// A save's `submitted` content with every field its author can't read put back as `stored`: they
-/// never saw those fields, so leaving them out of a save mustn't erase them.
+/// never saw those fields, so leaving them out of a save mustn't erase them. Sending one with a
+/// different value is refused, not dropped (D11): the role can't change what it can't read.
 pub(crate) fn restore_hidden(
     submitted: Value,
     stored: &str,
@@ -97,8 +98,15 @@ pub(crate) fn restore_hidden(
         // Not an object: validation refuses it, with its own words.
         return Ok(submitted);
     };
-    fields.retain(|field, _| read.includes(field));
-    for (field, value) in object(stored)? {
+    let stored = object(stored)?;
+    if let Some(field) = fields
+        .iter()
+        .find(|(field, value)| !read.includes(field) && stored.get(*field) != Some(*value))
+        .map(|(field, _)| field.clone())
+    {
+        return Err(not_permitted(&field));
+    }
+    for (field, value) in stored {
         if !read.includes(&field) {
             fields.insert(field, value);
         }
@@ -182,9 +190,17 @@ mod tests {
     fn a_save_keeps_hidden_fields_as_stored_and_refuses_changing_a_locked_one() {
         let stored = r#"{"body":"Soup","price":12,"title":"Menu"}"#;
         let read = only(&["title", "body"]);
-        // The saver never saw the price: leaving it out keeps it, and sending one is ignored.
-        let restored = restore_hidden(
+        // The saver never saw the price: leaving it out keeps it; sending another is refused.
+        let refused = restore_hidden(
             serde_json::json!({"title": "Spring menu", "body": "Soup", "price": 0}),
+            stored,
+            &read,
+        );
+        assert!(
+            matches!(refused, Err(ApiError::Invalid(ref refusal)) if refusal.pointer == "/price")
+        );
+        let restored = restore_hidden(
+            serde_json::json!({"title": "Spring menu", "body": "Soup"}),
             stored,
             &read,
         )
