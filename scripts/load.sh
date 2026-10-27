@@ -13,7 +13,7 @@
 # cli (requests authenticated by a bearer token, as the CLI sends them), members (member lists,
 # invitation lookups, role changes and new invitations), roles (requests by a member holding a
 # custom role, the caller's permissions, role lists and versioned role edits), projects (who may create projects:
-# refused creations and /me), changesets (reading, listing, reviewing and creating changesets),
+# refused creations and /me), setup (setup codes refused on a set-up installation, and /me), changesets (reading, listing, reviewing and creating changesets),
 # delivery (anonymous /content/v1 reads, latest and pinned), publishing (whole publishes, five
 # requests each, with the worker announcing every release to a local receiver; needs node),
 # studio (the Studio's static files; builds the Studio first) or site (the reference site's pages,
@@ -40,7 +40,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|cli|members|roles|projects|changesets|delivery|publishing|entries|content-types|studio|site throughput|steady [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|cli|members|roles|projects|setup|changesets|delivery|publishing|entries|content-types|studio|site throughput|steady [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -59,7 +59,7 @@ port="${LOAD_PORT:-58090}"
 if [[ "$scenario" == "steady" ]]; then default_vus=256; else default_vus=64; fi
 VUS="${VUS:-$default_vus}"
 case "$endpoint" in
-  session | projects | delivery | site) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
+  session | projects | setup | delivery | site) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
   # Half its requests list entries (a content type lookup too): about 2,000/s at most here, so
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
   cli | members | roles | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
