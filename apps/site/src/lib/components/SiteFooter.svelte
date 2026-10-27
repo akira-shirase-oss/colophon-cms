@@ -34,8 +34,8 @@
 </script>
 
 <footer class="mt-24 border-t border-border bg-card/60">
-	<div class="shell grid gap-12 py-14 md:grid-cols-[minmax(0,1.2fr)_repeat(3,minmax(0,1fr))]">
-		<div class="space-y-4">
+	<div class="shell grid grid-cols-2 gap-x-6 gap-y-10 py-14 md:grid-cols-[minmax(0,1.2fr)_repeat(3,minmax(0,1fr))] md:gap-12">
+		<div class="col-span-2 space-y-4 md:col-span-1">
 			<a href="/" class="inline-flex items-center gap-2.5 rounded-lg font-semibold tracking-tight outline-none focus-visible:ring-4 focus-visible:ring-ring/25">
 				<Mark size={20} />Colophon<span class="sr-only">, home</span>
 			</a>
