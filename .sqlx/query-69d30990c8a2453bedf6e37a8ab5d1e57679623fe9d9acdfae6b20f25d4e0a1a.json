@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT colophon_issue_setup_code($1, $2::int8 * interval '1 second')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "colophon_issue_setup_code",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "69d30990c8a2453bedf6e37a8ab5d1e57679623fe9d9acdfae6b20f25d4e0a1a"
+}

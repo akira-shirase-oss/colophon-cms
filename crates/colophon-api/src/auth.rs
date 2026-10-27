@@ -27,6 +27,8 @@ const SIGN_IN_WINDOW: Duration = Duration::from_secs(600);
 #[derive(Deserialize)]
 pub(crate) struct LoginQuery {
     return_to: Option<String>,
+    /// `create` starts on the provider's form for making an account, if it has one.
+    start: Option<String>,
 }
 
 /// A path on this site, or `/`: never another site (`//host`, `/\host`, or an absolute URL).
@@ -54,7 +56,9 @@ fn expires_in(duration: Duration) -> OffsetDateTime {
     OffsetDateTime::now_utc() + time::Duration::try_from(duration).unwrap_or(time::Duration::MINUTE)
 }
 
-/// `GET /auth/login?return_to=/path`: starts a sign-in and sends the browser to the provider.
+/// `GET /auth/login?return_to=/path[&start=create]`: starts a sign-in and sends the browser to the
+/// provider: to its sign-in form, or with `start=create` to its form for making an account.
+/// Either way the person comes back signed in; an account grants nothing by itself (D-043).
 pub(crate) async fn login(
     State(state): State<AppState>,
     Query(query): Query<LoginQuery>,
@@ -63,6 +67,10 @@ pub(crate) async fn login(
     let oidc = services.oidc.as_ref().ok_or(ApiError::Unavailable(
         "sign-in is not configured on this server",
     ))?;
+    let start = match query.start.as_deref() {
+        Some("create") => colophon_auth::Start::CreateAccount,
+        _ => colophon_auth::Start::SignIn,
+    };
     let (sign_in_state, nonce, pkce_verifier) = (random()?, random()?, random()?);
     let attempt = identity::SignInAttempt {
         nonce: nonce.clone(),
@@ -78,7 +86,7 @@ pub(crate) async fn login(
     .await
     .map_err(ApiError::from_db)?;
     let url = oidc
-        .authorization_url(&sign_in_state, &nonce, &pkce_verifier)
+        .authorization_url(&sign_in_state, &nonce, &pkce_verifier, start)
         .await
         .map_err(|error| {
             tracing::warn!(%error, "identity provider unavailable");
@@ -216,7 +224,16 @@ pub(crate) struct Me {
     display_name: Option<String>,
     /// Whether this person may create projects (D-043).
     administrator: bool,
+    /// The installation as a whole.
+    installation: Installation,
     projects: Vec<crate::projects::ProjectView>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct Installation {
+    /// Whether anyone is an administrator yet. Until someone is, the setup code the server prints
+    /// when it starts makes the first one (`POST /api/v1/setup`, D-060).
+    has_administrator: bool,
 }
 
 /// `GET /me`: who is signed in, and their projects.
@@ -236,6 +253,9 @@ pub(crate) async fn me(
             subject: profile.identity.subject,
             display_name: profile.identity.display_name,
             administrator: profile.identity.administrator,
+            installation: Installation {
+                has_administrator: profile.identity.installation_set_up,
+            },
             projects: profile
                 .projects
                 .into_iter()

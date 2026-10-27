@@ -179,3 +179,97 @@ async fn a_callback_works_once_and_only_in_the_browser_that_started_it() {
         "a sign-in state works once"
     );
 }
+
+/// A person who makes an account at the provider through `/auth/login?start=create` comes back
+/// signed in, and the account grants them nothing (D-043, D-060): no projects, no administrator,
+/// and a project of their own refused.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_new_account_signs_in_and_grants_nothing() {
+    let _server = Server::start().await;
+    let response = app()
+        .get(format!("{ORIGIN}/auth/login?start=create&return_to=/me"))
+        .send()
+        .await
+        .expect("login");
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let binding = common::cookie(&common::cookies_from(&response), "colophon_signin");
+    let provider = response.headers()[reqwest::header::LOCATION]
+        .to_str()
+        .expect("ascii")
+        .to_owned();
+    assert!(provider.contains("prompt=create"), "{provider}");
+
+    let keycloak = reqwest::Client::builder()
+        .cookie_store(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("client");
+    let page = keycloak
+        .get(&provider)
+        .send()
+        .await
+        .expect("sign-up page")
+        .text()
+        .await
+        .expect("html");
+    assert!(
+        page.contains("kc-register-form"),
+        "the provider's sign-up form"
+    );
+    let action = page
+        .split("id=\"kc-register-form\"")
+        .nth(1)
+        .and_then(|rest| rest.split("action=\"").nth(1))
+        .and_then(|rest| rest.split('"').next())
+        .expect("a form action")
+        .replace("&amp;", "&");
+    let name = format!("new-{}", &uuid::Uuid::now_v7().simple().to_string()[20..]);
+    let response = keycloak
+        .post(&action)
+        .form(&[
+            ("username", name.as_str()),
+            ("email", &format!("{name}@example.test")),
+            ("firstName", "New"),
+            ("lastName", "Person"),
+            ("password", "a-long-password-1"),
+            ("password-confirm", "a-long-password-1"),
+        ])
+        .send()
+        .await
+        .expect("sign up");
+    assert_eq!(
+        response.status(),
+        StatusCode::FOUND,
+        "Keycloak made the account"
+    );
+    let callback = response.headers()[reqwest::header::LOCATION]
+        .to_str()
+        .expect("ascii")
+        .to_owned();
+    let response = complete(&callback, &binding).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let set = common::cookies_from(&response);
+    let session = common::Session {
+        cookie: format!(
+            "colophon_session={}; colophon_csrf={}",
+            common::cookie(&set, "colophon_session"),
+            common::cookie(&set, "colophon_csrf")
+        ),
+        csrf: common::cookie(&set, "colophon_csrf"),
+    };
+    let (status, me) = get(Some(&session), "/me").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(me["data"]["display_name"], "New Person");
+    assert_eq!(me["data"]["administrator"], false);
+    assert_eq!(me["data"]["projects"], json!([]));
+    let (status, _) = post(
+        &session,
+        "/api/v1/projects",
+        &json!({"slug": unique_slug(), "name": "Mine"}),
+        Some(&session.csrf),
+        Some(ORIGIN),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "an account grants nothing");
+}

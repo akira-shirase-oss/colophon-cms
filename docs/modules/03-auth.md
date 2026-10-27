@@ -75,6 +75,27 @@ operation, and the cross-project and identity test families from spec §27 pass.
   - `/me` shows the subject (what to bootstrap with) and whether you're an administrator; `colophon whoami` prints
     both;
   - more administrators need a grant flow, planned with project administration.
+- Since step 3.7 (D-060, amending D-043), a fresh installation can also be set up from the Studio:
+  - while nobody is an administrator, a server that serves the API issues a **setup code** at start-up
+    (`colophon-server`'s `setup_code` module): 100 random bits as `XXXXX-XXXXX-XXXXX-XXXXX` in Crockford's
+    base-32 (`colophon_auth::tokens::setup_code`), valid for an hour, stored as its SHA-256 hash only, and printed
+    once to standard error, never to the structured log. The log says only that a code was printed;
+  - `POST /api/v1/setup` with `{"code"}` from a signed-in caller (CSRF and `Origin` checked for cookies, like every
+    write): the code is hashed on arrival (case, spaces, dashes and the look-alikes O, I and L don't matter), the
+    attempt is counted in Postgres (five a person, twenty in all, per fifteen minutes; 429 `rate_limited` with
+    `Retry-After`), the hash is compared with every live one in constant time, and the matching code is claimed in
+    one transaction that writes the `installation` row and the administrator, exactly as the bootstrap does.
+    Wrong, used and expired codes get one answer (422 `setup_code_invalid`); once anyone is an administrator,
+    409 `already_set_up`, and later starts issue nothing;
+  - the application role reaches the codes only through migration 0020's functions; it still can't read or write
+    `installation` or `administrators`. Running `colophon admin bootstrap` before the first start means no code is
+    ever issued;
+  - the Studio's home page shows a signed-in person on such an installation where to find the code, a field for
+    it, and the bootstrap command with their own subject.
+- Sign-up belongs to the identity provider: `GET /auth/login?start=create` asks it for its sign-up form
+  (`prompt=create`, when its discovery document lists it; its sign-in page otherwise). The development realm allows
+  self-registration since step 3.7. A new account grants nothing: it has no projects until someone invites it, and
+  creates none unless it is an administrator.
 - A development-only identity exists for local work and refuses to run on a publicly bound install: the Keycloak
   realm in `deploy/keycloak` has a public client secret, and the server refuses to start with it on a non-loopback
   listen address (D-031).
@@ -225,7 +246,7 @@ Built in step 1.7 (D-042), for people:
 | A4 | Revocation is checked before each later operation by the revoked principal. |
 | A5 | Agents are draft-only unless a scoped, revocable, opt-in permission says otherwise; nobody approves their own permission escalation. |
 | A6 | Hidden and missing resources are indistinguishable to unauthorized callers. |
-| A7 | Bootstrap runs once and is then disabled; the development identity never runs on a public bind. |
+| A7 | Bootstrap runs once and is then disabled, whether by the command or a setup code (D-060); the development identity never runs on a public bind. |
 | A8 | Tokens and session secrets are stored hashed, compared in constant time, and never logged. |
 
 ## Interfaces
@@ -263,6 +284,23 @@ Built in step 1.7 (D-042), for people:
   paths (spec §13).
 - **Invitations:** expired, reused, or accepted by a different identity.
 - **Bootstrap:** fails once it is complete; the development identity refuses a public bind.
+- **Since step 3.7 (D-060):**
+  - `crates/colophon-db/tests/setup.rs`: only a hash is stored and the application login can neither read the
+    codes nor write `installation`, `administrators` or the attempts; a code makes one administrator once and then
+    nobody else; an expired code is dead; lifetimes outside a minute to a day are refused; at most ten codes are
+    live; after a bootstrap nothing is issued, attempted or claimed; five attempts a person and twenty in all, with
+    refused attempts unrecorded and room again after fifteen minutes; two codes claimed at the same moment make one
+    administrator;
+  - `crates/colophon-server/tests/setup.rs`, against the real binary on a database nobody bootstrapped: the code
+    printed to standard error makes the first administrator, typed in lower case with spaces; wrong and malformed
+    codes get 422, the used code 409 for anyone else, and a second start prints nothing; signed out is 401 and a
+    cookie without CSRF 403; an expired code 422; the sixth attempt 429 with `Retry-After`, even with the right code,
+    while someone else within their limit succeeds; the code appears exactly once in all the process's output
+    (its banner) and in no response or structured log line, at `debug`;
+  - `crates/colophon-server/tests/sign_in.rs`: an account made through `/auth/login?start=create` on Keycloak's
+    sign-up form signs in with no projects, isn't an administrator, and can't create a project;
+  - unit tests: codes are four groups of Crockford characters and read back however they are typed; only an exact
+    hash matches, comparing every live code; the banner names the code once, the Studio and the expiry in UTC.
 - **Since step 1.8 (D-043):**
   - `crates/colophon-db/tests/administrators.rs`: a bootstrap before the person's first sign-in, which then finds
     the same identity; again for the same person changes nothing, for anyone else it's refused; the installation row

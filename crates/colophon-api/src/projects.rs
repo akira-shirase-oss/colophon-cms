@@ -103,7 +103,7 @@ pub(crate) async fn create(
         }
         Standing::NotBootstrapped => {
             return Err(ApiError::Forbidden(
-                "this installation has no administrator yet: its operator runs `colophon admin bootstrap`",
+                "this installation has no administrator yet: enter the setup code its server printed when it started, or its operator runs `colophon admin bootstrap`",
             ));
         }
     }
