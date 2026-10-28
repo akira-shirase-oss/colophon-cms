@@ -287,8 +287,29 @@ pub struct Field {
     /// The value a new entry gets when it leaves the field out, in canonical JSON (step M.4,
     /// D-071): top-level scalar fields only, checked against the field's own rules.
     pub default: Option<String>,
+    /// When the field applies, if not always (step M.4, D-072): top-level fields only.
+    pub when: Option<Condition>,
     /// What it holds.
     pub kind: FieldKind,
+}
+
+/// When a field applies (step M.4, D-072): while a top-level yes-or-no or choice field holds one
+/// of `is`. Otherwise content must leave the field out, and it isn't required.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Condition {
+    /// The field it depends on.
+    pub field: String,
+    /// The values for which it applies, in the order that field defines them.
+    pub is: Vec<Value>,
+}
+
+impl Condition {
+    /// Whether it holds in `object`, a document's top level: its field is set to one of `is`.
+    pub fn holds(&self, object: &Map<String, Value>) -> bool {
+        object
+            .get(&self.field)
+            .is_some_and(|value| self.is.contains(value))
+    }
 }
 
 /// A parsed, valid content type definition.
@@ -687,6 +708,24 @@ fn write_fields(out: &mut String, fields: &[Field]) {
         if let Some(default) = &field.default {
             out.push_str(r#","default":"#);
             out.push_str(default);
+        }
+        if let Some(when) = &field.when {
+            out.push_str(r#","when":{"field":"#);
+            write_string(out, &when.field);
+            out.push_str(r#","is":["#);
+            for (index, value) in when.is.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                match value {
+                    Value::Bool(true) => out.push_str("true"),
+                    Value::Bool(false) => out.push_str("false"),
+                    Value::String(text) => write_string(out, text),
+                    // `check_conditions` admits only these two.
+                    _ => {}
+                }
+            }
+            out.push_str("]}");
         }
         out.push('}');
     }
@@ -1329,6 +1368,104 @@ fn enum_values(object: &Map<String, Value>, pointer: &Pointer) -> Result<Vec<Str
 
 /// The slug rules of a definition (D-054): at most one slug field, and a `source` that names one of
 /// the definition's single-line text fields.
+/// The most values a condition lists.
+const MAX_CONDITION_VALUES: usize = 100;
+
+/// A field's `when`, as written: `{"field": id, "is": value or [values]}`. Which field and values
+/// are allowed is checked once every field is known ([`check_conditions`]).
+fn condition(value: &Value, depth: usize, pointer: &Pointer) -> Result<Condition, Refusal> {
+    let invalid = |message: &str| refuse("invalid_condition", pointer, message);
+    if depth > 0 {
+        return Err(invalid("only a top-level field can depend on another"));
+    }
+    let object = value.as_object().ok_or_else(|| {
+        invalid(
+            "`when` is {\"field\": the field it depends on, \"is\": a value or a list of values}",
+        )
+    })?;
+    only(object, &["field", "is"], pointer)?;
+    let field = object
+        .get("field")
+        .and_then(Value::as_str)
+        .filter(|id| is_field_id(id))
+        .ok_or_else(|| invalid("`when.field` names a field of this content type"))?
+        .to_owned();
+    let is = match object.get("is") {
+        Some(Value::Array(values)) => values.clone(),
+        Some(value) => vec![value.clone()],
+        None => Vec::new(),
+    };
+    let distinct = is
+        .iter()
+        .enumerate()
+        .all(|(index, value)| !is[..index].contains(value));
+    if is.is_empty() || is.len() > MAX_CONDITION_VALUES || !distinct {
+        return Err(invalid(
+            "`when.is` is a value, or a list of 1 to 100 different values, of the field it depends on",
+        ));
+    }
+    Ok(Condition { field, is })
+}
+
+/// Checks every condition against the fields it names (D-072): the field depends on another
+/// top-level yes-or-no or choice field that applies always, `is` lists values of it, and the title
+/// field applies always. Puts `is` in the order the field it depends on defines its values, so a
+/// definition has one canonical form.
+fn check_conditions(fields: &mut [Field], title_field: &str) -> Result<(), Refusal> {
+    let controllers: Vec<(String, Option<Vec<Value>>)> = fields
+        .iter()
+        .map(|field| {
+            let values = match (&field.kind, &field.when) {
+                (FieldKind::Boolean, None) => Some(vec![Value::Bool(false), Value::Bool(true)]),
+                (FieldKind::Enum { values }, None) => {
+                    Some(values.iter().cloned().map(Value::String).collect())
+                }
+                _ => None,
+            };
+            (field.id.clone(), values)
+        })
+        .collect();
+    for (index, field) in fields.iter_mut().enumerate() {
+        let Some(when) = &mut field.when else {
+            continue;
+        };
+        let mut pointer = at(&Pointer::new(), "fields");
+        pointer.push_index(index);
+        let pointer = at(&pointer, "when");
+        let invalid = |message: String| refuse("invalid_condition", &pointer, message);
+        if field.id == title_field {
+            return Err(invalid("the title field always applies".to_owned()));
+        }
+        let Some((_, allowed)) = controllers
+            .iter()
+            .find(|(id, _)| *id == when.field && *id != field.id)
+        else {
+            return Err(invalid(format!(
+                "`{}` isn't another field of this content type",
+                when.field
+            )));
+        };
+        let Some(allowed) = allowed else {
+            return Err(invalid(format!(
+                "`{}` must be a yes-or-no or choice field that applies always",
+                when.field
+            )));
+        };
+        if let Some(stranger) = when.is.iter().find(|value| !allowed.contains(value)) {
+            return Err(invalid(format!(
+                "{stranger} isn't a value of `{}`",
+                when.field
+            )));
+        }
+        when.is = allowed
+            .iter()
+            .filter(|value| when.is.contains(value))
+            .cloned()
+            .collect();
+    }
+    Ok(())
+}
+
 fn check_slug_fields(fields: &[Field]) -> Result<(), Refusal> {
     let pointer_to = |index: usize, key: &str| {
         let mut pointer = at(&Pointer::new(), "fields");
@@ -1390,6 +1527,7 @@ impl ContentType {
                     required: true,
                     unique: false,
                     default: None,
+                    when: None,
                     kind: FieldKind::Text {
                         min_chars: 0,
                         max_chars: 200,
@@ -1404,6 +1542,7 @@ impl ContentType {
                     required: true,
                     unique: false,
                     default: None,
+                    when: None,
                     kind: FieldKind::RichText,
                 },
             ],
@@ -1470,6 +1609,8 @@ impl ContentType {
                 "`title_field` must name a required, single-line text field",
             ));
         }
+        let mut fields = fields;
+        check_conditions(&mut fields, &title_field)?;
         Ok(Self {
             name,
             title_field,
@@ -1676,6 +1817,7 @@ impl ContentType {
             "required",
             "unique",
             "default",
+            "when",
         ];
         let kind = Self::kind(object, &common, pointer, depth)?;
         if unique && (depth > 0 || !kind.may_be_unique()) {
@@ -1695,6 +1837,10 @@ impl ContentType {
                 &at(pointer, "default"),
             )?),
         };
+        let when = match object.get("when") {
+            None => None,
+            Some(value) => Some(condition(value, depth, &at(pointer, "when"))?),
+        };
         Ok(Field {
             id,
             label,
@@ -1702,6 +1848,7 @@ impl ContentType {
             required,
             unique,
             default,
+            when,
             kind,
         })
     }
@@ -1855,24 +2002,33 @@ impl ContentType {
         let Some(object) = value.as_object() else {
             return (Cow::Borrowed(value), Vec::new());
         };
-        let missing: Vec<(&str, Value)> = self
-            .fields
-            .iter()
-            .filter(|field| !object.contains_key(&field.id))
-            .filter_map(|field| {
-                // Canonical JSON written by this crate, so it parses.
-                let default = serde_json::from_str(field.default.as_deref()?).ok()?;
-                Some((field.id.as_str(), default))
-            })
-            .collect();
-        if missing.is_empty() {
+        // Canonical JSON written by this crate, so it parses.
+        let default = |field: &Field| -> Option<Value> {
+            serde_json::from_str(field.default.as_deref()?).ok()
+        };
+        let missing = |field: &&Field| field.default.is_some() && !object.contains_key(&field.id);
+        if !self.fields.iter().any(|field| missing(&field)) {
             return (Cow::Borrowed(value), Vec::new());
         }
+        // Fields that always apply first: a conditional field's default fills it only if its
+        // condition holds once they are filled (D-072); what it depends on applies always.
         let mut filled = object.clone();
-        let mut ids = Vec::with_capacity(missing.len());
-        for (id, default) in missing {
-            filled.insert(id.to_owned(), default);
-            ids.push(id);
+        let mut ids = Vec::new();
+        for conditional in [false, true] {
+            for field in self.fields.iter().filter(missing) {
+                if field.when.is_some() != conditional
+                    || field.when.as_ref().is_some_and(|when| !when.holds(&filled))
+                {
+                    continue;
+                }
+                if let Some(value) = default(field) {
+                    filled.insert(field.id.clone(), value);
+                    ids.push(field.id.as_str());
+                }
+            }
+        }
+        if ids.is_empty() {
+            return (Cow::Borrowed(value), ids);
         }
         (Cow::Owned(Value::Object(filled)), ids)
     }
@@ -1955,8 +2111,10 @@ impl ContentType {
         let mut first = true;
         for field in fields {
             let at_field = at(pointer, &field.id);
+            // A field whose condition doesn't hold must be left out, and isn't required (D-072).
+            let applies = field.when.as_ref().is_none_or(|when| when.holds(object));
             let Some(value) = object.get(&field.id) else {
-                if field.required {
+                if field.required && applies {
                     return Err(refuse(
                         "missing_field",
                         &at_field,
@@ -1965,6 +2123,20 @@ impl ContentType {
                 }
                 continue;
             };
+            if let Some(when) = field.when.as_ref().filter(|_| !applies) {
+                let depends_on = fields
+                    .iter()
+                    .find(|other| other.id == when.field)
+                    .map_or(when.field.as_str(), |other| other.label.as_str());
+                return Err(refuse(
+                    "not_applicable",
+                    &at_field,
+                    format!(
+                        "`{}` doesn't apply for this `{depends_on}`: leave it out",
+                        field.label
+                    ),
+                ));
+            }
             if !first {
                 out.push(',');
             }
@@ -2464,7 +2636,9 @@ impl ContentType {
             };
             let mut pointer = at(&root, "fields");
             pointer.push_index(index);
-            if !widens(&old.kind, &new.kind) || (new.required && !old.required) {
+            // Applying in fewer cases, or always when required, can leave stored content wrong.
+            let narrower_when = old.when != new.when && (new.when.is_some() || new.required);
+            if !widens(&old.kind, &new.kind) || (new.required && !old.required) || narrower_when {
                 return Successor::CheckContent(refuse(
                     "needs_migration",
                     &pointer,
@@ -3866,6 +4040,168 @@ mod tests {
             tasks.successor(&other),
             Successor::Compatible,
             "a default never touches stored content"
+        );
+    }
+
+    fn media(extra: &[Value]) -> Result<ContentType, (&'static str, String)> {
+        let mut fields = vec![
+            json!({"id": "title", "label": "Title", "type": "text", "required": true}),
+            json!({"id": "kind", "label": "Kind", "type": "enum", "values": ["article", "video", "podcast"], "required": true}),
+            json!({"id": "featured", "label": "Featured", "type": "boolean"}),
+        ];
+        fields.extend(extra.iter().cloned());
+        ContentType::parse(&json!({"name": "Media", "title_field": "title", "fields": fields}))
+            .map_err(|refused| (refused.code, refused.pointer))
+    }
+
+    #[test]
+    fn a_condition_names_a_choice_or_yes_or_no_field_and_is_written_in_its_order() {
+        let duration = json!({"id": "duration", "label": "Duration", "type": "number", "required": true,
+                              "when": {"field": "kind", "is": ["podcast", "video", "podcast"]}});
+        assert_eq!(
+            media(&[duration]).map(|_| ()).map_err(|e| e.0),
+            Err("invalid_condition"),
+            "values are distinct"
+        );
+        let duration = json!({"id": "duration", "label": "Duration", "type": "number", "required": true,
+                              "when": {"field": "kind", "is": ["podcast", "video"]}});
+        let parsed = media(&[duration]).expect("valid");
+        assert!(parsed.canonical_json().ends_with(r#""required":true,"integer":false,"when":{"field":"kind","is":["video","podcast"]}}]}"#), "{}", parsed.canonical_json());
+        let badge = json!({"id": "badge", "label": "Badge", "type": "text", "when": {"field": "featured", "is": true}});
+        assert!(
+            media(&[badge])
+                .expect("valid")
+                .canonical_json()
+                .contains(r#""when":{"field":"featured","is":[true]}"#)
+        );
+        let refused = [
+            (
+                json!({"field": "kind", "is": "audio"}),
+                "a value it doesn't have",
+            ),
+            (json!({"field": "title", "is": "x"}), "a text field"),
+            (json!({"field": "nothing", "is": "x"}), "no such field"),
+            (json!({"field": "notes", "is": "x"}), "itself"),
+            (json!({"field": "kind", "is": []}), "no values"),
+            (json!({"field": "kind"}), "no is"),
+            (
+                json!({"field": "kind", "is": "video", "or": 1}),
+                "an unknown key",
+            ),
+        ];
+        for (when, why) in refused {
+            let notes = json!({"id": "notes", "label": "Notes", "type": "text", "when": when});
+            let code = media(&[notes]).map(|_| ()).map_err(|e| e.0);
+            assert!(
+                matches!(code, Err("invalid_condition" | "unknown_field")),
+                "{why}: {code:?}"
+            );
+        }
+        let chained = [
+            json!({"id": "episode", "label": "Episode", "type": "enum", "values": ["1", "2"], "when": {"field": "kind", "is": "podcast"}}),
+            json!({"id": "notes", "label": "Notes", "type": "text", "when": {"field": "episode", "is": "1"}}),
+        ];
+        assert_eq!(
+            media(&chained).map(|_| ()),
+            Err(("invalid_condition", "/fields/4/when".to_owned())),
+            "what it depends on applies always"
+        );
+        let title = ContentType::parse(&json!({"name": "M", "title_field": "title", "fields": [
+            {"id": "flag", "label": "Flag", "type": "boolean"},
+            {"id": "title", "label": "Title", "type": "text", "required": true, "when": {"field": "flag", "is": true}}
+        ]}));
+        assert_eq!(
+            title.map(|_| ()).map_err(|e| (e.code, e.pointer)),
+            Err(("invalid_condition", "/fields/1/when".to_owned()))
+        );
+        let nested = json!({"id": "extra", "label": "Extra", "type": "object", "fields": [
+            {"id": "inner", "label": "Inner", "type": "text", "when": {"field": "kind", "is": "video"}}
+        ]});
+        assert_eq!(
+            media(&[nested]).map(|_| ()),
+            Err(("invalid_condition", "/fields/3/fields/0/when".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_field_applies_only_while_its_condition_holds() {
+        let duration = json!({"id": "duration", "label": "Duration", "type": "number", "integer": true, "required": true,
+                              "when": {"field": "kind", "is": ["video", "podcast"]}});
+        let media = media(&[duration]).expect("valid");
+        assert!(
+            media
+                .validate(&json!({"title": "Clip", "kind": "video", "duration": 90}))
+                .is_ok()
+        );
+        let missing = media
+            .validate(&json!({"title": "Clip", "kind": "video"}))
+            .expect_err("required while it applies");
+        assert_eq!(
+            (missing.code, missing.pointer.as_str()),
+            ("missing_field", "/duration")
+        );
+        assert!(
+            media
+                .validate(&json!({"title": "Essay", "kind": "article"}))
+                .is_ok(),
+            "not required otherwise"
+        );
+        let stale = media
+            .validate(&json!({"title": "Essay", "kind": "article", "duration": 90}))
+            .expect_err("left out otherwise");
+        assert_eq!(
+            (stale.code, stale.pointer.as_str()),
+            ("not_applicable", "/duration")
+        );
+        assert!(stale.message.contains("Kind"), "{}", stale.message);
+    }
+
+    #[test]
+    fn defaults_and_changes_follow_the_condition() {
+        let badge = |when: Option<Value>, required: bool| {
+            let mut field = json!({"id": "badge", "label": "Badge", "type": "text", "required": required, "default": "New"});
+            if let Some(when) = when {
+                field["when"] = when;
+            }
+            media(&[field]).expect("valid")
+        };
+        let featured = badge(Some(json!({"field": "featured", "is": true})), false);
+        let plain = json!({"title": "T", "kind": "article"});
+        assert_eq!(
+            *featured.with_defaults(&plain).0,
+            plain,
+            "no default where it doesn't apply"
+        );
+        let starred = json!({"title": "T", "kind": "article", "featured": true});
+        let (filled, ids) = featured.with_defaults(&starred);
+        assert_eq!(
+            (filled["badge"].as_str(), ids),
+            (Some("New"), vec!["badge"])
+        );
+
+        let always = badge(None, false);
+        let always_required = badge(None, true);
+        assert!(
+            matches!(always.successor(&featured), Successor::CheckContent(_)),
+            "applying in fewer cases"
+        );
+        assert_eq!(
+            featured.successor(&always),
+            Successor::Compatible,
+            "applying always, optional"
+        );
+        assert!(
+            matches!(
+                badge(Some(json!({"field": "featured", "is": true})), true)
+                    .successor(&always_required),
+                Successor::CheckContent(_)
+            ),
+            "required always"
+        );
+        let other = badge(Some(json!({"field": "featured", "is": false})), false);
+        assert!(
+            matches!(featured.successor(&other), Successor::CheckContent(_)),
+            "a different condition"
         );
     }
 }
