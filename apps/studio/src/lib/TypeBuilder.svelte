@@ -19,12 +19,13 @@
 	import { INVALID_DEFAULT } from './words.ts';
 	import { savedPaths, structureProblems } from './fieldDefs.ts';
 	import FieldsEditor from './FieldsEditor.svelte';
-	import { typesQuery } from './queries.ts';
+	import { componentsQuery, typesQuery } from './queries.ts';
 
 	let { project, type, editable }: { project: string; type: ContentType; editable: boolean } = $props();
 	const queryClient = useQueryClient();
 	// The collections a link field can point to: every content type, this one included.
 	const collections = createQuery(() => typesQuery(project));
+	const components = createQuery(() => componentsQuery(project));
 
 	// svelte-ignore state_referenced_locally
 	const saved = type.definition;
@@ -141,6 +142,8 @@
 			titleField={draft.title_field}
 			collections={collections.data ?? []}
 			self={type.slug}
+			components={components.data ?? []}
+			{project}
 			refusal={refusal?.details?.pointer ? { pointer: refusal.details.pointer, message: refusal.message } : null}
 		/>
 	</div>

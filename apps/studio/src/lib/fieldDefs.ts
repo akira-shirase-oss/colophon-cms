@@ -166,5 +166,39 @@ export function defaultInput(field: FieldDefinition): DefaultInput | null {
 	}
 }
 
+/** The content types that use the component `slug`, anywhere: as a field, a list's items or a
+ *  section's field (D-073). */
+export function usedBy(types: { slug: string; definition: { name: string; fields: FieldDefinition[] } }[], slug: string): { slug: string; name: string }[] {
+	const uses = (fields: FieldDefinition[]): boolean =>
+		fields.some(
+			(field) =>
+				(field.type === 'object' && (field.component === slug || uses(field.fields))) ||
+				(field.type === 'list' && field.of.type === 'object' && (field.of.component === slug || uses(field.of.fields))) ||
+				(field.type === 'blocks' && field.blocks.some((kind) => uses(kind.fields)))
+		);
+	return types.filter((type) => uses(type.definition.fields)).map((type) => ({ slug: type.slug, name: type.definition.name }));
+}
+
+/** How many structure levels a field needs below its own depth (D-066): one for a structure, plus
+ *  what its fields need; a list's item sits one deeper, so a list of groups needs two. */
+function levels(field: FieldDefinition | ItemKind): number {
+	if (field.type === 'object') return 1 + headroom(field.fields);
+	if (field.type === 'list') return 1 + levels(field.of);
+	if (field.type === 'blocks') return 1 + Math.max(0, ...field.blocks.map((kind) => headroom(kind.fields)));
+	return 0;
+}
+const headroom = (fields: FieldDefinition[]) => Math.max(0, ...fields.map(levels));
+
+/** Whether a component fits as a group of fields at `depth`: its own structures still nest at most
+ *  three deep there. A list's item sits one deeper than the list. */
+export const componentFits = (component: { definition: { fields: FieldDefinition[] } }, depth: number) =>
+	canNest(depth + headroom(component.definition.fields));
+
+/** A field using a component: an object marked with its slug, holding its fields (the server copies
+ *  the current ones in, whatever is sent). */
+export function componentField(id: string, label: string, component: { slug: string; definition: { fields: FieldDefinition[] } }): FieldDefinition {
+	return { id, label, required: false, type: 'object', component: component.slug, fields: structuredClone(component.definition.fields) };
+}
+
 /** A section kind from its label. */
 export const blankBlock = (label: string): BlockKind => ({ name: idFrom(label), label, fields: [] });

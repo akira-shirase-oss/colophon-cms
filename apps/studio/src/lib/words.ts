@@ -70,6 +70,10 @@ export function patternMismatch(label: string, help = ''): string {
 export const DEFAULT_VALUE = 'Default value (optional)';
 export const INVALID_DEFAULT = 'This default isn’t a value the field accepts. Check its choices, limits and allowed form, or clear it.';
 
+/** Shared components (D-073): their two refusals. */
+export const UNKNOWN_COMPONENT = 'That component doesn’t exist in this project. Choose one from the list.';
+export const INVALID_COMPONENT = 'A component can’t hold another component, a URL name, or fields that are unique, have a default, or show only sometimes.';
+
 /** Conditional fields (D-072): the builder's control, its refusal (`invalid_condition`), and what
  *  the editor says when a field stops applying and its value is cleared. */
 export const SHOW_WHEN = 'Show only when';

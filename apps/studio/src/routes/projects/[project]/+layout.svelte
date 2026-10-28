@@ -65,6 +65,7 @@
 		'/projects/[project]/members': 'Members',
 		'/projects/[project]/settings': 'Settings',
 		'/projects/[project]/settings/types/[type]': 'Settings',
+		'/projects/[project]/settings/components/[component]': 'Settings',
 		'/projects/[project]/settings/roles/[role]': 'Settings',
 		'/projects/[project]/settings/tokens': 'Settings',
 		'/projects/[project]/settings/activity': 'Settings'

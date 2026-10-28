@@ -7,7 +7,17 @@
 // the permission (`details.permission`). The server's wording is never matched.
 
 import { type Action, ApiError } from './api.ts';
-import { INTERNAL_TERMS, INVALID_CONDITION, INVALID_PATTERN, INVALID_UNIQUE, PUBLISH_REQUEST, URL_NAME, WEBSITE_CONNECTIONS } from './words.ts';
+import {
+	INTERNAL_TERMS,
+	INVALID_COMPONENT,
+	INVALID_CONDITION,
+	INVALID_PATTERN,
+	INVALID_UNIQUE,
+	PUBLISH_REQUEST,
+	UNKNOWN_COMPONENT,
+	URL_NAME,
+	WEBSITE_CONNECTIONS
+} from './words.ts';
 
 /** A failure, said plainly: a short title, what happened and what to do, and the server's words. */
 export interface Said {
@@ -59,6 +69,8 @@ const BY_REASON: Record<string, string> = {
 	invalid_unique: INVALID_UNIQUE,
 	// Conditional fields (D-072). `not_applicable` keeps the server's words, which name both fields.
 	invalid_condition: INVALID_CONDITION,
+	unknown_component: UNKNOWN_COMPONENT,
+	invalid_component: INVALID_COMPONENT,
 	// Single types (D-067).
 	single_exists: 'This already has its entry; edit that one.',
 	too_many_entries: 'It has more than one entry already, so it can’t hold just one. Keep it as a list of entries, or make a new content type for the single entry.',

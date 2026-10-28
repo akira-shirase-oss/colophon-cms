@@ -148,7 +148,12 @@ export type FieldDefinition = {
 	| { type: 'reference'; to: string; many: true; max: number }
 	/** Step M.3 (D-066): structures, at most three deep, written in definition order. Nested
 	 *  fields: a group of fields (Strapi's component). */
-	| { type: 'object'; fields: FieldDefinition[] }
+	| {
+			type: 'object';
+			fields: FieldDefinition[];
+			/** A shared component's slug (D-073): the fields are its, copied in by the server. */
+			component?: string;
+	  }
 	/** Up to `max` values of one kind, never a list or page sections. */
 	| { type: 'list'; of: ItemKind; max: number }
 	/** A page builder: up to `max` sections, each one of its kinds, marked by `_block`. */
@@ -1064,4 +1069,45 @@ export async function listAudit(
 	if (options.action) query.set('action', options.action);
 	if (options.actor) query.set('actor', options.actor);
 	return (await (await send('GET', `/api/v1/projects/${project}/audit?${query}`)).json()) as Page<AuditEvent>;
+}
+
+/** A shared component (D-073): a named group of fields that content types use, copied into each. */
+export interface ComponentDefinition {
+	name: string;
+	fields: FieldDefinition[];
+}
+
+export interface Component {
+	slug: string;
+	version: number;
+	definition: ComponentDefinition;
+	definition_hash: string;
+	created_at: string;
+	/** After a change: the content types it gave a new version, in slug order. */
+	content_types?: { slug: string; version: number }[];
+}
+
+const components = (project: string) => `${base(project)}/components`;
+
+export async function listComponents(project: string): Promise<Component[]> {
+	return ((await (await send('GET', components(project))).json()) as { data: Component[] }).data;
+}
+
+/** A component with the ETag (`"v<version>"`) its next change names in `If-Match`. */
+export async function getComponent(project: string, slug: string): Promise<{ component: Component; etag: string }> {
+	const response = await send('GET', `${components(project)}/${slug}`);
+	const { data } = (await response.json()) as { data: Component };
+	return { component: data, etag: response.headers.get('etag') ?? `"v${data.version}"` };
+}
+
+/** Needs `schema.change` everywhere. */
+export async function createComponent(project: string, slug: string, definition: ComponentDefinition, key: string): Promise<Component> {
+	return ((await (await send('POST', components(project), { slug, definition }, { 'Idempotency-Key': key })).json()) as { data: Component }).data;
+}
+
+/** A new version, and one for every content type that uses it, or nothing: refused with
+ *  `needs_migration` (the type and its entries in the way) or `stale_version`. */
+export async function updateComponent(project: string, slug: string, definition: ComponentDefinition, etag: string, key: string): Promise<Component> {
+	const response = await send('PUT', `${components(project)}/${slug}`, definition, { 'If-Match': etag, 'Idempotency-Key': key });
+	return ((await response.json()) as { data: Component }).data;
 }

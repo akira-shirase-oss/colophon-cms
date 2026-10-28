@@ -241,6 +241,17 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   applies when Kind is video or podcast."), so a save never earns `not_applicable`; the new-entry dialog asks only for
   fields that apply and sends nothing that doesn't. A condition stored entries don't fit is listed like other changes
   in the way. Tests: `tests/conditions.spec.ts`, `tests/server/conditions.spec.ts`.
+- D-073 in the Studio: **shared components**. Settings lists them (fields, version, and the content types that use
+  each, worked out from their definitions by `usedBy` in `lib/fieldDefs.ts`) and makes one from a name and a name in
+  code, starting with a Title field. Its page (`settings/components/[component]`, `lib/ComponentBuilder.svelte`) edits
+  its fields like a group's, one structure deep, so nothing unique, no defaults, conditions, URL names or components
+  inside are offered. A save says the new version of every content type that changed with it, with links; a change
+  their entries can't take names that content type and lists its entries with links. The refusal names the type only
+  in its message, so the Studio finds it among the types that use the component (the one holding the first entry in
+  the way). A content type's builder offers *Component: SEO* wherever a group can go and the component's own
+  structures still fit three deep (`componentFits`), shows its fields read-only with a link to its page, and the
+  entry editor fills it like any group. Changing one takes `schema.change` everywhere; a role without it reads it,
+  and the server refuses its change too. Tests: `tests/components.spec.ts`, `tests/server/components.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

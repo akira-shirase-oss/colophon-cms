@@ -12,8 +12,9 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
 	import { Textarea } from '@colophon/ui/ui/textarea';
-	import { type ContentType, FIELD_TYPES, type FieldDefinition, type FieldType, type ItemKind, MAX_DEPTH } from './api.ts';
-	import { blank, blankBlock, blankKind, canBeUnique, canHaveDefault, canNest, defaultInput, idFrom, ITEM_TYPES, NAMES, STRUCTURES } from './fieldDefs.ts';
+	import { resolve } from '$app/paths';
+	import { type Component, type ContentType, FIELD_TYPES, type FieldDefinition, type FieldType, type ItemKind, MAX_DEPTH } from './api.ts';
+	import { blank, blankBlock, blankKind, canBeUnique, canHaveDefault, canNest, componentField, componentFits, defaultInput, idFrom, ITEM_TYPES, NAMES, STRUCTURES } from './fieldDefs.ts';
 	import { toLocal, toUtc } from './content.ts';
 	import { DEFAULT_VALUE, INVALID_UNIQUE, SHOW_WHEN, UNIQUE } from './words.ts';
 	import FieldsEditor from './FieldsEditor.svelte';
@@ -29,7 +30,9 @@
 		self,
 		within = '',
 		pointer = '/fields',
-		refusal = null
+		refusal = null,
+		components = [],
+		project = ''
 	}: {
 		/** The fields to edit, in place. */
 		fields: FieldDefinition[];
@@ -51,7 +54,11 @@
 		 *  options (an allowed form the server can't use) is shown at that option. */
 		pointer?: string;
 		refusal?: { pointer: string; message: string } | null;
+		/** Shared components that can be inserted here (D-073); none inside a component. */
+		components?: Component[];
+		project?: string;
 	} = $props();
+	const componentOf = (slug: string | undefined) => components.find((item) => item.slug === slug);
 
 	const select =
 		'h-9 rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40';
@@ -62,11 +69,16 @@
 	const hasSlug = $derived(fields.some((field) => field.type === 'slug'));
 	/** The types a new field here can have. */
 	const offered = $derived(FIELD_TYPES.filter((type) => (type !== 'slug' || depth === 0) && (!STRUCTURES.includes(type) || canNest(depth))));
-	const describe = (field: FieldDefinition | ItemKind) =>
-		field.type === 'list' ? `List of ${NAMES[field.of.type].toLowerCase()}` : NAMES[field.type];
+	const describe = (field: FieldDefinition | ItemKind): string =>
+		field.type === 'object' && field.component !== undefined
+			? `Component: ${componentOf(field.component)?.definition.name ?? field.component}`
+			: field.type === 'list'
+				? `List of ${field.of.type === 'object' && field.of.component !== undefined ? describe(field.of).toLowerCase() : NAMES[field.of.type].toLowerCase()}`
+				: NAMES[field.type];
 
 	let newLabel = $state('');
-	let newType = $state<FieldType>('text');
+	/** A field type, or `component:<slug>` for a shared component. */
+	let newType = $state<string>('text');
 	const newId = $derived(idFrom(newLabel));
 	const newProblem = $derived(
 		newLabel.trim() === ''
@@ -83,7 +95,8 @@
 	function add(event: SubmitEvent) {
 		event.preventDefault();
 		if (newProblem !== '' || newId === '') return;
-		fields.push(blank(newType, newId, newLabel.trim(), target, titleField));
+		const shared = newType.startsWith('component:') ? componentOf(newType.slice('component:'.length)) : undefined;
+		fields.push(shared ? componentField(newId, newLabel.trim(), shared) : blank(newType as FieldType, newId, newLabel.trim(), target, titleField));
 		newLabel = '';
 		newType = 'text';
 	}
@@ -154,8 +167,12 @@
 	}
 
 	/** What each item of a list is: a new kind replaces the old one. */
-	function setItem(field: FieldDefinition, type: FieldType) {
-		if (field.type === 'list') field.of = blankKind(type, target) as ItemKind;
+	function setItem(field: FieldDefinition, type: string) {
+		if (field.type !== 'list') return;
+		const shared = type.startsWith('component:') ? componentOf(type.slice('component:'.length)) : undefined;
+		field.of = shared
+			? ({ type: 'object', component: shared.slug, fields: structuredClone(shared.definition.fields) } as ItemKind)
+			: (blankKind(type as FieldType, target) as ItemKind);
 	}
 
 	// Kinds of page section: a label, and the name items will carry, made from it.
@@ -285,10 +302,22 @@
 			{/if}
 			{#if !isNew}<span class="text-xs text-muted-foreground">It keeps pointing at {nameOf(def.to)}: what it holds are {nameOf(def.to)} entries.</span>{/if}
 		</div>
+	{:else if def.type === 'object' && def.component !== undefined}
+		<!-- A shared component's fields are its own: shown here, changed on its page (D-073). -->
+		{@const name = componentOf(def.component)?.definition.name ?? def.component}
+		<div class="rounded-lg border border-dashed border-border p-3 text-sm" data-testid="component-{place}">
+			<p class="mb-1.5 text-xs text-muted-foreground">The fields of {name}, shared with every content type that uses it, are changed on its own page:</p>
+			<ul class="mb-2 flex flex-wrap gap-1.5" aria-label="Fields of {name}">
+				{#each def.fields as child (child.id)}<li><Badge variant="secondary">{child.label}</Badge></li>{/each}
+			</ul>
+			<a class="text-sm font-medium underline underline-offset-2" href={resolve('/projects/[project]/settings/components/[component]', { project, component: def.component })}
+				>Open the {name} component</a
+			>
+		</div>
 	{:else if def.type === 'object'}
 		<div class="rounded-lg border border-dashed border-border p-3" data-testid="group-{place}">
 			<p class="mb-2 text-xs text-muted-foreground">The fields in {owner}:</p>
-			<FieldsEditor fields={def.fields} depth={level + 1} {editable} {saved} path={place} {collections} {self} within={owner} pointer="{at}/fields" {refusal} />
+			<FieldsEditor fields={def.fields} depth={level + 1} {editable} {saved} path={place} {collections} {self} within={owner} pointer="{at}/fields" {refusal} {components} {project} />
 		</div>
 	{:else if def.type === 'list'}
 		{@const itemTypes = ITEM_TYPES.filter((type) => type !== 'object' || canNest(level + 1))}
@@ -296,8 +325,17 @@
 			<div class="flex flex-wrap items-center gap-4">
 				<label class="flex items-center gap-2">
 					Each item is
-					<select class={select} value={def.of.type} onchange={(event) => setItem(def as FieldDefinition, event.currentTarget.value as FieldType)} disabled={!editable} aria-label="What each item of {owner} is">
+					<select
+						class={select}
+						value={def.of.type === 'object' && def.of.component !== undefined ? `component:${def.of.component}` : def.of.type}
+						onchange={(event) => setItem(def as FieldDefinition, event.currentTarget.value)}
+						disabled={!editable}
+						aria-label="What each item of {owner} is"
+					>
 						{#each itemTypes as type (type)}<option value={type}>{NAMES[type]}</option>{/each}
+						{#each components.filter((shared) => componentFits(shared, level + 1)) as shared (shared.slug)}
+							<option value="component:{shared.slug}">Component: {shared.definition.name}</option>
+						{/each}
 					</select>
 				</label>
 				<label class="flex items-center gap-2">
@@ -337,6 +375,8 @@
 						within="{kind.label} section"
 						pointer="{at}/blocks/{index}/fields"
 						{refusal}
+						{components}
+						{project}
 					/>
 				</div>
 			{/each}
@@ -499,6 +539,9 @@
 			<select class={select} bind:value={newType}>
 				{#each offered as kind (kind)}
 					<option value={kind} disabled={kind === 'slug' && hasSlug}>{NAMES[kind]}</option>
+				{/each}
+				{#each components.filter((shared) => componentFits(shared, depth)) as shared (shared.slug)}
+					<option value="component:{shared.slug}">Component: {shared.definition.name}</option>
 				{/each}
 			</select>
 		</label>
