@@ -1,6 +1,6 @@
-// Content modelling through the testbed (steps M.1 to M.4, D-064 to D-066, D-069, D-070): types
-// with an object, a list of lowercase tags and blocks whose quote names a person, whose name is
-// unique; the page is stored in canonical form, a quote by nobody, a tag in capitals and a second
+// Content modelling through the testbed (steps M.1 to M.4, D-064 to D-066, D-069 to D-071):
+// types with an object, a list of lowercase tags and blocks whose quote names a person, whose name
+// is unique and whose role defaults to member; the page is stored in canonical form, a quote by nobody, a tag in capitals and a second
 // Ada are refused where they are, the page can't be published before the person, both
 // together can, and the person's read lists what references them.
 
@@ -28,6 +28,8 @@ test('structures are stored canonically, references are checked, and publishing 
 
 	await page.getByRole('button', { name: 'Set up types and Ada' }).click();
 	await expect(page.getByTestId('message')).toHaveText('set up');
+	// Ada was sent without a role: the default fills it (D-071).
+	await expect(page.getByTestId('ada')).toHaveText('{"name":"Ada","role":"member"}');
 
 	await page.getByRole('button', { name: 'Save a page quoting Ada' }).click();
 	await expect(page.getByTestId('message')).toHaveText('saved');
