@@ -11,6 +11,7 @@
 	import { resolve } from '$app/paths';
 	import ArrowUpRightIcon from '@lucide/svelte/icons/arrow-up-right';
 	import CopyIcon from '@lucide/svelte/icons/copy';
+	import EyeIcon from '@lucide/svelte/icons/eye';
 	import LinkIcon from '@lucide/svelte/icons/link';
 	import { toast } from 'svelte-sonner';
 	import { openEditor, type RichTextValue, toStored } from '@colophon/editor';
@@ -40,6 +41,7 @@
 	import { plainError } from './errors.ts';
 	import DiffView from './DiffView.svelte';
 	import PublishEntry from './PublishEntry.svelte';
+	import ReaderView from './ReaderView.svelte';
 	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from './queries.ts';
 	import RichTextToolbar from './RichTextToolbar.svelte';
 	import StatusBadge from './shell/StatusBadge.svelte';
@@ -247,6 +249,9 @@
 			toast.error("Couldn't copy; select it and copy it yourself.");
 		}
 	}
+
+	// "What readers get": the public read of this entry, in a dialog.
+	let readerView = $state(false);
 
 	let tab = $state<'content' | 'history'>('content');
 
@@ -520,6 +525,10 @@
 					>
 					<Button variant="ghost" size="icon-xs" aria-label="Copy the public address" onclick={() => copyAddress(address)}><CopyIcon /></Button>
 				</div>
+				<Button class="mt-3" variant="outline" size="sm" onclick={() => (readerView = true)} data-testid="see-what-readers-get"
+					><EyeIcon data-icon="inline-start" />See what readers get</Button
+				>
+				<ReaderView bind:open={readerView} {project} {collection} {entry} changed={standing === 'changed'} />
 			</section>
 		{/if}
 

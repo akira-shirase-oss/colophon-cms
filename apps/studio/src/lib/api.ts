@@ -1046,6 +1046,33 @@ export function deliveryUrl(project: string, collection: string): string {
 	return `/content/v1/${project}/production/${collection}`;
 }
 
+/** One entry as readers get it (`GET /content/v1/…/{entry}`, no sign-in): the published copy at
+ *  the latest release, never the draft. `published_in` is the release its version went out in. */
+export interface Delivered {
+	id: string;
+	revision_id: string;
+	collection: string;
+	title: string;
+	slug?: string;
+	content: Content;
+	content_hash: string;
+	published_in: number;
+}
+
+/** What readers get for one entry right now, with the release it was read at (the
+ *  `Colophon-Generation` header) and the answer exactly as sent. Taken down: 410 `gone`; not out
+ *  yet: 404. */
+export async function readDelivered(
+	project: string,
+	collection: string,
+	entry: string
+): Promise<{ data: Delivered; release: number | null; raw: string }> {
+	const response = await send('GET', `${deliveryUrl(project, collection)}/${entry}`);
+	const raw = await response.text();
+	const release = Number(response.headers.get('colophon-generation') ?? NaN);
+	return { data: (JSON.parse(raw) as { data: Delivered }).data, release: Number.isInteger(release) ? release : null, raw };
+}
+
 /** A fresh idempotency key: 32 hex characters. */
 export function newKey(): string {
 	return crypto.randomUUID().replaceAll('-', '');
