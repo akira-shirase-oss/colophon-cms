@@ -27,7 +27,7 @@
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
-	import { PUBLISH_REQUEST } from '#lib/words.ts';
+	import { PUBLISH_REQUEST, VALUE_TAKEN_ON_PUBLISH } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const id = $derived(page.params.changeset ?? '');
@@ -87,6 +87,8 @@
 				publishKey = newKey();
 			} else if (failure instanceof ApiError && failure.reason === 'stale_changeset') {
 				notice = STALE;
+			} else if (failure instanceof ApiError && failure.reason === 'value_taken') {
+				error = VALUE_TAKEN_ON_PUBLISH;
 			} else {
 				error = plainError(failure, 'publish this');
 			}

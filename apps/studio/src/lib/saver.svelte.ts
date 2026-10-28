@@ -62,6 +62,9 @@ export class Saver {
 	 *  and the refusal's reason (`pattern_mismatch`), for words that fit the control. */
 	pointer = $state<string | null>(null);
 	reason = $state<string | null>(null);
+	/** The entry that has a value this one may not share (`value_taken`, `slug_taken`), when the
+	 *  server names it: only to a role that reads its title (D-070). */
+	holder = $state<{ entry: string; title: string } | null>(null);
 
 	#saved: Content;
 	#latest: Content;
@@ -154,6 +157,7 @@ export class Saver {
 		this.place = null;
 		this.pointer = null;
 		this.reason = null;
+		this.holder = null;
 		if (this.#held) {
 			this.#held = false;
 			this.message = '';
@@ -332,6 +336,8 @@ export class Saver {
 				this.place = pointer?.[2] === undefined ? null : Number(pointer[2]);
 				this.pointer = error.details?.pointer ?? null;
 				this.reason = error.reason;
+				const named = error.details?.entries?.[0];
+				this.holder = named === undefined ? null : { entry: named.entry, title: named.title };
 				this.message =
 					error.reason === 'slug_taken'
 						? `another entry already uses this ${URL_NAME}${error.details?.entries?.[0] ? ` (“${error.details.entries[0].title}”)` : ''}: choose another`

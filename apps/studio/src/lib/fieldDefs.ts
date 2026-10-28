@@ -116,5 +116,13 @@ export function savedPaths(fields: FieldDefinition[], within = '', out = new Set
 	return out;
 }
 
+/** Whether a field may be unique (D-070): a top-level single-line text, email, web address,
+ *  number, date, time or date-and-time field. */
+export function canBeUnique(field: FieldDefinition, depth: number): boolean {
+	if (depth !== 0) return false;
+	if (field.type === 'text') return !field.multiline;
+	return ['email', 'url', 'number', 'date', 'time', 'datetime'].includes(field.type);
+}
+
 /** A section kind from its label. */
 export const blankBlock = (label: string): BlockKind => ({ name: idFrom(label), label, fields: [] });

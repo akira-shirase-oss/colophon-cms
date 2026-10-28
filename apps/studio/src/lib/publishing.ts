@@ -8,7 +8,7 @@
 import { ApiError, changesetAction, createChangeset, listReleases, may, newKey, type Project, publishChangeset } from './api.ts';
 import { plainError } from './errors.ts';
 import { explainLinks } from './references.ts';
-import { PUBLISH_REQUEST } from './words.ts';
+import { PUBLISH_REQUEST, VALUE_TAKEN_ON_PUBLISH } from './words.ts';
 
 export type Outcome =
 	| { kind: 'published'; generation: number; request: string }
@@ -82,7 +82,9 @@ export async function publishInOneClick(options: {
 				? 'Another release went live while you were publishing. Your request is approved and waiting: look at what is live now, then publish it from the request.'
 				: reason === 'stale_changeset'
 					? 'An entry changed while it was being published. Open the request to update it to the latest version.'
-					: plainError(failure, options.doing ?? (oneClick ? 'publish this' : 'ask for review here'));
+					: reason === 'value_taken'
+						? VALUE_TAKEN_ON_PUBLISH
+						: plainError(failure, options.doing ?? (oneClick ? 'publish this' : 'ask for review here'));
 		return { kind: 'stopped', message, request };
 	}
 }

@@ -65,6 +65,19 @@ export function patternMismatch(label: string, help = ''): string {
 	return `${label} isn't in its ${ALLOWED_FORM}.${help.trim() === '' ? '' : ` ${help.trim()}`}`;
 }
 
+/** A unique field (D-070), as the builder offers it. */
+export const UNIQUE = 'No two entries may share this';
+/** A value another entry already has (`value_taken` on a save), said under the field. */
+export function valueTaken(label: string): string {
+	return `Another entry already has this ${label}.`;
+}
+/** A release that would publish a value another published entry still has (`value_taken`). */
+export const VALUE_TAKEN_ON_PUBLISH =
+	'A value in it that must be unique is still what readers get from another entry. Change that entry, or take it down, first or in the same publish request.';
+/** A field that can't be unique (`invalid_unique`). */
+export const INVALID_UNIQUE =
+	'Only a one-line text, email address, web address, number, date, time, or date and time at the top of the type can be kept unique.';
+
 /** "Release 4, live since 3 minutes ago" pieces: a release is named by its number. */
 export function releaseName(generation: number): string {
 	return `Release ${generation}`;

@@ -106,6 +106,9 @@ export type FieldDefinition = {
 	required: boolean;
 	/** Help text shown under the field, at most 500 characters. */
 	description?: string;
+	/** No two entries may share its value (D-070): top-level single-line text, email, URL, number,
+	 *  date, time and date-time fields only. Written only when true. */
+	unique?: boolean;
 } & (
 	/** `pattern` (D-069): the form every value must take, a regular expression matched against the
 	 *  whole value on the server (Rust syntax; the Studio never imitates it). */

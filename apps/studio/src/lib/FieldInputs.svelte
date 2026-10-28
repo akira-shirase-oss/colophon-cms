@@ -15,7 +15,7 @@
 	import RichTextInput from './RichTextInput.svelte';
 	import StructureInput from './StructureInput.svelte';
 	import type { FieldDefinition } from './api.ts';
-	import { patternMismatch } from './words.ts';
+	import { patternMismatch, valueTaken } from './words.ts';
 	import { characters, fieldProblem, type FormValue, isWebAddress, MAX_SLUG_CHARS, slugify, webAddress } from './content.ts';
 
 	let {
@@ -37,7 +37,13 @@
 		/** Fields the person's role can read but not change (D-058, step R.3): shown, disabled. */
 		locked?: string[];
 		/** The server's refusal of the last save, where (its JSON Pointer) and why. */
-		refused?: { pointer: string | null; message: string; reason?: string | null } | null;
+		refused?: {
+			pointer: string | null;
+			message: string;
+			reason?: string | null;
+			/** The entry that has the value, when the server names it (D-070): where to open it. */
+			holder?: { title: string; href: string } | null;
+		} | null;
 		/** For link fields, which search and read the entries they point to. */
 		project?: string;
 		/** These fields' place in the content, as a JSON Pointer ('' for the entry's own fields;
@@ -53,6 +59,7 @@
 		// Not in its allowed form: the server's answer counts (its regex isn't imitated here), said
 		// with the field's help text, where a type says what the form is.
 		if (here && refused?.reason === 'pattern_mismatch') return patternMismatch(field.label, field.description);
+		if (here && refused?.reason === 'value_taken') return valueTaken(field.label);
 		return fieldProblem(field, form[field.id]) || (here ? (refused?.message ?? '') : '');
 	}
 	/** For a list of links: the place of the id the server refused. */
@@ -338,7 +345,15 @@
 					/>
 				{/if}
 				{#if problemOf(field)}
-					<p class="text-xs text-destructive" id="{input}-problem" data-testid="field-problem" data-field={at(field).slice(1)}>{problemOf(field)}</p>
+					<p class="text-xs text-destructive" id="{input}-problem" data-testid="field-problem" data-field={at(field).slice(1)}>
+						{problemOf(field)}
+						{#if refused?.pointer === at(field) && refused.holder}
+							<!-- Named only to a role that reads it (D-070). -->
+							<a class="font-medium underline underline-offset-2" href={refused.holder.href} data-user-content data-testid="open-holder"
+								>Open “{refused.holder.title}”</a
+							>
+						{/if}
+					</p>
 				{/if}
 				</div>
 			{/if}

@@ -70,7 +70,12 @@
 		} catch (failure) {
 			if (failure instanceof ApiError && failure.failure !== 'retry') {
 				// A refusal the Studio has words for gets them; the developer area keeps the server's otherwise.
-				const words = failure.reason === 'too_many_entries' || failure.reason === 'invalid_pattern' ? plainError(failure) : failure.message;
+				const words =
+					failure.reason === 'too_many_entries' || failure.reason === 'invalid_pattern' || failure.reason === 'invalid_unique'
+						? plainError(failure)
+						: failure.reason === 'needs_migration' && failure.details?.pointer?.endsWith('/unique')
+							? 'Some entries share a value in this field, so it can’t be kept unique yet. Change them (they are listed below), then save again.'
+							: failure.message;
 				refusal = { message: words, details: failure.details, stale: failure.failure === 'conflict' };
 			} else {
 				toast.error(failure instanceof Error ? failure.message : String(failure));
@@ -78,6 +83,13 @@
 		} finally {
 			busy = false;
 		}
+	}
+
+	/** A stored entry's problem with the change, in words: a shared unique value names its field. */
+	function problemWords(problem: { reason: string; pointer: string; message: string }): string {
+		if (problem.reason !== 'value_taken') return problem.message;
+		const field = draft.fields.find((item) => `/${item.id}` === problem.pointer);
+		return `It shares its ${field?.label ?? 'value'} with another entry.`;
 	}
 
 	async function reload() {
@@ -138,7 +150,7 @@
 								>{blocker.title}</a
 							>
 							<Badge variant="secondary">{blocker.state}</Badge>
-							{#if blocker.problem}<span class="text-muted-foreground">{blocker.problem.message}</span>{/if}
+							{#if blocker.problem}<span class="text-muted-foreground" data-testid="blocker-problem">{problemWords(blocker.problem)}</span>{/if}
 						</li>
 					{/each}
 				</ul>

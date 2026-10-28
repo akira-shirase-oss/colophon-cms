@@ -29,7 +29,7 @@
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
-	import { PUBLISH_REQUEST, releaseName, shownTitle } from '#lib/words.ts';
+	import { PUBLISH_REQUEST, releaseName, shownTitle, valueTaken } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const collection = $derived(page.params.collection ?? '');
@@ -225,7 +225,9 @@
 			error =
 				failure instanceof ApiError && failure.reason === 'slug_taken'
 					? 'Another entry already uses that URL name. Give this one a different title.'
-					: plainError(failure, 'create entries here');
+					: failure instanceof ApiError && failure.reason === 'value_taken'
+						? valueTaken(definition.fields.find((field) => `/${field.id}` === failure.details?.pointer)?.label ?? 'value')
+						: plainError(failure, 'create entries here');
 			exists = failure instanceof ApiError && failure.reason === 'single_exists';
 		} finally {
 			busy = false;

@@ -217,6 +217,15 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   said under the field as "Code isn't in its allowed form." with the field's help text. The words are in
   `lib/words.ts` (`ALLOWED_FORM`, `INVALID_PATTERN`, `patternMismatch`). Tests: `tests/patterns.spec.ts`,
   `tests/server/patterns.spec.ts`.
+- D-070 in the Studio: **unique fields**. The builder offers *No two entries may share this* only on top-level
+  single-line text, email, web address, number, date, time and date-and-time fields (`canBeUnique` in
+  `lib/fieldDefs.ts`), writes `unique: true` only when on, and says at the switch when it can't hold (`invalid_unique`)
+  or when entries share a value (`needs_migration`, the entries listed with "It shares its Code with another entry.").
+  In the editor, `value_taken` is said under the field ("Another entry already has this Email.") with *Open “Ada”*
+  only when the server names the entry, which it does only to a role that reads it; a URL name taken by an entry the
+  role can't read is refused without its name. A release that would publish a value another entry still publishes is
+  said in the publish flow's words. Words in `lib/words.ts`. Tests: `tests/unique.spec.ts`,
+  `tests/server/unique.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

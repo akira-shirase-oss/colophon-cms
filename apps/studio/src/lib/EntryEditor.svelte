@@ -388,7 +388,20 @@
 				titleField={definition.title_field}
 				onchange={changed}
 				{locked}
-				refused={saver.status === 'refused' ? { pointer: saver.pointer, message: saver.message, reason: saver.reason } : null}
+				refused={saver.status === 'refused'
+					? {
+							pointer: saver.pointer,
+							message: saver.message,
+							reason: saver.reason,
+							holder:
+								saver.holder === null
+									? null
+									: {
+											title: saver.holder.title,
+											href: resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: saver.holder.entry })
+										}
+						}
+					: null}
 				{project}
 			/>
 			{/key}

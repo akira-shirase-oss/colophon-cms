@@ -13,7 +13,8 @@
 	import { Input } from '@colophon/ui/ui/input';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { type ContentType, FIELD_TYPES, type FieldDefinition, type FieldType, type ItemKind, MAX_DEPTH } from './api.ts';
-	import { blank, blankBlock, blankKind, canNest, idFrom, ITEM_TYPES, NAMES, STRUCTURES } from './fieldDefs.ts';
+	import { blank, blankBlock, blankKind, canBeUnique, canNest, idFrom, ITEM_TYPES, NAMES, STRUCTURES } from './fieldDefs.ts';
+	import { INVALID_UNIQUE, UNIQUE } from './words.ts';
 	import FieldsEditor from './FieldsEditor.svelte';
 
 	let {
@@ -99,6 +100,12 @@
 		const value = bound(text);
 		if (value === undefined || value < 1) delete field.min_chars;
 		else field.min_chars = Math.trunc(value);
+	}
+
+	/** Unique (D-070): written only when true. */
+	function setUnique(field: FieldDefinition, on: boolean) {
+		if (on) field.unique = true;
+		else delete field.unique;
 	}
 
 	/** An allowed form (D-069): written only when there is one. */
@@ -336,6 +343,27 @@
 				{/if}
 			</div>
 			{@render options(field, place, isNew, isTitle, depth, field.label, `${pointer}/${index}`)}
+			{#if canBeUnique(field, depth) || field.unique === true}
+				<div class="grid gap-1 text-sm">
+					<label class="flex items-center gap-2">
+						<input
+							type="checkbox"
+							class="size-4 accent-primary"
+							checked={field.unique === true}
+							onchange={(event) => setUnique(field, event.currentTarget.checked)}
+							disabled={!editable}
+							data-testid="field-unique"
+						/>
+						{UNIQUE}
+					</label>
+					{#if field.unique === true && !canBeUnique(field, depth)}
+						<span class="text-xs text-destructive">{INVALID_UNIQUE} Turn this off, or make it one line.</span>
+					{:else}
+						<span class="text-xs text-muted-foreground">Each value belongs to one entry, among drafts and among what readers get.</span>
+					{/if}
+					{#if refusal?.pointer === `${pointer}/${index}/unique`}<span class="text-xs text-destructive" data-testid="unique-problem">{refusal.message}</span>{/if}
+				</div>
+			{/if}
 			<label class="grid max-w-xl gap-1 text-sm">
 				<span class="text-muted-foreground">Help for editors (optional)</span>
 				<Input
