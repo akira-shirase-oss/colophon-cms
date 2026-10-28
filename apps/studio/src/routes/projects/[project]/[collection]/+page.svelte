@@ -1,5 +1,6 @@
 <!--
-  One collection as a table: search titles (on the server, so it finds beyond the first page),
+  One collection as a table: search by the field that names each entry (its title, or what the
+  type calls it, D-082), on the server, so it finds beyond the first page;
   narrow it to the entries one started (also on the server), filter by where each entry stands
   for readers, and start a new entry.
 -->
@@ -22,7 +23,7 @@
 	import * as Tabs from '@colophon/ui/ui/tabs';
 	import { Toggle } from '@colophon/ui/ui/toggle';
 	import { ApiError, type Content, createEntry, type EntryState, entryState, getContentType, getEntry, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
-	import { applies, blockingProblem, type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
+	import { applies, blockingProblem, type FormValue, formValue, slugify, starter, storedValue, titleLabel } from '#lib/content.ts';
 	import { plainError } from '#lib/errors.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
 	import { oneOf } from '#lib/firstRun.ts';
@@ -32,13 +33,15 @@
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
-	import { PUBLISH_REQUEST, releaseName, shownTitle, valueTaken } from '#lib/words.ts';
+	import { plural, PUBLISH_REQUEST, releaseName, shownTitle, valueTaken } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const collection = $derived(page.params.collection ?? '');
 	const type = createQuery(() => ({ queryKey: ['type', project, collection], queryFn: () => getContentType(project, collection) }));
 	const mine = createQuery(() => projectQuery(project));
 	const writes = $derived(mine.data === undefined || may(mine.data, 'content.create', collection));
+	// What each entry is called here ("Title", "Name"): the column, the search and its empty result.
+	const named = $derived(type.data === undefined ? 'Title' : titleLabel(type.data.definition));
 
 	let typed = $state('');
 	let q = $state('');
@@ -309,7 +312,7 @@
 		</div>
 		<InputGroup.Root class="sm:w-72">
 			<InputGroup.Addon><SearchIcon /></InputGroup.Addon>
-			<InputGroup.Input type="search" placeholder="Search titles" aria-label="Search titles" maxlength={100} bind:value={typed} data-testid="entry-search" />
+			<InputGroup.Input type="search" placeholder="Search {plural(named)}" aria-label="Search {plural(named)}" maxlength={100} bind:value={typed} data-testid="entry-search" />
 		</InputGroup.Root>
 	</div>
 
@@ -390,7 +393,7 @@
 								/>
 							</Table.Head>
 						{/if}
-						<Table.Head class={bulk ? '' : 'pl-4'}>Title</Table.Head>
+						<Table.Head class={bulk ? '' : 'pl-4'} data-testid="title-column">{named}</Table.Head>
 						<Table.Head>Status</Table.Head>
 						<Table.Head class="hidden md:table-cell">Live in</Table.Head>
 						<Table.Head class="text-right {writes ? '' : 'pr-4'}">Updated</Table.Head>
@@ -446,7 +449,7 @@
 								{:else if q === ''}
 									No entries in this view.
 								{:else}
-									{creator === null ? 'No titles' : 'None of your titles'} match “{q}”.
+									{creator === null ? `No ${plural(named)}` : `None of your ${plural(named)}`} match “{q}”.
 								{/if}
 							</Table.Cell>
 						</Table.Row>

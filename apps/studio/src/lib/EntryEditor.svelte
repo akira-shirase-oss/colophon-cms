@@ -49,7 +49,7 @@
 	import StatusBadge from './shell/StatusBadge.svelte';
 	import TechnicalDetails from './shell/TechnicalDetails.svelte';
 	import { releaseName } from './words.ts';
-	import { applies, blockingProblem, EMPTY_DOCUMENT, type FormValue, formValue, storedValue } from './content.ts';
+	import { applies, blockingProblem, EMPTY_DOCUMENT, type FormValue, formValue, storedValue, titleLabel } from './content.ts';
 	import { kept } from './drafts.ts';
 	import FieldInputs from './FieldInputs.svelte';
 	import { Saver } from './saver.svelte.ts';
@@ -682,6 +682,6 @@
 		</div>
 	</div>
 	{#if published !== null}
-		<ReaderView bind:open={readerView} {project} {collection} {entry} changed={standing === 'changed'} />
+		<ReaderView bind:open={readerView} {project} {collection} {entry} changed={standing === 'changed'} titleLabel={titleLabel(definition)} />
 	{/if}
 </div>

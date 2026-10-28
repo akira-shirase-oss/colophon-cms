@@ -17,7 +17,8 @@
 	import { typesQuery } from './queries.ts';
 	import { linkedQuery } from './references.ts';
 	import StatusBadge from './shell/StatusBadge.svelte';
-	import { shownTitle } from './words.ts';
+	import { titleLabel } from './content.ts';
+	import { plural, shownTitle } from './words.ts';
 
 	let {
 		project,
@@ -47,11 +48,14 @@
 	const chosen = $derived(Array.isArray(value) ? value : value === '' ? [] : [value]);
 	const full = $derived(field.many ? chosen.length >= field.max : chosen.length >= 1);
 	const types = createQuery(() => typesQuery(project));
-	const target = $derived(types.data?.find((type) => type.slug === field.to)?.definition.name ?? field.to);
+	const targetType = $derived(types.data?.find((type) => type.slug === field.to));
+	const target = $derived(targetType?.definition.name ?? field.to);
+	// What the target calls each entry ("title", "name"), for the search box and its empty result.
+	const named = $derived(targetType === undefined ? 'title' : titleLabel(targetType.definition).toLowerCase());
 
 	// Each chosen entry's title, read on its own: a refused read is an entry the role can't see.
 	const titles = createQueries(() => ({ queries: chosen.map((id) => linkedQuery(project, field.to, id)) }));
-	const named = $derived(chosen.map((id, index) => ({ id, read: titles[index]?.data, failed: titles[index]?.isError === true })));
+	const picked = $derived(chosen.map((id, index) => ({ id, read: titles[index]?.data, failed: titles[index]?.isError === true })));
 	const label = (read: { title: string; seen: boolean } | undefined, failed: boolean) =>
 		failed ? 'Couldn’t load its title' : read === undefined ? 'Loading…' : read.seen ? shownTitle(read.title) : 'An entry you can’t see';
 
@@ -93,7 +97,7 @@
 <div class="grid gap-2" data-testid="reference-{field.id}">
 	{#if chosen.length > 0}
 		<ol class="grid gap-1.5" aria-label="{field.label}: chosen">
-			{#each named as item, index (item.id)}
+			{#each picked as item, index (item.id)}
 				<li
 					class="flex min-w-0 items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-sm {refusedAt === index ? 'border-destructive' : 'border-border'}"
 					data-testid="reference-chip"
@@ -125,7 +129,7 @@
 					id={input}
 					type="search"
 					autocomplete="off"
-					placeholder="Search {target} by title"
+					placeholder="Search {target} by {named}"
 					aria-describedby={describedBy}
 					bind:value={typed}
 					onfocus={() => (searching = true)}
@@ -141,7 +145,7 @@
 								{found.error instanceof ApiError && found.error.status === 403 ? `Your role can't see ${target}, so you can't choose one here.` : "Couldn't search just now. Try again."}
 							</p>
 						{:else if results.length === 0}
-							<p class="px-3 py-2 text-xs text-muted-foreground">{q === '' ? `No ${target.toLowerCase()} yet.` : `No titles match “${q}”.`}</p>
+							<p class="px-3 py-2 text-xs text-muted-foreground">{q === '' ? `No ${target.toLowerCase()} yet.` : `No ${plural(named)} match “${q}”.`}</p>
 						{:else}
 							<ul aria-label="Matching {target}">
 								{#each results as entry (entry.id)}

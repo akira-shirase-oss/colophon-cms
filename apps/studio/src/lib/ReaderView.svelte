@@ -20,7 +20,8 @@
 		project,
 		collection,
 		entry,
-		changed
+		changed,
+		titleLabel = 'Title'
 	}: {
 		open?: boolean;
 		project: string;
@@ -28,6 +29,8 @@
 		entry: string;
 		/** The draft has changes since the published version. */
 		changed: boolean;
+		/** What the type calls each entry (D-082): "Title", "Name". */
+		titleLabel?: string;
 	} = $props();
 
 	// Asked each time it opens: a release may have gone out since.
@@ -74,7 +77,7 @@
 		{:else}
 			<dl class="space-y-2 text-sm">
 				<div class="flex items-baseline justify-between gap-4">
-					<dt class="text-muted-foreground">Title</dt>
+					<dt class="text-muted-foreground" data-testid="reader-title-label">{titleLabel}</dt>
 					<dd class="min-w-0 truncate font-medium" data-user-content data-testid="reader-title">{read.data.data.title}</dd>
 				</div>
 				{#if read.data.data.slug}

@@ -2,8 +2,9 @@
   The content-type builder's frame (its own place in the Studio's navigation, like Strapi's
   Content-Type Builder): a left panel listing the project's collections, single types and shared
   components, with New content type and New component, beside the one being built. Making one asks
-  only for a name (its address name is made from it) and, for a content type, whether it holds
-  many entries or just one; it starts with a Title field and opens, ready for fields.
+  only for a name (its address name is made from it) and, for a content type, what each entry is
+  called (D-082: "Title", "Name", "Dish"; that field names entries in lists and search) and whether
+  it holds many entries or just one; it starts with that one field and opens, ready for more.
 -->
 <script lang="ts">
 	import ComponentIcon from '@lucide/svelte/icons/component';
@@ -21,6 +22,8 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { ApiError, createComponent, createContentType, may, newKey } from './api.ts';
 	import { slugify } from './content.ts';
+	import { idFrom } from './fieldDefs.ts';
+	import { SHOWN_IN_LISTS, TITLE_QUESTION } from './words.ts';
 	import { componentsQuery, projectQuery, typesQuery } from './queries.ts';
 
 	let {
@@ -49,6 +52,10 @@
 	let slug = $state('');
 	let slugTouched = $state(false);
 	let single = $state(false);
+	// What each entry is called: the title field's label, and its code name made from it ("Title"
+	// keeps `title`, "Name" makes `name`; a label with no Latin letters keeps `title`).
+	let called = $state('Title');
+	const titleId = $derived(idFrom(called.trim()) || 'title');
 	let error = $state('');
 	let busy = $state(false);
 	let key = newKey();
@@ -61,6 +68,7 @@
 		slug = '';
 		slugTouched = false;
 		single = false;
+		called = 'Title';
 		error = '';
 		key = newKey();
 	}
@@ -76,8 +84,8 @@
 					effective,
 					{
 						name: name.trim(),
-						title_field: 'title',
-						fields: [{ id: 'title', label: 'Title', type: 'text', required: true, max_chars: 200, multiline: false }],
+						title_field: titleId,
+						fields: [{ id: titleId, label: called.trim(), type: 'text', required: true, max_chars: 200, multiline: false }],
 						...(single ? { single: true } : {})
 					},
 					key
@@ -173,7 +181,7 @@
 			<Dialog.Header>
 				<Dialog.Title>{making === 'type' ? 'New content type' : 'New component'}</Dialog.Title>
 				<Dialog.Description>
-					{making === 'type' ? 'A kind of content, like Pages, Authors or Recipes. It starts with a Title; you add the rest next.' : 'A group of fields content types share, like SEO or an address. It starts with a Title; you add the rest next.'}
+					{making === 'type' ? 'A kind of content, like Pages, Authors or Recipes. It starts with what each one is called; you add the rest next.' : 'A group of fields content types share, like SEO or an address. It starts with a Title; you add the rest next.'}
 				</Dialog.Description>
 			</Dialog.Header>
 			<label class="grid gap-1.5 text-sm">
@@ -199,6 +207,13 @@
 				</span>
 			</label>
 			{#if making === 'type'}
+				<label class="grid gap-1.5 text-sm">
+					<span class="font-medium">{TITLE_QUESTION}</span>
+					<Input id="type-title-label" bind:value={called} required maxlength={100} />
+					<span class="text-xs text-muted-foreground">
+						The field that names each entry, like Title, Name or Dish. It's {SHOWN_IN_LISTS.toLowerCase()} and found by search.
+					</span>
+				</label>
 				<fieldset class="grid gap-2 text-sm">
 					<legend class="mb-1.5 font-medium">It holds</legend>
 					<label class="flex items-start gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 has-checked:border-ring">
@@ -214,7 +229,7 @@
 			{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
 			<Dialog.Footer>
 				<Button type="button" variant="outline" onclick={() => (making = null)}>Cancel</Button>
-				<Button type="submit" disabled={busy || name.trim() === '' || effective === ''} data-testid="create">{busy ? 'Creating…' : 'Create'}</Button>
+				<Button type="submit" disabled={busy || name.trim() === '' || effective === '' || (making === 'type' && called.trim() === '')} data-testid="create">{busy ? 'Creating…' : 'Create'}</Button>
 			</Dialog.Footer>
 		</form>
 	</Dialog.Content>

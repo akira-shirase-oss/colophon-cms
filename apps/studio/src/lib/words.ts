@@ -25,6 +25,20 @@ export function capital(text: string): string {
 	return text.slice(0, 1).toUpperCase() + text.slice(1);
 }
 
+/** The title field (D-082): the field that names each entry, asked for when a content type is
+ *  made, and its badge in the builder. Lists, search and the reader view use its label. */
+export const TITLE_QUESTION = 'What is each one called?';
+export const SHOWN_IN_LISTS = 'Shown in lists';
+
+/** "Name" → "names", "Title" → "titles", "Dish" → "dishes", "Story" → "stories": a label as the
+ *  plural a search box or an empty result says ("Search names"). English rules only. */
+export function plural(label: string): string {
+	const lower = label.trim().toLowerCase();
+	if (/(s|x|z|ch|sh)$/.test(lower)) return `${lower}es`;
+	if (/[^aeiou]y$/.test(lower)) return `${lower.slice(0, -1)}ies`;
+	return `${lower}s`;
+}
+
 /** "1 publish request", "3 publish requests". */
 export function count(n: number, one: string, many: string): string {
 	return `${n.toLocaleString()} ${n === 1 ? one : many}`;

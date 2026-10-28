@@ -406,7 +406,7 @@
 						<input type="checkbox" class="mt-0.5 size-4 accent-primary" bind:checked={field.required} disabled={!editable || isTitle} />
 						<span>
 							<span class="font-medium">Required</span>
-							<span class="block text-xs text-muted-foreground">{isTitle ? 'The title always is.' : 'Editors must fill it in.'}</span>
+							<span class="block text-xs text-muted-foreground">{isTitle ? 'The field that names each entry always is.' : 'Editors must fill it in.'}</span>
 						</span>
 					</label>
 					<label class="grid gap-1.5 text-sm">

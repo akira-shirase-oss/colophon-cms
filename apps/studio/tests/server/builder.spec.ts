@@ -5,10 +5,26 @@
 // code name set only before the first save, Cancel leaving things as they were, a clash refused
 // before saving); rows reordered with the keyboard and by dragging; a deleted field brought back;
 // the type renamed in Edit type; one save bar; and leaving with unsaved changes asked about first.
+// A new type asks what each entry is called (D-082), and that label names entries everywhere.
 
 import { expect, type Page, test } from '@playwright/test';
 import { FIELD_TYPES } from '../../src/lib/api.ts';
-import { api, applyField, editField, env, key, member, newProject, saveBuilder, signIn, startField, violations } from './helpers.ts';
+import {
+	api,
+	applyField,
+	editField,
+	env,
+	internalTerms,
+	key,
+	member,
+	newEntry,
+	newProject,
+	publishThroughApi,
+	saveBuilder,
+	signIn,
+	startField,
+	violations
+} from './helpers.ts';
 
 /** The labels of the top-level field rows, in order. */
 const order = (page: Page) => page.getByTestId('field-list').locator(':scope > li [data-testid="field-label-text"]').allTextContents();
@@ -174,4 +190,59 @@ test('leaving with unsaved changes asks first; Stay keeps them, Discard puts thi
 	await expect(page).toHaveURL(new RegExp(`/projects/${project}$`));
 	const fields = (await api(page, 'GET', `${env(project)}/content-types/articles`)).body?.['data'].definition.fields as { id: string }[];
 	expect(fields.map((field) => field.id)).toEqual(['title', 'body']);
+});
+
+test('a new type asks what each one is called; that names its entries in the builder, the list, search and what readers get', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	await page.goto(`/studio/projects/${project}/settings/types`);
+
+	// The default answer keeps the `title` code name.
+	await page.getByTestId('new-type').click();
+	await expect(page.getByLabel('What is each one called?')).toHaveValue('Title');
+	await page.locator('#type-name').fill('Pages');
+	await page.getByTestId('create').click();
+	await expect(page.getByRole('heading', { level: 1, name: 'Pages' })).toBeVisible();
+	await expect(page.getByTestId('field-title').getByTestId('title-badge')).toHaveText('Shown in lists');
+	const pages = (await api(page, 'GET', `${env(project)}/content-types/pages`)).body?.['data'].definition;
+	expect(pages.title_field).toBe('title');
+	expect(pages.fields).toEqual([{ id: 'title', label: 'Title', type: 'text', required: true, max_chars: 200, multiline: false }]);
+
+	// "Name": the field is called Name, and its code name follows.
+	await page.getByTestId('new-type').click();
+	await page.locator('#type-name').fill('Products');
+	await page.getByLabel('What is each one called?').fill('Name');
+	expect(await violations(page)).toEqual([]);
+	await page.getByTestId('create').click();
+	await expect(page.getByRole('heading', { level: 1, name: 'Products' })).toBeVisible();
+	const row = page.getByTestId('field-name');
+	await expect(row.getByTestId('field-label-text')).toHaveText('Name');
+	await expect(row.getByTestId('title-badge')).toHaveText('Shown in lists');
+	await expect(row.getByTestId('delete-field')).toBeDisabled();
+	await expect(page.getByTestId('field-title')).toHaveCount(0);
+	await expect(page.getByTestId('field-list')).not.toContainText(/\bTitle\b/);
+	const products = (await api(page, 'GET', `${env(project)}/content-types/products`)).body?.['data'].definition;
+	expect(products.title_field).toBe('name');
+	expect(products.fields).toEqual([{ id: 'name', label: 'Name', type: 'text', required: true, max_chars: 200, multiline: false }]);
+	expect(await violations(page)).toEqual([]);
+
+	// The list's column, its search and an empty search all say Name.
+	const beanie = await newEntry(page, project, 'Wool beanie', 'products', { name: 'Wool beanie' });
+	await page.goto(`/studio/projects/${project}/products`);
+	await expect(page.getByTestId('title-column')).toHaveText('Name');
+	await expect(page.getByTestId('entry-search')).toHaveAttribute('placeholder', 'Search names');
+	await expect(page.getByTestId('entries')).toContainText('Wool beanie');
+	await page.getByTestId('entry-search').fill('tote');
+	await expect(page.getByTestId('entries')).toContainText('No names match “tote”.');
+	expect(await internalTerms(page)).toEqual([]);
+	expect(await violations(page)).toEqual([]);
+
+	// What readers get names it the same way.
+	await publishThroughApi(page, project, 'Beanie', [beanie]);
+	await page.goto(`/studio/projects/${project}/products/${beanie}`);
+	await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Wool beanie');
+	await page.getByTestId('entry-details').getByTestId('technical-details').locator('summary').click();
+	await page.getByTestId('see-what-readers-get').click();
+	await expect(page.getByTestId('reader-title-label')).toHaveText('Name');
+	await expect(page.getByTestId('reader-title')).toHaveText('Wool beanie');
 });

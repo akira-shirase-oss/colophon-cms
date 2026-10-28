@@ -1,7 +1,7 @@
 <!--
   The fields of a content type (or a component, a group, a list's item or a kind of page section)
   in the builder: one compact row each, with its icon, label, kind in plain words and badges
-  (Title, Required, Unique, Shown only when…, New), and Edit and Delete. Settings open in
+  (Shown in lists for the field that names each entry, Required, Unique, Shown only when…, New), and Edit and Delete. Settings open in
   FieldDialog.svelte; "Add a field" opens the picker (FieldPicker.svelte) and then the dialog.
   Rows reorder by dragging their handle, or with the arrow keys on it. Structures (D-066) hold
   their own fields, listed under their row one level in: a group's, a list's item group's, and
@@ -15,6 +15,7 @@
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
+	import { SHOWN_IN_LISTS } from './words.ts';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
@@ -172,7 +173,7 @@
 					<div class="grid min-w-0 flex-1 gap-0.5">
 						<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 							<span class="truncate text-sm font-medium" data-testid="field-label-text">{field.label}</span>
-							{#if isTitle}<Badge variant="outline">Title</Badge>{/if}
+							{#if isTitle}<Badge variant="outline" data-testid="title-badge">{SHOWN_IN_LISTS}</Badge>{/if}
 							{#if field.required && !isTitle}<Badge variant="secondary">Required</Badge>{/if}
 							{#if field.unique === true}<Badge variant="secondary">Unique</Badge>{/if}
 							{#if field.when !== undefined}
@@ -192,7 +193,7 @@
 							variant="ghost"
 							size="icon-sm"
 							aria-label="Delete {field.label}"
-							title={isTitle ? 'The title field stays' : 'Delete'}
+							title={isTitle ? 'The field that names each entry stays' : 'Delete'}
 							disabled={isTitle}
 							onclick={() => remove(index)}
 							data-testid="delete-field"><Trash2Icon /></Button

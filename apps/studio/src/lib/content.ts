@@ -82,6 +82,11 @@ export function same(definition: Definition, a: Content, b: Content): boolean {
 	return canonical(definition, a) === canonical(definition, b);
 }
 
+/** The title field's label (D-082): "Title", or what the type calls each entry ("Name"). */
+export function titleLabel(definition: Pick<Definition, 'fields' | 'title_field'>): string {
+	return definition.fields.find((field) => field.id === definition.title_field)?.label ?? 'Title';
+}
+
 export function titleOf(definition: Definition, content: Content): string {
 	const title = content[definition.title_field];
 	return typeof title === 'string' ? title : '';
