@@ -200,6 +200,7 @@ pub async fn commit(
     let Some(unpublished) = unpublished else {
         return Ok(Committed::Unmatched);
     };
+    claim_published(tx, changeset).await?;
     if let Some(broken) = broken_reference(tx, changeset).await? {
         return Ok(Committed::Broken(broken));
     }
@@ -210,6 +211,54 @@ pub async fn commit(
         changed: opened.rows_affected(),
         unpublished,
     })
+}
+
+/// Makes the published claims of every entry the release touches the values its open
+/// publication sets in its type's unique fields (migration 0027, D-070); an entry it takes down
+/// claims none. A value another entry still publishes fails `unique_claims_value`: `ValueTaken`,
+/// and the whole release rolls back. Changing two entries' values in one release works, since
+/// both are replaced before either is claimed.
+async fn claim_published(tx: &mut ProjectTransaction, changeset: Uuid) -> Result<(), DbError> {
+    sqlx::query!(
+        "DELETE FROM unique_claims c
+         USING changeset_items i
+         WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
+           AND c.project_id = i.project_id AND c.environment_id = i.environment_id
+           AND c.entry_id = i.entry_id AND c.published",
+        tx.project,
+        tx.environment,
+        changeset
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    sqlx::query!(
+        "INSERT INTO unique_claims
+           (project_id, environment_id, collection, field, published, value_hash, entry_id)
+         SELECT p.project_id, p.environment_id, p.collection, v.field, true, v.value_hash, p.entry_id
+         FROM changeset_items i
+         JOIN publications p
+           ON p.project_id = i.project_id AND p.environment_id = i.environment_id
+          AND p.entry_id = i.entry_id AND p.valid_to IS NULL
+         CROSS JOIN LATERAL (
+             SELECT colophon_unique_fields(t.definition) AS fields
+             FROM content_type_versions t
+             WHERE t.project_id = p.project_id AND t.environment_id = p.environment_id
+               AND t.collection = p.collection
+             ORDER BY t.version DESC
+             LIMIT 1
+         ) u
+         CROSS JOIN LATERAL colophon_unique_values(u.fields, p.content) v
+         WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
+           AND i.kind = 'publish'",
+        tx.project,
+        tx.environment,
+        changeset
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
 }
 
 /// After the release's publications changed, a reference it leaves broken for readers, if any

@@ -48,6 +48,7 @@ impl Content {
             slug: None,
             schema_version: 1,
             references: &[],
+            unique: &[],
         }
     }
 }

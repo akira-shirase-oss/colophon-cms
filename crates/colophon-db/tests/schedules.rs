@@ -64,6 +64,7 @@ async fn ready(db: &TestDb) -> Ready {
             slug: None,
             schema_version: 1,
             references: &[],
+            unique: &[],
         },
     )
     .await
@@ -293,6 +294,7 @@ async fn an_edit_or_an_expired_approval_blocks_it_and_nothing_is_published() {
             slug: None,
             schema_version: 1,
             references: &[],
+            unique: &[],
         },
     )
     .await

@@ -200,6 +200,131 @@ pub async fn set_single(
     Ok(MadeSingle::Done)
 }
 
+/// What claiming the values of newly unique fields found ([`claim_unique`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Claimed {
+    /// Every value is claimed.
+    Done,
+    /// Some values are shared: nothing was claimed.
+    Shared {
+        /// Up to `limit` of the drafts and publications that share a value, grouped by value.
+        holders: Vec<SharedValue>,
+        /// How many drafts and publications share one.
+        total: i64,
+    },
+}
+
+/// A draft or publication whose value of a newly unique field another one of the same kind has.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedValue {
+    /// The entry.
+    pub entry_id: Uuid,
+    /// Its title, in that revision.
+    pub title: String,
+    /// Whether it is the publication rather than the draft.
+    pub published: bool,
+    /// The field.
+    pub field: String,
+}
+
+/// Brings `collection`'s unique claims in line with a definition whose unique fields are
+/// `unique` (migration 0027, D-070): drops the claims of fields that are no longer unique, and
+/// claims the values of `added` in every draft and open publication, unless two drafts, or two
+/// publications, share one. The caller holds [`lock_for_change`], so nothing is written
+/// meanwhile, and has bounded the work with [`stored_count`].
+pub async fn claim_unique(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    unique: &[String],
+    added: &[String],
+    limit: i64,
+) -> Result<Claimed, DbError> {
+    sqlx::query!(
+        "DELETE FROM unique_claims
+         WHERE project_id = $1 AND environment_id = $2 AND collection = $3
+           AND field <> ALL($4)",
+        tx.project,
+        tx.environment,
+        collection,
+        unique
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    if added.is_empty() {
+        return Ok(Claimed::Done);
+    }
+    // One pass over the content: the claims are inserted only if no value is shared, and the
+    // shared ones are what the statement returns.
+    let shared = sqlx::query_as!(
+        Shared,
+        r#"WITH wanted AS MATERIALIZED (
+               SELECT e.id AS entry_id, false AS published, v.field, v.value_hash,
+                      coalesce(e.draft_title, '') AS title
+               FROM entries e
+               JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id
+                               AND r.id = e.draft_revision_id
+               CROSS JOIN LATERAL colophon_unique_values($4, r.content) v
+               WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
+               UNION ALL
+               SELECT p.entry_id, true, v.field, v.value_hash, p.title
+               FROM publications p
+               CROSS JOIN LATERAL colophon_unique_values($4, p.content) v
+               WHERE p.project_id = $1 AND p.environment_id = $2 AND p.collection = $3
+                 AND p.valid_to IS NULL
+           ),
+           counted AS (
+               SELECT *, count(*) OVER (PARTITION BY field, published, value_hash) AS holders
+               FROM wanted
+           ),
+           shared AS (SELECT * FROM counted WHERE holders > 1),
+           claimed AS (
+               INSERT INTO unique_claims
+                 (project_id, environment_id, collection, field, published, value_hash, entry_id)
+               SELECT $1, $2, $3, field, published, value_hash, entry_id FROM wanted
+               WHERE NOT EXISTS (SELECT 1 FROM shared)
+           )
+           SELECT entry_id AS "entry_id!", title AS "title!", published AS "published!",
+                  field AS "field!", count(*) OVER () AS "total!"
+           FROM shared
+           ORDER BY array_position($4, field), published, value_hash, entry_id
+           LIMIT $5"#,
+        tx.project,
+        tx.environment,
+        collection,
+        added,
+        limit
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    let Some(first) = shared.first() else {
+        return Ok(Claimed::Done);
+    };
+    let total = first.total;
+    Ok(Claimed::Shared {
+        holders: shared
+            .into_iter()
+            .map(|row| SharedValue {
+                entry_id: row.entry_id,
+                title: row.title,
+                published: row.published,
+                field: row.field,
+            })
+            .collect(),
+        total,
+    })
+}
+
+/// A row of [`claim_unique`]'s statement.
+struct Shared {
+    entry_id: Uuid,
+    title: String,
+    published: bool,
+    field: String,
+    total: i64,
+}
+
 /// Holds `collection`'s content type still until the transaction ends. Entry writes and
 /// publishes take this lock shared, before they read the content type or what they publish;
 /// a change to the type takes it exclusively ([`lock_for_change`]). So a write is validated

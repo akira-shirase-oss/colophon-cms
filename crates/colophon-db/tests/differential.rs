@@ -93,6 +93,7 @@ async fn apply(db: &TestDb, world: &World, save: &Save) -> Real {
             slug: None,
             schema_version: 1,
             references: &[],
+            unique: &[],
         },
     )
     .await
@@ -176,6 +177,7 @@ async fn world(db: &TestDb, report: &Report) -> World {
                 slug: None,
                 schema_version: 1,
                 references: &[],
+                unique: &[],
             },
         )
         .await

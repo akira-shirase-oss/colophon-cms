@@ -41,6 +41,7 @@ async fn article(tx: &mut ProjectTransaction, title: &str) -> (Uuid, Uuid) {
             slug: None,
             schema_version: 1,
             references: &[],
+            unique: &[],
         },
     )
     .await

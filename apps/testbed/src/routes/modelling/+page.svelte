@@ -20,7 +20,7 @@
 
 	const env = $derived(`/api/v1/projects/${projectId}/environments/production`);
 
-	const PEOPLE = { name: 'People', title_field: 'name', fields: [{ id: 'name', label: 'Name', type: 'text', required: true }] };
+	const PEOPLE = { name: 'People', title_field: 'name', fields: [{ id: 'name', label: 'Name', type: 'text', required: true, unique: true }] };
 	const PAGES = {
 		name: 'Pages',
 		title_field: 'title',
@@ -109,6 +109,11 @@
 		message = describe(reply);
 	}
 
+	async function secondAda() {
+		const reply = await call('POST', `${env}/collections/people/entries`, { headers: headers(), body: JSON.stringify({ name: 'Ada' }) });
+		message = describe(reply);
+	}
+
 	async function saveShouting() {
 		const reply = await call('POST', `${env}/collections/pages/entries`, { headers: headers(), body: JSON.stringify(page(author, 'NEWS')) });
 		message = describe(reply);
@@ -145,8 +150,9 @@
 
 <h1>Content modelling</h1>
 <p class="lede">
-	Structures, references and patterns through the real API (steps M.1 to M.4, D-064 to D-066, D-069): a page with an object, a list
-	of lowercase tags and blocks whose quote names a person. A reference to nobody and a tag in capitals are refused where they are; a page can't be published before the person it names; the
+	Structures, references, patterns and unique values through the real API (steps M.1 to M.4, D-064 to D-066, D-069, D-070): a page
+	with an object, a list of lowercase tags and blocks whose quote names a person, whose name no one else may have. A reference to
+	nobody, a tag in capitals and a second Ada are refused where they are; a page can't be published before the person it names; the
 	person's read lists what references them.
 </p>
 
@@ -169,6 +175,7 @@
 				<button type="button" onclick={savePage} disabled={!author}>Save a page quoting Ada</button>
 				<button type="button" onclick={saveBroken} disabled={!author}>Save a quote by nobody</button>
 				<button type="button" onclick={saveShouting} disabled={!author}>Save a tag in capitals</button>
+				<button type="button" onclick={secondAda} disabled={!author}>Add a second Ada</button>
 			</p>
 			<p>
 				<button type="button" onclick={() => publish([pageId])} disabled={!pageId}>Publish the page alone</button>

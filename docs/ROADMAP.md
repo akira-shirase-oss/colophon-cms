@@ -190,11 +190,12 @@ fails halfway resumes without duplicates; the simulator covers schema changes ra
 
 **Steps:** M.1 seven field types, descriptions and minimum lengths (built: D-064) · M.2 references that never dangle,
 checked by the database on save and by every release, with "referenced by" (built: D-065, migration 0024) · M.3
-objects, lists and page-builder blocks, references inside them (built: D-066, migration 0025) · M.4 shared
-components, single types, patterns, uniqueness, defaults and conditional fields · M.5 migrations with a plan, a dry
-run and per-entry outcomes; the simulator racing schema changes and saves. M.1 to M.3 have their tests, a testbed page
-(`/modelling`) and a load scenario (`perf/k6/modelling.js`) whose million-request runs wait for a quiet machine; the
-Studio's builder and editor cover M.1 and M.2.
+objects, lists and page-builder blocks, references inside them (built: D-066, migration 0025) · M.4 single types
+(built: D-067, migration 0026), patterns (built: D-069), uniqueness (built: D-070, migration 0027), shared components,
+defaults and conditional fields · M.5 migrations with a plan, a dry run and per-entry outcomes; the simulator racing
+schema changes and saves. What is built has its tests, a testbed page (`/modelling`) and a load scenario
+(`perf/k6/modelling.js`) whose million-request runs wait for a quiet machine; the Studio's builder and editor cover
+M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 
 ## P4: Time travel and media
 

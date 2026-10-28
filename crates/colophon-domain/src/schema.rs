@@ -194,6 +194,23 @@ pub struct Block {
 }
 
 impl FieldKind {
+    /// Whether a field of this kind may be `unique` (D-070): one value that compares as written.
+    /// Slugs are unique already; multi-line text, structures and the rest are not keys.
+    pub const fn may_be_unique(&self) -> bool {
+        matches!(
+            self,
+            Self::Text {
+                multiline: false,
+                ..
+            } | Self::Email
+                | Self::Url
+                | Self::Number { .. }
+                | Self::Date
+                | Self::Time
+                | Self::DateTime
+        )
+    }
+
     /// The name in definitions.
     pub const fn name(&self) -> &'static str {
         match self {
@@ -243,6 +260,9 @@ pub struct Field {
     pub description: String,
     /// Whether content must have it.
     pub required: bool,
+    /// Whether no two entries may hold the same value: top-level scalar fields only (step M.4,
+    /// D-070). The database enforces it; see [`ContentType::unique_fields`].
+    pub unique: bool,
     /// What it holds.
     pub kind: FieldKind,
 }
@@ -633,6 +653,11 @@ fn write_fields(out: &mut String, fields: &[Field]) {
         } else {
             r#","required":false"#
         });
+        // Only when set, like `description`. The database finds unique fields by this text
+        // (migration 0027), which a quote inside a string can't form: it is written `\"`.
+        if field.unique {
+            out.push_str(r#","unique":true"#);
+        }
         write_options(out, &field.kind);
         out.push('}');
     }
@@ -1334,6 +1359,7 @@ impl ContentType {
                     label: "Title".to_owned(),
                     description: String::new(),
                     required: true,
+                    unique: false,
                     kind: FieldKind::Text {
                         min_chars: 0,
                         max_chars: 200,
@@ -1346,6 +1372,7 @@ impl ContentType {
                     label: "Body".to_owned(),
                     description: String::new(),
                     required: true,
+                    unique: false,
                     kind: FieldKind::RichText,
                 },
             ],
@@ -1608,14 +1635,23 @@ impl ContentType {
             })?
             .to_owned();
         let required = bool_or(object, "required", false, pointer)?;
+        let unique = bool_or(object, "unique", false, pointer)?;
         let description = description(object, pointer)?;
-        let common = ["id", "label", "description", "type", "required"];
+        let common = ["id", "label", "description", "type", "required", "unique"];
         let kind = Self::kind(object, &common, pointer, depth)?;
+        if unique && (depth > 0 || !kind.may_be_unique()) {
+            return Err(refuse(
+                "invalid_unique",
+                &at(pointer, "unique"),
+                "only a top-level single-line text, email, URL, number, date, time or date-time field can be unique",
+            ));
+        }
         Ok(Field {
             id,
             label,
             description,
             required,
+            unique,
             kind,
         })
     }
@@ -1729,6 +1765,15 @@ impl ContentType {
     /// The fields, in order.
     pub fn fields(&self) -> &[Field] {
         &self.fields
+    }
+
+    /// The ids of the fields no two entries may share a value of (D-070), in order.
+    pub fn unique_fields(&self) -> Vec<String> {
+        self.fields
+            .iter()
+            .filter(|field| field.unique)
+            .map(|field| field.id.clone())
+            .collect()
     }
 
     /// The definition in canonical form, every default written out: the bytes stored and hashed.
@@ -3500,5 +3545,96 @@ mod tests {
             "dropping one never refuses anything"
         );
         assert_eq!(upper.successor(&upper), Successor::Compatible);
+    }
+
+    fn with_unique(field: &Value) -> Result<ContentType, (&'static str, String)> {
+        ContentType::parse(&json!({
+            "name": "People", "title_field": "name",
+            "fields": [{"id": "name", "label": "Name", "type": "text", "required": true}, field]
+        }))
+        .map_err(|refused| (refused.code, refused.pointer))
+    }
+
+    #[test]
+    fn unique_is_for_top_level_keys_and_written_only_when_set() {
+        for kind in [
+            json!({"type": "text"}),
+            json!({"type": "email"}),
+            json!({"type": "url"}),
+            json!({"type": "number", "integer": true}),
+            json!({"type": "date"}),
+            json!({"type": "time"}),
+            json!({"type": "datetime"}),
+        ] {
+            let mut field = json!({"id": "key", "label": "Key", "unique": true});
+            field
+                .as_object_mut()
+                .expect("an object")
+                .extend(kind.as_object().expect("an object").clone());
+            let parsed =
+                with_unique(&field).unwrap_or_else(|refused| panic!("{field}: {refused:?}"));
+            assert_eq!(parsed.unique_fields(), ["key"]);
+            assert!(
+                parsed
+                    .canonical_json()
+                    .contains(r#""required":false,"unique":true"#),
+                "{field}"
+            );
+        }
+        let plain =
+            with_unique(&json!({"id": "key", "label": "Key", "type": "email"})).expect("valid");
+        assert_eq!(plain.unique_fields(), Vec::<String>::new());
+        assert!(
+            !plain.canonical_json().contains("unique"),
+            "older hashes stay"
+        );
+        let not_set =
+            with_unique(&json!({"id": "key", "label": "Key", "type": "email", "unique": false}))
+                .expect("valid");
+        assert_eq!(not_set.canonical_json(), plain.canonical_json());
+        for refused in [
+            json!({"id": "key", "label": "Key", "type": "text", "multiline": true, "unique": true}),
+            json!({"id": "key", "label": "Key", "type": "markdown", "unique": true}),
+            json!({"id": "key", "label": "Key", "type": "boolean", "unique": true}),
+            json!({"id": "key", "label": "Key", "type": "slug", "unique": true}),
+            json!({"id": "key", "label": "Key", "type": "json", "unique": true}),
+        ] {
+            assert_eq!(
+                with_unique(&refused).map(|_| ()),
+                Err(("invalid_unique", "/fields/1/unique".to_owned())),
+                "{refused}"
+            );
+        }
+        let nested = json!({"id": "hero", "label": "Hero", "type": "object", "fields": [
+            {"id": "code", "label": "Code", "type": "text", "unique": true}
+        ]});
+        assert_eq!(
+            with_unique(&nested).map(|_| ()),
+            Err(("invalid_unique", "/fields/1/fields/0/unique".to_owned()))
+        );
+        assert_eq!(
+            with_unique(&json!({"id": "key", "label": "Key", "type": "text", "unique": "yes"}))
+                .map(|_| ())
+                .map_err(|e| e.0),
+            Err("wrong_type")
+        );
+    }
+
+    #[test]
+    fn uniqueness_is_not_a_per_document_rule() {
+        // Whether stored values collide is the database's to find (D-070); for each document,
+        // making a field unique or dropping it changes nothing.
+        let plain =
+            with_unique(&json!({"id": "key", "label": "Key", "type": "email"})).expect("valid");
+        let unique =
+            with_unique(&json!({"id": "key", "label": "Key", "type": "email", "unique": true}))
+                .expect("valid");
+        assert_eq!(plain.successor(&unique), Successor::Compatible);
+        assert_eq!(unique.successor(&plain), Successor::Compatible);
+        assert!(
+            unique
+                .validate(&json!({"name": "Ada", "key": "ada@example.com"}))
+                .is_ok()
+        );
     }
 }

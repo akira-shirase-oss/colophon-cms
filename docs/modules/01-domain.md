@@ -98,6 +98,10 @@ invariant. Production adapters and the simulator both run this code unchanged.
   size limit, and compares by its source; matching takes time linear in the value, so no pattern can stall a write.
   Refusals: `invalid_pattern` where it is defined, `pattern_mismatch` at the value. Adding or changing a pattern is
   `CheckContent`; removing one is `Compatible`.
+- Built in step M.4 (D-070): `"unique": true` on a top-level single-line text, email, URL, number, date, time or
+  date-time field (`FieldKind::may_be_unique`; anywhere else `invalid_unique`), written only when true;
+  `ContentType::unique_fields` lists them. Uniqueness is across entries, so it isn't a rule on one document:
+  `successor` treats adding or dropping it as `Compatible`, and the database checks stored values (module 02).
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the

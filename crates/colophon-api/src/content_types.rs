@@ -21,7 +21,7 @@ use axum::{
     response::Response,
 };
 use colophon_db::{
-    content_types::{self, MadeSingle, Updated, Version},
+    content_types::{self, Claimed, MadeSingle, Updated, Version},
     idempotency::{self, Claim},
     scope::ProjectTransaction,
 };
@@ -364,6 +364,89 @@ pub(crate) async fn create(
     finish(tx, CREATE, key, StatusCode::CREATED, version).await
 }
 
+/// Brings the collection's unique claims in line with a change from unique fields `before` to
+/// `after` (D-070), refusing it, like any change stored content is in the way of (D-055), when
+/// two drafts or two publications already share a value of a field it makes unique. `ids` are
+/// the new definition's field ids, in order, for the refusal's pointer.
+async fn claim_unique(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    ids: &[String],
+    before: &[String],
+    after: &[String],
+) -> Result<(), ApiError> {
+    let added: Vec<String> = after
+        .iter()
+        .filter(|field| !before.contains(field))
+        .cloned()
+        .collect();
+    if !added.is_empty() {
+        let count = content_types::stored_count(tx, collection)
+            .await
+            .map_err(ApiError::from_db)?;
+        if count > content_types::MAX_CHECKED {
+            return Err(ApiError::Invalid(Refusal {
+                code: "too_many_to_check",
+                pointer: "/fields".to_owned(),
+                message: format!(
+                    "making a field unique means checking {count} drafts and publications, which needs a migration (the limit is {})",
+                    content_types::MAX_CHECKED
+                ),
+            }));
+        }
+    }
+    let limit = i64::try_from(MAX_ENTRIES_IN_THE_WAY).unwrap_or(i64::MAX);
+    let Claimed::Shared { holders, total } =
+        content_types::claim_unique(tx, collection, after, &added, limit)
+            .await
+            .map_err(ApiError::from_db)?
+    else {
+        return Ok(());
+    };
+    let first = holders
+        .first()
+        .map_or_else(String::new, |holder| holder.field.clone());
+    let pointer = ids.iter().position(|id| *id == first).map_or_else(
+        || "/fields".to_owned(),
+        |index| format!("/fields/{index}/unique"),
+    );
+    let entries = holders
+        .into_iter()
+        .map(|holder| {
+            let state = if holder.published {
+                "published"
+            } else {
+                "draft"
+            };
+            EntryInTheWay {
+                entry: holder.entry_id,
+                title: holder.title,
+                state,
+                problem: Some(Problem {
+                    reason: "value_taken",
+                    pointer: format!("/{}", holder.field),
+                    message: format!("another entry's {state} has the same `{}`", holder.field),
+                }),
+            }
+        })
+        .collect();
+    let total = u64::try_from(total).unwrap_or(0);
+    let noun = if total == 1 {
+        "entry is"
+    } else {
+        "entries are"
+    };
+    Err(ApiError::NeedsMigration(Box::new(InTheWay {
+        reason: "needs_migration",
+        pointer,
+        message: format!(
+            "making `{first}` unique: {total} {noun} in the way, sharing a value; change them first, or keep the old definition"
+        ),
+        entries,
+        total: Some(total),
+    })))
+}
+
 /// `PUT {P}/content-types/{slug}`.
 pub(crate) async fn update(
     State(state): State<AppState>,
@@ -400,6 +483,8 @@ pub(crate) async fn update(
     let stored: Value = serde_json::from_str(&current.definition).map_err(ApiError::internal)?;
     let previous = ContentType::parse(&stored).map_err(ApiError::internal)?;
     let single = next.single();
+    let unique = next.unique_fields();
+    let ids: Vec<String> = next.fields().iter().map(|field| field.id.clone()).collect();
     match previous.successor(&next) {
         Successor::Compatible => {}
         Successor::CheckContent(refusal) => {
@@ -418,6 +503,11 @@ pub(crate) async fn update(
             pointer: "/single".to_owned(),
             message: format!("a single type holds one entry, and this collection has {count}"),
         }));
+    }
+    // No two entries share a unique field's value (D-070): claim the values of fields made unique.
+    let before = previous.unique_fields();
+    if before != unique {
+        claim_unique(&mut tx, &path.slug, &ids, &before, &unique).await?;
     }
     match content_types::update(
         &mut tx,

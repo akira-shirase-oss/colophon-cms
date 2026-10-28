@@ -1,5 +1,6 @@
-// Load scenario for content modelling (steps M.1 to M.4, D-064 to D-066, D-069): pages built
-// from structures, with references. setup() signs in, defines `people` and `pages` (a hero
+// Load scenario for content modelling (steps M.1 to M.4, D-064 to D-066, D-069, D-070): pages
+// built from structures, with references, under unique titles. setup() signs in, defines
+// `people` and `pages` (a unique title, so every save replaces its page's claim; a hero
 // object, a list of tags each matched against a pattern, a list of questions, and blocks whose quotes name a person), makes 20 people
 // and gives each VU a page of its own. Each VU reads its page (50%; the ETag must be its last
 // accepted save), saves new structures naming two random people (20%; each save checks its
@@ -60,7 +61,7 @@ const PAGES_TYPE = {
   name: 'Pages',
   title_field: 'title',
   fields: [
-    { id: 'title', label: 'Title', type: 'text', required: true },
+    { id: 'title', label: 'Title', type: 'text', required: true, unique: true },
     { id: 'hero', label: 'Hero', type: 'object', fields: [
       { id: 'heading', label: 'Heading', type: 'text', required: true },
       { id: 'accent', label: 'Accent', type: 'color' },
