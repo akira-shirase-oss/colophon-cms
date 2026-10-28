@@ -80,6 +80,39 @@ keep.
 - **Compatibility.** The CLI checks the server's version first and explains a mismatch in plain words
   ([cli](08-cli.md), "Versions"). The SDK and the MCP server will follow the same rule when they exist.
 
+### Release workflow (D-062, milestone V): written, not yet run in CI
+`.github/workflows/release.yml`. Nothing in it has run on GitHub yet; what ran locally is listed under "Tests and
+evidence".
+- **Triggers.** A pushed tag `v<version>` releases. Run by hand (workflow_dispatch) on any branch it is a **dry
+  run**: it builds and checks every artifact, keeps them as workflow artifacts for seven days, and publishes and
+  signs nothing (an attestation from a public repository goes to Sigstore's public transparency log, so only tag
+  runs make one).
+- **plan:** the version from `scripts/release-version.sh`, which fails a tag that isn't `v` plus the workspace
+  version. A tag run also stops without a `LICENSE` file (OSS2, O-014) or a `## <version>` section in `CHANGELOG.md`
+  (OSS1); a dry run reports both as warnings. `SOURCE_DATE_EPOCH` is the commit's time, so build stamps are
+  reproducible.
+- **build**, one job per target, without caches: `aarch64-apple-darwin` (macOS 15), `x86_64-apple-darwin`
+  (cross-compiled on the same Apple-silicon runner, so it is not run there), `x86_64-unknown-linux-musl`
+  (Ubuntu 24.04), `aarch64-unknown-linux-musl` (Ubuntu 24.04 on Arm) and `x86_64-pc-windows-msvc` (Windows 2025).
+  Linux uses musl, with aws-lc's C code compiled by `musl-gcc`, and a step checks the binaries are static; Windows
+  uses aws-lc's prebuilt NASM objects, and `.gitattributes` checks every text file out with LF there too (CRLF
+  would break the scripts and change the embedded migrations' checksums, so a Windows binary would refuse a database
+  a Linux one migrated). Each native job runs both binaries' `--version` and checks the version and
+  commit. `scripts/release-package.sh` packs `colophon-cli-<version>-<target>.tar.gz` and
+  `colophon-server-<version>-<target>.tar.gz` (`.zip` on Windows), one binary each, owned by root, each with its
+  SHA-256.
+- **sbom:** `cargo-cyclonedx` 0.5.9 (installed `--locked`) writes a CycloneDX 1.5 SBOM of each binary's dependencies
+  for each target: `colophon-cli-<version>-<target>.cdx.json` and the server's.
+- **assemble:** rechecks every file against the checksum its job recorded, writes one `SHA256SUMS` (20 files: two
+  archives and two SBOMs per target) and checks it.
+- **release** (tag runs only): `actions/attest-build-provenance` signs SLSA build provenance for every file in
+  `SHA256SUMS`, then `gh release create --draft` attaches them all (marked pre-release for a pre-release version).
+  The maintainer checks the draft and publishes it by hand ("artifacts are verified before announcement"). Users
+  verify with `sha256sum -c SHA256SUMS` and `gh attestation verify <file> --repo akira-shirase-oss/colophon-cms`.
+- Every third-party action is pinned to a full commit SHA, as in `ci.yml`. Known gaps: the Studio's static files are
+  not in the server archive yet (the container images, still to build, will carry them); the musl server uses musl's
+  allocator, which is slower than glibc's under load, and its throughput has not been measured.
+
 ### Releases (spec §35)
 - Semantic versioning.
 - Each release ships:
@@ -134,6 +167,13 @@ Roughly one working day in five is reserved for maintenance once users depend on
 
 ## Tests and evidence
 
+- Milestone V, run locally on 2026-10-28 (macOS, Apple silicon): `scripts/release-version.sh` with no tag, a
+  mismatched tag and the right one; the `plan` step's script in its three modes (dry run warns, a mismatched tag
+  fails, a matching tag without `LICENSE` and a changelog entry fails); a release build for `aarch64-apple-darwin`
+  packed by `scripts/release-package.sh` (checksums verified, root-owned entries) and the `.zip` path with stand-in
+  binaries; `cargo-cyclonedx` 0.5.9 on this workspace for `x86_64-unknown-linux-musl` (one SBOM per member; the
+  CLI's lists 217 components, with no macOS or Windows crates); ShellCheck 0.11.0 on `scripts/*.sh` and
+  actionlint 1.7.12 on the workflows, both clean. The workflow itself has not run on GitHub.
 - CI checks:
   - `cargo deny` (advisories, licences, bans, sources);
   - secret scanning;
