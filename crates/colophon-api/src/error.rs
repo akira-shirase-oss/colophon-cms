@@ -139,6 +139,10 @@ pub struct ErrorDetails {
     /// `content.publish`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission: Option<&'static str>,
+    /// The content type a refused component change would have changed (D-073): `entries` and
+    /// the reason are that type's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
 }
 
 impl ErrorDetails {
@@ -150,6 +154,7 @@ impl ErrorDetails {
             total: None,
             candidates: Vec::new(),
             permission: None,
+            content_type: None,
         }
     }
 }
@@ -185,6 +190,8 @@ pub struct InTheWay {
     pub entries: Vec<EntryInTheWay>,
     /// How many there are, when the server counted them.
     pub total: Option<u64>,
+    /// For a component change: the content type in the way (D-073).
+    pub content_type: Option<String>,
 }
 
 /// Why stored content doesn't fit a content type: the refusal it would get.
@@ -469,6 +476,7 @@ impl ApiError {
             message: message.into(),
             entries: holder.into_iter().collect(),
             total: None,
+            content_type: None,
         }))
     }
 
@@ -484,6 +492,7 @@ impl ApiError {
             message: message.into(),
             entries: holder.into_iter().collect(),
             total: None,
+            content_type: None,
         }))
     }
 
@@ -594,6 +603,7 @@ impl ApiError {
             Self::Taken(way) | Self::NeedsMigration(way) => Some(ErrorDetails {
                 entries: way.entries.clone(),
                 total: way.total,
+                content_type: way.content_type.clone(),
                 ..ErrorDetails::new(way.reason, way.pointer.clone())
             }),
             _ => None,

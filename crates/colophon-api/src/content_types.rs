@@ -294,6 +294,7 @@ pub(crate) async fn check_stored(
         pointer: refusal.pointer,
         entries,
         total: Some(total),
+        content_type: None,
     })))
 }
 
@@ -477,6 +478,7 @@ async fn claim_unique(
         ),
         entries,
         total: Some(total),
+        content_type: None,
     })))
 }
 

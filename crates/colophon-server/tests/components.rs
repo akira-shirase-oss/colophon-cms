@@ -116,6 +116,10 @@ async fn a_component_change_reaches_every_type_that_uses_it_or_nothing_changes()
     let details = &refused.body["error"]["details"];
     assert_eq!(details["reason"], "needs_migration");
     assert_eq!(details["entries"][0]["title"], "Home");
+    assert_eq!(
+        details["content_type"], "pages",
+        "the type in the way, for clients to act on"
+    );
     assert!(
         refused.body["error"]["message"]
             .as_str()
