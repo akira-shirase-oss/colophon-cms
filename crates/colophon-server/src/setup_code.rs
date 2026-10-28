@@ -19,14 +19,15 @@ const ATTEMPTS: u32 = 12;
 /// The longest a write to standard error may take.
 const WRITE_DEADLINE: Duration = Duration::from_secs(5);
 
-/// What the operator reads: the code, where to enter it, until when, and the alternative.
+/// What the operator reads: the code, a link that fills it in (in the fragment, which a browser
+/// never sends, so it reaches no server log), until when, and the alternative.
 pub fn banner(code: &str, studio: &str, expires: OffsetDateTime) -> String {
     let expires = expires.to_offset(UtcOffset::UTC);
     let rule = "=".repeat(78);
     format!(
         "\n{rule}\nColophon has no administrator yet.\n\n    Setup code: {code}\n\n\
-         To become its first administrator, open the Studio, sign in or create an\n\
-         account, and enter this code:\n    {studio}\n\
+         To become its first administrator, open this link, sign in or create an\n\
+         account, and confirm; the link fills the code in for you:\n    {studio}#setup={code}\n\
          It works once, until {:02}:{:02} UTC. Restart the server for a new one.\n\n\
          Or, with the database credentials, run:\n    \
          colophon admin bootstrap --subject <your subject>\n{rule}\n\n",
@@ -119,13 +120,17 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("\n    http://localhost:58400/studio/\n"),
+            text.contains("\n    http://localhost:58400/studio/#setup=7K3QD-0ZX1V-ABCDE-FGHJK\n"),
             "{text}"
         );
         // 1,800,000,000 is 2027-01-15 08:00 UTC, whatever offset it was given in.
         assert!(text.contains("until 08:00 UTC"), "{text}");
         assert!(text.contains("colophon admin bootstrap"), "{text}");
-        assert_eq!(text.matches("7K3QD").count(), 1, "the code appears once");
+        assert_eq!(
+            text.matches("7K3QD").count(),
+            2,
+            "the code appears on its own line and in the link"
+        );
         assert!(
             text.lines().all(|line| line.chars().count() <= 78),
             "{text}"
