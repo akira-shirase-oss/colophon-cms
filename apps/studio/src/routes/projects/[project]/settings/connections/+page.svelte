@@ -85,7 +85,7 @@
 		{#snippet description()}
 			What happens to your website after each release.
 			{#if manages}
-				A site rebuild tells your site a release is out (a webhook, sent once, with a key it can use to drop repeats); a CDN clear asks your CDN to drop the
+				A site rebuild tells your site a release is out (a webhook, sent once, with a key it can use to drop repeats); a cache clear asks the cache in front of your site (a CDN) to drop the
 				copies the release changed; a site check reads the live site to confirm readers see it.
 			{/if}
 		{/snippet}
@@ -111,7 +111,7 @@
 	{:else if !any}
 		<div class="max-w-3xl">
 			<EmptyState icon={GlobeIcon} title="No website connections yet" testid="connections-empty">
-				Connect your website so each release rebuilds it, clears its CDN, or is checked on the live site. Until then, releases are published in Colophon and
+				Connect your website so each release rebuilds it, clears its cache, or is checked on the live site. Until then, releases are published in Colophon and
 				your site reads them whenever it asks.
 				{#snippet action()}
 					<Button onclick={start} data-testid="add-connection"><PlusIcon data-icon="inline-start" />Add a connection</Button>

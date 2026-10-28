@@ -67,7 +67,7 @@
 		<div class="text-[0.9375rem]"><ReleaseLabel release={shown} testid="receipt-label" /></div>
 		{#if shown.label === 'published' && shown.deliveries.length === 0}
 			<p class="text-sm text-muted-foreground" data-testid="receipt-explainer">
-				Published in Colophon: your website can read it now. Nothing checks your website yet; add a site check in
+				Your website can read it now. Nothing checks your website yet; add a site check in
 				<a class="underline underline-offset-2" href={resolve('/projects/[project]/settings/connections', { project })}>Settings → Website connections</a> to confirm
 				what readers see.
 			</p>
@@ -120,7 +120,7 @@
 						</span>
 					</li>
 				{:else}
-					<li class="text-sm text-muted-foreground">None were set up when this went live. Connect your website in Settings so each release rebuilds it, clears its CDN, or is checked.</li>
+					<li class="text-sm text-muted-foreground">None were set up when this went live. Connect your website in Settings so each release rebuilds it, clears the old copies its cache keeps, or is checked.</li>
 				{/each}
 			</ul>
 		</section>

@@ -1,5 +1,7 @@
 // Words for a release's label (D-051, spec §05), shared by the Releases page and a release's
 // receipt. "Verified" always says where: a probe proves what it saw, from where it looked.
+// Spec §05's "Published in CMS" is said "Published in Colophon" (D-082): an editor knows the
+// product's name, not the acronym.
 
 import type { Delivery, Release } from './api.ts';
 import { INTERNAL_TERMS } from './words.ts';
@@ -7,7 +9,7 @@ import { INTERNAL_TERMS } from './words.ts';
 export function labelText(release: Pick<Release, 'label' | 'locations'>): string {
 	switch (release.label) {
 		case 'published':
-			return 'Published in CMS';
+			return 'Published in Colophon';
 		case 'pending':
 			return 'Website update pending';
 		case 'verified':
@@ -20,7 +22,7 @@ export function labelText(release: Pick<Release, 'label' | 'locations'>): string
 export function deliveryText(delivery: Delivery): string {
 	switch (delivery.state) {
 		case 'done':
-			return delivery.kind === 'probe' ? 'saw this release' : delivery.kind === 'cdn' ? 'purge accepted' : 'delivered';
+			return delivery.kind === 'probe' ? 'saw this release' : delivery.kind === 'cdn' ? 'clearing accepted' : 'delivered';
 		case 'covered':
 			return `covered by release ${delivery.covered_by ?? '?'}`;
 		case 'pending':

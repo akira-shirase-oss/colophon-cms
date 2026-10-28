@@ -220,7 +220,9 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 
 	await test.step('they see its receipt', async () => {
 		await owner.getByTestId('publish-outcome').getByRole('link', { name: 'Release 1' }).click();
-		await expect(owner.getByTestId('receipt-label')).toHaveText('Published in CMS');
+		// Spec §05's "Published in CMS", in the product's name (D-082); no "CDN" either.
+		await expect(owner.getByTestId('receipt-label')).toHaveText('Published in Colophon');
+		await expect(owner.locator('main')).not.toContainText(/\bCDN\b|\bCMS\b/);
 		await expect(owner.getByTestId('receipt-explainer')).toContainText('Nothing checks your website yet');
 		await screen(owner, 'receipt');
 	});

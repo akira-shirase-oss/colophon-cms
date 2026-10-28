@@ -127,7 +127,7 @@
 			list.push({
 				id: 'connect',
 				title: 'Connect your website',
-				detail: 'So each release rebuilds your site, clears its CDN, or is checked on the live site.',
+				detail: 'So each release rebuilds your site, clears its cache, or is checked on the live site.',
 				done: counts.connections > 0,
 				href: resolve('/projects/[project]/settings/connections', { project }),
 				action: 'Connect'

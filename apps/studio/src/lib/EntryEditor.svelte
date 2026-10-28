@@ -255,6 +255,8 @@
 	const standing = $derived(
 		published === null ? 'draft' : published.revision_id === latest.revision.id && saver.status === 'saved' ? 'live' : 'changed'
 	);
+	/** Where anyone reads the published version, without signing in. */
+	const publicAddress = $derived(`${window.location.origin}${deliveryUrl(project, collection)}/${entry}`);
 	async function copyAddress(text: string) {
 		try {
 			await navigator.clipboard.writeText(text);
@@ -669,10 +671,17 @@
 
 		<div class="min-w-0 text-xs text-muted-foreground xl:mt-4 xl:border-t xl:border-dotted xl:border-border xl:pt-3" data-testid="entry-details">
 			<p title={new Date(latest.created_at).toLocaleString()}>Created {new Date(latest.created_at).toLocaleDateString()}</p>
+			{#if published !== null}
+				<!-- The public link in one click, without opening Technical details (D-082). -->
+				<p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+					<span>{standing === 'changed' ? 'Anyone can read the published version.' : 'Anyone can read it.'}</span>
+					<Button variant="outline" size="xs" onclick={() => copyAddress(publicAddress)} data-testid="copy-public-link"><LinkIcon data-icon="inline-start" />Copy public link</Button>
+				</p>
+			{/if}
 			<TechnicalDetails class="mt-3">
 				{#if published !== null}
 					<!-- Where readers get it (the public read, no sign-in): the published version, not the draft. -->
-					{@const address = `${window.location.origin}${deliveryUrl(project, collection)}/${entry}`}
+					{@const address = publicAddress}
 					<section class="space-y-1.5 border-b border-dashed border-border pb-2.5" aria-labelledby="public-address-heading" data-testid="public-address">
 						<h2 id="public-address-heading" class="font-medium text-foreground">Where readers get it</h2>
 						<p>
@@ -694,7 +703,7 @@
 				<p>Entry <span class="font-mono break-all">{entry}</span> in collection <span class="font-mono">{collection}</span></p>
 				<p>Revision <span class="font-mono break-all">{latest.revision.id}</span></p>
 				<p>Content hash <span class="font-mono break-all">{latest.revision.content_hash}</span></p>
-				<p>Readers get an entry only through a changeset that is published as a release.</p>
+				<p>Readers get an entry only once a release with it is published.</p>
 			</TechnicalDetails>
 		</div>
 	</div>

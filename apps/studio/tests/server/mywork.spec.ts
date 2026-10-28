@@ -46,7 +46,7 @@ test('two people each see their own work on the home page, on a desk and on a ph
 	await expect(page.getByTestId('waiting-review')).toContainText('Needs a look');
 	await expect(page.getByTestId('my-schedules-list')).toContainText('Tomorrow’s piece');
 	await expect(page.getByTestId('my-releases-list')).toContainText('Release 1');
-	await expect(page.getByTestId('my-releases-list')).toContainText('Published in CMS');
+	await expect(page.getByTestId('my-releases-list')).toContainText('Published in Colophon');
 	expect(await violations(page)).toEqual([]);
 	expect(await internalTerms(page)).toEqual([]);
 	await shot(page, 'my-work-owner');

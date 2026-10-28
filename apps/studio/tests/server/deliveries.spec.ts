@@ -99,7 +99,7 @@ test('a CDN added in Settings is asked to purge what each release changed', asyn
 		const project = await newProject(page);
 		await page.goto(`/studio/projects/${project}/settings/connections`);
 		await page.getByRole('button', { name: 'Add a connection' }).click();
-		await page.getByRole('radio', { name: /CDN clear/ }).check();
+		await page.getByRole('radio', { name: /Cache clear/ }).check();
 		await page.getByLabel('Connection name').fill('Edge cache');
 		await page.getByLabel('Purge URL (https)').fill(cdn.url);
 		await page.getByRole('button', { name: 'Add website connection' }).click();
@@ -130,6 +130,13 @@ test('a CDN added in Settings is asked to purge what each release changed', asyn
 		expect(cdn.purges).toHaveLength(1);
 		expect(cdn.purges[0]?.some((tag) => tag.endsWith(`:n:${entry.replaceAll('-', '')}`))).toBe(true);
 		expect(cdn.purges[0]?.some((tag) => tag.endsWith(':c:articles'))).toBe(true);
+
+		// Its receipt says so in plain words (D-082): no "CDN" outside Technical details.
+		await page.goto(`/studio/projects/${project}/releases/1`);
+		await expect(page.getByTestId('deliveries')).toContainText('Edge cache');
+		await expect(page.getByTestId('deliveries')).toContainText('Cache clear: clearing accepted');
+		await expect(page.getByTestId('deliveries')).not.toContainText('CDN');
+		expect(await internalTerms(page)).toEqual([]);
 	} finally {
 		cdn.close();
 	}

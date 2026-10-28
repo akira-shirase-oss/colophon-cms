@@ -47,7 +47,7 @@ export function count(n: number, one: string, many: string): string {
 /** What each kind of website connection does, as a noun and as the action it takes. */
 export const CONNECTION_KIND: Record<Destination['kind'], { name: string; does: string; detail: string }> = {
 	webhook: { name: 'Site rebuild', does: 'Rebuild the site', detail: 'Tells your website a new release is out, so it can rebuild.' },
-	cdn: { name: 'CDN clear', does: 'Clear the CDN', detail: 'Asks your CDN to drop the copies each release changed.' },
+	cdn: { name: 'Cache clear', does: 'Clear the cache', detail: 'Asks the cache in front of your site (a CDN) to drop the copies each release changed.' },
 	probe: { name: 'Site check', does: 'Check the site', detail: 'Reads your live site after each release to confirm readers see it.' }
 };
 
