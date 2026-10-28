@@ -100,8 +100,11 @@ CREATE POLICY entries_deleter_tombstones ON entries FOR UPDATE TO colophon_delet
 GRANT UPDATE (deleted_at, deleted_by) ON entries TO colophon_deleter;
 
 -- "Is this entry pinned by a changeset?" for each deletion; the primary key leads with the
--- changeset.
-CREATE INDEX changeset_items_by_entry ON changeset_items (project_id, environment_id, entry_id);
+-- changeset. It leads with the entry: led by the project and environment, it let the planner,
+-- on statistics from when the tables were empty, scan every item of the project for every entry
+-- of the project when a publish listed its collections (quadratic; 120 to 210 ms a publish in a
+-- 20-second schedules run, found by A/B against the build before this migration).
+CREATE INDEX changeset_items_by_entry ON changeset_items (entry_id, project_id, environment_id);
 
 -- Nothing new may name a deleted entry: not a reference (D-065), not a changeset pin, not a
 -- publication. The entry is locked FOR KEY SHARE, which waits for a deletion holding it FOR
