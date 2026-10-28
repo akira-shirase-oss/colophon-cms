@@ -44,18 +44,18 @@ Each action asks the [evaluator](/concepts/roles-and-permissions/) about every c
 | review (approve or ask for changes) | `content.review` | owners and publishers |
 | publish | `content.publish` | owners and publishers |
 
-On `main` these come from the fixed role table; on the R.2 branch a custom role can hold them for some collections and not others. <Status building="R.2" />
+A custom role can hold them for some collections and not others (R.2). Since R.3, a publish request may include an entry only if the caller's role may change it: anyone's, or their own where that is all it may change. <Status done="R.3" />
 
-**Self-review** is allowed and recorded: an approval by the person who submitted the changeset counts, and the changeset says `self_review: true`. That is the spec's default (§06: "the default permits a single operator to review their own work, visibly recorded"). The rule for requiring a different reviewer is in the domain (`require_different_reviewer`, under which a self-approval doesn't count) and is off for every project: the API passes `false` until project settings exist. <Status planned="not scheduled" />
+**Self-review** is allowed and recorded: an approval by the person who submitted the changeset counts, and the changeset says `self_review: true`. That is the spec's default (§06: "the default permits a single operator to review their own work, visibly recorded"). The rule for requiring a different reviewer is in the domain (`require_different_reviewer`, under which a self-approval doesn't count) and is off for every project: one constant, `colophon_db::publish::REQUIRE_DIFFERENT_REVIEWER`, is `false` until project settings exist, and a project read says so as `self_review: true`, which the Studio's one-click publishing follows. A per-project setting for it has no step yet. <Status planned="not scheduled" />
 
 ## Publishing it
 
-Publishing an approved changeset makes a release, in one transaction, on the release the publisher last saw ([Releases and generations](/concepts/releases-and-generations/)). On the step 3.6 branch, publishing first takes the content-type lock of every collection in the changeset, shared and in order, so no content type changes between reading the items and committing; and a release that would publish a URL name another entry still publishes is refused whole with `409 slug_taken`. <Status building="3.6" />
+Publishing an approved changeset makes a release, in one transaction, on the release the publisher last saw ([Releases and generations](/concepts/releases-and-generations/)). Since step 3.6, publishing first takes the content-type lock of every collection in the changeset, shared and in order, so no content type changes between reading the items and committing; and a release that would publish a URL name another entry still publishes is refused whole with `409 slug_taken`. The publish is one routine, `colophon_db::publish::publish`, which a person's publish and a scheduled one both run. <Status done="3.6" />
 
-## What is being built on top
+## Built on top, and planned
 
-- **One-click publishing.** In the Studio, publishing one entry becomes one button on the entry: it creates the publish request, and publishes it at once when the project lets people review their own work, or asks for review otherwise. It is still a changeset, a recorded review and a release underneath ([Onboarding and plain words](/concepts/onboarding/)). <Status building="3.7" />
-- **Scheduling.** An approved changeset can be given a time to publish, and is checked again when it falls due ([Scheduled publishing](/concepts/scheduled-publishing/)). <Status building="e/schedules" />
+- **One-click publishing.** In the Studio, publishing one entry is one button on the entry: it creates the publish request, sends it for review, and approves and publishes it at once when the project lets people review their own work and the role may approve and publish, or stops after asking for review otherwise. It is still a changeset, a recorded review and a release underneath ([Onboarding and plain words](/concepts/onboarding/)). <Status done="3.7" />
+- **Scheduling.** An approved changeset can be given a time to publish, in a time zone, and is checked again when it falls due ([Scheduled publishing](/concepts/scheduled-publishing/)). <Status done="D-060" />
 - Review stages, assignees and comments on top of changesets. <Status planned="E" />
 - Asset hashes in the canonical form, with media, as a new format version. <Status planned="P4" />
 
@@ -65,4 +65,4 @@ Publishing an approved changeset makes a release, in one transaction, on the rel
 
 ## Design
 
-[Module 01, domain](/design/modules/01-domain/) and [module 04, api](/design/modules/04-api/); decisions D-029, D-044 and D-049 in the [decisions](/design/decisions/). The editor's side is [Publish requests and review](/editors/review/); the routes are in [Publish requests and reviews](/reference/api/publish-requests/).
+[Module 01, domain](/design/modules/01-domain/) and [module 04, api](/design/modules/04-api/); decisions D-029, D-044, D-049 and D-060 in the [decisions](/design/decisions/). The editor's side is [Publish requests and review](/editors/review/); the routes are in [Publish requests and reviews](/reference/api/publish-requests/).

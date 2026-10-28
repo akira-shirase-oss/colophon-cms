@@ -27,8 +27,8 @@
 	<p>
 		These pages are the files in <a href="{REPOSITORY}/tree/main/docs" rel="external">docs/</a>, rendered when this site is built, so they never drift from the repository. They are
 		<strong>design documents</strong>: each one records a plan and, as steps land, what was built. Read them for the reasons behind a behaviour; read the guides,
-		whose labels say what exists, for what you can use today. They are <code>main</code>'s versions: decisions and module changes made on branches that aren't merged
-		yet (D-054 to D-059, for example) are on GitHub, on their branch, and the guides link there.
+		whose labels say what exists, for what you can use today. They are the versions in the same commit as these pages, so they describe the code this site was built
+		with.
 	</p>
 	<p>
 		When they disagree, the order of authority is the one in <code>AGENTS.md</code>: <a href={href('/design/decisions/')}>the decisions</a>, then the module documents, then

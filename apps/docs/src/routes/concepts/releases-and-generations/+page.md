@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-Publishing an approved changeset makes a **release**, and every release has a **generation**: a number that goes up by exactly one per release in an environment, and never goes down. Two people publishing at once can't both win, and a reader never sees half of a release. Today's Studio shows a release by its number ("release 4"); with step 3.7's plain words it keeps its name with the time it went live, and the generation stays the number underneath. <Status building="3.7" />
+Publishing an approved changeset makes a **release**, and every release has a **generation**: a number that goes up by exactly one per release in an environment, and never goes down. Two people publishing at once can't both win, and a reader never sees half of a release. The Studio names a release by its number ("Release 4") with the time it went live, and the generation is the number underneath (step 3.7's plain words). <Status done="3.7" />
 
 ## One transaction, from the base you saw
 
@@ -16,7 +16,7 @@ Publishing an approved changeset makes a **release**, and every release has a **
 
 The publisher's base matters: someone who looked at generation 4 can't publish over a generation 5 they never saw. The conditional update makes "two releases on one base can't both commit" a fact the database enforces, not a check that can race.
 
-On the step 3.6 branch, two more things happen before and during the commit. <Status building="3.6" />
+Since step 3.6, two more things happen before and during the commit. <Status done="3.6" />
 
 - Publishing takes the content-type lock of every collection in the changeset, shared and in order, before it reads the items. No content-type change can commit between reading them and the release, so what goes live is what was a draft when any change checked the collection ([Content types and URL names](/concepts/content-types/)).
 - Each publication copies its revision's URL name, and the partial unique index `publications_live_slug` allows one open publication per URL name in a collection. A release that would publish a URL name another entry still publishes fails that index, and **the whole release rolls back**: `409 slug_taken`, no generation taken. Publish the other entry's new URL name first, or in the same changeset.
@@ -40,11 +40,11 @@ Each environment also has an **epoch**, which is already part of cache keys and 
 ## How it is tested
 
 - `crates/colophon-server/tests/releases.rs` and `crates/colophon-db/tests/releases.rs` race two releases on one base, end to end and in the database: exactly one commits.
-- `crates/colophon-db/tests/slugs.rs`: a release never publishes a URL name another entry still publishes. <Status building="3.6" />
+- `crates/colophon-db/tests/slugs.rs`: a release never publishes a URL name another entry still publishes. <Status done="3.6" />
 - The [simulator](/concepts/simulator/)'s publishing scenario checks after every step that generations are contiguous, history never overlaps and every acknowledged publish is a release.
 - The real-process crash loop (`crates/colophon-server/tests/crash_loop.rs`) kills the server mid-publish, resends unanswered requests with the same keys, and checks that each project's generations run 1 to N with each changeset published once, and that delivery at generation g serves what was published by then.
 - `perf/k6/publishing.js` is the load scenario, with the worker running.
 
 ## Design
 
-[Module 01, domain](/design/modules/01-domain/), [module 02, db](/design/modules/02-db/) and [module 06, delivery](/design/modules/06-delivery/); decisions D-045 and D-047 in the [decisions](/design/decisions/), and D-054 for URL names on the [R.2 branch](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.2-custom-roles/docs/DECISIONS.md). The editor's side is [Publishing](/editors/publishing/).
+[Module 01, domain](/design/modules/01-domain/), [module 02, db](/design/modules/02-db/) and [module 06, delivery](/design/modules/06-delivery/); decisions D-045 and D-047 in the [decisions](/design/decisions/), and D-054 for URL names. The editor's side is [Publishing](/editors/publishing/).

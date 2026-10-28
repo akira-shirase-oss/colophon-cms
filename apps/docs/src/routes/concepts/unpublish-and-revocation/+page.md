@@ -19,7 +19,7 @@ In the release's transaction, for each unpublished entry:
 
 From then on, delivery skips revoked publications in lists, and a read of the entry, at any generation, is `410 Gone` with `Cache-Control: no-store`, never cached. Because cache keys name the latest unpublish, every answer cached before it is retired at once ([Caching and delivery](/concepts/caching-and-delivery/)). History rows stay: the record of what was published, and when, isn't rewritten. Publishing the entry again opens a new publication after the tombstone, delivered from its own generation on.
 
-On the step 3.6 branch, closing the publication also releases the entry's published URL name, because only open publications hold one; its draft keeps its URL name until someone changes it, so no other entry of the collection can take it meanwhile. <Status building="3.6" />
+Since step 3.6, closing the publication also releases the entry's published URL name, because only open publications hold one; its draft keeps its URL name until someone changes it, so no other entry of the collection can take it meanwhile. <Status done="3.6" />
 
 ## CDN purges
 

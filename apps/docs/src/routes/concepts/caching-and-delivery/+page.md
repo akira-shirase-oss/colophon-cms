@@ -44,7 +44,7 @@ A shared cache may hold a latest answer up to 30 seconds until a purge reaches i
 
 ## Who sees what
 
-Delivery needs no sign-in and serves only published rows: every published project is public, and private delivery comes later. When field-level read permissions arrive, delivery stays public and serves only published, public fields; answers that differ by caller elsewhere will key their caches on the caller's permission set (D-058). <Status planned="R.3" />
+Delivery needs no sign-in and serves only published rows: every published project is public, and private delivery comes later. Field-level read permissions (step R.3) narrow the management API, not delivery: D-058 keeps delivery public, serving only published, public fields, and since no field can be marked other than public yet, it serves every published field. Answers that differ by caller will key their caches on the caller's permission set (D-058); only delivery is cached today.
 
 ## How it is tested
 

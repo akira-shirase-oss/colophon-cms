@@ -53,8 +53,10 @@ test('search indexes the design documents too', async ({ page }) => {
 test('a search with no match says so', async ({ page }) => {
 	await page.goto(docs('/'), { waitUntil: 'networkidle' });
 	await page.getByTestId('search-open').click();
-	// Pagefind also matches parts of words when nothing matches exactly, so this word shares no part
-	// with any word on any page (zebrafishxylophone stopped qualifying as the pages grew).
-	await page.getByTestId('search-input').fill('vvwvvw');
+	// When nothing matches exactly, Pagefind falls back to indexed words the query begins with, one
+	// letter long included: zebrafishxylophone stopped qualifying as the pages grew, and vvwvvw when
+	// milestone V arrived. Probing "<letter>xqjzqk" for every letter on 2026-10-27, only a and t
+	// matched nothing (Pagefind doesn't index either alone), and no word begins "ax".
+	await page.getByTestId('search-input').fill('axqjzqk');
 	await expect(page.getByTestId('search-status')).toContainText('Nothing matches');
 });

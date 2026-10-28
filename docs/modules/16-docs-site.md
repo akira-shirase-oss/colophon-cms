@@ -97,7 +97,7 @@ On branch `site/docs` (not yet merged), rebuilt on 2026-10-27 in the website's l
   they, the shared imports or the status words drift.
 - **Information architecture** (`src/lib/nav.ts`, the one site map): Get started (what Colophon is, run it locally,
   the first project, article and publish with its receipt), For editors (in D-059's plain words), Concepts (fourteen
-  pages, including scheduled publishing and onboarding while they are built), Developer reference (API conventions,
+  pages, scheduled publishing and onboarding among them), Developer reference (API conventions,
   all routes, one page per area with every route's who, headers, bodies and errors, the error envelope with every
   code and reason, the delivery API, the CLI, rich text, webhooks), Operations (requirements, the local stack, every
   setting, health checks, the worker, every migration, backups, crash tests), Resources (security model, performance,
@@ -105,15 +105,17 @@ On branch `site/docs` (not yet merged), rebuilt on 2026-10-27 in the website's l
   documents.
 - **Statuses in the website's words (DS1):** every page carries *Done · step*, *Building · step or branch* or
   *Planned · milestone*, from the site map, plus *Overview* for pages that introduce others and *Design document*
-  for the rendered design documents. Parts of a page that differ carry an inline label (`<Status planned="R.3" />`).
-  Pages describe the newest branch (`r/r.2-custom-roles`, which contains main, 3.6 and R.1), with what isn't merged
-  labelled Building.
+  for the rendered design documents. Parts of a page that differ carry an inline label (`<Status planned="R.4" />`).
+  Pages describe the code they ship with, the checked-out tree: since 2026-10-27 that is main plus 3.6, 3.7, R.1 to
+  R.3 and scheduled publishing, merged together, and only the docs site and the website are still Building.
 - **Changelog and release notes** (docs/RELEASES.md): `/docs/changelog/` renders `CHANGELOG.md` (Keep a Changelog
   groups inside each step, an anchor per milestone and per step) with an Atom feed of merged steps at
   `/docs/changelog/feed.xml`; the website renders the same file at `/changelog/`. Release notes per milestone
   (`docs/releases/p0.md` …, from `docs/templates/release-notes.md`) render at `/docs/releases/…`, their "All changes"
   replaced at build time by the milestone's section of the changelog; upgrade guides per range of migrations
-  (`docs/upgrading/*.md`, from the template) at `/docs/upgrading/…`.
+  (`docs/upgrading/*.md`, from the template) at `/docs/upgrading/…`: one per milestone up to P3, and
+  `p3-roles-schedules.md` for 0016 to 0022, which arrived together. Milestones R and E have changelog sections but no
+  release notes yet.
 - **Rendered from the files:** the design documents, the release notes and the upgrade guides are read and rendered
   at build time with unified (remark-gfm), so there is no copy to drift. The performance page reads every
   `perf/results/*.json`, with its machine, date, commit and threshold outcome, misses included.
@@ -127,9 +129,10 @@ On branch `site/docs` (not yet merged), rebuilt on 2026-10-27 in the website's l
   search dialog and the phone navigation; every page reflows at 320 px; the theme switch is one button and survives a
   reload; the shared look; search finds pages, a changelog entry and the design documents; the changelog page lists
   every section and entry of `CHANGELOG.md` with their anchors, the feed every merged step, and each release note its
-  milestone's section; every documented route exists in the router on the newest branch (read with `git show`) and
-  every route there is documented, branch-only ones as Building; the errors page lists every code and every reason
-  the code can put in `details`; every runnable command exists; the CLI page lists every command.
+  milestone's section; every documented route exists in the router and every route there is documented once, never
+  as Planned; the errors page lists every code and every reason the code can put in `details` (from every module of
+  the API crate and every `code()` table in the domain); the code is read from the checked-out tree, so the checks
+  work on CI's shallow clone, and `COLOPHON_DOCS_CODE_REF` checks the docs against another commit with `git show`; every runnable command exists; the CLI page lists every command.
 
 Not done yet: versioned docs (spec §19), executing the examples in CI (today they are checked to exist, not run),
 deep-dive write-ups, troubleshooting and security-reporting pages, and hosting.

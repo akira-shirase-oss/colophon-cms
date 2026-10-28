@@ -72,7 +72,7 @@ A token acts with its person's full membership rights. Scoped tokens are planned
 
 ## Deny by default
 
-Every handler asks one evaluator whether the caller's role allows the action, in the collection when the action is about one, and anything not allowed is refused. On `main` that is a fixed table over four roles (step 1.7); on the R.2 branch roles are data and owners can define more, with nobody able to hand out power they don't hold. [Roles and permissions](/concepts/roles-and-permissions/) has the actions, the built-in roles and the rules. <Status building="R.2" />
+Every handler asks one evaluator whether the caller's role allows the action, in the collection when the action is about one, and anything not allowed is refused. Roles are data (R.1), owners can define more, with nobody able to hand out power they don't hold (R.2), and a permission can be narrowed to some fields or to the member's own entries (R.3): a read leaves out the fields a role can't read, a save can't change a field it can't change, and an entry it can't read at all answers `404`, like one that doesn't exist. [Roles and permissions](/concepts/roles-and-permissions/) has the actions, the built-in roles and the rules. <Status done="R.3" />
 
 Signing in grants nothing by itself: people reach a project only by invitation.
 
@@ -82,15 +82,15 @@ An invitation link, `/studio/invite#<token>`, carries a single-use token of 256 
 
 ## The first administrator
 
-Only administrators create projects. The first one is made once, by the operator, from a terminal, with the database owner's credentials: `colophon admin bootstrap --subject S` (D-043). In one transaction it finds or creates the identity, claims the single `installation` row and records the administrator. Run again for the same person it changes nothing (exit 0); for anyone else it is refused (exit 4).
+Only administrators create projects. The first one is made once. The operator can make it from a terminal, with the database owner's credentials: `colophon admin bootstrap --subject S` (D-043). In one transaction it finds or creates the identity, claims the single `installation` row and records the administrator. Run again for the same person it changes nothing (exit 0); for anyone else it is refused (exit 4).
 
-- No HTTP route can create an administrator.
+- Once an administrator exists, no HTTP route can create another (before that, only the setup code below can, D-061).
 - The `installation` row can't be updated, deleted or truncated, even by the table owner, without dropping its triggers.
 - A restrictive row-level security policy, `projects_created_by_administrators`, refuses anyone else's project below the API.
 
 `crates/colophon-db/tests/administrators.rs` and `crates/colophon-server/tests/bootstrap.rs` test each of these, including two bootstraps at the same moment making one administrator.
 
-Step 3.7's branch, `p3/3.7-onboarding`, adds a second way that keeps the rule that only the operator can start it: while nobody is an administrator, the server prints a one-time setup code to its terminal, and a signed-in person who enters it becomes the first administrator. The code is used once, expires after an hour, is stored only as a hash, is compared in constant time, and attempts are rate-limited in PostgreSQL; the application role still can't write `installation` or `administrators` except through functions that refuse once anyone is an administrator ([Onboarding and plain words](/concepts/onboarding/)). <Status building="3.7" />
+Step 3.7 added a second way that keeps the rule that only the operator can start it (D-061): while nobody is an administrator, the server prints a one-time setup code to its standard error when it starts, never to the structured log, and a signed-in person who sends it to `POST /api/v1/setup` becomes the first administrator. The code is 100 random bits, used once, expires after an hour, is stored only as a SHA-256 hash, and is compared in constant time with every live code; wrong, used and expired codes get one answer. Attempts are rate-limited in PostgreSQL, so every server instance shares the count: five a person and twenty in all per fifteen minutes. The application role still can't read or write `installation`, `administrators` or the code tables except through four functions that check all of this and refuse once anyone is an administrator. A code in standard error can sit in collected container logs for its hour; it dies at first use. An operator who wants no code ever issued runs the bootstrap command before the first start. `crates/colophon-db/tests/setup.rs` and `crates/colophon-server/tests/setup.rs` test each property ([Onboarding and plain words](/concepts/onboarding/)). <Status done="3.7" />
 
 ## Outbound requests only to public addresses
 
@@ -114,6 +114,9 @@ Not public, by `colophon_domain::destination::is_public`: loopback, private (10/
 | Pages of entries and public lists | at most 100 | `colophon-db` |
 | A publish request | 1 to 100 entries | `colophon-db` |
 | Members and invitations listed | 1,000 | `colophon-db` |
+| Roles in a project, permissions in a role | 100 roles, 500 permissions | `colophon_domain::policy` |
+| Schedules listed | the 100 next pending and the 20 latest finished | `colophon_db::schedules` |
+| Setup-code attempts | 5 a person and 20 in all per 15 minutes, then `429` with `Retry-After` | migration 0020 |
 
 The [configuration reference](/operations/configuration/) lists every setting.
 
@@ -123,16 +126,16 @@ Every error, including those from middleware and panics, leaves as one JSON enve
 
 ## What isn't done
 
-- **Rate limiting.** On `main` there is no per-client or per-person rate limit. Starting a device sign-in needs no authentication; its table is bounded by clearing expired rows on each insert. The only limit being built is on setup-code attempts, on the 3.7 branch. <Status building="3.7" /> General admission control and throttling a noisy client are planned; P5's gate includes a noisy agent being throttled (L08). <Status planned="P5" />
+- **Rate limiting.** There is no general per-client or per-person rate limit; the only one is on setup-code attempts (above). Starting a device sign-in needs no authentication; its table is bounded by clearing expired rows on each insert. Rate limits per person and per address, shared across server instances, are planned in milestone S <Status planned="S" />, and P5's gate includes a noisy agent being throttled (L08). <Status planned="P5" />
 - **Audit log.** Role, membership and token changes aren't yet recorded in an append-only log. <Status planned="R.4" />
 - **Scoped API tokens.** Bearer tokens act with their person's full rights; read-only, full-access and custom tokens come with R.4, and budgeted machine credentials for scripts and agents, with a kill switch, in P5. <Status planned="R.4" />
-- **Field-level permissions** and "only their own" conditions. <Status planned="R.3" />
 - **Fresh sign-in before sensitive changes**, such as role changes or deleting a project. Module 03 requires it; nothing asks yet. <Status planned="not scheduled" />
 - **Signed webhooks.** Announcements carry an idempotency key and the generation but no HMAC signature; that comes with destination secrets. <Status planned="not scheduled" />
 - **Secrets management.** Secrets come from environment variables only: no secret store, rotation or encryption at rest, because no third-party credential is stored yet. A real CDN adapter will read its credentials from the environment, never the database.
 - **A restrictive Content Security Policy** for the Studio. Its policy today only forbids framing.
 - **Private delivery.** Every published project is public; there are no private or preview projections yet. <Status planned="P4" />
 - **Several administrators**, through a grant flow. <Status planned="not scheduled" />
+- **Sign-up in the development realm.** The local Keycloak realm lets anyone who can reach it create an account; an account grants nothing until an invitation or the setup code, and a production identity provider decides for itself whether to offer sign-up (D-061).
 - **A security policy and advisories.** `SECURITY.md` with private advisories through GitHub, and a table of supported versions, are planned for v0.1 ([Releases](/design/releases/)), with signed release artifacts and an SBOM in P6. <Status planned="P6" />
 - **An outside review.** No external audit or penetration test has been done. The spec's target is the relevant OWASP ASVS 5.0 Level 2 controls before a public production release, mapped with evidence; that mapping doesn't exist yet. Hostile multi-tenant hosting is not a goal: one installation serves one organisation, with its projects isolated.
 - **Backups and restore.** <Status planned="P6" />

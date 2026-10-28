@@ -47,7 +47,7 @@ With a planted bug, the sweep should fail: it exits 1 and prints the seed that c
 
 The simulator models PostgreSQL and the network; it doesn't run them. That is what the real tests are for: the crash tests kill the real binary at named points, and the crash loop kills the whole server with `SIGKILL` at random moments against the real stack ([Crash tests](/operations/crash-tests/)).
 
-The simulator doesn't model content-type changes, URL names or roles yet: the step 3.6 and R.2 branches test those against PostgreSQL and the real server instead.
+The simulator doesn't model content-type changes, URL names, roles or schedules yet: tests against PostgreSQL and the real server cover those instead. Random roles checked against the evaluator are planned in milestone R, and schema changes racing saves in milestone M.
 
 ## Still to come
 

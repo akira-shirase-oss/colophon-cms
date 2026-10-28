@@ -134,9 +134,8 @@
 
 	<h2 id="every-kept-result">Every kept result</h2>
 	<p>
-		All {data.results.length} result files on <code>main</code>, newest first, including the {missed} runs that missed their thresholds. Some runs were repeated after a fix; both
-		are kept, and the commit messages say why. Runs kept on branches that aren't merged (R.1's signed-in session runs, R.2's custom-roles scenario
-		<code>perf/k6/roles.js</code>) appear here when their step merges.
+		All {data.results.length} result files in <code>perf/results</code>, newest first, including the {missed} runs that missed their thresholds. Some runs were repeated after a
+		fix; both are kept, and the commit messages say why.
 	</p>
 	{@render table(data.results, 'Every kept load run, newest first')}
 </PageFrame>

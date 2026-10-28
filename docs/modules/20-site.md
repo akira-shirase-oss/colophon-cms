@@ -47,7 +47,7 @@ another origin, and content that can't drift from its sources because it is read
 | Changelog | `CHANGELOG.md`, parsed at build time (`src/lib/server/changelog.ts`) | One entry per step merged into `main` (`git log --merges main`), written from the step's commits and decisions; in-progress steps under *Unreleased* say they aren't merged; a malformed entry fails the build |
 | Blog | `src/content/blog/*.md`, copied byte for byte from `minimal-portfolio/content/colophon` by `scripts/import-blog.ts` | Rendered like Zola renders it (CommonMark, smart punctuation, raw HTML escaped); each post's canonical link is its original at `https://404human.dev/colophon/<slug>/`, the slug made by Zola's rule |
 | Load figures | `perf/results/*.json`, globbed at build time (`src/lib/server/perf.ts`) | Each figure names its file, date, commit and machine (`apple-m2-pro-12c`), says what its run measured, and carries the laptop caveat; a missing file fails the build. The regression verdict isn't in the files, so it is taken from the commit that added each one |
-| Product, compare, roadmap | `src/lib/data/*.ts`, transcribed from `docs/COMPARISON.md` and `docs/ROADMAP.md` (2026-10-27) | Every feature is *done* (merged, with its proof), *building* (a step in progress) or *planned* (with its milestone); the comparison keeps its evidence notes, and says where it follows D-057 over older cells |
+| Product, compare, roadmap | `src/lib/data/*.ts`, transcribed from `docs/COMPARISON.md` and `docs/ROADMAP.md` (2026-10-27; statuses moved the same day for the merge of 3.6, 3.7, R.1 to R.3 and scheduled publishing, and milestones S and V added from D-062) | Every feature is *done* (merged, with its proof), *building* (a step in progress) or *planned* (with its milestone); the comparison keeps its evidence notes, and says where it follows D-057 over older cells |
 
 ### Look
 
@@ -95,7 +95,7 @@ cards; the four newest posts; where to follow along; the footer. Its content kee
 |---|---|---|
 | Logo marquee of customers | Text wordmarks of the projects in the stack | W3: no customer logos |
 | Testimonial and review cards | The question in `docs/WHY.md`; sentences copied from build-log posts, each linked to its post | W3, W9 |
-| Three plans, a billing switch, "Save 20%" | Done, under way and planned, from `src/lib/data/roadmap.ts`; the switch shows the milestone now or next; a line says there are no prices | There is nothing to buy and no hosted version |
+| Three plans, a billing switch, "Save 20%" | Done, under way and later (each line with its own status, since a later milestone can be under way), from `src/lib/data/roadmap.ts`; the switch shows the milestone now or next; a line says there are no prices | There is nothing to buy and no hosted version |
 | Follower counts | Each place's address | W3 |
 | Photographs and clouds | HTML illustrations of the Studio and the site; step-number covers for posts; clouds drawn with gradients | Not ours to copy |
 

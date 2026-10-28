@@ -29,6 +29,10 @@ The worker has its own database pool (`COLOPHON_WORKER_DB_CONNECTIONS`, 4 by def
 | `408`, `425`, `429`, `500`, `502`, `503`, `504`, a timeout, no connection | Retried with full-jitter doubling backoff from 1 s, capped at 60 s, respecting a bounded `Retry-After`. At most five attempts within an hour. |
 | Anything else, redirects included, or an address that isn't public | Failed for good; the release says *Needs attention*. |
 
+## Scheduled publishes <Status done="D-060" />
+
+A second loop beside the deliveries runs scheduled publishes as they fall due, every `COLOPHON_WORKER_POLL_MS`, on the worker's own pool, so a slow destination never holds a schedule back. It runs each one as the person who scheduled it, and the release it makes is announced through the outbox like any other ([Scheduled publishing](/concepts/scheduled-publishing/)).
+
 ## One announcement in flight per destination
 
 A destination has at most one job running under a live lease, and an attempt's deadline (`COLOPHON_WORKER_ATTEMPT_MS`, 10 s by default) is shorter than the lease, which the server checks at startup. The simulator found why this matters: without it, one worker could still be sending release N while another sent N+1, and a slow network could deliver N after N+1. With it, nothing one holder sent can still be on its way when the next starts.
@@ -53,7 +57,6 @@ A worker killed after sending but before recording can't know whether the send l
 - Signed announcements: an HMAC header comes with destination secrets. <Status planned="not scheduled" />
 - Waking workers with database notifications instead of polling is an open decision (O-010).
 - The per-destination and per-project concurrency limits in module 05; supersession keeps at most one announcement per destination worth sending meanwhile.
-- On the `e/schedules` branch, a second loop beside the deliveries runs scheduled publishes as they fall due, on the worker's own pool ([Scheduled publishing](/concepts/scheduled-publishing/)). <Status building="e/schedules" />
 
 ## Design
 

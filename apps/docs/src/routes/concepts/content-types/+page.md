@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-A **content type** says what an entry of a collection holds: its fields, their kinds and their limits. Every save is checked against it on the server, whatever sent it, and a content type can only change in ways that keep every stored entry valid. Versioned definitions with six field types are done (step 1.5). Step 3.6, on the branch `p3/3.6-modelling` and not merged, adds a seventh type for **URL names** (slugs), checks a change against the content actually stored instead of refusing every narrowing, and gives the Studio a builder. References, components, lists and the rest of milestone M are planned.
+A **content type** says what an entry of a collection holds: its fields, their kinds and their limits. Every save is checked against it on the server, whatever sent it, and a content type can only change in ways that keep every stored entry valid. Versioned definitions with six field types came first (step 1.5). Step 3.6 added a seventh type for **URL names** (slugs), checks a change against the content actually stored instead of refusing every narrowing, and gave the Studio a builder. References, components, lists and the rest of milestone M are planned.
 
 ## A definition <Status done="1.5" />
 
@@ -16,7 +16,7 @@ A definition has a name, a title field and 1 to 100 fields. Each field has an id
 | `boolean` | none | `true` or `false` |
 | `enum` | `values` (1 to 100) | one of the values |
 | `datetime` | none | `YYYY-MM-DDTHH:MM:SSZ` |
-| `slug` <Status building="3.6" /> | `source` | a URL name: see below |
+| `slug` <Status done="3.6" /> | `source` | a URL name: see below |
 
 An empty value is left out, not written as an empty string, so "empty" has one spelling. Definitions and content are written canonically, as `JSON.stringify` would, and each version's SHA-256 identifies it. Every environment starts with `articles`: a required single-line `title` of up to 200 characters and a required rich-text `body`.
 
@@ -36,9 +36,9 @@ An empty value is left out, not written as an empty string, so "empty" has one s
 
 A collection's own name in URLs (`posts`) is 1 to 63 lowercase letters, digits and hyphens. Four names are reserved because Studio pages sit beside collections: `members`, `settings`, `changesets` and `releases` (`reserved_slug`).
 
-## URL names <Status building="3.6" />
+## URL names <Status done="3.6" />
 
-A `slug` field holds the part of a web address that names an entry, such as `my-first-post` (decision D-054). On the step 3.6 branch:
+A `slug` field holds the part of a web address that names an entry, such as `my-first-post` (decision D-054):
 
 - A content type has at most one (`duplicate_slug` for a second). Its optional `source` names a single-line text field the Studio suggests the URL name from (`invalid_source` otherwise); it is only a hint, and the server never derives a URL name.
 - A URL name is 1 to 120 lowercase ASCII letters and digits, in groups joined by single hyphens. Anything else is refused with `invalid_slug` and the field's pointer, never normalised by the server: the Studio normalises as you type, so what is stored is what was sent, like every other text rule.
@@ -62,11 +62,11 @@ Definitions are versioned and insert-only: each new version names the one before
 
 Updating a definition takes `If-Match` with its `ETag` (`"v3"`, for example) and an `Idempotency-Key`, so two people changing it at once can't overwrite each other (`409 stale_version`). Creating or changing a content type needs `schema.change` for that collection: owners and developers have it by default.
 
-On `main`, anything else (removing a field, making one required, narrowing a limit, removing a value, changing a type) is refused with `needs_migration`, whatever is stored.
+Until step 3.6, anything else (removing a field, making one required, narrowing a limit, removing a value, changing a type) was refused with `needs_migration`, whatever was stored.
 
-## Changes checked against stored content <Status building="3.6" />
+## Changes checked against stored content <Status done="3.6" />
 
-Decision D-055 amends that rule on the step 3.6 branch: a narrowing change is **allowed when nothing stored is in the way**. `colophon_domain::schema::ContentType::successor` sorts a change into one of three answers:
+Decision D-055 amends that rule: a narrowing change is **allowed when nothing stored is in the way**. `colophon_domain::schema::ContentType::successor` sorts a change into one of three answers:
 
 | Answer | Changes | What happens |
 |---|---|---|
@@ -86,7 +86,7 @@ Every entry write and every publish takes a shared, transaction-scoped advisory 
 
 The check validates documents in pages of 200 on the blocking thread pool, off the request workers. A collection with more than 10,000 drafts and publications to check is refused with `too_many_to_check` (`422`) without looking: that change needs a migration, which doesn't exist yet.
 
-## The builder in the Studio <Status building="3.6" />
+## The builder in the Studio <Status done="3.6" />
 
 Settings, then Content types, opens a builder (`TypeBuilder.svelte`): rename the type and its fields, add fields of every type, change limits and whether a field is required, and remove fields. The server decides what is safe; a refusal lists the entries in the way with links to them. In the builder, field ids, field types and the title field are fixed once saved. Slug fields get a *From title* suggestion in the editor that follows the server's rule.
 
@@ -101,9 +101,9 @@ Settings, then Content types, opens a builder (`TypeBuilder.svelte`): rename the
 
 - The domain's unit tests cover every type's limits, the canonical form, URL names and the three kinds of change.
 - `crates/colophon-server/tests/content_types.rs` runs definitions and entries end to end against the real server: a change refused with the entries in its way and accepted once they are fixed, a narrowing change accepted when nothing stored is in the way, a URL name that belongs to one entry and reaches the public API, and only owners and developers changing types.
-- `crates/colophon-db/tests/slugs.rs` runs against PostgreSQL: two drafts never share a URL name, a release never publishes one another entry still publishes, a change waits for the writes under way, and the check sees every draft and publication. <Status building="3.6" />
+- `crates/colophon-db/tests/slugs.rs` runs against PostgreSQL: two drafts never share a URL name, a release never publishes one another entry still publishes, a change waits for the writes under way, and the check sees every draft and publication. <Status done="3.6" />
 - `apps/studio/tests/server/types.spec.ts` drives the builder in a real browser; `apps/testbed/tests/content-types.spec.ts` covers the API; `perf/k6/content-types.js` is the load scenario.
 
 ## Design
 
-[Module 01, domain](/design/modules/01-domain/) and decision D-040 in the [decisions](/design/decisions/) describe what is on `main`. Step 3.6's design is on its branch: D-054 and D-055 in [DECISIONS.md](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.2-custom-roles/docs/DECISIONS.md), [module 01](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.2-custom-roles/docs/modules/01-domain.md), [module 02](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.2-custom-roles/docs/modules/02-db.md) and [COMPARISON.md](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.2-custom-roles/docs/COMPARISON.md), which compares content modelling with Strapi's and Sanity's. The API's side is in [Content types](/reference/api/content-types/).
+[Module 01, domain](/design/modules/01-domain/) and [module 02, db](/design/modules/02-db/); decisions D-040, D-054 and D-055 in the [decisions](/design/decisions/). [COMPARISON.md](https://github.com/akira-shirase-oss/colophon-cms/blob/main/docs/COMPARISON.md) compares content modelling with Strapi's and Sanity's. The API's side is in [Content types](/reference/api/content-types/).

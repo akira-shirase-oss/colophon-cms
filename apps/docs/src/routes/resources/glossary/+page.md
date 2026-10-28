@@ -17,12 +17,12 @@ The Studio itself is being changed to the plain words in step 3.7, which adds on
 | draft | draft | An entry's newest version, the one being edited. Readers never see drafts. | [Drafts and versions](/concepts/drafts-and-versions/) |
 | editor | `editor` | Built-in role: writes and edits content. | [Roles and permissions](/concepts/roles-and-permissions/) |
 | environment | environment (`production`) | One copy of a project's content and releases. Every project has one today, `production`. | [Releases and generations](/concepts/releases-and-generations/) |
-| field | field | One named value in a content type: text, rich text, number, yes/no, choice or date-time, with its limits. URL name fields are being built (3.6). | [Content types](/concepts/content-types/) |
+| field | field | One named value in a content type: text, rich text, number, yes/no, choice, date-time or URL name, with its limits. | [Content types](/concepts/content-types/) |
 | invitation | invitation | A link that grants one role in one project, works once, expires after 72 hours and can be revoked. | [Roles and permissions](/concepts/roles-and-permissions/) |
 | label | `label`: `published`, `pending`, `verified`, `needs_attention` | A release's one word on how far the evidence goes: *Published in CMS*, *Website update pending*, *Verified at N locations* or *Needs attention*. | [Receipts and probes](/concepts/receipts-and-probes/) |
 | observation | observation | One look a probe took: when, from which location, which release the answer named, and its HTTP status. | [Receipts and probes](/concepts/receipts-and-probes/) |
 | owner | `owner` | Built-in role with every permission, including members. A project always keeps at least one. | [Roles and permissions](/concepts/roles-and-permissions/) |
-| permission | permission (action and subject) | Something a role allows, such as publishing. Today one fixed table; as data per collection on the R.2 branch; per field later (R.3). | [Roles and permissions](/concepts/roles-and-permissions/) |
+| permission | permission (action and subject) | Something a role allows, such as publishing, for every collection or one, and optionally only some fields or only the member's own entries. | [Roles and permissions](/concepts/roles-and-permissions/) |
 | project | project | One website's content, people and settings, isolated from every other project by the database. | [Roles and permissions](/concepts/roles-and-permissions/) |
 | publish request | changeset | The exact versions to publish or take down, reviewed and published together. An approval counts only for those versions. | [Publish requests](/concepts/publish-requests/) |
 | publisher | `publisher` | Built-in role: writes, reviews and publishes. | [Roles and permissions](/concepts/roles-and-permissions/) |
@@ -31,9 +31,11 @@ The Studio itself is being changed to the plain words in step 3.7, which adds on
 | release, and the time it went live | release | One publish: a numbered, permanent step in the website's history. Everything in it went live together. | [Releases and generations](/concepts/releases-and-generations/) |
 | release number | generation (`Colophon-Generation`) | A release's number in its environment. It only moves forward, and every public answer names the one it was read at. | [Releases and generations](/concepts/releases-and-generations/) |
 | rich text | `colophon/rich-text` v1 | Formatted text, stored as JSON the server checks on every save, never as HTML. | [Rich-text format](/reference/rich-text/) |
-| role | role | What a member may do in a project. Four are built in; roles owners define are being built (R.2). | [Roles and permissions](/concepts/roles-and-permissions/) |
+| role | role | What a member may do in a project. Four are built in, and owners can define more. | [Roles and permissions](/concepts/roles-and-permissions/) |
+| schedule | schedule (`POST {P}/changesets/{changeset}/schedule`) | A time, in a time zone, when an approved publish request publishes itself, as the person who set it. | [Scheduled publishing](/concepts/scheduled-publishing/) |
+| setup code | setup code (`POST /api/v1/setup`) | A one-time code a new installation's server prints to its terminal; whoever enters it, signed in, becomes the first administrator. | [Onboarding and plain words](/concepts/onboarding/) |
 | take down | unpublish | Removing an entry from the website, through a reviewed release. | [Unpublish and revocation](/concepts/unpublish-and-revocation/) |
-| URL name | slug | The part of a web address that names one entry, unique in its collection. Being built (3.6). | [Content types and URL names](/concepts/content-types/) |
+| URL name | slug | The part of a web address that names one entry, unique in its collection. | [Content types and URL names](/concepts/content-types/) |
 | version | revision | One save of an entry. Never changed or deleted afterwards. | [Drafts and versions](/concepts/drafts-and-versions/) |
 | website connection | destination | Somewhere each release is announced: rebuild the site, clear the CDN, or check the site. | [Outbox and worker](/concepts/outbox-and-worker/) |
 

@@ -2,17 +2,17 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-Colophon is built in eleven milestones, each named after what it proves. A milestone is done when its **proof gate** passes with stored evidence (a commit, a command and its raw output), not when its screens exist. Since D-057 the goal is every feature Strapi and Sanity offer, built to the same bar, so four lettered milestones (R, M, E and D) sit between the numbered ones. The estimates are guesses at about 45 hours a week (D-010), not measurements: about **9 to 12 months** to v0.1 in all, with the first public demo at the end of P3. This page follows the [full roadmap](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.2-custom-roles/docs/ROADMAP.md) on the `r/r.2-custom-roles` branch, the newest; the website shows the same plan on its [roadmap page](site:/roadmap/).
+Colophon is built in thirteen milestones, each named after what it proves. A milestone is done when its **proof gate** passes with stored evidence (a commit, a command and its raw output), not when its screens exist. Since D-057 the goal is every feature Strapi and Sanity offer, built to the same bar, so four lettered milestones (R, M, E and D) sit between the numbered ones; since D-062 two more, S (scale and performance) and V (versions and distribution), come before P5. The estimates are guesses at about 45 hours a week (D-010), not measurements: about **10 to 13 months** to v0.1 in all, with the first public demo at the end of P3. This page follows the [full roadmap](/design/roadmap/); the website shows the same plan on its [roadmap page](site:/roadmap/).
 
 ## How to read the labels
 
 The labels mean what they mean on the website:
 
 - **Done**: merged into `main`, with its tests, its testbed page and its load scenario. Each done step links to its entry in the [changelog](/changelog/).
-- **Building**: a step in progress on its own branch, not merged. Nothing on a branch is available from `main`.
+- **Building**: a step in progress on its own branch, not merged; for a milestone, one that has started and whose proof gate isn't met yet.
 - **Planned**: in the roadmap, nothing built.
 
-The roadmap on the `r/r.2-custom-roles` branch marks R.1 and R.2 as done there; until they merge into `main`, they are Building here.
+Steps 3.6 and 3.7, R.1 to R.3 and scheduled publishing were merged on 27 October 2026. Next are R.4 (API tokens and the audit log) and 3.8 (the site goes live, and the first public demo).
 
 ## Milestones at a glance
 
@@ -25,8 +25,10 @@ The roadmap on the `r/r.2-custom-roles` branch marks R.1 and R.2 as done there; 
 | R | Roles and permissions | Every action, role, field and condition decided by one evaluator, with no bypass | 2–3 weeks | Building |
 | M | Content modelling parity | Relations, components, lists, blocks and single types round-trip and stay valid | 4–6 weeks | Planned |
 | P4 | Time travel and media | Rollback, pinned reads, revocation, upload fault tests, the media library | 3–4 weeks | Planned |
-| E | Editorial parity | Localization, scheduling, review stages, comments, tasks and live collaboration without a lost edit | 5–7 weeks | Planned |
+| E | Editorial parity | Localization, scheduling, review stages, comments, tasks and live collaboration without a lost edit | 5–7 weeks | Building |
 | D | Developer parity | Query API, GraphQL, SDK, API tokens, import from Strapi and Sanity, extension points | 4–5 weeks | Planned |
+| S | Scale and performance | Several servers and workers behind a load balancer survive kills and drains; every scenario has a stored stress result; Rust benchmarks gate CI | 2–3 weeks | Planned |
+| V | Versions and distribution | One version across server, CLI, SDK and MCP; the CLI installs from npm, Cargo, Homebrew and a script on a clean machine | 1–2 weeks | Planned |
 | P5 | Safe automation | Zero unauthorized actions in the evaluation set; an interrupted bulk job resumes | 3–4 weeks | Planned |
 | P6 | Operate it | F09–F14, L05–L13, a 24-hour soak, a restore drill; **v0.1** | 3–4 weeks | Planned |
 
@@ -79,11 +81,11 @@ Release notes: [P2](/releases/p2/).
 - **3.3** A receipt for every publish. [Changelog](/changelog/#step-3-3) <Status done="3.3" />
 - **3.4** My own site, running on Colophon, locally. [Changelog](/changelog/#step-3-4) <Status done="3.4" />
 - **3.5** The Studio, designed. [Changelog](/changelog/#step-3-5) <Status done="3.5" />
-- **3.6** Content types and URL names: the content-type builder, URL names unique among drafts and among what is published, and changes checked against stored content (D-054, D-055). Branch `p3/3.6-modelling`. [Changelog](/changelog/#step-3-6) <Status building="3.6" />
-- **3.7** The non-technical path (D-059). Branch `p3/3.7-onboarding`, not pushed: so far, setting up a fresh installation from a browser with a one-time code. Plain words from one glossary, one-click publishing, a first-run checklist and phone-friendly review are still to come. [Changelog](/changelog/#step-3-7) <Status building="3.7" />
-- **3.8** My site goes live, and the first public demo: the docs skeleton, the simulator's cache and delivery faults, the mixed-release checker, a recorded crash loop. <Status planned="P3" />
+- **3.6** Content types and URL names: the content-type builder, URL names unique among drafts and among what is published, and changes checked against stored content (D-054, D-055). [Changelog](/changelog/#step-3-6) <Status done="3.6" />
+- **3.7** The non-technical path (D-059, D-061): plain words from one glossary, one-click publishing, a first-run checklist, teaching empty states, and sign-up with a setup code for a fresh installation's first administrator. Every screen working on a phone is checked on two screens so far, not yet on the rest. [Changelog](/changelog/#step-3-7) <Status done="3.7" />
+- **3.8** My site goes live, and the first public demo: the docs skeleton, the simulator's cache and delivery faults, the mixed-release checker, a recorded crash loop. Next. <Status planned="P3" />
 
-Two fixes are merged into `main` between steps: the Studio reads your role from the project, not from your list of projects ([changelog](/changelog/#step-fix)), and title search no longer walks the whole collection ([changelog](/changelog/#step-fix-3-5)).
+Two fixes were merged between steps: the Studio reads your role from the project, not from your list of projects ([changelog](/changelog/#step-fix)), and title search no longer walks the whole collection ([changelog](/changelog/#step-fix-3-5)).
 
 Release notes so far: [P3](/releases/p3/).
 
@@ -91,10 +93,10 @@ Release notes so far: [P3](/releases/p3/).
 
 **Proof gate:** one evaluator decides every action for every role, field and condition, exhaustively for the built-in roles and property-tested for random ones; every route has a denial test; a token can do exactly what its permissions allow; a load scenario with custom roles shows no regression (D-058). <Status building="R" />
 
-- **R.1** Roles and permissions as data, behaviour unchanged. Branch `r/r.1-roles-as-data`. [Changelog](/changelog/#step-r-1) <Status building="R.1" />
-- **R.2** Roles you define, and the Studio's role editor; nobody hands out more than they hold. Branch `r/r.2-custom-roles`. [Changelog](/changelog/#step-r-2) <Status building="R.2" />
-- **R.3** Field-level permissions and "only their own" conditions. <Status planned="R" />
-- **R.4** API tokens and the audit log. <Status planned="R" />
+- **R.1** Roles and permissions as data, behaviour unchanged. [Changelog](/changelog/#step-r-1) <Status done="R.1" />
+- **R.2** Roles you define, and the Studio's role editor; nobody hands out more than they hold. [Changelog](/changelog/#step-r-2) <Status done="R.2" />
+- **R.3** Permissions narrowed to some fields and to a member's own entries. [Changelog](/changelog/#step-r-3) <Status done="R.3" />
+- **R.4** API tokens and the audit log. Next. <Status planned="R" />
 
 ## M · Content modelling parity
 
@@ -110,9 +112,9 @@ What it plans: rollback as a new release, release history and comparison in the 
 
 ## E · Editorial parity
 
-**Proof gate:** two editors editing at once never lose an acknowledged edit; a schedule missed during downtime is reported as delayed, never on time; locale variants publish independently; comments and tasks follow permissions. <Status planned="E" />
+**Proof gate:** two editors editing at once never lose an acknowledged edit; a schedule missed during downtime is reported as delayed, never on time; locale variants publish independently; comments and tasks follow permissions. <Status building="E" />
 
-- Scheduled publishing, built ahead of the rest of E: schedule an approved publish request for a local time in a time zone, with daylight-saving edges never guessed. Branch `e/schedules`, not merged. [Changelog](/changelog/#step-schedules) <Status building="e/schedules" />
+- Scheduled publishing, built ahead of the rest of E: schedule an approved publish request for a local time in a time zone, with daylight-saving edges never guessed, run as its author with every publish check, published once or blocked with the reason, delayed when late (D-060). [Changelog](/changelog/#step-schedules) <Status done="D-060" />
 - Localization, review stages, comments, tasks, live presence and collaboration (O-017), live queries, and visual preview. <Status planned="E" />
 
 ## D · Developer parity
@@ -120,6 +122,18 @@ What it plans: rollback as a new release, release history and comparison in the 
 **Proof gate:** every query is permission-filtered; GraphQL and REST answer the same; imports of the Strapi and Sanity reference datasets round-trip; load scenarios for queries and GraphQL. <Status planned="D" />
 
 What it plans: a query API with filters, sorting and field selection, GraphQL, the OpenAPI document and the TypeScript SDK, webhooks by event, import and export, and extension points instead of plugins (custom field types as data, Studio panels in sandboxed frames). Its steps aren't numbered yet.
+
+## S · Scale and performance
+
+**Proof gate:** a server killed under load behind the balancer fails only its in-flight requests, and idempotent retries succeed on another; a draining server finishes what it accepted; rate limits hold across instances and when Valkey is down; every scenario has a stored stress result with its breaking point and how it fails; throughput on three servers is measured against one, with the bottleneck named (D-062). <Status planned="S" />
+
+What it plans: a local multi-instance stack (HAProxy in front of three servers and two workers), rate limits per person and per address shared across instances, readiness that drains before shutdown, a database connection budget summed across instances, a stress run for every load scenario on one, two and three servers, and Criterion benchmarks for the hot paths with a regression check in CI. Laptop numbers stay laptop numbers. Its steps aren't numbered yet.
+
+## V · Versions and distribution
+
+**Proof gate:** a release dry run builds every artifact; `npx @colophon-cms/cli --version`, `cargo install`, the Homebrew formula and the install script each install the same version on a clean machine in CI; an old command line against a new server, and the reverse, gets a plain-words answer (D-062). <Status planned="V" />
+
+What it plans: one version for the server, the worker, the command line, the SDK and the MCP server, with `/api/v1` as the contract; the server reporting its version and the API versions it serves; binaries for macOS, Linux and Windows with checksums and signed provenance; the command line on npm as `@colophon-cms/cli` (the `@colophon` scope belongs to someone else), through `cargo install`, a Homebrew tap and an install script; container images for the server and worker. Its steps aren't numbered yet.
 
 ## P5 · Safe automation
 
@@ -135,8 +149,8 @@ What it plans: encrypted backups and restore (see [backups](/operations/backups/
 
 ## Alongside the milestones
 
-- **The website**, with the product, the comparison, the roadmap, the changelog and the build log. Branch `site/new-look`. [Changelog](/changelog/#step-site) <Status building="site/new-look" />
-- **These docs**, with the changelog, release notes and upgrade guides. Branch `site/docs`. [Changelog](/changelog/#step-docs) <Status building="site/docs" />
+- **The website**, with the product, the comparison, the roadmap, the changelog and the build log. Branch `site/new-look`, not merged. [Changelog](/changelog/#step-site) <Status building="site/new-look" />
+- **These docs**, with the changelog, release notes and upgrade guides. Branch `site/docs`, not merged. [Changelog](/changelog/#step-docs) <Status building="site/docs" />
 
 ## What v0.1 means
 
@@ -154,4 +168,4 @@ Version 0.1 is done when every one of these has stored evidence ([end goal](/des
 
 ## Following along
 
-Each step is written up, mistakes included, in the build log at [404human.dev/colophon](https://404human.dev/colophon/). The [decisions](/design/decisions/) record every place Colophon deliberately departs from its original specification, and why; D-054 and the decisions after it are on branches until those merge.
+Each step is written up, mistakes included, in the build log at [404human.dev/colophon](https://404human.dev/colophon/). The [decisions](/design/decisions/) record every place Colophon deliberately departs from its original specification, and why.

@@ -22,7 +22,7 @@ Since 2026-10-27, Colophon's goal is every feature Strapi and Sanity offer (deci
 - each release ends with a receipt that says where it was actually seen, and never claims more;
 - a feature counts as done only with its failure tests, a testbed page and a load scenario.
 
-Today Colophon has far fewer features than either. The [comparison on the website](site:/compare/) is the short version; the full one, with the parity backlog, is [COMPARISON.md](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.2-custom-roles/docs/COMPARISON.md) on the R.2 branch.
+Today Colophon has far fewer features than either. The [comparison on the website](site:/compare/) is the short version; the full one, with the parity backlog, is [COMPARISON.md](/design/comparison/).
 
 ## Does it have GraphQL?
 
@@ -36,7 +36,7 @@ Not yet. Uploads, the media library and images in rich text come with milestone 
 
 Localization isn't built. Each locale will be a variant of one entry with its own URL name, drafts and publication history, and fallbacks between languages will be an explicit project setting, off by default. <Status planned="E" />
 
-Scheduled publishing is being built on its own branch. <Status building="e/schedules" /> As specified, a schedule stores the local time you chose, its IANA time zone, the exact moment that resolves to, and the approval it relies on; a time that daylight saving makes ambiguous or skips must be chosen explicitly. When it is due, the permissions, the approval and the exact versions are checked again, so content edited since approval blocks the schedule instead of quietly changing what goes out. A schedule that runs late is labelled *delayed*, and cancelling one stops it from starting but doesn't undo a release already made. [Scheduled publishing](/concepts/scheduled-publishing/) has the design.
+Yes: an approved publish request can be scheduled for a date and time in a time zone you pick. <Status done="D-060" /> A schedule stores the local time you chose, its IANA time zone, the exact moment that resolves to, and the approval it relies on; a time that daylight saving makes ambiguous or skips must be chosen explicitly. When it is due, the permissions, the approval and the exact versions are checked again, so content edited since approval blocks the schedule instead of quietly changing what goes out. It runs as the person who scheduled it, with their role as it is then. A schedule that runs late is labelled *delayed*, and cancelling one stops it from starting but doesn't undo a release already made. [Scheduled publishing](/concepts/scheduled-publishing/) has the details.
 
 ## Can I host it myself?
 
@@ -60,7 +60,7 @@ There is no `SECURITY.md` and no private reporting channel described in the repo
 
 ## Where's the changelog?
 
-The [changelog](/changelog/) lists every step merged into `main`, newest first, and what is being built on branches; it is rendered from `CHANGELOG.md` in the repository. [Release notes](/releases/) summarise each milestone, and [upgrade guides](/upgrading/) cover each range of database migrations. There are no version numbers yet: they start at v0.1.
+The [changelog](/changelog/) lists every step merged into `main`, by milestone, and what is being built on branches; it is rendered from `CHANGELOG.md` in the repository. [Release notes](/releases/) summarise milestones P0 to P3, and [upgrade guides](/upgrading/) cover each range of database migrations. There are no version numbers yet: they start at v0.1.
 
 ## How is it built?
 

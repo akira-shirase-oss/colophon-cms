@@ -24,7 +24,7 @@ Content-Type: application/json
 | No `If-Match` | `428 Precondition Required` |
 | A malformed `If-Match`, or `If-Match: *` | `400` |
 | Content its content type refuses | `422` with the refusal's code and JSON Pointer in `details` |
-| A URL name another entry of the collection has, as a draft or published | `409`, `details.reason` `slug_taken`, naming that entry <Status building="3.6" /> |
+| A URL name another entry of the collection has, as a draft or published | `409`, `details.reason` `slug_taken`, naming that entry <Status done="3.6" /> |
 
 The `ETag` names the revision, not a hash of its content, because the rule compares revisions: two revisions can hold identical content, and a save built on the older one is still stale.
 

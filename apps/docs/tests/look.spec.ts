@@ -54,8 +54,11 @@ for (const [scheme, background, foreground] of [
 }
 
 test('a page says where it stands in the website’s words', async ({ page }) => {
+	await page.goto(docs('/changelog/'), { waitUntil: 'networkidle' });
+	// Work on a branch: the changelog's Unreleased entry for these docs.
+	await expect(page.locator('#step-docs ~ .meta [data-capability]')).toHaveText(/Building\s*·\s*site\/docs/);
 	await page.goto(docs('/concepts/scheduled-publishing/'), { waitUntil: 'networkidle' });
-	await expect(page.locator('article header [data-capability]')).toHaveText(/Building\s*·\s*e\/schedules/);
+	await expect(page.locator('article header [data-capability]')).toHaveText(/Done\s*·\s*D-060/);
 	await page.goto(docs('/operations/backups/'), { waitUntil: 'networkidle' });
 	await expect(page.locator('article header [data-capability]')).toHaveText(/Planned\s*·\s*P6/);
 	await page.goto(docs('/concepts/publish-requests/'), { waitUntil: 'networkidle' });

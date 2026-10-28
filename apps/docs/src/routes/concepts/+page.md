@@ -10,15 +10,15 @@ The editor guide uses plain words for the same things: a changeset is a *publish
 
 - [Drafts and versions](/concepts/drafts-and-versions/): every save is a new version that is never changed; the draft points at the latest. <Status done="1.2" />
 - [Saves and conflicts](/concepts/saves-and-conflicts/): why a stale save is refused, and why a retried one is never stored twice. <Status done="1.3" />
-- [Content types and URL names](/concepts/content-types/): definitions whose changes are checked against stored content, and URL names no two entries share. <Status building="3.6" />
-- [Roles and permissions](/concepts/roles-and-permissions/): one deny-by-default evaluator, roles as data, roles owners define, and nobody handing out more than they hold. <Status building="R.2" />
+- [Content types and URL names](/concepts/content-types/): definitions whose changes are checked against stored content, and URL names no two entries share. <Status done="3.6" />
+- [Roles and permissions](/concepts/roles-and-permissions/): one deny-by-default evaluator, roles as data, roles owners define down to fields and their own entries, and nobody handing out more than they hold. <Status done="R.3" />
 
 ## Publishing
 
 - [Publish requests](/concepts/publish-requests/): a request pins exact versions, and an approval counts only for those bytes. <Status done="2.1" />
 - [Releases and generations](/concepts/releases-and-generations/): one transaction per publish, on the release the publisher saw; numbers that only go up. <Status done="2.2" />
 - [The outbox and the worker](/concepts/outbox-and-worker/): telling other systems, without ever holding a transaction open across the network. <Status done="2.3" />
-- [Scheduled publishing](/concepts/scheduled-publishing/): publishing at a chosen local time, checked again when it falls due, and labelled delayed when it runs late. <Status building="e/schedules" />
+- [Scheduled publishing](/concepts/scheduled-publishing/): publishing at a chosen local time, checked again when it falls due, and labelled delayed when it runs late. <Status done="D-060" />
 
 ## Delivery and proof
 
@@ -28,7 +28,7 @@ The editor guide uses plain words for the same things: a changeset is a *publish
 
 ## People who aren't developers
 
-- [Onboarding and plain words](/concepts/onboarding/): one glossary for every Studio screen, one-click publishing and a first-run checklist. <Status building="3.7" />
+- [Onboarding and plain words](/concepts/onboarding/): one glossary for every Studio screen, a setup code for a fresh installation, one-click publishing and a first-run checklist. <Status done="3.7" />
 
 ## Testing it
 

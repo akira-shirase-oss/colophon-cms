@@ -1,8 +1,9 @@
 # Roadmap
 
-Eleven milestones, each named after what it proves. Since D-057 the product goal is every feature Strapi and Sanity
-offer ([COMPARISON.md](COMPARISON.md)), built at Colophon's bar: the four lettered milestones carry that parity work and
-sit between the numbered ones in the order below. Estimates assume ~45 hours/week (D-010) and are guesses, not
+Thirteen milestones, each named after what it proves. Since D-057 the product goal is every feature Strapi and Sanity
+offer ([COMPARISON.md](COMPARISON.md)), built at Colophon's bar: the four lettered milestones R, M, E and D carry that
+parity work, and since D-062 S and V carry scale and distribution; they sit between the numbered ones in the order
+below. Estimates assume ~45 hours/week (D-010) and are guesses, not
 measurements. A milestone is done when its **proof gate** passes with stored evidence, not when its screens exist.
 
 | Order | Milestone | Proof gate | Estimate |
@@ -207,8 +208,8 @@ expired-approval scheduling).
 - Localization: locale variants with their own slugs, drafts and publication history (spec §06), the locale switcher,
   fallbacks as explicit policy.
 - Scheduled publishing and unpublishing, with time zones and missed schedules shown as delayed (spec §06, §14). Built
-  first, on the maintainer's request (D-060, branch `e/schedules`): publish requests scheduled in an IANA zone, DST
-  edges chosen explicitly, run as their author by the worker with every publish check, published once or blocked
+  first, on the maintainer's request, and done (D-060, migration 0019): publish requests scheduled in an IANA zone,
+  DST edges chosen explicitly, run as their author by the worker with every publish check, published once or blocked
   with the reason, delayed when late, cancellable.
 - Review stages (Strapi's review workflows) on top of changesets; assignees; comments on fields and entries; tasks.
 - Live presence and collaboration (O-017); duplicate, bulk actions, saved views, the history slider.

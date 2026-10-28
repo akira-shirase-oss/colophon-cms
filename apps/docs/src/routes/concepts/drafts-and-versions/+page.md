@@ -23,7 +23,7 @@ The entry's **draft** is a pointer to its newest revision, `entries.draft_revisi
 The two statements that move the pointer (creating an entry and saving one) also copy two things from the new draft onto the entry:
 
 - **its title**, `entries.draft_title` (migration 0015, from the title-search fix `065e614`). Step 3.5's title search found each entry's draft revision first and filtered after, so one search of a 512-entry collection made 512 lookups and took 157 ms in CI. Search now filters on the entry's own copy, served by a trigram index, before it looks anything up. `crates/colophon-db/tests/entries.rs` checks the copy against the draft and that search follows a renamed draft. <Status done="fix 065e614" />
-- **its URL name**, `entries.draft_slug` (migration 0016), when its content type has a slug field. A unique index on it is what stops two drafts of a collection sharing a URL name ([Content types and URL names](/concepts/content-types/)). <Status building="3.6" />
+- **its URL name**, `entries.draft_slug` (migration 0016), when its content type has a slug field. A unique index on it is what stops two drafts of a collection sharing a URL name ([Content types and URL names](/concepts/content-types/)). <Status done="3.6" />
 
 Neither copy is a foreign key, which would add a unique index on `revisions` that every save writes; tests hold each copy equal to the draft revision's value instead.
 
@@ -45,7 +45,7 @@ Reading needs `content.read` for the entry's collection; creating needs `content
 - **F01**: the real server is killed immediately before a save commits. No success was acknowledged and nothing was stored; a retry with the same key works.
 - **F02**: killed immediately after the commit, before the answer. The revision is stored, and the retry returns the same result instead of storing it again.
 - The [simulator](/concepts/simulator/) checks after every step of thousands of seeded runs that no acknowledged save is ever lost.
-- `crates/colophon-db/tests/slugs.rs` checks that the draft's URL name copy always matches the draft revision. <Status building="3.6" />
+- `crates/colophon-db/tests/slugs.rs` checks that the draft's URL name copy always matches the draft revision. <Status done="3.6" />
 
 ## Not built yet
 
@@ -55,4 +55,4 @@ Reading needs `content.read` for the entry's collection; creating needs `content
 
 ## Design
 
-[Module 01, domain](/design/modules/01-domain/) and [module 02, db](/design/modules/02-db/); decisions D-034, D-035 and D-040 in the [decisions](/design/decisions/). On GitHub: [docs/modules/01-domain.md](https://github.com/akira-shirase-oss/colophon-cms/blob/main/docs/modules/01-domain.md), [docs/modules/02-db.md](https://github.com/akira-shirase-oss/colophon-cms/blob/main/docs/modules/02-db.md); the step 3.6 additions in [module 02 on the R.2 branch](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.2-custom-roles/docs/modules/02-db.md).
+[Module 01, domain](/design/modules/01-domain/) and [module 02, db](/design/modules/02-db/); decisions D-034, D-035 and D-040 in the [decisions](/design/decisions/). On GitHub: [docs/modules/01-domain.md](https://github.com/akira-shirase-oss/colophon-cms/blob/main/docs/modules/01-domain.md), [docs/modules/02-db.md](https://github.com/akira-shirase-oss/colophon-cms/blob/main/docs/modules/02-db.md).

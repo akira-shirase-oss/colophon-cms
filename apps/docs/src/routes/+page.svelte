@@ -100,8 +100,8 @@
 		},
 		{
 			title: 'Roles you define, enforced everywhere',
-			body: 'Four default roles today. Roles owners define, checked by one deny-by-default evaluator, are being built; permissions down to a field are planned.',
-			capability: building('R.2'),
+			body: 'Four default roles, roles owners define, and permissions down to a field or to your own entries, all checked by one deny-by-default evaluator. API tokens and an audit log come next.',
+			capability: done('R.3'),
 			href: '/concepts/roles-and-permissions/'
 		},
 		{
@@ -218,7 +218,7 @@
 					<dd class="t-body text-[0.9375rem]">{STATUS_MEANING.done} The step that built it.</dd>
 				</div>
 				<div class="grid gap-2 p-5 sm:grid-cols-[10rem_minmax(0,1fr)]">
-					<dt><CapabilityLabel capability={building('3.6')} /></dt>
+					<dt><CapabilityLabel capability={building('site/docs')} /></dt>
 					<dd class="t-body text-[0.9375rem]">{STATUS_MEANING.building} The step, or the branch when there is no step yet.</dd>
 				</div>
 				<div class="grid gap-2 p-5 sm:grid-cols-[10rem_minmax(0,1fr)]">
