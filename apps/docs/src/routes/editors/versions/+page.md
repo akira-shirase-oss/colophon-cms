@@ -6,14 +6,16 @@ Every save makes a new **version** of the article. Versions are never edited or 
 
 ## Looking at the history
 
-Open an article and choose the **History** tab. It lists the versions, newest first (the newest 100; older ones are kept, but the Studio doesn't page back to them yet), each with its title, when it was saved and a short fingerprint of its content (the first characters of a SHA-256 hash, the same for two versions only when their content is identical). Two badges help you find your way:
+Open an article and choose the **History** tab. It lists the versions, newest first (the newest 100; older ones are kept, but the Studio doesn't page back to them yet), each with its title and when it was saved. Two badges help you find your way:
 
 - **Current draft** marks the newest version, the one you are editing.
-- **Live in No. N** marks the version readers see, and the release that published it.
+- **Live in Release N** marks the version readers see, and the release that published it.
+
+The current version's id and fingerprint (a SHA-256 hash of its content, the same for two versions only when their content is identical) are in the article's *Technical details*, for developers.
 
 ## Comparing a version with your draft
 
-Press **Compare with draft** on any older version. The Studio shows what changed between that version (it says *this revision*, the older word) and the current draft, word by word, field by field. Press **Hide** to fold it away.
+Press **Compare with draft** on any older version. The Studio shows what changed between *this version* and *the draft*, word by word, field by field. Press **Hide** to fold it away.
 
 The same comparison appears when you review a publish request: for every article in it, you see what changes for readers, from the version that is live now to the one being published. A new article shows as all new; one being taken down shows what goes.
 

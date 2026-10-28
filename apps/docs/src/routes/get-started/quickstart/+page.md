@@ -83,7 +83,7 @@ The script builds the command line, then runs two operator commands with the dat
 1. `colophon admin migrate` applies every pending database migration as the migrator role, the role that owns the tables. The server itself never uses that login: it signs in as `colophon_app`, which PostgreSQL's row-level security applies to.
 2. `colophon admin bootstrap --subject 00000000-0000-4000-8000-00000000c001` makes `dev-owner` this installation's **first administrator**, the only person who can create projects.
 
-Signing in by itself grants nothing, and no HTTP route can make an administrator. Bootstrap runs once per installation, bound to an identity provider's issuer and the person's subject (their fixed id at that provider), never to an email address:
+Signing in by itself grants nothing. Bootstrap runs once per installation, bound to an identity provider's issuer and the person's subject (their fixed id at that provider), never to an email address:
 
 | You run it | It says | Exit code |
 |---|---|---|
@@ -101,6 +101,8 @@ cargo run --release -p colophon-cli -- admin bootstrap --subject 00000000-0000-4
 
 On an installation of your own, the first administrator signs in once, runs `colophon login` and then `colophon whoami`, which prints their subject and issuer; the operator bootstraps that subject.
 
+There is a second way, from the browser (step 3.7, D-061). While nobody is an administrator, the server prints a one-time **setup code** to its terminal when it starts, valid for an hour; the first person to sign in to the Studio sees *Finish setting up Colophon*, enters the code, and becomes the administrator. Once anyone is an administrator, by either way, no code is issued and none works. The local stack never shows it, because `migrate.sh` has already bootstrapped `dev-owner`; `scripts/first-run.sh` starts a brand-new installation on port 58400, with a database of its own, to try it. [Onboarding and plain words](/concepts/onboarding/) has the details. <Status done="3.7" />
+
 ### Build the Studio and start the server
 
 ```sh runnable
@@ -115,7 +117,7 @@ The server serves the Studio at `/studio/` when `COLOPHON_STUDIO_DIR` names a bu
 
 ### If Keycloak predates step 1.8
 
-The development users have fixed ids since step 1.8. A Keycloak container started before that has random ones, and bootstrap then names nobody you can sign in as. Recreate it from the realm file; Keycloak keeps no data of its own:
+The development users have fixed ids since step 1.8. A Keycloak container started before that has random ones, and bootstrap then names nobody you can sign in as. One started before step 3.7 has no **Create an account** and doesn't accept the callback on port 58400. Recreate it from the realm file; Keycloak keeps no data of its own:
 
 ```sh runnable
 docker compose -f deploy/compose.yaml up -d --force-recreate keycloak
@@ -123,12 +125,12 @@ docker compose -f deploy/compose.yaml up -d --force-recreate keycloak
 
 ## 5. Sign in to the Studio
 
-Open `http://localhost:58000/studio/` and press **Sign in**. Keycloak's sign-in page opens, in Colophon's look; afterwards you are back in the Studio. The development realm has two people, both with the password `colophon-dev`:
+Open `http://localhost:58000/studio/` and press **Sign in**. Keycloak's sign-in page opens, in Colophon's look; afterwards you are back in the Studio. **Create an account** opens Keycloak's form for making one: the development realm lets anyone register, and a new account grants nothing until someone invites it. The development realm has two people already, both with the password `colophon-dev`:
 
 | User | Email | Subject | What they are for |
 |---|---|---|---|
 | `dev-owner` | `owner@example.test` | `00000000-0000-4000-8000-00000000c001` | The administrator, made by `migrate.sh`. Creates projects and is the owner of each one they create. |
-| `dev-editor` | `editor@example.test` | `00000000-0000-4000-8000-00000000c002` | Nobody special until invited. Signed in, they see *No projects yet* and *Ask a project owner for an invitation link.* The tests invite them into a project. |
+| `dev-editor` | `editor@example.test` | `00000000-0000-4000-8000-00000000c002` | Nobody special until invited. Signed in, they see *You're not in a project yet* and how to ask for an invitation. The tests invite them into a project. |
 
 To be two people at once, use a second browser or a private window for `dev-editor`. Sessions end 12 hours after signing in, or after 2 hours unused; the Studio has no sign-out button yet.
 

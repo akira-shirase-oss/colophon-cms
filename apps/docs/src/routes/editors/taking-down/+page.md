@@ -2,8 +2,8 @@ Taking something down removes an article from the website. It changes what reade
 
 ## Taking an article down
 
-1. Make a publish request (**Changesets**, then **New changeset**: the Studio's older word, until step 3.7) and tick **Unpublish** beside the article. That pins the version readers see now.
-2. Submit it for review. The reviewer sees exactly what goes away; the article is marked *unpublish*.
+1. Make a publish request (**Publish requests**, then **New publish request**) and tick **Unpublish** beside the article. That holds the version readers see now. Only articles that are live can be ticked.
+2. Press **Create publish request**, then **Ask for review**. The reviewer sees exactly what goes away; the article is marked *unpublish*.
 3. Once it is approved, publish it.
 
 The release says what it did: *1 unpublished* on **Releases**, *1 taken down* on its receipt. The article stays in the Studio with all its versions, and its state goes back to **Draft**: taking it down removes it from the website, not from your history. You can publish it again later; it reappears from that new release on.

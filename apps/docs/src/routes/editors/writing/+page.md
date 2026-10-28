@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-Open a collection from the sidebar (**Articles**, for example), then an article, or press **New entry**. A new article asks only for what it can't start without, usually its title, and starts as a draft: nothing is published until it has been reviewed and published. Each field has its own row; rich-text fields have a formatting toolbar for headings, lists, quotes, code, callouts and links. You don't save by hand: the Studio does it for you, and it tells you plainly where your words are.
+Open a collection from the sidebar (**Articles**, for example), then an article, or press **New entry** (in an empty collection, **Write the first article**). A new article asks only for what it can't start without, usually its title, and starts as a draft: *Readers see it only once it is published.* Each field has its own row; rich-text fields have a formatting toolbar for headings, lists, quotes, code, callouts and links. You don't save by hand: the Studio does it for you, and it tells you plainly where your words are.
 
 ## How saving works
 
@@ -39,13 +39,17 @@ Until you choose, your text stays on your device. Editing one article together, 
 
 ## Where the article stands
 
-The panel beside the fields shows the article's status, the release it is live in, its current version (the Studio still labels it *Revision*), and when it was saved and created. In a collection's list, every article has one of three states, each with a word as well as a colour:
+The panel beside the fields shows the article's **Status**, the release it is **Live in**, and when it was **Saved** and **Created**, with the **Publish** or **Ask for review** button ([Publishing](/editors/publishing/)). The current version's id and fingerprint are in *Technical details*, for developers. In a collection's list, every article has one of three states, each with a word as well as a colour:
 
 - **Draft**: never published, or taken down; readers can't see it.
 - **Live**: readers see this version.
 - **Changed**: it is live, and has been edited since; readers still see the older version until you publish again.
 
 The list has **All**, **Drafts**, **Changed** and **Live** filters, and **Search titles** finds articles by title, beyond the first page.
+
+## Fields your role doesn't show or can't change <Status done="R.3" />
+
+An owner can give your role access to only some fields of an article, or only to the articles you created. Then the editor leaves out the fields your role can't see, and says so above the fields: *Your role doesn’t show body; saving keeps it as it is.* Saving never erases a field you can't see. Fields you can see but not change are shown greyed out, with *Your role can read but not change …*. If your role may only see your own articles, the collection lists only those. [Roles and permissions](/concepts/roles-and-permissions/) explains how owners set this up.
 
 ## Not built yet
 

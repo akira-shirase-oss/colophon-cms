@@ -21,11 +21,11 @@ Press a label to open the release's **receipt**.
 
 ## Reading a receipt
 
-The receipt's title is the release and its name, *Release 3: Spring launch*, with who published it and when, and how many articles it changed or took down. Under the label, a line explains it: *Nothing checks the website yet. Add a probe in Settings to verify what readers see.* when no website connection worked on this release, *On its way: the label settles by itself.* while pending, and *A probe read this release (or a later one) on the live site.* once verified. While the label is pending, the page looks again every two seconds.
+The receipt's title is the release and its name, *Release 3: Spring launch*, with who published it and when, and how many articles it changed or took down. Beside the label, a line explains it: *Published in Colophon: your website can read it now. Nothing checks your website yet; add a site check in Settings → Website connections to confirm what readers see.* when no website connection worked on this release, *On its way: the label settles by itself.* while pending, and *A site check read this release (or a later one) on the live site.* once verified. While the label is pending, the page looks again every two seconds. A link at the top opens the publish request it came from.
 
-Below are two lists. Today's Studio uses the older words for both, *Destinations* and *What the probes saw*.
+Below are two lists, **Website connections** and **What the site checks saw**.
 
-**Each website connection's part** (*Destinations*): its name, its kind (*Webhook* rebuilds the site, *CDN* clears it, *Probe* checks it), and how its part went:
+**Each website connection's part**: its name, its kind (a *Site rebuild* tells the site to rebuild, a *CDN clear* clears the CDN, a *Site check* checks the site), and how its part went:
 
 | It says | Meaning |
 |---|---|
@@ -37,7 +37,7 @@ Below are two lists. Today's Studio uses the older words for both, *Destinations
 | covered by release N | A later release did the job, which covers this one too. |
 | failed, and the reason | It gave up. The reason is what the site or the CDN answered, or why nothing answered. |
 
-**Every look a check took** (*What the probes saw*), oldest first: when, from which place, which release it saw (or *no release named*), and the site's answer, such as *HTTP 200*.
+**Every look a check took** (*What the site checks saw*), oldest first: when, from which place, which release it saw (or *no release named*), and the site's answer, such as *HTTP 200*.
 
 A later release covers an earlier one: if release 8's rebuild finished, the site has release 7's changes too, so release 7's unfinished parts count as done.
 
@@ -63,7 +63,7 @@ If clearing the CDN fails for good, the copies it holds can be served until they
 
 ## Who sets this up
 
-Website connections live under **Settings**, where the Studio still calls them *Destinations*, and only owners and developers can see, add or switch them off: their addresses may carry secrets. Everyone else sees *Only owners and developers see destinations*. [Your first publish and receipt](/get-started/first-publish/) adds a check step by step.
+Website connections live under **Settings → Website connections**, and only people whose role manages them (owners and developers, by default) can see, add or switch them off: their addresses may carry secrets. Everyone else sees *Your role doesn't manage website connections, so they stay hidden: their addresses may carry secrets.* [Your first publish and receipt](/get-started/first-publish/) adds a check step by step.
 
 ## Technical details
 

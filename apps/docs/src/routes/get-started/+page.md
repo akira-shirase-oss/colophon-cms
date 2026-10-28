@@ -34,10 +34,11 @@ On your own machine, against the local stack:
 
 - **Write** drafts that save themselves, survive a closed tab or a dropped network, and never silently overwrite a colleague's save. <Status done="1.3" />
 - **Compare versions** of an entry word by word, and find entries by title. <Status done="3.5" />
-- **Define content types** through the API, with text, rich text, number, yes/no, choice and date-time fields, changed only in ways that keep stored entries valid. <Status done="1.5" /> A builder in the Studio, changes checked against stored content, and URL names are on a branch. <Status building="3.6" />
-- **Invite people** with single-use links, into one of four roles. <Status done="1.7" /> Roles that owners define are on a branch. <Status building="R.2" />
+- **Set it up from the browser**: create an account, enter the one-time code the server printed, and start a project as a small blog, a documentation site or blank, with a checklist for what to do first. <Status done="3.7" />
+- **Define content types** in the Studio's builder or through the API, with text, rich text, number, yes/no, choice, date-time and URL-name fields, changed only in ways that keep every stored entry valid. <Status done="3.6" />
+- **Invite people** with single-use links, into one of four built-in roles or roles owners define, down to some fields or a member's own entries. <Status done="R.3" />
 - **Review exact changes.** A publish request pins the versions in it, and an approval counts only for those exact versions. <Status done="2.1" />
-- **Publish** an approved request as one release, which the public API serves at once and can still serve later exactly as it was. <Status done="2.2" />
+- **Publish** an approved request as one release, which the public API serves at once and can still serve later exactly as it was <Status done="2.2" />, in one click from an entry when the project lets you approve your own <Status done="3.7" />, or at a time you choose, in your time zone. <Status done="D-060" />
 - **Serve readers** from a cache keyed by release, which can't serve an answer from the wrong one, with ETags and CDN cache headers. <Status done="3.1" />
 - **Build a website** from exactly one release, with the reference site in `apps/web`, which carries its release number on every page. <Status done="3.4" />
 - **Tell your website**: webhooks run from a worker that survives being killed <Status done="2.3" />, CDN purges <Status done="3.2" />, and probes that check the site, so each release gets one honest label. <Status done="3.3" />
@@ -46,13 +47,14 @@ On your own machine, against the local stack:
 
 Still to come, among others:
 
-- plain words in every Studio screen, one-click publishing and a first-run checklist <Status building="3.7" />;
-- scheduled publishing <Status building="e/schedules" />;
-- permissions per field and "only my own entries" <Status planned="R.3" />, API tokens and an audit log <Status planned="R.4" />;
+- API tokens and an audit log <Status planned="R.4" />;
+- the site going live, and the first public demo <Status planned="P3" />;
 - relations, reusable groups of fields and lists <Status planned="M" />;
 - media and images, preview links, the release slider and rollback <Status planned="P4" />;
 - localization, review stages, comments and live collaboration <Status planned="E" />;
 - a query API, GraphQL, the SDK and import from Strapi and Sanity <Status planned="D" />;
+- several servers behind a load balancer, a stress run for every load scenario, and Rust benchmarks <Status planned="S" />;
+- one version across the server, the command line, the SDK and the MCP server, installable from npm, Cargo and Homebrew <Status planned="V" />;
 - scoped credentials for scripts and agents <Status planned="P5" />;
 - backups, restore and the v0.1 release <Status planned="P6" />.
 
@@ -80,4 +82,4 @@ The editor pages use plain words (a *publish request*, a *version*, a *URL name*
 
 ## What it is not
 
-Colophon isn't trying to be first, or fastest in a synthetic benchmark, or "AI-powered". Since 2026-10-27 its goal is every feature Strapi and Sanity offer, each built with the same proof (decision D-057, recorded on the [R.2 branch](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.2-custom-roles/docs/DECISIONS.md)). Two things stay out on purpose: native plugins from strangers running inside the server, and commerce ([the parked list](/design/modules/parked/)). Load-test numbers in these docs come from one laptop, with its name and the date; they are evidence about the code, never a claim about production capacity.
+Colophon isn't trying to be first, or fastest in a synthetic benchmark, or "AI-powered". Since 2026-10-27 its goal is every feature Strapi and Sanity offer, each built with the same proof (decision D-057 in the [decisions](/design/decisions/)). Two things stay out on purpose: native plugins from strangers running inside the server, and commerce ([the parked list](/design/modules/parked/)). Load-test numbers in these docs come from one laptop, with its name and the date; they are evidence about the code, never a claim about production capacity.

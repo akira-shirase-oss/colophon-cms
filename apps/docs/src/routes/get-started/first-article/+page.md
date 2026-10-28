@@ -6,8 +6,8 @@ An **entry** is one piece of content, such as an article, in a **collection** (a
 
 ## Write an article in the Studio
 
-1. In the sidebar, under **Content**, open **Articles**. An empty collection says *Nothing here yet*.
-2. Press **New entry**. The dialog asks only for the fields that have no sensible starting value, here the **Title**, and says *It starts as a draft. Nothing is published until a changeset with it is approved and published.*
+1. In the sidebar, under **Content**, open **Articles**. An empty collection says *No articles yet* and offers **Write the first article**; otherwise press **New entry**.
+2. The dialog asks only for the fields that have no sensible starting value, here the **Title**, and says *It starts as a draft. Readers see it only once it is published.* If the content type has a required URL name made from the title, as the small-blog starting point gives Articles, the Studio makes it for you.
 3. Type a title and press **Create**. The entry opens.
 4. Write in the **Body**. The toolbar has headings, lists, quotes, code, callouts and links.
 
@@ -17,7 +17,7 @@ Back in **Articles**, the entry is listed with the state **Draft**: readers can'
 
 ## Every save is a version
 
-Open the entry's **History** tab. Each save is listed, newest first, with its title, when it was saved and the start of its fingerprint (a SHA-256 hash of its content). The newest is marked **Current draft**. Press **Compare with draft** on an older one to see what changed, word by word. Versions are never edited or deleted. [Versions and comparing](/editors/versions/) has more.
+Open the entry's **History** tab. Each save is listed, newest first, with its title and when it was saved. The newest is marked **Current draft**; the current version's fingerprint (a SHA-256 hash of its content) is in *Technical details*. Press **Compare with draft** on an older one to see what changed, word by word. Versions are never edited or deleted. [Versions and comparing](/editors/versions/) has more.
 
 ## Write one from the command line
 
@@ -43,13 +43,11 @@ The server checks every save against the collection's **content type**, whoever 
 
 ## Content types, briefly
 
-A content type is a versioned list of fields. Today a field is text, rich text, number, yes/no, choice or date-time, each with its own limits, and a change to a content type is allowed only when it can't make stored entries invalid. Developers and owners create content types through the API (`POST` to the project's `content-types`; see [Content types](/reference/api/content-types/)). <Status done="1.5" />
-
-On the step 3.6 branch, owners and developers build content types in the Studio, under **Settings → Content types**, and a change is checked against the entries actually stored: a refusal lists the entries in the way. <Status building="3.6" /> [Content types and URL names](/concepts/content-types/) explains both.
+A content type is a versioned list of fields. A field is text, rich text, number, yes/no, choice, date-time or URL name, each with its own limits. <Status done="3.6" /> Owners and developers build content types in the Studio, under **Settings → Content types** (**Add a content type**, then add fields), or through the API (`POST` to the project's `content-types`; see [Content types](/reference/api/content-types/)). A change is checked against the entries actually stored: removing a field, making one required or narrowing a limit is allowed only when every stored draft and published version still fits, and a refusal lists the entries in the way. [Content types and URL names](/concepts/content-types/) explains both.
 
 ## URL names
 
-A **URL name** is the part of a web address that names one article, such as `lemon-tart`. It arrives with a new field type on the 3.6 branch: a button beside the field makes one from the title, and two entries in one collection can't share one. <Status building="3.6" /> [URL names](/editors/url-names/) has the rules.
+A **URL name** is the part of a web address that names one article, such as `lemon-tart`. It is a field type of its own: a button beside the field makes one from the title, and two entries in one collection can't share one. <Status done="3.6" /> [URL names](/editors/url-names/) has the rules.
 
 ## Next
 
