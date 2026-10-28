@@ -617,3 +617,60 @@ async fn a_title_search_never_answers_from_titles_the_role_cant_read() {
         "titles_not_readable"
     );
 }
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_list_keeps_one_creator_s_entries_within_what_the_role_reads() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let guest = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    // Their own articles, nobody else's.
+    let made = send(
+        &owner,
+        Method::POST,
+        &roles(&project),
+        Some(&json!({
+            "key": "own-writer",
+            "name": "Own writer",
+            "permissions": [
+                {"action": "content.read", "subject": "articles", "condition": "own"},
+                {"action": "content.create", "subject": "articles"}
+            ]
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    join(&owner, &guest, &project, "own-writer").await;
+    let (owner_id, guest_id) = ids(&owner, &project).await;
+    for (session, title) in [(&owner, "The owner's"), (&guest, "The guest's")] {
+        let created = send(
+            session,
+            Method::POST,
+            &entries(&project),
+            Some(&article(title, "Body")),
+            &[("idempotency-key", &key())],
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    }
+    let by = |session, creator: String| {
+        let path = format!("{}?created_by={creator}", entries(&project));
+        async move { send(session, Method::GET, &path, None, &[]).await }
+    };
+
+    // The owner reads everyone's, so may ask for anyone's.
+    assert_eq!(titles(&by(&owner, guest_id.clone()).await), ["The guest's"]);
+    assert_eq!(titles(&by(&owner, owner_id.clone()).await), ["The owner's"]);
+    // The guest reads only their own: asking for the owner's is an empty page, not a leak.
+    assert_eq!(titles(&by(&guest, owner_id).await), Vec::<&str>::new());
+    assert_eq!(titles(&by(&guest, guest_id).await), ["The guest's"]);
+    let malformed = by(&owner, "not-an-id".to_owned()).await;
+    assert_eq!(
+        malformed.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        malformed.body
+    );
+}

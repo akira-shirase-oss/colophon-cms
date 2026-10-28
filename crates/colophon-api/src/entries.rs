@@ -27,7 +27,7 @@ use colophon_db::{
     scope::{self, ProjectTransaction},
 };
 use colophon_domain::{
-    policy::{Action, Fields},
+    policy::{Action, Fields, Policy},
     schema::{Content, ContentType, FieldKind},
 };
 use serde::{Deserialize, Serialize};
@@ -211,12 +211,14 @@ struct LiveView {
     generation: i64,
 }
 
-/// `?limit=&cursor=&q=` for lists; `q` searches titles.
+/// `?limit=&cursor=&q=&created_by=` for lists; `q` searches titles, `created_by` keeps one
+/// person's (or token's) entries.
 #[derive(Deserialize)]
 pub(crate) struct ListQuery {
     limit: Option<i64>,
     cursor: Option<String>,
     q: Option<String>,
+    created_by: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -687,28 +689,12 @@ fn after_cursor(path: &CollectionPath, project: Uuid, cursor: &str) -> Result<Uu
         ))
 }
 
-/// `GET {P}/collections/{collection}/entries?limit=&cursor=`.
-pub(crate) async fn list(
-    State(state): State<AppState>,
-    caller: SignedIn,
-    Path(path): Path<CollectionPath>,
-    Query(query): Query<ListQuery>,
-) -> Result<Response, ApiError> {
+/// A list's page size, title search and creator, checked.
+fn list_query(query: &ListQuery) -> Result<(i64, Option<&str>, Option<Uuid>), ApiError> {
     let limit = query.limit.unwrap_or(DEFAULT_PAGE);
     if !(1..=entries::MAX_PAGE).contains(&limit) {
         return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
     }
-    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_read(&tx, &path.collection)?;
-    // An unknown collection is 404, not an empty list.
-    content_type(&mut tx, &path.collection).await?;
-    let project = tx.project;
-    let before = query
-        .cursor
-        .as_deref()
-        .map(|cursor| after_cursor(&path, project, cursor))
-        .transpose()?;
-    // One more than the page, to know whether another page follows.
     let search = query
         .q
         .as_deref()
@@ -719,12 +705,90 @@ pub(crate) async fn list(
             "a search is at most 100 characters",
         ));
     }
-    // Only their own entries, when that is all the role may read (D-058, step R.3); and titles
-    // only where the role may read the title field.
+    let asked = query
+        .created_by
+        .as_deref()
+        .map(|text| {
+            Uuid::try_parse(text)
+                .map_err(|_| ApiError::InvalidHeader("created_by must be an identity id"))
+        })
+        .transpose()?;
+    Ok((limit, search, asked))
+}
+
+/// Whose entries a list may hold.
+enum Whose {
+    /// Everyone's the role reads.
+    Anyone,
+    /// Only those this identity created.
+    Only(Uuid),
+    /// None: the answer is an empty page.
+    Nobody,
+}
+
+/// Whose entries a list holds, from what the role reads (D-058): only the caller's own when that
+/// is all it reads (step R.3); when it searches titles, only where it reads them, or else which
+/// entries match would confirm a guess at a title the answer leaves blank (refused outright when
+/// it reads no title at all); and, when one creator is asked for, theirs within that.
+fn whose(
+    policy: &Policy,
+    identity: Uuid,
+    collection: &str,
+    title_field: Option<&str>,
+    searching: bool,
+    asked: Option<Uuid>,
+) -> Result<Whose, ApiError> {
+    let reads_title = |own: bool| {
+        title_field.is_none_or(|title| {
+            policy
+                .fields(Action::ContentRead, collection, own)
+                .is_some_and(|fields| fields.includes(title))
+        })
+    };
+    let mut only = policy
+        .fields(Action::ContentRead, collection, false)
+        .is_none()
+        .then_some(identity);
+    if searching && !reads_title(false) {
+        if reads_title(true) {
+            only = Some(identity);
+        } else {
+            return Err(ApiError::forbidden(
+                "titles_not_readable",
+                "your role can't read titles here, so it can't search them",
+            ));
+        }
+    }
+    Ok(match (only, asked) {
+        (Some(mine), Some(asked)) if mine != asked => Whose::Nobody,
+        (Some(mine), _) => Whose::Only(mine),
+        (None, Some(asked)) => Whose::Only(asked),
+        (None, None) => Whose::Anyone,
+    })
+}
+
+/// `GET {P}/collections/{collection}/entries?limit=&cursor=&q=&created_by=`.
+pub(crate) async fn list(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<CollectionPath>,
+    Query(query): Query<ListQuery>,
+) -> Result<Response, ApiError> {
+    let (limit, search, asked) = list_query(&query)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_read(&tx, &path.collection)?;
+    // An unknown collection is 404, not an empty list.
+    content_type(&mut tx, &path.collection).await?;
+    let project = tx.project;
+    let before = query
+        .cursor
+        .as_deref()
+        .map(|cursor| after_cursor(&path, project, cursor))
+        .transpose()?;
+    // Titles only where the role may read the title field (D-058, step R.3).
     let anyone = tx
         .policy
         .fields(Action::ContentRead, &path.collection, false);
-    let mut only_by = anyone.is_none().then_some(tx.identity);
     let title_field = match anyone {
         Some(Fields::All) => None,
         _ => Some(
@@ -735,35 +799,31 @@ pub(crate) async fn list(
                 .to_owned(),
         ),
     };
-    // A search matches titles, so it looks only where the role reads them: otherwise which
-    // entries match would confirm a guess at a title the answer leaves blank.
-    if let (Some(_), Some(title_field)) = (search, &title_field) {
-        let reads_title = |own: bool| {
-            tx.policy
-                .fields(Action::ContentRead, &path.collection, own)
-                .is_some_and(|fields| fields.includes(title_field))
-        };
-        if !reads_title(false) {
-            if reads_title(true) {
-                only_by = Some(tx.identity);
-            } else {
-                return Err(ApiError::forbidden(
-                    "titles_not_readable",
-                    "your role can't read titles here, so it can't search them",
-                ));
-            }
-        }
-    }
-    let mut rows: Vec<Summary> = entries::list(
-        &mut tx,
+    let listed = whose(
+        &tx.policy,
+        tx.identity,
         &path.collection,
-        before,
-        limit + 1,
-        search,
-        only_by,
-    )
-    .await
-    .map_err(ApiError::from_db)?;
+        title_field.as_deref(),
+        search.is_some(),
+        asked,
+    )?;
+    let by = match listed {
+        Whose::Anyone => None,
+        Whose::Only(creator) => Some(creator),
+        Whose::Nobody => {
+            tx.commit().await.map_err(ApiError::from_db)?;
+            let empty = Page::<SummaryView> {
+                data: Vec::new(),
+                next_cursor: None,
+            };
+            let body = serde_json::to_string(&empty).map_err(ApiError::internal)?;
+            return Ok(json(StatusCode::OK, body, None, false));
+        }
+    };
+    let mut rows: Vec<Summary> =
+        entries::list(&mut tx, &path.collection, before, limit + 1, search, by)
+            .await
+            .map_err(ApiError::from_db)?;
     let (policy, identity) = (tx.policy.clone(), tx.identity);
     tx.commit().await.map_err(ApiError::from_db)?;
     let more = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);

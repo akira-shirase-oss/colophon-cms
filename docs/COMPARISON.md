@@ -137,8 +137,8 @@ that builds them.
 | Bulk actions, duplicate, saved views | ✓ | ✓ | E |
 | Roles: built-in and custom | ✓ | ✓ (by plan) | done (R.1, R.2; D-058) |
 | Field-level and "own entries" permissions | ✓ | ✓ (by plan) | done (R.3; D-058) |
-| API tokens: read-only, full, custom | ✓ | ✓ | R.4 (device sign-in and bearer tokens done, D-041) |
-| Audit log | Paid | ✓ (by plan) | R.4 |
+| API tokens: read-only, full, custom | ✓ | ✓ | built in R.4 (D-063): read-only, full access and custom; device sign-in for the CLI since D-041 |
+| Audit log | Paid | ✓ (by plan) | built in R.4 (D-063): roles, members, invitations and tokens, append-only |
 | SSO / OpenID Connect | Paid | ✓ (by plan) | done (Keycloak, D-031) |
 | REST delivery with caching | ✓ | ✓ | done (P2, P3) |
 | Query API: filters, sort, populate, field selection, perspectives | ✓ | GROQ | D |

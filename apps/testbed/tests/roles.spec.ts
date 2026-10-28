@@ -46,7 +46,7 @@ test('create a role, change it at its version, refuse what is not enforced, dele
 	await page.getByLabel('Key').fill('owner');
 	await page.getByLabel('Permissions (JSON)').fill('[]');
 	await page.getByRole('button', { name: 'Save' }).click();
-	await expect(page.getByTestId('message')).toHaveText('409 conflict');
+	await expect(page.getByTestId('message')).toHaveText('409 conflict (owner_role_fixed)');
 
 	await page.getByLabel('Key').fill('desk');
 	await page.getByRole('button', { name: 'Delete' }).click();

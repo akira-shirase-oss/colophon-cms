@@ -45,8 +45,10 @@ sign-up with a one-time setup code for a fresh installation (migration 0020, `pe
 Milestone R, roles and permissions as data (D-058): R.1 (the four built-in roles as data, behaviour unchanged;
 migration 0017), R.2 (custom roles and the Studio's role editor; migration 0018, `perf/k6/roles.js`) and R.3 (field
 lists and `own` conditions; migrations 0021, 0022) are done. Scheduled publishing, from milestone E, is done (migration
-0019, the worker's scheduler, `perf/k6/schedules.js`; D-060). Next: R.4 (API tokens and the audit log), then step 3.8
-(the site goes live, the first public demo). D-062 adds milestones S (several servers behind a load balancer, stress
+0019, the worker's scheduler, `perf/k6/schedules.js`; D-060). R.4 is built, its full load runs pending: project API
+tokens that act as their own identity, kept away from access control, with an exact kill switch, and an append-only
+audit log (migration 0023, `colophon_db::{tokens, audit}`, `scope::begin_as_token`, `perf/k6/tokens.js`; D-063). Next:
+step 3.8 (the site goes live, the first public demo). D-062 adds milestones S (several servers behind a load balancer, stress
 runs, Rust benchmarks) and V (versions, and the CLI, SDK and MCP server packaged for npm, Cargo and Homebrew).
 
 ## Read first

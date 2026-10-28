@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT i.kind, i.entry_id, i.revision_id, r.collection, r.content_hash, r.schema_version,\n                  v.definition_hash, r.title,\n                  CASE WHEN i.kind = 'publish' THEN e.draft_revision_id\n                       ELSE (SELECT p.revision_id FROM publications p\n                             WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id\n                               AND p.entry_id = i.entry_id AND p.valid_to IS NULL)\n                  END AS current_revision_id,\n                  (SELECT p.revision_id FROM publications p\n                   WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id\n                     AND p.entry_id = i.entry_id AND p.valid_to IS NULL) AS published_revision_id\n         FROM changeset_items i\n         CROSS JOIN LATERAL (\n             SELECT r.collection, r.content_hash, r.schema_version, r.title\n             FROM revisions r\n             WHERE r.project_id = i.project_id AND r.environment_id = i.environment_id AND r.id = i.revision_id\n             LIMIT 1\n         ) r\n         JOIN content_type_versions v ON v.project_id = i.project_id AND v.environment_id = i.environment_id\n                                     AND v.collection = r.collection AND v.version = r.schema_version\n         CROSS JOIN LATERAL (\n             SELECT e.draft_revision_id\n             FROM entries e\n             WHERE e.project_id = i.project_id AND e.environment_id = i.environment_id AND e.id = i.entry_id\n             LIMIT 1\n         ) e\n         WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3\n         ORDER BY i.entry_id",
+  "query": "SELECT i.kind, i.entry_id, i.revision_id, r.collection, r.content_hash, r.schema_version,\n                  v.definition_hash, r.title,\n                  CASE WHEN i.kind = 'publish' THEN e.draft_revision_id\n                       ELSE (SELECT p.revision_id FROM publications p\n                             WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id\n                               AND p.entry_id = i.entry_id AND p.valid_to IS NULL)\n                  END AS current_revision_id,\n                  (SELECT p.revision_id FROM publications p\n                   WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id\n                     AND p.entry_id = i.entry_id AND p.valid_to IS NULL) AS published_revision_id,\n                  e.created_by\n         FROM changeset_items i\n         CROSS JOIN LATERAL (\n             SELECT r.collection, r.content_hash, r.schema_version, r.title\n             FROM revisions r\n             WHERE r.project_id = i.project_id AND r.environment_id = i.environment_id AND r.id = i.revision_id\n             LIMIT 1\n         ) r\n         JOIN content_type_versions v ON v.project_id = i.project_id AND v.environment_id = i.environment_id\n                                     AND v.collection = r.collection AND v.version = r.schema_version\n         CROSS JOIN LATERAL (\n             SELECT e.draft_revision_id, e.created_by\n             FROM entries e\n             WHERE e.project_id = i.project_id AND e.environment_id = i.environment_id AND e.id = i.entry_id\n             LIMIT 1\n         ) e\n         WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3\n         ORDER BY i.entry_id",
   "describe": {
     "columns": [
       {
@@ -102,6 +102,17 @@
         "name": "published_revision_id",
         "type_info": "Uuid",
         "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "created_by"
+          }
+        }
       }
     ],
     "parameters": {
@@ -121,8 +132,9 @@
       false,
       false,
       null,
-      null
+      null,
+      false
     ]
   },
-  "hash": "5730f12c3b2d8f97b77c4c20dd37420bb4de44b0ae112de041403c0d950f3501"
+  "hash": "028a5d6bac9bdc114982f926128814e539057ca889b0d78a7906d0ae549229f1"
 }
