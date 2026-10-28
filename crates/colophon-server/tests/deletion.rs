@@ -1,4 +1,4 @@
-//! Deleting entries, end to end (D-079): the real binary, real people and real API tokens. A
+//! Deleting entries, end to end (D-080): the real binary, real people and real API tokens. A
 //! deletion needs the draft's `ETag` and an idempotency key, replays its answer, and leaves nothing
 //! any read, list, history or save can find; it is refused, saying why, while the entry is
 //! published, named by another entry or pinned by a changeset; what it held comes free; and only

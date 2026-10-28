@@ -110,7 +110,7 @@ pub enum DbError {
         /// Whether the field holds a list.
         many: bool,
     },
-    /// A changeset pin or a publication names an entry that is deleted (migration 0030, D-079):
+    /// A changeset pin or a publication names an entry that is deleted (migration 0030, D-080):
     /// a deletion committed while it waited for the entry. Nothing was written; the transaction is
     /// aborted and the caller rolls it back.
     #[error("an entry is deleted")]

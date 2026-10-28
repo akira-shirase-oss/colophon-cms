@@ -73,7 +73,7 @@ pub struct Item {
     /// The revision readers get now, if the entry is published: what the item changes from.
     pub published_revision_id: Option<Uuid>,
     /// Who created the entry: for roles that may change only their own (D-058). `None` once the
-    /// entry is deleted (D-079), which only a published changeset can still show.
+    /// entry is deleted (D-080), which only a published changeset can still show.
     pub created_by: Option<Uuid>,
 }
 
@@ -333,7 +333,7 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
          ) r
          JOIN content_type_versions v ON v.project_id = i.project_id AND v.environment_id = i.environment_id
                                      AND v.collection = r.collection AND v.version = r.schema_version
-         -- A deleted entry (D-079) is hidden from this role, but a published changeset keeps
+         -- A deleted entry (D-080) is hidden from this role, but a published changeset keeps
          -- listing what it published: its item stays, without a draft or a creator.
          LEFT JOIN LATERAL (
              SELECT e.draft_revision_id, e.created_by
@@ -512,7 +512,7 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
                                 END
                       ) AS stale
                FROM changeset_items i
-               -- Items of deleted entries still count (D-079); only published changesets have them.
+               -- Items of deleted entries still count (D-080); only published changesets have them.
                LEFT JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
                                   AND e.id = i.entry_id
                WHERE i.project_id = c.project_id AND i.environment_id = c.environment_id

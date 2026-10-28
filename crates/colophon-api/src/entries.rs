@@ -7,7 +7,7 @@
 //! - `PUT  {P}/collections/{collection}/entries/{entry}`: save (`If-Match` and
 //!   `Idempotency-Key` required);
 //! - `DELETE {P}/collections/{collection}/entries/{entry}`: delete, leaving a tombstone
-//!   (`If-Match` and `Idempotency-Key` required; D-079);
+//!   (`If-Match` and `Idempotency-Key` required; D-080);
 //! - `GET  {P}/collections/{collection}/entries/{entry}/revisions`: history, newest first.
 //!
 //! A project the caller isn't in, an environment, collection or entry that doesn't exist: all
@@ -757,7 +757,7 @@ pub(crate) async fn save(
     }
 }
 
-/// What a deletion answers (D-079).
+/// What a deletion answers (D-080).
 #[derive(Serialize)]
 struct DeletedView {
     id: Uuid,
@@ -769,7 +769,7 @@ struct DeletedView {
     deleted_by: Uuid,
 }
 
-/// `DELETE {P}/collections/{collection}/entries/{entry}` (D-079): the entry becomes a tombstone
+/// `DELETE {P}/collections/{collection}/entries/{entry}` (D-080): the entry becomes a tombstone
 /// that no read, list, history or save finds again; its revisions and releases stay. Needs
 /// `content.delete` on this entry (anyone's, or the caller's own), the draft's `ETag` in
 /// `If-Match`, and an `Idempotency-Key`. Refused with 409 while it is published
@@ -863,7 +863,7 @@ pub(crate) async fn delete(
     }
 }
 
-/// Why a deletion was refused, as the API answers it (D-079).
+/// Why a deletion was refused, as the API answers it (D-080).
 fn deletion_refused(policy: &Policy, refused: Deleted) -> ApiError {
     match refused {
         Deleted::Deleted { .. } => ApiError::internal(std::io::Error::other(

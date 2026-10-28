@@ -249,7 +249,7 @@ pub async fn save(
     })))
 }
 
-/// What a deletion did (D-079). Every refusal writes nothing; the caller rolls back.
+/// What a deletion did (D-080). Every refusal writes nothing; the caller rolls back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Deleted {
     /// The entry is a tombstone now.
@@ -290,7 +290,7 @@ pub struct Pending {
 pub const MAX_PENDING: i64 = 20;
 
 /// Deletes `entry` of `collection` as the transaction's identity, if its draft is still
-/// `expected` and nothing depends on it (migration 0030, D-079): it becomes a tombstone that the
+/// `expected` and nothing depends on it (migration 0030, D-080): it becomes a tombstone that the
 /// application's role no longer sees, its slug, unique values and single-type place come free,
 /// and the audit log records it. Revisions, history and releases stay as they were. The caller has
 /// checked that its role may delete this entry.
@@ -511,7 +511,7 @@ async fn insert_references(
     .await;
     match inserted {
         Ok(_) => Ok(()),
-        // An entry deleted after the precheck read it (migration 0030's trigger, D-079): refused
+        // An entry deleted after the precheck read it (migration 0030's trigger, D-080): refused
         // like any reference to an entry that isn't there, at the first place that names it.
         Err(error) => match crate::deleted_entry(&error) {
             Some(("revision_references", gone)) => references

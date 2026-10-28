@@ -1,4 +1,4 @@
-//! Deleting entries against real PostgreSQL, as the application's login (migration 0030, D-079):
+//! Deleting entries against real PostgreSQL, as the application's login (migration 0030, D-080):
 //! a deletion leaves a tombstone the application no longer sees while revisions, history and the
 //! audit log keep it; it is refused while the draft moved on, while readers get the entry, while
 //! another live entry names it, and while an unpublished changeset pins it; what it held comes

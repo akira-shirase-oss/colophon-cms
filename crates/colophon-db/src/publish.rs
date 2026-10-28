@@ -69,7 +69,7 @@ pub enum Refusal {
     /// It would leave readers a reference to an entry they can't get (D-065). The caller rolls
     /// the transaction back.
     BrokenReference(releases::BrokenReference),
-    /// It would publish an entry that has been deleted (D-079): the database refused the
+    /// It would publish an entry that has been deleted (D-080): the database refused the
     /// publication. The transaction is aborted: the caller rolls it back.
     EntryDeleted {
         /// The entry, as the database reported it.

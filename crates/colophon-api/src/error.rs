@@ -143,11 +143,11 @@ pub struct ErrorDetails {
     /// the reason are that type's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
-    /// For a refused deletion (`still_referenced`, D-079): the entries that still name it, in
+    /// For a refused deletion (`still_referenced`, D-080): the entries that still name it, in
     /// collections the caller reads, shaped like a read's `referenced_by`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub referenced_by: Vec<Referrer>,
-    /// For a refused deletion (`entry_in_changeset`, D-079): the changesets, not yet published,
+    /// For a refused deletion (`entry_in_changeset`, D-080): the changesets, not yet published,
     /// that would publish it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub changesets: Vec<PendingChangeset>,
@@ -195,7 +195,7 @@ pub struct PendingChangeset {
     pub scheduled: bool,
 }
 
-/// A deletion refused because something still depends on the entry (D-079), with what it is.
+/// A deletion refused because something still depends on the entry (D-080), with what it is.
 /// Boxed in [`ApiError`], so every `Result` in the API stays small.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StillNeeded {
@@ -389,7 +389,7 @@ pub enum ApiError {
     #[error("{}", .0.message)]
     NeedsMigration(Box<InTheWay>),
     /// A deletion refused while other entries name the entry or a changeset would publish it
-    /// (D-079). 409, naming them.
+    /// (D-080). 409, naming them.
     #[error("{}", .0.message)]
     StillNeeded(Box<StillNeeded>),
     /// A local time the clocks show twice or skip in its time zone: the request must say which of
@@ -507,7 +507,7 @@ impl ApiError {
                 "single_exists",
                 "this collection is a single type and already has its entry; edit that one",
             ),
-            // A pin or publication of an entry deleted meanwhile (D-079); callers that can say
+            // A pin or publication of an entry deleted meanwhile (D-080); callers that can say
             // more match it first.
             DbError::EntryDeleted { .. } => Self::conflict(
                 "entry_deleted",

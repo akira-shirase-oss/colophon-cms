@@ -1,5 +1,5 @@
 -- Milestone M follow-up: deleting an entry. docs/modules/02-db.md ("Deleting entries"),
--- 04-api.md, D-079.
+-- 04-api.md, D-080.
 --
 -- Deleting leaves a tombstone; no row is ever removed. The entry gets `deleted_at` and
 -- `deleted_by` (a person, or an API token's own identity, as D-063 attributes), and its

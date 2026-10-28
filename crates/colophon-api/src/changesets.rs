@@ -142,7 +142,7 @@ pub(crate) struct ItemView {
     /// Who created the entry, so a client can tell which items a role limited to its own
     /// entries may change; `null` once it is deleted.
     created_by: Option<Uuid>,
-    /// Present (`true`) when the entry has been deleted since (D-079): only a published
+    /// Present (`true`) when the entry has been deleted since (D-080): only a published
     /// changeset can still list it, as what it published.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     entry_deleted: bool,
@@ -548,7 +548,7 @@ pub(crate) async fn create(
     changesets::create(&mut tx, id, title, &pins, &hash_of(&pins))
         .await
         .map_err(|error| match error {
-            // Deleted after the pins were read (D-079): as if it had never been there.
+            // Deleted after the pins were read (D-080): as if it had never been there.
             DbError::EntryDeleted { .. } => unknown_entry(),
             other => ApiError::from_db(other),
         })?;
@@ -790,7 +790,7 @@ fn refused(refusal: Refusal) -> ApiError {
             "still_referenced",
             "an entry this changeset takes down is named by a published entry; change or take down that entry first, or in the same changeset",
         ),
-        // Only a pin made while the entry was being deleted can get here (D-079).
+        // Only a pin made while the entry was being deleted can get here (D-080).
         Refusal::EntryDeleted { .. } => ApiError::conflict(
             "entry_deleted",
             "an entry in this changeset has been deleted; make a new changeset without it",
