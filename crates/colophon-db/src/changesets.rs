@@ -72,8 +72,9 @@ pub struct Item {
     pub current_revision_id: Option<Uuid>,
     /// The revision readers get now, if the entry is published: what the item changes from.
     pub published_revision_id: Option<Uuid>,
-    /// Who created the entry: for roles that may change only their own (D-058).
-    pub created_by: Uuid,
+    /// Who created the entry: for roles that may change only their own (D-058). `None` once the
+    /// entry is deleted (D-080), which only a published changeset can still show.
+    pub created_by: Option<Uuid>,
 }
 
 impl Item {
@@ -322,7 +323,7 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
                   (SELECT p.revision_id FROM publications p
                    WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id
                      AND p.entry_id = i.entry_id AND p.valid_to IS NULL) AS published_revision_id,
-                  e.created_by
+                  e.created_by AS "created_by?"
          FROM changeset_items i
          CROSS JOIN LATERAL (
              SELECT r.collection, r.content_hash, r.schema_version, r.title
@@ -332,12 +333,14 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
          ) r
          JOIN content_type_versions v ON v.project_id = i.project_id AND v.environment_id = i.environment_id
                                      AND v.collection = r.collection AND v.version = r.schema_version
-         CROSS JOIN LATERAL (
+         -- A deleted entry (D-080) is hidden from this role, but a published changeset keeps
+         -- listing what it published: its item stays, without a draft or a creator.
+         LEFT JOIN LATERAL (
              SELECT e.draft_revision_id, e.created_by
              FROM entries e
              WHERE e.project_id = i.project_id AND e.environment_id = i.environment_id AND e.id = i.entry_id
              LIMIT 1
-         ) e
+         ) e ON true
          WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
          ORDER BY i.entry_id"#,
         tx.project,
@@ -390,7 +393,7 @@ pub async fn repin(
     )
     .execute(&mut *tx.transaction)
     .await
-    .map_err(DbError::from_query)?;
+    .map_err(DbError::from_write)?;
     sqlx::query!(
         "UPDATE changesets SET hash = $4, updated_at = now()
          WHERE project_id = $1 AND environment_id = $2 AND id = $3",
@@ -509,8 +512,9 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
                                 END
                       ) AS stale
                FROM changeset_items i
-               JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
-                             AND e.id = i.entry_id
+               -- Items of deleted entries still count (D-080); only published changesets have them.
+               LEFT JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
+                                  AND e.id = i.entry_id
                WHERE i.project_id = c.project_id AND i.environment_id = c.environment_id
                  AND i.changeset_id = c.id
            ) counts

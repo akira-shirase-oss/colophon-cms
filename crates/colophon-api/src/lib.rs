@@ -137,7 +137,7 @@ pub fn routes(state: AppState) -> Router {
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}",
-            get(entries::get).put(entries::save),
+            get(entries::get).put(entries::save).delete(entries::delete),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions",

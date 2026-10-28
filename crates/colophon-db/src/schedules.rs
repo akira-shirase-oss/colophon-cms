@@ -374,6 +374,9 @@ fn reason(refusal: &Refusal) -> String {
             "an entry it takes down is still linked from a published entry; change that one first"
                 .to_owned()
         }
+        Refusal::EntryDeleted { .. } => {
+            "an entry in it has been deleted; make a new publish request without it".to_owned()
+        }
     }
 }
 

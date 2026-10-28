@@ -6,6 +6,8 @@
 //! - `GET  {P}/collections/{collection}/entries/{entry}`: the draft, with its `ETag`;
 //! - `PUT  {P}/collections/{collection}/entries/{entry}`: save (`If-Match` and
 //!   `Idempotency-Key` required);
+//! - `DELETE {P}/collections/{collection}/entries/{entry}`: delete, leaving a tombstone
+//!   (`If-Match` and `Idempotency-Key` required; D-080);
 //! - `GET  {P}/collections/{collection}/entries/{entry}/revisions`: history, newest first.
 //!
 //! A project the caller isn't in, an environment, collection or entry that doesn't exist: all
@@ -24,7 +26,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use colophon_db::{
     content_types,
-    entries::{self, Draft, NewRevision, Revision, Saved, Summary},
+    entries::{self, Deleted, Draft, NewRevision, Revision, Saved, Summary},
     idempotency::{self, Claim},
     scope::{self, ProjectTransaction},
 };
@@ -39,7 +41,7 @@ use uuid::Uuid;
 
 use crate::{
     ApiError, AppState,
-    error::EntryInTheWay,
+    error::{EntryInTheWay, PendingChangeset, StillNeeded},
     fault,
     session::{SignedIn, services},
     shape::{Data, Page},
@@ -55,6 +57,7 @@ const DEFAULT_PAGE: i64 = 20;
 
 const CREATE: &str = "entry.create";
 const SAVE: &str = "entry.save";
+const DELETE: &str = "entry.delete";
 
 /// The path of the collection routes.
 #[derive(Deserialize)]
@@ -313,11 +316,17 @@ pub(crate) fn idempotency_key(headers: &HeaderMap) -> Result<&str, ApiError> {
 
 /// The revision an `If-Match` names: exactly one strong `ETag`, `"<revision id>"`.
 fn if_match(headers: &HeaderMap) -> Result<Uuid, ApiError> {
+    if_match_or(
+        headers,
+        "saving needs an If-Match header with the ETag of the revision you edited",
+    )
+}
+
+/// [`if_match`], saying `missing` when there is none.
+fn if_match_or(headers: &HeaderMap, missing: &'static str) -> Result<Uuid, ApiError> {
     let value = headers
         .get(header::IF_MATCH)
-        .ok_or(ApiError::PreconditionRequired(
-            "saving needs an If-Match header with the ETag of the revision you edited",
-        ))?;
+        .ok_or(ApiError::PreconditionRequired(missing))?;
     value
         .to_str()
         .ok()
@@ -745,6 +754,164 @@ pub(crate) async fn save(
         }
         Saved::Stale { current } => Err(ApiError::StaleRevision { current }),
         Saved::NotFound => Err(ApiError::NotFound),
+    }
+}
+
+/// What a deletion answers (D-080).
+#[derive(Serialize)]
+struct DeletedView {
+    id: Uuid,
+    collection: String,
+    /// The draft it had: the revision the caller confirmed with `If-Match`.
+    revision_id: Uuid,
+    deleted_at: String,
+    /// Who deleted it: the caller, a person or an API token's own identity (D-063).
+    deleted_by: Uuid,
+}
+
+/// `DELETE {P}/collections/{collection}/entries/{entry}` (D-080): the entry becomes a tombstone
+/// that no read, list, history or save finds again; its revisions and releases stay. Needs
+/// `content.delete` on this entry (anyone's, or the caller's own), the draft's `ETag` in
+/// `If-Match`, and an `Idempotency-Key`. Refused with 409 while it is published
+/// (`entry_published`), while other live entries name it (`still_referenced`), while a changeset
+/// that hasn't been published pins it (`entry_in_changeset`), or when the draft moved on
+/// (`stale_revision`).
+pub(crate) async fn delete(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<EntryPath>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let expected = if_match_or(
+        &headers,
+        "deleting needs an If-Match header with the draft's ETag, so you delete what you looked at",
+    )?;
+    let key = idempotency_key(&headers)?;
+    let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    if [false, true].into_iter().all(|own| {
+        tx.policy
+            .fields(Action::ContentDelete, &path.collection, own)
+            .is_none()
+    }) {
+        return Err(ApiError::missing(
+            Action::ContentDelete,
+            "your role can't delete entries here",
+        ));
+    }
+    // Claimed before the entry is looked up: a retry after a lost answer finds it deleted, and
+    // must get the recorded answer, not a 404.
+    let request = request_hash(&[
+        DELETE,
+        &path.collection,
+        &entry.to_string(),
+        &expected.to_string(),
+    ]);
+    if let Some(replay) = claim(&mut tx, DELETE, key, &request).await? {
+        return Ok(replay);
+    }
+    // What this caller may do with this entry, by whose it is (D-058, step R.3). One it can't
+    // read is not found.
+    let created_by = entries::creators(&mut tx, &[entry])
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .find(|(_, collection, _)| *collection == path.collection)
+        .map(|(_, _, created_by)| created_by)
+        .ok_or(ApiError::NotFound)?;
+    let own = created_by == tx.identity;
+    if tx
+        .policy
+        .fields(Action::ContentRead, &path.collection, own)
+        .is_none()
+    {
+        return Err(ApiError::NotFound);
+    }
+    if tx
+        .policy
+        .fields(Action::ContentDelete, &path.collection, own)
+        .is_none()
+    {
+        return Err(ApiError::missing(
+            Action::ContentDelete,
+            "your role can't delete this entry",
+        ));
+    }
+    // A refusal returns early, dropping the transaction: the claim and the lock roll back.
+    match entries::delete(&mut tx, &path.collection, entry, expected)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Deleted::Deleted { revision, at } => {
+            let view = DeletedView {
+                id: entry,
+                collection: path.collection,
+                revision_id: revision,
+                deleted_at: rfc3339(at)?,
+                deleted_by: tx.identity,
+            };
+            let body = serde_json::to_string(&Data { data: view }).map_err(ApiError::internal)?;
+            idempotency::complete(&mut tx, DELETE, key, StatusCode::OK.as_u16(), &body)
+                .await
+                .map_err(ApiError::from_db)?;
+            fault::point("entry.delete:before-commit");
+            tx.commit().await.map_err(ApiError::from_db)?;
+            fault::point("entry.delete:after-commit");
+            Ok(json(StatusCode::OK, body, None, false))
+        }
+        refused => Err(deletion_refused(&tx.policy, refused)),
+    }
+}
+
+/// Why a deletion was refused, as the API answers it (D-080).
+fn deletion_refused(policy: &Policy, refused: Deleted) -> ApiError {
+    match refused {
+        Deleted::Deleted { .. } => ApiError::internal(std::io::Error::other(
+            "a deletion that succeeded was handled as a refusal",
+        )),
+        Deleted::NotFound => ApiError::NotFound,
+        Deleted::Stale { current } => ApiError::StaleRevision { current },
+        Deleted::Published => ApiError::conflict(
+            "entry_published",
+            "this entry is published, so readers still get it: take it down first (unpublish it in a changeset), then delete it",
+        ),
+        Deleted::Referenced(referrers) => {
+            // Only referrers in collections the role reads, as a read's `referenced_by` (D-065).
+            let referenced_by = referrers
+                .into_iter()
+                .filter(|referrer| {
+                    policy
+                        .fields(Action::ContentRead, &referrer.collection, false)
+                        .is_some()
+                })
+                .map(|referrer| crate::error::Referrer {
+                    entry_id: referrer.entry_id,
+                    collection: referrer.collection,
+                    field: referrer.field,
+                    in_draft: referrer.in_draft,
+                    published: referrer.published,
+                })
+                .collect();
+            ApiError::StillNeeded(Box::new(StillNeeded {
+                reason: "still_referenced",
+                message: "other entries still link to this one: remove those links first, then delete it".to_owned(),
+                referenced_by,
+                changesets: Vec::new(),
+            }))
+        }
+        Deleted::InChangeset(pending) => ApiError::StillNeeded(Box::new(StillNeeded {
+            reason: "entry_in_changeset",
+            message: "a changeset that hasn't been published includes this entry, and publishing it would bring the entry back: it can be deleted once that changeset is published".to_owned(),
+            referenced_by: Vec::new(),
+            changesets: pending
+                .into_iter()
+                .map(|pending| PendingChangeset {
+                    id: pending.id,
+                    title: pending.title,
+                    scheduled: pending.scheduled,
+                })
+                .collect(),
+        })),
     }
 }
 
