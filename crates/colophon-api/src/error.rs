@@ -428,6 +428,20 @@ impl ApiError {
                 "another entry in this collection has the same slug, as a draft or published",
                 None,
             ),
+            // 422, at the very place in the content (D-065).
+            DbError::MissingReference {
+                field,
+                position,
+                many,
+            } => Self::Invalid(colophon_domain::schema::Refusal {
+                code: "reference_not_found",
+                pointer: if many {
+                    format!("/{field}/{position}")
+                } else {
+                    format!("/{field}")
+                },
+                message: "this names no entry of the collection the field points at".to_owned(),
+            }),
             other => Self::internal(other),
         }
     }

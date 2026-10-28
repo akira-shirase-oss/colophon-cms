@@ -2,6 +2,7 @@
 //! inside a [`ProjectTransaction`], so the caller is a member and row-level security confines
 //! it to the project.
 
+use colophon_domain::schema::ContentReference;
 use sqlx::types::time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -25,6 +26,8 @@ pub struct NewRevision<'a> {
     pub slug: Option<&'a str>,
     /// The content type version the content was validated against.
     pub schema_version: i32,
+    /// The entries its reference fields name (D-065).
+    pub references: &'a [ContentReference],
 }
 
 /// The entry that has a slug, as a draft or as what readers get ([`slug_holder`]).
@@ -224,7 +227,7 @@ async fn insert_revision(
     base: Option<Uuid>,
     revision: NewRevision<'_>,
 ) -> Result<OffsetDateTime, DbError> {
-    sqlx::query_scalar!(
+    let created_at = sqlx::query_scalar!(
         "INSERT INTO revisions
            (project_id, environment_id, entry_id, id, base_revision_id, content, content_hash, title,
             author_id, collection, schema_version, slug)
@@ -245,7 +248,80 @@ async fn insert_revision(
     )
     .fetch_one(&mut *tx.transaction)
     .await
-    .map_err(DbError::from_write)
+    .map_err(DbError::from_write)?;
+    insert_references(tx, revision.id, revision.references).await?;
+    Ok(created_at)
+}
+
+/// Keeps a new revision's references (migration 0024, D-065). A precheck names the first one
+/// that isn't an entry of its collection, for the refusal; the foreign key on (entry,
+/// collection) is the rule, so a race can only end in an error, never a dangling reference.
+async fn insert_references(
+    tx: &mut ProjectTransaction,
+    revision: Uuid,
+    references: &[ContentReference],
+) -> Result<(), DbError> {
+    if references.is_empty() {
+        return Ok(());
+    }
+    let mut entries = Vec::with_capacity(references.len());
+    for reference in references {
+        let Ok(entry) = Uuid::try_parse(&reference.entry) else {
+            return Err(missing(reference));
+        };
+        entries.push(entry);
+    }
+    let found = sqlx::query!(
+        "SELECT id, collection FROM entries
+         WHERE project_id = $1 AND environment_id = $2 AND id = ANY($3)
+         FOR KEY SHARE",
+        tx.project,
+        tx.environment,
+        &entries
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    for (reference, entry) in references.iter().zip(&entries) {
+        if !found
+            .iter()
+            .any(|row| row.id == *entry && row.collection == reference.collection)
+        {
+            return Err(missing(reference));
+        }
+    }
+    let fields: Vec<&str> = references.iter().map(|r| r.field.as_str()).collect();
+    let positions: Vec<i16> = references
+        .iter()
+        .map(|r| i16::try_from(r.position).unwrap_or(i16::MAX))
+        .collect();
+    let collections: Vec<&str> = references.iter().map(|r| r.collection.as_str()).collect();
+    sqlx::query!(
+        "INSERT INTO revision_references
+           (project_id, environment_id, revision_id, field, position, collection, entry_id)
+         SELECT $1, $2, $3, field, position, collection, entry_id
+         FROM unnest($4::text[], $5::int2[], $6::text[], $7::uuid[])
+              AS t (field, position, collection, entry_id)",
+        tx.project,
+        tx.environment,
+        revision,
+        &fields as &[&str],
+        &positions,
+        &collections as &[&str],
+        &entries
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
+}
+
+fn missing(reference: &ContentReference) -> DbError {
+    DbError::MissingReference {
+        field: reference.field.clone(),
+        position: reference.position,
+        many: reference.many,
+    }
 }
 
 /// Another entry of `collection` with `slug`, as its draft's slug or its published one: what a

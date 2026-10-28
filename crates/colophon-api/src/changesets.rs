@@ -29,6 +29,7 @@ use colophon_db::{
     idempotency::{self, Claim},
     publish::{self, Base, Refusal},
     releases,
+    releases::BrokenReference,
     scope::ProjectTransaction,
 };
 use colophon_domain::{
@@ -759,6 +760,15 @@ fn refused(refusal: Refusal) -> ApiError {
             "",
             "an entry in this changeset has a slug that another entry still publishes; publish that entry's new slug first, or in the same changeset",
             None,
+        ),
+        // Readers never get a reference to an entry they can't get (D-065).
+        Refusal::BrokenReference(BrokenReference::NamesUnpublished { .. }) => ApiError::conflict(
+            "references_unpublished",
+            "an entry in this changeset names an entry that isn't published; publish that entry first, or in the same changeset",
+        ),
+        Refusal::BrokenReference(BrokenReference::StillNamed { .. }) => ApiError::conflict(
+            "still_referenced",
+            "an entry this changeset takes down is named by a published entry; change or take down that entry first, or in the same changeset",
         ),
     }
 }

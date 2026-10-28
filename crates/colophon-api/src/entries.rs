@@ -541,6 +541,7 @@ pub(crate) async fn create(
         title: content.title(),
         slug: content.slug(),
         schema_version: version,
+        references: content.references(),
     };
     let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision)
         .await
@@ -630,6 +631,7 @@ pub(crate) async fn save(
         title: content.title(),
         slug: content.slug(),
         schema_version: version,
+        references: content.references(),
     };
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.
     match entries::save(&mut tx, entry, expected, revision)
