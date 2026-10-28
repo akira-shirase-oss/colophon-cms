@@ -16,10 +16,12 @@ measurements. A milestone is done when its **proof gate** passes with stored evi
 | P4 | Time travel and media | Rollback, pinned reads, revocation, upload fault tests, the media library | 3–4 weeks |
 | E | Editorial parity | Localization, scheduling, review stages, comments, tasks and live collaboration without a lost edit | 5–7 weeks |
 | D | Developer parity | Query API, GraphQL, SDK, API tokens, import from Strapi and Sanity, extension points | 4–5 weeks |
+| S | Scale and performance | Several servers and workers behind a load balancer survive kills and drains; every scenario has a stored stress result; Rust benchmarks gate CI (D-062) | 2–3 weeks |
+| V | Versions and distribution | One version across server, CLI, SDK and MCP; the CLI installs from npm, Cargo, Homebrew and a script on a clean machine (D-062) | 1–2 weeks |
 | P5 | Safe automation | Zero unauthorized actions in the eval set; interrupted bulk job resumes (X12) | 3–4 weeks |
 | P6 | Operate it | F09–F14, L05–L13, 24-hour soak, restore drill; **v0.1 release** | 3–4 weeks |
 
-Total: about **9–12 months** to v0.1, with the first public demo at the end of P3.
+Total: about **10–13 months** to v0.1 at the pace these estimates assumed, with the first public demo at the end of P3.
 
 ---
 
@@ -230,6 +232,39 @@ reported as delayed, never on time; locale variants publish independently; comme
 
 **Proof gate:** every query is permission-filtered (no field or entry leaks across roles); GraphQL and REST answer the
 same; an import of the Strapi and Sanity reference datasets round-trips; load scenarios for queries and GraphQL.
+
+## S: Scale and performance (D-062)
+
+**Goal:** Colophon runs as several servers and workers behind a load balancer, and every scenario has a known
+breaking point and fails safely past it.
+
+- `deploy`: a multi-instance stack (HAProxy in front of three servers, two workers) beside the single-server one.
+- `server`: rate limits per principal and per address, shared across instances in Valkey and failing safe without it;
+  readiness that drains before shutdown; a connection budget summed across instances.
+- `perf`: a stress mode for every k6 scenario (raise the rate until the latency gate breaks; record the highest
+  sustained rate and the failure mode); the same runs on one, two and three servers.
+- Rust: Criterion benchmarks for hot paths with a CI regression check; profiles of each milestone's heaviest scenario.
+
+**Proof gate:** a server killed under load behind the balancer fails only in-flight requests and idempotent retries
+succeed; a draining server finishes what it accepted; rate limits hold across instances and when Valkey is down;
+every scenario has a stored stress result with its knee and failure mode; throughput on three servers is measured
+against one, with the bottleneck named.
+
+## V: Versions and distribution (D-062)
+
+**Goal:** anyone can install the CLI, SDK and MCP server without building Rust, and every piece says whether it fits
+the server it talks to.
+
+- One semantic version per release for the server, worker, CLI, SDK and MCP server; `/api/v1` is the contract.
+- The server reports its version and API range; the CLI, SDK and MCP server explain an incompatibility in plain words.
+- Release workflow: binaries for macOS (arm64, x64), Linux (x64, arm64) and Windows (x64) with checksums and signed
+  provenance; `@colophon-cms/cli` on npm (a launcher with per-platform optional dependencies), `cargo install`, a
+  Homebrew tap, an install script, and container images for the server and worker.
+- `@colophon-cms/sdk` and the MCP server published from the same release.
+
+**Proof gate:** a release dry run builds every artifact; `npx @colophon-cms/cli --version`, `cargo install`, the
+Homebrew formula and the install script each install the same version on a clean machine in CI; an old CLI against a
+new server (and the reverse) gets the plain-words answer, tested.
 
 ## P5: Safe automation (≈ spec M4)
 

@@ -70,7 +70,7 @@ v0.1 is done when every box below is checked with stored evidence (commit, comma
 
 ## Scope
 
-### Core (v0.1, milestones P0–P6 and R, M, E, D)
+### Core (v0.1, milestones P0–P6 and R, M, E, D, S, V)
 
 **Every feature Strapi and Sanity offer** (D-057; the list and its status are in [COMPARISON.md](COMPARISON.md)),
 with **roles and permissions** down to fields and an entry's creator (D-058), built at the bar above: no feature counts
@@ -78,7 +78,9 @@ until its failure behaviour is tested and its evidence stored. And all modules i
 except the parked list: content model and revisions,
 localization in the data model, editorial review, releases and rollback, public delivery with caching and evidence,
 media (images), preview links, scheduled publishing, the CLI, the TypeScript SDK, automation (scoped tokens, bulk jobs,
-MCP), the Studio, the reference blog, the docs site, verification, operations and open-source hygiene.
+MCP), the Studio, the reference blog, the docs site, verification, operations and open-source hygiene; and, since D-062, several servers behind a load balancer with stress runs and Rust
+benchmarks (milestone S), and the CLI, SDK and MCP server versioned together and installable from npm, Cargo and
+Homebrew (milestone V).
 
 ### Later (after v0.1)
 

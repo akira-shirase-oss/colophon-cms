@@ -113,9 +113,9 @@ that builds them.
 |---|---|---|---|
 | Drafts with autosave, conflict detection | ✓ | ✓ | done (P1) |
 | Full history of every revision, from every write path | Paid, admin edits only | ✓ | done (P1); history UI and restore in P4 |
-| Content types defined at runtime, safe changes | Dev-only builder | Code | done (D-040); builder and data-aware changes building (3.6) |
+| Content types defined at runtime, safe changes | Dev-only builder | Code | done (D-040; the builder and changes checked against stored content, 3.6) |
 | Text, rich text, number, boolean, enum, date-time | ✓ | ✓ | done (D-040) |
-| Slug / UID, unique per collection | ✓ | ✓ | building (3.6) |
+| Slug / UID, unique per collection | ✓ | ✓ | done (3.6, D-054) |
 | References / relations (one, many, two-way) | ✓ | ✓ | M |
 | Components / objects, repeatable lists | ✓ | ✓ | M |
 | Dynamic zones / block arrays (page builder) | ✓ | ✓ | M |
@@ -129,16 +129,16 @@ that builds them.
 | Publish several entries together (releases) | ✓ | ✓ (Enterprise) | done (P2) |
 | Proof that a release reached the site | – | – | done (P3) |
 | Unpublish with revocation | Unpublish | Unpublish | done (P3) |
-| Scheduled publishing | ✓ | ✓ | E |
+| Scheduled publishing | ✓ | ✓ | done (D-060) |
 | Localization (i18n) | ✓ | Plugins | E (data model ready since D-034) |
 | Comments and tasks | – | ✓ | E |
 | Real-time collaboration and presence | – | ✓ | E (O-017) |
 | Visual preview / click-to-edit | Preview | Presentation | E |
 | Bulk actions, duplicate, saved views | ✓ | ✓ | E |
-| Roles: built-in and custom | ✓ | ✓ (by plan) | R (four fixed roles done, D-042) |
-| Field-level and "own entries" permissions | ✓ | ✓ (by plan) | R |
-| API tokens: read-only, full, custom | ✓ | ✓ | R (device sign-in and bearer tokens done, D-041) |
-| Audit log | Paid | ✓ (by plan) | R |
+| Roles: built-in and custom | ✓ | ✓ (by plan) | done (R.1, R.2; D-058) |
+| Field-level and "own entries" permissions | ✓ | ✓ (by plan) | done (R.3; D-058) |
+| API tokens: read-only, full, custom | ✓ | ✓ | R.4 (device sign-in and bearer tokens done, D-041) |
+| Audit log | Paid | ✓ (by plan) | R.4 |
 | SSO / OpenID Connect | Paid | ✓ (by plan) | done (Keycloak, D-031) |
 | REST delivery with caching | ✓ | ✓ | done (P2, P3) |
 | Query API: filters, sort, populate, field selection, perspectives | ✓ | GROQ | D |

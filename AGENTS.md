@@ -38,7 +38,16 @@ and CDN purge jobs (migrations 0012, 0013; D-049, D-050). Step 3.3 is done: prob
 evidence scoped to the locations checked (migration 0014; D-051). Step 3.4 is done: the reference site in `apps/web`,
 built from one release and promoted atomically (D-052, `perf/k6/site.js`). Step 3.5 is done: title search, entry states,
 revision comparison and review diffs, and the design system: every shadcn-svelte component in `packages/ui` on
-Colophon's tokens (D-053, D-056), shown at `/studio/design`. Next is step 3.6: slugs and the content-type builder.
+Colophon's tokens (D-053, D-056), shown at `/studio/design`. Step 3.6 is done: slugs, and a content-type builder whose
+changes are checked against stored content (migration 0016; D-054, D-055). Step 3.7 is done but for a check at phone
+width: plain words from one glossary (`apps/studio/src/lib/words.ts`), one-click publish, a first-run checklist, and
+sign-up with a one-time setup code for a fresh installation (migration 0020, `perf/k6/setup.js`; D-059, D-061).
+Milestone R, roles and permissions as data (D-058): R.1 (the four built-in roles as data, behaviour unchanged;
+migration 0017), R.2 (custom roles and the Studio's role editor; migration 0018, `perf/k6/roles.js`) and R.3 (field
+lists and `own` conditions; migrations 0021, 0022) are done. Scheduled publishing, from milestone E, is done (migration
+0019, the worker's scheduler, `perf/k6/schedules.js`; D-060). Next: R.4 (API tokens and the audit log), then step 3.8
+(the site goes live, the first public demo). D-062 adds milestones S (several servers behind a load balancer, stress
+runs, Rust benchmarks) and V (versions, and the CLI, SDK and MCP server packaged for npm, Cargo and Homebrew).
 
 ## Read first
 
