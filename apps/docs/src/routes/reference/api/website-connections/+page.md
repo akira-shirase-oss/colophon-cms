@@ -76,7 +76,7 @@ Adds a destination. It receives jobs from the next release on.
 
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
-| `403` | `forbidden` | | Your role lacks `destinations.manage`. |
+| `403` | `forbidden` | `missing_permission` | Your role lacks `destinations.manage`. |
 | `422` | `validation_failed` | `invalid_kind` | `/kind` isn't one of the three. |
 | `422` | `validation_failed` | `invalid_location` | `/location` on a kind other than `probe`, or breaking the rule. |
 | `422` | `validation_failed` | `invalid_name` | `/name` breaks the rule. |

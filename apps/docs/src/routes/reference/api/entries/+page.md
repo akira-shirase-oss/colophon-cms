@@ -14,7 +14,7 @@ Since step R.3 (D-058), a role's permission can be narrowed to some fields, or t
 
 - **Reads leave out what your role can't read.** The draft's `content` holds only the fields you may read, and `hidden_fields` lists the content type's fields it left out. `revision.title` is empty when you can't read the title field. The same holds for revisions and their content.
 - **Fields you can read but not change** are listed in `locked_fields`; the Studio shows them disabled.
-- **An entry you can't read at all is `404`**, exactly like one that doesn't exist. A list holds only your own entries when that is all your role may read, with titles blank where the title field is hidden. Title search (`q`) matches the draft titles of every entry the list may hold, including titles your role can't read: such an entry is listed, with its title blank.
+- **An entry you can't read at all is `404`**, exactly like one that doesn't exist. A list holds only your own entries when that is all your role may read, with titles blank where the title field is hidden. A title search (`q`) looks only at titles your role may read: when it reads titles only on your own entries, only those are searched, and when it reads none, the search is refused with `403` `titles_not_readable`. <Status building="api/dashboard-fields" />
 - **Creating** may set only fields your role may create; setting another is refused with `field_not_permitted`.
 - **Saving** puts back every field you can't read exactly as stored, so leaving one out never erases it; sending one with a different value is refused. A change to any field your role can't change is refused too. Both are `422` `field_not_permitted`, with `details.pointer` at the field (`/price`), measured against the revision named in `If-Match`, which never changes.
 - **Publish requests** may pin an entry only if your role may change it ([Publish requests](/reference/api/publish-requests/)).
@@ -77,6 +77,7 @@ The collection's entries, newest first, each with its draft's revision and what 
 | `limit` | Entries per page, 1 to 100, default 20. |
 | `cursor` | The `next_cursor` of the previous page. It works only for this project, environment and collection. |
 | `q` | Searches draft titles: matches anywhere, ignoring case; `%`, `_` and `\` match themselves. Trimmed; empty means no search; at most 100 characters. |
+| `created_by` | An identity id: only the entries that person or API token created. When your role reads only your own entries, any other id gives an empty page. <Status building="api/dashboard-fields" /> |
 
 **Response:** `200`, ordered by when each entry was created (newest first), not by when it was last saved.
 
@@ -85,6 +86,7 @@ The collection's entries, newest first, each with its draft's revision and what 
   "data": [
     {
       "id": "0193f6b0-2c4d-7e5f-8a91-b2c3d4e5f607",
+      "created_by": "0193f6c4-9e0f-7a1b-8c2d-3e4f5a6b7c8d",
       "updated_at": "2026-10-27T09:14:03.512841Z",
       "revision": { "id": "0193f6b4-1e2f-7a3b-8c4d-5e6f7a8b9c0d", "base_revision_id": "0193f6b1-7d8e-7f90-a1b2-c3d4e5f60718", "author_id": "0193f6c4-9e0f-7a1b-8c2d-3e4f5a6b7c8d", "created_at": "2026-10-27T09:14:03.512841Z", "content_hash": "sha256:9f2c…", "title": "Release notes" },
       "published": { "revision_id": "0193f6b1-7d8e-7f90-a1b2-c3d4e5f60718", "generation": 41 }
@@ -94,12 +96,12 @@ The collection's entries, newest first, each with its draft's revision and what 
 }
 ```
 
-`published` is `null` for an entry readers don't have. When its `revision_id` differs from the draft's, the entry has changed since it went live; `generation` is the release it went out in.
+`created_by` is who created the entry, a person or an API token. `published` is `null` for an entry readers don't have. When its `revision_id` differs from the draft's, the entry has changed since it went live; `generation` is the release it went out in.
 
 | Status | `code` | When |
 |---|---|---|
-| `400` | `bad_request` | `limit` outside 1 to 100, a cursor from another list, or a search over 100 characters. |
-| `403` | `forbidden` | Your role can't read entries here, not even your own. |
+| `400` | `bad_request` | `limit` outside 1 to 100, a cursor from another list, a search over 100 characters, or a `created_by` that isn't an id. |
+| `403` | `forbidden` | Your role can't read entries here, not even your own (`missing_permission`); or it searches titles it can't read (`titles_not_readable`). |
 | `404` | `not_found` | No such project, environment or collection, or you aren't a member. |
 
 ### `POST {P}/collections/{collection}/entries`
@@ -122,7 +124,7 @@ Creates an entry and its first revision.
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
 | `400` | `bad_request` | | The `Idempotency-Key` is malformed. |
-| `403` | `forbidden` | | Your role can't create entries here. |
+| `403` | `forbidden` | `missing_permission` | Your role can't create entries here; `details.permission` is `content.create`. |
 | `404` | `not_found` | | No such project, environment or collection. |
 | `409` | `conflict` | `idempotency_key_reused` | The key was used for different content. |
 | `409` | `conflict` | `slug_taken` | Another entry of the collection has this URL name, as its draft or published; `details.entries` names it when your role may read its title. |
@@ -168,7 +170,7 @@ Content-Type: application/json
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
 | `400` | `bad_request` | | `If-Match` isn't one revision `ETag` exactly as given (no `*`, no `W/`, no list), or the key is malformed. |
-| `403` | `forbidden` | | Your role can't change entries here, or can't change this one (another person's, when yours is limited to your own). |
+| `403` | `forbidden` | `missing_permission` | Your role can't change entries here, or can't change this one (another person's, when yours is limited to your own). |
 | `404` | `not_found` | | No such entry in this collection, or your role can't read it. |
 | `409` | `conflict` | `stale_revision` | The draft has moved on; `ETag` names its revision now. |
 | `409` | `conflict` | `idempotency_key_reused` | The key was used for a different save. |

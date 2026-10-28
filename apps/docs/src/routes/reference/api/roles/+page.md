@@ -165,8 +165,8 @@ Creates a role.
 
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
-| `403` | `forbidden` | | Your role lacks `roles.manage`, or a power you are giving. |
-| `409` | `conflict` | | The project has a role with this key. |
+| `403` | `forbidden` | `missing_permission`, `cannot_grant` | Your role lacks `roles.manage`, or a power you are giving. |
+| `409` | `conflict` | `role_exists` | The project has a role with this key. |
 | `422` | `validation_failed` | `invalid_role_key` | `/key` breaks the rule. |
 | `422` | `validation_failed` | `invalid_role_name` | `/name` breaks the rule. |
 | `422` | `validation_failed` | `invalid_role_description` | `/description` breaks the rule. |
@@ -212,9 +212,9 @@ Changing a role locks only that role; its version decides which of two concurren
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
 | `400` | `bad_request` | | `If-Match` isn't one role `ETag`, such as `"v3"`. |
-| `403` | `forbidden` | | Your role lacks `roles.manage`, or a power of the role before or after. |
+| `403` | `forbidden` | `missing_permission`, `cannot_grant` | Your role lacks `roles.manage`, or a power of the role before or after. |
 | `404` | `not_found` | | No such role. |
-| `409` | `conflict` | | The role is `owner`, which is fixed. |
+| `409` | `conflict` | `owner_role_fixed` | The role is `owner`, which is fixed. |
 | `409` | `conflict` | `stale_role` | It changed since your version; the `ETag` header names the current one. |
 | `422` | `validation_failed` | as for creating | A field or permission breaks a rule. |
 | `428` | `precondition_required` | | No `If-Match`. |
@@ -233,9 +233,9 @@ A role that members hold, or that pending invitations offer, can't be deleted: g
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
 | `400` | `bad_request` | | `If-Match` is malformed. |
-| `403` | `forbidden` | | Your role lacks `roles.manage`, or a power of this role. |
+| `403` | `forbidden` | `missing_permission`, `cannot_grant` | Your role lacks `roles.manage`, or a power of this role. |
 | `404` | `not_found` | | No such role. |
-| `409` | `conflict` | | The role is `owner`. |
+| `409` | `conflict` | `owner_role_fixed` | The role is `owner`. |
 | `409` | `conflict` | `role_in_use` | Members hold it or pending invitations offer it; the message says how many of each. |
 | `409` | `conflict` | `stale_role` | It changed since your version; the `ETag` header names the current one. |
 | `428` | `precondition_required` | | No `If-Match`. |

@@ -132,7 +132,7 @@ Between them, 1 to 100 different entries; an entry can't be in both. "Same reque
 
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
-| `403` | `forbidden` | | Your role can't change content in one of the items' collections. |
+| `403` | `forbidden` | `missing_permission` | Your role can't change content in one of the items' collections; `details.permission` is `content.update`. |
 | `409` | `conflict` | `idempotency_key_reused` | The key was used for a different changeset. |
 | `422` | `validation_failed` | `invalid_title` | `/title` breaks the rule. |
 | `422` | `validation_failed` | `invalid_entries` | No entries, more than 100, or one listed twice (`/entries`). |
@@ -165,7 +165,7 @@ Asks for review. Submitting one that is already submitted changes nothing.
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
 | `400` | `bad_request` | | `If-Match` isn't one changeset `ETag`. |
-| `403` | `forbidden` | | Your role can't change content in one of its collections. |
+| `403` | `forbidden` | `missing_permission` | Your role can't change content in one of its collections. |
 | `404` | `not_found` | | No such changeset. |
 | `409` | `conflict` | `stale_changeset` | Its hash changed since you looked; the `ETag` header names the current one. |
 | `428` | `precondition_required` | | No `If-Match`. |
@@ -204,10 +204,11 @@ Approves the exact hash in `If-Match`, or asks for changes to it. The review is 
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
 | `400` | `bad_request` | | `If-Match` is malformed. |
-| `403` | `forbidden` | | Your role can't review content in one of its collections. |
+| `403` | `forbidden` | `missing_permission` | Your role can't review content in one of its collections. |
 | `404` | `not_found` | | No such changeset. |
 | `409` | `conflict` | `stale_changeset` | Its hash changed since you looked. |
-| `409` | `conflict` | | It hasn't been submitted for review yet, or an entry moved on after it was pinned (refresh it first). |
+| `409` | `conflict` | `not_submitted` | It hasn't been submitted for review yet. |
+| `409` | `conflict` | `entries_moved_on` | An entry moved on after it was pinned: refresh it first. |
 | `422` | `validation_failed` | `invalid_decision` | `/decision` isn't one of the two. |
 | `422` | `validation_failed` | `invalid_comment` | `/comment` is over 2,000 characters. |
 | `428` | `precondition_required` | | No `If-Match`. |
@@ -260,7 +261,7 @@ Content-Type: application/json
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
 | `400` | `bad_request` | | `If-Match` or the key is malformed. |
-| `403` | `forbidden` | | Your role can't publish content in one of its collections. |
+| `403` | `forbidden` | `missing_permission` | Your role can't publish content in one of its collections. |
 | `404` | `not_found` | | No such changeset. |
 | `409` | `conflict` | `generation_moved` | Another release committed first; `Colophon-Generation` names the environment's generation now. |
 | `409` | `conflict` | `stale_changeset` | Its hash changed since you looked. |
@@ -269,7 +270,10 @@ Content-Type: application/json
 | `409` | `conflict` | `value_taken` | An item would put live a value of a [unique field](/reference/content-modelling/#unique-fields) another entry still publishes. Publish that entry's new value first, or in the same changeset. <Status building="M.4" /> |
 | `409` | `conflict` | `references_unpublished` | An item would publish an entry whose [references](/reference/content-modelling/#references) name an entry that isn't published, and wouldn't be. Publish that entry first, or in the same changeset. <Status building="M.2" /> |
 | `409` | `conflict` | `still_referenced` | An item would take down an entry that a published entry still names. Change or take down that entry first, or in the same changeset. <Status building="M.2" /> |
-| `409` | `conflict` | | Not approved: already published, stale, approval expired, or never approved. The message says which and what to do. |
+| `409` | `conflict` | `already_published` | It has been published already. |
+| `409` | `conflict` | `entries_moved_on` | An entry moved on after it was pinned: refresh it and have it reviewed again. |
+| `409` | `conflict` | `approval_expired` | Its approval expired: it needs reviewing again. |
+| `409` | `conflict` | `not_approved` | It isn't approved: open, waiting for review, or changes were asked for. |
 | `422` | `validation_failed` | `invalid_generation` | `/base_generation` is negative. |
 | `428` | `precondition_required` | | No `If-Match`, or no `Idempotency-Key`. |
 
@@ -349,10 +353,11 @@ Content-Type: application/json
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
 | `400` | `bad_request` | | `If-Match` is malformed. |
-| `403` | `forbidden` | | Your role can't publish content in one of its collections, so it can't schedule it either. |
+| `403` | `forbidden` | `missing_permission` | Your role can't publish content in one of its collections, so it can't schedule it either. |
 | `404` | `not_found` | | No such changeset. |
 | `409` | `conflict` | `stale_changeset` | Its hash changed since you looked. |
-| `409` | `conflict` | | Not approved (already published, stale, approval expired, or never approved), or it already has a pending schedule: cancel that one to choose another time. |
+| `409` | `conflict` | `already_published`, `entries_moved_on`, `approval_expired`, `not_approved` | Not approved, as for publishing. |
+| `409` | `conflict` | `already_scheduled` | It already has a pending schedule: cancel that one to choose another time. |
 | `422` | `validation_failed` | `invalid_local_time` | `/local_time` isn't a date and time. |
 | `422` | `validation_failed` | `unknown_time_zone` | `/time_zone` isn't an IANA time zone. |
 | `422` | `validation_failed` | `invalid_choice` | `/choice` is neither `earlier` nor `later`. |
@@ -389,7 +394,7 @@ Cancels a pending schedule. A run already in progress finishes first; cancelling
 |---|---|---|
 | `403` | `forbidden` | It isn't yours, and your role can't publish its content. |
 | `404` | `not_found` | No such schedule. |
-| `409` | `conflict` | It already published, was blocked, or was cancelled already. |
+| `409` | `conflict` | It already published (`schedule_published`; cancelling never undoes a release), was blocked when its time came (`schedule_blocked`), or was cancelled already (`schedule_cancelled`). |
 
 ## Proof
 

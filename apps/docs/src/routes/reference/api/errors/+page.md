@@ -35,7 +35,7 @@ Renaming a code is a breaking change. They are defined in `ErrorCode` in `crates
 | `malformed_json` | 400 | The body isn't valid JSON, or doesn't have the expected shape: a required field missing, a value of the wrong type, or an unknown field in a body with a fixed shape. The message quotes the parser. |
 | `sign_in_failed` | 400 | Sign-in failed, was cancelled, or its attempt expired or was already used. Details are logged, never shown. |
 | `unauthorized` | 401 | Not signed in, the session or token ended (12 hours after sign-in, 2 hours unused, revoked), or a bearer token isn't valid. |
-| `forbidden` | 403 | Signed in, but not allowed: a role without the permission, a browser write without a trusted `Origin` or a matching CSRF token, a bearer token approving a device, or someone who isn't an administrator creating a project. The message says which. |
+| `forbidden` | 403 | Signed in, but not allowed: a role without the permission, a browser write without a trusted `Origin` or a matching CSRF token, a bearer token approving a device, or someone who isn't an administrator creating a project. `details.reason` says which ([Refusals](#refusals)). |
 | `not_found` | 404 | No such resource, or one you may not see; the two look the same. Also an id that isn't a UUID, and an unknown, expired or used invitation, device code or device secret. |
 | `gone` | 410 | Delivery only: it was published, and has been taken down. |
 | `conflict` | 409 | The request conflicts with the current state; `details.reason` says how, [when it can](#conflicts). |
@@ -62,9 +62,28 @@ Renaming a code is a breaking change. They are defined in `ErrorCode` in `crates
 | `Cache-Control: no-store` | `410`: if the entry is published again, no cache may still say it's gone. |
 | `Connection: close` | Sometimes on `413` or another early refusal, when the unread body was over 32 MiB or took more than 2 s to drain. |
 
+## Refusals
+
+Every `403` has `details.reason`, a stable code to act on instead of the message, and `details.pointer`, empty. A missing permission also names it in `details.permission`, as roles write permissions:
+
+```json
+{"error":{"code":"forbidden","message":"your role can't publish this content","details":{"reason":"missing_permission","pointer":"","permission":"content.publish"},"request_id":"0193f6e2-8b9c-7d0e-9f1a-2b3c4d5e6f70"}}
+```
+
+| `details.reason` | Routes | When |
+|---|---|---|
+| `missing_permission` | any route a permission guards | Your role lacks the permission here, named in `details.permission` (`content.create`, `members.manage`, …). |
+| `cannot_grant` | roles, members, invitations | Giving a role or a member powers your own role doesn't hold, or changing a member whose role has powers yours lacks. |
+| `administrators_only` | `POST /api/v1/projects` | Only an administrator creates projects. |
+| `not_set_up` | `POST /api/v1/projects` | The installation has no administrator yet: enter the setup code its server printed, or have its operator run `colophon admin bootstrap`. |
+| `browser_session_required` | `POST /auth/device/approve` | A device is approved from a browser where you are signed in, never with a bearer token. |
+| `origin_not_allowed` | any cookie write | The `Origin` header isn't a trusted origin. |
+| `csrf_token_invalid` | any cookie write | The `X-CSRF-Token` header is missing or doesn't match the session's. |
+| `titles_not_readable` | `GET {P}/collections/{collection}/entries?q=` | Your role can't read titles in this collection, not even on your own entries, so it can't search them. |
+
 ## Conflicts
 
-A `409` carries a reason when the client can act on it, and a header naming the current state:
+Every `409` carries a reason, and some a header naming the current state:
 
 | `details.reason` | Routes | When | Also in the response |
 |---|---|---|---|
@@ -81,21 +100,21 @@ A `409` carries a reason when the client can act on it, and a header naming the 
 | `references_unpublished` | `publish` | The release would publish an entry naming an entry that isn't published and wouldn't be. <Status building="M.2" /> | |
 | `still_referenced` | `publish` | The release would take down an entry a published entry still names. <Status building="M.2" /> | |
 | `already_set_up` | `POST /api/v1/setup` | The installation has an administrator already, so setup codes do nothing; ask one to invite you to a project. | |
-
-Other conflicts have no reason, only a message:
-
-| Route | Message |
-|---|---|
-| `POST /api/v1/projects` | a project with this slug already exists |
-| `POST {P}/content-types` | a content type with this slug already exists |
-| `POST /api/v1/projects/{project}/roles` | this project already has a role with that key |
-| `PUT`, `DELETE` the `owner` role | the owner role is fixed: it always holds every permission |
-| `PUT`, `DELETE` a member | a project must keep at least one owner |
-| `POST /api/v1/invitations/accept` | you are already a member of this project |
-| `POST {P}/changesets/{changeset}/reviews` | this changeset hasn't been submitted for review yet; or an entry moved on after this changeset pinned it, so refresh it first |
-| `POST {P}/changesets/{changeset}/publish` | already published; an entry moved on (refresh and review again); the approval has expired; or only an approved changeset can be published |
-| `POST {P}/changesets/{changeset}/schedule` | as for `publish`; or this publish request is already scheduled; cancel that schedule to choose another time |
-| `DELETE {P}/schedules/{schedule}` | this schedule has published already; cancelling never undoes a release; or it was blocked when its time came; or it was cancelled already |
+| `project_exists` | `POST /api/v1/projects` | A project with this slug exists. | |
+| `content_type_exists` | `POST {P}/content-types` | A content type with this slug exists. | |
+| `role_exists` | `POST /api/v1/projects/{project}/roles` | The project has a role with this key. | |
+| `owner_role_fixed` | `PUT`, `DELETE` the `owner` role | The owner role always holds every permission. | |
+| `last_owner` | `PUT`, `DELETE` a member | A project must keep at least one owner. | |
+| `already_member` | `POST /api/v1/invitations/accept` | You are a member of this project already; the invitation stays unused. | |
+| `not_submitted` | `reviews` | The changeset hasn't been submitted for review yet. | |
+| `entries_moved_on` | `reviews`, `publish`, `schedule` | An entry moved on after the changeset pinned it: refresh it, and have it reviewed again. | |
+| `already_published` | `publish`, `schedule` | The changeset has been published already. | |
+| `approval_expired` | `publish`, `schedule` | The approval expired: it needs reviewing again. | |
+| `not_approved` | `publish`, `schedule` | Only an approved changeset can be published or scheduled. | |
+| `already_scheduled` | `schedule` | It has a pending schedule; cancel that one to choose another time. | |
+| `schedule_published` | `DELETE {P}/schedules/{schedule}` | It has published already; cancelling never undoes a release. | |
+| `schedule_blocked` | `DELETE {P}/schedules/{schedule}` | It was blocked when its time came; there is nothing to cancel. | |
+| `schedule_cancelled` | `DELETE {P}/schedules/{schedule}` | It was cancelled already. | |
 
 ## Validation reasons
 

@@ -46,8 +46,8 @@ A project you aren't a member of answers `404`, exactly as one that doesn't exis
 
 **Writes from a browser.** Every cookie-authenticated request with a method other than `GET`, `HEAD` or `OPTIONS` needs both:
 
-- an `Origin` header equal, character for character, to a trusted origin: the server's public origin, or one listed in `COLOPHON_TRUSTED_ORIGINS` (comma-separated). Otherwise `403` `forbidden`, "this origin may not make changes";
-- an `X-CSRF-Token` header equal to the `colophon_csrf` cookie's value. Otherwise `403` `forbidden`, "missing or invalid CSRF token".
+- an `Origin` header equal, character for character, to a trusted origin: the server's public origin, or one listed in `COLOPHON_TRUSTED_ORIGINS` (comma-separated). Otherwise `403` `forbidden` with `details.reason` `origin_not_allowed`, "this origin may not make changes";
+- an `X-CSRF-Token` header equal to the `colophon_csrf` cookie's value. Otherwise `403` `forbidden` with `details.reason` `csrf_token_invalid`, "missing or invalid CSRF token".
 
 ```http
 PUT /api/v1/projects/0193f6a2-5b1c-7d3e-9f40-1a2b3c4d5e6f/environments/production/collections/articles/entries/0193f6b0-2c4d-7e5f-8a91-b2c3d4e5f607 HTTP/1.1
@@ -63,7 +63,7 @@ Idempotency-Key: 4d1f6a0e-studio-save-0003
 
 There are no API tokens for scripts and agents yet; a token is always a person's. <Status planned="R.4" />
 
-**Who may do what** is decided per project by the caller's role, a list of permissions such as `content.update` on one collection or on all of them, which may be narrowed to some fields or to the caller's own entries ([Roles](/reference/api/roles/)). Each route below names the permission it needs and the built-in roles that hold it; [Roles](/reference/api/roles/#built-in-roles) has the full table. A caller without the permission gets `403` `forbidden`, but only inside a project they can see: outside it, `404`.
+**Who may do what** is decided per project by the caller's role, a list of permissions such as `content.update` on one collection or on all of them, which may be narrowed to some fields or to the caller's own entries ([Roles](/reference/api/roles/)). Each route below names the permission it needs and the built-in roles that hold it; [Roles](/reference/api/roles/#built-in-roles) has the full table. A caller without the permission gets `403` `forbidden`, with `details.reason` `missing_permission` and the permission in `details.permission`, but only inside a project they can see: outside it, `404`. Every `403` and `409` names its reason in a stable code ([Errors](/reference/api/errors/#refusals)). <Status building="api/dashboard-fields" />
 
 ## Preconditions: If-Match and ETags
 

@@ -305,7 +305,7 @@ The code is hashed as soon as the body is read; only hashes reach PostgreSQL, th
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
 | `401` | `unauthorized` | | Not signed in. |
-| `403` | `forbidden` | | A cookie write without a trusted `Origin` or a matching CSRF token. |
+| `403` | `forbidden` | `origin_not_allowed`, `csrf_token_invalid` | A cookie write without a trusted `Origin` or a matching CSRF token. |
 | `409` | `conflict` | `already_set_up` | The installation has an administrator already; ask one to invite you to a project. Nothing is recorded. |
 | `422` | `validation_failed` | `setup_code_invalid` | Wrong, already used or expired: one answer for all three, at `/code`, so a guesser can't tell which codes once existed. |
 | `429` | `rate_limited` | | More than five attempts by you, or twenty by anyone, in the last fifteen minutes. `Retry-After` says how many seconds until there is room; a refused attempt isn't counted. The limits are counted in PostgreSQL, so every server process shares them. |

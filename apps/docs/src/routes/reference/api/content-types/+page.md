@@ -182,8 +182,8 @@ Creates a content type, at version 1.
 
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
-| `403` | `forbidden` | | Your role can't change content types here. |
-| `409` | `conflict` | | A content type with this slug exists. |
+| `403` | `forbidden` | `missing_permission` | Your role can't change content types here. |
+| `409` | `conflict` | `content_type_exists` | A content type with this slug exists. |
 | `409` | `conflict` | `idempotency_key_reused` | The key was used for a different request. |
 | `422` | `validation_failed` | `invalid_slug` | `/slug` breaks the rule. |
 | `422` | `validation_failed` | `reserved_slug` | `/slug` names a Studio page. |
@@ -226,7 +226,7 @@ Stores a new definition as the next version, if [the change is allowed](#changin
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
 | `400` | `bad_request` | | `If-Match` isn't one content type `ETag`, such as `"v3"`, or the key is malformed. |
-| `403` | `forbidden` | | Your role can't change this content type. |
+| `403` | `forbidden` | `missing_permission` | Your role can't change this content type. |
 | `404` | `not_found` | | No content type with this slug. |
 | `409` | `conflict` | `stale_version` | It changed since your version; the `ETag` header names the current one. Nothing was written. |
 | `409` | `conflict` | `idempotency_key_reused` | The key was used for a different request. |

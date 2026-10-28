@@ -54,8 +54,8 @@ Creates a project, with a `production` environment, the built-in `articles` cont
 
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
-| `403` | `forbidden` | | You aren't an administrator, or the installation has none yet; then the message says to enter the setup code the server printed when it started, or to have its operator run `colophon admin bootstrap`. |
-| `409` | `conflict` | | A project with this slug exists. |
+| `403` | `forbidden` | `administrators_only`, `not_set_up` | You aren't an administrator (`administrators_only`), or the installation has none yet (`not_set_up`); then the message says to enter the setup code the server printed when it started, or to have its operator run `colophon admin bootstrap`. |
+| `409` | `conflict` | `project_exists` | A project with this slug exists. |
 | `422` | `validation_failed` | `invalid_slug` | `/slug` breaks the rule. |
 | `422` | `validation_failed` | `invalid_name` | `/name` breaks the rule. |
 
@@ -132,9 +132,9 @@ Owner rows are locked before the change and the caller's role is read again unde
 
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
-| `403` | `forbidden` | | Your role lacks `members.manage`, or one of the two roles' powers. |
+| `403` | `forbidden` | `missing_permission`, `cannot_grant` | Your role lacks `members.manage`, or one of the two roles' powers. |
 | `404` | `not_found` | | No such member. |
-| `409` | `conflict` | | The project would lose its last owner. |
+| `409` | `conflict` | `last_owner` | The project would lose its last owner. |
 | `422` | `validation_failed` | `invalid_role` | `/role` isn't shaped like a role key. |
 | `422` | `validation_failed` | `unknown_role` | The project has no role with that key. |
 
@@ -207,7 +207,7 @@ Makes an invitation link.
 
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
-| `403` | `forbidden` | | Your role lacks `members.manage`, or a power of the role offered. |
+| `403` | `forbidden` | `missing_permission`, `cannot_grant` | Your role lacks `members.manage`, or a power of the role offered. |
 | `422` | `validation_failed` | `invalid_role` | `/role` isn't shaped like a role key. |
 | `422` | `validation_failed` | `unknown_role` | The project has no such role. |
 | `422` | `validation_failed` | `invalid_label` | `/label` breaks the rule. |
@@ -274,7 +274,7 @@ Joins the project with the invitation's role, bound to whoever is signed in.
 | Status | `code` | When |
 |---|---|---|
 | `404` | `not_found` | Unknown, expired, revoked or already used. |
-| `409` | `conflict` | You are already a member. The invitation stays unused, for whoever it was meant for. |
+| `409` | `conflict` | You are already a member (`already_member`). The invitation stays unused, for whoever it was meant for. |
 
 ## Not built yet
 
