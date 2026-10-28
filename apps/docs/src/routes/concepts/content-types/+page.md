@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-A **content type** says what an entry of a collection holds: its fields, their kinds and their limits. Every save is checked against it on the server, whatever sent it, and a content type can only change in ways that keep every stored entry valid. Versioned definitions with six field types came first (step 1.5). Step 3.6 added a seventh type for **URL names** (slugs), checks a change against the content actually stored instead of refusing every narrowing, and gave the Studio a builder. References, components, lists and the rest of milestone M are planned.
+A **content type** says what an entry of a collection holds: its fields, their kinds and their limits. Every save is checked against it on the server, whatever sent it, and a content type can only change in ways that keep every stored entry valid. Versioned definitions with six field types came first (step 1.5). Step 3.6 added a seventh type for **URL names** (slugs), checks a change against the content actually stored instead of refusing every narrowing, and gave the Studio a builder. Milestone M, being built on a branch, adds eleven more types, references between entries, objects, lists and page-builder blocks, single types, patterns and unique fields: the [content modelling reference](/reference/content-modelling/) has every type, option and rule.
 
 ## A definition <Status done="1.5" />
 
@@ -90,9 +90,22 @@ The check validates documents in pages of 200 on the blocking thread pool, off t
 
 Settings, then Content types, opens a builder (`TypeBuilder.svelte`): rename the type and its fields, add fields of every type, change limits and whether a field is required, and remove fields. The server decides what is safe; a refusal lists the entries in the way with links to them. In the builder, field ids, field types and the title field are fixed once saved. Slug fields get a *From title* suggestion in the editor that follows the server's rule.
 
+## Milestone M: more types and rules <Status building="M.1–M.4" />
+
+Steps M.1 to M.4 are built on a branch, with their tests, and not merged. They keep the same promises: the server checks every value, a rule that spans entries is the database's, and a type changes only in ways that keep stored entries valid.
+
+- **More field types** (D-064): email, URL, date, time, JSON, Markdown and colour, each stored in one form the Studio can reproduce; a description on any field, and a minimum length on text.
+- **References** (D-065): a field that names other entries by id. The database refuses an id that names no entry, and a release that would show readers a reference to an entry they can't get. Reading an entry says what references it.
+- **Objects, lists and page-builder blocks** (D-066): fields inside fields, at most three deep, every list bounded at 100 items.
+- **Single types** (D-067): a type that holds one entry, such as a site's settings, enforced by a unique index.
+- **Patterns** (D-069): a form a text value must match whole, in Rust's regular-expression syntax, matched in time that grows only with the value.
+- **Unique fields** (D-070): a value that belongs to one entry among drafts and one among what is published, compared exactly as stored.
+
+The [content modelling reference](/reference/content-modelling/) has every type, its options and stored form, each rule and refusal, and a worked example. The Studio's builder doesn't offer the newer types yet; they are defined through the API.
+
 ## Not built yet
 
-- References (one and many), components and nested fields, bounded lists, block lists, single types, and email, URL, date, time, JSON, Markdown and colour fields; validation by pattern, uniqueness, length and value; defaults, descriptions, groups and tabs. <Status planned="M" />
+- Defaults, conditional fields, groups and tabs, and shared components used by many types. <Status planned="M" />
 - Migrations with a plan, a dry run, approval and per-entry outcomes, for the changes D-055 still refuses. <Status planned="M" />
 - Image fields, with the media library. <Status planned="P4" />
 - Redirects when a URL name changes. <Status planned="P4" />
@@ -106,4 +119,4 @@ Settings, then Content types, opens a builder (`TypeBuilder.svelte`): rename the
 
 ## Design
 
-[Module 01, domain](/design/modules/01-domain/) and [module 02, db](/design/modules/02-db/); decisions D-040, D-054 and D-055 in the [decisions](/design/decisions/). [COMPARISON.md](https://github.com/akira-shirase-oss/colophon-cms/blob/main/docs/COMPARISON.md) compares content modelling with Strapi's and Sanity's. The API's side is in [Content types](/reference/api/content-types/).
+[Module 01, domain](/design/modules/01-domain/) and [module 02, db](/design/modules/02-db/); decisions D-040, D-054 and D-055 in the [decisions](/design/decisions/). Milestone M's decisions, D-064 to D-067, D-069 and D-070, are in `docs/DECISIONS.md` on the branch that builds them, and join the decisions here when it is merged. [COMPARISON.md](https://github.com/akira-shirase-oss/colophon-cms/blob/main/docs/COMPARISON.md) compares content modelling with Strapi's and Sanity's. The API's side is in [Content types](/reference/api/content-types/).

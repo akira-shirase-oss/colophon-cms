@@ -14,6 +14,7 @@ Colophon has one management API that everything uses, and one public API for web
 ## Tools and formats
 
 - [Command line](/reference/cli/): the `colophon` command.
+- [Content modelling](/reference/content-modelling/): every field type, its options and stored form, references, structures, single types, patterns and unique fields. <Status building="M.1–M.4" />
 - [Rich-text format](/reference/rich-text/): `colophon/rich-text` v1, the stored JSON of every rich-text field.
 - [Webhooks and website connections](/reference/webhooks/): webhooks, CDN purges and probes, and what each receives.
 
