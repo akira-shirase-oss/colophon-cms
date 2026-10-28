@@ -48,6 +48,63 @@ export const REQUEST_STATE: Record<ChangesetState, string> = {
 	published: 'Published'
 };
 
+/** An entry's title as a list shows it. The server leaves a title out when the role may not read
+ *  the title field, and a draft can have none yet; either way the row still needs words. */
+export function shownTitle(title: string): string {
+	return title.trim() === '' ? 'No title to show' : title;
+}
+
+/** A text field's pattern (D-069): the form its values must take, said as such. */
+export const ALLOWED_FORM = 'allowed form';
+/** The server refused a pattern it can't use (`invalid_pattern`). */
+export const INVALID_PATTERN =
+	'Colophon can’t use this allowed form. Write it as a regular expression, like [A-Z]{3}-[0-9]{4}, without look-around or back-references.';
+/** A value the server found not in its field's allowed form (`pattern_mismatch`), with the field's
+ *  help text, which is where a type says what the form is. */
+export function patternMismatch(label: string, help = ''): string {
+	return `${label} isn't in its ${ALLOWED_FORM}.${help.trim() === '' ? '' : ` ${help.trim()}`}`;
+}
+
+/** A field's default (D-071), as the builder offers it, and its refusal (`invalid_default`) when the
+ *  server's own words can't be shown. */
+export const DEFAULT_VALUE = 'Default value (optional)';
+export const INVALID_DEFAULT = 'This default isn’t a value the field accepts. Check its choices, limits and allowed form, or clear it.';
+
+/** Rate limits (D-076): the server turned a request away for a moment because this person or
+ *  address sent many at once, and its `Retry-After` said how long to wait. `auto`: the Studio
+ *  sends it again by itself (a save, a read); otherwise the person does. */
+export function busyFor(seconds: number, auto: boolean): string {
+	const count = Math.max(1, Math.ceil(seconds));
+	const wait = `${count} second${count === 1 ? '' : 's'}`;
+	return `Colophon is busy for a moment; ${auto ? 'trying' : 'try'} again in ${wait}.`;
+}
+
+/** Shared components (D-073): their two refusals. */
+export const UNKNOWN_COMPONENT = 'That component doesn’t exist in this project. Choose one from the list.';
+export const INVALID_COMPONENT = 'A component can’t hold another component, a URL name, or fields that are unique, have a default, or show only sometimes.';
+
+/** Conditional fields (D-072): the builder's control, its refusal (`invalid_condition`), and what
+ *  the editor says when a field stops applying and its value is cleared. */
+export const SHOW_WHEN = 'Show only when';
+export const INVALID_CONDITION =
+	'This condition can’t be used: it must name a yes-or-no or choice field that always applies, with some of its values, and the title always shows.';
+export function clearedNote(label: string, dependsOn: string, values: string[]): string {
+	return `${label} is cleared because it only applies when ${dependsOn} is ${values.join(' or ')}.`;
+}
+
+/** A unique field (D-070), as the builder offers it. */
+export const UNIQUE = 'No two entries may share this';
+/** A value another entry already has (`value_taken` on a save), said under the field. */
+export function valueTaken(label: string): string {
+	return `Another entry already has this ${label}.`;
+}
+/** A release that would publish a value another published entry still has (`value_taken`). */
+export const VALUE_TAKEN_ON_PUBLISH =
+	'A value in it that must be unique is still what readers get from another entry. Change that entry, or take it down, first or in the same publish request.';
+/** A field that can't be unique (`invalid_unique`). */
+export const INVALID_UNIQUE =
+	'Only a one-line text, email address, web address, number, date, time, or date and time at the top of the type can be kept unique.';
+
 /** "Release 4, live since 3 minutes ago" pieces: a release is named by its number. */
 export function releaseName(generation: number): string {
 	return `Release ${generation}`;

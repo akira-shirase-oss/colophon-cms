@@ -9,7 +9,7 @@ use axum::{
     http::{HeaderMap, Method, Request, StatusCode, header},
     routing::{get, post},
 };
-use colophon_api::{Dependency, HttpLimits, Readiness, middleware};
+use colophon_api::{AppState, BuildInfo, Dependency, HttpLimits, Readiness, middleware};
 use http_body_util::BodyExt as _;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -176,6 +176,43 @@ async fn readyz_reports_every_state_with_the_right_status_code() {
     let reply = send(app(readiness), get_request("/readyz")).await;
     assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(reply.body["status"], "draining");
+}
+
+#[tokio::test]
+async fn version_reports_the_build_and_the_api_versions_to_anyone() {
+    let build = BuildInfo {
+        version: "1.2.3-test.1",
+        commit: "50558a7601474ef9245d9c4afc916b17487b14f6",
+        build_date: "2026-10-28",
+    };
+    let state = AppState {
+        build,
+        ..AppState::without_services(ready())
+    };
+    let app = middleware::apply(colophon_api::routes(state), LIMITS);
+    // No session, no token: a client checks this before it signs in.
+    let reply = send(app, get_request("/version")).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(
+        reply.body,
+        json!({
+            "version": "1.2.3-test.1",
+            "commit": "50558a7601474ef9245d9c4afc916b17487b14f6",
+            "build_date": "2026-10-28",
+            "api": ["v1"]
+        })
+    );
+    assert_eq!(reply.headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(colophon_api::API_VERSIONS, ["v1"]);
+}
+
+#[tokio::test]
+async fn an_unstamped_build_says_unknown_instead_of_inventing_a_commit() {
+    let reply = send(app(ready()), get_request("/version")).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.body["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(reply.body["commit"], "unknown");
+    assert_eq!(reply.body["build_date"], "unknown");
 }
 
 #[tokio::test]

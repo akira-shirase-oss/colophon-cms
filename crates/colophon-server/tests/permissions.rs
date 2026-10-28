@@ -519,3 +519,158 @@ async fn an_author_reads_and_edits_titles_of_any_article_and_all_of_their_own() 
     .await;
     assert_eq!(pin_mine.status, StatusCode::CREATED, "{}", pin_mine.body);
 }
+
+/// Titles matching `q` in the project's articles, as `session` sees them.
+async fn search(session: &Session, project: &str, q: &str) -> Reply {
+    send(
+        session,
+        Method::GET,
+        &format!("{}?q={q}", entries(project)),
+        None,
+        &[],
+    )
+    .await
+}
+
+fn titles(reply: &Reply) -> Vec<&str> {
+    reply.body["data"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|entry| entry["revision"]["title"].as_str().expect("a title"))
+        .collect()
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_title_search_never_answers_from_titles_the_role_cant_read() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let guest = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    // Bodies of anyone's articles, but titles only of one's own.
+    let made = send(
+        &owner,
+        Method::POST,
+        &roles(&project),
+        Some(&json!({
+            "key": "body-reader",
+            "name": "Body reader",
+            "permissions": [
+                {"action": "content.read", "subject": "articles", "fields": ["body"]},
+                {"action": "content.read", "subject": "articles", "condition": "own"},
+                {"action": "content.create", "subject": "articles"}
+            ]
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    join(&owner, &guest, &project, "body-reader").await;
+    for (session, title) in [(&owner, "Secret launch plan"), (&guest, "My launch notes")] {
+        let created = send(
+            session,
+            Method::POST,
+            &entries(&project),
+            Some(&article(title, "Body")),
+            &[("idempotency-key", &key())],
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    }
+
+    // The owner's title is hidden from the guest, so a search can't confirm a guess at it.
+    let guessed = search(&guest, &project, "Secret").await;
+    assert_eq!(guessed.status, StatusCode::OK, "{}", guessed.body);
+    assert!(
+        titles(&guessed).is_empty(),
+        "a hidden title matched a search: {}",
+        guessed.body
+    );
+    // Their own titles they may search; both entries still list without a search.
+    assert_eq!(
+        titles(&search(&guest, &project, "launch").await),
+        ["My launch notes"]
+    );
+    let all = send(&guest, Method::GET, &entries(&project), None, &[]).await;
+    assert_eq!(all.body["data"].as_array().map(Vec::len), Some(2));
+    // The owner reads every title, so searches every one.
+    assert_eq!(titles(&search(&owner, &project, "launch").await).len(), 2);
+
+    // A role that can read no title at all can't search titles: refused, not answered.
+    let edited = send(
+        &owner,
+        Method::PUT,
+        &format!("{}/body-reader", roles(&project)),
+        Some(&json!({
+            "name": "Body reader",
+            "permissions": [{"action": "content.read", "subject": "articles", "fields": ["body"]}]
+        })),
+        &[("if-match", "\"v1\"")],
+    )
+    .await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    let refused = search(&guest, &project, "launch").await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+    assert_eq!(
+        refused.body["error"]["details"]["reason"],
+        "titles_not_readable"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_list_keeps_one_creator_s_entries_within_what_the_role_reads() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let guest = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    // Their own articles, nobody else's.
+    let made = send(
+        &owner,
+        Method::POST,
+        &roles(&project),
+        Some(&json!({
+            "key": "own-writer",
+            "name": "Own writer",
+            "permissions": [
+                {"action": "content.read", "subject": "articles", "condition": "own"},
+                {"action": "content.create", "subject": "articles"}
+            ]
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    join(&owner, &guest, &project, "own-writer").await;
+    let (owner_id, guest_id) = ids(&owner, &project).await;
+    for (session, title) in [(&owner, "The owner's"), (&guest, "The guest's")] {
+        let created = send(
+            session,
+            Method::POST,
+            &entries(&project),
+            Some(&article(title, "Body")),
+            &[("idempotency-key", &key())],
+        )
+        .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    }
+    let by = |session, creator: String| {
+        let path = format!("{}?created_by={creator}", entries(&project));
+        async move { send(session, Method::GET, &path, None, &[]).await }
+    };
+
+    // The owner reads everyone's, so may ask for anyone's.
+    assert_eq!(titles(&by(&owner, guest_id.clone()).await), ["The guest's"]);
+    assert_eq!(titles(&by(&owner, owner_id.clone()).await), ["The owner's"]);
+    // The guest reads only their own: asking for the owner's is an empty page, not a leak.
+    assert_eq!(titles(&by(&guest, owner_id).await), Vec::<&str>::new());
+    assert_eq!(titles(&by(&guest, guest_id).await), ["The guest's"]);
+    let malformed = by(&owner, "not-an-id".to_owned()).await;
+    assert_eq!(
+        malformed.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        malformed.body
+    );
+}

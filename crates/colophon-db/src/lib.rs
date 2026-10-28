@@ -7,7 +7,9 @@
 
 pub mod access;
 pub mod administrators;
+pub mod audit;
 pub mod changesets;
+pub mod components;
 pub mod content_types;
 pub mod delivery;
 pub mod destinations;
@@ -23,6 +25,7 @@ pub mod roles;
 pub mod schedules;
 pub mod scope;
 pub mod setup;
+pub mod tokens;
 
 use std::{str::FromStr, time::Duration};
 
@@ -89,6 +92,24 @@ pub enum DbError {
     /// (migration 0016, D-054).
     #[error("the slug is taken")]
     SlugTaken,
+    /// A value of a unique field is another entry's, as a draft or published, in the same
+    /// collection (migration 0027, D-070).
+    #[error("a unique value is taken")]
+    ValueTaken,
+    /// The collection is a single type and already has its entry (migration 0026, D-067).
+    #[error("this single type already has its entry")]
+    SingleExists,
+    /// A reference field names an entry that isn't one of its collection's (migration 0024,
+    /// D-065); nothing was written.
+    #[error("a reference names no entry of its collection")]
+    MissingReference {
+        /// The field.
+        field: String,
+        /// The place in its list.
+        position: u16,
+        /// Whether the field holds a list.
+        many: bool,
+    },
     /// Applying migrations failed.
     #[error("applying migrations failed")]
     Migrate(#[source] sqlx::migrate::MigrateError),
@@ -106,13 +127,15 @@ impl DbError {
         }
     }
 
-    /// A write's error: a violation of the slug indexes becomes `SlugTaken`, other unique
-    /// violations `Conflict`, the rest as [`Self::from_query`].
+    /// A write's error: a violation of the slug indexes becomes `SlugTaken`, of the unique
+    /// claims `ValueTaken`, other unique violations `Conflict`, the rest as [`Self::from_query`].
     pub(crate) fn from_write(error: sqlx::Error) -> Self {
         match &error {
             sqlx::Error::Database(database) if database.is_unique_violation() => {
                 match database.constraint() {
                     Some("entries_draft_slug" | "publications_live_slug") => Self::SlugTaken,
+                    Some("entries_single") => Self::SingleExists,
+                    Some("unique_claims_value") => Self::ValueTaken,
                     _ => Self::Conflict,
                 }
             }

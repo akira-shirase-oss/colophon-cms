@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM unique_claims\n         WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3 AND NOT published",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d1afa514ce5065df7939957f541f0fde93331c8326960a3c1a32b5b7a5f788b9"
+}

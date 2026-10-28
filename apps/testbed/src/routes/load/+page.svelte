@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { results } from '#lib/results.ts';
+	import { results, stressResults } from '#lib/results.ts';
 
 	const number = new Intl.NumberFormat('en');
 
@@ -7,6 +7,12 @@
 		return result.scenario === 'throughput'
 			? `${number.format(result.params.total ?? 0)} requests, ${result.params.vus} VUs`
 			: `${number.format(result.params.rate ?? 0)}/s for ${result.params.duration}`;
+	}
+
+	function topology(result: (typeof stressResults)[number]): string {
+		const { servers, workers, balancer } = result.topology;
+		const shape = `${servers} server${servers === 1 ? '' : 's'}`;
+		return balancer ? `${shape}, ${workers} workers behind ${balancer}` : shape;
 	}
 </script>
 
@@ -53,7 +59,46 @@
 	</table>
 </div>
 
+<h2>Stress runs</h2>
+<p class="lede">
+	Each scenario's steady mode at rates rising 25% a step until a step breaks twice (D-077). The knee is the highest rate
+	that held; how the next step broke says what to look at: <em>shed load</em> means every failed request was the server
+	refusing work it had no database connection for, as designed.
+</p>
+
+<div class="table">
+	<table data-testid="stress">
+		<thead>
+			<tr>
+				<th>When (UTC)</th>
+				<th>Scenario</th>
+				<th class="num">Knee (/s)</th>
+				<th>How it broke</th>
+				<th class="num">Steps</th>
+				<th>Healthy after</th>
+				<th>Machine · commit</th>
+			</tr>
+		</thead>
+		<tbody>
+			{#each stressResults as result (result.date)}
+				<tr data-endpoint={result.endpoint} data-failure={result.failure_mode}>
+					<td>{result.date.replace('T', ' ').replace('Z', '')}</td>
+					<td>{result.endpoint} · stress<br /><small>{topology(result)}, p99 gate {result.p99_gate_ms} ms</small></td>
+					<td class="num">{number.format(result.knee_rate)}</td>
+					<td>{result.failure_mode}</td>
+					<td class="num">{result.steps.length}</td>
+					<td><span class="pill {result.healthy_after ? 'ok' : 'bad'}">{result.healthy_after ? 'yes' : 'no'}</span></td>
+					<td><small>{result.machine.cpu}, {result.machine.cores} cores · <code>{result.commit}</code></small></td>
+				</tr>
+			{/each}
+		</tbody>
+	</table>
+</div>
+
 <style>
+	h2 {
+		margin-top: 2rem;
+	}
 	.lede {
 		color: var(--muted);
 		max-width: 46rem;

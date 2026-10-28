@@ -15,6 +15,9 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 # The crash tests (tests/faults.rs) build only with the fault points compiled in.
 cargo clippy -p colophon-server --features fault-injection --all-targets --locked -- -D warnings
 cargo test --workspace --locked
+# The micro-benchmarks, each run once and unoptimized: they still build and their inputs still
+# hold. Timing them is scripts/bench.sh's job (D-074), not this script's.
+cargo test -p colophon-bench --benches --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 scripts/check-architecture.sh
 scripts/check-architecture.sh colophon-sim
@@ -83,6 +86,7 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh cli throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh members throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh roles throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh tokens throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh schedules throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh projects throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh changesets throughput
@@ -90,6 +94,7 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=500 KEEP=0 scripts/load.sh publishing throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh entries throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh content-types throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh modelling throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=50000 P99_MS=50 KEEP=0 scripts/load.sh studio throughput
   else
     echo "note: k6 is not installed here (scripts/install-k6.sh); CI runs the load smoke test" >&2

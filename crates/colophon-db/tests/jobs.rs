@@ -74,6 +74,8 @@ async fn release(db: &TestDb, alice: Uuid, project: Uuid, base: i64) {
             title: "Hi",
             slug: None,
             schema_version: 1,
+            references: &[],
+            unique: &[],
         },
     )
     .await

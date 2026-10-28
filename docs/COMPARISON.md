@@ -17,7 +17,7 @@ plan tiers are the vendors' own claims and change often. Where a cell says *not 
 | Groups of fields | Components: reusable, single or repeatable, not content on their own | Object types, nestable, arrays of objects | None | Later, as bounded lists of objects; nothing on the reference site needs them yet |
 | Page builder | Dynamic zones: an ordered list of components | Arrays of object types | Rich text has its own validated node set | Not for v0.1. Rich text covers the blog; a block list is a format change with new fixtures ([rich-text v1](formats/rich-text-v1.md)) |
 | One-of-a-kind content | Single types (the demo's `global` and `about`) | Documents with a fixed id, arranged in the Structure tool | Collections only | Not scheduled. A collection with one entry works until a real need appears |
-| Validation | required, unique, min/max length or value, regex, default value | Rule chains (`required`, `either`, `all`), `custom()` functions in the Studio | required, max characters, min/max, integer; server-side, with a code per failure | Uniqueness only for slugs, enforced by the database (spec §07: prechecks alone race). No custom-code validators: the server runs no user code |
+| Validation | required, unique, min/max length or value, regex, default value | Rule chains (`required`, `either`, `all`), `custom()` functions in the Studio | required, min/max characters, min/max, integer, patterns (whole value, linear time: D-069), defaults filled on creation (D-071); server-side, with a code per failure | Uniqueness for slugs and any `unique` top-level key field (D-070), enforced by the database (spec §07: prechecks alone race). No custom-code validators: the server runs no user code |
 | Conditional fields | Shown or hidden by a boolean or enumeration field | `hidden` and `readOnly` callbacks | None | Not adopted for v0.1 |
 | AI schema design | Strapi AI (Growth plan) builds content types from prompts, code, Figma or an image | *Not checked* | Agents propose drafts only (P5) | Not adopted. A schema change is the riskiest edit a CMS has; it stays a reviewed human action |
 
@@ -116,13 +116,13 @@ that builds them.
 | Content types defined at runtime, safe changes | Dev-only builder | Code | done (D-040; the builder and changes checked against stored content, 3.6) |
 | Text, rich text, number, boolean, enum, date-time | ✓ | ✓ | done (D-040) |
 | Slug / UID, unique per collection | ✓ | ✓ | done (3.6, D-054) |
-| References / relations (one, many, two-way) | ✓ | ✓ | M |
-| Components / objects, repeatable lists | ✓ | ✓ | M |
-| Dynamic zones / block arrays (page builder) | ✓ | ✓ | M |
-| Single types / singletons | ✓ | ✓ | M |
-| Email, URL, date, time, JSON, Markdown, colour, geopoint fields | ✓ | ✓ | M |
-| Validation: pattern, unique, length, value; conditional fields; defaults | ✓ | ✓ | M |
-| Field descriptions, groups and tabs, custom previews | ✓ | ✓ | M |
+| References / relations (one, many, two-way) | ✓ | ✓ | one and many built in M.2 (D-065), never dangling, with "referenced by" on every read; the Studio's picker next |
+| Components / objects, repeatable lists | ✓ | ✓ | built in M.3 (D-066), inline, and shared components in M.4 (D-073): one change reaches every type that uses it, checked against stored content |
+| Dynamic zones / block arrays (page builder) | ✓ | ✓ | built in M.3 (D-066) |
+| Single types / singletons | ✓ | ✓ | built in M.4 (D-067), one entry enforced by the database |
+| Email, URL, date, time, JSON, Markdown, colour, geopoint fields | ✓ | ✓ | built in M.1 (D-064) but geopoint; the Studio's editor for them is next |
+| Validation: pattern, unique, length, value; conditional fields; defaults | ✓ | ✓ | length and value built; patterns (D-069), unique fields (D-070), defaults (D-071) and conditional fields (D-072) built in M.4 |
+| Field descriptions, groups and tabs, custom previews | ✓ | ✓ | descriptions in M.1 (D-064); groups, tabs and previews in M |
 | Schema migrations with a plan | Rename only | Scripts | M |
 | Media library: uploads, folders, alt text, image transforms, hotspot and crop | ✓ | ✓ | P4 |
 | Review before publish | Review workflows (paid) | Tasks, comments | done: changesets and hash-bound reviews (P2); stages in E |
@@ -137,8 +137,8 @@ that builds them.
 | Bulk actions, duplicate, saved views | ✓ | ✓ | E |
 | Roles: built-in and custom | ✓ | ✓ (by plan) | done (R.1, R.2; D-058) |
 | Field-level and "own entries" permissions | ✓ | ✓ (by plan) | done (R.3; D-058) |
-| API tokens: read-only, full, custom | ✓ | ✓ | R.4 (device sign-in and bearer tokens done, D-041) |
-| Audit log | Paid | ✓ (by plan) | R.4 |
+| API tokens: read-only, full, custom | ✓ | ✓ | built in R.4 (D-063): read-only, full access and custom; device sign-in for the CLI since D-041 |
+| Audit log | Paid | ✓ (by plan) | built in R.4 (D-063): roles, members, invitations and tokens, append-only |
 | SSO / OpenID Connect | Paid | ✓ (by plan) | done (Keycloak, D-031) |
 | REST delivery with caching | ✓ | ✓ | done (P2, P3) |
 | Query API: filters, sort, populate, field selection, perspectives | ✓ | GROQ | D |

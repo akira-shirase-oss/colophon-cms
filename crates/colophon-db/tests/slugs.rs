@@ -42,6 +42,8 @@ fn revision<'a>(title: &'a str, slug: Option<&'a str>) -> NewRevision<'a> {
         title,
         slug,
         schema_version: 1,
+        references: &[],
+        unique: &[],
     }
 }
 

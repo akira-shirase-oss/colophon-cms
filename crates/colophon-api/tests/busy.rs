@@ -47,7 +47,10 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
             trusted_origins: vec!["http://localhost:58000".to_owned()],
             allow_private_destinations: true,
             cache: colophon_api::DeliveryCache::disabled(),
+            content_types: colophon_api::ContentTypeCache::new(),
         })),
+        build: colophon_api::BuildInfo::unstamped("0.0.0-test"),
+        admission: None,
     };
     let app = middleware::apply(
         colophon_api::routes(state),

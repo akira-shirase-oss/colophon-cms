@@ -18,7 +18,8 @@
 		defaultOptions: {
 			queries: {
 				staleTime: 5_000,
-				retry: (count, error) => error instanceof ApiError && error.failure === 'retry' && count < 3
+				// A read turned away for the rate limit already waited and went once more (D-076).
+				retry: (count, error) => error instanceof ApiError && error.failure === 'retry' && error.reason !== 'rate_limited' && count < 3
 			}
 		}
 	});

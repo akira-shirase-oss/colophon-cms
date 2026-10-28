@@ -50,7 +50,7 @@ pub struct Release {
 }
 
 /// What [`commit`] did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Committed {
     /// The release committed as `generation`.
     Done {
@@ -71,6 +71,34 @@ pub enum Committed {
     /// An entry to unpublish no longer publishes the pinned revision. The caller checks this
     /// under the changeset's lock first, so it means a bug, and nothing is committed.
     Unmatched,
+    /// The release would leave readers a reference to an entry they can't get (D-065). Nothing
+    /// is committed: the caller rolls the transaction back.
+    Broken(BrokenReference),
+}
+
+/// A reference a release would break for readers (D-065).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BrokenReference {
+    /// `entry`, which the release publishes, names `other` in `field`, and `other` wouldn't be
+    /// published.
+    NamesUnpublished {
+        /// The entry being published.
+        entry: Uuid,
+        /// Its reference field.
+        field: String,
+        /// The entry it names.
+        other: Uuid,
+    },
+    /// `entry`, which the release takes down, is named in `field` by `other`, which readers
+    /// would still get.
+    StillNamed {
+        /// The entry being taken down.
+        entry: Uuid,
+        /// The field of `other` that names it.
+        field: String,
+        /// The published entry naming it.
+        other: Uuid,
+    },
 }
 
 /// The environment's epoch and generation.
@@ -172,6 +200,10 @@ pub async fn commit(
     let Some(unpublished) = unpublished else {
         return Ok(Committed::Unmatched);
     };
+    claim_published(tx, changeset).await?;
+    if let Some(broken) = broken_reference(tx, changeset).await? {
+        return Ok(Committed::Broken(broken));
+    }
     outbox(tx, bumped.generation, job_lifetime).await?;
     Ok(Committed::Done {
         generation: bumped.generation,
@@ -179,6 +211,115 @@ pub async fn commit(
         changed: opened.rows_affected(),
         unpublished,
     })
+}
+
+/// Makes the published claims of every entry the release touches the values its open
+/// publication sets in its type's unique fields (migration 0027, D-070); an entry it takes down
+/// claims none. A value another entry still publishes fails `unique_claims_value`: `ValueTaken`,
+/// and the whole release rolls back. Changing two entries' values in one release works, since
+/// both are replaced before either is claimed.
+async fn claim_published(tx: &mut ProjectTransaction, changeset: Uuid) -> Result<(), DbError> {
+    sqlx::query!(
+        "DELETE FROM unique_claims c
+         USING changeset_items i
+         WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
+           AND c.project_id = i.project_id AND c.environment_id = i.environment_id
+           AND c.entry_id = i.entry_id AND c.published",
+        tx.project,
+        tx.environment,
+        changeset
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    sqlx::query!(
+        "INSERT INTO unique_claims
+           (project_id, environment_id, collection, field, published, value_hash, entry_id)
+         SELECT p.project_id, p.environment_id, p.collection, v.field, true, v.value_hash, p.entry_id
+         FROM changeset_items i
+         JOIN publications p
+           ON p.project_id = i.project_id AND p.environment_id = i.environment_id
+          AND p.entry_id = i.entry_id AND p.valid_to IS NULL
+         CROSS JOIN LATERAL (
+             SELECT colophon_unique_fields(t.definition) AS fields
+             FROM content_type_versions t
+             WHERE t.project_id = p.project_id AND t.environment_id = p.environment_id
+               AND t.collection = p.collection
+             ORDER BY t.version DESC
+             LIMIT 1
+         ) u
+         CROSS JOIN LATERAL colophon_unique_values(u.fields, p.content) v
+         WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
+           AND i.kind = 'publish'",
+        tx.project,
+        tx.environment,
+        changeset
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
+}
+
+/// After the release's publications changed, a reference it leaves broken for readers, if any
+/// (D-065). Only the release's own entries can break one: an entry it publishes that names an
+/// entry nobody publishes, or an entry it takes down that a published revision still names.
+async fn broken_reference(
+    tx: &mut ProjectTransaction,
+    changeset: Uuid,
+) -> Result<Option<BrokenReference>, DbError> {
+    let row = sqlx::query!(
+        r#"SELECT 'names' AS "problem!", i.entry_id AS "entry!", r.field AS "field!",
+                  r.entry_id AS "other!"
+           FROM changeset_items i
+           JOIN revision_references r
+             ON r.project_id = i.project_id AND r.environment_id = i.environment_id
+            AND r.revision_id = i.revision_id
+           WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
+             AND i.kind = 'publish'
+             AND NOT EXISTS (
+                 SELECT 1 FROM publications p
+                 WHERE p.project_id = r.project_id AND p.environment_id = r.environment_id
+                   AND p.entry_id = r.entry_id AND p.valid_to IS NULL
+             )
+           UNION ALL
+           SELECT 'named', i.entry_id, r.field, p.entry_id
+           FROM changeset_items i
+           JOIN revision_references r
+             ON r.project_id = i.project_id AND r.environment_id = i.environment_id
+            AND r.entry_id = i.entry_id
+           -- One lookup by revision per reference (migration 0028), as in entries::referrers.
+           CROSS JOIN LATERAL (
+               SELECT p.entry_id FROM publications p
+               WHERE p.project_id = r.project_id AND p.environment_id = r.environment_id
+                 AND p.revision_id = r.revision_id AND p.valid_to IS NULL
+               LIMIT 1
+           ) p
+           WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
+             AND i.kind = 'unpublish'
+           LIMIT 1"#,
+        tx.project,
+        tx.environment,
+        changeset
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(row.map(|row| {
+        if row.problem == "names" {
+            BrokenReference::NamesUnpublished {
+                entry: row.entry,
+                field: row.field,
+                other: row.other,
+            }
+        } else {
+            BrokenReference::StillNamed {
+                entry: row.entry,
+                field: row.field,
+                other: row.other,
+            }
+        }
+    }))
 }
 
 /// The outbox: one job per enabled destination for the release at `generation`, committed with

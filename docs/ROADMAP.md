@@ -145,8 +145,8 @@ content modelling in the Studio (slugs, a content-type builder whose changes are
 D-055) · 3.7 the non-technical path (D-059: plain words from one glossary, one-click publish, a first-run checklist,
 teaching empty states, developer settings out of the way, phone-friendly review; with sign-up and a setup code for a
 fresh installation's first administrator, D-061; built: the journey from sign-up to a first release, its Playwright
-journey and plain-words test, the testbed's Setup page and `perf/k6/setup.js`; phone-friendly review not yet
-checked at phone width) · 3.8 my site goes live, and the first
+journey and plain-words test, the testbed's Setup page and `perf/k6/setup.js`; phone-friendly review checked at
+phone width since the Studio's completion work) · 3.8 my site goes live, and the first
 public demo (docs skeleton, simulator cache and delivery faults, the mixed-release checker, a
 recorded crash loop).
 
@@ -170,7 +170,9 @@ roles; every route has a denial test; field and condition tests for create, upda
 exactly what its permission set allows; a load scenario with custom roles shows the evaluator costs no regression.
 
 **Steps:** R.1 roles as data, behaviour unchanged (done) · R.2 custom roles and the Studio's role editor (done) · R.3 field-level
-permissions and `own` conditions (done) · R.4 API tokens and the audit log.
+permissions and `own` conditions (done) · R.4 API tokens and the audit log (built: D-063; tokens that act as their own
+identity, an exact kill switch, an append-only log; the million-request runs of `perf/k6/tokens.js` wait for a quiet
+machine, so not yet done).
 
 ## M: Content modelling parity
 
@@ -186,6 +188,15 @@ types here, validated in Rust and kept valid as they change.
 
 **Proof gate:** every type round-trips byte for byte; references never dangle (database-enforced); a migration that
 fails halfway resumes without duplicates; the simulator covers schema changes racing saves.
+
+**Steps:** M.1 seven field types, descriptions and minimum lengths (built: D-064) · M.2 references that never dangle,
+checked by the database on save and by every release, with "referenced by" (built: D-065, migration 0024) · M.3
+objects, lists and page-builder blocks, references inside them (built: D-066, migration 0025) · M.4 single types
+(built: D-067, migration 0026), patterns (built: D-069), uniqueness (built: D-070, migration 0027), defaults (built:
+D-071), conditional fields (built: D-072) and shared components (built: D-073, migration 0029) · M.5 migrations with a plan, a dry run and per-entry outcomes; the simulator racing
+schema changes and saves. What is built has its tests, a testbed page (`/modelling`) and a load scenario
+(`perf/k6/modelling.js`) whose million-request runs wait for a quiet machine; the Studio's builder and editor cover
+M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 
 ## P4: Time travel and media
 
@@ -245,6 +256,18 @@ breaking point and fails safely past it.
 - `perf`: a stress mode for every k6 scenario (raise the rate until the latency gate breaks; record the highest
   sustained rate and the failure mode); the same runs on one, two and three servers.
 - Rust: Criterion benchmarks for hot paths with a CI regression check; profiles of each milestone's heaviest scenario.
+  **Built:** the benchmarks (`crates/colophon-bench`), `scripts/bench.sh` and the pull-request check that times base
+  and head on one runner (D-074); the profiles are still to do.
+
+**Built (S.1, D-075):** `scripts/cluster.sh` (three servers and two workers behind HAProxy), `CLUSTER=1
+scripts/load.sh`, and `scripts/failover.sh kill|drain`, whose first runs passed at 100 writes a second; the readiness
+probe got a connection of its own after the first drain run found every server going unready together. **Built (S.2,
+D-076):** rate limits per address and per credential, shared in Valkey and applied by each server without it. **Built
+(S.3, D-077):** `scripts/load.sh <endpoint> stress`, the knee and failure mode of any scenario; each step stores the
+failed requests the servers logged, so a full pool shedding load (`shed load`) is told apart from errors. **Built
+(D-078):** parsed content types cached by their definition's hash, after the benchmarks found every entry request
+parsing its type again (281 µs to 6.5 µs for a 100-field type). Next: stress results for every scenario and the one-,
+two- and three-server comparison, on a quiet machine.
 
 **Proof gate:** a server killed under load behind the balancer fails only in-flight requests and idempotent retries
 succeed; a draining server finishes what it accepted; rate limits hold across instances and when Valkey is down;
@@ -267,6 +290,32 @@ the server it talks to.
 Homebrew formula and the install script each install the same version on a clean machine in CI; an old CLI against a
 new server (and the reverse) gets the plain-words answer, tested.
 
+**Status (2026-10-28, branch `v/versions-distribution`).** What ran is listed in modules 08 and 19, "Tests and
+evidence".
+
+- Built and tested: the version is `0.1.0-alpha.1`, one for every crate and the npm packages (module 19,
+  "Versions"); `colophon --version` and `colophon-server --version` print version, commit and build date
+  (`crates/colophon-version`); `GET /version` reports the release and `api: ["v1"]` (module 04); the CLI checks it
+  before every command that talks to a server and says in plain words whether it is too old or too new (module 08,
+  "Versions"), which covers the gate's last item for the CLI with canned servers in both directions.
+  `@colophon-cms/cli` and its five platform packages, assembled from release archives (module 08, "Install"); the
+  install script; the Homebrew formula template; `cargo install --locked --git` (run here from a local clone).
+- Written, not yet run in CI: `.github/workflows/release.yml` (five targets, `SHA256SUMS`, CycloneDX SBOMs, signed
+  build provenance, a draft release, npm publishing behind an approval; a manual run is a dry run that publishes
+  nothing) and `ci.yml`'s `distribution` job. Its first dry run is the first real test of the cross-builds (musl
+  with aws-lc, Windows, macOS x64 from arm64).
+- Waits on the maintainer: create the npm organization `colophon-cms`; create the `npm` environment with required
+  reviewers and `NPM_TOKEN` (an npm token that can publish to `@colophon-cms`) in its secrets; confirm the licence
+  (O-014) and add `LICENSE`; add `CHANGELOG.md` with a `## 0.1.0-alpha.1` section; run the workflow by hand once as a
+  dry run; then push the tag `v0.1.0-alpha.1`, check the draft release and publish it, and approve the npm job. For
+  Homebrew, create the tap `akira-shirase-oss/homebrew-colophon` and commit each release's `colophon.rb` as
+  `Formula/colophon.rb`.
+- Not built yet: crates.io publishing (`cargo install colophon-cli`, after O-014 and publishing the crates it
+  depends on); the SDK (it doesn't exist yet); packaging the MCP server (`crates/colophon-mcp`, built in P5, D-068) for npm,
+  Cargo and Homebrew, and its checks; container images for the server
+  and worker; the server archive without the Studio's files; CI installs of the published packages, the formula and
+  `cargo install` on clean machines, which need a published release.
+
 ## P5: Safe automation (≈ spec M4)
 
 **Goal:** scripts and agents can do permitted work at bounded scale and never execute an unauthorized action.
@@ -279,6 +328,13 @@ new server (and the reverse) gets the plain-words answer, tested.
 
 **Proof gate:** zero unauthorized actions across the evaluation set; X12 (an agent interrupted halfway through a bulk
 edit resumes without duplicates or overwrites); L08 (a noisy agent is throttled; editors keep their latency).
+
+**Steps:** the MCP adapter over local stdio (built: D-068, closing O-013 with a thin JSON-RPC layer;
+`crates/colophon-mcp`, MCP 2025-11-25, eight typed tools over `/api/v1` with a project API token: read content, write
+drafts from the revision read, make a publish request and ask for its review; nothing approves or publishes; tool
+discovery follows the token's permissions; unit tests and a stack test over stdio) · not built: remote MCP with its
+authorization, service-account quotas and budgets, bulk manifests and jobs (X12), the CLI's full JSON contract and a
+`colophon mcp` subcommand, the evaluation suite, L08. The proof gate is not met.
 
 ## P6: Operate it (≈ spec M5)
 

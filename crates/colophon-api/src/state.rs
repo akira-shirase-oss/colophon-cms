@@ -6,7 +6,7 @@ use axum::extract::FromRef;
 use colophon_auth::OidcClient;
 use colophon_db::PgPool;
 
-use crate::{DeliveryCache, Readiness};
+use crate::{BuildInfo, ContentTypeCache, DeliveryCache, Readiness, admission::SharedAdmission};
 
 /// Session lifetimes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,23 +42,32 @@ pub struct Services {
     pub allow_private_destinations: bool,
     /// The public delivery cache (D-048); [`DeliveryCache::disabled`] without `COLOPHON_CACHE_URL`.
     pub cache: DeliveryCache,
+    /// Parsed content types by their definition's hash (D-078).
+    pub content_types: ContentTypeCache,
 }
 
-/// The router's state. Cloning is two reference-count increments.
+/// The router's state. Cloning is two reference-count increments and a copy.
 #[derive(Clone)]
 pub struct AppState {
     /// Readiness, for `/readyz`.
     pub readiness: Readiness,
     /// Everything that needs the database; `None` in tests of the HTTP contract alone.
     pub services: Option<Arc<Services>>,
+    /// What this build is, for `/version`: the server binary stamps it (`colophon-version`).
+    pub build: BuildInfo,
+    /// Rate limits (D-076); `None` admits everything (tests of the HTTP contract alone).
+    pub admission: Option<SharedAdmission>,
 }
 
 impl AppState {
-    /// State for a server without a database (only health and stateless endpoints work).
+    /// State for a server without a database (only health and stateless endpoints work). Its
+    /// build knows only its version: the commit and date come from the binary's stamp.
     pub fn without_services(readiness: Readiness) -> Self {
         Self {
             readiness,
             services: None,
+            build: BuildInfo::unstamped(env!("CARGO_PKG_VERSION")),
+            admission: None,
         }
     }
 }

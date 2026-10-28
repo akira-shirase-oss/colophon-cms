@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::{
     DbError,
     publish::{self, Base, Refusal},
+    releases,
     scope::{self, ProjectTransaction},
 };
 
@@ -362,6 +363,17 @@ fn reason(refusal: &Refusal) -> String {
             "other releases kept publishing first; schedule it again".to_owned()
         }
         Refusal::SlugTaken => "a URL name in it is still published by another entry".to_owned(),
+        Refusal::ValueTaken => {
+            "a value that must be unique is still published by another entry".to_owned()
+        }
+        Refusal::BrokenReference(releases::BrokenReference::NamesUnpublished { .. }) => {
+            "an entry in it links to an entry that isn't published; publish that one with it"
+                .to_owned()
+        }
+        Refusal::BrokenReference(releases::BrokenReference::StillNamed { .. }) => {
+            "an entry it takes down is still linked from a published entry; change that one first"
+                .to_owned()
+        }
     }
 }
 

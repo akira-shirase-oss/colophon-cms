@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO revision_references\n           (project_id, environment_id, revision_id, field, position, collection, entry_id)\n         SELECT $1, $2, $3, field, position, collection, entry_id\n         FROM unnest($4::text[], $5::int2[], $6::text[], $7::uuid[])\n              AS t (field, position, collection, entry_id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "TextArray",
+        "Int2Array",
+        "TextArray",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ec20428175d9c2206ba6514ad6d63a30d2b88dc15f9551788cbf0245237efbf3"
+}

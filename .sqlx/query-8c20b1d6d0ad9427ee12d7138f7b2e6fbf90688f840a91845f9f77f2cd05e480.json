@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE entries SET single = $4\n         WHERE project_id = $1 AND environment_id = $2 AND collection = $3 AND single <> $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8c20b1d6d0ad9427ee12d7138f7b2e6fbf90688f840a91845f9f77f2cd05e480"
+}

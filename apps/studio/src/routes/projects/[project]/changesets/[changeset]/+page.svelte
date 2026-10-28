@@ -16,15 +16,18 @@
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Textarea } from '@colophon/ui/ui/textarea';
-	import { ApiError, type Changeset, changesetAction, getChangeset, may, newKey, publishChangeset } from '#lib/api.ts';
+	import { ApiError, type Changeset, changesetAction, createChangeset, getChangeset, may, mayOn, newKey, publishChangeset } from '#lib/api.ts';
+	import { goto } from '$app/navigation';
+	import { explainLinks, type Named } from '#lib/references.ts';
+	import { plainError } from '#lib/errors.ts';
 	import ItemDiff from '#lib/ItemDiff.svelte';
 	import SchedulePanel from '#lib/SchedulePanel.svelte';
-	import { ago, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
+	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
-	import { PUBLISH_REQUEST } from '#lib/words.ts';
+	import { PUBLISH_REQUEST, VALUE_TAKEN_ON_PUBLISH } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const id = $derived(page.params.changeset ?? '');
@@ -36,6 +39,14 @@
 	const collections = $derived([...new Set((set.data?.items ?? []).map((item) => item.collection))]);
 	const reviewer = $derived(collections.every((collection) => may(mine.data, 'content.review', collection)));
 	const publisher = $derived(collections.every((collection) => may(mine.data, 'content.publish', collection)));
+	// Sending for review and updating need edit rights on every entry in it: for a role whose edit
+	// rights are only for its own entries, every entry must be the caller's (each item says whose).
+	const who = createQuery(meQuery);
+	const writer = $derived(
+		mine.data !== undefined &&
+			who.data != null &&
+			(set.data?.items ?? []).every((item) => mayOn(mine.data, 'content.update', item.collection, item.created_by === who.data?.id))
+	);
 	// Publishing names the release it follows: the latest one this page has seen.
 	const releases = createQuery(() => releasesQuery(project));
 	const types = createQuery(() => typesQuery(project));
@@ -47,6 +58,8 @@
 
 	let comment = $state('');
 	let error = $state('');
+	/** Linked entries a refused publish named, which a new request could include. */
+	let missing = $state<Named[]>([]);
 	let notice = $state('');
 	let busy = $state(false);
 	const STALE = `This ${PUBLISH_REQUEST} changed since you loaded it. Here is the current one: check it, then try again.`;
@@ -57,17 +70,27 @@
 		busy = true;
 		error = '';
 		notice = '';
+		missing = [];
 		try {
 			await publishChangeset(project, id, shown.hash, base, publishKey);
 			publishKey = newKey();
 		} catch (failure) {
+			const links = failure instanceof ApiError ? await explainLinks(project, id, failure.reason, types.data) : null;
+			if (links !== null) {
+				error = links.text;
+				missing = links.missing.filter((entry) => !entry.title.startsWith('an entry'));
+				publishKey = newKey();
+				return;
+			}
 			if (failure instanceof ApiError && failure.reason === 'generation_moved') {
 				notice = 'Another release was published first. Check what is live now, then publish again.';
 				publishKey = newKey();
 			} else if (failure instanceof ApiError && failure.reason === 'stale_changeset') {
 				notice = STALE;
+			} else if (failure instanceof ApiError && failure.reason === 'value_taken') {
+				error = VALUE_TAKEN_ON_PUBLISH;
 			} else {
-				error = failure instanceof ApiError ? failure.message : String(failure);
+				error = plainError(failure, 'publish this');
 			}
 		} finally {
 			busy = false;
@@ -77,6 +100,24 @@
 				queryClient.invalidateQueries({ queryKey: ['changesets', project] }),
 				queryClient.invalidateQueries({ queryKey: ['entries', project] })
 			]);
+		}
+	}
+
+	/** A new request with this one's entries and the linked ones it was missing; it opens next. */
+	async function includeLinked(shown: Changeset) {
+		busy = true;
+		try {
+			const publishing = shown.items.filter((item) => item.kind === 'publish').map((item) => item.entry_id);
+			const leaving = shown.items.filter((item) => item.kind === 'unpublish').map((item) => item.entry_id);
+			const made = await createChangeset(project, `${shown.title}, with what it links to`, [...publishing, ...missing.map((entry) => entry.id)], leaving, newKey());
+			missing = [];
+			error = '';
+			await queryClient.invalidateQueries({ queryKey: ['changesets', project] });
+			await goto(resolve('/projects/[project]/changesets/[changeset]', { project, changeset: made.id }));
+		} catch (failure) {
+			error = plainError(failure, 'make this request');
+		} finally {
+			busy = false;
 		}
 	}
 
@@ -93,7 +134,7 @@
 			if (failure instanceof ApiError && failure.reason === 'stale_changeset') {
 				notice = STALE;
 			} else {
-				error = failure instanceof ApiError ? failure.message : String(failure);
+				error = plainError(failure, action === 'reviews' ? 'review this' : action === 'submit' ? 'ask for review here' : 'update it');
 			}
 			await queryClient.invalidateQueries({ queryKey: ['changeset', project, id] });
 		} finally {
@@ -138,14 +179,18 @@
 				{:else if shown.status.state === 'changes_requested'}
 					<span>by {shown.status.by}</span>
 				{:else if shown.status.state === 'published'}
-					<span>as <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases', { project })} data-testid="release-link">release {shown.status.generation}</a></span>
+					<span>as <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(shown.status.generation) })} data-testid="release-link">release {shown.status.generation}</a></span>
 				{/if}
 			</span>
 		{/snippet}
 		{#snippet actions()}
-			{#if shown.status.state === 'stale'}
+			{#if (shown.status.state === 'stale' || shown.status.state === 'open') && mine.data !== undefined && !writer}
+				<p class="max-w-xs text-sm text-muted-foreground" data-testid="cannot-send">
+					{shown.status.state === 'open' ? 'Someone who can edit these entries sends it for review.' : 'Someone who can edit these entries updates it.'}
+				</p>
+			{:else if shown.status.state === 'stale' && writer}
 				<Button onclick={() => act(shown, 'refresh')} disabled={busy}>Update to the latest versions</Button>
-			{:else if shown.status.state === 'open'}
+			{:else if shown.status.state === 'open' && writer}
 				<Button onclick={() => act(shown, 'submit')} disabled={busy}>Ask for review</Button>
 			{:else if shown.status.state === 'approved' && publisher}
 				<Button onclick={() => publish(shown)} disabled={busy || releases.data === undefined}>Publish</Button>
@@ -163,7 +208,16 @@
 	</ol>
 
 	{#if notice}<p role="status" class="mb-4 rounded-lg bg-pending-soft px-4 py-3 text-sm text-pending-ink" data-testid="changeset-notice">{notice}</p>{/if}
-	{#if error}<p role="alert" class="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>{/if}
+	{#if error}
+		<div role="alert" class="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive" data-testid="changeset-error">
+			<p>{error}</p>
+			{#if missing.length > 0}
+				<Button class="mt-3" variant="outline" size="sm" disabled={busy} onclick={() => includeLinked(shown)} data-testid="include-linked">
+					Make a {PUBLISH_REQUEST} that includes {missing.length === 1 ? missing[0]?.title : 'them'}
+				</Button>
+			{/if}
+		</div>
+	{/if}
 
 	<div class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
 		<section aria-labelledby="items-heading">
@@ -211,14 +265,20 @@
 			</ul>
 		</section>
 
-		<div class="space-y-8">
+		<!-- Beside the entries on wide screens. Below lg its parts join the page's column, and the
+		     Review panel moves to the top, so a reviewer on a phone finds Approve without scrolling
+		     past every comparison (D-059, rule 7). -->
+		<div class="contents lg:block lg:space-y-8">
 			{#if shown.status.state !== 'open' && shown.status.state !== 'stale'}
 				<SchedulePanel {project} changeset={shown} canSchedule={publisher} />
 			{/if}
 			{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale' && shown.status.state !== 'published'}
-				<section class="rounded-xl border border-border bg-card p-4 shadow-xs" aria-label="Review">
+				<section class="-order-1 rounded-xl border border-border bg-card p-4 shadow-xs lg:order-none" aria-label="Review" data-testid="review-panel">
 					<h2 class="text-base font-semibold">Review</h2>
-					<p class="mt-1 text-sm text-muted-foreground">You approve exactly what is shown here. If it changes, your approval no longer counts.</p>
+					<p class="mt-1 text-sm text-muted-foreground">
+						You approve exactly the {shown.items.length === 1 ? 'version' : 'versions'} on this page<span class="lg:hidden">: the changes are below</span>. If
+						{shown.items.length === 1 ? 'it changes' : 'they change'}, your approval no longer counts.
+					</p>
 					<div class="mt-4 grid gap-1.5">
 						<Label for="review-comment">Comment (optional)</Label>
 						<Textarea id="review-comment" bind:value={comment} rows={3} maxlength={2000} />

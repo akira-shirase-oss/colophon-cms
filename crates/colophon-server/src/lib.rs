@@ -116,6 +116,24 @@ fn delivery_cache(config: &Config) -> anyhow::Result<colophon_api::DeliveryCache
     }
 }
 
+/// The OpenID Connect client, when sign-in is configured.
+fn oidc_client(
+    config: &Config,
+) -> anyhow::Result<Option<std::sync::Arc<colophon_auth::OidcClient>>> {
+    let Some(settings) = &config.oidc else {
+        return Ok(None);
+    };
+    colophon_auth::OidcClient::new(colophon_auth::OidcConfig {
+        issuer: settings.issuer.clone(),
+        client_id: settings.client_id.clone(),
+        client_secret: colophon_auth::ClientSecret::new(settings.client_secret.expose()),
+        redirect_uri: format!("{}/auth/callback", config.public_origin),
+    })
+    .map(Some)
+    .map_err(|error| anyhow::anyhow!(error))
+    .context("configuring sign-in")
+}
+
 /// Runs the server until `signal` resolves, then shuts down.
 pub async fn run(
     config: Config,
@@ -141,11 +159,10 @@ pub async fn run(
 
     let cancel = CancellationToken::new();
     let mut supervisor = Supervisor::new(readiness.clone(), cancel.child_token());
-    supervisor.spawn(
-        Dependency::Database,
-        DatabaseProbe::new(pool.clone(), config.probe_timeout),
-        config.probe_interval,
-    );
+    let database_probe = DatabaseProbe::new(config.database_url.expose(), config.probe_timeout)
+        .map_err(|error| anyhow::anyhow!(error))
+        .context("configuring the database probe")?;
+    supervisor.spawn(Dependency::Database, database_probe, config.probe_interval);
     if let Some(url) = &config.cache_url {
         let probe = CacheProbe::new(url.expose(), config.probe_timeout)
             .map_err(|error| anyhow::anyhow!(error))
@@ -154,39 +171,37 @@ pub async fn run(
     }
 
     let local_addr = listener.local_addr().context("reading the bound address")?;
+    let build = colophon_version::build_info!();
     tracing::info!(
         %local_addr,
         role = config.role.as_str(),
-        version = env!("CARGO_PKG_VERSION"),
+        version = build.version,
+        commit = build.commit,
         "listening"
     );
 
-    let oidc = match &config.oidc {
-        Some(settings) => Some(
-            colophon_auth::OidcClient::new(colophon_auth::OidcConfig {
-                issuer: settings.issuer.clone(),
-                client_id: settings.client_id.clone(),
-                client_secret: colophon_auth::ClientSecret::new(settings.client_secret.expose()),
-                redirect_uri: format!("{}/auth/callback", config.public_origin),
-            })
-            .map_err(|error| anyhow::anyhow!(error))
-            .context("configuring sign-in")?,
-        ),
-        None => None,
-    };
     let mut trusted_origins = vec![config.public_origin.clone()];
     trusted_origins.extend(config.extra_trusted_origins.iter().cloned());
     let services = colophon_api::Services {
         pool: pool.clone(),
-        oidc,
+        oidc: oidc_client(&config)?,
         sessions: colophon_api::SessionSettings::default(),
         trusted_origins,
         allow_private_destinations: config.listen_addr.ip().is_loopback(),
         cache: delivery_cache(&config)?,
+        content_types: colophon_api::ContentTypeCache::new(),
     };
+    let admission = colophon_api::admission::Admission::new(
+        config.admission.clone(),
+        config.cache_url.as_ref().map(config::Secret::expose),
+    )
+    .map_err(|error| anyhow::anyhow!(error))
+    .context("configuring rate limits")?;
     let state = colophon_api::AppState {
         readiness: readiness.clone(),
         services: Some(std::sync::Arc::new(services)),
+        build,
+        admission: Some(std::sync::Arc::new(admission)),
     };
     let mut routes = colophon_api::routes(state);
     if let Some(dir) = &config.studio_dir {

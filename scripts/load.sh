@@ -10,12 +10,15 @@
 # session (signed-in requests: session lookup and row-level security on every request),
 # entries (drafts: reads, lists and If-Match saves, each read checked against the last save),
 # content-types (the same for entries of a seven-field type, plus reads of its definition),
+# modelling (pages of objects, lists and blocks whose quotes reference people: saves, refused
+# references, reads, lists and "referenced by" reads),
 # cli (requests authenticated by a bearer token, as the CLI sends them), members (member lists,
 # invitation lookups, role changes and new invitations), roles (requests by a member holding a
-# custom role, the caller's permissions, role lists and versioned role edits), schedules (schedule
-# lists, and scheduling and cancelling a day ahead), projects (who may create projects:
-# refused creations and /me), setup (setup codes refused on a set-up installation, and /me),
-# changesets (reading, listing, reviewing and creating changesets),
+# custom role, the caller's permissions, role lists and versioned role edits), tokens (requests
+# with a read-only and a field-narrowed API token, audit log pages, and tokens made and revoked),
+# schedules (schedule lists, and scheduling and cancelling a day ahead), projects (who may create
+# projects: refused creations and /me), setup (setup codes refused on a set-up installation, and
+# /me), changesets (reading, listing, reviewing and creating changesets),
 # delivery (anonymous /content/v1 reads, latest and pinned), publishing (whole publishes, five
 # requests each, with the worker announcing every release to a local receiver; needs node),
 # studio (the Studio's static files; builds the Studio first) or site (the reference site's pages,
@@ -23,7 +26,10 @@
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090),
-# SERVER_LOG=<path> (keep the server's log there).
+# SERVER_LOG=<path> (keep the server's log there); for stress, START_RATE, STEP_SECONDS and
+# MAX_STEPS (below); CLUSTER=1 (run against the servers and
+# workers scripts/cluster.sh started, through its balancer, instead of one server of its own;
+# the result records how many, and is compared only with runs of the same shape: D-075).
 #
 # RATE and P99_MS default per endpoint. health and rich-text never touch the database: 20,000
 # requests/s and a 25 ms p99. session waits on database round trips, so its steady rate is
@@ -41,8 +47,8 @@ cd "$(dirname "$0")/.."
 
 endpoint="${1:-}"
 scenario="${2:-}"
-if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|cli|members|roles|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|studio|site throughput|steady [--baseline]" >&2
+if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
+  echo "usage: scripts/load.sh health|rich-text|session|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -58,14 +64,14 @@ done
 port="${LOAD_PORT:-58090}"
 # The open model needs its virtual users allocated up front: creating them mid-run makes k6
 # miss its own schedule (a steady run on 2026-10-25 dropped 271 of 1.2 M iterations at 64).
-if [[ "$scenario" == "steady" ]]; then default_vus=256; else default_vus=64; fi
+if [[ "$scenario" == "steady" || "$scenario" == "stress" ]]; then default_vus=256; else default_vus=64; fi
 VUS="${VUS:-$default_vus}"
 case "$endpoint" in
   session | projects | setup | delivery | site) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
   # Half its requests list entries (a content type lookup too): about 2,000/s at most here, so
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
-  cli | members | roles | schedules | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
-  entries | content-types) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
+  cli | members | roles | tokens | schedules | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
+  entries | content-types | modelling) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
   studio) RATE="${RATE:-5000}" P99_MS="${P99_MS:-25}" ;;
   # RATE counts publishes here, five requests each, and every request writes and commits: on the
   # reference laptop that tops out around 500 to 700 requests a second, so the steady rate is 40
@@ -75,6 +81,17 @@ case "$endpoint" in
   *) RATE="${RATE:-20000}" P99_MS="${P99_MS:-25}" ;;
 esac
 base_url="http://127.0.0.1:$port"
+public_url="http://localhost:$port"
+cluster="${CLUSTER:-0}"
+cluster_dir="$PWD/target/cluster"
+topology='{"servers": 1, "workers": 0, "balancer": null}'
+if [[ "$cluster" == "1" ]]; then
+  base_url="http://127.0.0.1:58405"
+  public_url="http://localhost:58405"
+  servers=$(cat "$cluster_dir/servers" 2>/dev/null || echo 0)
+  workers=$(find "$cluster_dir" -name 'worker-*.pid' 2>/dev/null | wc -l | tr -d ' ')
+  topology=$(jq -cn --argjson servers "$servers" --argjson workers "$workers" '{servers: $servers, workers: $workers, balancer: "haproxy"}')
+fi
 work=$(mktemp -d)
 server_pid=""
 receiver_pid=""
@@ -127,31 +144,50 @@ if [[ "$endpoint" == "site" ]]; then
   site_pid=$!
 fi
 
-# The load-test server: the local stack's settings, its own port, and warnings-only logging,
-# as production would run (per-request lines are DEBUG).
-(
-  # shellcheck source=scripts/local-env.sh
-  . scripts/local-env.sh
-  # The public URL is the sign-in redirect URI registered in the development realm.
-  export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
-  if [[ -n "$studio_dir" ]]; then export COLOPHON_STUDIO_DIR="$studio_dir"; fi
-  exec target/release/colophon-server
-) >"$work/server.log" 2>&1 &
-server_pid=$!
-
-ready=0
-for _ in $(seq 1 100); do
-  if target/release/colophon doctor --server "$base_url" --timeout-ms 500 >/dev/null 2>&1; then
-    ready=1
-    break
+# How much each cluster process had logged before the run: only what the run adds counts.
+cluster_log_sizes() {
+  for file in "$cluster_dir"/*.log; do
+    [[ -e "$file" ]] && printf '%s %s\n' "$file" "$(wc -c <"$file" | tr -d ' ')"
+  done
+}
+if [[ "$cluster" == "1" ]]; then
+  if ! target/release/colophon doctor --server "$base_url" --timeout-ms 1000 >/dev/null 2>&1; then
+    echo "error: CLUSTER=1, but the balancer isn't ready (scripts/cluster.sh up)" >&2
+    exit 1
   fi
-  sleep 0.2
-done
-if (( ready == 0 )); then
-  echo "error: the server never became ready (is the stack up? scripts/stack.sh up)" >&2
-  target/release/colophon doctor --server "$base_url" >&2 || true
-  cat "$work/server.log" >&2
-  exit 1
+  cluster_log_sizes >"$work/log-sizes"
+else
+  # The load-test server: the local stack's settings, its own port, and warnings-only logging,
+  # as production would run (per-request lines are DEBUG).
+  (
+    # shellcheck source=scripts/local-env.sh
+    . scripts/local-env.sh
+    # The public URL is the sign-in redirect URI registered in the development realm.
+    export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
+    # One machine sends every request: rate limits (D-076) that never refuse, so each request
+    # still pays for its check and the run measures it.
+    export COLOPHON_RATE_LIMIT_PER_ADDRESS="${COLOPHON_RATE_LIMIT_PER_ADDRESS:-1000000/1000000}" \
+      COLOPHON_RATE_LIMIT_PER_CREDENTIAL="${COLOPHON_RATE_LIMIT_PER_CREDENTIAL:-1000000/1000000}" \
+      COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000000/1000000}"
+    if [[ -n "$studio_dir" ]]; then export COLOPHON_STUDIO_DIR="$studio_dir"; fi
+    exec target/release/colophon-server
+  ) >"$work/server.log" 2>&1 &
+  server_pid=$!
+
+  ready=0
+  for _ in $(seq 1 100); do
+    if target/release/colophon doctor --server "$base_url" --timeout-ms 500 >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 0.2
+  done
+  if (( ready == 0 )); then
+    echo "error: the server never became ready (is the stack up? scripts/stack.sh up)" >&2
+    target/release/colophon doctor --server "$base_url" >&2 || true
+    cat "$work/server.log" >&2
+    exit 1
+  fi
 fi
 
 # The database the server uses: `colophon`, or COLOPHON_TEST_DATABASE's (scripts/local-env.sh
@@ -164,11 +200,131 @@ db_transactions() {
 sleep 1.5 # let Postgres publish its statistics
 tx_before=$(db_transactions)
 
+# Stress (milestone S, D-077): the steady scenario at rising rates on one server (or the
+# cluster), until a step breaks its own thresholds. Each step runs STEP_SECONDS (default 20) at
+# a rate 25% above the last, from START_RATE (default a quarter of the endpoint's RATE), at most
+# MAX_STEPS (default 15). The knee is the highest rate that held; the failure mode is how the
+# first step that didn't hold broke: shed load (every failed request the servers logged was 503
+# `unavailable` at WARN, which only a request that waited out the pool's acquire timeout logs,
+# D-033: overload handled as designed), errors (anything else), falling behind (k6 couldn't
+# start iterations on time because answers were too slow), or latency over P99_MS. Each step
+# keeps the WARN and ERROR lines it added to the servers' logs: failed requests by code (or a
+# middleware failure's status), other lines by message, so an error is never only a number. A step that breaks is run once
+# more, and only breaking twice ends the climb. A measurement, not a pass/fail gate: it exits 0
+# unless the server is unhealthy afterwards.
+if [[ "$scenario" == "stress" ]]; then
+  step_seconds="${STEP_SECONDS:-20}"
+  rate="${START_RATE:-$(( RATE / 4 ))}"
+  (( rate >= 10 )) || rate=10
+  max_steps="${MAX_STEPS:-15}"
+  steps='[]'
+  knee=0
+  failure="none within $max_steps steps"
+  echo "stressing $endpoint from $rate/s, ${step_seconds} s a step, p99 gate $P99_MS ms"
+  # Where each server's log ends now, so a step counts only the lines it adds.
+  log_sizes() {
+    if [[ "$cluster" == "1" ]]; then
+      cluster_log_sizes
+    else
+      printf '%s %s\n' "$work/server.log" "$(wc -c <"$work/server.log" | tr -d ' ')"
+    fi
+  }
+  # The WARN and ERROR lines added since log_sizes wrote $work/step-log-sizes: failed requests
+  # by code (`unavailable`, `internal`, ...) or a middleware failure's status, the rest (such as
+  # sqlx's slow-acquire warnings) by message.
+  logged_failures() {
+    while read -r file size; do
+      tail -c +"$(( size + 1 ))" "$file"
+    done <"$work/step-log-sizes" | jq -Rsc '
+      def counts: group_by(.) | map({key: .[0], value: length}) | from_entries;
+      [split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")]
+      | {requests: (map(select(.code or .status) | (.code // .status)) | counts),
+         other: (map(select((.code or .status) | not) | (.message // "unknown")) | counts)}'
+  }
+  # One step at the current rate: appends it to $steps, sets $entry and $step_status.
+  run_step() {
+    local attempt=$1 load_average logged
+    load_average=$(uptime | sed 's/.*averages*: //' | awk '{print $1}' | tr -d ,)
+    log_sizes >"$work/step-log-sizes"
+    step_status=0
+    "$k6" run --quiet --no-color --summary-export "$work/step.json" \
+      -e BASE_URL="$base_url" -e PUBLIC_URL="$public_url" -e SCENARIO=steady \
+      -e VUS="$VUS" -e RATE="$rate" -e DURATION="${step_seconds}s" \
+      -e P99_MS="$P99_MS" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
+      "perf/k6/$endpoint.js" >"$work/step.log" 2>&1 || step_status=$?
+    logged=$(logged_failures)
+    entry=$(jq -c --argjson rate "$rate" --argjson attempt "$attempt" --argjson status "$step_status" --arg load "$load_average" \
+      --argjson logged "$logged" '{
+      rate: $rate, attempt: $attempt, rps: (.metrics.http_reqs.rate | floor),
+      p99_ms: (.metrics.http_req_duration."p(99)" * 1000 | round / 1000),
+      failed: (.metrics.http_req_failed.passes // 0), checks_failed: (.metrics.checks.fails // 0),
+      dropped: (.metrics.dropped_iterations.count // 0), held: ($status == 0), load_average: ($load | tonumber? // null),
+      server_logged: $logged
+    }' "$work/step.json")
+    steps=$(jq -c --argjson entry "$entry" '. + [$entry]' <<<"$steps")
+    echo "  $(jq -r '"\(.rate)/s: \(.rps) requests/s, p99 \(.p99_ms) ms, \(.failed) failed, \(.dropped) dropped: " + (if .held then "held" else "broke" end)
+      + (if .server_logged.requests == {} then "" else " (failed requests the servers logged: \(.server_logged.requests | to_entries | map("\(.value) \(.key)") | join(", ")))" end)' <<<"$entry")"
+  }
+  for _ in $(seq 1 "$max_steps"); do
+    run_step 1
+    # One broken window can be a passing stall (a checkpoint, another process): a step breaks
+    # only if it breaks twice in a row (a first run on 2026-10-28 "broke" at 303/s on one
+    # p99 spike, and held to 731/s when run again).
+    if (( step_status != 0 )); then
+      echo "  once more, to tell a stall from a limit"
+      run_step 2
+    fi
+    if (( step_status != 0 )); then
+      failure=$(jq -r --argjson gate "$P99_MS" '
+        if .failed > 0 and (.server_logged.requests | keys) == ["unavailable"] and .server_logged.requests.unavailable >= .failed then "shed load"
+        elif .failed > 0 or .checks_failed > 0 then "errors"
+        elif .dropped > 0 then "fell behind"
+        elif .p99_ms > $gate then "latency"
+        else "thresholds" end' <<<"$entry")
+      break
+    fi
+    knee=$rate
+    rate=$(( rate * 5 / 4 ))
+  done
+  healthy=true
+  target/release/colophon doctor --server "$base_url" >/dev/null || healthy=false
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    cpu=$(sysctl -n machdep.cpu.brand_string)
+    cores=$(sysctl -n hw.ncpu)
+  else
+    cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//')
+    cores=$(nproc)
+  fi
+  machine=$(printf '%s-%sc' "$cpu" "$cores" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/-$//')
+  shape=""
+  [[ "$cluster" == "1" ]] && shape="-cluster$(echo "$topology" | jq -r '"\(.servers)s\(.workers)w"')"
+  stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  record=$(jq -cn --arg endpoint "$endpoint" --arg stamp "$stamp" --arg commit "$(git rev-parse --short HEAD)" \
+    --argjson dirty "$([[ -n "$(git status --porcelain -- crates Cargo.lock perf/k6)" ]] && echo true || echo false)" \
+    --arg machine "$machine" --arg cpu "$cpu" --argjson cores "$cores" --argjson topology "$topology" \
+    --argjson gate "$P99_MS" --argjson step_seconds "$step_seconds" --argjson steps "$steps" \
+    --argjson knee "$knee" --arg failure "$failure" --argjson healthy "$healthy" \
+    '{scenario: "stress", endpoint: $endpoint, date: $stamp, commit: $commit, dirty: $dirty,
+      machine: {id: $machine, cpu: $cpu, cores: $cores}, topology: $topology,
+      p99_gate_ms: $gate, step_seconds: $step_seconds, knee_rate: $knee, failure_mode: $failure,
+      healthy_after: $healthy, steps: $steps}')
+  echo "$record" | jq '{endpoint, knee_rate, failure_mode, healthy_after, topology}'
+  if [[ "${KEEP:-1}" == "1" ]]; then
+    mkdir -p perf/results
+    file="perf/results/${stamp//:/}-$endpoint-stress-$machine$shape.json"
+    echo "$record" | jq . >"$file"
+    echo "$record" >>perf/results/history.jsonl
+    echo "saved $file"
+  fi
+  [[ "$healthy" == true ]]
+  exit
+fi
+
 echo "running k6: $endpoint $scenario"
 k6_status=0
 "$k6" run --quiet --no-color \
   --summary-export "$work/summary.json" \
-  -e BASE_URL="$base_url" -e PUBLIC_URL="http://localhost:$port" -e SCENARIO="$scenario" \
+  -e BASE_URL="$base_url" -e PUBLIC_URL="$public_url" -e SCENARIO="$scenario" \
   -e TOTAL="${TOTAL:-1000000}" -e VUS="$VUS" \
   -e RATE="$RATE" -e DURATION="${DURATION:-60s}" \
   -e P99_MS="$P99_MS" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
@@ -182,7 +338,15 @@ target/release/colophon doctor --server "$base_url" >/dev/null || {
   echo "error: the server is not ready after the run" >&2
   k6_status=1
 }
-server_warnings=$(grep -c '"level":"\(WARN\|ERROR\)"' "$work/server.log" || true)
+if [[ "$cluster" == "1" ]]; then
+  server_warnings=0
+  while read -r file size; do
+    added=$(tail -c +"$(( size + 1 ))" "$file" | grep -c '"level":"\(WARN\|ERROR\)"' || true)
+    server_warnings=$(( server_warnings + added ))
+  done <"$work/log-sizes"
+else
+  server_warnings=$(grep -c '"level":"\(WARN\|ERROR\)"' "$work/server.log" || true)
+fi
 
 commit=$(git rev-parse --short HEAD)
 dirty=$([[ -n "$(git status --porcelain -- crates Cargo.lock perf/k6)" ]] && echo true || echo false)
@@ -196,6 +360,9 @@ else
   memory_gb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 / 1024 ))
 fi
 machine=$(printf '%s-%sc' "$cpu" "$cores" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/-$//')
+# Runs through the balancer are their own series: file names and baselines carry the shape.
+shape=""
+[[ "$cluster" == "1" ]] && shape="-cluster$(echo "$topology" | jq -r '"\(.servers)s\(.workers)w"')"
 stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 record=$(jq -c \
@@ -203,11 +370,12 @@ record=$(jq -c \
   --arg cpu "$cpu" --argjson cores "$cores" --argjson memory_gb "$memory_gb" --arg machine "$machine" \
   --arg os "$(uname -s) $(uname -r)" --arg k6 "$("$k6" version | awk '{print $2}')" \
   --argjson tx "$(( tx_after - tx_before ))" --argjson warnings "$server_warnings" \
-  --argjson k6_status "$k6_status" \
+  --argjson k6_status "$k6_status" --argjson topology "$topology" \
   --arg total "${TOTAL:-1000000}" --arg vus "$VUS" --arg rate "$RATE" --arg duration "${DURATION:-60s}" \
   '{
     scenario: $scenario, endpoint: $endpoint, date: $stamp, commit: $commit, dirty: $dirty,
     machine: { id: $machine, cpu: $cpu, cores: $cores, memory_gb: $memory_gb, os: $os },
+    topology: $topology,
     k6: $k6,
     params: (if $scenario == "throughput" then { total: ($total | tonumber), vus: ($vus | tonumber) }
              else { rate: ($rate | tonumber), duration: $duration, vus: ($vus | tonumber) } end),
@@ -230,7 +398,7 @@ echo "$record" | jq .
 
 if [[ "${KEEP:-1}" == "1" ]]; then
   mkdir -p perf/results perf/baselines
-  file="perf/results/${stamp//:/}-$endpoint-$scenario-$machine.json"
+  file="perf/results/${stamp//:/}-$endpoint-$scenario-$machine$shape.json"
   echo "$record" | jq . >"$file"
   echo "$record" >>perf/results/history.jsonl
   echo "saved $file"
@@ -242,7 +410,7 @@ if (( server_warnings > 0 )); then
   status=1
 fi
 
-baseline="perf/baselines/$endpoint-$scenario-$machine.json"
+baseline="perf/baselines/$endpoint-$scenario-$machine$shape.json"
 # Only like with like: a 10,000-request smoke spends a visible share of its requests opening
 # pool connections and preparing statements, which a million-request run amortizes away, so
 # a run with different parameters relies on its absolute thresholds alone.

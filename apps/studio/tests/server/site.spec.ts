@@ -78,10 +78,9 @@ test('an article published in the Studio is live on the site, verified, and acce
 		await expect(page.getByTestId('release-link')).toHaveText('release 1');
 
 		// The receipt: the site built it and the probe saw it there.
+		// The release link opens its receipt, which settles by itself.
 		await page.getByTestId('release-link').click();
-		const label = page.locator('[data-generation="1"]').getByTestId('label');
-		await expect(label).toHaveText('Verified at 1 location', { timeout: 30_000 });
-		await label.click();
+		await expect(page.getByTestId('receipt-label')).toHaveText('Verified at 1 location', { timeout: 30_000 });
 		await expect(page.getByTestId('deliveries')).toContainText('Site build');
 		await expect(page.getByTestId('deliveries')).toContainText('saw this release');
 

@@ -74,7 +74,24 @@ on clean infrastructure and an independent install, so operations are a module w
   state; the handler only reads it, so `/readyz` costs no database work however often it is called (a 5-million-request
   load run saw 13 database transactions, all from the probes). Statuses: `starting`, `ready`, `degraded` (200),
   `not_ready`, `draining` (503). A supervisor marks a dependency down if its probe ever stops, so readiness can't
-  freeze at "up".
+  freeze at "up". The database probe uses one connection of its own, never the request pool (D-075): under load
+  that pool is busy, and a probe waiting for it called a healthy database down on every server at once, which left
+  the balancer nothing to send to (found by `scripts/failover.sh`). Each process therefore holds one more database
+  connection than its pool.
+- Several servers behind a load balancer (milestone S, D-075; `scripts/cluster.sh`, `deploy/cluster/`): the balancer
+  checks `/readyz` every 500 ms and drops a server after two failures, so a server asked to stop leaves the rotation
+  within about a second of saying `draining`; `COLOPHON_DRAIN_DELAY_MS` (default 5 s) must stay longer than that.
+  The balancer retries a request no server answered (refused, or closed without a response) on another, holding the
+  body to do so; writes carry `Idempotency-Key`, so a write a dying server did commit is replayed, not repeated.
+  The sum of every process's database connections stays under PostgreSQL's `max_connections` with room to spare.
+- Rate limits (D-076): `COLOPHON_RATE_LIMIT_PER_ADDRESS` (default `300/600`: requests a second and burst),
+  `COLOPHON_RATE_LIMIT_PER_CREDENTIAL` (`150/300`) and `COLOPHON_RATE_LIMIT_DELIVERY` (`1000/2000`), each `off` to
+  disable; `COLOPHON_TRUSTED_PROXIES`, comma-separated addresses or networks (a load balancer, a CDN's ranges), whose
+  `X-Forwarded-For` names the client. Behind a proxy that isn't listed, every client looks like the proxy and shares
+  one count. Counts live in Valkey (`colophon:rl:*` keys that expire on their own); with Valkey down each server
+  counts alone, so a cluster of N admits up to N times the rate until it is back. `scripts/load.sh` and
+  `scripts/cluster.sh` raise the limits so far that they never refuse (one machine sends everything), and still
+  pay for every check.
 - `colophon doctor [--json]` reports what `/readyz` reports, with the CLI exit codes (0 ready, 5 otherwise).
   - A cache failure can be *degraded* rather than unready when the bounded fallback is available.
   - A database failure makes writes unavailable.

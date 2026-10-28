@@ -35,6 +35,7 @@ pub(crate) struct Place<'a> {
 async fn open(place: &Place<'_>) -> Result<(Client, String), Failure> {
     let saved = credentials::profile(place.profile).await?;
     let client = Client::new(&saved.server, Some(saved.token))?;
+    client.check_server().await?;
     let projects = client
         .send(Method::GET, "/api/v1/projects", None, &[])
         .await?

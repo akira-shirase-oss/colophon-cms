@@ -1,0 +1,440 @@
+# Releases (D-062; docs/modules/19-oss.md, "Release workflow").
+#
+# Pushing a tag v<version> builds every artifact, then drafts a GitHub release carrying the
+# archives, SHA256SUMS, the SBOMs and signed build provenance; the maintainer checks the draft and
+# publishes it by hand.
+#
+# Run by hand (Actions > release > Run workflow) it is a dry run, on any branch: it builds and
+# checks every artifact and keeps them as workflow artifacts for a week. It publishes nothing and
+# signs nothing: for a public repository an attestation is written to Sigstore's public
+# transparency log, so only tag runs make one.
+#
+# Every third-party action is pinned to a full commit SHA (spec §35), as in ci.yml. Nothing here
+# uses a cache: a release is built from a clean slate.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    name: plan (version, tag, licence, changelog)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      publish: ${{ steps.plan.outputs.publish }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      epoch: ${{ steps.plan.outputs.epoch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == push && "$REF_TYPE" == tag ]]; then
+            # Fails unless the tag is v plus the workspace version.
+            version=$(scripts/release-version.sh "$REF_NAME")
+            publish=true
+          else
+            version=$(scripts/release-version.sh)
+            publish=false
+          fi
+          # OSS1 and OSS2 (module 19): no public release without a confirmed licence and a
+          # changelog entry. A dry run reports what is missing and goes on.
+          problems=()
+          [[ -f LICENSE ]] || problems+=("there is no LICENSE file: the licence is not confirmed yet (O-014)")
+          heading="^## \[?${version//./\\.}\]?([[:space:]]|$)"
+          grep -Eq "$heading" CHANGELOG.md 2>/dev/null || problems+=("CHANGELOG.md has no '## $version' section")
+          for problem in "${problems[@]}"; do
+            if [[ "$publish" == true ]]; then
+              echo "::error::$problem"
+            else
+              echo "::warning::$problem (a dry run goes on; a tag run would stop here)"
+            fi
+          done
+          if [[ "$publish" == true && ${#problems[@]} -gt 0 ]]; then
+            exit 1
+          fi
+          prerelease=false
+          if [[ "$version" == *-* ]]; then prerelease=true; fi
+          {
+            echo "version=$version"
+            echo "publish=$publish"
+            echo "prerelease=$prerelease"
+            # Reproducible stamps: every binary's build date is the commit's time, not the runner's clock.
+            echo "epoch=$(git log -1 --format=%ct)"
+          } >>"$GITHUB_OUTPUT"
+          echo "Release $version; publish: $publish; pre-release: $prerelease" >>"$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep this list in step with the SBOM job's and with packages/cli-npm (one npm package
+        # per target).
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-15
+            native: true
+          # Cross-compiled on Apple silicon: no Intel runner needed, and it can't run here.
+          - target: x86_64-apple-darwin
+            os: macos-15
+            native: false
+          # musl: static binaries that run on any Linux distribution.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+            native: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            native: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-2025
+            native: true
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+      # aws-lc's C code is compiled with musl too, so the binaries stay static.
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
+      # Windows: aws-lc uses its prebuilt NASM objects instead of needing NASM installed.
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: rustup, if the runner image lacks it
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+          fi
+      - name: Install the pinned toolchain and the target
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal --target "$TARGET"
+      - run: scripts/check-toolchain.sh
+      - name: Install musl-gcc
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - name: Build colophon and colophon-server
+        run: cargo build --release --locked --target "$TARGET" -p colophon-cli -p colophon-server
+      - name: The binaries run and report this release and commit
+        if: matrix.native
+        run: |
+          exe=
+          if [[ "$TARGET" == *windows* ]]; then exe=.exe; fi
+          for bin in colophon colophon-server; do
+            line=$("target/$TARGET/release/$bin$exe" --version | tr -d '\r')
+            echo "$line"
+            if [[ "$line" != "$bin $VERSION (commit $GITHUB_SHA, built "* ]]; then
+              echo "::error::$bin --version printed '$line', expected $VERSION at $GITHUB_SHA"
+              exit 1
+            fi
+          done
+      - name: Linux binaries are static
+        if: contains(matrix.target, 'musl')
+        run: |
+          for bin in colophon colophon-server; do
+            file "target/$TARGET/release/$bin"
+            file "target/$TARGET/release/$bin" | grep -Eq 'statically linked|static-pie linked'
+          done
+      - name: Package
+        run: scripts/release-package.sh "$TARGET" "$VERSION" dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  sbom:
+    name: SBOMs (CycloneDX, each binary for each target)
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      SOURCE_DATE_EPOCH: ${{ needs.plan.outputs.epoch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal
+      - name: Install cargo-cyclonedx (pinned, from its lockfile)
+        run: cargo install --locked cargo-cyclonedx@0.5.9
+      - name: Describe each binary's dependencies for each target
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-pc-windows-msvc; do
+            # It writes one file beside every workspace member's Cargo.toml; keep the two binaries'.
+            cargo cyclonedx --format json --spec-version 1.5 --target "$target" --override-filename "sbom-$target"
+            cp "crates/colophon-cli/sbom-$target.json" "dist/colophon-cli-$VERSION-$target.cdx.json"
+            cp "crates/colophon-server/sbom-$target.json" "dist/colophon-server-$VERSION-$target.cdx.json"
+          done
+          cd dist
+          for file in *.cdx.json; do sha256sum "$file" >"$file.sha256"; done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-sbom
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  assemble:
+    name: checksums and checks
+    needs: [plan, build, sbom]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: Every file matches the checksum its job recorded; one SHA256SUMS for the release
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum --strict -c ./*.sha256
+          cat ./*.sha256 | sort -k 2 >SHA256SUMS
+          rm ./*.sha256
+          # The install script and the Homebrew formula (filled in from the archives' checksums)
+          # ship with the release, checksummed and attested like everything else.
+          cp ../scripts/install.sh install.sh
+          ../scripts/homebrew-formula.sh "$VERSION" SHA256SUMS >colophon.rb
+          sha256sum install.sh colophon.rb >>SHA256SUMS
+          sort -k 2 -o SHA256SUMS SHA256SUMS
+          sha256sum --strict -c SHA256SUMS
+          # Two archives and two SBOMs for each of the five targets, the script and the formula.
+          count=$(wc -l <SHA256SUMS)
+          if [[ "$count" -ne 22 ]]; then
+            echo "::error::expected 22 files in SHA256SUMS, found $count"
+            exit 1
+          fi
+          {
+            echo '| File | SHA-256 |'
+            echo '|---|---|'
+            awk '{print "| " $2 " | `" $1 "` |"}' SHA256SUMS
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: The install script installs this release's Linux x64 archive, checked against SHA256SUMS
+        run: |
+          set -euo pipefail
+          # Served as GitHub would: <base>/v<version>/<file>.
+          mkdir -p "$RUNNER_TEMP/www"
+          ln -s "$GITHUB_WORKSPACE/dist" "$RUNNER_TEMP/www/v$VERSION"
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory "$RUNNER_TEMP/www" >/dev/null 2>&1 &
+          for _ in $(seq 50); do curl -fs -o /dev/null http://127.0.0.1:8765/ && break; sleep 0.1; done
+          COLOPHON_DOWNLOAD_URL=http://127.0.0.1:8765 sh dist/install.sh --version "$VERSION" --dir "$RUNNER_TEMP/bin"
+          line=$("$RUNNER_TEMP/bin/colophon" --version)
+          if [[ "$line" != "colophon $VERSION (commit $GITHUB_SHA, built "* ]]; then
+            echo "::error::the installed colophon printed '$line'"
+            exit 1
+          fi
+      - name: The Homebrew formula pairs each platform with its archive and hash
+        run: scripts/test-homebrew-formula.sh && ruby -c dist/colophon.rb
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ needs.plan.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  npm-pack:
+    name: npm packages (assembled from the archives, packed, installed and run)
+    needs: [plan, assemble]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ needs.plan.outputs.version }}
+          path: dist
+      - name: The launcher's and the assembler's tests
+        working-directory: packages/cli-npm
+        run: npm test
+      - name: Assemble the packages from the archives (each checked against SHA256SUMS) and pack them
+        run: |
+          set -euo pipefail
+          node packages/cli-npm/scripts/assemble.mjs --version "$VERSION" --archives dist --out npm
+          mkdir -p npm-dist
+          for dir in npm/*/; do
+            (cd "$dir" && npm pack --pack-destination "$GITHUB_WORKSPACE/npm-dist")
+          done
+          ls -l npm-dist
+      - name: Install the packed launcher and the Linux x64 package, then run colophon through npx
+        run: |
+          set -euo pipefail
+          try=$(mktemp -d)
+          cd "$try"
+          echo '{"name": "try", "private": true}' >package.json
+          # The other platforms' packages aren't on npm yet; npm skips optional ones it can't find.
+          npm install --no-audit --no-fund \
+            "$GITHUB_WORKSPACE/npm-dist/colophon-cms-cli-linux-x64-$VERSION.tgz" \
+            "$GITHUB_WORKSPACE/npm-dist/colophon-cms-cli-$VERSION.tgz"
+          line=$(npx --no-install colophon --version)
+          echo "$line"
+          if [[ "$line" != "colophon $VERSION (commit $GITHUB_SHA, built "* ]]; then
+            echo "::error::npx colophon --version printed '$line'"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-${{ needs.plan.outputs.version }}
+          path: npm-dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: draft the GitHub release, with signed provenance
+    needs: [plan, assemble]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the draft release
+      id-token: write # sign the provenance with a short-lived Sigstore certificate
+      attestations: write # store the attestation with the repository
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ needs.plan.outputs.version }}
+          path: dist
+      - name: Sign build provenance for every file in SHA256SUMS
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - name: Draft the release (the maintainer checks it and publishes it by hand)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cat >notes.md <<NOTES
+          Colophon $VERSION. What changed: [CHANGELOG.md](https://github.com/$GH_REPO/blob/v$VERSION/CHANGELOG.md).
+
+          Check a download before you run it:
+
+              sha256sum --ignore-missing -c SHA256SUMS
+              gh attestation verify <file> --repo $GH_REPO
+
+          Each archive holds one binary: \`colophon\` (the CLI) or \`colophon-server\`. The \`.cdx.json\`
+          files are CycloneDX SBOMs of each binary's dependencies for that target.
+
+          Install the CLI:
+
+              npx @colophon-cms/cli@$VERSION --version
+              curl -fsSL https://github.com/$GH_REPO/releases/download/v$VERSION/install.sh | sh -s -- --version $VERSION
+              cargo install --locked --git https://github.com/$GH_REPO --tag v$VERSION colophon-cli
+
+          \`colophon.rb\` is the Homebrew formula for this release, for the tap.
+          NOTES
+          flags=(--draft --verify-tag --title "Colophon $VERSION" --notes-file notes.md)
+          if [[ "$PRERELEASE" == true ]]; then flags+=(--prerelease); fi
+          gh release create "v$VERSION" "${flags[@]}" dist/*
+
+  npm-publish:
+    name: publish to npm (after a maintainer approves)
+    needs: [plan, release, npm-pack]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The approval: give the `npm` environment required reviewers and keep NPM_TOKEN in its secrets
+    # (Settings > Environments). The first step refuses to go on if it has no reviewers.
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm --provenance signs where and how each package was built
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+    steps:
+      - name: The npm environment requires a reviewer's approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          reviewers=$(gh api "repos/$GH_REPO/environments/npm" --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length')
+          if [[ "$reviewers" -lt 1 ]]; then
+            echo "::error::the npm environment has no required reviewers, so nothing was approved; add them in Settings > Environments > npm"
+            exit 1
+          fi
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-${{ needs.plan.outputs.version }}
+          path: npm-dist
+      - name: Publish the platform packages, then the launcher that depends on them
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$NODE_AUTH_TOKEN" ]]; then
+            echo "::error::NPM_TOKEN is not set in the npm environment's secrets"
+            exit 1
+          fi
+          # A pre-release must not become what `npm install @colophon-cms/cli` gets.
+          tag=latest
+          if [[ "$PRERELEASE" == true ]]; then tag=next; fi
+          publish() {
+            local name=$1 file=$2
+            # A rerun after a partial failure skips what is already there; npm never overwrites.
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already on npm"
+              return
+            fi
+            npm publish "npm-dist/$file" --access public --provenance --tag "$tag"
+          }
+          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
+            publish "@colophon-cms/cli-$platform" "colophon-cms-cli-$platform-$VERSION.tgz"
+          done
+          publish "@colophon-cms/cli" "colophon-cms-cli-$VERSION.tgz"

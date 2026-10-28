@@ -4,7 +4,7 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import EntryEditor from '#lib/EntryEditor.svelte';
 	import { getContentType, getEntry } from '#lib/api.ts';
-	import { ago, entriesQuery } from '#lib/queries.ts';
+	import { ago } from '#lib/queries.ts';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 
@@ -19,9 +19,18 @@
 		staleTime: Infinity,
 		refetchOnWindowFocus: false
 	}));
-	// What readers get now comes with the collection's list (the newest 100).
-	const list = createQuery(() => entriesQuery(project, collection));
-	const published = $derived(list.data?.data.find((summary) => summary.id === entry)?.published ?? null);
+	// What readers get now: the entry's own answer says (B1), however old it is. Keyed under the
+	// collection's entries, so saving and publishing, which refresh those, refresh this too.
+	// Its read also says which entries link to it (D-065).
+	const state = createQuery(() => ({
+		queryKey: ['entries', project, collection, 'state', entry],
+		queryFn: async () => {
+			const { draft } = await getEntry(project, collection, entry);
+			return { published: draft.published ?? null, referencedBy: draft.referenced_by ?? [] };
+		}
+	}));
+	const published = $derived(state.data !== undefined ? state.data.published : (draft.data?.draft.published ?? null));
+	const referencedBy = $derived(state.data?.referencedBy ?? draft.data?.draft.referenced_by ?? []);
 </script>
 
 <svelte:head><title>{draft.data?.draft.revision.title ?? 'Editing'} · Colophon Studio</title></svelte:head>
@@ -40,6 +49,6 @@
 		{/snippet}
 	</PageHeader>
 	{#key entry}
-		<EntryEditor {project} {collection} {entry} type={type.data} initial={draft.data} {published} />
+		<EntryEditor {project} {collection} {entry} type={type.data} initial={draft.data} {published} {referencedBy} />
 	{/key}
 {/if}

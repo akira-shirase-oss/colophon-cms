@@ -27,6 +27,7 @@ pub(crate) async fn login(
     json: bool,
 ) -> Result<(), Failure> {
     let client = Client::new(server, None)?;
+    client.check_server().await?;
     let started = client
         .send(
             Method::POST,
@@ -118,7 +119,9 @@ pub(crate) async fn login(
     }
 }
 
-/// Runs `colophon logout`: revokes the token on the server, then forgets it here.
+/// Runs `colophon logout`: revokes the token on the server, then forgets it here. It skips the
+/// version check on purpose: signing out must work even against a server this colophon can't
+/// otherwise use, and `/auth/logout` predates version reports.
 pub(crate) async fn logout(profile: &str) -> Result<(), Failure> {
     let saved = credentials::profile(profile).await?;
     let client = Client::new(&saved.server, Some(saved.token))?;
@@ -136,10 +139,9 @@ pub(crate) async fn logout(profile: &str) -> Result<(), Failure> {
 /// Runs `colophon whoami`.
 pub(crate) async fn whoami(profile: &str, json: bool) -> Result<(), Failure> {
     let saved = credentials::profile(profile).await?;
-    let me = Client::new(&saved.server, Some(saved.token))?
-        .send(Method::GET, "/me", None, &[])
-        .await?
-        .body;
+    let client = Client::new(&saved.server, Some(saved.token))?;
+    client.check_server().await?;
+    let me = client.send(Method::GET, "/me", None, &[]).await?.body;
     if json {
         print_json(
             &json!({ "version": 1, "command": "whoami", "server": saved.server, "me": me["data"] }),

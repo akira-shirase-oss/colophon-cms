@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.id AS \"entry_id!\", r.title AS \"title!\", false AS \"published!\",\n                  e.created_by AS \"created_by!\"\n           FROM entries e\n           JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id\n                           AND r.id = e.draft_revision_id\n           WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3\n             AND e.draft_slug = $4 AND e.id IS DISTINCT FROM $5\n           UNION ALL\n           SELECT p.entry_id, p.title, true, e.created_by\n           FROM publications p\n           JOIN entries e ON e.project_id = p.project_id AND e.environment_id = p.environment_id\n                         AND e.id = p.entry_id\n           WHERE p.project_id = $1 AND p.environment_id = $2 AND p.collection = $3\n             AND p.slug = $4 AND p.valid_to IS NULL AND p.entry_id IS DISTINCT FROM $5\n           LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entry_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "title!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "published!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_by!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "91a4ec08b6c538b2bac2630968c4e988d7563062c08038a81c55d61e8ea0d572"
+}

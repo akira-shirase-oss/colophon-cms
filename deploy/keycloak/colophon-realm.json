@@ -37,7 +37,7 @@
       "webOrigins": [],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:58000/"
+        "post.logout.redirect.uris": "http://localhost:58000/studio/##http://localhost:58090/studio/##http://localhost:58091/studio/##http://localhost:58092/studio/##http://localhost:58093/studio/##http://localhost:58400/studio/##http://localhost:58401/studio/##http://localhost:58402/studio/##http://localhost:58403/studio/##http://localhost:58404/studio/##http://localhost:58405/studio/"
       }
     }
   ],

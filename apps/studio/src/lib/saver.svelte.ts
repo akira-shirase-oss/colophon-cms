@@ -6,10 +6,13 @@
 //   refuses (409) and the saver opens a conflict instead of overwriting anyone.
 // - A save that gets no answer is sent again with the same Idempotency-Key, so if the first one
 //   did reach the database the server replays its answer instead of saving twice (F02).
+// - A save turned away for the rate limit (D-076) waits as long as the server asks, then goes
+//   again, key and all; the edits stay on this device meanwhile.
 
 import { ApiError, type Content, type Definition, type Draft, getEntry, type Loaded, newKey, saveEntry } from './api.ts';
-import { URL_NAME } from './words.ts';
+import { busyFor, URL_NAME } from './words.ts';
 import { canonical, same } from './content.ts';
+import { plainError } from './errors.ts';
 import { forget, keep, type Kept, type Sent } from './drafts.ts';
 
 export type SaveStatus =
@@ -23,7 +26,10 @@ export type SaveStatus =
 	/** The server refused the content; editing again will retry. */
 	| 'refused'
 	/** The session ended; edits stay on this device until sign-in. */
-	| 'signed-out';
+	| 'signed-out'
+	/** Something typed can't be stored as it is (JSON that doesn't read yet): not sent, and not
+	 *  kept on this device, until it's fixed. */
+	| 'held';
 
 /** A save that was refused because someone else's revision is now the draft. */
 export interface Conflict {
@@ -50,6 +56,19 @@ export class Saver {
 	conflict = $state.raw<Conflict | null>(null);
 	/** False when this browser refused to keep the edits locally. */
 	keptOnDevice = $state(true);
+	/** Waiting out a rate limit (D-076): `message` says for how long. */
+	busy = $state(false);
+	/** For a refused save: the field the server named (its JSON Pointer's first part), if any,
+	 *  and for a list, the place in it (`/related/1`). */
+	field = $state<string | null>(null);
+	place = $state<number | null>(null);
+	/** The whole JSON Pointer of a refused save (`/sections/1/by`), for controls inside structures,
+	 *  and the refusal's reason (`pattern_mismatch`), for words that fit the control. */
+	pointer = $state<string | null>(null);
+	reason = $state<string | null>(null);
+	/** The entry that has a value this one may not share (`value_taken`, `slug_taken`), when the
+	 *  server names it: only to a role that reads its title (D-070). */
+	holder = $state<{ entry: string; title: string } | null>(null);
 
 	#saved: Content;
 	#latest: Content;
@@ -59,6 +78,10 @@ export class Saver {
 	#key = '';
 	#keyFor = '';
 	#retries = 0;
+	/** No save goes before this time (ms since the epoch): the server asked to wait until then. */
+	#notBefore = 0;
+	/** Saving is held until the next edit (see `hold`). */
+	#held = false;
 	/** The request sent and not yet answered: kept on the device so a reload can resend it. */
 	#sent: Sent | null = null;
 	/** After reopening: the newest edits, applied once the resent request is answered. */
@@ -123,8 +146,28 @@ export class Saver {
 		});
 	}
 
+	/** Holds saving while something typed can't be stored: says why, sends nothing, and keeps
+	 *  nothing on this device (leaving the page warns). The next `edit` carries on. */
+	hold(reason: string): void {
+		if (this.conflict !== null || this.status === 'signed-out') return;
+		clearTimeout(this.#timer);
+		this.#held = true;
+		this.status = 'held';
+		this.message = reason;
+		this.keptOnDevice = false;
+	}
+
 	/** Records the editor's current content. */
 	edit(content: Content): void {
+		this.field = null;
+		this.place = null;
+		this.pointer = null;
+		this.reason = null;
+		this.holder = null;
+		if (this.#held) {
+			this.#held = false;
+			this.message = '';
+		}
 		this.#latest = content;
 		this.#newest = null;
 		if (this.conflict !== null) {
@@ -141,13 +184,15 @@ export class Saver {
 		this.#keep(this.etag, content);
 		if (this.status === 'signed-out') return;
 		if (!this.#inFlight && this.status !== 'retrying') this.status = 'unsaved';
-		this.#schedule(this.status === 'retrying' ? RETRY_MS[0] ?? 1_000 : DEBOUNCE_MS);
+		this.#schedule(this.status === 'retrying' ? Math.max(RETRY_MS[0] ?? 1_000, this.#notBefore - Date.now()) : DEBOUNCE_MS);
 	}
 
-	/** Saves at once (the Save button, ⌘S). */
+	/** Saves at once (the Save button, ⌘S), or as soon as the server said it may. */
 	saveNow(): void {
 		clearTimeout(this.#timer);
-		void this.#save();
+		const wait = this.#notBefore - Date.now();
+		if (wait > 0) this.#schedule(wait);
+		else void this.#save();
 	}
 
 	/** Conflict choice: save my version on top of theirs. Theirs stays in the history. */
@@ -191,7 +236,7 @@ export class Saver {
 	}
 
 	async #save(): Promise<void> {
-		if (this.conflict !== null || this.status === 'signed-out') return;
+		if (this.conflict !== null || this.status === 'signed-out' || this.#held) return;
 		if (this.#inFlight) {
 			this.#again = true;
 			return;
@@ -219,6 +264,8 @@ export class Saver {
 			this.etag = result.etag;
 			this.#saved = result.draft.content;
 			this.#retries = 0;
+			this.#notBefore = 0;
+			this.busy = false;
 			this.#keyFor = '';
 			this.message = this.#newest === null ? '' : this.message;
 			this.onSaved(result);
@@ -239,6 +286,8 @@ export class Saver {
 			await this.#failed(error);
 		} finally {
 			this.#inFlight = false;
+			// Held while this save was out: say so, whatever it answered.
+			if (this.#held) this.status = 'held';
 			if (this.#again) {
 				this.#again = false;
 				if (this.status === 'unsaved' || this.status === 'saving') this.#schedule(0);
@@ -280,7 +329,8 @@ export class Saver {
 				}
 				return;
 			case 'retry':
-				this.#retry(error.message);
+				if (error.reason === 'rate_limited') this.#wait(error.retryAfter ?? 1_000);
+				else this.#retry(error.message);
 				return;
 			case 'signed-out':
 				this.status = 'signed-out';
@@ -291,16 +341,34 @@ export class Saver {
 				this.#sent = null;
 				this.status = 'refused';
 				// The API names it a slug; the Studio says URL name (D-059), and which entry has it.
+				// Other refusals in plain words; the field they name is marked in the editor.
+				const pointer = /^\/([^/]+)(?:\/(\d+))?/.exec(error.details?.pointer ?? '');
+				this.field = pointer?.[1] ?? null;
+				this.place = pointer?.[2] === undefined ? null : Number(pointer[2]);
+				this.pointer = error.details?.pointer ?? null;
+				this.reason = error.reason;
+				const named = error.details?.entries?.[0];
+				this.holder = named === undefined ? null : { entry: named.entry, title: named.title };
 				this.message =
 					error.reason === 'slug_taken'
 						? `another entry already uses this ${URL_NAME}${error.details?.entries?.[0] ? ` (“${error.details.entries[0].title}”)` : ''}: choose another`
-						: error.message;
+						: plainError(error, 'change this entry');
 				return;
 		}
 	}
 
+	/** Turned away for the rate limit: the same request again once the server's wait is over. */
+	#wait(ms: number): void {
+		this.status = 'retrying';
+		this.busy = true;
+		this.message = busyFor(ms / 1000, true);
+		this.#notBefore = Date.now() + ms;
+		this.#schedule(ms);
+	}
+
 	#retry(message: string): void {
 		this.status = 'retrying';
+		this.busy = false;
 		this.message = message;
 		this.#schedule(RETRY_MS[Math.min(this.#retries, RETRY_MS.length - 1)] ?? 30_000);
 		this.#retries += 1;

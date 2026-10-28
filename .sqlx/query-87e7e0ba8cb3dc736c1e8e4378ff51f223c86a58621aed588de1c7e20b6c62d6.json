@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT v.field AS \"field!\", c.entry_id AS \"entry_id!\", c.published AS \"published!\",\n                  coalesce(CASE WHEN c.published\n                               THEN (SELECT p.title FROM publications p\n                                     WHERE p.project_id = c.project_id\n                                       AND p.environment_id = c.environment_id\n                                       AND p.entry_id = c.entry_id AND p.valid_to IS NULL)\n                               ELSE e.draft_title END, '') AS \"title!\",\n                  e.created_by AS \"created_by!\"\n           FROM colophon_unique_values($4, $5) v\n           JOIN unique_claims c\n             ON c.project_id = $1 AND c.environment_id = $2 AND c.collection = $3\n            AND c.field = v.field AND c.value_hash = v.value_hash\n            AND c.entry_id IS DISTINCT FROM $6\n           JOIN entries e\n             ON e.project_id = c.project_id AND e.environment_id = c.environment_id\n            AND e.id = c.entry_id\n           ORDER BY array_position($4, v.field), c.published\n           LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "field!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "entry_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "unique_claims",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "published!",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "unique_claims",
+            "name": "published"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "title!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_by!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "created_by"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "TextArray",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      false,
+      null,
+      false
+    ]
+  },
+  "hash": "87e7e0ba8cb3dc736c1e8e4378ff51f223c86a58621aed588de1c7e20b6c62d6"
+}

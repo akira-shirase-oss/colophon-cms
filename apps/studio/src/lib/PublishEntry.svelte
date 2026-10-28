@@ -10,18 +10,10 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { useQueryClient } from '@tanstack/svelte-query';
+	import * as AlertDialog from '@colophon/ui/ui/alert-dialog';
 	import { Button } from '@colophon/ui/ui/button';
-	import {
-		ApiError,
-		changesetAction,
-		createChangeset,
-		type EntryState,
-		listReleases,
-		may,
-		newKey,
-		type Project,
-		publishChangeset
-	} from './api.ts';
+	import { type EntryState, mayOn, type Project } from './api.ts';
+	import { newKeys, type Outcome, publishesInOneClick, publishInOneClick } from './publishing.ts';
 	import { PUBLISH_REQUEST, releaseName } from './words.ts';
 
 	let {
@@ -33,7 +25,9 @@
 		standing,
 		saved,
 		generation,
-		seenGeneration
+		seenGeneration,
+		own = true,
+		linkedLive = []
 	}: {
 		project: string;
 		collection: string;
@@ -48,75 +42,48 @@
 		generation: number | null;
 		/** The newest release this page has seen: publishing goes on top of it, never past one unseen. */
 		seenGeneration: number | undefined;
+		/** Whether the caller created this entry, for permissions limited to one's own entries. */
+		own?: boolean;
+		/** Published entries that link to this one, named: taking it down will be refused (D-065). */
+		linkedLive?: string[];
 	} = $props();
 
-	const queryClient = useQueryClient();
-	const oneClick = $derived(
-		mine?.self_review === true && may(mine, 'content.publish', collection) && may(mine, 'content.review', collection)
-	);
-	const asks = $derived(may(mine, 'content.update', collection));
+	// Before an unpublish the server will refuse, say why and let the person decide (stale data can
+	// be wrong, so trying stays possible).
+	let warning = $state(false);
 
-	type Outcome =
-		| { kind: 'published'; generation: number }
-		| { kind: 'requested'; request: string }
-		| { kind: 'stopped'; message: string; request: string | null };
+	const queryClient = useQueryClient();
+	const oneClick = $derived(publishesInOneClick(mine, [collection]));
+	const asks = $derived(mayOn(mine, 'content.update', collection, own));
+
 	let step = $state('');
 	let outcome = $state<Outcome | null>(null);
-	// One key for the request and one for publishing it: pressing again after a lost answer is safe.
-	let requestKey = newKey();
-	let publishKey = newKey();
+	// Pressing again after a lost answer is safe: the same keys until the attempt ends.
+	let keys = newKeys();
 
-	async function refresh() {
+	/** Publishes the saved version, or with `unpublish`, takes the live one down: the same path,
+	 *  a request whose one item unpublishes (D-049). Publishing it again puts it back. */
+	async function go(unpublish = false) {
+		outcome = null;
+		const named = title || 'Untitled';
+		outcome = await publishInOneClick({
+			project,
+			title: unpublish ? `Unpublish: ${named}` : named,
+			entries: unpublish ? [] : [entry],
+			unpublish: unpublish ? [entry] : [],
+			oneClick,
+			seenGeneration,
+			keys,
+			step: (words) => (step = words),
+			doing: oneClick ? (unpublish ? 'unpublish this' : 'publish this') : 'ask for review here'
+		});
+		step = '';
+		keys = newKeys();
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ['entries', project] }),
 			queryClient.invalidateQueries({ queryKey: ['changesets', project] }),
 			queryClient.invalidateQueries({ queryKey: ['releases', project] })
 		]);
-	}
-
-	async function go() {
-		outcome = null;
-		let request: string | null = null;
-		try {
-			step = `Making a ${PUBLISH_REQUEST}…`;
-			let made = await createChangeset(project, title || 'Untitled', [entry], [], requestKey);
-			request = made.id;
-			if (made.status.state === 'open') {
-				step = 'Sending it for review…';
-				made = await changesetAction(project, made.id, made.hash, 'submit');
-			}
-			if (!oneClick) {
-				outcome = { kind: 'requested', request: made.id };
-				return;
-			}
-			if (made.status.state === 'awaiting_review') {
-				step = 'Approving it…';
-				made = await changesetAction(project, made.id, made.hash, 'reviews', {
-					decision: 'approve',
-					comment: 'Approved and published from the editor in one step.'
-				});
-			}
-			step = 'Publishing…';
-			const base = seenGeneration ?? (await listReleases(project)).generation;
-			const published = await publishChangeset(project, made.id, made.hash, base, publishKey);
-			outcome = { kind: 'published', generation: published.generation };
-		} catch (failure) {
-			const reason = failure instanceof ApiError ? failure.reason : null;
-			const message =
-				reason === 'generation_moved'
-					? 'Another release went live while you were publishing. Your request is approved and waiting: look at what is live now, then publish it from the request.'
-					: reason === 'stale_changeset'
-						? 'The entry changed while it was being published. Open the request to update it to the latest version.'
-						: failure instanceof ApiError
-							? failure.message
-							: String(failure);
-			outcome = { kind: 'stopped', message, request };
-		} finally {
-			step = '';
-			requestKey = newKey();
-			publishKey = newKey();
-			await refresh();
-		}
 	}
 </script>
 
@@ -130,26 +97,57 @@
 					>{releaseName(generation)}</a
 				>{/if}.
 		</p>
-	{:else if outcome?.kind === 'published' || outcome?.kind === 'requested'}
-		<!-- Said below; pressing again would only make a second request. -->
-	{:else if oneClick || asks}
-		<Button class="w-full" onclick={go} disabled={!saved || step !== ''} data-testid="publish-button">
-			{step !== '' ? step : oneClick ? (standing === 'changed' ? 'Publish changes' : 'Publish') : 'Ask for review'}
-		</Button>
-		<p class="text-xs text-muted-foreground">
-			{#if !saved}
-				Saving first…
-			{:else if oneClick}
-				Goes live for readers at once, as the next release. Your approval is recorded.
-			{:else}
-				Someone who can publish approves it and puts it live.
-			{/if}
-		</p>
-	{:else}
+	{:else if !(oneClick || asks)}
 		<p class="text-xs text-muted-foreground">Your role can't publish or ask for review here.</p>
 	{/if}
 
-	{#if outcome?.kind === 'published'}
+	{#if mine !== undefined && (oneClick || asks)}
+		<!-- Side by side in the phone's bar, stacked in the desktop card. -->
+		<div class="flex gap-2 xl:grid">
+			{#if !(standing === 'live' && saved && outcome === null) && outcome?.kind !== 'published' && outcome?.kind !== 'requested'}
+				<Button class="flex-1" onclick={() => go()} disabled={!saved || step !== ''} data-testid="publish-button">
+					{step !== '' ? step : oneClick ? (standing === 'changed' ? 'Publish changes' : 'Publish') : 'Ask for review'}
+				</Button>
+			{/if}
+			{#if (standing !== 'draft' || outcome?.kind === 'published') && outcome?.kind !== 'unpublished' && outcome?.kind !== 'requested'}
+				<!-- Taking it down is the same path in reverse, and undone by publishing again (D-059, rule 6). -->
+				<Button
+					class="flex-1"
+					variant="outline"
+					onclick={() => (linkedLive.length > 0 ? (warning = true) : go(true))}
+					disabled={step !== ''}
+					data-testid="unpublish-button"
+				>
+					{oneClick ? 'Unpublish' : 'Ask to unpublish'}
+				</Button>
+			{/if}
+		</div>
+		{#if !(standing === 'live' && saved && outcome === null) && outcome === null}
+			<p class="text-xs text-muted-foreground {saved ? 'hidden xl:block' : ''}">
+				{#if !saved}
+					Saving first…
+				{:else if oneClick}
+					Goes live for readers at once, as the next release. Your approval is recorded.
+				{:else}
+					Someone who can publish approves it and puts it live.
+				{/if}
+			</p>
+		{/if}
+	{/if}
+
+	{#if linkedLive.length > 0 && standing !== 'draft' && outcome?.kind !== 'unpublished'}
+		<p class="hidden text-xs text-muted-foreground xl:block" data-testid="unpublish-warning">
+			Readers have {linkedLive.length === 1 ? 'an entry that links' : 'entries that link'} here, so it can't be taken down until {linkedLive.length === 1 ? 'that changes' : 'they change'}.
+		</p>
+	{/if}
+
+	{#if outcome?.kind === 'unpublished'}
+		<p role="status" class="rounded-lg bg-pending-soft px-3 py-2 text-sm text-pending-ink" data-testid="publish-outcome">
+			Taken down in <a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(outcome.generation) })}
+				>{releaseName(outcome.generation)}</a
+			>. Readers no longer get it; publish it again to put it back.
+		</p>
+	{:else if outcome?.kind === 'published'}
 		<p role="status" class="rounded-lg bg-live-soft px-3 py-2 text-sm text-live-ink" data-testid="publish-outcome">
 			Live as <a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(outcome.generation) })}
 				>{releaseName(outcome.generation)}</a
@@ -157,7 +155,7 @@
 		</p>
 	{:else if outcome?.kind === 'requested'}
 		<p role="status" class="rounded-lg bg-pending-soft px-3 py-2 text-sm text-pending-ink" data-testid="publish-outcome">
-			Sent for review.
+			{outcome.unpublish ? 'Asked to take it down.' : 'Sent for review.'}
 			<a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: outcome.request })}
 				>See the {PUBLISH_REQUEST}</a
 			>
@@ -173,3 +171,21 @@
 		</p>
 	{/if}
 </div>
+
+<AlertDialog.Root bind:open={warning}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>Readers still have links to this</AlertDialog.Title>
+			<AlertDialog.Description>
+				{linkedLive.join(', ')}
+				{linkedLive.length === 1 ? 'links' : 'link'} to it, and readers have {linkedLive.length === 1 ? 'it' : 'them'}. Colophon won't take this down
+				until {linkedLive.length === 1 ? 'that changes' : 'they change'}: change or take down {linkedLive.length === 1 ? 'that entry' : 'those entries'} first, or in
+				the same publish request.
+			</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel>Keep it</AlertDialog.Cancel>
+			<AlertDialog.Action variant="outline" onclick={() => go(true)}>Try anyway</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>

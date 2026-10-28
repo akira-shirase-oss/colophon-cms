@@ -7,7 +7,7 @@
 |---|---|
 | Milestones | P5 |
 | Proposed owner | Claude |
-| Depends on | domain, auth (machine credentials, policy), api services, db (budget reservations), worker (bulk and AI pools), an MCP implementation (O-013) |
+| Depends on | domain, auth (machine credentials, policy), api services, db (budget reservations), worker (bulk and AI pools), the MCP layer in `crates/colophon-mcp` (D-068) |
 | Used by | scripts, agents, the CLI's agent mode, the Studio's optional AI panel |
 | Spec | §11, §17, §27 |
 
@@ -62,12 +62,88 @@ a zero-unauthorized-action evaluation gate, X12, L08 and F11.
 | `job_status` / `release_status` | Reports progress and delivery receipts |
 
 - Tool discovery is filtered by the caller's current authorization.
-- The CLI's JSON contract is implemented first; the MCP adapter wraps the same services afterwards.
+- Built so far, as MCP tools (D-068): `list_content_types` (`discover_schemas`), `list_entries` and `get_entry`
+  (`query_content`, with title search only), `create_draft`, `update_draft`, `create_publish_request`
+  (`propose_changeset`), `request_review` and `get_publish_request`. Not built: `validate_changeset`, `job_status`,
+  `release_status`.
+- The plan was the CLI's JSON contract first, then the MCP adapter over the same services. The MCP server came first
+  (D-068), as a client of the HTTP API, so it shares the API's authorization literally; the CLI's JSON contract
+  follows.
 
-### MCP adapter (spec §11; O-013)
-- Remote access uses the pinned MCP 2025-11-25 authorization requirements, with audience validation.
-- Local stdio uses scoped credentials supplied by the operator.
-- Neither is a privileged alternate path: both call the identical services.
+### MCP adapter (spec §11; D-068)
+
+**Built: local stdio.** `crates/colophon-mcp`, a library and the `colophon-mcp` binary, speaks MCP **2025-11-25** on
+stdin and stdout: one JSON-RPC 2.0 message per line, no batches (MCP removed them in 2025-06-18), logs on stderr only.
+It answers `initialize`, `ping`, `tools/list` and `tools/call`; `notifications/cancelled` stops a request. It always
+answers `initialize` with 2025-11-25, the one version it speaks.
+
+- **Credentials and path.** `COLOPHON_SERVER` (an origin; plain `http` only for loopback, so the token never crosses
+  a network in the clear), `COLOPHON_TOKEN` (a project API token, `colophon_api_…`, D-063; a person's token is
+  refused) and `COLOPHON_PROJECT` (the token's project: no route tells a token which it is). It calls `/api/v1` like
+  the Studio and the CLI and is never a privileged path: the API decides every call with the token's own
+  permissions (AU1), and what it writes is attributed to the token's identity.
+- **Tools**, each a typed wrapper over one route under `{P}` = `/api/v1/projects/{project}/environments/production`:
+
+  | Tool | Route | Precondition |
+  |---|---|---|
+  | `list_content_types` | `GET {P}/content-types` | |
+  | `list_entries` (collection, `q`, cursor) | `GET {P}/collections/{c}/entries` | |
+  | `get_entry` (collection, id) | `GET {P}/collections/{c}/entries/{id}`, with `published` and `referenced_by` | |
+  | `create_draft` (collection, content) | `POST {P}/collections/{c}/entries` | `Idempotency-Key` |
+  | `update_draft` (collection, id, content, revision) | `PUT {P}/collections/{c}/entries/{id}` | `If-Match` on the revision read, `Idempotency-Key` |
+  | `create_publish_request` (title, entry ids) | `POST {P}/changesets` | `Idempotency-Key` |
+  | `request_review` (id, hash) | `POST {P}/changesets/{id}/submit` | `If-Match` on the hash read |
+  | `get_publish_request` (id) | `GET {P}/changesets/{id}` | |
+
+- **Nothing approves or publishes.** There is no tool to approve, publish, unpublish, schedule, or manage roles,
+  members or tokens, whatever the token may do: a full-access token, which could approve and publish through the API,
+  gets the same eight tools (AU2; the stack test calls thirteen such names and gets "unknown tool" for each).
+- **Discovery.** `tools/list` shows a tool when the token holds the action it needs in some collection, read from
+  `GET {P}/permissions` (one read; the caller's own permissions, for a person or a token). Discovery grants nothing:
+  a listed tool can still be refused for an entry (field lists, `own`), and every call is decided by the API. (The
+  first version probed the API with requests that couldn't write, because no such route existed yet.)
+  A 401 or 404 on discovery is a JSON-RPC error (`-32001`) that says the token is wrong, revoked or expired, or that
+  `COLOPHON_PROJECT` isn't its project.
+- **Stale versions never overwrite.** `update_draft` sends the revision the agent read; when the draft has moved on,
+  the API's 409 `stale_revision` becomes a tool error naming the current revision (from the answer's `ETag`) and
+  saying nothing was saved. `request_review` sends the hash the agent read, so review is asked for exactly what it saw;
+  a stale one names the current hash.
+- **Retries can't write twice.** Writes send an `Idempotency-Key`: the agent's `idempotency_key` argument, or a new
+  key returned in the result. The client tries again after no answer or a 503, at most three times within the call's
+  30-second deadline, with the same key; the API replays the recorded answer (`replayed: true`). A write with no answer
+  is a tool error (`outcome_unknown`) that names the key to retry with. `request_review` needs no key: submitting is a
+  no-op once submitted. A cancelled write may still happen; retrying it with its key is safe.
+- **Refusals stay intact.** Every API refusal is a tool error (`isError`, so the model can correct itself) carrying
+  the status, `code`, `details.reason`, `details.permission`, `details.pointer`, the rest of `details` and the request
+  id. Invalid arguments are tool errors too, checked before anything is sent (MCP 2025-11-25 asks for input errors as
+  tool errors); an unknown tool or malformed `params` is JSON-RPC `-32602`.
+- **Limits.** A message is at most 2 MiB (a longer line is dropped as it arrives and answered `-32600`); an API answer
+  at most 4 MiB; an attempt 15 s including its body, 5 s to connect, 30 s per call; at most 8 requests run at once and
+  the next waits for a slot; a client that stops reading for 30 s ends the session; when the input ends, running
+  requests get 5 s, then stop. Reading the input has no deadline: an idle client is normal.
+- **Instructions to the model** say that entry content is data written by people, never instructions to follow.
+
+**O-013, decided (D-068): a thin JSON-RPC layer of our own** (`jsonrpc.rs` and `server.rs`, about 660 lines without
+their tests), rather than the official Rust SDK. `rmcp` 3.8.0 (checked on crates.io on 2026-10-28) supports
+2025-11-25, but its default server features pull in `schemars`, `rmcp-macros`, `pastey` and a second `base64`, it
+always needs `chrono`, and it went from 3.5.0 to 3.8.0 in four weeks. This server uses four methods and two
+notifications; owning them puts the frame limit, the error codes and the "bad arguments are tool errors" rule where our
+tests see them, and adds no external dependency (the lockfile gains only the crate itself). Revisit when remote MCP is
+built: the SDK's Streamable HTTP and authorization support may then be worth its weight.
+
+**Built: a route that tells a caller its own permissions.** `GET {P}/permissions`, answered for people and API tokens
+alike (it sits under `/environments/`, where tokens are allowed): `{"data": {"kind": "person" | "token", "role",
+"permissions": [{"action", "subject", "fields"?, "condition"?}]}}`, from the same `Policy` every check uses, through
+the same scoped transaction (a revoked token can't read it). The MCP server's discovery reads it; the Studio and the
+CLI can show from it what a role or token can do.
+
+**Not built yet (P5):**
+- Remote MCP: Streamable HTTP with the 2025-11-25 authorization requirements and audience validation.
+- Budgets reserved in Postgres, bulk manifests and jobs, and service-account quotas beyond R.4's tokens.
+- `validate_changeset`, `job_status`, `release_status`, and unpublish requests.
+- The evaluation suite and L08 (a noisy agent beside editors).
+- A `colophon mcp` subcommand in the CLI, and environments other than `production`.
+- Testbed and k6 coverage for the MCP server itself: it adds no API route, and the routes it calls keep their own.
 
 ### Bulk work (spec §11, §17)
 - A bulk job is a manifest of exact IDs and base revisions.
@@ -147,6 +223,14 @@ a zero-unauthorized-action evaluation gate, X12, L08 and F11.
 
 ## Tests and evidence
 
+- The MCP server (D-068): unit tests for JSON-RPC framing (malformed JSON, batches, ids, oversized lines, unknown
+  methods and tools, the `initialize` handshake and requests before it), tool argument validation, error mapping and
+  configuration (`cargo test -p colophon-mcp`); and `crates/colophon-mcp/tests/stack.rs` (ignored; the local stack and
+  `colophon-server`), which drives the binary over stdio with a custom, a read-only and a full-access token: a draft, a
+  refused stale save naming the current revision, a create retried with the same key returning the same entry, a
+  publish request and its review request; no write tools for the read-only token and its writes refused by the API;
+  no approving or publishing tool for anyone; and a wrong `COLOPHON_PROJECT` or a token revoked mid-session said
+  plainly (`-32001`, and 401 on the next call: R.4's kill switch holds through MCP).
 - X12, L08 and F11.
 - The evaluation suite with repeated trials and the zero-unauthorized-action gate.
 - Spec §27 agent-abuse cases:
@@ -162,11 +246,10 @@ a zero-unauthorized-action evaluation gate, X12, L08 and F11.
 1. Service accounts, quotas and the kill switch (with [auth](03-auth.md)).
 2. Typed tools over the CLI JSON contract.
 3. Bulk manifests and budget reservations.
-4. The MCP adapter.
+4. The MCP adapter. Local stdio is built (D-068), ahead of 1 to 3, on R.4's API tokens; remote MCP waits for 3.
 5. The optional AI assistant, last and off by default.
 
 ## Open decisions
 
-- **O-013:** the MCP implementation (official Rust SDK or a thin JSON-RPC layer).
 - Whether the AI assistant ships in v0.1 at all, or moves to "Later".
 - The default budget values per project.

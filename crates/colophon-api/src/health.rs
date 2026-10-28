@@ -210,7 +210,7 @@ struct Liveness {
     status: &'static str,
 }
 
-fn no_store(mut response: Response) -> Response {
+pub(crate) fn no_store(mut response: Response) -> Response {
     // Health answers are about this instant; no cache or proxy may keep them.
     response
         .headers_mut()

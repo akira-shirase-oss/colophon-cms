@@ -109,6 +109,13 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - The CSRF token is per session, stored hashed, and sent to the page in a readable `SameSite=Strict` cookie; writes
   echo it in `X-CSRF-Token`. Trusted origins are the public origin plus `COLOPHON_TRUSTED_ORIGINS`, compared exactly.
 - Nothing caches sessions, so revocation (logout) takes effect on the next request.
+- Signing out (`POST /auth/logout`) ends the session at once, whatever the identity provider does, and answers where
+  the browser should go to end its session at the provider too (OpenID Connect RP-Initiated Logout 1.0:
+  `provider_sign_out`, the provider's end-session page with the client's id and the Studio's front door to come back
+  to; `null` if the provider has none or can't be reached). Without it, the next person at a shared computer was
+  signed straight back in without a password. No ID token hint is sent, so the provider asks the person to confirm.
+  The development realm lists each local port's `/studio/` as a post-logout address. Built after R.4, from a gap
+  the Studio's sign-out showed; tested end to end against Keycloak (a provider without an end-session page is not).
 - CORS is narrowly scoped, and no secrets ever appear in URLs.
 - Sensitive actions require fresh authentication: deleting a project, export, credential and role changes.
 
@@ -162,7 +169,9 @@ Built in step 1.7 (D-042), for people:
 - Entries enforce it (`colophon_api::visibility`): a read leaves out what the role can't read (`hidden_fields`) and
   marks what it can read but not change (`locked_fields`); an entry it can't read at all is 404; a list holds only
   the caller's own entries when that is all the role may read, with titles blank where the title field is hidden;
-  revisions and history the same. Creating may only set fields the role may create. Saving puts back every field
+  revisions and history the same. A title search (`?q=`) looks only where the role reads titles: its own entries
+  when it reads only theirs, and none (403 `titles_not_readable`) when it reads none, so which entries match can't
+  confirm a guess at a hidden title (found by the docs rewrite, fixed with a test that failed before). Creating may only set fields the role may create. Saving puts back every field
   the saver can't read exactly as stored, refuses one sent with a different value, and refuses any change to a
   field the role can't change (422 `field_not_permitted`, pointing at the field), measured against the immutable
   revision the editor started from. A publish request may pin an entry only if the role may change it.
@@ -219,6 +228,42 @@ Built in step 1.7 (D-042), for people:
 - A broad administrator token never appears in a template or frontend bundle.
 - A **kill switch** revokes a principal and prevents new work; actions it already completed stay auditable.
 
+### API tokens (step R.4, D-063)
+- A project's API token holds permissions the way a role does: **read-only** (`content.read` everywhere), **full
+  access** (every action a token may hold, everywhere) or **custom** (a list, narrowed by fields and `own` as a role's).
+  No token may hold `members.manage`, `roles.manage`, `tokens.manage` or `audit.read`
+  (`colophon_domain::policy::TOKEN_FORBIDDEN`): people keep the actions that manage access and read the record of it,
+  so a leaked token can't raise anyone's power or read what it did. The database refuses them too (migration 0023).
+- Made, listed and revoked at `/api/v1/projects/{project}/tokens` by people whose role holds `tokens.manage` (owners,
+  by default), checked against their role as it is now; nobody makes a token with a power they lack (`cannot_grant`).
+  Expires after 1 to 366 days. At most 100 active per project, counted under the owner-role row lock.
+- The secret is `colophon_api_` and 43 random characters, shown once in the answer that makes it; only its SHA-256
+  hash is stored. The prefix keeps it apart from personal tokens and lets secret scanners spot one that leaked.
+- A token acts as an identity of its own (issuer `urn:colophon:api-token`, which no provider uses, so it can never sign
+  in): what it writes names it in `created_by` and `author_id`, and the audit log names it as the actor.
+- `Authorization: Bearer colophon_api_…` works only on its project's content routes (`…/environments/…`) and the
+  rich-text validator. Another project is 404, as projects a person isn't in are (A6); `/me`, project lists, members,
+  roles, tokens, the audit log and scheduling are 403 `api_token_not_allowed` (a schedule runs later as the person who
+  made it); revoked or expired is 401.
+- Lookup by hash goes through `colophon_api_token(hash)`, a `SECURITY DEFINER` function that returns what a token is,
+  never its permissions. `scope::begin_as_token` then re-checks the token inside its project's context and reads its
+  permissions, holding a **share lock** on its row until the request's transaction ends. Revoking takes the row's
+  update lock, so it waits for requests already running under the token, and none starts once it has committed: the
+  kill switch is exact (A4; tested by removing the lock, which fails the test). Last use is written at most once a
+  minute, in a transaction of its own, so requests never queue on it.
+
+### Audit log (step R.4, D-063)
+- `audit_events` records every change to roles, memberships, invitations and API tokens, in the transaction that makes
+  it: `role.created`, `role.updated` (before and after), `role.deleted`, `member.role_changed` (from and to),
+  `member.removed`, `member.left`, `invitation.created` (role and label), `invitation.revoked`,
+  `invitation.accepted`, `token.created`, `token.revoked` (name, kind, permissions, expiry). Never a secret: not a
+  token's, not an invitation's link.
+- Append-only: the API's database role may insert and read, never update or delete, and a trigger refuses `UPDATE`,
+  `DELETE` and `TRUNCATE` from anyone, the table owner included. Retention (90 days by default, spec §21) arrives with
+  operations in P6, as a separate, audited purge.
+- Read at `/api/v1/projects/{project}/audit` with `audit.read` (owners, by default): newest first, cursor pages,
+  filtered by `?action=` and `?actor=`; each event names its actor as a person or a token.
+
 ### The policy function
 - `authorize(principal, action, resource) -> Decision`, deny by default.
 - Its first form, built in step 1.7: `colophon_domain::policy::allows(role, action)` over `Read`, `WriteContent`,
@@ -239,7 +284,8 @@ Built in step 1.7 (D-042), for people:
   `content.review`, for every collection it pins; publishing checks `content.publish` for each, after locking them;
   content types check `schema.change` for theirs. A collection-wide check passes `None` and holds only for `*`.
   Project-wide actions (members, roles, destinations, tokens) can't be granted for one collection.
-- Principals other than people and resource-level checks arrive with machine credentials (R.4, P5).
+- Principals other than people: API tokens since step R.4 (above). Scoped machine credentials for agents, with
+  budgets and a kill switch for a principal's queued work, remain P5.
 - It checks object ownership, project, environment, action and field policy on **every** read and mutation.
 - Publish, export, schema change and secret administration need explicit permission.
 - Hidden resources answer like missing ones (consistent 404), so IDs can't be probed.
@@ -264,6 +310,7 @@ Built in step 1.7 (D-042), for people:
 | A6 | Hidden and missing resources are indistinguishable to unauthorized callers. |
 | A7 | Bootstrap runs once and is then disabled, whether by the command or a setup code (D-061); the development identity never runs on a public bind. |
 | A8 | Tokens and session secrets are stored hashed, compared in constant time, and never logged. |
+| A9 | Every change to roles, memberships, invitations and API tokens is recorded in the transaction that makes it, and no recorded change is ever altered or removed (step R.4). |
 
 ## Interfaces
 
@@ -376,7 +423,7 @@ Built in step 1.7 (D-042), for people:
 1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin and cross-project denial for projects (step 1.1, done); roles,
    invitations and the policy function (step 1.7, done); the owner bootstrap (step 1.8, done).
 2. **R:** roles as data (R.1, done), custom roles and the Studio's role editor (R.2, done), field-level permissions and `own`
-   conditions (R.3, done), API tokens and the audit log (R.4); docs/ROADMAP.md, D-058.
+   conditions (R.3, done), API tokens and the audit log (R.4, done: D-063); docs/ROADMAP.md, D-058.
 3. **P2:** approval permissions and self-review recording.
 4. **P4:** preview capabilities.
 5. **P5:** machine credentials, device-authorization login, quotas, kill switch.

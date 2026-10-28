@@ -74,6 +74,199 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   with the draft. A changeset shows, for every item, what changes for readers: a word-level comparison from the live
   revision to the pinned one (new entries are all additions; unpublishing shows what goes). Destinations moved to
   `…/settings`.
+- Finishing the Studio (branch `studio/dashboard`, 2026-10-27), slice by slice:
+  - **Sign out from any screen** (`shell/AccountMenu.svelte`, in the project shell's header and the plain frame's):
+    who is signed in, *Your work and projects*, *About Colophon* (which version this is, below), and *Sign out*, which calls `POST /auth/logout` and only then
+    reloads at the front door with a note that says so. If the server can't be reached it says you're still signed
+    in. Since f4338a7 the answer names the identity provider's sign-out address, and the browser follows it
+    (Keycloak asks to confirm, then returns to `/studio/`), so signing in again asks for a password; only when the
+    provider gives no address does the front door say to close the browser on a shared computer. Test:
+    `tests/server/signout.spec.ts`.
+  - **Honest states and permission-aware navigation**: the sidebar, the Overview, the command palette and the new
+    publish request dialog show only collections the role may read (the server refuses the others' lists), so the
+    Overview and its checklist load for a role that can't read every collection. Each Overview section waits only for
+    what it shows and shows a failed read instead of "Loading…"; the palette searches each collection on its own and
+    says which it couldn't. `shell/Problem.svelte` words every failure through `lib/errors.ts` (a 403 is "Your role
+    can't see this"), offers *Try again* when that can help, and keeps the server's words in Technical details.
+  - **Gaps against the API** (the audit below), closed one by one: a published entry's page says *Where readers get
+    it* (its public `/content/v1` address, to open or copy; with newer changes, that readers get the version live in
+    its release). Test: `tests/server/address.spec.ts`. *Only mine* on a collection's list: the server keeps the entries the person started (the list's `created_by`), with a search too, and with none it says so and offers everyone's back; a role that reads only its own entries isn't offered it. Test: `tests/server/mine.spec.ts`. *About Colophon* in the account menu (`shell/AboutColophon.svelte`), so any role finds it on any screen, Settings or not: the server's version and build day from `GET /version` in words, the commit and API versions in Technical details, and *Copy details* for a problem report; if the server doesn't answer, it says so with *Try again*. Test: `tests/server/about.spec.ts`. *See what readers get* on a published entry (`ReaderView.svelte`): the public read of it, made as a website makes it, at the latest release; the title, the release its version went live in, a note when newer changes aren't in it, and the answer exactly as sent (marked technical, since it carries the API's field names), to copy. Taken down meanwhile: "Readers get nothing for it now". Test: `tests/server/readers.spec.ts`.
+    Test: `tests/server/honest.spec.ts`.
+  - **Plain-words errors**: `lib/errors.ts` turns a failure into a title, what happened and what to do, by status and
+    `details.reason`, which the server gives every 403 and 409 (a missing permission also names it), never by the
+    server's wording. Used by the publish request page, one-click publishing, scheduling, Members and new
+    entries. Tests in `tests/server/words.spec.ts`: a review refused because an entry was edited meanwhile (409) and a
+    request refused because the role was narrowed meanwhile (403) both read without internal terms.
+  - **Controls follow permissions**: *Ask for review* and *Update to the latest versions* need edit rights in every
+    collection the request touches (a role that can't edit is told who can); *Cancel the schedule* shows for its author
+    or someone who may publish it; Settings (sidebar and search) shows only to a role that can change something there
+    (`SETTINGS_ACTIONS`: content types, website connections, roles, tokens), so Editors don't see it. Built-in Editors
+    may read, create and update everywhere, so they still send and update requests. Test: `tests/server/controls.spec.ts`.
+  - The editor reads an entry's live state from the entry itself (`published` on a read), not from the collection's
+    newest 100, so an older entry no longer shows as Draft.
+  - **Your work** (`/studio/`, `lib/MyWork.svelte`): signed in with a project, the front door shows the person's work
+    in the project they last opened in this browser (`lib/lastProject.ts`; a picker when they have several, none when
+    they have one): entries they started that aren't live, publish requests waiting for review (worded for whether they can
+    approve them) and their own still in progress (`created_by`/`submitted_by`), upcoming and blocked schedules with
+    why, and the last three releases with their labels; then, with several projects, every project. A list row whose
+    title the role can't read (or that has none) says "No title to show". Test: `tests/server/mywork.spec.ts`.
+  - **The editor, finished for P3**: *Unpublish* in one click beside *Publish* (a request whose one item takes the live
+    version down, sent, approved and published like publishing; *Ask to unpublish* when the role can't approve), undone
+    by publishing again; *Restore this version* in History (its fields become the draft and are saved as a new
+    version on top, so nothing is lost; locked fields keep their values); and *Load more* on a collection, following
+    the server's cursor 100 at a time. Test: `tests/server/entry-actions.spec.ts`.
+  - **Bulk actions on a collection**: pick rows (or every row shown) and *Publish N* together, as one publish request
+    and one release, or *Ask for review of N* when the role can't approve; at most 100 at a time, and live entries with
+    nothing new are left out and said so. *Duplicate* on each row copies what the role can read, adds "(copy)" to the
+    title and takes the next free URL name, and opens the copy. One-click publishing lives in `lib/publishing.ts`,
+    shared with the editor. Test: `tests/server/bulk.spec.ts`.
+  - **Phone-friendly review** (closes ROADMAP 3.7's open item): below `xl` the editor's save status and Publish /
+    Unpublish are a bar that stays at the bottom of the screen while the fields scroll (the details and Technical
+    details stay on the wide card); below `lg` a publish request's Review panel comes first, so Approve is on the first
+    screen. `tests/server/journey.spec.ts` now opens every project screen at 390x844 (home, overview, a collection,
+    the editor, publish requests, a request waiting for review, releases, a receipt, members, settings): no sideways
+    scroll, axe in light and dark, plain words outside Settings, Publish and Approve in view without scrolling.
+  - **Receipt next steps**: a receipt that *Needs attention* says which website connection gave up and why in plain
+    words (`failureText` in `lib/receipts.ts`: "your website refused it (HTTP 404)", "couldn't reach your website"…),
+    that the release is published in Colophon but the website may not show it, and what to do (check the connection,
+    publish again: the next release carries this one's changes), with *Open website connections* for roles that
+    manage them. Releases says failures the same way and shows schedule and delivery load errors. A published
+    request's "release N" opens that release's receipt. A retry button per delivery waits for the API's retry (B5).
+    Test: `tests/server/deliveries.spec.ts` (a webhook answering 404).
+- Step R.4 in the Studio (API tokens and the audit log; the API is in [api](04-api.md)):
+  - **The role editor** names the new `audit.read` as *See the activity log*, and *Manage API tokens* says what it
+    means. Its grid is now `PermissionGrid.svelte`, with the words in `lib/permissions.ts`, shared with custom API
+    tokens and the activity log's sentences. Test: `tests/server/permissions.spec.ts`.
+  - **Settings → API tokens** (`…/settings/tokens`, for roles that manage tokens; others are told why it's empty):
+    each token with its state (*Active*, *Ended*, *Revoked*), what it may do, last use and end date in words; making
+    one as *Read only*, *Full access* or *Custom* (the role editor's grid without the four powers only people hold)
+    for 7 days to a year; its secret shown once with *Copy* and "You won't see it again"; *Revoke* asks first.
+    Refusals use B3's reasons (`cannot_grant`, `not_for_tokens`, `too_many_tokens`…). Test: `tests/server/tokens.spec.ts`
+    (the token reads with `Authorization: Bearer`, is refused a write, shows its last use, and answers 401 once
+    revoked; a custom token creates entries and is refused people's routes; phone width).
+  - **Settings → Activity** (`…/settings/activity`, the audit log, for roles with `audit.read`): each change as a
+    sentence (`lib/activity.ts`: "Dev Owner changed Dev Editor's role from Editor to Desk"), newest first and grouped by
+    day; filters for the kind of change and the person; *Show older* pages back 25 at a time. People are named from
+    the members list and the events' own actors, so someone who left is usually still named. Settings now shows to
+    roles with `audit.read` too. Test: `tests/server/activity.spec.ts` (seven changes in order, both filters, paging,
+    phone width; an Editor sees neither page, in the sidebar, in search or by address, and the Studio doesn't ask).
+  - **Own-only roles and "Your drafts", with the API's creators** (790c450): *Ask for review* and *Update* on a
+    publish request, the editor's *Ask for review*, and bulk sending follow permissions limited to one's own entries
+    (`mayOn`, with each item's and entry's `created_by`). "Your drafts" lists the entries the person started
+    (`?created_by=`), however many newer ones others wrote. Tests: `tests/server/controls.spec.ts`,
+    `tests/server/mywork.spec.ts`.
+- Step M.1 in the Studio (D-064; the field types are in [domain](01-domain.md)):
+  - **The content-type builder** offers the seven new types in plain words (*Email address*, *Web address*, *Date*,
+    *Time of day*, *Structured data (JSON)*, *Markdown text*, *Colour*), markdown's character limit, an optional
+    minimum on text, and *Help for editors* on any field; help text is sent trimmed and only when there is some, and
+    the minimum only when set, as the server writes definitions. Test: `tests/server/fields.spec.ts`.
+  - **The entry editor** draws each with a fitting control: native inputs for email, web address, date, time and
+    colour (a swatch beside a `#rrggbb` box), a textarea with a live character count for markdown, and a monospaced
+    one for JSON; each field's help text sits under its label. Checks mirror the server's (`fieldProblem` in
+    `lib/content.ts`) and show under the field; the server still decides, and its refusal is marked on the field it
+    names, in plain words. Values are sent in the server's canonical forms (a web address as `new URL(text).href`,
+    shown so once it is one; colours lowercase; JSON by `lib/json.ts`, which writes `write_json`'s bytes), and
+    `canonical()` compares JSON canonically, so a value read back is never a change. JSON that doesn't read yet is
+    never sent: the save is *held* (`Saver.hold`), says why, and leaving the page warns. Tests:
+    `tests/json.spec.ts` (the canonical form, the number rules, depth and size), `tests/server/fields.spec.ts`
+    (values stored canonically and nothing to save after a reload, plain refusals, and the server's stored bytes
+    equal to `canonicalJson` for a value with astral and non-ASCII keys, `1.5` and `-0`).
+- Step M.2 in the Studio (D-065; links are in [domain](01-domain.md)):
+  - **Link fields**: the builder's *Link to entries* type chooses the collection it links to (fixed once saved) and
+    *One entry* or *A list of up to N*. In the editor, `ReferencePicker.svelte` searches the target collection's
+    titles (the API's `q`) and sets the id; a list shows chips that move up and down and are removed, up to its
+    maximum and never twice. Chosen entries are named by reading each; one the role can't read is "An entry you
+    can't see", never its id. An id the server refuses (`reference_not_found` at `/related/1`) is marked on its
+    chip and in plain words under the field. Test: `tests/server/references.spec.ts`.
+  - **Link refusals by name** (`lib/references.ts`): the server's `references_unpublished` and `still_referenced`
+    name no entries, so the Studio works them out from the request's own: the linked entries its pinned versions
+    name that aren't published and aren't in it, and the published entries (`referenced_by`) that still link to what
+    it takes down. One-click publishing and the publish request page say, for example, "“Notes on the engine” links to
+    “Ada Lovelace”, which isn't published yet. Publish “Ada Lovelace” first, or in the same publish request.", and
+    the request page offers *Make a publish request that includes* them. Test: `tests/server/references.spec.ts`.
+  - **Linked from** (624f6bd): an entry's editor lists the entries that link to it (its read's `referenced_by`),
+    each named by reading it, with the field and whether readers see the link. The server lists only collections the
+    role reads in full, so a role that reads only its own entries isn't told which link here. When readers see a
+    link, *Unpublish* explains that it will be refused and names the linking entries before it is tried (*Keep it* or
+    *Try anyway*). Test: `tests/server/references.spec.ts`.
+- Step M.3 in the Studio (D-066; structures are in [domain](01-domain.md)):
+  - **The builder** offers *Group of fields* (object), *List* (what each item is: any field kind but a list, page
+    sections or a URL name, or a group of fields; a maximum) and *Page sections* (blocks: kinds of section, each with
+    its own fields; a maximum). Field lists are edited by `FieldsEditor.svelte`, recursively (rules and words in
+    `lib/fieldDefs.ts`). Structures are offered only while they may still nest (three deep at most) and the builder
+    says so where it stops; an empty group, a kind of section without fields and page sections without kinds are
+    said before saving, and Save waits. Test: `tests/server/structures.spec.ts`.
+  - **The editor** draws structures with `StructureInput.svelte`: a group of fields as a fieldset; a list as rows that
+    are added, moved and removed, up to its maximum (an added item isn't saved until something is typed into it);
+    page sections as a stack, each with its kind's label, collapsible, movable and removable, added by choosing a
+    kind. Inside, every control is the editor's own (FieldInputs, recursively; rich text through
+    `RichTextInput.svelte`; links through the picker), each at its JSON Pointer (`/faq/1/q`, `/sections/0/by`), so a
+    refusal lands under it. Values are built in definition order with `_block` first; `canonical()` compares
+    structures by their definitions' order; JSON held anywhere inside holds the save; comparisons and the conflict
+    screen read structures as their parts. "Linked from" names nested places ("Pages, in Sections → Quote 1 → By",
+    the kind from the linking entry's content; `placeName` in `lib/references.ts`). Test:
+    `tests/server/structures.spec.ts` (two kinds of section, a list of questions, a list of tags and a quote linking
+    to a person, filled in and reordered, stored canonically, nothing to save after a reload, a refusal at `/faq/1/q`
+    under its control, phone width, axe, plain words, and the person's "Linked from").
+- Step M.4 in the Studio (D-067): **single types**. The builder's switch *Just one entry (like site settings or a home
+  page)* writes `single: true` (left out otherwise). The sidebar opens a single type's one entry directly, and its page
+  redirects there; with none yet, it offers *Create it*. A second entry (409 `single_exists`) is refused as "This
+  already has its entry; edit that one." with *Open it*; making a type with several entries single (422
+  `too_many_entries`) is said plainly in the builder. Test: `tests/server/single.spec.ts`.
+- D-069 in the Studio: **allowed forms of text**. Every text field in the builder, at any depth, has *Allowed form
+  (optional)*, a regular expression matched against the whole value, left out of the definition when empty and kept
+  when other options change; a form the server can't use (422 `invalid_pattern` at `/fields/n/pattern`, or deeper) is
+  said plainly at that input. The editor never imitates the regex: a value the server refuses (`pattern_mismatch`) is
+  said under the field as "Code isn't in its allowed form." with the field's help text. The words are in
+  `lib/words.ts` (`ALLOWED_FORM`, `INVALID_PATTERN`, `patternMismatch`). Tests: `tests/patterns.spec.ts`,
+  `tests/server/patterns.spec.ts`.
+- D-070 in the Studio: **unique fields**. The builder offers *No two entries may share this* only on top-level
+  single-line text, email, web address, number, date, time and date-and-time fields (`canBeUnique` in
+  `lib/fieldDefs.ts`), writes `unique: true` only when on, and says at the switch when it can't hold (`invalid_unique`)
+  or when entries share a value (`needs_migration`, the entries listed with "It shares its Code with another entry.").
+  In the editor, `value_taken` is said under the field ("Another entry already has this Email.") with *Open “Ada”*
+  only when the server names the entry, which it does only to a role that reads it; a URL name taken by an entry the
+  role can't read is refused without its name. A release that would publish a value another entry still publishes is
+  said in the publish flow's words. Words in `lib/words.ts`. Tests: `tests/unique.spec.ts`,
+  `tests/server/unique.spec.ts`.
+- D-071 in the Studio: **field defaults**. The builder's *Default value (optional)* uses the field's own kind of input
+  (`defaultInput` in `lib/fieldDefs.ts`: a text box, a number box, Yes/No, the choices, date, time and date-time
+  pickers, a colour), only on top-level fields that aren't unique and can have one (`canHaveDefault`); cleared, it's
+  left out; `invalid_default` is said at that input. A new entry leaves defaulted fields to the server, which fills
+  them on creation (the starter no longer picks a required choice's first option or false over a default), and the
+  new-entry dialog shows a required field's default already chosen. Entries written before are never touched. Tests:
+  `tests/defaults.spec.ts`, `tests/server/defaults.spec.ts`.
+- D-072 in the Studio: **conditional fields**. The builder's *Show only when* (on top-level fields but the title) picks a
+  yes-or-no or choice field that always applies and ticks its values, kept in that field's order; *Always shown*
+  removes it; a field others depend on says it always shows; `invalid_condition` is said at the control. In the
+  editor (`applies` in `lib/content.ts`, the server's rule), a field shows only while its condition holds, is required
+  only then, and when it stops applying its value is cleared and said so quietly ("Duration is cleared because it only
+  applies when Kind is video or podcast."), so a save never earns `not_applicable`; the new-entry dialog asks only for
+  fields that apply and sends nothing that doesn't. A condition stored entries don't fit is listed like other changes
+  in the way. Tests: `tests/conditions.spec.ts`, `tests/server/conditions.spec.ts`.
+- D-073 in the Studio: **shared components**. Settings lists them (fields, version, and the content types that use
+  each, worked out from their definitions by `usedBy` in `lib/fieldDefs.ts`) and makes one from a name and a name in
+  code, starting with a Title field. Its page (`settings/components/[component]`, `lib/ComponentBuilder.svelte`) edits
+  its fields like a group's, one structure deep, so nothing unique, no defaults, conditions, URL names or components
+  inside are offered. A save says the new version of every content type that changed with it, with links; a change
+  their entries can't take names that content type, linked, from the server's `details.content_type`, and lists its
+  entries with links; a type's own refusal (too deep there, say) is named the same way, with the server's words. A
+  content type's builder offers *Component: SEO* wherever a group can go and the component's own
+  structures still fit three deep (`componentFits`), shows its fields read-only with a link to its page, and the
+  entry editor fills it like any group. Changing one takes `schema.change` everywhere; a role without it reads it,
+  and the server refuses its change too. Tests: `tests/components.spec.ts`, `tests/server/components.spec.ts`.
+- D-076 in the Studio: **rate limits**. The one fetch layer (`send` in `lib/api.ts`) reads a 429 `rate_limited` and
+  its `Retry-After` (`retryAfterMs`: seconds or a date, a second if neither, at most a minute). A read waits that long
+  and goes once more, then fails with the wait (TanStack Query doesn't retry it again); a write isn't resent there, so
+  its caller decides, and every attempt is the same request, Idempotency-Key included. The autosave waits as long as
+  the server asked (an edit or ⌘S meanwhile doesn't go sooner), says "Colophon is busy for a moment; trying again in 1
+  second. Your changes are kept on this device.", keeps the edit and the request in flight on the device, and sends the
+  same save again, so a retried save can't be stored twice. Elsewhere the words are "…; try again in N seconds." (title
+  "Colophon is busy"). Other 429s, such as too many setup code tries, keep their own words. Words: `busyFor` in
+  `lib/words.ts`. Tests: `tests/ratelimit.spec.ts` (the fetch layer with a stand-in `fetch`) and
+  `tests/server/ratelimit.spec.ts`, which starts a server of its own with `COLOPHON_RATE_LIMIT_PER_CREDENTIAL=1/40`
+  (and no limit per address) on `COLOPHON_JOURNEY_PORT`, uses up the session's limit and shows an edit surviving the
+  429.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 
@@ -219,7 +412,7 @@ Internal job terminology stays behind a technical detail drawer for developers.
 1. **P0:** the Tiptap spike (custom blocks, paste, image placeholder, undo/redo, serialization). Built in step 0.4:
    `packages/editor` and `apps/studio`; documents open only if they survive the editor byte for byte (D-022).
 2. **P1:** content list, editor, autosave, conflict screen (step 1.3, done: D-037, D-038); entries of any content
-   type (step 1.5, done). Sign-out and a content-type designer (today definitions are written as JSON through the API
+   type (step 1.5, done). Sign-out (done, see above) and a content-type designer (today definitions are written as JSON through the API
    and the testbed) come next; the formatting toolbar and search arrived in step 3.5.
 3. **P2:** review and publish.
 4. **P3:** publishing labels and the receipt timeline. Step 3.3 (D-051): each release on the Releases page shows its
@@ -230,6 +423,37 @@ Internal job terminology stays behind a technical detail drawer for developers.
 5. **P4:** history, time-travel slider, media picker, preview.
 6. **P5:** developer area for tokens; the optional AI panel.
 7. **P6:** polish and the usability test.
+
+## Gaps against the API (audit, 2026-10-28)
+
+Every route in `crates/colophon-api/src/lib.rs` and every row of `docs/COMPARISON.md`'s parity backlog, checked
+against what the Studio shows or does. Sizes: S (a day or less, Studio only), M (a few days, or needs a backend route
+first), L (a milestone).
+
+Backend capabilities with no Studio screen or action:
+
+| Capability | What's missing | Size |
+|---|---|---|
+| An entry's public address (`/content/v1/{project}/{environment}/{collection}/{entry}`) | **Done** (2026-10-28): a published entry's page says *Where readers get it*, to open or copy; with newer changes it says readers get the version live in that release; a never-published draft shows none (`tests/server/address.spec.ts`) | S |
+| `created_by` on an entry list | **Done** (2026-10-28): *Only mine* beside a collection's filters asks the server for the entries one started (`created_by`, so it holds beyond the first page and with a search); offered only where the role lists other people's entries too (`tests/server/mine.spec.ts`) | S |
+| `GET /version` (version, commit, build date, API versions) | **Done** (2026-10-28): *About Colophon* in the account menu (every screen, every role) shows the version and the day it was built, keeps the commit and API versions in Technical details, and *Copy details* copies them with the address, page and browser for a problem report (`tests/server/about.spec.ts`) | S |
+| Delivery reads (`/content/v1/...`) | **Done for an entry** (2026-10-28): *See what readers get* on a published entry opens the public read of it at the latest release: its title, the release its version went live in, whether newer changes are left out, and the answer exactly as a website receives it, to copy; taken down meanwhile, it says so (`tests/server/readers.spec.ts`). Still missing: a whole release's view, and reads pinned to an older release (`?generation=`) | M |
+| `GET …/jobs?generation=` | Not used; the receipt already carries each destination's state, attempts and last error | none |
+| `GET …/permissions` | Not used; the Studio reads the same grants from the project | none |
+| `POST /api/v1/rich-text/validate` | Not used; the Studio validates with the same package before saving | none |
+
+Asked about, and complete for what the API offers: scheduled publishing (a local time with the two instants when
+clocks change, cancel, upcoming on Releases and My work; changing a time is cancel and schedule again, as in the API);
+receipts and probes (labels, each destination's part, every probe look, locations); website connections (webhook, CDN
+purge, probe with a location; on and off); API tokens (read-only, full access, custom grants, expiry, last used,
+revoke); the activity log (by kind and person, older pages; the API has no date range); single types; the reference
+picker in groups, list items and page sections; history (compare any revision, restore as a new one); bulk publish
+and unpublish from a list, and duplicate.
+
+Needs a backend route first (each M unless said): deleting entries, content types and components; renaming or
+removing a project; changing or removing a website connection (only on and off today); rotating a token; seeing and
+ending one's sessions; defaults and conditions inside structures; geopoint fields. Later milestones (L): media
+library (P4), localization, comments and tasks, presence, visual preview (E), query filters and webhooks by event (D).
 
 ## Open decisions
 

@@ -3,7 +3,10 @@
 //
 // Every failure is a typed `ApiError` saying what kind it is, because the editor reacts to each
 // differently: a conflict opens the conflict screen, a refusal shows the reason, and a network
-// failure or a busy server means "keep the edit and try again".
+// failure or a busy server means "keep the edit and try again". A rate limit (429, D-076) says
+// how long to wait: a read waits and goes once more here; a write keeps its Idempotency-Key.
+
+import { busyFor } from './words.ts';
 
 export interface Project {
 	id: string;
@@ -32,7 +35,12 @@ export type Action =
 	| 'members.manage'
 	| 'roles.manage'
 	| 'destinations.manage'
-	| 'tokens.manage';
+	| 'tokens.manage'
+	| 'audit.read';
+
+/** Actions only people hold: no API token may (step R.4), so a leaked token can't change who has
+ *  access or read the record of it. */
+export const PEOPLE_ONLY: Action[] = ['members.manage', 'roles.manage', 'tokens.manage', 'audit.read'];
 
 /** One permission: an action, on `*` or one collection. */
 export interface Grant {
@@ -55,6 +63,30 @@ export function may(project: Pick<Project, 'permissions'> | undefined, action: A
 	);
 }
 
+/**
+ * Whether the role allows `action` on one entry of `collection`, `own` when the caller created it:
+ * a permission limited to their own entries (step R.3) counts only then. `may` answers "somewhere";
+ * this answers "on this entry".
+ */
+export function mayOn(project: Pick<Project, 'permissions'> | undefined, action: Action, collection: string, own: boolean): boolean {
+	return (project?.permissions ?? []).some(
+		(grant) =>
+			grant.action === action &&
+			(grant.subject === '*' || grant.subject === collection) &&
+			(grant.condition === undefined || (grant.condition === 'own' && own))
+	);
+}
+
+/** Whether the role holds any of `actions`, anywhere: for showing an area whose parts each ask
+ *  for their own permission (Settings). */
+export function mayAny(project: Pick<Project, 'permissions'> | undefined, actions: Action[]): boolean {
+	return (project?.permissions ?? []).some((grant) => actions.includes(grant.action));
+}
+
+/** What Settings holds (D-059, rule 5): content types, website connections, roles and tokens. A
+ *  role with none of these doesn't see Settings at all. */
+export const SETTINGS_ACTIONS: Action[] = ['schema.change', 'destinations.manage', 'roles.manage', 'tokens.manage', 'audit.read'];
+
 export interface Me {
 	id: string;
 	issuer: string;
@@ -69,9 +101,29 @@ export interface Me {
 	projects: Project[];
 }
 
-/** One field of a content type, as the server writes definitions: every default spelled out. */
-export type FieldDefinition = { id: string; label: string; required: boolean } & (
-	| { type: 'text'; max_chars: number; multiline: boolean }
+/** One field of a content type, as the server writes definitions: every default spelled out,
+ *  except `description` and `min_chars`, which are written only when set (D-064). */
+export type FieldDefinition = {
+	id: string;
+	label: string;
+	required: boolean;
+	/** Help text shown under the field, at most 500 characters. */
+	description?: string;
+	/** No two entries may share its value (D-070): top-level single-line text, email, URL, number,
+	 *  date, time and date-time fields only. Written only when true. */
+	unique?: boolean;
+	/** What a new entry starts with when it leaves this field out (D-071), in canonical form: a
+	 *  top-level field that isn't unique and holds text, Markdown, a number, true or false, a
+	 *  choice, a date, a time, a date-time, an email, a URL or a colour. Written only when set. */
+	default?: unknown;
+	/** Applies only while another top-level yes-or-no or choice field holds one of these values
+	 *  (D-072); left out of content otherwise, and not required then. Written as a list, in that
+	 *  field's order, only when set. */
+	when?: { field: string; is: unknown[] };
+} & (
+	/** `pattern` (D-069): the form every value must take, a regular expression matched against the
+	 *  whole value on the server (Rust syntax; the Studio never imitates it). */
+	| { type: 'text'; max_chars: number; multiline: boolean; min_chars?: number; pattern?: string }
 	| { type: 'rich_text' }
 	| { type: 'number'; integer: boolean; min?: number; max?: number }
 	| { type: 'boolean' }
@@ -80,10 +132,77 @@ export type FieldDefinition = { id: string; label: string; required: boolean } &
 	/** The entry's URL name, unique in its collection (D-054); `source` is the text field the
 	 *  Studio suggests it from. */
 	| { type: 'slug'; source?: string }
+	/** Step M.1 (D-064): values in one fixed format each, written canonically by the server. */
+	| { type: 'email' }
+	/** Stored as `new URL(text).href`: http or https, with a host and no user name. */
+	| { type: 'url' }
+	/** `YYYY-MM-DD`, as typed. */
+	| { type: 'date' }
+	/** `HH:MM` or `HH:MM:SS`, as typed. */
+	| { type: 'time' }
+	/** Any JSON value, canonical (lib/json.ts). */
+	| { type: 'json' }
+	| { type: 'markdown'; max_chars: number }
+	/** `#rrggbb`, lowercase. */
+	| { type: 'color' }
+	/** Step M.2 (D-065): entries of the collection `to`, by id: one, or a list of up to `max`
+	 *  distinct ones. The database keeps them from dangling. */
+	| { type: 'reference'; to: string; many: false }
+	| { type: 'reference'; to: string; many: true; max: number }
+	/** Step M.3 (D-066): structures, at most three deep, written in definition order. Nested
+	 *  fields: a group of fields (Strapi's component). */
+	| {
+			type: 'object';
+			fields: FieldDefinition[];
+			/** A shared component's slug (D-073): the fields are its, copied in by the server. */
+			component?: string;
+	  }
+	/** Up to `max` values of one kind, never a list or page sections. */
+	| { type: 'list'; of: ItemKind; max: number }
+	/** A page builder: up to `max` sections, each one of its kinds, marked by `_block`. */
+	| { type: 'blocks'; blocks: BlockKind[]; max: number }
 );
 
+/** What each item of a list is: a field's kind and options, without its id, label or flags. */
+export type ItemKind = FieldDefinition extends infer Field
+	? Field extends { type: 'list' | 'blocks' | 'slug' }
+		? never
+		: Field extends FieldDefinition
+			? Omit<Field, 'id' | 'label' | 'required' | 'description'>
+			: never
+	: never;
+
+/** One kind of page section: a name (what items' `_block` says), a label and its fields. */
+export interface BlockKind {
+	name: string;
+	label: string;
+	fields: FieldDefinition[];
+}
+
+/** How deep structures nest (D-066): a group, a list and page sections each add one level. */
+export const MAX_DEPTH = 3;
+
 /** The field types a content type can use, in the order the builder offers them. */
-export const FIELD_TYPES = ['text', 'rich_text', 'number', 'boolean', 'enum', 'datetime', 'slug'] as const;
+export const FIELD_TYPES = [
+	'text',
+	'rich_text',
+	'markdown',
+	'number',
+	'boolean',
+	'enum',
+	'datetime',
+	'date',
+	'time',
+	'email',
+	'url',
+	'color',
+	'json',
+	'reference',
+	'object',
+	'list',
+	'blocks',
+	'slug'
+] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
 
 /** A content type's definition (D-040). */
@@ -91,6 +210,9 @@ export interface Definition {
 	name: string;
 	title_field: string;
 	fields: FieldDefinition[];
+	/** A single type (D-067): it holds one entry, like site settings or a home page. Written only
+	 *  when true. */
+	single?: boolean;
 }
 
 /** One version of a content type. */
@@ -128,10 +250,29 @@ export interface Draft {
 	hidden_fields?: string[];
 	/** Fields the role can read but not change. */
 	locked_fields?: string[];
+	/** What readers get now, on a read: the live revision and its release, or null when not
+	 *  published. Create and save answers leave it out. */
+	published?: { revision_id: string; generation: number } | null;
+	/** On a read: entries that link to this one (at most 100, only in collections the role reads),
+	 *  by field, and whether their draft and what readers get of them link to it (D-065). */
+	referenced_by?: Referrer[];
+}
+
+/** An entry that links to another (D-065). */
+export interface Referrer {
+	entry_id: string;
+	collection: string;
+	field: string;
+	/** Its draft links to it. */
+	in_draft: boolean;
+	/** What readers get of it links to it: taking the linked entry down is refused until that changes. */
+	published: boolean;
 }
 
 export interface Summary {
 	id: string;
+	/** Who created it. */
+	created_by: string;
 	updated_at: string;
 	revision: Revision;
 	/** What readers get now, if published, and the release it went out in. */
@@ -182,7 +323,10 @@ export class ApiError extends Error {
 		/** For a conflict: the current revision's ETag. */
 		readonly current: string | null = null,
 		/** What the server said about where and why, including entries in the way. */
-		readonly details: Details | null = null
+		readonly details: Details | null = null,
+		/** For a rate limit (429 `rate_limited`, D-076): how long to wait before sending it again,
+		 *  in milliseconds, from `Retry-After`. */
+		readonly retryAfter: number | null = null
 	) {
 		super(message);
 	}
@@ -207,6 +351,11 @@ export interface Details {
 	/** For a local time the clocks show twice or skip: the two instants to choose from, earlier
 	 *  first (D-060). */
 	candidates?: string[];
+	/** For a 403 `missing_permission`: the permission the role lacks, such as `content.publish`. */
+	permission?: string;
+	/** For a refused component change (D-073): the content type that couldn't take it; `reason`
+	 *  and `entries` are that type's. */
+	content_type?: string;
 }
 
 /** The session's CSRF token, which every cookie-authenticated write echoes. */
@@ -234,30 +383,56 @@ interface Envelope {
 	error?: { code?: string; message?: string; details?: Details };
 }
 
+/** How long a 429's `Retry-After` asks to wait, in milliseconds: whole seconds or an HTTP date; a
+ *  second when it says neither, and never more than a minute. */
+export function retryAfterMs(header: string | null, now = Date.now()): number {
+	const text = header?.trim() ?? '';
+	const wait = /^\d+$/.test(text) ? Number(text) * 1000 : Number.isNaN(Date.parse(text)) ? 1000 : Date.parse(text) - now;
+	return Math.min(Math.max(wait, 0), 60_000);
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function send(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
 	const write = method !== 'GET';
-	let response: Response;
-	try {
-		response = await fetch(path, {
-			method,
-			cache: 'no-store',
-			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-			headers: {
-				Accept: 'application/json',
-				...(write ? { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() } : {}),
-				...headers
-			},
-			...(body === undefined ? {} : { body: JSON.stringify(body) })
-		});
-	} catch {
-		throw new ApiError('retry', 'no answer from the server');
-	}
+	// Every attempt is the same request: a write sent again keeps its Idempotency-Key.
+	const attempt = async (): Promise<Response> => {
+		try {
+			return await fetch(path, {
+				method,
+				cache: 'no-store',
+				signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+				headers: {
+					Accept: 'application/json',
+					...(write ? { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() } : {}),
+					...headers
+				},
+				...(body === undefined ? {} : { body: JSON.stringify(body) })
+			});
+		} catch {
+			throw new ApiError('retry', 'no answer from the server');
+		}
+	};
+	const refusal = async (response: Response) => ((await response.json().catch(() => ({}))) as Envelope).error;
+	let response = await attempt();
 	if (response.ok) return response;
-	const envelope = ((await response.json().catch(() => ({}))) as Envelope).error;
+	let envelope = await refusal(response);
+	// Turned away for the rate limit (D-076), before anything ran: a read waits as asked and goes
+	// once more. A write is its caller's to send again (the autosave does, after the same wait).
+	if (!write && response.status === 429 && envelope?.details?.reason === 'rate_limited') {
+		await pause(retryAfterMs(response.headers.get('retry-after')));
+		response = await attempt();
+		if (response.ok) return response;
+		envelope = await refusal(response);
+	}
 	const message = envelope?.message ?? `HTTP ${response.status}`;
 	const details = envelope?.details ?? null;
 	const reason = details?.reason ?? null;
 	switch (true) {
+		case response.status === 429 && reason === 'rate_limited': {
+			const wait = retryAfterMs(response.headers.get('retry-after'));
+			throw new ApiError('retry', busyFor(wait / 1000, false), 429, reason, null, details, wait);
+		}
 		case response.status === 401:
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
@@ -291,6 +466,35 @@ export async function me(): Promise<Me | null> {
 		if (error instanceof ApiError && error.failure === 'signed-out') return null;
 		throw error;
 	}
+}
+
+/**
+ * Ends this browser's session (`POST /auth/logout`, CSRF-checked) and answers where to end it at
+ * the identity provider too, so the next person at this computer must sign in again; `null` when
+ * the provider can't say. Already signed out counts as done: the outcome asked for holds either way.
+ */
+export async function signOut(): Promise<string | null> {
+	try {
+		const answer = (await (await send('POST', '/auth/logout')).json().catch(() => null)) as { data?: { provider_sign_out?: string | null } } | null;
+		return answer?.data?.provider_sign_out ?? null;
+	} catch (error) {
+		if (error instanceof ApiError && error.failure === 'signed-out') return null;
+		throw error;
+	}
+}
+
+/** Which Colophon the server is (`GET /version`, D-062): its release version, the full git commit
+ *  and the UTC day it was built (each `unknown` when the build couldn't learn it), and the API
+ *  versions it serves. Read without signing in; fields may be added, never removed. */
+export interface ServerVersion {
+	version: string;
+	commit: string;
+	build_date: string;
+	api: string[];
+}
+
+export async function serverVersion(): Promise<ServerVersion> {
+	return (await (await send('GET', '/version')).json()) as ServerVersion;
 }
 
 /**
@@ -356,11 +560,19 @@ export async function listEntries(project: string, collection: string): Promise<
 	return (await searchEntries(project, collection)).data;
 }
 
-/** Up to 100 entries, newest first; `q` searches draft titles (at most 100 characters). */
-export async function searchEntries(project: string, collection: string, q = '', cursor: string | null = null): Promise<Page<Summary>> {
+/** Up to 100 entries, newest first; `q` searches draft titles (at most 100 characters);
+ *  `createdBy` keeps one person's entries, within what the role may list. */
+export async function searchEntries(
+	project: string,
+	collection: string,
+	q = '',
+	cursor: string | null = null,
+	createdBy: string | null = null
+): Promise<Page<Summary>> {
 	const query = new URLSearchParams({ limit: '100' });
 	if (q.trim() !== '') query.set('q', q.trim());
 	if (cursor !== null) query.set('cursor', cursor);
+	if (createdBy !== null) query.set('created_by', createdBy);
 	return (await (await send('GET', `${entries(project, collection)}?${query}`)).json()) as Page<Summary>;
 }
 
@@ -563,6 +775,8 @@ export interface ChangesetItem {
 	edited: boolean;
 	/** The revision readers get now, if published: what this item changes from. */
 	published_revision_id: string | null;
+	/** Who created the entry, for permissions limited to one's own entries. */
+	created_by: string;
 }
 
 export interface ChangesetReview {
@@ -596,6 +810,9 @@ export interface ChangesetSummary {
 	title: string;
 	hash: string;
 	status: ChangesetStatus;
+	/** Who made it, and who sent it for review. */
+	created_by: string;
+	submitted_by: string | null;
 	items: number;
 	/** How many of its items unpublish. */
 	unpublish: number;
@@ -829,7 +1046,144 @@ export function deliveryUrl(project: string, collection: string): string {
 	return `/content/v1/${project}/production/${collection}`;
 }
 
+/** One entry as readers get it (`GET /content/v1/…/{entry}`, no sign-in): the published copy at
+ *  the latest release, never the draft. `published_in` is the release its version went out in. */
+export interface Delivered {
+	id: string;
+	revision_id: string;
+	collection: string;
+	title: string;
+	slug?: string;
+	content: Content;
+	content_hash: string;
+	published_in: number;
+}
+
+/** What readers get for one entry right now, with the release it was read at (the
+ *  `Colophon-Generation` header) and the answer exactly as sent. Taken down: 410 `gone`; not out
+ *  yet: 404. */
+export async function readDelivered(
+	project: string,
+	collection: string,
+	entry: string
+): Promise<{ data: Delivered; release: number | null; raw: string }> {
+	const response = await send('GET', `${deliveryUrl(project, collection)}/${entry}`);
+	const raw = await response.text();
+	const release = Number(response.headers.get('colophon-generation') ?? NaN);
+	return { data: (JSON.parse(raw) as { data: Delivered }).data, release: Number.isInteger(release) ? release : null, raw };
+}
+
 /** A fresh idempotency key: 32 hex characters. */
 export function newKey(): string {
 	return crypto.randomUUID().replaceAll('-', '');
+}
+
+/** A project's API token (step R.4): a key a script or a site uses instead of someone's session. */
+export interface ApiToken {
+	id: string;
+	/** The identity its requests act as, so what it writes is attributed to it. */
+	identity_id: string;
+	name: string;
+	description: string;
+	kind: 'read-only' | 'full-access' | 'custom';
+	permissions: Grant[];
+	state: 'active' | 'expired' | 'revoked';
+	created_by: { id: string; name: string | null };
+	created_at: string;
+	expires_at: string;
+	last_used_at: string | null;
+	revoked_at: string | null;
+	/** Only in the answer that made it: the server keeps a hash. */
+	secret?: string;
+}
+
+export interface NewToken {
+	name: string;
+	description?: string;
+	kind: ApiToken['kind'];
+	/** Custom tokens only. */
+	permissions?: Grant[];
+	/** 1 to 366. */
+	expires_in_days: number;
+}
+
+const tokens = (project: string) => `/api/v1/projects/${project}/tokens`;
+
+export async function listTokens(project: string): Promise<ApiToken[]> {
+	return ((await (await send('GET', tokens(project))).json()) as { data: ApiToken[] }).data;
+}
+
+/** Refused with 403 `cannot_grant` for powers the caller's role lacks, 422 `not_for_tokens` for a
+ *  people-only action, `invalid_expiry`, `permissions_required` or `too_many_tokens`. */
+export async function createToken(project: string, token: NewToken): Promise<ApiToken> {
+	return ((await (await send('POST', tokens(project), token)).json()) as { data: ApiToken }).data;
+}
+
+/** Revokes it at once; revoking again changes nothing. */
+export async function revokeToken(project: string, id: string): Promise<ApiToken> {
+	return ((await (await send('DELETE', `${tokens(project)}/${id}`)).json()) as { data: ApiToken }).data;
+}
+
+/** One change in a project's audit log (step R.4). */
+export interface AuditEvent {
+	id: string;
+	at: string;
+	actor: { id: string; name: string | null; kind: 'person' | 'token' };
+	action: string;
+	/** A role's key, a member's identity id, an invitation's or a token's id. */
+	subject: string;
+	detail: Record<string, unknown>;
+}
+
+/** Newest first; `action` and `actor` filter exactly. Needs `audit.read`. */
+export async function listAudit(
+	project: string,
+	options: { cursor?: string | null; action?: string; actor?: string; limit?: number } = {}
+): Promise<Page<AuditEvent>> {
+	const query = new URLSearchParams({ limit: String(options.limit ?? 50) });
+	if (options.cursor) query.set('cursor', options.cursor);
+	if (options.action) query.set('action', options.action);
+	if (options.actor) query.set('actor', options.actor);
+	return (await (await send('GET', `/api/v1/projects/${project}/audit?${query}`)).json()) as Page<AuditEvent>;
+}
+
+/** A shared component (D-073): a named group of fields that content types use, copied into each. */
+export interface ComponentDefinition {
+	name: string;
+	fields: FieldDefinition[];
+}
+
+export interface Component {
+	slug: string;
+	version: number;
+	definition: ComponentDefinition;
+	definition_hash: string;
+	created_at: string;
+	/** After a change: the content types it gave a new version, in slug order. */
+	content_types?: { slug: string; version: number }[];
+}
+
+const components = (project: string) => `${base(project)}/components`;
+
+export async function listComponents(project: string): Promise<Component[]> {
+	return ((await (await send('GET', components(project))).json()) as { data: Component[] }).data;
+}
+
+/** A component with the ETag (`"v<version>"`) its next change names in `If-Match`. */
+export async function getComponent(project: string, slug: string): Promise<{ component: Component; etag: string }> {
+	const response = await send('GET', `${components(project)}/${slug}`);
+	const { data } = (await response.json()) as { data: Component };
+	return { component: data, etag: response.headers.get('etag') ?? `"v${data.version}"` };
+}
+
+/** Needs `schema.change` everywhere. */
+export async function createComponent(project: string, slug: string, definition: ComponentDefinition, key: string): Promise<Component> {
+	return ((await (await send('POST', components(project), { slug, definition }, { 'Idempotency-Key': key })).json()) as { data: Component }).data;
+}
+
+/** A new version, and one for every content type that uses it, or nothing: refused with
+ *  `needs_migration` (the type and its entries in the way) or `stale_version`. */
+export async function updateComponent(project: string, slug: string, definition: ComponentDefinition, etag: string, key: string): Promise<Component> {
+	const response = await send('PUT', `${components(project)}/${slug}`, definition, { 'If-Match': etag, 'Idempotency-Key': key });
+	return ((await response.json()) as { data: Component }).data;
 }

@@ -61,8 +61,14 @@ test.beforeAll(async () => {
 	}
 });
 
-test.afterAll(() => {
-	server?.kill();
+test.afterAll(async () => {
+	// Stopped before its database goes, and waited for, so the port is free for what runs next.
+	const running = server;
+	if (running !== undefined && running.exitCode === null) {
+		const stopped = new Promise((resolve) => running.once('exit', resolve));
+		running.kill();
+		await stopped;
+	}
 	psql(`DROP DATABASE IF EXISTS ${DATABASE} WITH (FORCE)`);
 });
 
@@ -246,6 +252,45 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await teammate.getByTestId('publish-button').click();
 		await expect(teammate.getByTestId('publish-outcome')).toContainText('Sent for review');
 		await screen(teammate, 'asked-for-review');
+	});
+
+	await test.step('every project screen reads on a phone, and a reviewer finds Approve without scrolling (D-059, rule 7)', async () => {
+		const base = new URL(owner.url()).pathname.replace(/\/$/, '');
+		const entry = new URL(teammate.url()).pathname;
+		const request = await teammate.getByTestId('publish-outcome').getByRole('link').getAttribute('href');
+		expect(request).toBeTruthy();
+		const phone = await (await browser.newContext({ baseURL: ORIGIN, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
+		await phone.context().addCookies(await owner.context().cookies());
+		const routes: [string, string][] = [
+			['home', '/studio/'],
+			['overview', base],
+			['articles', `${base}/articles`],
+			['editor', entry],
+			['publish-requests', `${base}/changesets`],
+			['review', request ?? ''],
+			['releases', `${base}/releases`],
+			['receipt', `${base}/releases/1`],
+			['members', `${base}/members`],
+			['settings', `${base}/settings`]
+		];
+		for (const [name, path] of routes) {
+			await phone.goto(path);
+			await phone.waitForLoadState('networkidle');
+			const overflow = await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+			expect(overflow, `${path} (${name}) scrolls sideways on a phone`).toBeLessThanOrEqual(0);
+			if (name === 'editor') {
+				// The save and publish bar stays on screen below the fields.
+				await expect(phone.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
+				await expect(phone.getByTestId('publish-button')).toBeInViewport();
+			}
+			if (name === 'review') {
+				await expect(phone.getByTestId('changeset-status')).toHaveAttribute('data-state', 'awaiting_review');
+				await expect(phone.getByRole('button', { name: 'Approve this version' })).toBeInViewport();
+			}
+			// Settings is the developer area, where the internal names stay (D-059, rule 5).
+			await screen(phone, `phone-${name}`, { words: name !== 'settings' });
+		}
+		await phone.context().close();
 	});
 
 	await test.step('the owner approves it and publishes it', async () => {

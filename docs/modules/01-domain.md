@@ -73,6 +73,49 @@ invariant. Production adapters and the simulator both run this code unchanged.
   `Compatible` (widening: nothing to check), `CheckContent` (narrowing: allowed only if the new definition `accepts`
   every current draft and published revision) or `Refused` (a new title field, or a field turned into or out of a
   slug).
+- Built in step M.1 (D-064): seven more types and two options. `email` (a dot-atom local part and a host name with a
+  dot; shape, never delivery), `url` (`http`/`https` with a host and no credentials, stored in its WHATWG form, what a
+  browser's `new URL(text).href` gives), `date` (`YYYY-MM-DD`), `time` (`HH:MM` or `HH:MM:SS`), `json` (any value up to
+  64 KiB and 32 levels, keys sorted by UTF-16 code units as JavaScript sorts them, numbers as number fields write
+  them), `markdown` (multi-line text with `max_chars`; the site renders it, nothing renders it here) and `color`
+  (`#rrggbb` in lowercase). Every field may carry a `description` (help text, up to 500 characters) and text a
+  `min_chars`. Both are written only when set, so a definition from before M.1 keeps its canonical bytes and hash,
+  which publish requests pin. Changing a field's type is `CheckContent` (text may become email if every stored value
+  is one); text widens into markdown that fits it. Patterns, uniqueness, defaults and conditional fields came
+  in M.4 (D-069 to D-072), below.
+- Built in step M.2 (D-065): `reference` fields (`to` a collection slug; one entry, or `many` with `max` up to 100)
+  hold entry ids as canonical lowercase UUIDs, distinct in a list. `Content::references` reports each with its field,
+  collection, place and whether the field is a list; whether an id names an entry is the database's to check.
+  Pointing a field at another collection is `Refused`.
+- Built in step M.3 (D-066): `object` (nested `fields`), `list` (`of` one kind, never a list or blocks; up to 100) and
+  `blocks` (a page builder: up to 20 named kinds of block with their own fields; items carry `_block`, written first).
+  Structures nest at most three deep; slugs stay top-level. Validation, the canonical form and the change rules recurse;
+  a reference anywhere keeps its path, and retargeting one at any depth is `Refused`. Reusable shared components are M.4.
+- Built in step M.4 (D-067): `"single": true` makes a content type hold at most one entry (`ContentType::single`),
+  written into the canonical definition only when true.
+- Built in step M.4 (D-069): a text field's `pattern` (1 to `MAX_PATTERN_CHARS` = 500 characters, Rust `regex` syntax)
+  must match the whole value. `Pattern` compiles it once when the definition is parsed, anchored and within a 1 MiB
+  size limit, and compares by its source; matching takes time linear in the value, so no pattern can stall a write.
+  Refusals: `invalid_pattern` where it is defined, `pattern_mismatch` at the value. Adding or changing a pattern is
+  `CheckContent`; removing one is `Compatible`.
+- Built in step M.4 (D-070): `"unique": true` on a top-level single-line text, email, URL, number, date, time or
+  date-time field (`FieldKind::may_be_unique`; anywhere else `invalid_unique`), written only when true;
+  `ContentType::unique_fields` lists them. Uniqueness is across entries, so it isn't a rule on one document:
+  `successor` treats adding or dropping it as `Compatible`, and the database checks stored values (module 02).
+- Built in step M.4 (D-071): a top-level field that isn't unique and holds a plain value (`FieldKind::may_have_default`)
+  may have a `default`, checked by the field's own rules and kept in canonical JSON (`Field::default`), written only
+  when set (`invalid_default` otherwise). `ContentType::with_defaults` fills the fields a new entry leaves out and
+  says which; the API calls it on creation only. A changed default is `Compatible`.
+- Built in step M.4 (D-072): a top-level field's `when` (`Condition`: a top-level boolean or enum field that applies
+  always, and values of it, kept in that field's order) makes it apply only while `Condition::holds`; validation
+  refuses it otherwise (`not_applicable`) and requires it only while it applies. `check_conditions` checks every
+  `when` once all fields are parsed (`invalid_condition`). A narrower or different condition, or a required field
+  made unconditional, is `CheckContent`.
+- Built in step M.4 (D-073): `Component` (a name and object fields, using no other component; `invalid_component`)
+  and `FieldKind::Object`'s `component` marker, written before `fields`. `components_used` lists the components a
+  definition uses; `expand_components` gives each component field, and each marked object, the component's fields
+  (`unknown_component`, or, for a stored definition when one component changes, `Unlisted::Keep`). A definition
+  that still holds `"type": "component"` is refused (`unexpanded_component`): the server expands first.
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the

@@ -172,3 +172,21 @@ test('an author retitles someone else’s article without seeing or erasing its 
 	await expect(page.getByLabel('Publish: Articles')).toBeChecked();
 	expect(await violations(page)).toEqual([]);
 });
+
+// Step R.4: the activity log's permission, in plain words, and what managing tokens means.
+test('the role editor names the activity log in plain words, and says what managing tokens means', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	await page.goto(`/studio/projects/${project}/settings/roles/owner`);
+	await expect(page.getByLabel('See the activity log')).toBeChecked();
+	await expect(page.getByLabel('See the activity log')).toBeDisabled();
+	await expect(page.getByTestId('role-project')).toContainText('Make and revoke keys that let scripts and sites use the API');
+	await expect(page.getByTestId('role-project')).not.toContainText('arrive in a later step');
+	await page.goto(`/studio/projects/${project}/settings/roles/publisher`);
+	await expect(page.getByLabel('See the activity log')).not.toBeChecked();
+	await page.getByLabel('See the activity log').check();
+	await page.getByRole('button', { name: 'Save role' }).click();
+	await expect(page.getByText('Version 2')).toBeVisible();
+	await expect(page.getByLabel('See the activity log')).toBeChecked();
+	expect(await violations(page)).toEqual([]);
+});

@@ -45,9 +45,15 @@ sign-up with a one-time setup code for a fresh installation (migration 0020, `pe
 Milestone R, roles and permissions as data (D-058): R.1 (the four built-in roles as data, behaviour unchanged;
 migration 0017), R.2 (custom roles and the Studio's role editor; migration 0018, `perf/k6/roles.js`) and R.3 (field
 lists and `own` conditions; migrations 0021, 0022) are done. Scheduled publishing, from milestone E, is done (migration
-0019, the worker's scheduler, `perf/k6/schedules.js`; D-060). Next: R.4 (API tokens and the audit log), then step 3.8
-(the site goes live, the first public demo). D-062 adds milestones S (several servers behind a load balancer, stress
-runs, Rust benchmarks) and V (versions, and the CLI, SDK and MCP server packaged for npm, Cargo and Homebrew).
+0019, the worker's scheduler, `perf/k6/schedules.js`; D-060). R.4 is built, its full load runs pending: project API
+tokens that act as their own identity, kept away from access control, with an exact kill switch, and an append-only
+audit log (migration 0023, `colophon_db::{tokens, audit}`, `scope::begin_as_token`, `perf/k6/tokens.js`; D-063). Milestone M has begun: field types (M.1, D-064), references that never dangle (M.2, migrations 0024; D-065)
+and objects, lists and page-builder blocks (M.3, migration 0025; D-066) are built, their full load runs pending; single types (M.4, migration 0026; D-067), text patterns (M.4, D-069), unique fields (M.4, migration 0027; D-070), defaults (M.4, D-071), conditional fields (M.4, D-072) and shared components (M.4, migration 0029; D-073) too. Milestone V (D-062)
+is built: one version (`0.1.0-alpha.1`, `colophon --version`, `GET /version`, the CLI's compatibility check), a
+release workflow written but not yet run on GitHub, the `@colophon-cms/cli` npm launcher, an install script and a
+Homebrew formula template; publishing waits on the maintainer (npm organization, `NPM_TOKEN`, a licence, a tag; see
+module 19). Next: step 3.8 (the site goes live, the first public demo) and the rest of M.4. D-062 adds milestones S (several servers behind a load balancer, stress
+runs, Rust benchmarks; Criterion micro-benchmarks of the per-request hot paths and a pull-request check that times the base and the head on one runner, `crates/colophon-bench`, `scripts/bench.sh`, D-074; S.1, the multi-instance stack and failover proof, is built: `scripts/cluster.sh`, `scripts/failover.sh`, D-075; S.2, rate limits shared in Valkey, D-076; S.3, `scripts/load.sh <endpoint> stress`, D-077; parsed content types cached by definition hash, D-078) and V (versions, and the CLI, SDK and MCP server packaged for npm, Cargo and Homebrew).
 
 ## Read first
 
@@ -138,7 +144,10 @@ and, when the local stack is running, CI's integration half: `scripts/stack.sh c
 the stack (`cargo test --workspace -- --ignored --test-threads=1`; they stop and restart services), `scripts/testbed.sh`
 (svelte-check and Playwright), `scripts/studio.sh` (the Studio against the real server) and the `scripts/load.sh`
 smoke runs (health, rich-text validation, signed-in requests, drafts, the Studio). Run it before every push. Full load runs:
-`scripts/load.sh throughput|steady [--baseline]`; commit the result files they write.
+`scripts/load.sh throughput|steady [--baseline]`; commit the result files they write. Micro-benchmarks:
+`scripts/bench.sh` (medians to `perf/results/`) and `scripts/bench.sh compare <base>` (both builds timed on this
+machine; never compare numbers across machines). Benchmarks go in `colophon-bench`, not `colophon-domain`, whose
+dev-dependencies change serde_json's maps (D-074).
 
 The local stack (`scripts/stack.sh up`, details in `deploy/README.md`) binds every port to `127.0.0.1`; its credentials
 are public development values. The database has two logins: `colophon` owns the tables and runs migrations

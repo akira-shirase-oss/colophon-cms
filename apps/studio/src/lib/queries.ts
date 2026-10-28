@@ -4,6 +4,7 @@
 import {
 	getProject,
 	listChangesets,
+	listComponents,
 	listContentTypes,
 	listDestinations,
 	listReleases,
@@ -18,6 +19,7 @@ export const meQuery = () => ({ queryKey: ['me'], queryFn: me });
 export const changesetsQuery = (project: string) => ({ queryKey: ['changesets', project], queryFn: () => listChangesets(project) });
 export const releasesQuery = (project: string) => ({ queryKey: ['releases', project], queryFn: () => listReleases(project) });
 export const rolesQuery = (project: string) => ({ queryKey: ['roles', project], queryFn: () => listRoles(project) });
+export const componentsQuery = (project: string) => ({ queryKey: ['components', project], queryFn: () => listComponents(project) });
 export const destinationsQuery = (project: string) => ({ queryKey: ['destinations', project], queryFn: () => listDestinations(project) });
 /** One collection's newest entries, or those whose title matches `q`. */
 export const entriesQuery = (project: string, collection: string, q = '') => ({

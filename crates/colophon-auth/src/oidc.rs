@@ -108,6 +108,9 @@ struct Metadata {
     /// form (OpenID Connect Prompt Create 1.0).
     #[serde(default)]
     prompt_values_supported: Vec<String>,
+    /// Where a browser ends its session at the provider (RP-Initiated Logout 1.0), if it can.
+    #[serde(default)]
+    end_session_endpoint: Option<String>,
 }
 
 /// Which of the provider's pages a sign-in starts on.
@@ -244,6 +247,23 @@ impl OidcClient {
             url.query_pairs_mut().append_pair("prompt", "create");
         }
         Ok(url)
+    }
+
+    /// Where a browser goes to end its session at the provider as well, then comes back to
+    /// `post_logout_redirect` (OpenID Connect RP-Initiated Logout 1.0); `None` when the provider
+    /// has no end-session endpoint. It names the client but sends no ID token hint, so the
+    /// provider may ask the person to confirm: on a shared computer, that is the safer default.
+    pub async fn logout_url(&self, post_logout_redirect: &str) -> Result<Option<Url>, OidcError> {
+        let metadata = self.metadata().await?;
+        let Some(endpoint) = &metadata.end_session_endpoint else {
+            return Ok(None);
+        };
+        let mut url = Url::parse(endpoint)
+            .map_err(|error| OidcError::Discovery(format!("end-session endpoint: {error}")))?;
+        url.query_pairs_mut()
+            .append_pair("client_id", &self.config.client_id)
+            .append_pair("post_logout_redirect_uri", post_logout_redirect);
+        Ok(Some(url))
     }
 
     /// Exchanges an authorization code and verifies the ID token it returns.

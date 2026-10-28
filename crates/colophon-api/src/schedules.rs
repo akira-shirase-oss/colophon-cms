@@ -164,7 +164,8 @@ async fn may_publish(tx: &mut ProjectTransaction, changeset: Uuid) -> Result<(),
     {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(
+        Err(ApiError::missing(
+            Action::ContentPublish,
             "your role can't publish this content, so it can't schedule it either",
         ))
     }
@@ -236,7 +237,8 @@ pub(crate) async fn create(
     .await
     .map_err(ApiError::from_db)?;
     let Created::Done(made) = created else {
-        return Err(ApiError::Conflict(
+        return Err(ApiError::conflict(
+            "already_scheduled",
             "this publish request is already scheduled; cancel that schedule to choose another time",
         ));
     };
@@ -308,10 +310,16 @@ pub(crate) async fn cancel(
             }))
         }
         Cancelled::NotFound => Err(ApiError::NotFound),
-        Cancelled::Finished(state) => Err(ApiError::Conflict(match state.as_str() {
-            "published" => "this schedule has published already; cancelling never undoes a release",
-            "blocked" => "this schedule was blocked when its time came; there is nothing to cancel",
-            _ => "this schedule was cancelled already",
-        })),
+        Cancelled::Finished(state) => Err(match state.as_str() {
+            "published" => ApiError::conflict(
+                "schedule_published",
+                "this schedule has published already; cancelling never undoes a release",
+            ),
+            "blocked" => ApiError::conflict(
+                "schedule_blocked",
+                "this schedule was blocked when its time came; there is nothing to cancel",
+            ),
+            _ => ApiError::conflict("schedule_cancelled", "this schedule was cancelled already"),
+        }),
     }
 }

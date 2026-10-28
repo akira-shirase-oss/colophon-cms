@@ -12,6 +12,8 @@
 //! answer 404 alike. A draft's `ETag` names its revision; a save whose `If-Match` names an older
 //! one is refused with 409 and the current `ETag`, and writes nothing.
 
+use std::sync::Arc;
+
 use aws_lc_rs::digest;
 use axum::{
     Json,
@@ -27,7 +29,7 @@ use colophon_db::{
     scope::{self, ProjectTransaction},
 };
 use colophon_domain::{
-    policy::{Action, Fields},
+    policy::{Action, Fields, Policy},
     schema::{Content, ContentType, FieldKind},
 };
 use serde::{Deserialize, Serialize};
@@ -111,11 +113,36 @@ struct DraftView {
     /// Fields the caller's role can read but not change: an editor shows them locked.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     locked_fields: Vec<String>,
+    /// On a read, what readers get now: the live version, or `null` when the entry isn't
+    /// published (as on a list's summaries). Left out of create and save answers, which don't
+    /// look it up; a save never changes what is live.
+    #[serde(skip_serializing_if = "Publication::not_looked_up")]
+    published: Publication,
+    /// On a read, the entries whose draft or published revision names this one (D-065), in
+    /// collections the caller's role reads; left out of create and save answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    referenced_by: Option<Vec<ReferrerView>>,
+}
+
+#[derive(Serialize)]
+struct ReferrerView {
+    entry_id: Uuid,
+    collection: String,
+    field: String,
+    /// Its draft names this entry.
+    in_draft: bool,
+    /// What readers get of it names this entry.
+    published: bool,
 }
 
 impl DraftView {
     /// The draft as the caller may see it: `None` if their role can't read it.
-    fn shown(draft: Draft, access: &Access, content_type: &ContentType) -> Result<Self, ApiError> {
+    fn shown(
+        draft: Draft,
+        published: Publication,
+        access: &Access,
+        content_type: &ContentType,
+    ) -> Result<Self, ApiError> {
         let read = access.read.as_ref().ok_or(ApiError::NotFound)?;
         let fields = field_ids(content_type);
         let (content, hidden_fields) = visibility::project(draft.content, read, &fields)?;
@@ -133,6 +160,8 @@ impl DraftView {
             content: RawValue::from_string(content).map_err(ApiError::internal)?,
             locked_fields: visibility::locked(access, &fields),
             hidden_fields,
+            published,
+            referenced_by: None,
         })
     }
 }
@@ -148,11 +177,49 @@ fn field_ids(content_type: &ContentType) -> Vec<String> {
 #[derive(Serialize)]
 struct SummaryView {
     id: Uuid,
+    /// Who created it: the member whose own entry it is (D-058).
+    created_by: Uuid,
     updated_at: String,
     revision: RevisionView,
     /// What readers get now, if the entry is published: so a list can say draft, live or
     /// changed since it went live.
     published: Option<LiveView>,
+}
+
+/// Whether an entry is live, as an answer about it says.
+enum Publication {
+    /// The answer didn't look it up: the field is left out.
+    NotLookedUp,
+    /// Not published: `null`.
+    Unpublished,
+    /// Published: the live version and its release.
+    Live(LiveView),
+}
+
+impl Publication {
+    fn not_looked_up(&self) -> bool {
+        matches!(self, Self::NotLookedUp)
+    }
+}
+
+impl From<Option<(Uuid, i64)>> for Publication {
+    fn from(live: Option<(Uuid, i64)>) -> Self {
+        live.map_or(Self::Unpublished, |(revision_id, generation)| {
+            Self::Live(LiveView {
+                revision_id,
+                generation,
+            })
+        })
+    }
+}
+
+impl Serialize for Publication {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Live(live) => live.serialize(serializer),
+            Self::NotLookedUp | Self::Unpublished => serializer.serialize_none(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -162,12 +229,14 @@ struct LiveView {
     generation: i64,
 }
 
-/// `?limit=&cursor=&q=` for lists; `q` searches titles.
+/// `?limit=&cursor=&q=&created_by=` for lists; `q` searches titles, `created_by` keeps one
+/// person's (or token's) entries.
 #[derive(Deserialize)]
 pub(crate) struct ListQuery {
     limit: Option<i64>,
     cursor: Option<String>,
     q: Option<String>,
+    created_by: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -294,24 +363,32 @@ pub(crate) async fn open(
 ) -> Result<ProjectTransaction, ApiError> {
     let services = services(state)?;
     let project = Uuid::try_parse(project).map_err(|_| ApiError::NotFound)?;
-    scope::begin_in_project(&services.pool, caller.identity, project, environment)
-        .await
-        .map_err(ApiError::from_db)?
-        .ok_or(ApiError::NotFound)
+    let opened = match caller.project {
+        // An API token: only in its own project, with its own permissions (D-063).
+        Some(own) if own == project => {
+            scope::begin_in_project_as_token(&services.pool, caller.identity, project, environment)
+                .await
+        }
+        Some(_) => return Err(ApiError::NotFound),
+        None => {
+            scope::begin_in_project(&services.pool, caller.identity, project, environment).await
+        }
+    };
+    opened.map_err(ApiError::from_db)?.ok_or(ApiError::NotFound)
 }
 
-/// The collection's current content type and its version, or 404.
+/// The collection's current content type and its version, or 404. The definition is read from
+/// Postgres every time; only its parsing is cached (D-078).
 pub(crate) async fn content_type(
+    state: &AppState,
     tx: &mut ProjectTransaction,
     collection: &str,
-) -> Result<(ContentType, i32), ApiError> {
+) -> Result<(Arc<ContentType>, i32), ApiError> {
     let stored = content_types::current(tx, collection)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
-    // Stored definitions were validated when written; failing to parse one is a bug.
-    let value: Value = serde_json::from_str(&stored.definition).map_err(ApiError::internal)?;
-    let parsed = ContentType::parse(&value).map_err(ApiError::internal)?;
+    let parsed = services(state)?.content_types.parse(&stored.definition)?;
     Ok((parsed, stored.version))
 }
 
@@ -357,6 +434,7 @@ async fn slug_free(
     else {
         return Ok(());
     };
+    let named = may_name(tx, collection, content_type, holder.created_by);
     let field = content_type
         .fields()
         .iter()
@@ -370,13 +448,69 @@ async fn slug_free(
     Err(ApiError::slug_taken(
         format!("/{field}"),
         format!("\"{slug}\" is already the slug of another entry ({state})"),
-        Some(EntryInTheWay {
+        named.then_some(EntryInTheWay {
             entry: holder.entry_id,
             title: holder.title,
             state,
             problem: None,
         }),
     ))
+}
+
+/// Refuses content holding a value of a unique field that another entry of the collection
+/// holds, as a draft or published (D-070), naming that entry when the caller may read its title.
+/// Only the wording: `unique_claims_value` is the rule, and a write that loses a race to it is
+/// refused without a name ([`ApiError::from_db`]).
+async fn unique_free(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    content_type: &ContentType,
+    unique: &[String],
+    content: &Content,
+    entry: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let Some(holder) =
+        entries::unique_holder(tx, collection, unique, content.canonical_json(), entry)
+            .await
+            .map_err(ApiError::from_db)?
+    else {
+        return Ok(());
+    };
+    let named = may_name(tx, collection, content_type, holder.created_by);
+    let label = content_type
+        .fields()
+        .iter()
+        .find(|field| field.id == holder.field)
+        .map_or(holder.field.as_str(), |field| field.label.as_str());
+    let state = if holder.published {
+        "published"
+    } else {
+        "draft"
+    };
+    Err(ApiError::value_taken(
+        format!("/{}", holder.field),
+        format!("another entry already has this {label} ({state}), and it must be unique"),
+        named.then_some(EntryInTheWay {
+            entry: holder.entry_id,
+            title: holder.title,
+            state,
+            problem: None,
+        }),
+    ))
+}
+
+/// Whether a refusal may name an entry in the way, created by `created_by`: only when the
+/// caller's role reads its title (step R.3), so a refusal never shows a title the role can't
+/// read. The refusal itself still says the slug or value is taken, as any unique rule must.
+fn may_name(
+    tx: &ProjectTransaction,
+    collection: &str,
+    content_type: &ContentType,
+    created_by: Uuid,
+) -> bool {
+    tx.policy
+        .fields(Action::ContentRead, collection, created_by == tx.identity)
+        .is_some_and(|fields| fields.includes(content_type.title_field()))
 }
 
 /// Refuses unless the caller's role may read entries of `collection` (D-058).
@@ -391,17 +525,21 @@ fn may_read(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError> {
     if some {
         Ok(())
     } else {
-        Err(ApiError::Forbidden("your role can't read entries here"))
+        Err(ApiError::missing(
+            Action::ContentRead,
+            "your role can't read entries here",
+        ))
     }
 }
 
 /// The fields of `entry` the caller's role may read, and its content type; an entry it may not
 /// read at all is not found, as if it didn't exist.
 async fn readable(
+    state: &AppState,
     tx: &mut ProjectTransaction,
     collection: &str,
     entry: Uuid,
-) -> Result<(Fields, ContentType), ApiError> {
+) -> Result<(Fields, Arc<ContentType>), ApiError> {
     let created_by = entries::creators(tx, &[entry])
         .await
         .map_err(ApiError::from_db)?
@@ -412,7 +550,7 @@ async fn readable(
     let read = Access::of(&tx.policy, tx.identity, collection, created_by)
         .read
         .ok_or(ApiError::NotFound)?;
-    let (content_type, _) = content_type(tx, collection).await?;
+    let (content_type, _) = content_type(state, tx, collection).await?;
     Ok((read, content_type))
 }
 
@@ -457,18 +595,34 @@ pub(crate) async fn create(
     let create = tx
         .policy
         .fields(Action::ContentCreate, &path.collection, true)
-        .ok_or(ApiError::Forbidden("your role can't create entries here"))?;
+        .ok_or(ApiError::missing(
+            Action::ContentCreate,
+            "your role can't create entries here",
+        ))?;
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
-    let (content_type, version) = content_type(&mut tx, &path.collection).await?;
+    let (content_type, version) = content_type(&state, &mut tx, &path.collection).await?;
+    // A new entry gets the defaults of the fields it leaves out (D-071). They are the type's,
+    // not the caller's, so a role's field list applies to what it sent.
+    let (value, defaulted) = content_type.with_defaults(&value);
     let (content, hash) = validate(&value, &content_type)?;
-    visibility::only_permitted_fields(content.canonical_json(), &create)?;
+    visibility::only_permitted_fields(content.canonical_json(), &create, &defaulted)?;
     let request = request_hash(&[CREATE, &path.collection, content.canonical_json()]);
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);
     }
     slug_free(&mut tx, &path.collection, &content_type, &content, None).await?;
+    let unique = content_type.unique_fields();
+    unique_free(
+        &mut tx,
+        &path.collection,
+        &content_type,
+        &unique,
+        &content,
+        None,
+    )
+    .await?;
     let revision = NewRevision {
         id: Uuid::now_v7(),
         content: content.canonical_json(),
@@ -476,12 +630,14 @@ pub(crate) async fn create(
         title: content.title(),
         slug: content.slug(),
         schema_version: version,
+        references: content.references(),
+        unique: &unique,
     };
     let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision)
         .await
         .map_err(ApiError::from_db)?;
     let access = Access::of(&tx.policy, tx.identity, &path.collection, draft.created_by);
-    let view = DraftView::shown(draft, &access, &content_type)?;
+    let view = DraftView::shown(draft, Publication::NotLookedUp, &access, &content_type)?;
     finish(tx, CREATE, key, StatusCode::CREATED, view).await
 }
 
@@ -503,12 +659,15 @@ pub(crate) async fn save(
             .fields(Action::ContentUpdate, &path.collection, own)
             .is_none()
     }) {
-        return Err(ApiError::Forbidden("your role can't change entries here"));
+        return Err(ApiError::missing(
+            Action::ContentUpdate,
+            "your role can't change entries here",
+        ));
     }
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
-    let (content_type, version) = content_type(&mut tx, &path.collection).await?;
+    let (content_type, version) = content_type(&state, &mut tx, &path.collection).await?;
     // What this caller may do with this entry, by whose it is (D-058, step R.3).
     let created_by = entries::creators(&mut tx, &[entry])
         .await
@@ -519,10 +678,10 @@ pub(crate) async fn save(
         .ok_or(ApiError::NotFound)?;
     let access = Access::of(&tx.policy, tx.identity, &path.collection, created_by);
     let read = access.read.clone().ok_or(ApiError::NotFound)?;
-    let update = access
-        .update
-        .clone()
-        .ok_or(ApiError::Forbidden("your role can't change this entry"))?;
+    let update = access.update.clone().ok_or(ApiError::missing(
+        Action::ContentUpdate,
+        "your role can't change this entry",
+    ))?;
     // The version the editor started from; revisions never change. A stale one is reported by
     // the save itself.
     let stored = entries::revision(&mut tx, &path.collection, entry, expected)
@@ -555,6 +714,16 @@ pub(crate) async fn save(
         Some(entry),
     )
     .await?;
+    let unique = content_type.unique_fields();
+    unique_free(
+        &mut tx,
+        &path.collection,
+        &content_type,
+        &unique,
+        &content,
+        Some(entry),
+    )
+    .await?;
     let revision = NewRevision {
         id: Uuid::now_v7(),
         content: content.canonical_json(),
@@ -562,6 +731,8 @@ pub(crate) async fn save(
         title: content.title(),
         slug: content.slug(),
         schema_version: version,
+        references: content.references(),
+        unique: &unique,
     };
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.
     match entries::save(&mut tx, entry, expected, revision)
@@ -569,7 +740,7 @@ pub(crate) async fn save(
         .map_err(ApiError::from_db)?
     {
         Saved::Saved(draft) => {
-            let view = DraftView::shown(*draft, &access, &content_type)?;
+            let view = DraftView::shown(*draft, Publication::NotLookedUp, &access, &content_type)?;
             finish(tx, SAVE, key, StatusCode::OK, view).await
         }
         Saved::Stale { current } => Err(ApiError::StaleRevision { current }),
@@ -586,18 +757,35 @@ pub(crate) async fn get(
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_read(&tx, &path.collection)?;
-    let draft = entries::get(&mut tx, &path.collection, entry)
+    let (draft, published) = entries::get_with_live(&mut tx, &path.collection, entry)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
-    let (content_type, _) = content_type(&mut tx, &path.collection).await?;
+    let (content_type, _) = content_type(&state, &mut tx, &path.collection).await?;
     let access = Access::of(&tx.policy, tx.identity, &path.collection, draft.created_by);
+    // Only referrers in collections the role reads, so the list shows nothing it couldn't.
+    let referenced_by = entries::referrers(&mut tx, entry)
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .filter(|referrer| {
+            tx.policy
+                .fields(Action::ContentRead, &referrer.collection, false)
+                .is_some()
+        })
+        .map(|referrer| ReferrerView {
+            entry_id: referrer.entry_id,
+            collection: referrer.collection,
+            field: referrer.field,
+            in_draft: referrer.in_draft,
+            published: referrer.published,
+        })
+        .collect();
     tx.commit().await.map_err(ApiError::from_db)?;
     let revision = draft.revision.id;
-    let body = serde_json::to_string(&Data {
-        data: DraftView::shown(draft, &access, &content_type)?,
-    })
-    .map_err(ApiError::internal)?;
+    let mut view = DraftView::shown(draft, published.into(), &access, &content_type)?;
+    view.referenced_by = Some(referenced_by);
+    let body = serde_json::to_string(&Data { data: view }).map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, Some(revision), false))
 }
 
@@ -621,28 +809,12 @@ fn after_cursor(path: &CollectionPath, project: Uuid, cursor: &str) -> Result<Uu
         ))
 }
 
-/// `GET {P}/collections/{collection}/entries?limit=&cursor=`.
-pub(crate) async fn list(
-    State(state): State<AppState>,
-    caller: SignedIn,
-    Path(path): Path<CollectionPath>,
-    Query(query): Query<ListQuery>,
-) -> Result<Response, ApiError> {
+/// A list's page size, title search and creator, checked.
+fn list_query(query: &ListQuery) -> Result<(i64, Option<&str>, Option<Uuid>), ApiError> {
     let limit = query.limit.unwrap_or(DEFAULT_PAGE);
     if !(1..=entries::MAX_PAGE).contains(&limit) {
         return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
     }
-    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_read(&tx, &path.collection)?;
-    // An unknown collection is 404, not an empty list.
-    content_type(&mut tx, &path.collection).await?;
-    let project = tx.project;
-    let before = query
-        .cursor
-        .as_deref()
-        .map(|cursor| after_cursor(&path, project, cursor))
-        .transpose()?;
-    // One more than the page, to know whether another page follows.
     let search = query
         .q
         .as_deref()
@@ -653,32 +825,119 @@ pub(crate) async fn list(
             "a search is at most 100 characters",
         ));
     }
-    // Only their own entries, when that is all the role may read (D-058, step R.3); and titles
-    // only where the role may read the title field.
+    let asked = query
+        .created_by
+        .as_deref()
+        .map(|text| {
+            Uuid::try_parse(text)
+                .map_err(|_| ApiError::InvalidHeader("created_by must be an identity id"))
+        })
+        .transpose()?;
+    Ok((limit, search, asked))
+}
+
+/// Whose entries a list may hold.
+enum Whose {
+    /// Everyone's the role reads.
+    Anyone,
+    /// Only those this identity created.
+    Only(Uuid),
+    /// None: the answer is an empty page.
+    Nobody,
+}
+
+/// Whose entries a list holds, from what the role reads (D-058): only the caller's own when that
+/// is all it reads (step R.3); when it searches titles, only where it reads them, or else which
+/// entries match would confirm a guess at a title the answer leaves blank (refused outright when
+/// it reads no title at all); and, when one creator is asked for, theirs within that.
+fn whose(
+    policy: &Policy,
+    identity: Uuid,
+    collection: &str,
+    title_field: Option<&str>,
+    searching: bool,
+    asked: Option<Uuid>,
+) -> Result<Whose, ApiError> {
+    let reads_title = |own: bool| {
+        title_field.is_none_or(|title| {
+            policy
+                .fields(Action::ContentRead, collection, own)
+                .is_some_and(|fields| fields.includes(title))
+        })
+    };
+    let mut only = policy
+        .fields(Action::ContentRead, collection, false)
+        .is_none()
+        .then_some(identity);
+    if searching && !reads_title(false) {
+        if reads_title(true) {
+            only = Some(identity);
+        } else {
+            return Err(ApiError::forbidden(
+                "titles_not_readable",
+                "your role can't read titles here, so it can't search them",
+            ));
+        }
+    }
+    Ok(match (only, asked) {
+        (Some(mine), Some(asked)) if mine != asked => Whose::Nobody,
+        (Some(mine), _) => Whose::Only(mine),
+        (None, Some(asked)) => Whose::Only(asked),
+        (None, None) => Whose::Anyone,
+    })
+}
+
+/// `GET {P}/collections/{collection}/entries?limit=&cursor=&q=&created_by=`.
+pub(crate) async fn list(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<CollectionPath>,
+    Query(query): Query<ListQuery>,
+) -> Result<Response, ApiError> {
+    let (limit, search, asked) = list_query(&query)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_read(&tx, &path.collection)?;
+    // An unknown collection is 404, not an empty list.
+    let (content_type, _) = content_type(&state, &mut tx, &path.collection).await?;
+    let project = tx.project;
+    let before = query
+        .cursor
+        .as_deref()
+        .map(|cursor| after_cursor(&path, project, cursor))
+        .transpose()?;
+    // Titles only where the role may read the title field (D-058, step R.3).
     let anyone = tx
         .policy
         .fields(Action::ContentRead, &path.collection, false);
-    let only_by = anyone.is_none().then_some(tx.identity);
     let title_field = match anyone {
         Some(Fields::All) => None,
-        _ => Some(
-            content_type(&mut tx, &path.collection)
-                .await?
-                .0
-                .title_field()
-                .to_owned(),
-        ),
+        _ => Some(content_type.title_field()),
     };
-    let mut rows: Vec<Summary> = entries::list(
-        &mut tx,
+    let listed = whose(
+        &tx.policy,
+        tx.identity,
         &path.collection,
-        before,
-        limit + 1,
-        search,
-        only_by,
-    )
-    .await
-    .map_err(ApiError::from_db)?;
+        title_field,
+        search.is_some(),
+        asked,
+    )?;
+    let by = match listed {
+        Whose::Anyone => None,
+        Whose::Only(creator) => Some(creator),
+        Whose::Nobody => {
+            tx.commit().await.map_err(ApiError::from_db)?;
+            let empty = Page::<SummaryView> {
+                data: Vec::new(),
+                next_cursor: None,
+            };
+            let body = serde_json::to_string(&empty).map_err(ApiError::internal)?;
+            return Ok(json(StatusCode::OK, body, None, false));
+        }
+    };
+    let mut rows: Vec<Summary> =
+        entries::list(&mut tx, &path.collection, before, limit + 1, search, by)
+            .await
+            .map_err(ApiError::from_db)?;
     let (policy, identity) = (tx.policy.clone(), tx.identity);
     tx.commit().await.map_err(ApiError::from_db)?;
     let more = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);
@@ -697,6 +956,7 @@ pub(crate) async fn list(
             }
             Ok(SummaryView {
                 id: row.entry_id,
+                created_by: row.created_by,
                 updated_at: rfc3339(row.updated_at)?,
                 revision: RevisionView::new(row.revision)?,
                 published: row.published.map(|(revision_id, generation)| LiveView {
@@ -721,7 +981,7 @@ pub(crate) async fn revision(
     let revision = Uuid::try_parse(&path.revision).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_read(&tx, &path.collection)?;
-    let (read, content_type) = readable(&mut tx, &path.collection, entry).await?;
+    let (read, content_type) = readable(&state, &mut tx, &path.collection, entry).await?;
     let found = entries::revision(&mut tx, &path.collection, entry, revision)
         .await
         .map_err(ApiError::from_db)?
@@ -752,7 +1012,7 @@ pub(crate) async fn history(
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_read(&tx, &path.collection)?;
-    let (read, content_type) = readable(&mut tx, &path.collection, entry).await?;
+    let (read, content_type) = readable(&state, &mut tx, &path.collection, entry).await?;
     let revisions = entries::history(&mut tx, &path.collection, entry, entries::MAX_PAGE)
         .await
         .map_err(ApiError::from_db)?;

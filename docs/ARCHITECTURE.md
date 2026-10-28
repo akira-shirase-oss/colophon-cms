@@ -117,7 +117,9 @@ colophon/
 │   ├── colophon-media/         # upload intents, quarantine, verification, derivatives
 │   ├── colophon-automation/    # agent tools, bulk jobs, budgets, MCP adapter, optional AI assist
 │   ├── colophon-sim/           # deterministic simulator and invariant checkers
+│   ├── colophon-bench/         # Criterion micro-benchmarks of the hot paths (D-074)
 │   ├── colophon-cli/           # binary: colophon
+│   ├── colophon-mcp/           # binary: colophon-mcp, the MCP server on stdio, an API client (D-068)
 │   └── colophon-server/        # binary: colophon-server (composition root)
 ├── packages/
 │   ├── sdk/                    # generated TypeScript client + pinned-read helpers
@@ -136,9 +138,11 @@ colophon/
 ```text
 colophon-server ──► api, delivery, worker, media, automation, auth, db
 colophon-cli ─────► shared request/response types (crate choice open), HTTP client
+colophon-mcp ─────► HTTP client only: it calls /api/v1 with an API token, like any script (D-068)
 api / delivery / worker / media / automation ──► domain (+ auth for policy)
 db ──► implements domain and auth ports
 sim ──► domain, plus in-memory and fault-injecting port implementations
+bench ──► domain, auth (benchmarks only; nothing depends on it)
 domain ──► nothing that does I/O
 ```
 

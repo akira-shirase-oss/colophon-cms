@@ -35,10 +35,15 @@ export interface Figure {
 	result: PerfResult;
 }
 
-const files = import.meta.glob('../../../../../perf/results/*.json', {
+const everything = import.meta.glob('../../../../../perf/results/*.json', {
 	eager: true,
 	import: 'default'
 }) as Record<string, PerfResult>;
+// Stress runs (D-077) and micro-benchmarks (D-074) share the folder with shapes of their own;
+// the site's counts and charts are throughput and steady runs only.
+const files = Object.fromEntries(
+	Object.entries(everything).filter(([, result]) => result.scenario === 'throughput' || result.scenario === 'steady')
+);
 
 const REPOSITORY = 'https://github.com/akira-shirase-oss/colophon-cms/blob/main/perf/results/';
 

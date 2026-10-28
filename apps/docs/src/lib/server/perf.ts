@@ -48,8 +48,11 @@ export function loadResults(): LoadResult[] {
 	const dir = inRepo('perf', 'results');
 	return readdirSync(dir)
 		.filter((file) => file.endsWith('.json'))
-		.map((file) => {
-			const raw = JSON.parse(readFileSync(`${dir}/${file}`, 'utf8')) as RawResult;
+		.map((file) => ({ file, raw: JSON.parse(readFileSync(`${dir}/${file}`, 'utf8')) as RawResult }))
+		// Stress runs (D-077) and micro-benchmarks (D-074) sit in the same folder with shapes of
+		// their own; this page shows throughput and steady runs.
+		.filter(({ raw }) => raw.scenario === 'throughput' || raw.scenario === 'steady')
+		.map(({ file, raw }) => {
 			return {
 				file: `perf/results/${file}`,
 				date: raw.date,

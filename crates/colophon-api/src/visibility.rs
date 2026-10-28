@@ -137,15 +137,20 @@ pub(crate) fn only_permitted_changes(
     }
 }
 
-/// Refuses content for a new entry that sets a field `create` doesn't allow.
-pub(crate) fn only_permitted_fields(content: &str, create: &Fields) -> Result<(), ApiError> {
+/// Refuses content for a new entry that sets a field `create` doesn't allow, other than those
+/// in `defaulted`, which the content type's defaults set (D-071).
+pub(crate) fn only_permitted_fields(
+    content: &str,
+    create: &Fields,
+    defaulted: &[&str],
+) -> Result<(), ApiError> {
     if *create == Fields::All {
         return Ok(());
     }
     let fields = object(content)?;
     let mut set: Vec<&String> = fields
         .iter()
-        .filter(|(_, value)| !value.is_null())
+        .filter(|(field, value)| !value.is_null() && !defaulted.contains(&field.as_str()))
         .map(|(field, _)| field)
         .collect();
     set.sort();
@@ -228,10 +233,21 @@ mod tests {
     #[test]
     fn a_new_entry_may_only_set_the_fields_the_role_may_create() {
         assert!(
-            only_permitted_fields(r#"{"title":"Menu","body":null}"#, &only(&["title"])).is_ok()
+            only_permitted_fields(r#"{"title":"Menu","body":null}"#, &only(&["title"]), &[])
+                .is_ok()
         );
-        assert!(only_permitted_fields(r#"{"title":"Menu","price":3}"#, &only(&["title"])).is_err());
-        assert!(only_permitted_fields(r#"{"price":3}"#, &Fields::All).is_ok());
+        assert!(
+            only_permitted_fields(r#"{"title":"Menu","price":3}"#, &only(&["title"]), &[]).is_err()
+        );
+        assert!(
+            only_permitted_fields(
+                r#"{"title":"Menu","price":3}"#,
+                &only(&["title"]),
+                &["price"]
+            )
+            .is_ok()
+        );
+        assert!(only_permitted_fields(r#"{"price":3}"#, &Fields::All, &[]).is_ok());
     }
 
     #[test]

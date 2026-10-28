@@ -159,6 +159,9 @@ crates/
   colophon-sim/      the deterministic simulator
   colophon-cli/      the `colophon` binary
   colophon-server/   the `colophon-server` binary (--role api|worker|all)
+  colophon-mcp/      the `colophon-mcp` binary: an MCP server on stdio for agents, over the same HTTP API (D-068)
+  colophon-version/  the version, commit and build date every binary reports (--version, GET /version)
+  colophon-bench/    Criterion micro-benchmarks of the per-request hot paths and their inputs (D-074)
 apps/
   studio/            the Studio, served by the server at /studio
   testbed/           a separate SvelteKit app that uses every feature through the real HTTP API
@@ -170,8 +173,10 @@ packages/
   content-renderer/  stored documents to safe HTML, one implementation for the Studio and the public site
   ui/                the design system: tokens and the owned shadcn-svelte components
   site-theme/        the website's look, shared by the website and the docs
+  cli-npm/           @colophon-cms/cli: the npm launcher for the prebuilt `colophon` binaries
+packaging/           the Homebrew formula template (scripts/homebrew-formula.sh fills it in per release)
 fixtures/            the shared rich-text contract: 12 valid documents with their reviewed HTML, 34 that must be refused
-perf/                k6 scenarios, every load result, per-machine baselines, and a webhook receiver for load runs
+perf/                k6 scenarios, every load and micro-benchmark result, per-machine baselines, and a webhook receiver
 deploy/              compose.yaml: the local stack (PostgreSQL, Valkey, Garage, Keycloak); local.env
 scripts/             check.sh (everything CI runs), stack.sh, migrate.sh, load.sh, demo.sh, first-run.sh and the checks
 docs/                the plan and the design documents; docs/formats/ holds the stored formats
@@ -203,6 +208,9 @@ scripts/testbed.sh       # the testbed's Playwright suite (or --dev to explore i
 scripts/studio.sh        # the Studio against the real server: autosave, conflicts, offline, recovery
 npm test -w @colophon/docs   # the docs site: build, then Playwright
 npm test -w @colophon/site   # the website: build, then Playwright
+cargo run -p colophon-cli -- login --server http://localhost:58000   # then approve the code in the Studio
+scripts/bench.sh                       # micro-benchmarks of the per-request hot paths; medians in perf/results/
+scripts/bench.sh compare main          # this checkout against main, both built and timed on this machine
 ```
 
 Load runs (they build the release binaries; each result goes in `perf/results/` with the machine and commit):
@@ -280,4 +288,4 @@ mistakes, is written up in the [build log](https://404human.dev/colophon/).
 ## License
 
 Apache-2.0 is proposed for the core, CLI and SDK. The `LICENSE` file will be added once the maintainer confirms it,
-before any release.
+before any release; the release workflow refuses a tag without it.

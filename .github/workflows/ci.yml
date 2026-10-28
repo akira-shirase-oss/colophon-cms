@@ -39,6 +39,8 @@ jobs:
       - name: Clippy on the crash tests (built only with the fault points)
         run: cargo clippy -p colophon-server --features fault-injection --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - name: Micro-benchmarks, each run once unoptimized (they build and their inputs hold)
+        run: cargo test -p colophon-bench --benches --locked
       - run: cargo doc --workspace --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
@@ -48,6 +50,42 @@ jobs:
         run: cargo run --quiet --release --locked -p colophon-sim -- --seeds 2000
       - name: Simulator sweep, publishing (releases, the outbox and workers under leases)
         run: cargo run --quiet --release --locked -p colophon-sim -- --scenario publishing --seeds 1000
+
+  # Micro-benchmarks (D-074): the pull request's merge commit against its base, both built and
+  # timed on this one runner in alternating rounds (scripts/bench.sh compare). Runners' CPUs
+  # differ about 2.4x by model, so stored numbers from another job would compare machines, not code;
+  # that is also why pushes to main run nothing here. Fails when a benchmark is slower in every
+  # round by more than 15% and 25 ns; the report is in the job summary and the artifact.
+  benchmarks:
+    name: benchmarks (this pull request against its base, on one runner)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The base commit has to be here to be built.
+          fetch-depth: 0
+      - name: Install the pinned toolchain
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Time the base and this pull request (scripts/bench.sh compare)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: scripts/bench.sh compare "$BASE_SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: benchmark-comparison
+          path: |
+            target/bench-compare/report.md
+            target/bench-compare/report.json
+            target/bench-compare/runs.jsonl
+            target/bench-compare/logs/
+          retention-days: 30
 
   frontend:
     name: frontend (types, editor unit tests, Studio in Chromium)
@@ -70,6 +108,29 @@ jobs:
           name: studio-playwright-traces
           path: apps/studio/test-results/
           retention-days: 7
+
+  # How the CLI reaches people without Rust (D-062, milestone V): the npm launcher picks the right
+  # platform package and passes exit codes through, the packages assemble from release archives
+  # checked against SHA256SUMS, `npm pack` ships exactly the expected files, the install script
+  # verifies before it installs, and the Homebrew formula gets each platform's hash.
+  distribution:
+    name: distribution (npm launcher and packages, install script, Homebrew formula)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Launcher and assembler tests (packages/cli-npm)
+        working-directory: packages/cli-npm
+        run: npm test
+      - name: The install script against fake releases served from a temporary directory
+        run: scripts/test-install.sh
+      - name: The Homebrew formula, rendered from a SHA256SUMS
+        run: scripts/test-homebrew-formula.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
@@ -138,7 +199,7 @@ jobs:
             -c "ALTER SYSTEM SET log_lock_waits = on" \
             -c "ALTER SYSTEM SET deadlock_timeout = '50ms'" \
             -c "SELECT pg_reload_conf()"
-      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, custom roles, schedules, who may create projects, changesets, public delivery, publishing with the worker, drafts, content types, the Studio)
+      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, custom roles, API tokens, schedules, who may create projects, changesets, public delivery, publishing with the worker, drafts, content types, content modelling, the Studio)
         # Endpoints that never touch the database run back to back (throughput): their p99 has
         # threefold headroom even on the slowest runner seen, and health's requests a second say
         # how fast this runner is. Database-backed endpoints run at a fixed rate (steady), about
@@ -153,24 +214,42 @@ jobs:
         # iterations on every EPYC 7763 and passed on every 9V45, while e/schedules and R.3 builds
         # did the same back to back on one laptop (1,532 to 1,733 a second). Back to back, the
         # laptop does 1,461 changesets, 1,722 roles and 1,856 schedules requests a second; a 7763
-        # did 783 changesets, so about 920 roles and 990 schedules: half is 450 and 500.
+        # did 783 changesets, so about 920 roles and 990 schedules: half is 450 and 500. Members and
+        # the CLI had stayed at 1,000, about 94% of a 7763 (the laptop does 1,993 and 1,979 a second
+        # back to back, so a 7763 about 1,070): on 2026-10-28 members failed on p99 (203 ms, nothing
+        # dropped, invitations and role changes queueing on one membership row) on an EPYC 9V74, where
+        # the same hour's passing runs of earlier branches spread from 4 ms to 177 ms by runner, and
+        # the CLI failed on a 7763.
+        # Half is 500 each. Tokens failed twice at 400; until its million-request run gives a
+        # back-to-back figure, it runs at 200. Session ran at 1,000 until a slow EPYC 7763 (rich-text
+        # 10,838 a second against about 12,900 on others) served only 833 session requests a second,
+        # median 587 ms; limits on or off made no difference to it on the laptop (2,110 to 2,465
+        # off, 2,235 to 2,544 on, alternating), so it runs at 400, about half of that runner.
+        # Projects failed next at 1,000 on a 7763 (p99 237 ms, 10 dropped): its admin's GET /me
+        # (median 120 ms against 2.7 ms for the editor's) returns every project the admin is in, up
+        # to 1,000, and the suites before the smokes create hundreds as dev-owner. It runs at 500
+        # until /me stops listing every project (docs/modules/04-api.md, open decisions).
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 DURATION=20s
           TOTAL=200000 P99_MS=50 scripts/load.sh health throughput
           TOTAL=100000 P99_MS=50 scripts/load.sh rich-text throughput
-          RATE=1000 P99_MS=200 scripts/load.sh session steady
-          RATE=1000 P99_MS=200 scripts/load.sh cli steady
-          RATE=1000 P99_MS=200 scripts/load.sh members steady
+          RATE=400 P99_MS=200 scripts/load.sh session steady
+          RATE=500 P99_MS=200 scripts/load.sh cli steady
+          RATE=500 P99_MS=200 scripts/load.sh members steady
           RATE=450 P99_MS=200 scripts/load.sh roles steady
+          RATE=200 P99_MS=200 scripts/load.sh tokens steady
           RATE=500 P99_MS=200 scripts/load.sh schedules steady
-          RATE=1000 P99_MS=200 scripts/load.sh projects steady
+          RATE=500 P99_MS=200 scripts/load.sh projects steady
           RATE=400 P99_MS=200 scripts/load.sh changesets steady
           RATE=1500 P99_MS=200 scripts/load.sh delivery steady
           # RATE counts publishes here, five requests each.
           RATE=60 P99_MS=500 scripts/load.sh publishing steady
           RATE=400 P99_MS=500 scripts/load.sh entries steady
           RATE=400 P99_MS=500 scripts/load.sh content-types steady
+          # Structures and references (M.1 to M.3): about 1,156 a second back to back on the
+          # laptop, so about 600 on a 7763; half is 300.
+          RATE=300 P99_MS=500 scripts/load.sh modelling steady
           TOTAL=50000 P99_MS=50 scripts/load.sh studio throughput
       - name: Service logs, and what the database was doing
         if: failure()

@@ -7,7 +7,13 @@
 	import { onMount } from 'svelte';
 	import { asset } from '$app/paths';
 	import type { Editor } from '@tiptap/core';
-	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { resolve } from '$app/paths';
+	import ArrowUpRightIcon from '@lucide/svelte/icons/arrow-up-right';
+	import CopyIcon from '@lucide/svelte/icons/copy';
+	import EyeIcon from '@lucide/svelte/icons/eye';
+	import LinkIcon from '@lucide/svelte/icons/link';
+	import { toast } from 'svelte-sonner';
 	import { openEditor, type RichTextValue, toStored } from '@colophon/editor';
 	import RichText from '@colophon/content-renderer/RichText.svelte';
 	import CloudAlertIcon from '@lucide/svelte/icons/cloud-alert';
@@ -18,23 +24,30 @@
 	import {
 		type Content,
 		type ContentType,
+		deliveryUrl,
 		type Draft,
 		type FieldDefinition,
 		getRevision,
 		listRevisions,
 		type Loaded,
+		type Referrer,
 		signInUrl,
 		type Summary
 	} from './api.ts';
-	import { compare } from './diff.ts';
+	import { linkedQuery, placeName } from './references.ts';
+	import { clearedNote, shownTitle } from './words.ts';
+	import { compare, readable } from './diff.ts';
+	import { prettyJson } from './json.ts';
+	import { plainError } from './errors.ts';
 	import DiffView from './DiffView.svelte';
 	import PublishEntry from './PublishEntry.svelte';
-	import { ago, projectQuery, releasesQuery } from './queries.ts';
+	import ReaderView from './ReaderView.svelte';
+	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from './queries.ts';
 	import RichTextToolbar from './RichTextToolbar.svelte';
 	import StatusBadge from './shell/StatusBadge.svelte';
 	import TechnicalDetails from './shell/TechnicalDetails.svelte';
 	import { releaseName } from './words.ts';
-	import { EMPTY_DOCUMENT, type FormValue, formValue, storedValue } from './content.ts';
+	import { applies, blockingProblem, EMPTY_DOCUMENT, type FormValue, formValue, storedValue } from './content.ts';
 	import { kept } from './drafts.ts';
 	import FieldInputs from './FieldInputs.svelte';
 	import { Saver } from './saver.svelte.ts';
@@ -45,7 +58,8 @@
 		entry,
 		type,
 		initial,
-		published = null
+		published = null,
+		referencedBy = []
 	}: {
 		project: string;
 		collection: string;
@@ -54,7 +68,29 @@
 		initial: Loaded;
 		/** What readers get now, from the collection's list; null when not published. */
 		published?: Summary['published'];
+		/** Entries that link to this one, as its read says (D-065). */
+		referencedBy?: Referrer[];
 	} = $props();
+
+	// "Linked from": each linking entry named by reading it; one the role can't read is said so.
+	const allTypes = createQuery(() => typesQuery(project));
+	const linking = createQueries(() => ({ queries: referencedBy.map((link) => linkedQuery(project, link.collection, link.entry_id)) }));
+	const linkedFrom = $derived(
+		referencedBy.map((link, index) => {
+			const definition = allTypes.data?.find((item) => item.slug === link.collection)?.definition;
+			return {
+				link,
+				read: linking[index]?.data,
+				collectionName: definition?.name ?? link.collection,
+				// "Author", or inside structures "Sections → Quote 2 → By" (the kind from its content).
+				fieldLabel: placeName(definition?.fields ?? [], link.field, linking[index]?.data?.content) || link.field
+			};
+		})
+	);
+	/** Published entries that link here: taking this down is refused until they change. */
+	const linkedLive = $derived(
+		linkedFrom.filter((item) => item.link.published).map((item) => (item.read?.seen ? `“${shownTitle(item.read.title)}”` : 'an entry you can’t see'))
+	);
 
 	const queryClient = useQueryClient();
 	// Until media uploads arrive (P4), every image previews as the same placeholder.
@@ -83,6 +119,7 @@
 	// What the role may do here, and the newest release this page has seen: publishing goes on top
 	// of that one (D-045).
 	const mine = createQuery(() => projectQuery(project));
+	const who = createQuery(meQuery);
 	const releases = createQuery(() => releasesQuery(project));
 	const revisions = createQuery(() => ({
 		queryKey: ['history', project, collection, entry],
@@ -92,11 +129,24 @@
 	const hosts: Record<string, HTMLDivElement> = {};
 	let editors = $state.raw<Record<string, Editor>>({});
 	let form = $state<Record<string, FormValue>>({});
+	/** Bumped each time the whole content is (re)shown, so nested controls start from it. */
+	let showings = $state(0);
 	let unopenable = $state('');
+
+	// Conditional fields (D-072): a field applies while the field it depends on holds one of its
+	// values, judged from what this editor would save. One that doesn't apply is hidden and left
+	// out of every save, so a save never earns `not_applicable`.
+	const controllers = definition.fields.filter((field) => definition.fields.some((other) => other.when?.field === field.id));
+	const deciding = $derived(Object.fromEntries(controllers.map((field) => [field.id, storedValue(field, form[field.id])])));
+	const appliesNow = (field: FieldDefinition) => applies(field, deciding);
+	/** What was cleared because it stopped applying, said quietly until it applies again. */
+	let cleared = $state<Record<string, string>>({});
 
 	function current(): Content {
 		const content: Content = {};
+		const decided = Object.fromEntries(controllers.map((field) => [field.id, storedValue(field, form[field.id])]));
 		for (const field of visible) {
+			if (!applies(field, decided)) continue;
 			const editor = editors[field.id];
 			const value = field.type === 'rich_text' ? editor && toStored(editor.getJSON()) : storedValue(field, form[field.id]);
 			if (value !== undefined) content[field.id] = value;
@@ -104,8 +154,32 @@
 		return content;
 	}
 
+	/** Clears what stopped applying, and says so; forgets the note once it applies again. */
+	function clearInapplicable() {
+		const decided = Object.fromEntries(controllers.map((field) => [field.id, storedValue(field, form[field.id])]));
+		for (const field of visible) {
+			if (field.when === undefined) continue;
+			if (applies(field, decided)) {
+				if (cleared[field.id] !== undefined) delete cleared[field.id];
+				continue;
+			}
+			const editor = editors[field.id];
+			const filled = field.type === 'rich_text' ? editor !== undefined && !editor.isEmpty : storedValue(field, form[field.id]) !== undefined;
+			if (!filled) continue;
+			if (field.type === 'rich_text') editor?.commands.clearContent();
+			else form[field.id] = formValue(field, undefined);
+			const dependsOn = definition.fields.find((other) => other.id === field.when?.field);
+			const values = field.when.is.map((value) => (value === true ? 'Yes' : value === false ? 'No' : String(value)));
+			cleared[field.id] = clearedNote(field.label, dependsOn?.label ?? field.when.field, values);
+		}
+	}
+
 	function changed() {
-		saver.edit(current());
+		clearInapplicable();
+		// JSON that doesn't read yet can't be sent (it would be lost or stored as text): hold.
+		const blocked = blockingProblem(plain.filter(appliesNow), form);
+		if (blocked !== '') saver.hold(blocked);
+		else saver.edit(current());
 	}
 
 	/** Shows `content`, refusing any rich text the editor can't give back exactly (D-022). */
@@ -134,6 +208,8 @@
 		}
 		editors = next;
 		form = Object.fromEntries(plain.map((field) => [field.id, formValue(field, content[field.id])]));
+		// Controls inside structures (and their rich text) are made afresh for the new content.
+		showings += 1;
 		unopenable = '';
 	}
 
@@ -155,15 +231,64 @@
 
 	function shown(field: FieldDefinition, value: unknown): string {
 		if (value === undefined) return '(empty)';
+		if (field.type === 'object' || field.type === 'list' || field.type === 'blocks' || field.type === 'reference') return readable(field, value) || '(empty)';
 		if (field.type === 'boolean') return value === true ? 'Yes' : 'No';
 		if (field.type === 'datetime' && typeof value === 'string') return new Date(value).toLocaleString();
+		if (field.type === 'json') return prettyJson(value);
 		return String(value);
 	}
 
 	const standing = $derived(
 		published === null ? 'draft' : published.revision_id === latest.revision.id && saver.status === 'saved' ? 'live' : 'changed'
 	);
+	async function copyAddress(text: string) {
+		try {
+			await navigator.clipboard.writeText(text);
+			toast.success('Copied');
+		} catch {
+			toast.error("Couldn't copy; select it and copy it yourself.");
+		}
+	}
+
+	// "What readers get": the public read of this entry, in a dialog.
+	let readerView = $state(false);
+
 	let tab = $state<'content' | 'history'>('content');
+
+	// Restoring a version (spec's History screen): its fields become the draft and are saved as a new
+	// version on top of the current one, so nothing in the history is lost and the restore itself can
+	// be undone by restoring again. Fields the role may not change keep their current values; hidden
+	// ones are never sent, so the server keeps them.
+	const restores = $derived(locked.length < visible.length);
+	let restoring = $state<string | null>(null);
+	let restoreNote = $state<{ kind: 'done' | 'failed'; text: string } | null>(null);
+	async function restore(revision: { id: string; created_at: string }) {
+		restoring = revision.id;
+		restoreNote = null;
+		try {
+			const old = await queryClient.fetchQuery({
+				queryKey: ['revision', project, collection, entry, revision.id],
+				queryFn: () => getRevision(project, collection, entry, revision.id),
+				staleTime: Infinity
+			});
+			const now = current();
+			const next: Content = {};
+			for (const field of visible) {
+				const value = locked.includes(field.id) ? now[field.id] : old.content[field.id];
+				if (value !== undefined) next[field.id] = value;
+			}
+			show(next);
+			saver.edit(current());
+			saver.saveNow();
+			comparing = null;
+			tab = 'content';
+			restoreNote = { kind: 'done', text: `Restored the version saved ${ago(revision.created_at)}, as a new version. The newer ones stay in the history.` };
+		} catch (failure) {
+			restoreNote = { kind: 'failed', text: `Not restored. ${plainError(failure, 'change this entry')}` };
+		} finally {
+			restoring = null;
+		}
+	}
 	// The revision being compared with this draft, and what it held.
 	let comparing = $state<string | null>(null);
 	const compared = createQuery(() => ({
@@ -182,13 +307,17 @@
 			case 'saving':
 				return 'Saving…';
 			case 'retrying':
-				return "Can't reach the server. Your changes are kept on this device; retrying.";
+				return saver.busy
+					? `${saver.message}${saver.keptOnDevice ? ' Your changes are kept on this device.' : ''}`
+					: "Can't reach the server. Your changes are kept on this device; retrying.";
 			case 'conflict':
 				return 'Not saved: someone else saved first';
 			case 'refused':
 				return `Not saved: ${saver.message}`;
 			case 'signed-out':
 				return 'Signed out: changes kept on this device';
+			case 'held':
+				return `Not saved: ${saver.message}`;
 		}
 	});
 
@@ -287,6 +416,16 @@
 			{/each}
 		</div>
 
+		{#if restoreNote}
+			<p
+				role={restoreNote.kind === 'failed' ? 'alert' : 'status'}
+				class="mb-4 rounded-lg px-4 py-3 text-sm {restoreNote.kind === 'failed' ? 'bg-attention-soft text-attention-ink' : 'bg-live-soft text-live-ink'}"
+				data-testid="restore-note"
+			>
+				{restoreNote.text}
+			</p>
+		{/if}
+
 		<div role="tabpanel" id="panel-content" aria-labelledby="tab-content" hidden={tab !== 'content'}>
 			{#if hidden.size > 0 || locked.length > 0}
 				<p class="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="role-limits">
@@ -294,9 +433,39 @@
 					{#if locked.length > 0}Your role can read but not change {locked.join(', ')}.{/if}
 				</p>
 			{/if}
-			<FieldInputs fields={plain} bind:form titleField={definition.title_field} onchange={changed} {locked} />
+{#key showings}
+			{#if Object.keys(cleared).length > 0}
+				<div role="status" data-testid="cleared-notes">
+					<ul class="mb-2 space-y-1 text-xs text-muted-foreground">
+						{#each Object.entries(cleared) as [id, note] (id)}<li>{note}</li>{/each}
+					</ul>
+				</div>
+			{/if}
+			<FieldInputs
+				fields={plain.filter(appliesNow)}
+				bind:form
+				titleField={definition.title_field}
+				onchange={changed}
+				{locked}
+				refused={saver.status === 'refused'
+					? {
+							pointer: saver.pointer,
+							message: saver.message,
+							reason: saver.reason,
+							holder:
+								saver.holder === null
+									? null
+									: {
+											title: saver.holder.title,
+											href: resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: saver.holder.entry })
+										}
+						}
+					: null}
+				{project}
+			/>
+			{/key}
 			{#each rich as field (field.id)}
-				<div class="py-5">
+				<div class="py-5" hidden={!appliesNow(field)}>
 					<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
 					<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60">
 						<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" />
@@ -305,6 +474,63 @@
 				</div>
 			{/each}
 		</div>
+
+		{#if linkedFrom.length > 0}
+			<section class="mt-8" aria-labelledby="linked-from-heading" data-testid="linked-from">
+				<h2 id="linked-from-heading" class="mb-1 text-sm font-semibold">Linked from</h2>
+				<p class="mb-3 text-xs text-muted-foreground">Entries whose fields link to this one.</p>
+				<ul class="overflow-hidden rounded-xl border border-border bg-card">
+					{#each linkedFrom as item (`${item.link.entry_id}-${item.link.field}`)}
+						<li class="rule-dotted flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm last:border-b-0" data-testid="linked-from-entry">
+							<LinkIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+							<span class="min-w-0 flex-1">
+								{#if item.read === undefined}
+									<span class="text-muted-foreground">Loading…</span>
+								{:else if item.read.seen}
+									<a
+										class="font-medium hover:underline"
+										data-user-content
+										href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.link.collection, entry: item.link.entry_id })}
+										>{shownTitle(item.read.title)}</a
+									>
+								{:else}
+									<span class="text-muted-foreground">An entry you can’t see</span>
+								{/if}
+								<span class="block text-xs text-muted-foreground" data-user-content>{item.collectionName}, in {item.fieldLabel}</span>
+							</span>
+							{#if item.link.published}
+								<Badge variant="live">Readers see this link</Badge>
+							{:else}
+								<Badge variant="draft">In a draft</Badge>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
+
+		{#if published !== null}
+			<!-- Where readers get it (the public read, no sign-in): the published version, not the draft. -->
+			{@const address = `${window.location.origin}${deliveryUrl(project, collection)}/${entry}`}
+			<section class="mt-8" aria-labelledby="public-address-heading" data-testid="public-address">
+				<h2 id="public-address-heading" class="mb-1 text-sm font-semibold">Where readers get it</h2>
+				<p class="mb-3 text-xs text-muted-foreground">
+					Anyone can read the published version at this address, without signing in{standing === 'changed'
+						? `: the one live in ${releaseName(published.generation)}, not your newer changes`
+						: ''}.
+				</p>
+				<div class="flex min-w-0 items-center gap-1 rounded-xl border border-border bg-card px-4 py-2.5 text-sm">
+					<a class="min-w-0 flex-1 truncate font-mono text-xs underline underline-offset-2" href={address} target="_blank" rel="noreferrer"
+						>{address}<ArrowUpRightIcon class="ml-0.5 inline size-3" aria-hidden="true" /></a
+					>
+					<Button variant="ghost" size="icon-xs" aria-label="Copy the public address" onclick={() => copyAddress(address)}><CopyIcon /></Button>
+				</div>
+				<Button class="mt-3" variant="outline" size="sm" onclick={() => (readerView = true)} data-testid="see-what-readers-get"
+					><EyeIcon data-icon="inline-start" />See what readers get</Button
+				>
+				<ReaderView bind:open={readerView} {project} {collection} {entry} changed={standing === 'changed'} />
+			</section>
+		{/if}
 
 		<div role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== 'history'}>
 			{#if revisions.data}
@@ -323,6 +549,17 @@
 									<Button variant="ghost" size="xs" onclick={() => (comparing = comparing === revision.id ? null : revision.id)}>
 										{comparing === revision.id ? 'Hide' : 'Compare with draft'}
 									</Button>
+									{#if restores}
+										<Button
+											variant="outline"
+											size="xs"
+											disabled={restoring !== null || saver.status !== 'saved'}
+											title={saver.status !== 'saved' ? 'Wait until your changes are saved' : undefined}
+											onclick={() => restore(revision)}
+										>
+											{restoring === revision.id ? 'Restoring…' : 'Restore this version'}
+										</Button>
+									{/if}
 								{/if}
 							</div>
 							{#if comparing === revision.id}
@@ -343,8 +580,18 @@
 		</div>
 	</div>
 
-	<aside class="xl:sticky xl:top-20 xl:self-start">
-		<div class="rounded-xl border border-border bg-card p-4 shadow-xs">
+	<!--
+	  Saving and publishing: a card beside the fields on wide screens; below xl, a bar that stays at
+	  the bottom of the screen while the fields scroll, so Publish never sits under a long body
+	  (D-059, rule 7). The details and Technical details are on the wide card only.
+	-->
+	<aside
+		class="sticky bottom-0 z-20 -mx-5 border-t border-border bg-background/95 px-5 py-3 backdrop-blur sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10 xl:top-20 xl:bottom-auto xl:mx-0 xl:self-start xl:border-t-0 xl:bg-transparent xl:p-0 xl:backdrop-blur-none"
+		aria-label="Saving and publishing"
+		data-testid="entry-actions"
+	>
+		<div class="grid gap-x-6 gap-y-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,18rem)] sm:items-center xl:block xl:rounded-xl xl:border xl:border-border xl:bg-card xl:p-4 xl:shadow-xs">
+			<div class="min-w-0">
 			<p class="flex items-start gap-2 text-sm font-medium" role="status" data-testid="save-status" data-status={saver.status}>
 				{#if saver.status === 'saved'}
 					<CloudCheckIcon class="pop mt-0.5 size-4 shrink-0 text-live" aria-hidden="true" />
@@ -355,19 +602,20 @@
 				{:else}
 					<CloudAlertIcon class="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
 				{/if}
-				<span class:text-destructive={saver.status === 'conflict' || saver.status === 'refused' || saver.status === 'signed-out'}>{label}</span>
+				<span class:text-destructive={saver.status === 'conflict' || saver.status === 'refused' || saver.status === 'signed-out' || saver.status === 'held'}>{label}</span>
 			</p>
-			{#if saver.message && saver.status !== 'refused' && saver.status !== 'conflict'}
+			{#if saver.message && saver.status !== 'refused' && saver.status !== 'conflict' && saver.status !== 'held'}
 				<p class="mt-2 text-xs text-muted-foreground" data-testid="save-message">{saver.message}</p>
 			{/if}
 			{#if saver.status === 'signed-out'}
 				<p class="mt-2 text-xs"><a class="underline" href={signInUrl(window.location.pathname)} data-sveltekit-reload>Sign in again</a> to save them.</p>
 			{/if}
-			<Button class="mt-3 w-full" variant="outline" size="sm" onclick={() => saver.saveNow()} disabled={saver.status === 'saved' || saver.status === 'conflict'}>
+			</div>
+			<Button class="mt-3 hidden w-full xl:flex" variant="outline" size="sm" onclick={() => saver.saveNow()} disabled={saver.status === 'saved' || saver.status === 'conflict' || saver.status === 'held'}>
 				Save now <kbd class="ml-auto font-sans text-[0.6875rem] text-muted-foreground">⌘S</kbd>
 			</Button>
 
-			<dl class="mt-4 space-y-2.5 border-t border-dotted border-border pt-4 text-sm">
+			<dl class="mt-4 hidden space-y-2.5 border-t border-dotted border-border pt-4 text-sm xl:block">
 				<div class="flex items-center justify-between gap-2">
 					<dt class="text-muted-foreground">Status</dt>
 					<dd><StatusBadge state={standing} generation={published?.generation ?? null} /></dd>
@@ -385,7 +633,7 @@
 					<dd>{new Date(latest.created_at).toLocaleDateString()}</dd>
 				</div>
 			</dl>
-			<div class="mt-4 border-t border-dotted border-border pt-4">
+			<div class="xl:mt-4 xl:border-t xl:border-dotted xl:border-border xl:pt-4">
 				<PublishEntry
 					{project}
 					{collection}
@@ -396,9 +644,11 @@
 					saved={saver.status === 'saved'}
 					generation={published?.generation ?? null}
 					seenGeneration={releases.data?.generation}
+					own={who.data != null && latest.created_by === who.data.id}
+					{linkedLive}
 				/>
 			</div>
-			<TechnicalDetails class="mt-4 border-t border-dotted border-border pt-3">
+			<TechnicalDetails class="mt-4 hidden border-t border-dotted border-border pt-3 xl:block">
 				<p>Entry <span class="font-mono break-all">{entry}</span> in collection <span class="font-mono">{collection}</span></p>
 				<p>Revision <span class="font-mono break-all">{latest.revision.id}</span></p>
 				<p>Content hash <span class="font-mono break-all">{latest.revision.content_hash}</span></p>

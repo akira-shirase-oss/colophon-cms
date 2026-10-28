@@ -15,30 +15,15 @@
 	import { Input } from '@colophon/ui/ui/input';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { type Action, ApiError, type ContentType, deleteRole, type Grant, type RoleDefinition, updateRole } from '#lib/api.ts';
+	import PermissionGrid from '#lib/PermissionGrid.svelte';
+	import { cell } from '#lib/permissions.ts';
 	import FormRow from '#lib/shell/FormRow.svelte';
 
 	let { project, role, types, editable }: { project: string; role: RoleDefinition; types: ContentType[]; editable: boolean } = $props();
 
 	const queryClient = useQueryClient();
 
-	/** Work on content, in the order an article goes through it. Deleting has no button yet, so it
-	 *  isn't offered; a role that has it keeps it. */
-	const WORK: { action: Action; label: string }[] = [
-		{ action: 'content.read', label: 'See' },
-		{ action: 'content.create', label: 'Create' },
-		{ action: 'content.update', label: 'Edit' },
-		{ action: 'content.review', label: 'Approve' },
-		{ action: 'content.publish', label: 'Publish' },
-		{ action: 'schema.change', label: 'Change fields' }
-	];
-	const PROJECT: { action: Action; label: string; hint: string }[] = [
-		{ action: 'members.manage', label: 'Invite people and change their roles', hint: 'Only to roles whose every power this role has.' },
-		{ action: 'roles.manage', label: 'Make and change roles', hint: 'Again, never beyond this role’s own powers.' },
-		{ action: 'destinations.manage', label: 'Manage where releases go', hint: 'Webhooks, CDNs and checks; their addresses may carry secrets.' },
-		{ action: 'tokens.manage', label: 'Manage API tokens', hint: 'API tokens arrive in a later step.' }
-	];
-
-	const key = (action: string, subject: string) => `${action}|${subject}`;
+	const key = cell;
 	// The editor's copy, keyed on the role's version by the page: a save starts a fresh copy.
 	// svelte-ignore state_referenced_locally
 	const saved = role;
@@ -63,18 +48,7 @@
 			initial.some((grant) => !grants.has(grant)) ||
 			JSON.stringify(limits) !== initialLimits
 	);
-	const rows = $derived([
-		{ subject: '*', name: 'Everything', hint: 'Every content type, including ones added later.' },
-		...types.map((type) => ({ subject: type.slug, name: type.definition.name, hint: '' }))
-	]);
 	const used = $derived(role.members + role.invitations);
-
-	function toggle(action: Action, subject: string, on: boolean) {
-		const next = new Set(grants);
-		if (on) next.add(key(action, subject));
-		else next.delete(key(action, subject));
-		grants = next;
-	}
 
 	function permissions(): Grant[] {
 		const plain = [...grants].map((grant) => {
@@ -178,45 +152,8 @@
 		<Textarea id="role-edit-description" class="max-w-md" bind:value={description} maxlength={500} rows={2} disabled={!editable} />
 	</FormRow>
 
-	<h2 class="mt-8 mb-1 text-base font-semibold" id="content-work">Content</h2>
-	<p class="mb-4 text-sm text-muted-foreground">What people with this role may do with entries, and with each content type's fields.</p>
-	<div class="overflow-x-auto rounded-xl border border-border bg-card">
-		<table class="w-full text-sm" aria-labelledby="content-work" data-testid="role-grid">
-			<thead>
-				<tr class="border-b border-border">
-					<th scope="col" class="px-4 py-2.5 text-left font-medium text-muted-foreground"><span class="sr-only">Content type</span></th>
-					{#each WORK as column (column.action)}
-						<th scope="col" class="px-2 py-2.5 text-center font-medium whitespace-nowrap">{column.label}</th>
-					{/each}
-				</tr>
-			</thead>
-			<tbody>
-				{#each rows as row (row.subject)}
-					<tr class="rule-dotted last:border-b-0">
-						<th scope="row" class="px-4 py-2.5 text-left font-normal">
-							<span class="font-medium">{row.name}</span>
-							{#if row.hint}<span class="block text-xs text-muted-foreground">{row.hint}</span>{/if}
-						</th>
-						{#each WORK as column (column.action)}
-							{@const covered = row.subject !== '*' && grants.has(key(column.action, '*'))}
-							<td class="px-2 py-2.5 text-center">
-								<input
-									type="checkbox"
-									class="size-4 accent-primary disabled:opacity-60"
-									aria-label="{column.label}: {row.name}"
-									title={covered ? 'Included in Everything' : undefined}
-									checked={covered || grants.has(key(column.action, row.subject))}
-									disabled={!editable || covered}
-									onchange={(event) => toggle(column.action, row.subject, event.currentTarget.checked)}
-								/>
-							</td>
-						{/each}
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-	</div>
-
+	<PermissionGrid {types} bind:grants {editable}>
+		{#snippet between()}
 	<h2 class="mt-8 mb-1 text-base font-semibold" id="limited-heading">Limited permissions</h2>
 	<p class="mb-4 text-sm text-muted-foreground">
 		Narrower than the grid: only some fields, or only the entries a member created themselves. For example, edit the titles of any article and
@@ -271,27 +208,8 @@
 		</fieldset>
 	{/if}
 
-	<h2 class="mt-8 mb-1 text-base font-semibold">The whole project</h2>
-	<p class="mb-4 text-sm text-muted-foreground">Powers over people, roles and connections, which aren't about one content type.</p>
-	<ul class="overflow-hidden rounded-xl border border-border bg-card" data-testid="role-project">
-		{#each PROJECT as power (power.action)}
-			<li class="rule-dotted last:border-b-0">
-				<label class="flex items-start gap-3 px-4 py-3">
-					<input
-						type="checkbox"
-						class="mt-0.5 size-4 accent-primary disabled:opacity-60"
-						checked={grants.has(key(power.action, '*'))}
-						disabled={!editable}
-						onchange={(event) => toggle(power.action, '*', event.currentTarget.checked)}
-					/>
-					<span>
-						<span class="text-sm font-medium">{power.label}</span>
-						<span class="block text-xs text-muted-foreground">{power.hint}</span>
-					</span>
-				</label>
-			</li>
-		{/each}
-	</ul>
+		{/snippet}
+	</PermissionGrid>
 
 	{#if error}
 		<div role="alert" class="mt-6 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive" data-testid="role-error">

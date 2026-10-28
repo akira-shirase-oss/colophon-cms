@@ -50,14 +50,33 @@ create → conflict → review → publish scenario produce equivalent durable r
   2. propagate request ID;
   3. trace (one span per request; per-request lines at DEBUG, so the default `info` level logs no line per request);
   4. error envelope: every 4xx/5xx becomes `{"error":{"code","message","request_id"}}`, including axum's 405 and
-     tower-http's 413 and 504;
+     tower-http's 413 and 504. Every 403 and 409 the handlers send also has `details.reason`, a stable code
+     clients act on instead of the wording: `missing_permission` (with `details.permission`, such as
+     `content.publish`), `cannot_grant`, `administrators_only`, `not_set_up`, `browser_session_required`,
+     `origin_not_allowed`, `csrf_token_invalid`; and `already_published`, `not_approved`, `not_submitted`,
+     `entries_moved_on`, `approval_expired`, `already_scheduled`, `schedule_published`, `schedule_blocked`,
+     `schedule_cancelled`, `last_owner`, `already_member`, `owner_role_fixed`, `role_exists`, `project_exists`,
+     `content_type_exists`, beside the older `stale_revision`, `stale_changeset`, `generation_moved` and the rest.
+     A unit test refuses a refusal without a snake-case reason;
   5. body hygiene: never close a connection silently over an unread request body. Declared oversized bodies are
      refused after being drained, bodies a handler leaves unread are drained afterwards (up to 32 MiB, within 2 s),
      and otherwise the response says `Connection: close` (RFC 9112 §9.6; found by the testbed);
   6. `CatchPanicLayer::custom`;
   7. timeout (504 `deadline_exceeded`);
   8. body limit (1 MiB; uploads stream separately).
+- Inside that stack, around every route: rate limits (milestone S, D-076; `admission.rs`). The management API
+  (`/api/`, `/auth/`) counts per client address and per credential (a session cookie or bearer token, hashed; a
+  made-up one counts too), public delivery (`/content/`) per client address at its own rate; health, `/version` and
+  the Studio's files never count. Over a limit: 429 `rate_limited` (`details.reason` `rate_limited`) with
+  `Retry-After` in seconds, before any handler runs. GCRA in one Valkey script on Valkey's clock, so every server
+  shares one count; without Valkey (down, or slower than 100 ms) each server applies the limits on its own. The
+  client address is the peer, or behind a trusted proxy (`COLOPHON_TRUSTED_PROXIES`) the nearest untrusted
+  `X-Forwarded-For` hop.
 - `AppState` is cheap to clone (`Arc`s); there is no global mutable state.
+- Entry handlers read their collection's definition from Postgres on every request and parse it through
+  `ContentTypeCache` (`type_cache.rs`, D-078): parsed types keyed by the SHA-256 of the text just read, at most 1,024
+  of them and 32 MiB of definition text, least recently used first. A new version is new text, so nothing is
+  invalidated.
 - A fallback route returns the error envelope.
 
 ### Route families (spec §10, minus parked areas)
@@ -67,12 +86,15 @@ create → conflict → review → publish scenario produce equivalent durable r
 | Route family | Operations and guard |
 |---|---|
 | `/api/v1/rich-text/validate` | The validator's verdict on a document: canonical form, or a 422 whose `details` name the rejection code and JSON Pointer. Stores nothing. Built in step 0.5; requires authentication from P1 |
-| `/auth/*`, `/me` | OIDC login, callback and logout; session inspection and revocation; exact callback origins, CSRF. Built in step 1.1: `GET /auth/login`, `GET /auth/callback`, `POST /auth/logout`, and `GET /me` (the identity and its projects; since step 1.8 also its `subject` and whether it is an `administrator`, D-043). Since step 3.7 (D-061): `GET /auth/login?start=create` opens the provider's sign-up form when its discovery document lists `prompt=create`; `/me` adds `installation.has_administrator`; and `POST /api/v1/setup` (`{"code"}`, signed in, CSRF-checked) makes the caller the first administrator with the setup code the server printed, answering 422 `setup_code_invalid` (wrong, used or expired, alike), 409 `already_set_up`, or 429 `rate_limited` with `Retry-After` |
+| `/auth/*`, `/me` | OIDC login, callback and logout; session inspection and revocation; exact callback origins, CSRF. Built in step 1.1: `GET /auth/login`, `GET /auth/callback`, `POST /auth/logout`, and `GET /me` (the identity and its projects; since step 1.8 also its `subject` and whether it is an `administrator`, D-043). Since step 3.7 (D-061): `GET /auth/login?start=create` opens the provider's sign-up form when its discovery document lists `prompt=create`; `/me` adds `installation.has_administrator`; and `POST /api/v1/setup` (`{"code"}`, signed in, CSRF-checked) makes the caller the first administrator with the setup code the server printed, answering 422 `setup_code_invalid` (wrong, used or expired, alike), 409 `already_set_up`, or 429 `rate_limited` with `Retry-After` . `POST /auth/logout` answers `200 {"data": {"provider_sign_out"}}` for a browser (the identity provider's end-session address, or `null`) and still `204` for the CLI's token |
 | `/api/v1/projects`, `/members`, `/invitations` | Project lifecycle and membership; owner-scoped. Built in step 1.1: list, create (with a `production` environment and the creator as owner; a taken slug is 409; administrators only since step 1.8, D-043) and get, where a project you aren't a member of is 404. Built in step 1.7 (D-042): `/members` (list; owners change roles and remove; anyone may leave) and `/invitations` (owners create, list and revoke), plus `POST /api/v1/invitations/lookup` and `/accept` with the token in the body; the last owner is 409 |
+| `/api/v1/projects/{project}/tokens`, `/audit` | Built in step R.4 (D-063). `tokens`: list, create (`{"name", "description"?, "kind": "read-only"|"full-access"|"custom", "permissions"? (custom only), "expires_in_days": 1–366}`; 201 with `secret`, shown only there) and `DELETE …/tokens/{token}` (revokes; answers the token); `tokens.manage`, checked fresh; `cannot_grant`, `not_for_tokens`, `invalid_expiry`, `permissions_required`, `permissions_not_applicable`, `too_many_tokens`. `audit`: `?limit=&cursor=&action=&actor=`, newest first, `audit.read`. `Authorization: Bearer colophon_api_…` works only under its project's `/environments/` routes and `/api/v1/rich-text/validate`; another project is 404, other routes and `…/schedule` are 403 `api_token_not_allowed`, a revoked or expired token 401 |
+| `{P}/permissions` | The caller's own permissions here, for a person or an API token: `{"kind", "role", "permissions"}`, as roles show them (D-068). Opened like any content route, so a revoked token is 401 and another project 404 |
 | `{P}/schemas`, `/migrations` | Discover, validate, plan, apply, inspect; apply needs an approved current plan and migration permission. Built in step 1.5 as `{P}/content-types` (D-040): list, create, get with `ETag: "v<n>"`, and update with `If-Match`, accepted only for changes that keep stored entries valid (`needs_migration` otherwise); owners and developers only. Since step 3.6 (D-055) a narrowing change is checked against every draft and published revision: refused with 422 `needs_migration`, `details.entries` (the first 20 in the way, each with its title, `draft` or `published`, and the refusal its content would get) and `details.total`; more than 10,000 to check is `too_many_to_check`. A `slug` field (D-054): a save or create whose slug another entry has, as a draft or published, is 409 `slug_taken` naming it in `details.entries`; a release that would publish a slug another entry still publishes is 409 `slug_taken`. Published entries carry `slug` in `/content/v1` when they have one. Migrations later |
-| `{P}/collections/{collection}/entries` | List and create; get, update and archive by ID; updates need the expected revision. Built in step 1.2 for the `articles` collection (D-034): list (cursor), create, get with `ETag`, save with `If-Match`, and `…/{entry}/revisions`; archive later |
+| `{P}/components`, `/{slug}` | Shared components (D-073): list, create (`Idempotency-Key`), get with `ETag: "v<version>"`, and change (`If-Match`, `Idempotency-Key`). A change gives every content type that uses the component a new version in the same transaction, each checked against its stored content, and answers with them (`content_types`); if one is refused, nothing changes and the refusal names it in `details.content_type` (with that type's entries in the way). A content type uses one with `{"type": "component", "component": slug}`, stored as an object holding the component's fields and marked with its slug (`unknown_component` if there is none). Any member reads them; changing one takes `schema.change` everywhere. |
+| `{P}/collections/{collection}/entries` | List and create; get, update and archive by ID; updates need the expected revision. Built in step 1.2 for the `articles` collection (D-034): list (cursor), create, get with `ETag`, save with `If-Match`, and `…/{entry}/revisions`; archive later. A read says whether the entry is live: `published` is `{revision_id, generation}`, or `null` when it isn't published (create and save answers leave it out, since they don't look it up). List summaries carry `created_by`, as reads do, and `?created_by=` keeps one creator's entries within what the role may list (someone else's, for a role that reads only its own, is an empty page). A read also lists `referenced_by` (D-065): the entries whose draft or published revision names this one, by field, at most 100, only in collections the role reads |
 | `{P}/entries/{id}/revisions`, `/comments` | History, compare, restore as a new draft, revision-bound comments |
-| `{P}/changesets`, `/reviews`, `/releases` | Prepare, validate, request review, approve, publish, schedule, cancel, inspect, roll back as a new generation. Built in step 2.1 (D-044): `{P}/changesets` list and create (idempotent; 1 to 100 entries, each pinned at its current revision), `{P}/changesets/{id}` with `ETag: "sha256:…"`, and `…/submit`, `…/refresh` and `…/reviews` (`{"decision", "comment"}`, owners and publishers), each needing `If-Match` with the hash (409 `stale_changeset` otherwise). Built in step 2.2 (D-045): `…/publish` (`{"base_generation"}`, `If-Match` and `Idempotency-Key`; 409 `generation_moved` if another release committed first) and `{P}/releases`, newest first, with `Colophon-Generation`. Built for D-060: `…/schedule` (`{"local_time", "time_zone", "choice"?}`, `If-Match`; 422 `ambiguous_local_time` or `skipped_local_time` with `details.candidates`, `in_the_past`, `too_far_ahead`, `after_approval_expires`, `unknown_time_zone`, `invalid_local_time`; 409 if one is pending), `{P}/schedules` (`?changeset=`; pending ones, then the 20 latest finished, each with `delayed`) and `DELETE {P}/schedules/{id}` (its author, or anyone who may publish it; 409 once it ran) |
+| `{P}/changesets`, `/reviews`, `/releases` | Prepare, validate, request review, approve, publish, schedule, cancel, inspect, roll back as a new generation. Built in step 2.1 (D-044): `{P}/changesets` list and create (idempotent; 1 to 100 entries, each pinned at its current revision), `{P}/changesets/{id}` with `ETag: "sha256:…"`, and `…/submit`, `…/refresh` and `…/reviews` (`{"decision", "comment"}`, owners and publishers), each needing `If-Match` with the hash (409 `stale_changeset` otherwise). Built in step 2.2 (D-045): `…/publish` (`{"base_generation"}`, `If-Match` and `Idempotency-Key`; 409 `generation_moved` if another release committed first) and `{P}/releases`, newest first, with `Colophon-Generation`. Built for D-060: `…/schedule` (`{"local_time", "time_zone", "choice"?}`, `If-Match`; 422 `ambiguous_local_time` or `skipped_local_time` with `details.candidates`, `in_the_past`, `too_far_ahead`, `after_approval_expires`, `unknown_time_zone`, `invalid_local_time`; 409 if one is pending), `{P}/schedules` (`?changeset=`; pending ones, then the 20 latest finished, each with `delayed`) and `DELETE {P}/schedules/{id}` (its author, or anyone who may publish it; 409 once it ran). Publish request summaries carry `created_by` and `submitted_by`, so a list can show someone their own requests and those waiting on them, and each item of a request names its entry's `created_by` |
 | `{P}/assets`, `/upload-intents` | Create an intent, complete verification, inspect, list references, request deletion |
 | `{P}/agents`, `/jobs` | Scoped credentials, proposals, bounded bulk work, status, authorized cancellation |
 | `{P}/destinations`, `/deliveries` | Configure and test integrations; inspect failures; retry or reconcile safely. Built in step 2.3 (D-046): `{P}/destinations` (list and create, owners and developers; https and public addresses), `PUT {P}/destinations/{id}` (`{"enabled"}`), and `{P}/jobs?generation=` for any member |
@@ -117,6 +139,14 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 | 503 | Dependency or capacity unavailable, with `Retry-After` |
 
 ### Contracts and discovery
+- **`GET /version`** (D-062, built in milestone V): `{"version", "commit", "build_date", "api": ["v1"]}`, the
+  release this server is, the git commit and day it was built from (`unknown` when the build couldn't tell), and
+  the API versions it serves, oldest first (`colophon_api::API_VERSIONS`). It is unauthenticated and `no-store`, like
+  the health endpoints, because a client checks it before signing in; it names versions only, never hosts or
+  configuration. Its shape never changes: fields may be added, none removed or renamed, so a client of any version can
+  read it. The server binary stamps the build (`crates/colophon-version`, module [19](19-oss.md), "Versions") and
+  hands it to the router in `AppState::build`. The CLI reads it to say plainly when it is too old or too new for the
+  server ([cli](08-cli.md), "Versions"); a server from before it answers the 404 envelope, which the CLI recognises.
 - An OpenAPI document is exported from the code (D-027, `utoipa`). The TypeScript client ([sdk](13-sdk.md)) is generated from it
   and tested against the server in CI.
 - Schema discovery returns only the collections and fields the caller may access.
@@ -146,7 +176,7 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 ## Interfaces
 
-- HTTP: `/api/v1/*`, `/auth/*`, `/me`, `/livez`, `/readyz`.
+- HTTP: `/api/v1/*`, `/auth/*`, `/me`, `/livez`, `/readyz`, `/version`.
 - The OpenAPI document (a build artifact).
 - `router(state) -> Router`, used by colophon-server.
 
@@ -162,12 +192,16 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 ## Tests and evidence
 
-- In-process `oneshot` tests for every route and every error class.
+- In-process `oneshot` tests for every route and every error class; `/version`'s shape and its unstamped
+  fallback are in `tests/http.rs`.
 - Contract tests of the OpenAPI document against the server.
 - The parity gate: Studio-API, CLI and SDK run the same scenario and produce equivalent records.
 - Cursor fuzzing: tampered cursors, cursors from another project or query shape.
 - A middleware-order test: request ID present on panic, timeout and body-limit responses.
 - A pool that can't hand out a connection gives 503 with `Retry-After` and the envelope (`tests/busy.rs`).
+- The parsed-type cache (`type_cache.rs` unit tests, D-078): the same text is parsed once and a hit equals a fresh
+  parse; different text is a different type; least recently used first; the byte bound, and a definition over it
+  never kept; a text that doesn't parse is an internal error and isn't kept.
 - Entries end to end against the real binary (`crates/colophon-server/tests/entries.rs`), and the crash tests F01 and
   F02 (`faults.rs`, D-036).
 - Members and invitations end to end with two people (`crates/colophon-server/tests/members.rs`, D-042); every
@@ -186,6 +220,12 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 6. **P5:** agents and machine credentials.
 
 ## Open decisions
+
+- `GET /me` returns every project the caller is a member of, up to 1,000, on every call. An administrator who
+  belongs to hundreds of projects pays for the whole list each time (120 ms median in CI's projects smoke, against
+  2.7 ms for an editor in one project), and the Studio's home shows them as one unsearchable grid. Replace it with
+  a paginated, searchable project list (`GET /api/v1/projects?search=&cursor=`, recent first) and keep `/me` to who
+  the caller is.
 
 - Whether the Studio (session cookie) and the CLI (bearer credential) share every route, or whether some routes are
   cookie-only.

@@ -44,7 +44,8 @@ pub(crate) struct PermissionView {
     condition: Option<&'static str>,
 }
 
-/// A policy's permissions as the API shows them: `{"action", "subject"}`, sorted.
+/// A policy's permissions as the API shows them: `{"action", "subject"}`, with `fields` and
+/// `condition` where they narrow it, sorted.
 pub(crate) fn permission_views(policy: &Policy) -> Vec<PermissionView> {
     policy
         .permissions()
@@ -130,7 +131,7 @@ pub(crate) struct RoleChange {
     permissions: Vec<PermissionBody>,
 }
 
-fn invalid(error: RoleError, pointer: &'static str) -> ApiError {
+pub(crate) fn invalid(error: RoleError, pointer: &'static str) -> ApiError {
     ApiError::InvalidField {
         reason: error.code(),
         pointer,
@@ -139,7 +140,7 @@ fn invalid(error: RoleError, pointer: &'static str) -> ApiError {
 }
 
 /// The permissions a body asks for, or the first one refused, by its position.
-fn policy(permissions: &[PermissionBody]) -> Result<Policy, ApiError> {
+pub(crate) fn policy(permissions: &[PermissionBody]) -> Result<Policy, ApiError> {
     if permissions.len() > MAX_PERMISSIONS {
         return Err(invalid(RoleError::TooManyPermissions, "/permissions"));
     }
@@ -211,7 +212,8 @@ async fn may_grant(
     if granted.iter().all(|policy| fresh.covers(policy)) {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(
+        Err(ApiError::forbidden(
+            "cannot_grant",
             "a role can only be given powers your own role has",
         ))
     }
@@ -274,10 +276,12 @@ pub(crate) async fn create(
         .map_err(ApiError::from_db)?
     {
         Written::Done(role) => {
+            crate::audit::record(&mut tx, "role.created", &role.key, &described(&role)).await?;
             tx.commit().await.map_err(ApiError::from_db)?;
             respond(StatusCode::CREATED, *role)
         }
-        Written::Exists => Err(ApiError::Conflict(
+        Written::Exists => Err(ApiError::conflict(
+            "role_exists",
             "this project already has a role with that key",
         )),
         Written::TooMany => Err(ApiError::InvalidField {
@@ -296,6 +300,15 @@ pub(crate) async fn create(
 
 const FIXED: &str = "the owner role is fixed: it always holds every permission";
 
+/// What the audit log keeps about a role (D-063).
+fn described(role: &StoredRole) -> serde_json::Value {
+    serde_json::json!({
+        "name": role.name,
+        "description": role.description,
+        "permissions": permission_views(&role.policy),
+    })
+}
+
 /// `PUT {P}/roles/{role}`.
 pub(crate) async fn update(
     State(state): State<AppState>,
@@ -312,7 +325,7 @@ pub(crate) async fn update(
     let granted = policy(&body.permissions)?;
     let mut tx = open(&state, caller, &path.project).await?;
     if path.role == roles::OWNER {
-        return Err(ApiError::Conflict(FIXED));
+        return Err(ApiError::conflict("owner_role_fixed", FIXED));
     }
     let current = roles::get(&mut tx, &path.role)
         .await
@@ -324,12 +337,15 @@ pub(crate) async fn update(
         .map_err(ApiError::from_db)?
     {
         Written::Done(role) => {
+            let change =
+                serde_json::json!({"before": described(&current), "after": described(&role)});
+            crate::audit::record(&mut tx, "role.updated", &role.key, &change).await?;
             tx.commit().await.map_err(ApiError::from_db)?;
             respond(StatusCode::OK, *role)
         }
         Written::Stale { current } => Err(ApiError::StaleRole { current }),
         Written::NotFound => Err(ApiError::NotFound),
-        Written::Fixed => Err(ApiError::Conflict(FIXED)),
+        Written::Fixed => Err(ApiError::conflict("owner_role_fixed", FIXED)),
         Written::Exists | Written::TooMany => Err(ApiError::internal(std::io::Error::other(
             "changing a role answered as a creation",
         ))),
@@ -346,7 +362,7 @@ pub(crate) async fn delete(
     let expected = if_match(&headers)?;
     let mut tx = open(&state, caller, &path.project).await?;
     if path.role == roles::OWNER {
-        return Err(ApiError::Conflict(FIXED));
+        return Err(ApiError::conflict("owner_role_fixed", FIXED));
     }
     let current = roles::get(&mut tx, &path.role)
         .await
@@ -358,6 +374,8 @@ pub(crate) async fn delete(
         .map_err(ApiError::from_db)?
     {
         Removed::Done => {
+            crate::audit::record(&mut tx, "role.deleted", &current.key, &described(&current))
+                .await?;
             tx.commit().await.map_err(ApiError::from_db)?;
             Ok(StatusCode::NO_CONTENT)
         }
@@ -370,6 +388,35 @@ pub(crate) async fn delete(
         }),
         Removed::Stale { current } => Err(ApiError::StaleRole { current }),
         Removed::NotFound => Err(ApiError::NotFound),
-        Removed::Fixed => Err(ApiError::Conflict(FIXED)),
+        Removed::Fixed => Err(ApiError::conflict("owner_role_fixed", FIXED)),
     }
+}
+
+/// What `GET {P}/permissions` answers: the caller's own permissions here.
+#[derive(Serialize)]
+pub(crate) struct OwnView {
+    /// `person` or `token`.
+    kind: &'static str,
+    /// Its role's key, for a person; `null` for an API token.
+    role: Option<String>,
+    permissions: Vec<PermissionView>,
+}
+
+/// `GET /api/v1/projects/{project}/environments/{environment}/permissions`: what the caller, a
+/// person or an API token, may do here, as roles show permissions (D-058, D-068). An agent's MCP
+/// server lists only the tools these allow; every call is still decided by the API.
+pub(crate) async fn own(
+    State(state): State<AppState>,
+    caller: crate::session::SignedIn,
+    Path(path): Path<crate::content_types::TypesPath>,
+) -> Result<Json<Data<OwnView>>, ApiError> {
+    let token = caller.project.is_some();
+    let tx = crate::entries::open(&state, caller, &path.project, &path.environment).await?;
+    let view = OwnView {
+        kind: if token { "token" } else { "person" },
+        role: (!token).then(|| tx.role.clone()),
+        permissions: permission_views(&tx.policy),
+    };
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(Json(Data { data: view }))
 }

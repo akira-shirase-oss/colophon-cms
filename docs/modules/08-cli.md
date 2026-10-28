@@ -87,6 +87,71 @@ colophon export --env production --out export-directory
 - It is the only path with direct infrastructure access, and it requires a distinct mode.
 - Normal commands never need a production database password.
 
+### Versions (D-062, built in milestone V)
+- `colophon --version` (and `-V`) prints the version, the git commit and the build date:
+  `colophon 0.1.0-alpha.1 (commit 50558a7…, built 2026-10-28)`. `colophon-server --version` prints the same line.
+  The stamp comes from the binary's build script (`crates/colophon-version`; module [19](19-oss.md), "Versions"); a
+  build without git and without `COLOPHON_COMMIT` says `commit unknown` rather than inventing one.
+- Before it does anything else, every command that talks to a server (`login`, `whoami`, `content create`,
+  `content list`) reads the server's `GET /version` ([api](04-api.md)) without sending a token, and stops with a
+  plain explanation when this colophon doesn't fit that server. The rule (`src/compat.rs`), in order:
+  1. the server serves the API version this colophon speaks (`v1`); otherwise this colophon is too old (the server
+     only serves newer API versions) or too new (only older ones);
+  2. before 1.0, both are on the same minor line (any 0.1.x with any 0.1.x, pre-releases included), because until
+     1.0 a minor release may change the API (SemVer item 4); a server on a later line means this colophon is too old,
+     an earlier line too new. From 1.0 on, `/api/vN` is the contract and a newer server that still serves `v1` fits;
+  3. the server is at least `OLDEST_SERVER` (now 0.1.0-alpha.1), the oldest with every route this colophon calls;
+     raise it in the change that makes a command call something older servers lack.
+- A server that answers `/version` with the 404 envelope predates version reports, so this colophon is too new for
+  it. An answer that isn't a version report at all exits 6 ("is it a Colophon server?"); no answer exits 5.
+- The message names both versions and says what to do, for example: `colophon 0.1.0 is too old for the server at
+  https://cms.example, which runs 0.2.0: before 1.0 each minor release may change the API, so colophon and the server
+  must share a minor version, and the server is on a later one (0.1 here, 0.2 there). Install colophon 0.2.0 to match
+  it (…/releases).`
+- `logout` skips the check on purpose: signing out must work even against a server this colophon can't otherwise use.
+- `doctor` doesn't check versions yet (it reads `/readyz` only).
+
+### Install (D-062, milestone V)
+- **npm**, `npx @colophon-cms/cli login` or `npm install --global @colophon-cms/cli`. Not published yet: it waits
+  on the maintainer (the npm organization, `NPM_TOKEN`, a tag; module [19](19-oss.md)). The `@colophon` scope and the
+  `colophon` package belong to someone else (checked with `npm view` and the registry on 2026-10-28; the
+  `colophon-cms` organization did not exist yet), so everything is under `@colophon-cms`.
+  - `packages/cli-npm/` is `@colophon-cms/cli`: a launcher, `bin/colophon.js`, with no binary of its own. Each
+    platform's binary is its own package with `os` and `cpu` fields (`@colophon-cms/cli-darwin-arm64`,
+    `-darwin-x64`, `-linux-arm64`, `-linux-x64`, `-win32-x64`), all optional dependencies at the same version, so npm
+    installs only the matching one, the way esbuild and Biome ship theirs. The Linux binaries are static (musl), so
+    one package per architecture serves glibc and musl distributions alike.
+  - `lib/platform.js` picks the package for `process.platform`-`process.arch` and checks its version matches the
+    launcher's. The launcher runs the binary with the same arguments and standard streams, passes its exit code
+    through (a signal too), and forwards `SIGINT`, `SIGTERM` and `SIGHUP`. When it finds no binary it exits 6 and says
+    why: an unsupported platform (with the `cargo install` command), a platform package not installed (with
+    `--omit=optional` named and the `npm install` that fixes it), a version mismatch, or a package without its
+    binary. `COLOPHON_BINARY` runs a binary you built yourself.
+  - `packages/cli-npm/scripts/assemble.mjs --version V --archives DIR --out DIR` builds the six packages from a
+    release's `colophon-cli-*` archives, each checked against `SHA256SUMS` first, and refuses a version that isn't
+    the launcher's. The package is not an npm workspace member (`!packages/cli-npm` in the root `package.json`), so
+    its unpublished optional dependencies never touch the workspace lockfile.
+- **Install script**, `scripts/install.sh` (POSIX `sh`; macOS and Linux): `curl -fsSL …/install.sh | sh`, or
+  `sh -s -- --version V --dir D --target T` (also `COLOPHON_VERSION`, `COLOPHON_INSTALL_DIR`). It picks the build for
+  this machine (the native one under Rosetta), downloads `SHA256SUMS` and the archive over HTTPS with curl or wget,
+  checks the archive's SHA-256 (with `sha256sum`, `shasum` or `openssl`; without one it stops), and only then
+  installs `colophon` into `~/.local/bin` by default, by copy and rename, so an existing one is never left
+  half-written. Without `--version` it asks GitHub for the newest release, pre-releases included.
+  `COLOPHON_DOWNLOAD_URL` points it at a mirror (or a test server). Windows is told to use npm or the `.zip`. Each
+  release attaches the script, checksummed and attested.
+- **Homebrew**: `packaging/homebrew/colophon.rb.in` is the formula template; `scripts/homebrew-formula.sh V
+  SHA256SUMS` fills in each platform's archive and hash (it refuses a `SHA256SUMS` missing one), and the release
+  workflow attaches the result as `colophon.rb`. It installs the prebuilt binary on macOS (arm64, Intel) and Linux
+  (arm64, x86-64), and its `test` block checks `colophon --version`. The tap, `akira-shirase-oss/homebrew-colophon`,
+  doesn't exist yet (the maintainer creates it and commits `Formula/colophon.rb` from each release), so nothing has
+  been installed with `brew`.
+- **Cargo**: `cargo install --locked --git https://github.com/akira-shirase-oss/colophon-cms --tag vV colophon-cli`
+  builds from source (Rust 1.99 or newer, the workspace's `rust-version`). Query macros use the committed `.sqlx`
+  data when `DATABASE_URL` is unset; set `SQLX_OFFLINE=true` if your shell has a `DATABASE_URL`. The binary stamps
+  the commit Cargo checked out. `cargo install colophon-cli` from crates.io waits: the crates are `publish = false`
+  until the licence is confirmed (O-014), and `cargo package -p colophon-cli` stops because its path dependencies
+  (`colophon-db`, which needs `colophon-domain`, and `colophon-version`) would have to be published first.
+
 ### Output (spec §09, §11)
 - Default output is for humans.
 - `--json` writes exactly one versioned JSON result to stdout.
@@ -98,7 +163,7 @@ colophon export --env production --out export-directory
 | Code | Meaning |
 |---|---|
 | 0 | Success (including `202 accepted`, reported as `accepted`) |
-| 2 | Usage or validation error |
+| 2 | Usage or validation error, including a colophon too old or too new for the server (retrying can't help) |
 | 3 | Unauthorized or denied |
 | 4 | Conflict |
 | 5 | Transient failure or dependency unavailable |
@@ -145,6 +210,28 @@ colophon export --env production --out export-directory
 
 ## Tests and evidence
 
+- Versions (milestone V): the compatibility rule's unit tests (`src/compat.rs`: both directions of every reason,
+  pre-releases, crossing 1.0, odd API lists, loose report parsing, the exact message); `tests/compat.rs` runs the
+  binary against canned servers (a later line, an earlier line, no `/version`, a dropped API version, a reply that
+  isn't a report, a fitting server that is then used, `whoami` and `content list` checking without sending the token,
+  an unreachable server); `tests/exit_codes.rs` checks that `--version` prints the version, commit and date.
+- Install (milestone V): `packages/cli-npm/test/` (`npm test` there; CI's `distribution` job). `launcher.test.js`
+  calls `findBinary` for every platform and failure, then runs `bin/colophon.js` in a throwaway `node_modules` tree
+  with `process.platform` and `process.arch` replaced by a preloaded module: each of the five platforms runs its own
+  stand-in binary; arguments, exit codes 2 to 6 and a signal pass through; a missing package, an unsupported
+  platform and a version mismatch exit 6 with their message. `assemble.test.mjs` checks the launcher's version
+  against `Cargo.toml`, `npm pack --dry-run` of the launcher, assembly from archives made by
+  `scripts/release-package.sh` (`os`, `cpu`, version, executable binary, and each package's `npm pack --dry-run`
+  file list), and refusal of a tampered archive, a missing target and a wrong version.
+- Install script and formula (milestone V; CI's `distribution` job): `scripts/test-install.sh [binary]` packs fake
+  releases with `scripts/release-package.sh`, serves them over HTTP on `127.0.0.1` from a temporary directory and
+  runs `install.sh` under `sh`, `dash` and `bash` and piped into `sh`: it installs this machine's build (detected),
+  upgrades in place, refuses a tampered archive and leaves the installed binary untouched, refuses an archive
+  `SHA256SUMS` doesn't list, a release that doesn't exist, an unknown target and a mirror without a version, and takes
+  its options from the environment (25 checks on macOS arm64). A copy of `install.sh` that skips the hash comparison
+  fails it. `scripts/test-homebrew-formula.sh` renders the formula, checks it with `ruby -c`, evaluates it with a
+  stand-in for Homebrew's DSL to check each platform block's URL and hash, and checks a missing hash is refused; a
+  template with two hashes swapped fails it.
 - `insta` snapshots of every `--json` result shape.
 - An exit-code matrix test for every error class.
 - Contract tests against a running server.
@@ -162,6 +249,10 @@ colophon export --env production --out export-directory
 5. **P5:** scoped machine credentials, `--jsonl`, `content import`, `export`, `content get --generation`,
    `release history`.
 6. **P6:** `init`, `migrate plan|apply`, the rest of `admin`.
+7. **V (D-062):** `--version` with commit and build date, the server version check, and the install paths: npm,
+   the install script, Homebrew and `cargo install --git` (built; publishing waits on the maintainer, module
+   [19](19-oss.md)). Still to come: `cargo install colophon-cli` from crates.io, and `doctor` reporting the server's
+   version.
 
 ## Open decisions
 

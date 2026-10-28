@@ -14,12 +14,15 @@
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQueries, createQuery } from '@tanstack/svelte-query';
 	import * as Breadcrumb from '@colophon/ui/ui/breadcrumb';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 	import * as Sidebar from '@colophon/ui/ui/sidebar';
-	import { ago, changesetsQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
+	import { may, mayAny, SETTINGS_ACTIONS } from '#lib/api.ts';
+	import { rememberProject } from '#lib/lastProject.ts';
+	import { ago, changesetsQuery, entriesQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
+	import AccountMenu from '#lib/shell/AccountMenu.svelte';
 	import AppearanceMenu from '#lib/shell/AppearanceMenu.svelte';
 	import CollectionCount from '#lib/shell/CollectionCount.svelte';
 	import CommandPalette from '#lib/shell/CommandPalette.svelte';
@@ -39,7 +42,20 @@
 	const releases = createQuery(() => releasesQuery(project));
 	const awaiting = $derived((sets.data ?? []).filter((set) => set.status.state === 'awaiting_review').length);
 	const live = $derived(releases.data?.releases.find((release) => release.generation === releases.data?.generation));
+	// Only collections the role may read are listed and searched: the server refuses the others
+	// (D-058), so offering them would lead only to a refusal.
+	const readable = $derived(mine.data === undefined ? [] : (types.data ?? []).filter((type) => may(mine.data, 'content.read', type.slug)));
+	// A single type (D-067) opens its one entry: its list (the same query as its count) says which.
+	const singles = $derived(readable.filter((type) => type.definition.single === true));
+	const singleLists = createQueries(() => ({ queries: singles.map((type) => entriesQuery(project, type.slug)) }));
+	const oneOf = (slug: string) => singleLists[singles.findIndex((type) => type.slug === slug)]?.data?.data[0]?.id;
+	// Settings is the developer area (D-059, rule 5): only roles that can change something there see it.
+	const settings = $derived(mayAny(mine.data, SETTINGS_ACTIONS));
 	let searching = $state(false);
+	// The home page shows someone's work in the project they last opened here.
+	$effect(() => {
+		if (who.data && mine.data) rememberProject(who.data.id, mine.data.id);
+	});
 
 	const SECTION: Record<string, string> = {
 		'/projects/[project]/changesets': 'Publish requests',
@@ -49,7 +65,10 @@
 		'/projects/[project]/members': 'Members',
 		'/projects/[project]/settings': 'Settings',
 		'/projects/[project]/settings/types/[type]': 'Settings',
-		'/projects/[project]/settings/roles/[role]': 'Settings'
+		'/projects/[project]/settings/components/[component]': 'Settings',
+		'/projects/[project]/settings/roles/[role]': 'Settings',
+		'/projects/[project]/settings/tokens': 'Settings',
+		'/projects/[project]/settings/activity': 'Settings'
 	};
 	const collectionName = $derived(
 		types.data?.find((type) => type.slug === page.params.collection)?.definition.name ?? page.params.collection ?? ''
@@ -65,7 +84,7 @@
 			if (route.endsWith('[entry]')) trail.push({ label: 'Entry' });
 		} else if (SECTION[route]) {
 			const section = SECTION[route];
-			const detail = route.endsWith(']') && !route.endsWith('[project]');
+			const detail = (route.endsWith(']') && !route.endsWith('[project]')) || route.endsWith('/tokens') || route.endsWith('/activity');
 			const href =
 				section === 'Publish requests'
 					? resolve('/projects/[project]/changesets', { project })
@@ -76,6 +95,8 @@
 			if (route.endsWith('[generation]')) trail.push({ label: `Release ${page.params.generation}` });
 			if (route.endsWith('[changeset]')) trail.push({ label: 'Publish request' });
 			if (route.endsWith('[role]')) trail.push({ label: `Role ${page.params.role ?? ''}` });
+			if (route.endsWith('/tokens')) trail.push({ label: 'API tokens' });
+			if (route.endsWith('/activity')) trail.push({ label: 'Activity' });
 			if (route.endsWith('[type]')) {
 				trail.push({ label: types.data?.find((type) => type.slug === page.params.type)?.definition.name ?? page.params.type ?? '' });
 			}
@@ -154,16 +175,23 @@
 			<Sidebar.Group>
 				<Sidebar.GroupLabel>Content</Sidebar.GroupLabel>
 				<Sidebar.Menu data-testid="nav-collections">
-					{#each types.data ?? [] as type (type.slug)}
+					{#each readable as type (type.slug)}
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton isActive={page.params.collection === type.slug} tooltipContent={type.definition.name}>
 								{#snippet child({ props })}
-									<a href={resolve('/projects/[project]/[collection]', { project, collection: type.slug })} {...props}>
+									{@const one = type.definition.single === true ? oneOf(type.slug) : undefined}
+									<a
+										href={one === undefined
+											? resolve('/projects/[project]/[collection]', { project, collection: type.slug })
+											: resolve('/projects/[project]/[collection]/[entry]', { project, collection: type.slug, entry: one })}
+										data-testid="nav-{type.slug}"
+										{...props}
+									>
 										<FileTextIcon /><span>{type.definition.name}</span>
 									</a>
 								{/snippet}
 							</Sidebar.MenuButton>
-							<CollectionCount {project} collection={type.slug} />
+							{#if type.definition.single !== true}<CollectionCount {project} collection={type.slug} />{/if}
 						</Sidebar.MenuItem>
 					{/each}
 				</Sidebar.Menu>
@@ -205,13 +233,15 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
-					<Sidebar.MenuItem>
-						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/settings')} tooltipContent="Settings">
-							{#snippet child({ props })}
-								<a href={resolve('/projects/[project]/settings', { project })} data-testid="settings-link" {...props}><Settings2Icon /><span>Settings</span></a>
-							{/snippet}
-						</Sidebar.MenuButton>
-					</Sidebar.MenuItem>
+					{#if settings}
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/settings')} tooltipContent="Settings">
+								{#snippet child({ props })}
+									<a href={resolve('/projects/[project]/settings', { project })} data-testid="settings-link" {...props}><Settings2Icon /><span>Settings</span></a>
+								{/snippet}
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
+					{/if}
 				</Sidebar.Menu>
 			</Sidebar.Group>
 		</Sidebar.Content>
@@ -262,6 +292,7 @@
 					<SearchIcon />Search entries…<kbd class="ml-auto font-sans text-[0.6875rem]">⌘K</kbd>
 				</Button>
 				<AppearanceMenu />
+				<AccountMenu />
 			</div>
 		</header>
 		{#key page.url.pathname}
@@ -272,4 +303,11 @@
 	</Sidebar.Inset>
 </Sidebar.Provider>
 
-<CommandPalette {project} types={types.data ?? []} bind:open={searching} />
+<CommandPalette
+	{project}
+	types={readable}
+	{settings}
+	tokens={may(mine.data, 'tokens.manage')}
+	activity={may(mine.data, 'audit.read')}
+	bind:open={searching}
+/>

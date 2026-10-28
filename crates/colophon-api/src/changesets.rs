@@ -29,6 +29,7 @@ use colophon_db::{
     idempotency::{self, Claim},
     publish::{self, Base, Refusal},
     releases,
+    releases::BrokenReference,
     scope::ProjectTransaction,
 };
 use colophon_domain::{
@@ -137,6 +138,9 @@ pub(crate) struct ItemView {
     edited: bool,
     /// The revision readers get now, if published: what this item changes from.
     published_revision_id: Option<Uuid>,
+    /// Who created the entry, so a client can tell which items a role limited to its own
+    /// entries may change.
+    created_by: Uuid,
 }
 
 #[derive(Serialize)]
@@ -217,6 +221,10 @@ pub(crate) struct SummaryView {
     items: i64,
     /// How many of its items unpublish.
     unpublish: i64,
+    /// Who made it, so a list can show someone their own requests.
+    created_by: Uuid,
+    /// Who asked for its review, if anyone has.
+    submitted_by: Option<Uuid>,
     submitted_at: Option<String>,
     updated_at: String,
 }
@@ -268,6 +276,7 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
         items: items
             .into_iter()
             .map(|item| ItemView {
+                created_by: item.created_by,
                 edited: item.moved(),
                 kind: item.pin.kind,
                 entry_id: item.pin.entry_id,
@@ -384,7 +393,8 @@ async fn may_change_entries(tx: &mut ProjectTransaction, entries: &[Uuid]) -> Re
     if allowed {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(
+        Err(ApiError::missing(
+            Action::ContentUpdate,
             "your role can't change content in this changeset",
         ))
     }
@@ -412,6 +422,8 @@ pub(crate) async fn list(
                 status: StatusView::new(status, edited),
                 items: row.items,
                 unpublish: row.unpublish,
+                created_by: row.head.created_by,
+                submitted_by: row.head.submitted_by,
                 submitted_at: row.head.submitted_at.map(rfc3339).transpose()?,
                 updated_at: rfc3339(row.head.updated_at)?,
             })
@@ -652,7 +664,8 @@ pub(crate) async fn review(
         "your role can't review changes to this content",
     )?;
     if head.submitted_by.is_none() {
-        return Err(ApiError::Conflict(
+        return Err(ApiError::conflict(
+            "not_submitted",
             "this changeset hasn't been submitted for review yet",
         ));
     }
@@ -662,7 +675,8 @@ pub(crate) async fn review(
         .iter()
         .any(changesets::Item::moved);
     if edited {
-        return Err(ApiError::Conflict(
+        return Err(ApiError::conflict(
+            "entries_moved_on",
             "an entry moved on after this changeset pinned it; refresh the changeset, then review it",
         ));
     }
@@ -694,18 +708,24 @@ pub(crate) struct PublishedView {
 pub(crate) fn publishable(status: &Status) -> Result<(), ApiError> {
     match status {
         Status::Approved { .. } => Ok(()),
-        Status::Published { .. } => Err(ApiError::Conflict(
+        Status::Published { .. } => Err(ApiError::conflict(
+            "already_published",
             "this changeset has already been published",
         )),
-        Status::Stale { .. } => Err(ApiError::Conflict(
+        Status::Stale { .. } => Err(ApiError::conflict(
+            "entries_moved_on",
             "an entry moved on after this changeset pinned it; refresh and review it again before publishing",
         )),
-        Status::ApprovalExpired => Err(ApiError::Conflict(
+        Status::ApprovalExpired => Err(ApiError::conflict(
+            "approval_expired",
             "the approval has expired; it needs reviewing again before publishing",
         )),
-        Status::Open | Status::AwaitingReview | Status::ChangesRequested { .. } => Err(
-            ApiError::Conflict("only an approved changeset can be published"),
-        ),
+        Status::Open | Status::AwaitingReview | Status::ChangesRequested { .. } => {
+            Err(ApiError::conflict(
+                "not_approved",
+                "only an approved changeset can be published",
+            ))
+        }
     }
 }
 
@@ -728,7 +748,10 @@ fn refused(refusal: Refusal) -> ApiError {
         Refusal::HashMoved { current } => ApiError::StaleChangeset {
             current: content_hash(&current),
         },
-        Refusal::NotPermitted => ApiError::Forbidden("your role can't publish this content"),
+        Refusal::NotPermitted => ApiError::missing(
+            Action::ContentPublish,
+            "your role can't publish this content",
+        ),
         Refusal::NotPublishable(status) => publishable(&status).err().unwrap_or_else(|| {
             ApiError::internal(std::io::Error::other("a publishable changeset was refused"))
         }),
@@ -737,6 +760,20 @@ fn refused(refusal: Refusal) -> ApiError {
             "",
             "an entry in this changeset has a slug that another entry still publishes; publish that entry's new slug first, or in the same changeset",
             None,
+        ),
+        Refusal::ValueTaken => ApiError::value_taken(
+            "",
+            "an entry in this changeset has a value that must be unique and that another entry still publishes; publish that entry's new value first, or in the same changeset",
+            None,
+        ),
+        // Readers never get a reference to an entry they can't get (D-065).
+        Refusal::BrokenReference(BrokenReference::NamesUnpublished { .. }) => ApiError::conflict(
+            "references_unpublished",
+            "an entry in this changeset names an entry that isn't published; publish that entry first, or in the same changeset",
+        ),
+        Refusal::BrokenReference(BrokenReference::StillNamed { .. }) => ApiError::conflict(
+            "still_referenced",
+            "an entry this changeset takes down is named by a published entry; change or take down that entry first, or in the same changeset",
         ),
     }
 }

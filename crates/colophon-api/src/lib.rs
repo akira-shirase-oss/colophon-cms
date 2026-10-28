@@ -4,10 +4,13 @@
 //!
 //! Design: `docs/modules/04-api.md`.
 
+pub mod admission;
+mod audit;
 mod auth;
 mod body;
 mod cache;
 mod changesets;
+mod components;
 mod content_types;
 mod delivery;
 mod destinations;
@@ -28,6 +31,10 @@ mod setup;
 mod shape;
 pub mod state;
 pub mod studio;
+mod tokens;
+mod type_cache;
+mod valkey;
+pub mod version;
 mod visibility;
 
 use axum::{
@@ -36,10 +43,13 @@ use axum::{
 };
 
 pub use cache::{DeliveryCache, InvalidCacheUrl};
+pub use colophon_version::BuildInfo;
 pub use error::{ApiError, ErrorCode, ErrorDetails, PublicError};
 pub use health::{CheckState, Dependency, Readiness, ReadinessReport, Status};
 pub use middleware::{HttpLimits, REQUEST_ID_HEADER};
 pub use state::{AppState, Services, SessionSettings};
+pub use type_cache::ContentTypeCache;
+pub use version::API_VERSIONS;
 
 /// The complete router: the routes, a fallback that answers with the error envelope, and the
 /// middleware stack around all of them.
@@ -50,9 +60,11 @@ pub fn app(state: AppState, limits: HttpLimits) -> Router {
 /// The routes without the middleware stack, for tests that add their own routes before
 /// applying it.
 pub fn routes(state: AppState) -> Router {
+    let admission = axum::middleware::from_fn_with_state(state.clone(), admission::admit);
     Router::new()
         .route("/livez", get(health::livez))
         .route("/readyz", get(health::readyz))
+        .route("/version", get(version::get))
         .route("/auth/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
         .route("/auth/logout", post(auth::logout))
@@ -88,8 +100,29 @@ pub fn routes(state: AppState) -> Router {
             "/api/v1/projects/{project}/roles/{role}",
             get(roles::get).put(roles::update).delete(roles::delete),
         )
+        .route(
+            "/api/v1/projects/{project}/tokens",
+            get(tokens::list).post(tokens::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/tokens/{token}",
+            axum::routing::delete(tokens::revoke),
+        )
+        .route("/api/v1/projects/{project}/audit", get(audit::list))
         .route("/api/v1/invitations/lookup", post(members::lookup))
         .route("/api/v1/invitations/accept", post(members::accept))
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/permissions",
+            get(roles::own),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/components",
+            get(components::list).post(components::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/components/{slug}",
+            get(components::get).put(components::update),
+        )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/content-types",
             get(content_types::list).post(content_types::create),
@@ -117,6 +150,8 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/v1/rich-text/validate", post(rich_text::validate))
         .merge(publishing())
         .fallback(fallback)
+        // Rate limits (D-076): inside the error envelope, before any handler does work.
+        .layer(admission)
         .with_state(state)
 }
 

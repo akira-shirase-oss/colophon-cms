@@ -26,7 +26,10 @@ pub trait Probe: Send + 'static {
     fn check(&mut self) -> impl Future<Output = Result<(), ProbeError>> + Send;
 }
 
-/// PostgreSQL: `SELECT 1` through the shared pool.
+/// PostgreSQL: `SELECT 1` over a connection of its own (D-075). Never through the pool requests
+/// use: under load that pool is busy, and a probe waiting for it would call a healthy database
+/// down, mark every server not ready at once, and leave a load balancer nothing to send to
+/// (found by `scripts/failover.sh`).
 #[derive(Debug)]
 pub struct DatabaseProbe {
     pool: PgPool,
@@ -34,9 +37,19 @@ pub struct DatabaseProbe {
 }
 
 impl DatabaseProbe {
-    /// Probes through `pool`, giving up after `deadline`.
-    pub fn new(pool: PgPool, deadline: Duration) -> Self {
-        Self { pool, deadline }
+    /// Probes the database at `url` over one connection of its own, opened when first needed and
+    /// reopened after a failure, giving up after `deadline`. The URL holds a password, so an
+    /// error never includes it.
+    pub fn new(url: &str, deadline: Duration) -> Result<Self, ProbeError> {
+        let pool = colophon_db::connect_lazy(
+            url,
+            colophon_db::PoolSettings {
+                max_connections: 1,
+                acquire_timeout: deadline,
+                statement_timeout: deadline,
+            },
+        )?;
+        Ok(Self { pool, deadline })
     }
 }
 
@@ -380,6 +393,37 @@ mod tests {
             .err()
             .expect("not a redis URL");
         assert!(!error.to_string().contains("hunter2"));
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the local stack: scripts/stack.sh up"]
+    async fn the_database_probe_answers_while_the_request_pool_is_exhausted() {
+        let url = std::env::var("COLOPHON_DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://colophon_app:colophon-dev@127.0.0.1:55432/colophon".to_owned()
+        });
+        let requests = colophon_db::connect_lazy(
+            &url,
+            colophon_db::PoolSettings {
+                max_connections: 1,
+                acquire_timeout: Duration::from_millis(200),
+                ..colophon_db::PoolSettings::default()
+            },
+        )
+        .expect("a valid URL");
+        let held = requests
+            .acquire()
+            .await
+            .expect("the request pool's only connection");
+        assert!(
+            colophon_db::ping(&requests, Duration::from_millis(500))
+                .await
+                .is_err(),
+            "a probe through the busy request pool would say down"
+        );
+        let mut probe = DatabaseProbe::new(&url, Duration::from_secs(1)).expect("a valid URL");
+        probe.check().await.expect("its own connection answers");
+        probe.check().await.expect("and answers again");
+        drop(held);
     }
 
     #[tokio::test]

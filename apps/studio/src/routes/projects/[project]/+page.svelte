@@ -15,14 +15,14 @@
 	import { entryState, may, type Summary } from '#lib/api.ts';
 	import { oneOf } from '#lib/firstRun.ts';
 	import FirstRun from '#lib/FirstRun.svelte';
-	import { ago, changesetsQuery, entriesQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
+	import { ago, changesetsQuery, count as countOf, entriesQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import ReleaseLabel from '#lib/shell/ReleaseLabel.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
-	import { count, PUBLISH_REQUEST, PUBLISH_REQUESTS, releaseName } from '#lib/words.ts';
+	import { count, PUBLISH_REQUEST, PUBLISH_REQUESTS, releaseName, shownTitle } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const who = createQuery(meQuery);
@@ -30,15 +30,20 @@
 	const types = createQuery(() => typesQuery(project));
 	const sets = createQuery(() => changesetsQuery(project));
 	const releases = createQuery(() => releasesQuery(project));
-	const lists = createQueries(() => ({ queries: (types.data ?? []).map((type) => entriesQuery(project, type.slug)) }));
+	// Only the collections this role may read: the server refuses the others' lists (D-058), and
+	// waiting for an answer that will never be a list kept this page "Loading…" for good.
+	const readable = $derived(mine.data === undefined ? [] : (types.data ?? []).filter((type) => may(mine.data, 'content.read', type.slug)));
+	const lists = createQueries(() => ({ queries: readable.map((type) => entriesQuery(project, type.slug)) }));
 
 	const live = $derived(releases.data?.releases.find((release) => release.generation === releases.data?.generation));
 	const waiting = $derived(
 		(sets.data ?? []).filter((set) => ['awaiting_review', 'changes_requested', 'approved', 'stale'].includes(set.status.state))
 	);
 	const all = $derived(
-		(types.data ?? []).flatMap((type, index) => (lists[index]?.data?.data ?? []).map((entry: Summary) => ({ type, entry })))
+		readable.flatMap((type, index) => (lists[index]?.data?.data ?? []).map((entry: Summary) => ({ type, entry })))
 	);
+	// Each list holds the newest 100; when any has more, the totals say "at least".
+	const more = $derived(lists.some((list) => list.data?.next_cursor != null));
 	const tally = $derived(
 		all.reduce(
 			(counts, { entry }) => {
@@ -50,12 +55,21 @@
 	);
 	const newest = $derived([...all].sort((a, b) => b.entry.updated_at.localeCompare(a.entry.updated_at)));
 	const recent = $derived(newest.slice(0, 8));
-	// Each query's data is read before any is tested: svelte-query only updates what has been read,
-	// so a `.data` first read behind a short-circuit can stay empty for good (see ItemDiff.svelte).
-	const answers = $derived([mine.data, who.data, sets.data, releases.data, types.data, ...lists.map((list) => list.data)]);
-	const loaded = $derived(answers.every((answer) => answer !== undefined));
+	// Each query's data and error are read before any is tested: svelte-query only updates what has
+	// been read, so a `.data` first read behind a short-circuit can stay empty for good (see
+	// ItemDiff.svelte). A list that failed is settled too: its problem is shown, not waited for.
+	const settled = $derived(lists.map((list) => list.data !== undefined || list.isError));
+	const failed = $derived(readable.filter((_, index) => lists[index]?.isError === true));
+	const firstError = $derived(lists.find((list) => list.isError)?.error ?? null);
+	// Each section waits only for what it shows: the entries for the recent edits, everything for
+	// the checklist.
+	const entriesSettled = $derived(
+		[mine.data !== undefined || mine.isError, types.data !== undefined || types.isError, ...settled].every(Boolean)
+	);
+	const answers = $derived([mine.data, who.data, sets.data, releases.data, types.data]);
+	const loaded = $derived(answers.every((answer) => answer !== undefined) && entriesSettled);
 	// Where a first entry goes: a type the project added (Pages), else Articles.
-	const main = $derived((types.data ?? []).find((type) => type.slug !== 'articles') ?? types.data?.[0]);
+	const main = $derived(readable.find((type) => type.slug !== 'articles') ?? readable[0]);
 </script>
 
 <svelte:head><title>{mine.data?.name ?? 'Overview'} · Colophon Studio</title></svelte:head>
@@ -79,7 +93,7 @@
 				{project}
 				identity={who.data.id}
 				mine={mine.data}
-				types={types.data ?? []}
+				types={readable}
 				entries={newest}
 				requests={sets.data}
 				releases={releases.data.releases}
@@ -91,6 +105,9 @@
 			<span class="stat-label">Live release</span>
 			{#if releases.isPending}
 				<Skeleton class="h-8 w-24" />
+			{:else if releases.isError}
+				<span class="stat-value">Unknown</span>
+				<span class="text-xs text-destructive" data-testid="releases-problem">Couldn't check what's live</span>
 			{:else if live}
 				<span class="stat-value">{releaseName(live.generation)}</span>
 				<ReleaseLabel release={live} testid="overview-label" />
@@ -101,12 +118,17 @@
 		</a>
 		<a class="stat lift" style="--i: 1" href={resolve('/projects/[project]/changesets', { project })}>
 			<span class="stat-label">Waiting for review</span>
-			<span class="stat-value tabular" data-testid="awaiting-count">{(sets.data ?? []).filter((set) => set.status.state === 'awaiting_review').length}</span>
-			<span class="text-xs text-muted-foreground">{count(waiting.length, PUBLISH_REQUEST, PUBLISH_REQUESTS)} in progress</span>
+			{#if sets.isError}
+				<span class="stat-value">Unknown</span>
+				<span class="text-xs text-destructive">Couldn't load {PUBLISH_REQUESTS}</span>
+			{:else}
+				<span class="stat-value tabular" data-testid="awaiting-count">{(sets.data ?? []).filter((set) => set.status.state === 'awaiting_review').length}</span>
+				<span class="text-xs text-muted-foreground">{count(waiting.length, PUBLISH_REQUEST, PUBLISH_REQUESTS)} in progress</span>
+			{/if}
 		</a>
 		<div class="stat" style="--i: 2">
 			<span class="stat-label">Entries</span>
-			<span class="stat-value tabular">{all.length}</span>
+			<span class="stat-value tabular" data-testid="entry-count">{all.length}{more ? '+' : ''}</span>
 			<span class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
 				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-live align-middle"></span>{tally.live} live</span>
 				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-pending align-middle"></span>{tally.changed} changed</span>
@@ -125,6 +147,11 @@
 			<div class="mb-3 flex items-baseline justify-between">
 				<h2 id="recent" class="text-base font-semibold">Recently edited</h2>
 			</div>
+			{#if failed.length > 0}
+				<div class="mb-3" data-testid="lists-problem">
+					<Problem error={firstError ?? new Error('')} what={failed.map((type) => type.definition.name).join(', ')} retry={() => lists.forEach((list) => list.isError && list.refetch())} />
+				</div>
+			{/if}
 			<div class="stagger overflow-hidden rounded-xl border border-border bg-card" class:hidden={recent.length === 0}>
 				{#each recent as { type, entry }, index (entry.id)}
 					<a
@@ -134,15 +161,15 @@
 					>
 						<FileTextIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 						<span class="min-w-0 flex-1">
-							<span class="block truncate text-sm font-medium">{entry.revision.title}</span>
+							<span class="block truncate text-sm font-medium">{shownTitle(entry.revision.title)}</span>
 							<span class="text-xs text-muted-foreground">{type.definition.name} · {ago(entry.updated_at)}</span>
 						</span>
 						<StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} />
 					</a>
 				{/each}
 			</div>
-			{#if recent.length === 0}
-				{#if !loaded}
+			{#if recent.length === 0 && failed.length === 0}
+				{#if !entriesSettled}
 					<p class="px-4 py-8 text-center text-sm text-muted-foreground">Loading…</p>
 				{:else}
 					<EmptyState icon={PenLineIcon} title="Nothing written yet" testid="overview-empty">
@@ -160,6 +187,11 @@
 		<div class="space-y-10">
 			<section aria-labelledby="waiting">
 				<h2 id="waiting" class="mb-3 text-base font-semibold">In review</h2>
+				{#if sets.isError}
+					<Problem error={sets.error} what={PUBLISH_REQUESTS} retry={() => sets.refetch()} />
+				{:else if sets.isPending}
+					<Skeleton class="h-16 w-full rounded-lg" />
+				{:else}
 				<ul class="space-y-2">
 					{#each waiting.slice(0, 5) as set (set.id)}
 						<li>
@@ -175,6 +207,10 @@
 						<li class="text-sm text-muted-foreground">Nothing is waiting for review. Publish requests appear here until they go live.</li>
 					{/each}
 				</ul>
+				{/if}
+				{#if releases.isError}
+					<div class="mt-4"><Problem error={releases.error} what="releases" retry={() => releases.refetch()} /></div>
+				{/if}
 			</section>
 
 			<section aria-labelledby="content-heading">
@@ -183,14 +219,14 @@
 					<Problem error={types.error} />
 				{:else}
 					<ul class="space-y-1" data-testid="content-types">
-						{#each types.data ?? [] as type, index (type.slug)}
+						{#each readable as type, index (type.slug)}
 							<li>
 								<a class="group flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-muted" href={resolve('/projects/[project]/[collection]', { project, collection: type.slug })}>
 									<span class="min-w-0 flex-1">
 										<span class="block text-sm font-medium">{type.definition.name}</span>
 										<span class="text-xs text-muted-foreground">{type.definition.fields.length} fields</span>
 									</span>
-									{#if lists[index]?.data}<Badge variant="secondary" class="tabular">{lists[index]?.data?.data.length}</Badge>{/if}
+									{#if lists[index]?.data}<Badge variant="secondary" class="tabular">{countOf(lists[index].data)}</Badge>{/if}
 									<ArrowRightIcon class="size-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
 								</a>
 							</li>

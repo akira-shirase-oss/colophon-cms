@@ -226,6 +226,8 @@ async fn a_revision_names_its_entry_s_collection_and_a_version_that_exists() {
             title: "One",
             slug: None,
             schema_version: 1,
+            references: &[],
+            unique: &[],
         },
     )
     .await

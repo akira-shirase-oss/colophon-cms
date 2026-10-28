@@ -58,6 +58,12 @@ impl Server {
 
     /// Starts the server with extra environment variables, such as `COLOPHON_FAULT`.
     pub(crate) async fn start_with(extra: &[(&str, &str)]) -> Self {
+        Self::start_on(PORT, extra).await
+    }
+
+    /// [`Self::start_with`] on another port of loopback: a second server beside the first,
+    /// sharing its database and Valkey. Sign-in needs [`PORT`]'s registered origin.
+    pub(crate) async fn start_on(port: u16, extra: &[(&str, &str)]) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_colophon-server"));
         command
             .env_clear()
@@ -65,13 +71,16 @@ impl Server {
             .stderr(Stdio::inherit())
             .envs(local_env());
         command
-            .env("COLOPHON_LISTEN_ADDR", format!("127.0.0.1:{PORT}"))
+            .env("COLOPHON_LISTEN_ADDR", format!("127.0.0.1:{port}"))
             .env("COLOPHON_PUBLIC_URL", ORIGIN)
             .env("COLOPHON_LOG", "warn")
             .envs(extra.iter().copied());
         let server = Self(command.spawn().expect("the server starts"));
         let deadline = Instant::now() + Duration::from_secs(10);
-        while reqwest::get(format!("{ORIGIN}/livez")).await.is_err() {
+        while reqwest::get(format!("http://127.0.0.1:{port}/livez"))
+            .await
+            .is_err()
+        {
             assert!(Instant::now() < deadline, "the server never answered");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

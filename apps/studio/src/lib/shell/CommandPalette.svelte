@@ -4,6 +4,8 @@
 -->
 <script lang="ts">
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
+	import HistoryIcon from '@lucide/svelte/icons/history';
+	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 	import MoonIcon from '@lucide/svelte/icons/moon';
@@ -16,9 +18,25 @@
 	import { toggleMode } from 'mode-watcher';
 	import * as Command from '@colophon/ui/ui/command';
 	import { type ContentType, entryState, searchEntries } from '#lib/api.ts';
+	import { shownTitle } from '#lib/words.ts';
 	import StatusBadge from './StatusBadge.svelte';
 
-	let { project, types, open = $bindable(false) }: { project: string; types: ContentType[]; open?: boolean } = $props();
+	let {
+		project,
+		types,
+		settings = false,
+		tokens = false,
+		activity = false,
+		open = $bindable(false)
+	}: {
+		project: string;
+		types: ContentType[];
+		/** Whether the role sees Settings, API tokens and the activity log. */
+		settings?: boolean;
+		tokens?: boolean;
+		activity?: boolean;
+		open?: boolean;
+	} = $props();
 
 	let typed = $state('');
 	let q = $state('');
@@ -31,8 +49,14 @@
 	const found = createQuery(() => ({
 		queryKey: ['palette', project, q],
 		queryFn: async () => {
-			const pages = await Promise.all(types.map(async (type) => ({ type, page: await searchEntries(project, type.slug, q) })));
-			return pages.flatMap(({ type, page }) => page.data.slice(0, 8).map((entry) => ({ type, entry })));
+			// Each collection answers on its own: one that fails leaves the others' results, and says so.
+			const pages = await Promise.allSettled(types.map(async (type) => ({ type, page: await searchEntries(project, type.slug, q) })));
+			const answered = pages.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+			if (answered.length === 0 && pages.length > 0) throw (pages[0] as PromiseRejectedResult).reason;
+			return {
+				entries: answered.flatMap(({ type, page }) => page.data.slice(0, 8).map((entry) => ({ type, entry }))),
+				missed: types.filter((_, index) => pages[index]?.status === 'rejected')
+			};
 		},
 		enabled: open && q.length > 0 && types.length > 0,
 		staleTime: 2_000
@@ -56,7 +80,9 @@
 		{ label: 'Publish requests', icon: LayersIcon, href: resolve('/projects/[project]/changesets', { project }) },
 		{ label: 'Releases', icon: PackageCheckIcon, href: resolve('/projects/[project]/releases', { project }) },
 		{ label: 'Members', icon: UsersIcon, href: resolve('/projects/[project]/members', { project }) },
-		{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }
+		...(settings ? [{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }] : []),
+		...(tokens ? [{ label: 'API tokens', icon: KeyRoundIcon, href: resolve('/projects/[project]/settings/tokens', { project }) }] : []),
+		...(activity ? [{ label: 'Activity', icon: HistoryIcon, href: resolve('/projects/[project]/settings/activity', { project }) }] : [])
 	]);
 	const needle = $derived(typed.trim().toLowerCase());
 	const pages = $derived(PAGES.filter((item) => item.label.toLowerCase().includes(needle)));
@@ -68,16 +94,21 @@
 <Command.Dialog bind:open title="Search" description="Go to a page or find an entry by its title" shouldFilter={false}>
 	<Command.Input placeholder="Search entries or jump to…" bind:value={typed} />
 	<Command.List>
-		<Command.Empty>{found.isFetching ? 'Searching…' : 'Nothing matches.'}</Command.Empty>
-		{#if found.data && found.data.length > 0}
+		<Command.Empty>{found.isFetching ? 'Searching…' : found.isError ? "Couldn't search just now. Try again in a moment." : 'Nothing matches.'}</Command.Empty>
+		{#if found.data && found.data.missed.length > 0}
+			<p class="px-3 py-2 text-xs text-muted-foreground" role="status" data-testid="search-missed">
+				Couldn't search {found.data.missed.map((type) => type.definition.name).join(', ')} just now.
+			</p>
+		{/if}
+		{#if found.data && found.data.entries.length > 0}
 			<Command.Group heading="Entries">
-				{#each found.data as { type, entry } (entry.id)}
+				{#each found.data.entries as { type, entry } (entry.id)}
 					<Command.Item
 						value={`entry-${entry.id}`}
 						onSelect={() => go(resolve('/projects/[project]/[collection]/[entry]', { project, collection: type.slug, entry: entry.id }))}
 					>
 						<FileTextIcon class="text-muted-foreground" />
-						<span class="truncate">{entry.revision.title}</span>
+						<span class="truncate">{shownTitle(entry.revision.title)}</span>
 						<span class="ml-auto flex items-center gap-2">
 							<span class="text-xs text-muted-foreground">{type.definition.name}</span>
 							<StatusBadge state={entryState(entry)} />
