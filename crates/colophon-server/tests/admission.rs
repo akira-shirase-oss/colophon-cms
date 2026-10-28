@@ -14,7 +14,7 @@ mod common;
 use std::{
     path::PathBuf,
     process::{Command, Stdio},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use common::{PORT, Server};
@@ -110,7 +110,7 @@ async fn a_credential_over_its_limit_waits_as_it_is_told_and_health_never_counts
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn two_servers_sharing_valkey_share_one_count() {
     let settings = [
-        ("COLOPHON_RATE_LIMIT_PER_ADDRESS", "5/5"),
+        ("COLOPHON_RATE_LIMIT_PER_ADDRESS", "1/5"),
         ("COLOPHON_RATE_LIMIT_PER_CREDENTIAL", "off"),
         ("COLOPHON_TRUSTED_PROXIES", "127.0.0.1"),
     ];
@@ -119,6 +119,7 @@ async fn two_servers_sharing_valkey_share_one_count() {
     let client = fresh_address();
     let mut admitted = [0_u32; 2];
     let mut refused = [0_u32; 2];
+    let started = Instant::now();
     for n in 0..20 {
         let (index, port) = if n % 2 == 0 {
             (0, PORT)
@@ -132,12 +133,20 @@ async fn two_servers_sharing_valkey_share_one_count() {
             admitted[index] += 1;
         }
     }
-    // Five a second with a burst of five, over far less than a second: about five in all, where
-    // two separate counts would admit ten.
-    let total = admitted[0] + admitted[1];
+    // One count admits the burst of five plus one a second while the requests last; two separate
+    // counts would admit at least ten (each server sees ten requests and has a burst of five). A
+    // first version allowed six at five a second, and a slow CI runner whose twenty requests took
+    // about 400 ms rightly admitted seven.
+    let elapsed = started.elapsed();
     assert!(
-        (5..=6).contains(&total),
-        "admitted {admitted:?}, refused {refused:?}"
+        elapsed < Duration::from_secs(3),
+        "the requests took {elapsed:?}: too slow to tell one count from two"
+    );
+    let total = u128::from(admitted[0] + admitted[1]);
+    let allowed = 5 + elapsed.as_millis().div_ceil(1000);
+    assert!(
+        (5..=allowed).contains(&total),
+        "admitted {admitted:?}, refused {refused:?} in {elapsed:?}, at most {allowed} allowed"
     );
     assert!(refused[0] > 0 && refused[1] > 0, "both refuse: {refused:?}");
 }
