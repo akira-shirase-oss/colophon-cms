@@ -9,7 +9,10 @@
 	import type { Editor } from '@tiptap/core';
 	import { createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { resolve } from '$app/paths';
+	import ArrowUpRightIcon from '@lucide/svelte/icons/arrow-up-right';
+	import CopyIcon from '@lucide/svelte/icons/copy';
 	import LinkIcon from '@lucide/svelte/icons/link';
+	import { toast } from 'svelte-sonner';
 	import { openEditor, type RichTextValue, toStored } from '@colophon/editor';
 	import RichText from '@colophon/content-renderer/RichText.svelte';
 	import CloudAlertIcon from '@lucide/svelte/icons/cloud-alert';
@@ -20,6 +23,7 @@
 	import {
 		type Content,
 		type ContentType,
+		deliveryUrl,
 		type Draft,
 		type FieldDefinition,
 		getRevision,
@@ -235,6 +239,15 @@
 	const standing = $derived(
 		published === null ? 'draft' : published.revision_id === latest.revision.id && saver.status === 'saved' ? 'live' : 'changed'
 	);
+	async function copyAddress(text: string) {
+		try {
+			await navigator.clipboard.writeText(text);
+			toast.success('Copied');
+		} catch {
+			toast.error("Couldn't copy; select it and copy it yourself.");
+		}
+	}
+
 	let tab = $state<'content' | 'history'>('content');
 
 	// Restoring a version (spec's History screen): its fields become the draft and are saved as a new
@@ -488,6 +501,25 @@
 						</li>
 					{/each}
 				</ul>
+			</section>
+		{/if}
+
+		{#if published !== null}
+			<!-- Where readers get it (the public read, no sign-in): the published version, not the draft. -->
+			{@const address = `${window.location.origin}${deliveryUrl(project, collection)}/${entry}`}
+			<section class="mt-8" aria-labelledby="public-address-heading" data-testid="public-address">
+				<h2 id="public-address-heading" class="mb-1 text-sm font-semibold">Where readers get it</h2>
+				<p class="mb-3 text-xs text-muted-foreground">
+					Anyone can read the published version at this address, without signing in{standing === 'changed'
+						? `: the one live in ${releaseName(published.generation)}, not your newer changes`
+						: ''}.
+				</p>
+				<div class="flex min-w-0 items-center gap-1 rounded-xl border border-border bg-card px-4 py-2.5 text-sm">
+					<a class="min-w-0 flex-1 truncate font-mono text-xs underline underline-offset-2" href={address} target="_blank" rel="noreferrer"
+						>{address}<ArrowUpRightIcon class="ml-0.5 inline size-3" aria-hidden="true" /></a
+					>
+					<Button variant="ghost" size="icon-xs" aria-label="Copy the public address" onclick={() => copyAddress(address)}><CopyIcon /></Button>
+				</div>
 			</section>
 		{/if}
 
