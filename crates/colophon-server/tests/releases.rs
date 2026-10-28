@@ -591,6 +591,10 @@ async fn me(session: &Session) -> String {
 
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story, told in order: unpublished, published, edited, saved, listed"
+)]
 async fn an_entry_says_whether_and_where_it_is_live_and_lists_say_whose() {
     let _server = Server::start().await;
     let owner = sign_in("dev-owner").await;
@@ -622,6 +626,15 @@ async fn an_entry_says_whether_and_where_it_is_live_and_lists_say_whose() {
     assert_eq!(draft.body["data"]["created_by"], editor_id.as_str());
 
     let (path, hash) = approved(&editor, &owner, &project, &[&first]).await;
+    let request = call(&owner, Method::GET, &path, None, &[])
+        .await
+        .expect("request");
+    assert_eq!(
+        request.body["data"]["items"][0]["created_by"],
+        editor_id.as_str(),
+        "an item says whose entry it is: {}",
+        request.body
+    );
     let released = publish(&owner, &path, &hash, 0, &key()).await;
     assert_eq!(released.status, StatusCode::CREATED, "{}", released.body);
 

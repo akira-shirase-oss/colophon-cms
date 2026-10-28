@@ -137,6 +137,9 @@ pub(crate) struct ItemView {
     edited: bool,
     /// The revision readers get now, if published: what this item changes from.
     published_revision_id: Option<Uuid>,
+    /// Who created the entry, so a client can tell which items a role limited to its own
+    /// entries may change.
+    created_by: Uuid,
 }
 
 #[derive(Serialize)]
@@ -272,6 +275,7 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
         items: items
             .into_iter()
             .map(|item| ItemView {
+                created_by: item.created_by,
                 edited: item.moved(),
                 kind: item.pin.kind,
                 entry_id: item.pin.entry_id,

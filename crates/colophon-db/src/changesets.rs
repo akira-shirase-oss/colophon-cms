@@ -72,6 +72,8 @@ pub struct Item {
     pub current_revision_id: Option<Uuid>,
     /// The revision readers get now, if the entry is published: what the item changes from.
     pub published_revision_id: Option<Uuid>,
+    /// Who created the entry: for roles that may change only their own (D-058).
+    pub created_by: Uuid,
 }
 
 impl Item {
@@ -319,7 +321,8 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
                   END AS current_revision_id,
                   (SELECT p.revision_id FROM publications p
                    WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id
-                     AND p.entry_id = i.entry_id AND p.valid_to IS NULL) AS published_revision_id
+                     AND p.entry_id = i.entry_id AND p.valid_to IS NULL) AS published_revision_id,
+                  e.created_by
          FROM changeset_items i
          CROSS JOIN LATERAL (
              SELECT r.collection, r.content_hash, r.schema_version, r.title
@@ -330,7 +333,7 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
          JOIN content_type_versions v ON v.project_id = i.project_id AND v.environment_id = i.environment_id
                                      AND v.collection = r.collection AND v.version = r.schema_version
          CROSS JOIN LATERAL (
-             SELECT e.draft_revision_id
+             SELECT e.draft_revision_id, e.created_by
              FROM entries e
              WHERE e.project_id = i.project_id AND e.environment_id = i.environment_id AND e.id = i.entry_id
              LIMIT 1
@@ -359,6 +362,7 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
             title: row.title,
             current_revision_id: row.current_revision_id,
             published_revision_id: row.published_revision_id,
+            created_by: row.created_by,
         })
         .collect())
 }
