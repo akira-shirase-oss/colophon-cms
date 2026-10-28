@@ -4,6 +4,7 @@
   "description": "Colophon CMS: the JavaScript workspace (testbed now; the Studio, UI kit and SDK later).",
   "workspaces": [
     "packages/*",
+    "!packages/cli-npm",
     "apps/*"
   ],
   "engines": {

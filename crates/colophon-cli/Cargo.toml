@@ -5,6 +5,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+homepage = "https://github.com/akira-shirase-oss/colophon-cms"
+keywords = ["cms", "headless-cms", "cli", "colophon"]
+categories = ["command-line-utilities"]
+# Not on crates.io yet (docs/modules/08-cli.md, "Install"): the licence isn't confirmed (O-014), and
+# colophon-db, colophon-domain and colophon-version would have to be published first. Until then
+# `cargo install --locked --git https://github.com/akira-shirase-oss/colophon-cms colophon-cli`.
 publish.workspace = true
 
 [[bin]]
@@ -14,11 +20,17 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 colophon-db.workspace = true
+colophon-version.workspace = true
 reqwest.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util"] }
 uuid.workspace = true
+
+[build-dependencies]
+# build.rs stamps the commit and build date (D-062).
+colophon-version = { workspace = true, features = ["stamp"] }
 
 [dev-dependencies]
 serde_json.workspace = true

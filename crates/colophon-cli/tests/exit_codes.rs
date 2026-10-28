@@ -15,13 +15,38 @@ fn colophon(args: &[&str]) -> Output {
 }
 
 #[test]
-fn version_prints_name_and_version_and_exits_zero() {
-    let out = colophon(&["--version"]);
+fn version_prints_the_version_the_commit_and_the_build_date() {
+    for flag in ["--version", "-V"] {
+        let out = colophon(&[flag]);
 
-    assert_eq!(out.status.code(), Some(0));
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout).trim(),
-        format!("colophon {}", env!("CARGO_PKG_VERSION"))
+        assert_eq!(out.status.code(), Some(0));
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            text.trim(),
+            format!(
+                "colophon {} (commit {}, built {})",
+                env!("CARGO_PKG_VERSION"),
+                env!("COLOPHON_COMMIT"),
+                env!("COLOPHON_BUILD_DATE")
+            )
+        );
+    }
+    // The stamp is a real commit and day, or says plainly that it isn't known.
+    let commit = env!("COLOPHON_COMMIT");
+    assert!(
+        commit == "unknown"
+            || (commit.len() == 40 && commit.bytes().all(|byte| byte.is_ascii_hexdigit())),
+        "{commit}"
+    );
+    let date = env!("COLOPHON_BUILD_DATE");
+    let shape: Vec<usize> = date.split('-').map(str::len).collect();
+    assert!(
+        date == "unknown"
+            || (shape == [4, 2, 2]
+                && date
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || byte == b'-')),
+        "{date}"
     );
 }
 

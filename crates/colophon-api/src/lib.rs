@@ -30,6 +30,7 @@ mod shape;
 pub mod state;
 pub mod studio;
 mod tokens;
+pub mod version;
 mod visibility;
 
 use axum::{
@@ -38,10 +39,12 @@ use axum::{
 };
 
 pub use cache::{DeliveryCache, InvalidCacheUrl};
+pub use colophon_version::BuildInfo;
 pub use error::{ApiError, ErrorCode, ErrorDetails, PublicError};
 pub use health::{CheckState, Dependency, Readiness, ReadinessReport, Status};
 pub use middleware::{HttpLimits, REQUEST_ID_HEADER};
 pub use state::{AppState, Services, SessionSettings};
+pub use version::API_VERSIONS;
 
 /// The complete router: the routes, a fallback that answers with the error envelope, and the
 /// middleware stack around all of them.
@@ -55,6 +58,7 @@ pub fn routes(state: AppState) -> Router {
     Router::new()
         .route("/livez", get(health::livez))
         .route("/readyz", get(health::readyz))
+        .route("/version", get(version::get))
         .route("/auth/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
         .route("/auth/logout", post(auth::logout))

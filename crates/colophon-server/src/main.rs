@@ -7,7 +7,7 @@ use colophon_server::{Config, Role, ShutdownOutcome, shutdown, telemetry};
 /// The Colophon server. Configuration comes from `COLOPHON_*` environment variables; see
 /// `crates/colophon-server/src/config.rs` for the list.
 #[derive(Debug, Parser)]
-#[command(name = "colophon-server", version, about)]
+#[command(name = "colophon-server", version = colophon_version::long_version!(), about)]
 struct Args {
     /// Which part of the server this process runs.
     #[arg(long, value_enum, env = "COLOPHON_ROLE", default_value_t = Role::All)]

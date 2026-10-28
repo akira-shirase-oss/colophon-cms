@@ -1,0 +1,41 @@
+{
+  "name": "@colophon-cms/cli",
+  "version": "0.1.0-alpha.1",
+  "description": "colophon, the command line for Colophon CMS, prebuilt for macOS, Linux and Windows: no Rust needed.",
+  "keywords": [
+    "colophon",
+    "cms",
+    "headless-cms",
+    "cli"
+  ],
+  "homepage": "https://github.com/akira-shirase-oss/colophon-cms#readme",
+  "bugs": "https://github.com/akira-shirase-oss/colophon-cms/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akira-shirase-oss/colophon-cms.git",
+    "directory": "packages/cli-npm"
+  },
+  "bin": {
+    "colophon": "bin/colophon.js"
+  },
+  "files": [
+    "bin/colophon.js",
+    "lib/platform.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@colophon-cms/cli-darwin-arm64": "0.1.0-alpha.1",
+    "@colophon-cms/cli-darwin-x64": "0.1.0-alpha.1",
+    "@colophon-cms/cli-linux-arm64": "0.1.0-alpha.1",
+    "@colophon-cms/cli-linux-x64": "0.1.0-alpha.1",
+    "@colophon-cms/cli-win32-x64": "0.1.0-alpha.1"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
