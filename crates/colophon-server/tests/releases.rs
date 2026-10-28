@@ -567,3 +567,120 @@ async fn unpublishing_is_reviewed_pins_what_is_published_and_says_what_it_took_d
         assert_eq!(status, StatusCode::GONE, "{generation}: {body}");
     }
 }
+
+/// The caller's identity id, from `/me`.
+async fn me(session: &Session) -> String {
+    let me = call(session, Method::GET, "/me", None, &[])
+        .await
+        .expect("request");
+    me.body["data"]["id"].as_str().expect("an id").to_owned()
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_entry_says_whether_and_where_it_is_live_and_lists_say_whose() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let editor = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    join(&owner, &editor, &project, "editor").await;
+    let editor_id = me(&editor).await;
+    let first = new_article(&editor, &project, "First", "one").await;
+    let second = new_article(&editor, &project, "Second", "two").await;
+    let read = |entry: String| {
+        let (session, path) = (&owner, format!("{}/{entry}", entries(&project)));
+        async move {
+            call(session, Method::GET, &path, None, &[])
+                .await
+                .expect("request")
+        }
+    };
+
+    // Not published: the read says so with an explicit null, and says whose entry it is.
+    let draft = read(first.clone()).await;
+    assert_eq!(draft.status, StatusCode::OK, "{}", draft.body);
+    assert!(
+        draft.body["data"]
+            .as_object()
+            .is_some_and(|data| data.get("published") == Some(&Value::Null)),
+        "an unpublished entry reads `published: null`: {}",
+        draft.body
+    );
+    assert_eq!(draft.body["data"]["created_by"], editor_id.as_str());
+
+    let (path, hash) = approved(&editor, &owner, &project, &[&first]).await;
+    let released = publish(&owner, &path, &hash, 0, &key()).await;
+    assert_eq!(released.status, StatusCode::CREATED, "{}", released.body);
+
+    // Published: the read names the live version and its release, whatever the list holds.
+    let live = read(first.clone()).await;
+    assert_eq!(live.body["data"]["published"]["generation"], 1);
+    assert_eq!(
+        live.body["data"]["published"]["revision_id"], live.body["data"]["revision"]["id"],
+        "nothing edited since it went live"
+    );
+    assert_eq!(
+        read(second.clone()).await.body["data"]["published"],
+        Value::Null
+    );
+
+    // Edited after going live: the draft moved on, the live version didn't.
+    edit(&editor, &project, &first, "First, edited", "one more").await;
+    let moved = read(first.clone()).await;
+    assert_eq!(moved.body["data"]["published"]["generation"], 1);
+    assert_ne!(
+        moved.body["data"]["published"]["revision_id"], moved.body["data"]["revision"]["id"],
+        "changed since it went live"
+    );
+
+    // A save's answer doesn't look publication up, so it leaves the field out rather than
+    // saying `null` (which would read as "not published").
+    let saved = call(
+        &editor,
+        Method::PUT,
+        &format!("{}/{first}", entries(&project)),
+        Some(&article("First, again", "once more")),
+        &[
+            ("if-match", &moved.etag().expect("an ETag")),
+            ("idempotency-key", &key()),
+        ],
+    )
+    .await
+    .expect("request");
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    assert!(
+        saved.body["data"]
+            .as_object()
+            .is_some_and(|data| !data.contains_key("published")),
+        "{}",
+        saved.body
+    );
+
+    // Lists say whose: entries by creator, publish requests by creator and submitter.
+    let listed = call(&owner, Method::GET, &entries(&project), None, &[])
+        .await
+        .expect("request");
+    let creators: Vec<&Value> = listed.body["data"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|entry| &entry["created_by"])
+        .collect();
+    assert_eq!(creators, [&json!(editor_id), &json!(editor_id)]);
+    let requests = call(
+        &owner,
+        Method::GET,
+        &format!("{}/changesets", base(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    let request = &requests.body["data"][0];
+    assert_eq!(
+        (&request["created_by"], &request["submitted_by"]),
+        (&json!(editor_id), &json!(editor_id)),
+        "{}",
+        requests.body
+    );
+}

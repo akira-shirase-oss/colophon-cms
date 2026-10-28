@@ -217,6 +217,10 @@ pub(crate) struct SummaryView {
     items: i64,
     /// How many of its items unpublish.
     unpublish: i64,
+    /// Who made it, so a list can show someone their own requests.
+    created_by: Uuid,
+    /// Who asked for its review, if anyone has.
+    submitted_by: Option<Uuid>,
     submitted_at: Option<String>,
     updated_at: String,
 }
@@ -412,6 +416,8 @@ pub(crate) async fn list(
                 status: StatusView::new(status, edited),
                 items: row.items,
                 unpublish: row.unpublish,
+                created_by: row.head.created_by,
+                submitted_by: row.head.submitted_by,
                 submitted_at: row.head.submitted_at.map(rfc3339).transpose()?,
                 updated_at: rfc3339(row.head.updated_at)?,
             })

@@ -289,14 +289,35 @@ pub async fn get(
     collection: &str,
     entry_id: Uuid,
 ) -> Result<Option<Draft>, DbError> {
+    Ok(get_with_live(tx, collection, entry_id)
+        .await?
+        .map(|(draft, _)| draft))
+}
+
+/// [`get`], and what readers get now if the entry is published: its live revision and the
+/// release it went out in. One statement, so the draft and its publication are read at the
+/// same snapshot.
+pub async fn get_with_live(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    entry_id: Uuid,
+) -> Result<Option<(Draft, Option<(Uuid, i64)>)>, DbError> {
     let row = sqlx::query!(
-        "SELECT e.collection, e.created_at, e.created_by, e.updated_at,
+        r#"SELECT e.collection, e.created_at, e.created_by, e.updated_at,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
-                r.content_hash, r.title, r.content
+                r.content_hash, r.title, r.content,
+                live.revision_id AS "published_revision_id?", live.valid_from AS "published_in?"
          FROM entries e
          JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id
                          AND r.id = e.draft_revision_id
-         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.id = $3 AND e.collection = $4",
+         LEFT JOIN LATERAL (
+             SELECT p.revision_id, p.valid_from
+             FROM publications p
+             WHERE p.project_id = e.project_id AND p.environment_id = e.environment_id
+               AND p.entry_id = e.id AND p.valid_to IS NULL
+             LIMIT 1
+         ) live ON true
+         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.id = $3 AND e.collection = $4"#,
         tx.project,
         tx.environment,
         entry_id,
@@ -305,21 +326,24 @@ pub async fn get(
     .fetch_optional(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)?;
-    Ok(row.map(|row| Draft {
-        entry_id,
-        collection: row.collection,
-        created_at: row.created_at,
-        created_by: row.created_by,
-        updated_at: row.updated_at,
-        revision: Revision {
-            id: row.revision_id,
-            base_revision_id: row.base_revision_id,
-            author_id: row.author_id,
-            created_at: row.revision_created_at,
-            content_hash: row.content_hash,
-            title: row.title,
-        },
-        content: row.content,
+    Ok(row.map(|row| {
+        let draft = Draft {
+            entry_id,
+            collection: row.collection,
+            created_at: row.created_at,
+            created_by: row.created_by,
+            updated_at: row.updated_at,
+            revision: Revision {
+                id: row.revision_id,
+                base_revision_id: row.base_revision_id,
+                author_id: row.author_id,
+                created_at: row.revision_created_at,
+                content_hash: row.content_hash,
+                title: row.title,
+            },
+            content: row.content,
+        };
+        (draft, row.published_revision_id.zip(row.published_in))
     }))
 }
 
