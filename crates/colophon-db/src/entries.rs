@@ -645,7 +645,10 @@ pub struct Referrer {
 pub const MAX_REFERRERS: i64 = 100;
 
 /// The entries whose draft or published revision names `entry`, by field, at most
-/// [`MAX_REFERRERS`]: what an editor should know before changing or taking it down.
+/// [`MAX_REFERRERS`]: what an editor should know before changing or taking it down. Each
+/// reference finds its entry and its open publication by revision (migration 0028), one lookup
+/// apiece: a revision is at most one entry's draft and has at most one open publication, and
+/// the `LIMIT 1` keeps a generic plan from scanning the environment's entries per reference.
 pub async fn referrers(tx: &mut ProjectTransaction, entry: Uuid) -> Result<Vec<Referrer>, DbError> {
     let rows = sqlx::query!(
         r#"SELECT entry_id AS "entry_id!", collection AS "collection!", field AS "field!",
@@ -653,14 +656,22 @@ pub async fn referrers(tx: &mut ProjectTransaction, entry: Uuid) -> Result<Vec<R
            FROM (
                SELECT e.id AS entry_id, e.collection, r.field, true AS draft, false AS live
                FROM revision_references r
-               JOIN entries e ON e.project_id = r.project_id AND e.environment_id = r.environment_id
-                             AND e.draft_revision_id = r.revision_id
+               CROSS JOIN LATERAL (
+                   SELECT e.id, e.collection FROM entries e
+                   WHERE e.project_id = r.project_id AND e.environment_id = r.environment_id
+                     AND e.draft_revision_id = r.revision_id
+                   LIMIT 1
+               ) e
                WHERE r.project_id = $1 AND r.environment_id = $2 AND r.entry_id = $3
                UNION ALL
                SELECT p.entry_id, p.collection, r.field, false, true
                FROM revision_references r
-               JOIN publications p ON p.project_id = r.project_id AND p.environment_id = r.environment_id
-                                  AND p.revision_id = r.revision_id AND p.valid_to IS NULL
+               CROSS JOIN LATERAL (
+                   SELECT p.entry_id, p.collection FROM publications p
+                   WHERE p.project_id = r.project_id AND p.environment_id = r.environment_id
+                     AND p.revision_id = r.revision_id AND p.valid_to IS NULL
+                   LIMIT 1
+               ) p
                WHERE r.project_id = $1 AND r.environment_id = $2 AND r.entry_id = $3
            ) named
            GROUP BY entry_id, collection, field
