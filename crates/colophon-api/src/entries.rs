@@ -12,6 +12,8 @@
 //! answer 404 alike. A draft's `ETag` names its revision; a save whose `If-Match` names an older
 //! one is refused with 409 and the current `ETag`, and writes nothing.
 
+use std::sync::Arc;
+
 use aws_lc_rs::digest;
 use axum::{
     Json,
@@ -375,18 +377,18 @@ pub(crate) async fn open(
     opened.map_err(ApiError::from_db)?.ok_or(ApiError::NotFound)
 }
 
-/// The collection's current content type and its version, or 404.
+/// The collection's current content type and its version, or 404. The definition is read from
+/// Postgres every time; only its parsing is cached (D-078).
 pub(crate) async fn content_type(
+    state: &AppState,
     tx: &mut ProjectTransaction,
     collection: &str,
-) -> Result<(ContentType, i32), ApiError> {
+) -> Result<(Arc<ContentType>, i32), ApiError> {
     let stored = content_types::current(tx, collection)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
-    // Stored definitions were validated when written; failing to parse one is a bug.
-    let value: Value = serde_json::from_str(&stored.definition).map_err(ApiError::internal)?;
-    let parsed = ContentType::parse(&value).map_err(ApiError::internal)?;
+    let parsed = services(state)?.content_types.parse(&stored.definition)?;
     Ok((parsed, stored.version))
 }
 
@@ -533,10 +535,11 @@ fn may_read(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError> {
 /// The fields of `entry` the caller's role may read, and its content type; an entry it may not
 /// read at all is not found, as if it didn't exist.
 async fn readable(
+    state: &AppState,
     tx: &mut ProjectTransaction,
     collection: &str,
     entry: Uuid,
-) -> Result<(Fields, ContentType), ApiError> {
+) -> Result<(Fields, Arc<ContentType>), ApiError> {
     let created_by = entries::creators(tx, &[entry])
         .await
         .map_err(ApiError::from_db)?
@@ -547,7 +550,7 @@ async fn readable(
     let read = Access::of(&tx.policy, tx.identity, collection, created_by)
         .read
         .ok_or(ApiError::NotFound)?;
-    let (content_type, _) = content_type(tx, collection).await?;
+    let (content_type, _) = content_type(state, tx, collection).await?;
     Ok((read, content_type))
 }
 
@@ -599,7 +602,7 @@ pub(crate) async fn create(
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
-    let (content_type, version) = content_type(&mut tx, &path.collection).await?;
+    let (content_type, version) = content_type(&state, &mut tx, &path.collection).await?;
     // A new entry gets the defaults of the fields it leaves out (D-071). They are the type's,
     // not the caller's, so a role's field list applies to what it sent.
     let (value, defaulted) = content_type.with_defaults(&value);
@@ -664,7 +667,7 @@ pub(crate) async fn save(
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
-    let (content_type, version) = content_type(&mut tx, &path.collection).await?;
+    let (content_type, version) = content_type(&state, &mut tx, &path.collection).await?;
     // What this caller may do with this entry, by whose it is (D-058, step R.3).
     let created_by = entries::creators(&mut tx, &[entry])
         .await
@@ -758,7 +761,7 @@ pub(crate) async fn get(
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
-    let (content_type, _) = content_type(&mut tx, &path.collection).await?;
+    let (content_type, _) = content_type(&state, &mut tx, &path.collection).await?;
     let access = Access::of(&tx.policy, tx.identity, &path.collection, draft.created_by);
     // Only referrers in collections the role reads, so the list shows nothing it couldn't.
     let referenced_by = entries::referrers(&mut tx, entry)
@@ -895,7 +898,7 @@ pub(crate) async fn list(
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_read(&tx, &path.collection)?;
     // An unknown collection is 404, not an empty list.
-    content_type(&mut tx, &path.collection).await?;
+    let (content_type, _) = content_type(&state, &mut tx, &path.collection).await?;
     let project = tx.project;
     let before = query
         .cursor
@@ -908,19 +911,13 @@ pub(crate) async fn list(
         .fields(Action::ContentRead, &path.collection, false);
     let title_field = match anyone {
         Some(Fields::All) => None,
-        _ => Some(
-            content_type(&mut tx, &path.collection)
-                .await?
-                .0
-                .title_field()
-                .to_owned(),
-        ),
+        _ => Some(content_type.title_field()),
     };
     let listed = whose(
         &tx.policy,
         tx.identity,
         &path.collection,
-        title_field.as_deref(),
+        title_field,
         search.is_some(),
         asked,
     )?;
@@ -984,7 +981,7 @@ pub(crate) async fn revision(
     let revision = Uuid::try_parse(&path.revision).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_read(&tx, &path.collection)?;
-    let (read, content_type) = readable(&mut tx, &path.collection, entry).await?;
+    let (read, content_type) = readable(&state, &mut tx, &path.collection, entry).await?;
     let found = entries::revision(&mut tx, &path.collection, entry, revision)
         .await
         .map_err(ApiError::from_db)?
@@ -1015,7 +1012,7 @@ pub(crate) async fn history(
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_read(&tx, &path.collection)?;
-    let (read, content_type) = readable(&mut tx, &path.collection, entry).await?;
+    let (read, content_type) = readable(&state, &mut tx, &path.collection, entry).await?;
     let revisions = entries::history(&mut tx, &path.collection, entry, entries::MAX_PAGE)
         .await
         .map_err(ApiError::from_db)?;

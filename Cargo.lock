@@ -387,6 +387,7 @@ dependencies = [
 name = "colophon-bench"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "colophon-api",
  "colophon-auth",
  "colophon-domain",
  "criterion",

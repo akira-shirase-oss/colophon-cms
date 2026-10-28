@@ -32,6 +32,7 @@ mod shape;
 pub mod state;
 pub mod studio;
 mod tokens;
+mod type_cache;
 mod valkey;
 pub mod version;
 mod visibility;
@@ -47,6 +48,7 @@ pub use error::{ApiError, ErrorCode, ErrorDetails, PublicError};
 pub use health::{CheckState, Dependency, Readiness, ReadinessReport, Status};
 pub use middleware::{HttpLimits, REQUEST_ID_HEADER};
 pub use state::{AppState, Services, SessionSettings};
+pub use type_cache::ContentTypeCache;
 pub use version::API_VERSIONS;
 
 /// The complete router: the routes, a fallback that answers with the error envelope, and the

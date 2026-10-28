@@ -286,9 +286,11 @@ What they showed:
    stored definition as text and parses it into a `Value`, then a `ContentType`, on every read and save. For the
    modelling page that is 22 µs, four times its validation; for the 100-field type, 303 µs. A profile of
    `ContentType::parse` on that type (macOS `sample`) put 49% of it in `regex::RegexBuilder::build`: each text
-   pattern (D-069) is compiled again per request, then dropped. The remedy is a bounded cache of parsed definitions
-   in `colophon-api`, keyed by the definition's hash; versions are insert-only, so a cached one can never be stale.
-   It needs its own tests and a decision about its bound, so it is left for its own change.
+   pattern (D-069) is compiled again per request, then dropped. Fixed by D-078: a bounded cache of parsed types in
+   `colophon-api`, keyed by the SHA-256 of the definition text read. A hit is `content_type/cached_*`: 0.12 µs for
+   articles, 0.59 µs for the page and 6.5 µs for the 100-field type, against 1.89, 20.4 and 281 µs parsing, mostly
+   the hash itself (`perf/results/2026-10-28T135828Z-bench-apple-m2-pro-12c.json`, same machine, load average 12 to
+   8).
 2. **Rebuilding a role was quadratic in its permissions.** `Policy::new` looked for each permission among those
    merged so far, and every signed-in request rebuilds its role. Fixed in `d0b0af7` (sort, then merge neighbours):
    96.1 µs to 14.4 µs for 500 permissions, same machine, three rounds

@@ -189,6 +189,7 @@ pub async fn run(
         trusted_origins,
         allow_private_destinations: config.listen_addr.ip().is_loopback(),
         cache: delivery_cache(&config)?,
+        content_types: colophon_api::ContentTypeCache::new(),
     };
     let admission = colophon_api::admission::Admission::new(
         config.admission.clone(),

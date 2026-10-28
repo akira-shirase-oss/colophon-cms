@@ -15,6 +15,7 @@
 
 use std::{collections::BTreeMap, hint::black_box};
 
+use colophon_api::ContentTypeCache;
 use colophon_auth::tokens;
 use colophon_bench::{
     BLOG_POST_FIXTURE, CSRF_TOKEN, SESSION_TOKEN, article, big_type, changeset_items, custom_role,
@@ -101,21 +102,31 @@ fn content_type(c: &mut Criterion) {
     // Every entry request reads its collection's definition from Postgres as text and parses it
     // (colophon-api `entries::content_type`): JSON text to Value, then ContentType::parse, which
     // also compiles each text pattern.
-    for (name, definition) in [
-        ("load_articles", ContentType::articles()),
-        ("load_page", page_definition()),
+    let stored = [
+        ("articles", ContentType::articles()),
+        ("page", page_definition()),
         (
-            "load_big",
+            "big",
             ContentType::parse(&big_type()).expect("the big type is valid"),
         ),
-    ] {
-        let stored = definition.canonical_json();
-        group.bench_function(name, |b| {
+    ]
+    .map(|(name, definition)| (name, definition.canonical_json()));
+    for (name, text) in &stored {
+        group.bench_function(format!("load_{name}"), |b| {
             b.iter(|| {
                 let value: Value =
-                    serde_json::from_str(black_box(&stored)).expect("stored text is JSON");
+                    serde_json::from_str(black_box(text)).expect("stored text is JSON");
                 ContentType::parse(&value)
             });
+        });
+    }
+    // Since D-078 the entry path parses through ContentTypeCache: a hit hashes the text it read
+    // and clones an Arc.
+    let cache = ContentTypeCache::new();
+    for (name, text) in &stored {
+        cache.parse(text).expect("the definition is valid");
+        group.bench_function(format!("cached_{name}"), |b| {
+            b.iter(|| cache.parse(black_box(text)));
         });
     }
 
