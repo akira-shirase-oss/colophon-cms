@@ -296,7 +296,7 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "colophon-api"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -304,6 +304,7 @@ dependencies = [
  "colophon-auth",
  "colophon-db",
  "colophon-domain",
+ "colophon-version",
  "futures-util",
  "http-body",
  "http-body-util",
@@ -321,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-auth"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
@@ -336,11 +337,13 @@ dependencies = [
 
 [[package]]
 name = "colophon-cli"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "clap",
  "colophon-db",
+ "colophon-version",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "tokio",
@@ -349,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-db"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "colophon-domain",
  "colophon-sim",
@@ -362,7 +365,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-domain"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "jiff",
  "serde_json",
@@ -372,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "colophon-server"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -381,6 +384,7 @@ dependencies = [
  "colophon-auth",
  "colophon-db",
  "colophon-domain",
+ "colophon-version",
  "colophon-worker",
  "jiff",
  "redis",
@@ -399,14 +403,18 @@ dependencies = [
 
 [[package]]
 name = "colophon-sim"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "colophon-domain",
 ]
 
 [[package]]
+name = "colophon-version"
+version = "0.1.0-alpha.1"
+
+[[package]]
 name = "colophon-worker"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "aws-lc-rs",
  "colophon-db",

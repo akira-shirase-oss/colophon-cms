@@ -18,6 +18,7 @@ clap.workspace = true
 colophon-api.workspace = true
 colophon-auth.workspace = true
 colophon-db.workspace = true
+colophon-version.workspace = true
 colophon-worker.workspace = true
 redis.workspace = true
 thiserror.workspace = true
@@ -27,6 +28,10 @@ tokio-util.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
+
+[build-dependencies]
+# build.rs stamps the commit and build date (D-062).
+colophon-version = { workspace = true, features = ["stamp"] }
 
 [dev-dependencies]
 # Local times for the scheduled-publishing tests (tests/schedules.rs).

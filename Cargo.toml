@@ -3,7 +3,9 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.0.0"
+# One semantic version for the server, worker, CLI, SDK and MCP server (D-062); the policy is in
+# docs/modules/19-oss.md, "Versions". The release workflow refuses a tag that doesn't match it.
+version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.99"
 repository = "https://github.com/akira-shirase-oss/colophon-cms"
@@ -18,6 +20,7 @@ colophon-api = { path = "crates/colophon-api" }
 colophon-auth = { path = "crates/colophon-auth" }
 colophon-sim = { path = "crates/colophon-sim" }
 colophon-worker = { path = "crates/colophon-worker" }
+colophon-version = { path = "crates/colophon-version" }
 
 # External crates: versions live here only (rust-mastery chapter 15). Minimal features;
 # one async runtime (Tokio); no TLS stack until a feature needs one.
@@ -32,6 +35,8 @@ http-body-util = "0.1.5"
 jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 redis = { version = "1.8", default-features = false, features = ["tokio-comp"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "form", "rustls"] }
+# The CLI compares its version with the server's by SemVer precedence (D-062).
+semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "uuid", "time"] }

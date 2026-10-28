@@ -79,12 +79,17 @@ fn an_undocumented_role_is_a_usage_error_that_lists_the_valid_ones() {
 }
 
 #[test]
-fn version_prints_name_and_version_and_exits_zero() {
+fn version_prints_the_version_the_commit_and_the_build_date() {
     let out = server(&["--version"], &[]);
 
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
-        format!("colophon-server {}", env!("CARGO_PKG_VERSION"))
+        format!(
+            "colophon-server {} (commit {}, built {})",
+            env!("CARGO_PKG_VERSION"),
+            env!("COLOPHON_COMMIT"),
+            env!("COLOPHON_BUILD_DATE")
+        )
     );
 }

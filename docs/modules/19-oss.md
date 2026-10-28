@@ -60,6 +60,26 @@ keep.
 - Daily RustSec/OSV advisory checks and `cargo deny`, triaged by a human by severity.
 - OpenSSF Scorecard is used as a diagnostic, not a certification.
 
+### Versions (D-062, built in milestone V)
+- **One version.** `version` in the root `Cargo.toml`'s `[workspace.package]` is the version of every crate, so the
+  server, worker and CLI always share it; the npm packages (`@colophon-cms/cli` and its platform packages, later
+  `@colophon-cms/sdk`) carry the same one, and the release tag is `v` plus it.
+- **Semantic versioning 2.0.** Before 1.0 a minor release may change `/api/v1` (SemVer item 4) and a patch release
+  may not. From 1.0, `/api/vN` is the contract: a breaking change ships as a new API version, served beside the old
+  one for the support window below.
+- **Pre-releases.** `0.1.0-alpha.N` until P6's v0.1 gate, then `-beta.N` and `-rc.N` as needed, then `0.1.0`. The
+  version is `0.1.0-alpha.1` since milestone V.
+- **Raising it:** change `[workspace.package] version` in one commit, then tag that commit `v<version>`.
+- **What every binary reports.** `--version` prints `<version> (commit <sha>, built <YYYY-MM-DD>)`, and the server
+  serves the same at `GET /version` with the API versions it serves ([api](04-api.md)). A build script stamps it
+  through `crates/colophon-version`. The commit comes from `COLOPHON_COMMIT` if set (a packager building a source
+  tarball), else `.cargo_vcs_info.json` (a crate built from a registry), else `git rev-parse HEAD` when that
+  repository tracks the package, else `unknown`. The date is `SOURCE_DATE_EPOCH` when set (the release workflow sets
+  it to the tagged commit's time, so the stamp is reproducible), else the day the stamp was made, which in a
+  development build can be earlier than the latest compile. Only the two binaries' crates rebuild on a new commit.
+- **Compatibility.** The CLI checks the server's version first and explains a mismatch in plain words
+  ([cli](08-cli.md), "Versions"). The SDK and the MCP server will follow the same rule when they exist.
+
 ### Releases (spec §35)
 - Semantic versioning.
 - Each release ships:

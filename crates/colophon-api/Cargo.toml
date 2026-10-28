@@ -18,6 +18,8 @@ base64.workspace = true
 colophon-auth.workspace = true
 colophon-db.workspace = true
 colophon-domain.workspace = true
+# The build stamp `/version` reports; the server binary makes it (D-062).
+colophon-version.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
 redis.workspace = true

@@ -14,11 +14,17 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 colophon-db.workspace = true
+colophon-version.workspace = true
 reqwest.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util"] }
 uuid.workspace = true
+
+[build-dependencies]
+# build.rs stamps the commit and build date (D-062).
+colophon-version = { workspace = true, features = ["stamp"] }
 
 [dev-dependencies]
 serde_json.workspace = true

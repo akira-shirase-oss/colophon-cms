@@ -125,6 +125,14 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 | 503 | Dependency or capacity unavailable, with `Retry-After` |
 
 ### Contracts and discovery
+- **`GET /version`** (D-062, built in milestone V): `{"version", "commit", "build_date", "api": ["v1"]}`, the
+  release this server is, the git commit and day it was built from (`unknown` when the build couldn't tell), and
+  the API versions it serves, oldest first (`colophon_api::API_VERSIONS`). It is unauthenticated and `no-store`, like
+  the health endpoints, because a client checks it before signing in; it names versions only, never hosts or
+  configuration. Its shape never changes: fields may be added, none removed or renamed, so a client of any version can
+  read it. The server binary stamps the build (`crates/colophon-version`, module [19](19-oss.md), "Versions") and
+  hands it to the router in `AppState::build`. The CLI reads it to say plainly when it is too old or too new for the
+  server ([cli](08-cli.md), "Versions"); a server from before it answers the 404 envelope, which the CLI recognises.
 - An OpenAPI document is exported from the code (D-027, `utoipa`). The TypeScript client ([sdk](13-sdk.md)) is generated from it
   and tested against the server in CI.
 - Schema discovery returns only the collections and fields the caller may access.
@@ -154,7 +162,7 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 ## Interfaces
 
-- HTTP: `/api/v1/*`, `/auth/*`, `/me`, `/livez`, `/readyz`.
+- HTTP: `/api/v1/*`, `/auth/*`, `/me`, `/livez`, `/readyz`, `/version`.
 - The OpenAPI document (a build artifact).
 - `router(state) -> Router`, used by colophon-server.
 
@@ -170,7 +178,8 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 ## Tests and evidence
 
-- In-process `oneshot` tests for every route and every error class.
+- In-process `oneshot` tests for every route and every error class; `/version`'s shape and its unstamped
+  fallback are in `tests/http.rs`.
 - Contract tests of the OpenAPI document against the server.
 - The parity gate: Studio-API, CLI and SDK run the same scenario and produce equivalent records.
 - Cursor fuzzing: tampered cursors, cursors from another project or query shape.

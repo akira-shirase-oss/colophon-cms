@@ -87,6 +87,30 @@ colophon export --env production --out export-directory
 - It is the only path with direct infrastructure access, and it requires a distinct mode.
 - Normal commands never need a production database password.
 
+### Versions (D-062, built in milestone V)
+- `colophon --version` (and `-V`) prints the version, the git commit and the build date:
+  `colophon 0.1.0-alpha.1 (commit 50558a7…, built 2026-10-28)`. `colophon-server --version` prints the same line.
+  The stamp comes from the binary's build script (`crates/colophon-version`; module [19](19-oss.md), "Versions"); a
+  build without git and without `COLOPHON_COMMIT` says `commit unknown` rather than inventing one.
+- Before it does anything else, every command that talks to a server (`login`, `whoami`, `content create`,
+  `content list`) reads the server's `GET /version` ([api](04-api.md)) without sending a token, and stops with a
+  plain explanation when this colophon doesn't fit that server. The rule (`src/compat.rs`), in order:
+  1. the server serves the API version this colophon speaks (`v1`); otherwise this colophon is too old (the server
+     only serves newer API versions) or too new (only older ones);
+  2. before 1.0, both are on the same minor line (any 0.1.x with any 0.1.x, pre-releases included), because until
+     1.0 a minor release may change the API (SemVer item 4); a server on a later line means this colophon is too old,
+     an earlier line too new. From 1.0 on, `/api/vN` is the contract and a newer server that still serves `v1` fits;
+  3. the server is at least `OLDEST_SERVER` (now 0.1.0-alpha.1), the oldest with every route this colophon calls;
+     raise it in the change that makes a command call something older servers lack.
+- A server that answers `/version` with the 404 envelope predates version reports, so this colophon is too new for
+  it. An answer that isn't a version report at all exits 6 ("is it a Colophon server?"); no answer exits 5.
+- The message names both versions and says what to do, for example: `colophon 0.1.0 is too old for the server at
+  https://cms.example, which runs 0.2.0: before 1.0 each minor release may change the API, so colophon and the server
+  must share a minor version, and the server is on a later one (0.1 here, 0.2 there). Install colophon 0.2.0 to match
+  it (…/releases).`
+- `logout` skips the check on purpose: signing out must work even against a server this colophon can't otherwise use.
+- `doctor` doesn't check versions yet (it reads `/readyz` only).
+
 ### Output (spec §09, §11)
 - Default output is for humans.
 - `--json` writes exactly one versioned JSON result to stdout.
@@ -98,7 +122,7 @@ colophon export --env production --out export-directory
 | Code | Meaning |
 |---|---|
 | 0 | Success (including `202 accepted`, reported as `accepted`) |
-| 2 | Usage or validation error |
+| 2 | Usage or validation error, including a colophon too old or too new for the server (retrying can't help) |
 | 3 | Unauthorized or denied |
 | 4 | Conflict |
 | 5 | Transient failure or dependency unavailable |
@@ -145,6 +169,11 @@ colophon export --env production --out export-directory
 
 ## Tests and evidence
 
+- Versions (milestone V): the compatibility rule's unit tests (`src/compat.rs`: both directions of every reason,
+  pre-releases, crossing 1.0, odd API lists, loose report parsing, the exact message); `tests/compat.rs` runs the
+  binary against canned servers (a later line, an earlier line, no `/version`, a dropped API version, a reply that
+  isn't a report, a fitting server that is then used, `whoami` and `content list` checking without sending the token,
+  an unreachable server); `tests/exit_codes.rs` checks that `--version` prints the version, commit and date.
 - `insta` snapshots of every `--json` result shape.
 - An exit-code matrix test for every error class.
 - Contract tests against a running server.
