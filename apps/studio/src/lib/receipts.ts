@@ -2,6 +2,7 @@
 // receipt. "Verified" always says where: a probe proves what it saw, from where it looked.
 
 import type { Delivery, Release } from './api.ts';
+import { INTERNAL_TERMS } from './words.ts';
 
 export function labelText(release: Pick<Release, 'label' | 'locations'>): string {
 	switch (release.label) {
@@ -25,6 +26,22 @@ export function deliveryText(delivery: Delivery): string {
 		case 'pending':
 			return delivery.kind === 'probe' ? 'still looking' : 'on its way';
 		case 'failed':
-			return `failed${delivery.last_error ? `: ${delivery.last_error}` : ''}`;
+			return `failed${delivery.last_error ? `: ${failureText(delivery.last_error)}` : ''}`;
 	}
+}
+
+/** Why an attempt to reach the website failed, in plain words, from what the worker recorded:
+ *  `HTTP 404`, `timed out`, `could not connect`, a probe's "saw release 6, not yet 7"… */
+export function failureText(error: string): string {
+	const status = /^HTTP (\d{3})$/.exec(error.trim());
+	if (status?.[1] !== undefined) {
+		const code = Number(status[1]);
+		return code >= 500 ? `your website had a problem (HTTP ${code})` : `your website refused it (HTTP ${code})`;
+	}
+	if (error === 'timed out') return "your website didn't answer in time";
+	if (error === 'could not connect') return "couldn't reach your website";
+	const behind = /^saw release (\d+), not yet (\d+)$/.exec(error);
+	if (behind?.[1] !== undefined) return `the live site still showed release ${behind[1]}`;
+	if (error === 'the answer names no release') return "the page it checked doesn't say which release it shows";
+	return INTERNAL_TERMS.test(error) ? 'it was refused' : error;
 }

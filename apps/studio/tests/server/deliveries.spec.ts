@@ -6,7 +6,7 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test } from '@playwright/test';
-import { newProject, signIn, violations } from './helpers.ts';
+import { internalTerms, newEntry, newProject, publishThroughApi, shot, signIn, violations } from './helpers.ts';
 
 interface Seen {
 	key: string;
@@ -190,5 +190,52 @@ test('a probe added in Settings verifies a release, and its receipt shows what i
 		expect(await violations(page)).toEqual([]);
 	} finally {
 		checked.close();
+	}
+});
+
+/** A webhook receiver on 127.0.0.1 that answers 404 to everything: a site that refuses. */
+async function refuser(): Promise<{ url: string; close: () => void }> {
+	const server = createServer((request, response) => {
+		request.resume();
+		request.on('end', () => response.writeHead(404).end());
+	});
+	await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+	const { port } = server.address() as AddressInfo;
+	return { url: `http://127.0.0.1:${port}/hook`, close: () => server.close() };
+}
+
+test('a website connection that refuses makes the release “Needs attention”, with what failed and what to do, in plain words', async ({ page }) => {
+	const hook = await refuser();
+	try {
+		await signIn(page);
+		const project = await newProject(page);
+		await page.goto(`/studio/projects/${project}/settings`);
+		await page.getByLabel('Connection name').fill('Site rebuild');
+		await page.getByLabel('Webhook URL (https)').fill(hook.url);
+		await page.getByRole('button', { name: 'Add website connection' }).click();
+		await expect(page.getByTestId('destinations')).toContainText('Site rebuild');
+		await publishThroughApi(page, project, 'Refused', [await newEntry(page, project, 'Refused')]);
+
+		await page.goto(`/studio/projects/${project}/releases`);
+		const label = page.locator('[data-generation="1"]').getByTestId('label');
+		await expect(label).toHaveAttribute('data-label', 'needs_attention', { timeout: 15_000 });
+		await expect(page.getByTestId('delivery')).toContainText('Site rebuild: failed (your website refused it (HTTP 404))');
+		expect(await internalTerms(page)).toEqual([]);
+		await label.click();
+
+		await expect(page.getByTestId('receipt-label')).toHaveText('Needs attention');
+		const attention = page.getByTestId('attention');
+		await expect(attention).toContainText('Site rebuild gave up on this release: your website refused it (HTTP 404).');
+		await expect(attention).toContainText('your website may not show it yet');
+		await expect(attention).toContainText('Publish again');
+		await expect(page.getByTestId('deliveries')).toContainText('failed: your website refused it (HTTP 404)');
+		await shot(page, 'receipt-needs-attention');
+		expect(await violations(page)).toEqual([]);
+		expect(await internalTerms(page)).toEqual([]);
+		await attention.getByTestId('fix-connections').click();
+		await expect(page).toHaveURL(/\/settings#website-connections$/);
+		await expect(page.getByTestId('destinations')).toContainText('Site rebuild');
+	} finally {
+		hook.close();
 	}
 });

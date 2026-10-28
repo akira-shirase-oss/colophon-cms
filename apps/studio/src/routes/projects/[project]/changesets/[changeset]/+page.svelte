@@ -143,7 +143,7 @@
 				{:else if shown.status.state === 'changes_requested'}
 					<span>by {shown.status.by}</span>
 				{:else if shown.status.state === 'published'}
-					<span>as <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases', { project })} data-testid="release-link">release {shown.status.generation}</a></span>
+					<span>as <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(shown.status.generation) })} data-testid="release-link">release {shown.status.generation}</a></span>
 				{/if}
 			</span>
 		{/snippet}

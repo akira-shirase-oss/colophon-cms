@@ -44,7 +44,10 @@ test('an approved changeset is published as release 1, and a stale tab is told a
 	await expect(status(page)).toHaveAttribute('data-state', 'published');
 	await expect(page.getByTestId('release-link')).toHaveText('release 1');
 
+	// The release link opens its receipt; the Releases page lists it too.
 	await page.getByTestId('release-link').click();
+	await expect(page.getByTestId('receipt-label')).toBeVisible();
+	await page.getByTestId('releases-link').click();
 	await expect(page.getByTestId('current-generation')).toContainText('Live: release 1');
 	await expect(page.getByTestId('releases')).toContainText('Opening day');
 	expect(await violations(page)).toEqual([]);
@@ -101,7 +104,12 @@ test('an article is taken down through a reviewed changeset, and delivery says i
 	await page.getByRole('button', { name: 'Publish', exact: true }).click();
 	await expect(page.getByTestId('release-link')).toHaveText('release 2');
 
+	// A published request links to its release's receipt.
 	await page.getByTestId('release-link').click();
+	await expect(page).toHaveURL(new RegExp(`/studio/projects/${project}/releases/2$`));
+	await expect(page.getByRole('heading', { level: 1 })).toContainText('Release 2');
+	await expect(page.getByText('1 taken down')).toBeVisible();
+	await page.getByTestId('releases-link').click();
 	await expect(page.locator('[data-generation="2"]').getByTestId('unpublished')).toHaveText('1 unpublished');
 	const after = await page.evaluate(
 		async ({ list, one }) => {

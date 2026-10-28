@@ -8,16 +8,17 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery } from '@tanstack/svelte-query';
+	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
-	import { type Delivery, getReceipt } from '#lib/api.ts';
+	import { type Delivery, getReceipt, may } from '#lib/api.ts';
 	import { markReceiptSeen } from '#lib/firstRun.ts';
-	import { deliveryText } from '#lib/receipts.ts';
-	import { ago } from '#lib/queries.ts';
+	import { deliveryText, failureText } from '#lib/receipts.ts';
+	import { ago, projectQuery } from '#lib/queries.ts';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import ReleaseLabel from '#lib/shell/ReleaseLabel.svelte';
 	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
-	import { CONNECTION_KIND, PUBLISH_REQUEST } from '#lib/words.ts';
+	import { CONNECTION_KIND, PUBLISH_REQUEST, WEBSITE_CONNECTIONS } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const generation = $derived(Number(page.params.generation ?? '0'));
@@ -29,7 +30,11 @@
 	}));
 
 	const when = (at: string) => new Date(at).toLocaleString();
+	const mine = createQuery(() => projectQuery(project));
+	const fixes = $derived(may(mine.data, 'destinations.manage'));
+	const failed = $derived((receipt.data?.deliveries ?? []).filter((delivery) => delivery.state === 'failed'));
 	const named = (id: string) => receipt.data?.deliveries.find((delivery) => delivery.destination_id === id)?.name ?? 'a site check';
+	const deliveryTextShort = (delivery: Delivery) => (delivery.last_error ? failureText(delivery.last_error) : 'it failed');
 	const DOT: Record<Delivery['state'], string> = { done: 'bg-live', covered: 'bg-live', pending: 'bg-pending', failed: 'bg-attention' };
 	// The first-run checklist's last step is looking at a receipt (step 3.7).
 	onMount(() => markReceiptSeen(project));
@@ -72,6 +77,34 @@
 			<p class="text-sm text-muted-foreground">On its way: the label settles by itself.</p>
 		{/if}
 	</div>
+
+	{#if shown.label === 'needs_attention'}
+		<!-- Needs attention always says what failed and the safe next step (spec §05's labels). A
+		     retry button for one delivery comes with the API's retry (B5). -->
+		<section class="mb-8 rounded-xl border border-attention/40 bg-attention-soft/60 p-5" aria-labelledby="attention-heading" data-testid="attention">
+			<h2 id="attention-heading" class="font-semibold text-attention-ink">What needs attention</h2>
+			<p class="mt-1 text-sm text-attention-ink">
+				{#if failed.length > 0}
+					{failed.map((delivery) => delivery.name).join(', ')} gave up on this release:
+					{failed.map((delivery) => deliveryTextShort(delivery)).join('; ')}.
+				{:else}
+					A website connection gave up on this release.
+				{/if}
+				It is published in Colophon, and anything that reads Colophon directly has it, but your website may not show it yet.
+			</p>
+			<ol class="mt-3 list-decimal space-y-1 pl-5 text-sm text-attention-ink">
+				<li>Check the connection's address, and that your website is up.</li>
+				<li>Publish again: the next release carries this one's changes, and the label of this receipt follows when it is delivered.</li>
+			</ol>
+			<div class="mt-4">
+				{#if fixes}
+					<Button variant="outline" href={resolve('/projects/[project]/settings', { project }) + '#website-connections'} data-testid="fix-connections">Open {WEBSITE_CONNECTIONS}</Button>
+				{:else}
+					<p class="text-sm text-attention-ink">Ask someone who manages {WEBSITE_CONNECTIONS} (an owner or developer) to check them.</p>
+				{/if}
+			</div>
+		</section>
+	{/if}
 
 	<div class="grid gap-10 lg:grid-cols-2">
 		<section aria-labelledby="destinations-heading">

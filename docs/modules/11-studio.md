@@ -121,6 +121,13 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     screen. `tests/server/journey.spec.ts` now opens every project screen at 390x844 (home, overview, a collection,
     the editor, publish requests, a request waiting for review, releases, a receipt, members, settings): no sideways
     scroll, axe in light and dark, plain words outside Settings, Publish and Approve in view without scrolling.
+  - **Receipt next steps**: a receipt that *Needs attention* says which website connection gave up and why in plain
+    words (`failureText` in `lib/receipts.ts`: "your website refused it (HTTP 404)", "couldn't reach your website"…),
+    that the release is published in Colophon but the website may not show it, and what to do (check the connection,
+    publish again: the next release carries this one's changes), with *Open website connections* for roles that
+    manage them. Releases says failures the same way and shows schedule and delivery load errors. A published
+    request's "release N" opens that release's receipt. A retry button per delivery waits for the API's retry (B5).
+    Test: `tests/server/deliveries.spec.ts` (a webhook answering 404).
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

@@ -18,6 +18,7 @@
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
+	import { failureText } from '#lib/receipts.ts';
 	import ReleaseLabel from '#lib/shell/ReleaseLabel.svelte';
 	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
 
@@ -120,6 +121,13 @@
 		{/if}
 	</p>
 
+	{#if schedules.isError}
+		<div class="mb-6"><Problem error={schedules.error} what="what is scheduled" retry={() => schedules.refetch()} /></div>
+	{/if}
+	{#if jobs.isError}
+		<div class="mb-6"><Problem error={jobs.error} what="how each release reached your website" retry={() => jobs.refetch()} /></div>
+	{/if}
+
 	{#if upcoming.length > 0 || recent.length > 0}
 		<section class="mb-8" aria-labelledby="scheduled-heading" data-testid="schedules">
 			<h2 id="scheduled-heading" class="mb-3 text-base font-semibold">Scheduled</h2>
@@ -184,7 +192,7 @@
 								<li class="flex items-center gap-2" data-testid="delivery" data-status={job.status} class:text-destructive={job.status === 'failed'}>
 									<span class="size-1.5 rounded-full {DOT[job.status]}" class:breathe={['pending', 'running', 'retrying'].includes(job.status)} aria-hidden="true"></span>
 									{job.destination_name}: {STATUS[job.status]}{job.attempts > 1 ? ` after ${job.attempts} attempts` : ''}{job.last_error && job.status !== 'succeeded'
-										? ` (${job.last_error})`
+										? ` (${failureText(job.last_error)})`
 										: ''}
 								</li>
 							{/each}
