@@ -2,13 +2,17 @@
   The Studio's front door (step 3.7, D-059): signed out, sign in or create an account; signed in
   on an installation nobody has set up yet, enter the setup code its server printed (D-061);
   then your projects. An administrator with none is offered their first; anyone else learns that
-  projects are joined by invitation, and what to ask for.
+  projects are joined by invitation, and what to ask for. Opened from the server's setup link
+  (`#setup=<code>`, D-082), it says this Colophon is new, makes Create an account the first
+  choice, and fills the code in after signing in.
 -->
 <script lang="ts">
 	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
+	import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
 	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 	import MailIcon from '@lucide/svelte/icons/mail';
 	import PlusIcon from '@lucide/svelte/icons/plus';
+	import { replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
@@ -19,6 +23,7 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { ApiError, claimSetup, me, signInUrl, signUpUrl } from '#lib/api.ts';
 	import { lastProject } from '#lib/lastProject.ts';
+	import { forgetSetupCode, keepSetupCode, keptSetupCode, setupCodeFrom } from '#lib/setupLink.ts';
 	import MyWork from '#lib/MyWork.svelte';
 	import NewProject from '#lib/NewProject.svelte';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
@@ -30,10 +35,33 @@
 	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
 	let creating = $state(false);
 
-	// The setup code (D-061): typed or pasted from the server's terminal.
-	let code = $state('');
+	// The setup code (D-061): typed or pasted from the server's terminal, or filled in from the setup
+	// link the server printed beside it (D-082). The link's code is kept in this tab through signing
+	// in, and out of the address bar, so it isn't left in the history or a bookmark.
+	// Read whenever the address's fragment changes, since a link pasted into a tab already on this
+	// page changes only the fragment and doesn't open the page afresh.
+	const keptAtStart = keptSetupCode();
+	let kept = $state(keptAtStart);
+	let code = $state(keptAtStart ?? '');
+	$effect(() => {
+		const linked = setupCodeFrom(page.url.hash);
+		if (linked === null) return;
+		keepSetupCode(linked);
+		kept = linked;
+		code = linked;
+		replaceState(`${page.url.pathname}${page.url.search}`, {});
+	});
+	const fromLink = $derived(kept !== null && code.trim().toUpperCase() === kept);
 	let setupError = $state('');
 	let setupBusy = $state(false);
+	function forget() {
+		forgetSetupCode();
+		kept = null;
+	}
+	// Once anyone is an administrator, a kept code is dead: forget it.
+	$effect(() => {
+		if (who.data?.installation.has_administrator === true && kept !== null) forget();
+	});
 
 	async function claim(event: SubmitEvent) {
 		event.preventDefault();
@@ -42,8 +70,11 @@
 		try {
 			await claimSetup(code);
 			code = '';
+			forget();
 			await queryClient.invalidateQueries({ queryKey: ['me'] });
 		} catch (failure) {
+			// The link's own code refused (used, expired, or from an older start): it won't work later either.
+			if (failure instanceof ApiError && failure.reason === 'setup_code_invalid' && fromLink) forget();
 			setupError =
 				failure instanceof ApiError && failure.reason === 'setup_code_invalid'
 					? "That code isn't right, or it was used or has expired. Copy the code the server printed when it last started; restarting the server prints a new one."
@@ -82,12 +113,28 @@
 			</p>
 		{/if}
 		<h1 class="text-3xl font-semibold tracking-tight">Welcome to Colophon</h1>
-		<p class="mt-3 text-muted-foreground" data-testid="signed-out">Write, review and publish your website's content, and see what reached your readers.</p>
-		<div class="mt-8 flex flex-wrap justify-center gap-3">
-			<Button href={signInUrl(resolve('/'))} data-sveltekit-reload data-testid="sign-in">Sign in<ArrowRightIcon data-icon="inline-end" /></Button>
-			<Button variant="outline" href={signUpUrl(resolve('/'))} data-sveltekit-reload data-testid="create-account">Create an account</Button>
-		</div>
-		<p class="mt-6 text-sm text-muted-foreground">New here? Create an account, then ask the person who runs this Colophon to invite you to a project.</p>
+		{#if kept !== null}
+			<!-- Opened from the server's setup link, which it prints only while nobody is an administrator. -->
+			<div data-testid="new-installation">
+				<p class="mt-3 text-pretty text-muted-foreground" data-testid="signed-out">
+					This Colophon is new. Create the first account; you'll become its administrator with the setup code the server printed.
+				</p>
+				<div class="mt-8 flex flex-wrap justify-center gap-3">
+					<Button href={signUpUrl(resolve('/'))} data-sveltekit-reload data-testid="create-account">Create an account<ArrowRightIcon data-icon="inline-end" /></Button>
+					<Button variant="outline" href={signInUrl(resolve('/'))} data-sveltekit-reload data-testid="sign-in">Sign in</Button>
+				</div>
+				<p class="mt-6 text-sm text-pretty text-muted-foreground">
+					Your link carries the setup code, so you won't need to type it. Already have an account here? Sign in instead.
+				</p>
+			</div>
+		{:else}
+			<p class="mt-3 text-muted-foreground" data-testid="signed-out">Write, review and publish your website's content, and see what reached your readers.</p>
+			<div class="mt-8 flex flex-wrap justify-center gap-3">
+				<Button href={signInUrl(resolve('/'))} data-sveltekit-reload data-testid="sign-in">Sign in<ArrowRightIcon data-icon="inline-end" /></Button>
+				<Button variant="outline" href={signUpUrl(resolve('/'))} data-sveltekit-reload data-testid="create-account">Create an account</Button>
+			</div>
+			<p class="mt-6 text-sm text-muted-foreground">New here? Create an account, then ask the person who runs this Colophon to invite you to a project.</p>
+		{/if}
 	</div>
 {:else if !who.data.installation.has_administrator}
 	<div class="mx-auto max-w-xl py-8" data-testid="setup">
@@ -114,6 +161,11 @@
 				/>
 				<Button type="submit" disabled={setupBusy || code.trim() === ''}>{setupBusy ? 'Checking…' : 'Become the administrator'}</Button>
 			</div>
+			{#if fromLink}
+				<p class="flex items-center gap-1.5 text-sm font-medium" role="status" data-testid="setup-from-link">
+					<CircleCheckIcon class="size-4 text-live" aria-hidden="true" />Code filled in from your link.
+				</p>
+			{/if}
 			<p class="text-sm text-muted-foreground">It looks like <span class="font-mono">7K3QD-0ZX1V-…</span>, works once, and expires an hour after the server started.</p>
 			{#if setupError}<p role="alert" class="text-sm text-destructive" data-testid="setup-error">{setupError}</p>{/if}
 		</form>

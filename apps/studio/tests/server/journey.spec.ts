@@ -1,6 +1,7 @@
-// The first-run journey (step 3.7, D-059, D-061), on a brand-new installation: its own database,
-// migrated and never bootstrapped, and its own server, whose setup code is read from its terminal
-// as an operator would. A new person makes an account, becomes the administrator with the code,
+// The first-run journey (step 3.7, D-059, D-061, D-082), on a brand-new installation: its own
+// database, migrated and never bootstrapped, and its own server, whose setup link is read from its
+// terminal as an operator would. A new person opens it, makes an account, becomes the administrator
+// with the code the link filled in,
 // creates a project from the blog starting point, writes and publishes the first article in one
 // click, sees its receipt, and invites a teammate, who makes an account from the link, joins as
 // an editor and asks for review; the owner approves and publishes. Every screen passes axe in
@@ -79,6 +80,13 @@ function setupCode(): string {
 	return code;
 }
 
+/** The link the server printed beside it, which fills the code in (D-082). */
+function setupLink(): string {
+	const link = /(\S+#setup=\S+)/.exec(printed)?.[1];
+	if (link === undefined) throw new Error('no setup link');
+	return link;
+}
+
 let shot = 0;
 /** One screen of the journey: axe and plain words in light and dark, and a photograph of each. */
 async function screen(page: Page, name: string, { words = true }: { words?: boolean } = {}) {
@@ -126,7 +134,23 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 	await test.step('a new installation greets a signed-out visitor', async () => {
 		await owner.goto('/studio/');
 		await expect(owner.getByTestId('signed-out')).toBeVisible();
+		// Without the setup link, nothing signed out says whether anyone runs it yet.
+		await expect(owner.getByTestId('new-installation')).toHaveCount(0);
 		await screen(owner, 'welcome');
+	});
+
+	await test.step('the setup link from the terminal says this Colophon is new, with Create an account first', async () => {
+		expect(setupLink()).toBe(`${ORIGIN}/studio/#setup=${setupCode()}`);
+		await owner.goto(setupLink().slice(ORIGIN.length));
+		await expect(owner.getByTestId('new-installation')).toContainText(
+			"This Colophon is new. Create the first account; you'll become its administrator with the setup code the server printed."
+		);
+		await expect(owner.getByTestId('create-account')).toHaveClass(/\bbg-primary\b/);
+		await expect(owner.getByTestId('sign-in')).not.toHaveClass(/\bbg-primary\b/);
+		// The code leaves the address bar (and the history) and waits in this tab for the sign-up.
+		await expect(owner).toHaveURL(`${ORIGIN}/studio/`);
+		expect(await owner.evaluate(() => sessionStorage.getItem('colophon-setup-code'))).toBe(setupCode());
+		await screen(owner, 'welcome-setup-link');
 	});
 
 	await test.step('they make an account at the identity provider', async () => {
@@ -137,16 +161,27 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await expect(owner.getByTestId('setup')).toBeVisible();
 	});
 
-	await test.step('nobody runs this Colophon yet: the setup code from the terminal makes them its administrator', async () => {
+	await test.step('nobody runs this Colophon yet: the code the link carried makes them its administrator', async () => {
 		await expect(owner.getByRole('heading', { level: 1 })).toHaveText('Finish setting up Colophon');
+		// The identity provider's redirect dropped the fragment; the tab kept the code.
+		await expect(owner.getByLabel('Setup code')).toHaveValue(setupCode());
+		await expect(owner.getByTestId('setup-from-link')).toHaveText('Code filled in from your link.');
 		await screen(owner, 'setup');
+		// Kept until used: a reload still has it.
+		await owner.reload();
+		await expect(owner.getByLabel('Setup code')).toHaveValue(setupCode());
+		// A wrong code is refused, and typing over the link's code drops the note.
 		await owner.getByLabel('Setup code').fill('AAAAA-AAAAA-AAAAA-AAAAA');
+		await expect(owner.getByTestId('setup-from-link')).toHaveCount(0);
 		await owner.getByRole('button', { name: 'Become the administrator' }).click();
 		await expect(owner.getByTestId('setup-error')).toContainText("isn't right");
+		// The code typed by hand, in lower case, works as well as the link's.
 		await owner.getByLabel('Setup code').fill(setupCode().toLowerCase());
 		await owner.getByRole('button', { name: 'Become the administrator' }).click();
 		await expect(owner.getByTestId('first-project')).toBeVisible();
 		await expect(owner.getByTestId('signed-in')).toContainText('administrator');
+		// Used: forgotten.
+		expect(await owner.evaluate(() => sessionStorage.getItem('colophon-setup-code'))).toBeNull();
 		await screen(owner, 'first-project');
 	});
 
