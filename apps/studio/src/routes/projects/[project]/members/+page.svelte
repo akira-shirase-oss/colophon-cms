@@ -31,6 +31,7 @@
 		revokeInvitation,
 		type Role
 	} from '#lib/api.ts';
+	import { plainError } from '#lib/errors.ts';
 	import { rolesQuery } from '#lib/queries.ts';
 
 	const project = $derived(page.params.project ?? '');
@@ -56,14 +57,14 @@
 	let made = $state<Invitation | null>(null);
 	let copied = $state(false);
 
-	async function act(work: () => Promise<void>): Promise<boolean> {
+	async function act(work: () => Promise<void>, doing = 'make this change'): Promise<boolean> {
 		busy = true;
 		error = '';
 		try {
 			await work();
 			return true;
 		} catch (failure) {
-			error = failure instanceof ApiError ? failure.message : String(failure);
+			error = plainError(failure, doing);
 			return false;
 		} finally {
 			busy = false;
@@ -80,12 +81,12 @@
 
 	async function setRole(select: HTMLSelectElement, identity: string, was: Role) {
 		const next = select.value as Role;
-		if (!(await act(() => changeRole(project, identity, next)))) select.value = was;
+		if (!(await act(() => changeRole(project, identity, next), 'give that role'))) select.value = was;
 		await refresh();
 	}
 
 	async function remove(identity: string) {
-		await act(() => removeMember(project, identity));
+		await act(() => removeMember(project, identity), 'remove people');
 		await refresh();
 	}
 
@@ -104,7 +105,7 @@
 		await act(async () => {
 			made = await createInvitation(project, role, label);
 			label = '';
-		});
+		}, 'invite people with that role');
 		await refresh();
 	}
 
@@ -251,7 +252,7 @@
 							variant="ghost"
 							size="sm"
 							disabled={busy}
-							onclick={() => act(() => revokeInvitation(project, invitation.id)).then(refresh)}
+							onclick={() => act(() => revokeInvitation(project, invitation.id), 'revoke invitations').then(refresh)}
 							aria-label="Revoke the invitation for {invitation.label}">Revoke</Button
 						>
 					</li>

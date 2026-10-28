@@ -18,6 +18,7 @@
 	import * as Tabs from '@colophon/ui/ui/tabs';
 	import { ApiError, createEntry, type EntryState, entryState, getContentType, may, newKey } from '#lib/api.ts';
 	import { type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
+	import { plainError } from '#lib/errors.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
 	import { oneOf } from '#lib/firstRun.ts';
 	import { ago, entriesQuery, projectQuery } from '#lib/queries.ts';
@@ -105,9 +106,7 @@
 			error =
 				failure instanceof ApiError && failure.reason === 'slug_taken'
 					? 'Another entry already uses that URL name. Give this one a different title.'
-					: failure instanceof ApiError
-						? failure.message
-						: String(failure);
+					: plainError(failure, 'create entries here');
 		} finally {
 			busy = false;
 		}

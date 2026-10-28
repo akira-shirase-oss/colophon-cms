@@ -22,6 +22,7 @@
 		type Project,
 		publishChangeset
 	} from './api.ts';
+	import { plainError } from './errors.ts';
 	import { PUBLISH_REQUEST, releaseName } from './words.ts';
 
 	let {
@@ -107,9 +108,7 @@
 					? 'Another release went live while you were publishing. Your request is approved and waiting: look at what is live now, then publish it from the request.'
 					: reason === 'stale_changeset'
 						? 'The entry changed while it was being published. Open the request to update it to the latest version.'
-						: failure instanceof ApiError
-							? failure.message
-							: String(failure);
+						: plainError(failure, oneClick ? 'publish this' : 'ask for review here');
 			outcome = { kind: 'stopped', message, request };
 		} finally {
 			step = '';

@@ -13,6 +13,7 @@
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
 	import { ApiError, cancelSchedule, type Changeset, listSchedules, type Schedule, scheduleChangeset } from '#lib/api.ts';
+	import { plainError } from '#lib/errors.ts';
 	import { ago } from '#lib/queries.ts';
 
 	let { project, changeset, canSchedule }: { project: string; changeset: Changeset; canSchedule: boolean } = $props();
@@ -90,7 +91,7 @@
 				ask = { reason, candidates };
 				choice = 'earlier';
 			} else {
-				error = failure instanceof ApiError ? failure.message : String(failure);
+				error = plainError(failure, 'schedule this');
 			}
 		} finally {
 			busy = false;
@@ -103,7 +104,7 @@
 		try {
 			await cancelSchedule(project, item.id);
 		} catch (failure) {
-			error = failure instanceof ApiError ? failure.message : String(failure);
+			error = plainError(failure, 'cancel this schedule');
 		} finally {
 			busy = false;
 			await refresh();

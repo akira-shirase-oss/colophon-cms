@@ -17,6 +17,7 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { ApiError, type Changeset, changesetAction, getChangeset, may, newKey, publishChangeset } from '#lib/api.ts';
+	import { plainError } from '#lib/errors.ts';
 	import ItemDiff from '#lib/ItemDiff.svelte';
 	import SchedulePanel from '#lib/SchedulePanel.svelte';
 	import { ago, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
@@ -67,7 +68,7 @@
 			} else if (failure instanceof ApiError && failure.reason === 'stale_changeset') {
 				notice = STALE;
 			} else {
-				error = failure instanceof ApiError ? failure.message : String(failure);
+				error = plainError(failure, 'publish this');
 			}
 		} finally {
 			busy = false;
@@ -93,7 +94,7 @@
 			if (failure instanceof ApiError && failure.reason === 'stale_changeset') {
 				notice = STALE;
 			} else {
-				error = failure instanceof ApiError ? failure.message : String(failure);
+				error = plainError(failure, action === 'reviews' ? 'review this' : action === 'submit' ? 'ask for review here' : 'update it');
 			}
 			await queryClient.invalidateQueries({ queryKey: ['changeset', project, id] });
 		} finally {
