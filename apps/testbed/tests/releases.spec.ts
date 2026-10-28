@@ -10,18 +10,25 @@ async function setup(page: Page): Promise<string> {
 	return page.evaluate(async (slug) => {
 		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
 		const json = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
-		const created = await fetch('/server/api/v1/projects', { method: 'POST', headers: json, body: JSON.stringify({ slug, name: 'Releases testbed' }) });
+		// Every setup request must succeed: a refusal here is reported with the server's answer,
+		// not found a minute later as a choice missing from a list.
+		async function ok(response: Promise<Response>, what: string): Promise<Response> {
+			const answer = await response;
+			if (!answer.ok) throw new Error(`setup: ${what}: HTTP ${answer.status} ${await answer.text()}`);
+			return answer;
+		}
+		const created = await ok(fetch('/server/api/v1/projects', { method: 'POST', headers: json, body: JSON.stringify({ slug, name: 'Releases testbed' }) }), 'project');
 		const project = ((await created.json()) as { data: { id: string } }).data.id;
 		const base = `/server/api/v1/projects/${project}/environments/production`;
 		for (const title of ['First story', 'Second story']) {
 			const body = { title, body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } };
-			const entry = await fetch(`${base}/collections/articles/entries`, { method: 'POST', headers: { ...json, 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body) });
+			const entry = await ok(fetch(`${base}/collections/articles/entries`, { method: 'POST', headers: { ...json, 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body) }), `${title}: entry`);
 			const entryId = ((await entry.json()) as { data: { id: string } }).data.id;
-			const made = await fetch(`${base}/changesets`, { method: 'POST', headers: { ...json, 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ title, entries: [entryId] }) });
+			const made = await ok(fetch(`${base}/changesets`, { method: 'POST', headers: { ...json, 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ title, entries: [entryId] }) }), `${title}: changeset`);
 			const set = ((await made.json()) as { data: { id: string; hash: string } }).data;
 			const ifMatch = { ...json, 'If-Match': `"${set.hash}"` };
-			await fetch(`${base}/changesets/${set.id}/submit`, { method: 'POST', headers: ifMatch });
-			await fetch(`${base}/changesets/${set.id}/reviews`, { method: 'POST', headers: ifMatch, body: JSON.stringify({ decision: 'approve' }) });
+			await ok(fetch(`${base}/changesets/${set.id}/submit`, { method: 'POST', headers: ifMatch }), `${title}: submit`);
+			await ok(fetch(`${base}/changesets/${set.id}/reviews`, { method: 'POST', headers: ifMatch, body: JSON.stringify({ decision: 'approve' }) }), `${title}: approve`);
 		}
 		return project;
 	}, `tb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`);
