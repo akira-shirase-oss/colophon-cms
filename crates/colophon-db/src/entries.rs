@@ -507,6 +507,66 @@ pub async fn list(
         .collect())
 }
 
+/// An entry whose draft or published revision names another (D-065).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Referrer {
+    /// The entry that names it.
+    pub entry_id: Uuid,
+    /// Its collection.
+    pub collection: String,
+    /// The reference field that names it.
+    pub field: String,
+    /// Whether its draft names it.
+    pub in_draft: bool,
+    /// Whether what readers get of it names it.
+    pub published: bool,
+}
+
+/// The most referrers [`referrers`] returns.
+pub const MAX_REFERRERS: i64 = 100;
+
+/// The entries whose draft or published revision names `entry`, by field, at most
+/// [`MAX_REFERRERS`]: what an editor should know before changing or taking it down.
+pub async fn referrers(tx: &mut ProjectTransaction, entry: Uuid) -> Result<Vec<Referrer>, DbError> {
+    let rows = sqlx::query!(
+        r#"SELECT entry_id AS "entry_id!", collection AS "collection!", field AS "field!",
+                  bool_or(draft) AS "in_draft!", bool_or(live) AS "published!"
+           FROM (
+               SELECT e.id AS entry_id, e.collection, r.field, true AS draft, false AS live
+               FROM revision_references r
+               JOIN entries e ON e.project_id = r.project_id AND e.environment_id = r.environment_id
+                             AND e.draft_revision_id = r.revision_id
+               WHERE r.project_id = $1 AND r.environment_id = $2 AND r.entry_id = $3
+               UNION ALL
+               SELECT p.entry_id, p.collection, r.field, false, true
+               FROM revision_references r
+               JOIN publications p ON p.project_id = r.project_id AND p.environment_id = r.environment_id
+                                  AND p.revision_id = r.revision_id AND p.valid_to IS NULL
+               WHERE r.project_id = $1 AND r.environment_id = $2 AND r.entry_id = $3
+           ) named
+           GROUP BY entry_id, collection, field
+           ORDER BY collection, entry_id, field
+           LIMIT $4"#,
+        tx.project,
+        tx.environment,
+        entry,
+        MAX_REFERRERS
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| Referrer {
+            entry_id: row.entry_id,
+            collection: row.collection,
+            field: row.field,
+            in_draft: row.in_draft,
+            published: row.published,
+        })
+        .collect())
+}
+
 /// Who created each of these entries in this environment, and their collections; entries that
 /// don't exist are missing (D-058, step R.3: the own condition).
 pub async fn creators(

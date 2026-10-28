@@ -116,6 +116,21 @@ struct DraftView {
     /// look it up; a save never changes what is live.
     #[serde(skip_serializing_if = "Publication::not_looked_up")]
     published: Publication,
+    /// On a read, the entries whose draft or published revision names this one (D-065), in
+    /// collections the caller's role reads; left out of create and save answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    referenced_by: Option<Vec<ReferrerView>>,
+}
+
+#[derive(Serialize)]
+struct ReferrerView {
+    entry_id: Uuid,
+    collection: String,
+    field: String,
+    /// Its draft names this entry.
+    in_draft: bool,
+    /// What readers get of it names this entry.
+    published: bool,
 }
 
 impl DraftView {
@@ -144,6 +159,7 @@ impl DraftView {
             locked_fields: visibility::locked(access, &fields),
             hidden_fields,
             published,
+            referenced_by: None,
         })
     }
 }
@@ -662,12 +678,29 @@ pub(crate) async fn get(
         .ok_or(ApiError::NotFound)?;
     let (content_type, _) = content_type(&mut tx, &path.collection).await?;
     let access = Access::of(&tx.policy, tx.identity, &path.collection, draft.created_by);
+    // Only referrers in collections the role reads, so the list shows nothing it couldn't.
+    let referenced_by = entries::referrers(&mut tx, entry)
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .filter(|referrer| {
+            tx.policy
+                .fields(Action::ContentRead, &referrer.collection, false)
+                .is_some()
+        })
+        .map(|referrer| ReferrerView {
+            entry_id: referrer.entry_id,
+            collection: referrer.collection,
+            field: referrer.field,
+            in_draft: referrer.in_draft,
+            published: referrer.published,
+        })
+        .collect();
     tx.commit().await.map_err(ApiError::from_db)?;
     let revision = draft.revision.id;
-    let body = serde_json::to_string(&Data {
-        data: DraftView::shown(draft, published.into(), &access, &content_type)?,
-    })
-    .map_err(ApiError::internal)?;
+    let mut view = DraftView::shown(draft, published.into(), &access, &content_type)?;
+    view.referenced_by = Some(referenced_by);
+    let body = serde_json::to_string(&Data { data: view }).map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, Some(revision), false))
 }
 
