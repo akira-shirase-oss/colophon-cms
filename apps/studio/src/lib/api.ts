@@ -129,6 +129,10 @@ export type FieldDefinition = {
 	| { type: 'markdown'; max_chars: number }
 	/** `#rrggbb`, lowercase. */
 	| { type: 'color' }
+	/** Step M.2 (D-065): entries of the collection `to`, by id: one, or a list of up to `max`
+	 *  distinct ones. The database keeps them from dangling. */
+	| { type: 'reference'; to: string; many: false }
+	| { type: 'reference'; to: string; many: true; max: number }
 );
 
 /** The field types a content type can use, in the order the builder offers them. */
@@ -146,6 +150,7 @@ export const FIELD_TYPES = [
 	'url',
 	'color',
 	'json',
+	'reference',
 	'slug'
 ] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
@@ -195,6 +200,20 @@ export interface Draft {
 	/** What readers get now, on a read: the live revision and its release, or null when not
 	 *  published. Create and save answers leave it out. */
 	published?: { revision_id: string; generation: number } | null;
+	/** On a read: entries that link to this one (at most 100, only in collections the role reads),
+	 *  by field, and whether their draft and what readers get of them link to it (D-065). */
+	referenced_by?: Referrer[];
+}
+
+/** An entry that links to another (D-065). */
+export interface Referrer {
+	entry_id: string;
+	collection: string;
+	field: string;
+	/** Its draft links to it. */
+	in_draft: boolean;
+	/** What readers get of it links to it: taking the linked entry down is refused until that changes. */
+	published: boolean;
 }
 
 export interface Summary {

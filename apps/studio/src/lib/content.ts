@@ -59,7 +59,7 @@ export function starter(definition: Definition): Content {
 /** A form's value for a field: text inputs and selects work on strings, checkboxes on
  *  booleans, and Svelte binds number inputs as numbers (or null when empty). Rich text has its
  *  own editor. */
-export type FormValue = string | boolean | number | null;
+export type FormValue = string | boolean | number | null | string[];
 
 /** `YYYY-MM-DDTHH:MM:SSZ` to what a `datetime-local` input shows, in the browser's time zone. */
 export function toLocal(utc: string): string {
@@ -86,6 +86,9 @@ export function formValue(field: FieldDefinition, value: unknown): FormValue {
 			return typeof value === 'string' ? toLocal(value) : '';
 		case 'json':
 			return value === undefined ? '' : prettyJson(value);
+		case 'reference':
+			if (field.many) return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+			return typeof value === 'string' ? value : '';
 		default:
 			return typeof value === 'string' ? value : '';
 	}
@@ -104,6 +107,8 @@ export function webAddress(text: string): string {
  *  required field left empty is still sent, so the server says which field and why. */
 export function storedValue(field: FieldDefinition, form: FormValue | undefined): unknown {
 	if (field.type === 'boolean') return form === true;
+	// An empty list is left out, as the server asks ("leave it out instead").
+	if (field.type === 'reference' && field.many) return Array.isArray(form) && form.length > 0 ? [...form] : undefined;
 	if (typeof form === 'number') return Number.isFinite(form) ? form : undefined;
 	const text = typeof form === 'string' ? form : '';
 	if (text === '') return field.required ? (field.type === 'text' ? '' : undefined) : undefined;
@@ -180,6 +185,11 @@ export function isTime(text: string): boolean {
  * (or is empty: a missing required value is the server's to say). The server still decides.
  */
 export function fieldProblem(field: FieldDefinition, form: FormValue | undefined): string {
+	if (field.type === 'reference' && field.many && Array.isArray(form)) {
+		if (form.length > field.max) return `${field.label} names at most ${field.max} entries.`;
+		if (new Set(form).size !== form.length) return `${field.label} names an entry twice.`;
+		return '';
+	}
 	const text = typeof form === 'string' ? form : '';
 	if (text === '' || typeof form !== 'string') return '';
 	switch (field.type) {

@@ -11,6 +11,7 @@
 	import { Input } from '@colophon/ui/ui/input';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { Button } from '@colophon/ui/ui/button';
+	import ReferencePicker from './ReferencePicker.svelte';
 	import type { FieldDefinition } from './api.ts';
 	import { characters, fieldProblem, type FormValue, isWebAddress, MAX_SLUG_CHARS, slugify, webAddress } from './content.ts';
 
@@ -21,7 +22,8 @@
 		onchange = () => {},
 		stacked = false,
 		locked = [],
-		refused = null
+		refused = null,
+		project = ''
 	}: {
 		fields: FieldDefinition[];
 		form: Record<string, FormValue>;
@@ -30,8 +32,10 @@
 		stacked?: boolean;
 		/** Fields the person's role can read but not change (D-058, step R.3): shown, disabled. */
 		locked?: string[];
-		/** The server's refusal of the last save, and the field it named. */
-		refused?: { field: string | null; message: string } | null;
+		/** The server's refusal of the last save, the field it named, and for a list, the place. */
+		refused?: { field: string | null; place?: number | null; message: string } | null;
+		/** For link fields, which search and read the entries they point to. */
+		project?: string;
 	} = $props();
 
 	/** What is wrong with a field now: the client's check, else the server's refusal of it. */
@@ -263,6 +267,18 @@
 					<p class="text-xs text-muted-foreground tabular" id="{input}-count" data-testid="markdown-count">
 						{characters(String(form[field.id] ?? '')).toLocaleString()} of {field.max_chars.toLocaleString()} characters
 					</p>
+				{:else if field.type === 'reference'}
+					<ReferencePicker
+						{project}
+						{field}
+						input={input}
+						bind:value={form[field.id] as string | string[]}
+						disabled={locked.includes(field.id)}
+						describedBy={describedBy(input, field)}
+						refusedAt={refused?.field === field.id ? (refused.place ?? null) : null}
+						refusal={refused?.field === field.id ? refused.message : ''}
+						{onchange}
+					/>
 				{:else if field.type === 'json'}
 					<Textarea
 						id={input}

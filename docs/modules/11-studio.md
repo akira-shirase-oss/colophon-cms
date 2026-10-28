@@ -168,6 +168,13 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     `tests/json.spec.ts` (the canonical form, the number rules, depth and size), `tests/server/fields.spec.ts`
     (values stored canonically and nothing to save after a reload, plain refusals, and the server's stored bytes
     equal to `canonicalJson` for a value with astral and non-ASCII keys, `1.5` and `-0`).
+- Step M.2 in the Studio (D-065; links are in [domain](01-domain.md)):
+  - **Link fields**: the builder's *Link to entries* type chooses the collection it links to (fixed once saved) and
+    *One entry* or *A list of up to N*. In the editor, `ReferencePicker.svelte` searches the target collection's
+    titles (the API's `q`) and sets the id; a list shows chips that move up and down and are removed, up to its
+    maximum and never twice. Chosen entries are named by reading each; one the role can't read is "An entry you
+    can't see", never its id. An id the server refuses (`reference_not_found` at `/related/1`) is marked on its
+    chip and in plain words under the field. Test: `tests/server/references.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

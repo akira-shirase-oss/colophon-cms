@@ -45,6 +45,11 @@ const BY_REASON: Record<string, string> = {
 	already_set_up: 'Colophon is already set up. Reload the page.',
 	idempotency_key_reused: 'That was sent twice with different contents. Reload the page and try again.',
 	setup_code_invalid: "That code isn't right, or it was used or has expired.",
+	// 422s and 409s for links between entries (D-065). The two 409s get names on the pages that
+	// know the request's entries (lib/references.ts); these are the words without them.
+	reference_not_found: 'A linked entry isn’t there, or isn’t in the collection the field links to. Remove it and choose again.',
+	references_unpublished: `An entry in it links to an entry that isn't published yet. Publish that entry first, or in the same ${PUBLISH_REQUEST}.`,
+	still_referenced: `A published entry still links to an entry this takes down. Change or take down that entry first, or in the same ${PUBLISH_REQUEST}.`,
 	// 422s for API tokens.
 	not_for_tokens: 'An API token can’t manage people, roles, tokens or the activity log.',
 	invalid_expiry: 'A token lasts between 1 and 366 days.',

@@ -54,8 +54,10 @@ export class Saver {
 	conflict = $state.raw<Conflict | null>(null);
 	/** False when this browser refused to keep the edits locally. */
 	keptOnDevice = $state(true);
-	/** For a refused save: the field the server named (its JSON Pointer's first part), if any. */
+	/** For a refused save: the field the server named (its JSON Pointer's first part), if any,
+	 *  and for a list, the place in it (`/related/1`). */
 	field = $state<string | null>(null);
+	place = $state<number | null>(null);
 
 	#saved: Content;
 	#latest: Content;
@@ -145,6 +147,7 @@ export class Saver {
 	/** Records the editor's current content. */
 	edit(content: Content): void {
 		this.field = null;
+		this.place = null;
 		if (this.#held) {
 			this.#held = false;
 			this.message = '';
@@ -318,7 +321,9 @@ export class Saver {
 				this.status = 'refused';
 				// The API names it a slug; the Studio says URL name (D-059), and which entry has it.
 				// Other refusals in plain words; the field they name is marked in the editor.
-				this.field = /^\/([^/]+)/.exec(error.details?.pointer ?? '')?.[1] ?? null;
+				const pointer = /^\/([^/]+)(?:\/(\d+))?/.exec(error.details?.pointer ?? '');
+				this.field = pointer?.[1] ?? null;
+				this.place = pointer?.[2] === undefined ? null : Number(pointer[2]);
 				this.message =
 					error.reason === 'slug_taken'
 						? `another entry already uses this ${URL_NAME}${error.details?.entries?.[0] ? ` (“${error.details.entries[0].title}”)` : ''}: choose another`

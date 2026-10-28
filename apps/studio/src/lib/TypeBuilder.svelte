@@ -9,7 +9,7 @@
 <script lang="ts">
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
 	import { resolve } from '$app/paths';
-	import { useQueryClient } from '@tanstack/svelte-query';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
@@ -26,9 +26,13 @@
 		newKey,
 		updateContentType
 	} from './api.ts';
+	import { typesQuery } from './queries.ts';
 
 	let { project, type, editable }: { project: string; type: ContentType; editable: boolean } = $props();
 	const queryClient = useQueryClient();
+	// The collections a link field can point to: every content type, this one included.
+	const collections = createQuery(() => typesQuery(project));
+	const nameOf = (slug: string) => collections.data?.find((item) => item.slug === slug)?.definition.name ?? slug;
 
 	// svelte-ignore state_referenced_locally
 	const saved = type.definition;
@@ -60,6 +64,7 @@
 		url: 'Web address',
 		color: 'Colour',
 		json: 'Structured data (JSON)',
+		reference: 'Link to entries',
 		slug: 'URL name'
 	};
 
@@ -87,6 +92,9 @@
 				return { ...common, type: 'slug', source: draft.title_field };
 			case 'markdown':
 				return { ...common, type: 'markdown', max_chars: 100_000 };
+			case 'reference':
+				// Another collection if there is one (a story names its author), else this one.
+				return { ...common, type: 'reference', to: collections.data?.find((item) => item.slug !== type.slug)?.slug ?? type.slug, many: false };
 			case 'rich_text':
 			case 'boolean':
 			case 'datetime':
@@ -133,6 +141,15 @@
 
 	function setEnumValues(field: FieldDefinition, text: string) {
 		if (field.type === 'enum') field.values = text.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+	}
+
+	/** One linked entry, or a list of up to `max` (the server's default and limit is 100). */
+	function setMany(field: FieldDefinition, many: boolean) {
+		if (field.type !== 'reference') return;
+		const index = draft.fields.indexOf(field);
+		draft.fields[index] = many
+			? { id: field.id, label: field.label, required: field.required, ...(field.description ? { description: field.description } : {}), type: 'reference', to: field.to, many: true, max: 10 }
+			: { id: field.id, label: field.label, required: field.required, ...(field.description ? { description: field.description } : {}), type: 'reference', to: field.to, many: false };
 	}
 
 	/** Help text: written only when there is some (D-064). */
@@ -240,6 +257,39 @@
 							<input type="checkbox" class="size-4 accent-primary" bind:checked={field.multiline} disabled={!editable || isTitle} />
 							Several lines
 						</label>
+					</div>
+				{:else if field.type === 'reference'}
+					<div class="flex flex-wrap items-center gap-4 text-sm" data-testid="reference-options">
+						<label class="flex items-center gap-2">
+							Links to
+							<select
+								class={select}
+								value={field.to}
+								onchange={(event) => {
+									if (field.type === 'reference') field.to = event.currentTarget.value;
+								}}
+								disabled={!editable || !isNew}
+								title={isNew ? undefined : 'Saved links point to their collection for good'}
+							>
+								{#each collections.data ?? [] as item (item.slug)}
+									<option value={item.slug}>{item.definition.name}{item.slug === type.slug ? ' (this one)' : ''}</option>
+								{:else}
+									<option value={field.to}>{nameOf(field.to)}</option>
+								{/each}
+							</select>
+						</label>
+						<label class="flex items-center gap-2">
+							<input type="radio" class="size-4 accent-primary" name="many-{field.id}" checked={!field.many} onchange={() => setMany(field, false)} disabled={!editable} />
+							One entry
+						</label>
+						<label class="flex items-center gap-2">
+							<input type="radio" class="size-4 accent-primary" name="many-{field.id}" checked={field.many} onchange={() => setMany(field, true)} disabled={!editable} />
+							A list of up to
+						</label>
+						{#if field.many}
+							<Input class="h-8 w-20 tabular" type="number" min={1} max={100} aria-label="Most entries in {field.label}" bind:value={field.max} disabled={!editable} />
+						{/if}
+						{#if !isNew}<span class="text-xs text-muted-foreground">It keeps pointing at {nameOf(field.to)}: what it holds are {nameOf(field.to)} entries.</span>{/if}
 					</div>
 				{:else if field.type === 'markdown'}
 					<div class="flex flex-wrap items-center gap-4 text-sm">

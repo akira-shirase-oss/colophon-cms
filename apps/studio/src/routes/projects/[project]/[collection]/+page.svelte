@@ -394,7 +394,7 @@
 				<Dialog.Description>It starts as a draft. Readers see it only once it is published.</Dialog.Description>
 			</Dialog.Header>
 			<form class="grid gap-4" onsubmit={create} aria-label="New entry">
-				<FieldInputs fields={asked} bind:form titleField={type.data.definition.title_field} stacked />
+				<FieldInputs fields={asked} bind:form titleField={type.data.definition.title_field} stacked {project} />
 				{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
 				<Dialog.Footer>
 					<Button variant="outline" type="button" onclick={() => (creating = false)}>Cancel</Button>

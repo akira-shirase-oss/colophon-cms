@@ -354,7 +354,8 @@
 				titleField={definition.title_field}
 				onchange={changed}
 				{locked}
-				refused={saver.status === 'refused' ? { field: saver.field, message: saver.message } : null}
+				refused={saver.status === 'refused' ? { field: saver.field, place: saver.place, message: saver.message } : null}
+				{project}
 			/>
 			{#each rich as field (field.id)}
 				<div class="py-5">
