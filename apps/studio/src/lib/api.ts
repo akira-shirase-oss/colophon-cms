@@ -483,6 +483,12 @@ export async function signOut(): Promise<string | null> {
 	}
 }
 
+/** Whether anyone is this installation's administrator yet (`GET /api/v1/installation`, D-082):
+ *  answered without signing in, so the signed-out front door can say a new Colophon is new. */
+export async function installation(): Promise<{ has_administrator: boolean }> {
+	return ((await (await send('GET', '/api/v1/installation')).json()) as { data: { has_administrator: boolean } }).data;
+}
+
 /** Which Colophon the server is (`GET /version`, D-062): its release version, the full git commit
  *  and the UTC day it was built (each `unknown` when the build couldn't learn it), and the API
  *  versions it serves. Read without signing in; fields may be added, never removed. */

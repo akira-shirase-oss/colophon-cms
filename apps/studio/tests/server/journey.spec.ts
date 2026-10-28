@@ -134,8 +134,10 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 	await test.step('a new installation greets a signed-out visitor', async () => {
 		await owner.goto('/studio/');
 		await expect(owner.getByTestId('signed-out')).toBeVisible();
-		// Without the setup link, nothing signed out says whether anyone runs it yet.
-		await expect(owner.getByTestId('new-installation')).toHaveCount(0);
+		// Without the setup link too: GET /api/v1/installation says nobody runs it yet (D-082).
+		await expect(owner.getByTestId('new-installation')).toContainText('This Colophon is new');
+		await expect(owner.getByTestId('new-installation')).toContainText('The server printed the setup code');
+		await expect(owner.getByTestId('create-account')).toHaveText(/Create an account/);
 		await screen(owner, 'welcome');
 	});
 

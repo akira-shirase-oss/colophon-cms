@@ -2,9 +2,10 @@
   The Studio's front door (step 3.7, D-059): signed out, sign in or create an account; signed in
   on an installation nobody has set up yet, enter the setup code its server printed (D-061);
   then your projects. An administrator with none is offered their first; anyone else learns that
-  projects are joined by invitation, and what to ask for. Opened from the server's setup link
-  (`#setup=<code>`, D-082), it says this Colophon is new, makes Create an account the first
-  choice, and fills the code in after signing in.
+  projects are joined by invitation, and what to ask for. On an installation with no administrator
+  yet (`GET /api/v1/installation`), or opened from the server's setup link (`#setup=<code>`), it
+  says this Colophon is new and makes Create an account the first choice (D-082); the link's code
+  is filled in after signing in.
 -->
 <script lang="ts">
 	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
@@ -21,7 +22,7 @@
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
-	import { ApiError, claimSetup, me, signInUrl, signUpUrl } from '#lib/api.ts';
+	import { ApiError, claimSetup, installation, me, signInUrl, signUpUrl } from '#lib/api.ts';
 	import { lastProject } from '#lib/lastProject.ts';
 	import { forgetSetupCode, keepSetupCode, keptSetupCode, setupCodeFrom } from '#lib/setupLink.ts';
 	import MyWork from '#lib/MyWork.svelte';
@@ -33,6 +34,8 @@
 
 	const queryClient = useQueryClient();
 	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
+	// Signed out, whether anyone runs this Colophon yet: nobody does on a fresh installation.
+	const install = createQuery(() => ({ queryKey: ['installation'], queryFn: installation, enabled: who.data === null }));
 	let creating = $state(false);
 
 	// The setup code (D-061): typed or pasted from the server's terminal, or filled in from the setup
@@ -113,8 +116,8 @@
 			</p>
 		{/if}
 		<h1 class="text-3xl font-semibold tracking-tight">Welcome to Colophon</h1>
-		{#if kept !== null}
-			<!-- Opened from the server's setup link, which it prints only while nobody is an administrator. -->
+		{#if kept !== null || install.data?.has_administrator === false}
+			<!-- Nobody is an administrator yet, or opened from the setup link the server prints only then. -->
 			<div data-testid="new-installation">
 				<p class="mt-3 text-pretty text-muted-foreground" data-testid="signed-out">
 					This Colophon is new. Create the first account; you'll become its administrator with the setup code the server printed.
@@ -124,7 +127,11 @@
 					<Button variant="outline" href={signInUrl(resolve('/'))} data-sveltekit-reload data-testid="sign-in">Sign in</Button>
 				</div>
 				<p class="mt-6 text-sm text-pretty text-muted-foreground">
-					Your link carries the setup code, so you won't need to type it. Already have an account here? Sign in instead.
+					{#if kept !== null}
+						Your link carries the setup code, so you won't need to type it. Already have an account here? Sign in instead.
+					{:else}
+						The server printed the setup code, and a link that fills it in, when it started. Already have an account here? Sign in instead.
+					{/if}
 				</p>
 			</div>
 		{:else}

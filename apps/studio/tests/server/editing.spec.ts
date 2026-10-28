@@ -123,8 +123,13 @@ test('edits made just before a reload come back from this device and are saved',
 });
 
 test('the home page is accessible signed out and signed in, and lists your projects', async ({ page }) => {
+	const asked = page.waitForResponse((response) => response.url().endsWith('/api/v1/installation'));
 	await page.goto('/studio/');
 	await expect(page.getByTestId('signed-out')).toBeVisible();
+	// An installation someone runs greets visitors as usual, not as a new one (D-082): checked once
+	// the Studio has its answer.
+	expect(await (await asked).json()).toEqual({ data: { has_administrator: true } });
+	await expect(page.getByTestId('new-installation')).toHaveCount(0);
 	expect(await violations(page)).toEqual([]);
 	await signIn(page);
 	const project = await newProject(page);
