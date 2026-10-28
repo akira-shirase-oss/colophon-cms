@@ -1,0 +1,31 @@
+[package]
+name = "colophon-mcp"
+description = "Colophon's MCP server over stdio: typed tools over the same HTTP API everyone uses, with a project API token."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "colophon-mcp"
+path = "src/main.rs"
+
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-std", "io-util"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+# Cookies only for the Keycloak side of the stack test's sign-in.
+reqwest = { workspace = true, features = ["cookies"] }
+# The stack test drives the binary over its stdin and stdout.
+tokio = { workspace = true, features = ["io-std", "io-util", "process", "test-util"] }
+
+[lints]
+workspace = true
