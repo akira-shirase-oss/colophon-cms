@@ -65,7 +65,7 @@
 					{#if group.id === 'writing'}
 						<Stage alt="colophon-server is killed with kill -9 while version 7 is saving; after the restart, the retry with the same key is saved once."><CrashGraphic /></Stage>
 					{:else if group.id === 'modelling'}
-						<div><StatusBadge kind="building" at="3.6" /></div>
+						<div><StatusBadge kind="done" at="3.6" /></div>
 						<Stage alt="making a field required is refused with 422 needs_migration, naming the stored entries in the way."><MigrationGraphic /></Stage>
 					{:else if group.id === 'publishing'}
 						<Stage alt="a probe finds the release marker on the live site: Verified at 1 location." class="h-52"><ProbeGraphic /></Stage>
@@ -74,7 +74,7 @@
 						<div><StatusBadge kind="planned" at="P4" /></div>
 						<Stage alt="a release slider" interactive class="h-52"><SliderGraphic /></Stage>
 					{:else if group.id === 'access'}
-						<div><StatusBadge kind="planned" at="R" /></div>
+						<div><StatusBadge kind="done" at="R.2, R.3" /></div>
 						<Stage alt="a permission matrix for a custom role, toggling cells."><RolesGraphic /></Stage>
 					{:else if group.id === 'developers'}
 						<Terminal
@@ -162,7 +162,7 @@
 	<section aria-labelledby="next" class="section glass flex flex-col items-start justify-between gap-6 rounded-3xl p-8 tb:flex-row tb:items-center">
 		<div>
 			<h2 id="next" class="t-h5">When does the planned part arrive?</h2>
-			<p class="t-body mt-2">The roadmap orders the milestones and estimates them, as guesses, at about 9 to 12 months to v0.1.</p>
+			<p class="t-body mt-2">The roadmap orders the milestones and estimates them, as guesses, at about 10 to 13 months to v0.1.</p>
 		</div>
 		<Pill label="See the roadmap" href="/roadmap/" />
 	</section>

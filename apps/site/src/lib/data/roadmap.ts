@@ -1,13 +1,15 @@
-// The milestones, in build order, from docs/ROADMAP.md (the step 3.6 branch's version, which adds
-// the parity milestones R, M, E and D from D-057). Estimates are the roadmap's own guesses at ~45
-// hours a week, not measurements. Statuses from what is merged into main (CHANGELOG.md).
+// The milestones, in build order, from docs/ROADMAP.md: the numbered ones, the parity milestones R,
+// M, E and D (D-057), and S and V (D-062). Estimates are the roadmap's own guesses at ~45 hours a
+// week, not measurements. Statuses from what is merged (CHANGELOG.md): a milestone is done only
+// when its proof gate passes, so one with some steps done is still under way.
 import type { StatusKind } from '#lib/status.ts';
 
 export interface Step {
 	id: string;
 	title: string;
 	kind: StatusKind;
-	/** For a step in progress: what is happening to it. */
+	/** What the status leaves out: for a step in progress, what is happening to it; for a done
+	 * step, what is still to check. */
 	note?: string;
 }
 
@@ -21,10 +23,12 @@ export interface Milestone {
 	/** Added after the status's word, when it says more: "October 2026", "v0.1". */
 	label: string;
 	steps?: Step[];
+	/** For a milestone without numbered steps: what it has built so far, ahead of the rest. */
+	built?: string[];
 	bullets?: string[];
 }
 
-export const TOTAL_ESTIMATE = 'about 9–12 months to v0.1, with the first public demo at the end of P3';
+export const TOTAL_ESTIMATE = 'about 10–13 months to v0.1 at the pace the estimates assumed, with the first public demo at the end of P3';
 
 export const MILESTONES: Milestone[] = [
 	{
@@ -93,24 +97,29 @@ export const MILESTONES: Milestone[] = [
 			{ id: '3.3', title: 'A receipt for every publish', kind: 'done' },
 			{ id: '3.4', title: 'My own site, running on Colophon (locally)', kind: 'done' },
 			{ id: '3.5', title: 'The Studio, designed', kind: 'done' },
-			{ id: '3.6', title: 'Content modelling in the Studio: slugs and the content-type builder', kind: 'building', note: 'building' },
-			{ id: '3.7', title: 'The non-technical path: plain words, one-click publish, a first-run checklist', kind: 'planned' },
-			{ id: '3.8', title: 'The site goes live, and the first public demo', kind: 'planned' }
+			{ id: '3.6', title: 'Content modelling in the Studio: slugs and the content-type builder', kind: 'done' },
+			{
+				id: '3.7',
+				title: 'The non-technical path: plain words, one-click publish, a first-run checklist, sign-up with a setup code',
+				kind: 'done',
+				note: 'not yet checked at phone width'
+			},
+			{ id: '3.8', title: 'The site goes live, and the first public demo', kind: 'planned', note: 'next' }
 		]
 	},
 	{
 		id: 'R',
 		name: 'Roles and permissions',
 		goal: 'Owners decide exactly who may do what, down to a field, and every path enforces it the same way (D-058).',
-		gate: 'Every action, role, field and condition decided by one evaluator, exhaustive for the built-in roles and property-tested for random ones; a denial test on every route.',
+		gate: 'Every action, role, field and condition decided by one evaluator, exhaustive for the built-in roles and property-tested for random ones; a denial test on every route; a token can do exactly what its permissions allow; a load scenario with custom roles shows no regression.',
 		estimate: '2–3 weeks',
-		kind: 'planned',
+		kind: 'building',
 		label: '',
 		steps: [
-			{ id: 'R.1', title: 'Roles as data, behaviour unchanged', kind: 'planned' },
-			{ id: 'R.2', title: 'Custom roles and the Studio’s role editor', kind: 'planned' },
-			{ id: 'R.3', title: 'Field-level permissions and “only their own”', kind: 'planned' },
-			{ id: 'R.4', title: 'API tokens and the audit log', kind: 'planned' }
+			{ id: 'R.1', title: 'Roles as data, behaviour unchanged', kind: 'done' },
+			{ id: 'R.2', title: 'Custom roles and the Studio’s role editor', kind: 'done' },
+			{ id: 'R.3', title: 'Field-level permissions and “only their own”', kind: 'done' },
+			{ id: 'R.4', title: 'API tokens and the audit log', kind: 'planned', note: 'next' }
 		]
 	},
 	{
@@ -146,12 +155,13 @@ export const MILESTONES: Milestone[] = [
 		id: 'E',
 		name: 'Editorial parity',
 		goal: 'Everything an editorial team does in Strapi or Sanity, with nothing lost and every change attributed.',
-		gate: 'Two editors at once never lose an acknowledged edit; a schedule missed during downtime is reported as delayed; locale variants publish independently.',
+		gate: 'Two editors at once never lose an acknowledged edit; a schedule missed during downtime is reported as delayed, never on time; locale variants publish independently; comments and tasks follow permissions.',
 		estimate: '5–7 weeks',
-		kind: 'planned',
+		kind: 'building',
 		label: '',
+		built: ['Scheduled publishing in a time zone, with daylight-saving edges chosen, never guessed, built first (D-060)'],
 		bullets: [
-			'Localization and scheduled publishing with time zones',
+			'Localization: locale variants with their own URL names, drafts and history',
 			'Review stages, assignees, comments and tasks',
 			'Live presence and collaboration; a live Studio that updates as PostgreSQL commits',
 			'Visual preview with click-to-edit'
@@ -170,6 +180,36 @@ export const MILESTONES: Milestone[] = [
 			'GraphQL, OpenAPI, and the TypeScript SDK with generated types',
 			'Webhooks by event; import from Strapi and Sanity; export',
 			'Extension points instead of plugins: custom field types as data, sandboxed Studio panels'
+		]
+	},
+	{
+		id: 'S',
+		name: 'Scale and performance',
+		goal: 'Colophon runs as several servers and workers behind a load balancer, and every scenario has a known breaking point and fails safely past it (D-062).',
+		gate: 'A server killed under load behind the balancer fails only its in-flight requests, and idempotent retries succeed; a draining server finishes what it accepted; rate limits hold across instances and when Valkey is down; every scenario has a stored stress result; three servers are measured against one.',
+		estimate: '2–3 weeks',
+		kind: 'planned',
+		label: '',
+		bullets: [
+			'A local multi-instance stack: HAProxy in front of three servers and two workers',
+			'Rate limits shared across instances, readiness that drains, a connection budget summed across them',
+			'A stress run for every load scenario, on one, two and three servers',
+			'Rust benchmarks for the hot paths, with a regression check in CI'
+		]
+	},
+	{
+		id: 'V',
+		name: 'Versions and distribution',
+		goal: 'Anyone can install the command line, the SDK and the MCP server without building Rust, and each says whether it fits the server it talks to (D-062).',
+		gate: 'A release dry run builds every artifact; npm, Cargo, Homebrew and an install script each install the same version on a clean machine in CI; an old CLI against a new server, and the reverse, gets a plain-words answer.',
+		estimate: '1–2 weeks',
+		kind: 'planned',
+		label: '',
+		bullets: [
+			'One version for the server, worker, CLI, SDK and MCP server; /api/v1 is the contract',
+			'Binaries for macOS, Linux and Windows with checksums and signed provenance',
+			'The CLI on npm as @colophon-cms/cli, with cargo install, a Homebrew tap and an install script',
+			'Container images for the server and worker'
 		]
 	},
 	{

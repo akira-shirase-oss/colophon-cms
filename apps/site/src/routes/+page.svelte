@@ -116,8 +116,8 @@
 		<BentoCard kind="planned" at="P4" title="Time travel" icon={HistoryIcon} class="dt:col-span-2">
 			Reads pinned to any release work today; the release slider and rollback come in P4.
 		</BentoCard>
-		<BentoCard kind="building" at="R" title="Roles you define" icon={UsersIcon} class="dt:col-span-2">
-			Roles are data now; custom roles, field-level rules, API tokens and an audit log come next.
+		<BentoCard kind="done" at="R.1–R.3" title="Roles you define" icon={UsersIcon} class="dt:col-span-2">
+			Owners make roles in plain words, down to some fields or a member’s own entries; API tokens and an audit log come next, in R.4.
 		</BentoCard>
 	</div>
 </section>

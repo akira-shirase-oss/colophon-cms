@@ -33,12 +33,10 @@
 		'R.1': 'Roles as data',
 		'R.2': 'Custom roles and their editor',
 		'R.3': 'Field-level permissions',
-		'R.4': 'API tokens and an audit log',
-		M: 'Content modelling',
-		E: 'Editorial work',
-		D: 'Developer APIs'
+		'R.4': 'API tokens and an audit log'
 	};
-	const steps = (id: string): Item[] => (byId(id).steps ?? []).map((step) => ({ text: SHORT[step.id] ?? step.title, kind: step.kind }));
+	const steps = (id: string): Item[] =>
+		(byId(id).steps ?? []).map((step) => ({ text: `${SHORT[step.id] ?? step.title}${step.note ? ` · ${step.note}` : ''}`, kind: step.kind }));
 
 	const DONE_ITEMS: Item[] = [
 		{ text: 'Drafts that can’t be lost', kind: 'done' },
@@ -47,11 +45,26 @@
 		{ text: 'Work that survives a crash', kind: 'done' },
 		{ text: 'Seeded simulation in CI', kind: 'done' }
 	];
-	// Five lines, like its neighbours: the last two milestones share one.
-	const LATER_ITEMS: Item[] = [
-		...later.slice(0, -2).map((milestone) => ({ text: `${SHORT[milestone.id] ?? milestone.name} · ${milestone.id}`, kind: milestone.kind })),
-		...(later.length >= 2 ? [{ text: `Automation, ops · ${later.at(-2)!.id}, ${later.at(-1)!.id}`, kind: later.at(-1)!.kind }] : [])
+	// Five lines, like its neighbours: milestones that belong together share one. A line is under
+	// way if any of its milestones is, and done only if all of them are.
+	const LATER_GROUPS: { ids: string[]; text: string }[] = [
+		{ ids: ['M', 'P4'], text: 'Modelling, media' },
+		{ ids: ['E'], text: 'Editorial work' },
+		{ ids: ['D'], text: 'Developer APIs' },
+		{ ids: ['S', 'V'], text: 'Scale, versions' },
+		{ ids: ['P5', 'P6'], text: 'Automation, ops' }
 	];
+	const LATER_ITEMS: Item[] = LATER_GROUPS.map(({ ids, text }) => {
+		const members = later.filter((milestone) => ids.includes(milestone.id));
+		const kind: StatusKind = members.some((milestone) => milestone.kind === 'building')
+			? 'building'
+			: members.every((milestone) => milestone.kind === 'done')
+				? 'done'
+				: 'planned';
+		return { text: `${text} · ${members.map((milestone) => milestone.id).join(', ')}`, kind, empty: members.length === 0 };
+	})
+		.filter((item) => !item.empty)
+		.map(({ text, kind }) => ({ text, kind }));
 
 	let showing = $state<'now' | 'next'>('now');
 	const middle = $derived(showing === 'now' ? current : next);
@@ -112,8 +125,8 @@
 		<article class="glass flex flex-col rounded-3xl p-8" data-status="planned">
 			<div>
 				<p class="text-lg leading-[1.4] font-medium text-ink-2">Milestones {later[0]?.id} to {later.at(-1)?.id}</p>
-				<p class="t-h3 mt-1">{STATUS_WORD.planned}</p>
-				<p class="t-body-lg mt-6">Parity first, then v0.1.</p>
+				<p class="t-h3 mt-1">Later</p>
+				<p class="t-body-lg mt-6">Parity, scale and packaging, then v0.1.</p>
 			</div>
 			{@render checklist(LATER_ITEMS)}
 			<Pill label="See the comparison" href="/compare/" variant="secondary" class="mt-8 w-full" />

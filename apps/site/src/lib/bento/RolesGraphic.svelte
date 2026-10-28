@@ -1,8 +1,9 @@
 <!--
-  Custom roles (milestone R, D-058; building): a role's permissions as a matrix of collections and
-  actions, with "own" for entries the person created. A pointer toggles two cells, slowly, in a
-  nine-second loop. Step R.1 stored roles as data; editing them comes with R.2, so the card says
-  Building.
+  Custom roles (milestone R, D-058; done in R.2 and R.3): a role's permissions as a matrix of
+  collections and actions, with "own" for entries the person created (an `own` condition on
+  content.update, which R.3 allows). A pointer toggles two cells, slowly, in a nine-second loop.
+  The Studio's own grid says See, Create, Edit, Approve and Publish; this one shows the API's
+  action names.
 -->
 <script lang="ts">
 	const ACTIONS = ['read', 'create', 'update', 'publish'];

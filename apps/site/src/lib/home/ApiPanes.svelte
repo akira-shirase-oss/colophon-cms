@@ -109,7 +109,6 @@
 		{
 			id: 'slug',
 			label: 'Slug taken',
-			building: '3.6',
 			what: 'URL names are unique per collection, enforced by PostgreSQL; the refusal names the holder.',
 			lines: [
 				{ t: 'cmd', s: `curl -i -X PUT ${SAVE} … -d '{"slug": "spring-menu", …}'` },

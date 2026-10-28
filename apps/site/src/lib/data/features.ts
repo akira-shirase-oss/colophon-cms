@@ -1,7 +1,7 @@
 // The product, feature by feature, grouped like the parity backlog in docs/COMPARISON.md and
 // labelled from it, from docs/ROADMAP.md and from what is merged (CHANGELOG.md). Checked
-// 2026-10-27.
-import { building, done, planned, type Status } from '#lib/status.ts';
+// 2026-10-27, after steps 3.6, 3.7, R.1 to R.3 and scheduled publishing merged.
+import { done, planned, type Status } from '#lib/status.ts';
 
 export interface Feature {
 	name: string;
@@ -53,8 +53,8 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
 			{
 				name: 'Plain words and one obvious path',
 				detail:
-					'One glossary for every screen, one-click publish, a first-run checklist, and technical detail only on request (D-059).',
-				status: planned('3.7')
+					'One glossary for every screen, one-click publish, a first-run checklist, empty states that teach, and technical detail only on request (D-059). Not yet checked at phone width.',
+				status: done('3.7')
 			},
 			{ name: 'Localization', detail: 'Locale variants with their own URL names, drafts and history.', status: planned('E') },
 			{ name: 'Comments and tasks', detail: 'On entries and fields, following permissions.', status: planned('E') },
@@ -84,14 +84,14 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
 			},
 			{
 				name: 'URL names (slugs)',
-				detail: 'Unique per collection among drafts and among what is published, enforced by the database.',
-				status: building('3.6')
+				detail: 'Unique per collection among drafts and among what is published, enforced by the database; suggested from the title in one click.',
+				status: done('3.6')
 			},
 			{
 				name: 'A builder that names what a change would break',
 				detail:
-					'A refused change lists the entries and versions in the way, so an owner can fix them or keep the old shape.',
-				status: building('3.6')
+					'Add, rename and remove fields in the Studio; a change stored content can’t take is refused, naming the first entries in the way, so an owner can fix them or keep the old shape.',
+				status: done('3.6')
 			},
 			{ name: 'References and relations', detail: 'One and many, with the other side listed; never dangling.', status: planned('M') },
 			{ name: 'Components and repeatable lists', detail: 'Reusable groups of fields, nested and repeated.', status: planned('M') },
@@ -140,7 +140,12 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
 				detail: 'Every page marked with its release, promoted atomically, never backwards. Runs locally today.',
 				status: done('P3')
 			},
-			{ name: 'Scheduled publishing', detail: 'With time zones; a schedule missed during downtime is shown as delayed, never on time.', status: planned('E') },
+			{
+				name: 'Scheduled publishing',
+				detail:
+					'An approved request publishes at a time you pick, in a time zone, as you, with every publish check run again; a time the clocks show twice or skip is never guessed, and a late start is labelled delayed (D-060).',
+				status: done('D-060')
+			},
 			{ name: 'Review stages and assignees', detail: 'On top of publish requests.', status: planned('E') },
 			{ name: 'Visual preview with click-to-edit', detail: 'The site renders a draft through a short-lived capability.', status: planned('E') }
 		]
@@ -167,12 +172,30 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
 		features: [
 			{ name: 'Sign-in with OpenID Connect', detail: 'Keycloak as the reference provider; server-side sessions, CSRF and Origin checks.', status: done('P1') },
 			{ name: 'Projects that can’t see each other', detail: 'Isolated by PostgreSQL row-level security, not by application checks alone.', status: done('P1') },
-			{ name: 'Four built-in roles', detail: 'Owner, developer, editor and publisher, decided by one policy table.', status: done('P1') },
+			{
+				name: 'Four built-in roles',
+				detail: 'Owner, developer, editor and publisher, seeded into every project as data and decided by one evaluator (R.1).',
+				status: done('P1')
+			},
 			{ name: 'Invitations', detail: 'Single-use links; a project can never lose its last owner.', status: done('P1') },
-			{ name: 'Custom roles', detail: 'A permission matrix of collections and actions, edited by owners (D-058).', status: building('R') },
-			{ name: 'Field-level and “only their own” permissions', detail: 'A role can be limited to some fields, or to the entries its members created.', status: planned('R') },
-			{ name: 'API tokens', detail: 'Read-only, full access or a custom permission set, hashed and expiring.', status: planned('R') },
-			{ name: 'Audit log', detail: 'Every role, membership and token change, append-only.', status: planned('R') }
+			{
+				name: 'Setting up from the browser',
+				detail:
+					'Create an account from the Studio when the identity provider offers sign-up, and make a fresh installation’s first administrator with a one-time code only the server’s terminal shows (D-061).',
+				status: done('3.7')
+			},
+			{
+				name: 'Custom roles',
+				detail: 'Owners make roles as a grid of plain-word permissions per content type; nobody can hand out more than they hold (D-058).',
+				status: done('R.2')
+			},
+			{
+				name: 'Field-level and “only their own” permissions',
+				detail: 'A role can be limited to some fields, or to the entries its members created; hidden fields are left out of reads, locked ones refused on writes.',
+				status: done('R.3')
+			},
+			{ name: 'API tokens', detail: 'Read-only, full access or a custom permission set, hashed and expiring.', status: planned('R.4') },
+			{ name: 'Audit log', detail: 'Every role, membership and token change, append-only.', status: planned('R.4') }
 		]
 	},
 	{
@@ -198,6 +221,16 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
 			{ name: 'Scoped, budgeted tokens and an MCP adapter', detail: 'Agents can draft and propose; they can never approve their own work.', status: planned('P5') },
 			{ name: 'Bulk jobs that resume', detail: 'An interrupted bulk edit resumes without duplicates or overwrites.', status: planned('P5') },
 			{ name: 'Optional AI writing assistance', detail: 'Off by default, built last.', status: planned('P5') },
+			{
+				name: 'Several servers behind a load balancer',
+				detail: 'Kills and drains under load, rate limits shared across instances, and a stress run for every load scenario.',
+				status: planned('S')
+			},
+			{
+				name: 'Install without building Rust',
+				detail: 'One version for the server, CLI, SDK and MCP server; the CLI from npm, Cargo, Homebrew or a script.',
+				status: planned('V')
+			},
 			{ name: 'Backups and a restore drill', detail: 'Encrypted backups and a restore onto clean infrastructure, documented.', status: planned('P6') },
 			{ name: 'Signed releases', detail: 'Signed artifacts, an SBOM and a security policy for v0.1.', status: planned('P6') }
 		]

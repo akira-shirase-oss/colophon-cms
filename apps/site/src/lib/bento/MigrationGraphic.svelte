@@ -1,8 +1,8 @@
 <!--
-  A content type change checked against stored content (D-055, step 3.6, building): making a
-  field required while stored entries leave it empty is refused with 422, details.reason
+  A content type change checked against stored content (D-055, step 3.6, done): making a field
+  required while stored entries leave it empty is refused with 422, details.reason
   "needs_migration", and the first entries in the way. The request and field are illustrative;
-  the status, code and reason are the branch's (crates/colophon-api/src/error.rs on p3/3.6-modelling).
+  the status, code and reason are the server's (crates/colophon-api/src/error.rs).
 -->
 <div class="flex h-full flex-col justify-center p-5">
 	<div class="overflow-hidden rounded-2xl border border-border bg-card font-mono text-[0.6875rem] leading-relaxed shadow-soft">

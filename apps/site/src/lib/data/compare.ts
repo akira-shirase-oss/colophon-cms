@@ -1,6 +1,7 @@
-// Colophon, Strapi and Sanity, transcribed from docs/COMPARISON.md as it stood on 2026-10-27 (on
-// the step 3.6 branch). Keep the source's evidence notes with it: what was checked against the
-// vendors' docs, and what is general knowledge. Backticks mark code.
+// Colophon, Strapi and Sanity, transcribed from docs/COMPARISON.md as it stood on 2026-10-27, with
+// Colophon's cells brought up to what merged since (steps 3.6, 3.7, R.1 to R.3 and scheduled
+// publishing; the parity backlog as 03239d7 left it). Keep the source's evidence notes with it:
+// what was checked against the vendors' docs, and what is general knowledge. Backticks mark code.
 import type { StatusKind } from '#lib/status.ts';
 
 export const EVIDENCE = {
@@ -33,8 +34,8 @@ export const TABLES: CompareTable[] = [
 				'Field types',
 				'Text (short, long), rich text (Blocks or Markdown), number (integer, big integer, decimal, float), date/datetime/time, boolean, enumeration, email, password, JSON, UID, media, relation (six kinds), component (single or repeatable), dynamic zone, marketplace custom fields',
 				'string, text, number, boolean, date, datetime, url, email, slug, image, file, reference, cross-dataset and global references, array, object, block (Portable Text), geopoint',
-				'text, rich text, number, boolean, enum, datetime (D-040); image with media (P4); reference and bounded list planned',
-				'Slug in step 3.6; image with media in P4; references, lists and the other field types in milestone M (see the backlog). Password: not adopted'
+				'text, rich text, number, boolean, enum, datetime (D-040); slug, unique per collection (3.6, D-054); image with media (P4); reference and bounded list planned',
+				'Image with media in P4; references, lists and the other field types in milestone M (see the backlog). Password: not adopted'
 			],
 			[
 				'Groups of fields',
@@ -61,7 +62,7 @@ export const TABLES: CompareTable[] = [
 				'Validation',
 				'required, unique, min/max length or value, regex, default value',
 				'Rule chains (`required`, `either`, `all`), `custom()` functions in the Studio',
-				'required, max characters, min/max, integer; server-side, with a code per failure',
+				'required, max characters, min/max, integer; slugs unique per collection, enforced by PostgreSQL (3.6); server-side, with a code per failure',
 				'Pattern, uniqueness, length and value in milestone M, uniqueness enforced by the database (prechecks alone race). No custom-code validators: the server runs no user code'
 			],
 			[
@@ -83,7 +84,7 @@ export const TABLES: CompareTable[] = [
 	{
 		id: 'schema-changes',
 		title: 'Changing a schema that already has content',
-		lead: 'Where the products differ most. Neither Strapi nor Sanity tells an editor, before a change, which stored entries it would break; Colophon refuses any change that would invalidate a stored version, and step 3.6 makes the refusal name them.',
+		lead: 'Where the products differ most. Neither Strapi nor Sanity tells an editor, before a change, which stored entries it would break; Colophon refuses any change that would invalidate a stored version, and since step 3.6 the refusal names them.',
 		columns: ['', 'Strapi 5', 'Sanity', 'Colophon'],
 		rows: [
 			[
@@ -96,7 +97,7 @@ export const TABLES: CompareTable[] = [
 				'Who can change it, where',
 				'The builder is “available in Development environment only”; changes reach production as a code deploy',
 				'Developers, by deploying Studio code',
-				'Owners and developers, at runtime, through the same API as everything else'
+				'Anyone whose role may change content types (owners and developers by default), at runtime, in the Studio’s builder or through the same API as everything else (3.6)'
 			],
 			[
 				'Does the store enforce it',
@@ -108,7 +109,7 @@ export const TABLES: CompareTable[] = [
 				'Renaming a field',
 				'Since 5.57.0 the column is renamed and data kept; renaming and changing its type recreates the field empty',
 				'Old data stays under the old name until a migration script moves it',
-				'Refused with `needs_migration` today; migrations with plans and approvals come later'
+				'A label can change at any time; a field’s id is fixed once saved, and removing a field stored versions still use is refused with `needs_migration`, naming the first entries in the way (3.6). Migrations with plans and approvals come in milestone M'
 			],
 			['Removing a type', 'Entries vanish from the admin; data stays in the database', 'Documents stay in the dataset', 'Not possible yet']
 		]
@@ -223,9 +224,9 @@ const row = (feature: string, strapi: string, sanity: string, colophon: string, 
 export const PARITY: ParityRow[] = [
 	row('Drafts with autosave, conflict detection', '✓', '✓', 'done (P1)', 'done'),
 	row('Full history of every revision, from every write path', 'Paid, admin edits only', '✓', 'done (P1); history UI and restore in P4', 'done'),
-	row('Content types defined at runtime, safe changes', 'Dev-only builder', 'Code', 'done (D-040); builder and data-aware changes building (3.6)', 'done'),
+	row('Content types defined at runtime, safe changes', 'Dev-only builder', 'Code', 'done (D-040; the builder and changes checked against stored content, 3.6)', 'done'),
 	row('Text, rich text, number, boolean, enum, date-time', '✓', '✓', 'done (D-040)', 'done'),
-	row('Slug / UID, unique per collection', '✓', '✓', 'building (3.6)', 'building'),
+	row('Slug / UID, unique per collection', '✓', '✓', 'done (3.6, D-054)', 'done'),
 	row('References / relations (one, many, two-way)', '✓', '✓', 'M', 'planned'),
 	row('Components / objects, repeatable lists', '✓', '✓', 'M', 'planned'),
 	row('Dynamic zones / block arrays (page builder)', '✓', '✓', 'M', 'planned'),
@@ -239,16 +240,16 @@ export const PARITY: ParityRow[] = [
 	row('Publish several entries together (releases)', '✓', '✓ (Enterprise)', 'done (P2)', 'done'),
 	row('Proof that a release reached the site', '–', '–', 'done (P3)', 'done'),
 	row('Unpublish with revocation', 'Unpublish', 'Unpublish', 'done (P3)', 'done'),
-	row('Scheduled publishing', '✓', '✓', 'E', 'planned'),
+	row('Scheduled publishing', '✓', '✓', 'done (D-060)', 'done'),
 	row('Localization (i18n)', '✓', 'Plugins', 'E (data model ready since D-034)', 'planned'),
 	row('Comments and tasks', '–', '✓', 'E', 'planned'),
 	row('Real-time collaboration and presence', '–', '✓', 'E (O-017)', 'planned'),
 	row('Visual preview / click-to-edit', 'Preview', 'Presentation', 'E', 'planned'),
 	row('Bulk actions, duplicate, saved views', '✓', '✓', 'E', 'planned'),
-	row('Roles: built-in and custom', '✓', '✓ (by plan)', 'R (four fixed roles done, D-042)', 'planned'),
-	row('Field-level and “own entries” permissions', '✓', '✓ (by plan)', 'R', 'planned'),
-	row('API tokens: read-only, full, custom', '✓', '✓', 'R (device sign-in and bearer tokens done, D-041)', 'planned'),
-	row('Audit log', 'Paid', '✓ (by plan)', 'R', 'planned'),
+	row('Roles: built-in and custom', '✓', '✓ (by plan)', 'done (R.1, R.2; D-058)', 'done'),
+	row('Field-level and “own entries” permissions', '✓', '✓ (by plan)', 'done (R.3; D-058)', 'done'),
+	row('API tokens: read-only, full, custom', '✓', '✓', 'R.4 (device sign-in and bearer tokens done, D-041)', 'planned'),
+	row('Audit log', 'Paid', '✓ (by plan)', 'R.4', 'planned'),
 	row('SSO / OpenID Connect', 'Paid', '✓ (by plan)', 'done (Keycloak, D-031)', 'done'),
 	row('REST delivery with caching', '✓', '✓', 'done (P2, P3)', 'done'),
 	row('Query API: filters, sort, populate, field selection, perspectives', '✓', 'GROQ', 'D', 'planned'),
@@ -284,7 +285,8 @@ export const CONVEX: { idea: string; colophon: string; when: string }[] = [
 	{ idea: 'One snapshot per client', colophon: 'Studio pages read at one release and draft version', when: 'E' },
 	{ idea: 'Side effects outside transactions', colophon: 'Already invariant 2: the outbox and the worker', when: 'done (P2)' },
 	{ idea: 'Deterministic functions', colophon: 'Already how the simulator works (D-039)', when: 'done (P1)' },
-	{ idea: 'Indexes declared in the schema', colophon: 'The query API filters and sorts only on fields a content type declares as indexed', when: 'D' }
+	{ idea: 'Indexes declared in the schema', colophon: 'The query API filters and sorts only on fields a content type declares as indexed', when: 'D' },
+	{ idea: 'Scheduler and cron as durable rows', colophon: 'Scheduled publishing: one row per schedule in PostgreSQL, taken by the worker under a row lock when it falls due', when: 'done (D-060)' }
 ];
 
 /** The backlog by status, and its planned rows by the milestone that builds them. */

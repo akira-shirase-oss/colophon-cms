@@ -9,17 +9,25 @@
 	import { GITHUB_FILE } from '#lib/site.ts';
 
 	const done = MILESTONES.filter((milestone) => milestone.kind === 'done').length;
+	const underWay = MILESTONES.filter((milestone) => milestone.kind === 'building').map((milestone) => milestone.id);
+	const NUMBERS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen'];
+	const count = NUMBERS[MILESTONES.length] ?? String(MILESTONES.length);
+	const Count = count[0]!.toUpperCase() + count.slice(1);
+	const list = (ids: string[]) => (ids.length < 2 ? (ids[0] ?? '') : `${ids.slice(0, -1).join(', ')} and ${ids.at(-1)}`);
+	const stepWord = (step: { kind: string; note?: string }) =>
+		(step.kind === 'done' ? 'done' : step.kind === 'building' ? 'building' : 'planned') + (step.note ? `, ${step.note}` : '');
 </script>
 
 <Seo
 	title="Roadmap · Colophon"
-	description="Colophon's eleven milestones, each named after what it proves and done only when its proof gate passes with stored evidence."
+	description="Colophon's {count} milestones, each named after what it proves and done only when its proof gate passes with stored evidence."
 />
 
-<PageIntro badge="Roadmap" title="Eleven milestones, each named after what it proves">
+<PageIntro badge="Roadmap" title="{Count} milestones, each named after what it proves">
 	<p>
-		A milestone is done when its proof gate passes with stored evidence, not when its screens exist. {done} of {MILESTONES.length} are done; P3 is
-		under way. In all, {TOTAL_ESTIMATE}. Estimates assume about 45 hours a week and are guesses, not measurements.
+		A milestone is done when its proof gate passes with stored evidence, not when its screens exist. {done} of {MILESTONES.length} are done;
+		{list(underWay)} {underWay.length === 1 ? 'is' : 'are'} under way. In all, {TOTAL_ESTIMATE}. Estimates assume about 45 hours a week and are
+		guesses, not measurements.
 	</p>
 </PageIntro>
 
@@ -68,14 +76,24 @@
 										<span class="figure w-8 shrink-0 font-medium">{step.id}</span>
 										<span class="flex-1">
 											{step.title}
-											<span class="sr-only">({step.kind === 'done' ? 'done' : step.kind === 'building' ? (step.note ?? 'building') : 'planned'})</span>
+											<span class="sr-only">({stepWord(step)})</span>
 											{#if step.note}<span aria-hidden="true" class="ml-1 text-xs font-medium">· {step.note}</span>{/if}
 										</span>
 									</li>
 								{/each}
 							</ol>
 						{:else if milestone.bullets}
-							<h3 class="text-sm font-semibold">What it builds</h3>
+							{#if milestone.built}
+								<h3 class="text-sm font-semibold">Done so far</h3>
+								<ul class="mt-3 mb-6 grid gap-2">
+									{#each milestone.built as item (item)}
+										<li class="flex items-start gap-3 text-sm leading-relaxed">
+											<CheckIcon class="mt-0.5 size-4 shrink-0 text-live-ink" aria-hidden="true" />{item}<span class="sr-only"> (done)</span>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+							<h3 class="text-sm font-semibold">{milestone.built ? 'Still to build' : 'What it builds'}</h3>
 							<ul class="mt-3 grid gap-2">
 								{#each milestone.bullets as bullet (bullet)}
 									<li class="flex items-start gap-3 text-sm leading-relaxed text-muted-foreground">
@@ -93,6 +111,7 @@
 	<p class="mt-10 max-w-3xl text-sm leading-relaxed text-muted-foreground">
 		After v0.1: a business-site template with forms, and possibly a commerce showcase. Never: untrusted native plugins, active-active
 		multi-region writes. The full plan, with each milestone’s module list, is
-		<a class="text-link" href={GITHUB_FILE('docs/ROADMAP.md')}>docs/ROADMAP.md</a>; the order of R, M, E and D comes from D-057.
+		<a class="text-link" href={GITHUB_FILE('docs/ROADMAP.md')}>docs/ROADMAP.md</a>; the order of R, M, E and D comes from D-057, and S and V from
+		D-062.
 	</p>
 </div>

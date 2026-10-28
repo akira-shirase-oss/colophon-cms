@@ -157,7 +157,7 @@ test('the API panes are tabs: arrow keys move between them, and each shows its a
 	await page.keyboard.press('End');
 	await expect(page.getByRole('tab', { name: /Slug taken/ })).toBeFocused();
 	await expect(page.getByRole('tabpanel')).toContainText('slug_taken');
-	await expect(page.getByRole('tabpanel')).toContainText('Building');
+	await expect(page.getByRole('tabpanel')).toContainText('Done');
 	await page.getByRole('tab', { name: 'Stale save' }).click();
 	await expect(page.getByRole('tabpanel')).toContainText('"reason": "stale_revision"');
 	await expect(page.getByRole('tabpanel')).toContainText('HTTP/1.1 409 Conflict');
