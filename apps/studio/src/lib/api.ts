@@ -98,9 +98,16 @@ export interface Me {
 	projects: Project[];
 }
 
-/** One field of a content type, as the server writes definitions: every default spelled out. */
-export type FieldDefinition = { id: string; label: string; required: boolean } & (
-	| { type: 'text'; max_chars: number; multiline: boolean }
+/** One field of a content type, as the server writes definitions: every default spelled out,
+ *  except `description` and `min_chars`, which are written only when set (D-064). */
+export type FieldDefinition = {
+	id: string;
+	label: string;
+	required: boolean;
+	/** Help text shown under the field, at most 500 characters. */
+	description?: string;
+} & (
+	| { type: 'text'; max_chars: number; multiline: boolean; min_chars?: number }
 	| { type: 'rich_text' }
 	| { type: 'number'; integer: boolean; min?: number; max?: number }
 	| { type: 'boolean' }
@@ -109,10 +116,38 @@ export type FieldDefinition = { id: string; label: string; required: boolean } &
 	/** The entry's URL name, unique in its collection (D-054); `source` is the text field the
 	 *  Studio suggests it from. */
 	| { type: 'slug'; source?: string }
+	/** Step M.1 (D-064): values in one fixed format each, written canonically by the server. */
+	| { type: 'email' }
+	/** Stored as `new URL(text).href`: http or https, with a host and no user name. */
+	| { type: 'url' }
+	/** `YYYY-MM-DD`, as typed. */
+	| { type: 'date' }
+	/** `HH:MM` or `HH:MM:SS`, as typed. */
+	| { type: 'time' }
+	/** Any JSON value, canonical (lib/json.ts). */
+	| { type: 'json' }
+	| { type: 'markdown'; max_chars: number }
+	/** `#rrggbb`, lowercase. */
+	| { type: 'color' }
 );
 
 /** The field types a content type can use, in the order the builder offers them. */
-export const FIELD_TYPES = ['text', 'rich_text', 'number', 'boolean', 'enum', 'datetime', 'slug'] as const;
+export const FIELD_TYPES = [
+	'text',
+	'rich_text',
+	'markdown',
+	'number',
+	'boolean',
+	'enum',
+	'datetime',
+	'date',
+	'time',
+	'email',
+	'url',
+	'color',
+	'json',
+	'slug'
+] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
 
 /** A content type's definition (D-040). */

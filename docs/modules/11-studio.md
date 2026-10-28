@@ -152,6 +152,11 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     (`mayOn`, with each item's and entry's `created_by`). "Your drafts" lists the entries the person started
     (`?created_by=`), however many newer ones others wrote. Tests: `tests/server/controls.spec.ts`,
     `tests/server/mywork.spec.ts`.
+- Step M.1 in the Studio (D-064; the field types are in [domain](01-domain.md)):
+  - **The content-type builder** offers the seven new types in plain words (*Email address*, *Web address*, *Date*,
+    *Time of day*, *Structured data (JSON)*, *Markdown text*, *Colour*), markdown's character limit, an optional
+    minimum on text, and *Help for editors* on any field; help text is sent trimmed and only when there is some, and
+    the minimum only when set, as the server writes definitions. Test: `tests/server/fields.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

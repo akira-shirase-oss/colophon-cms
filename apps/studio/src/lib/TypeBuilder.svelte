@@ -49,10 +49,17 @@
 	const NAMES: Record<FieldType, string> = {
 		text: 'Text',
 		rich_text: 'Rich text',
+		markdown: 'Markdown text',
 		number: 'Number',
 		boolean: 'Yes or no',
 		enum: 'Choice',
 		datetime: 'Date and time',
+		date: 'Date',
+		time: 'Time of day',
+		email: 'Email address',
+		url: 'Web address',
+		color: 'Colour',
+		json: 'Structured data (JSON)',
 		slug: 'URL name'
 	};
 
@@ -78,7 +85,17 @@
 				return { ...common, type: 'enum', values: ['First option'] };
 			case 'slug':
 				return { ...common, type: 'slug', source: draft.title_field };
-			default:
+			case 'markdown':
+				return { ...common, type: 'markdown', max_chars: 100_000 };
+			case 'rich_text':
+			case 'boolean':
+			case 'datetime':
+			case 'date':
+			case 'time':
+			case 'email':
+			case 'url':
+			case 'color':
+			case 'json':
 				return { ...common, type: kind };
 		}
 	}
@@ -118,6 +135,20 @@
 		if (field.type === 'enum') field.values = text.split('\n').map((line) => line.trim()).filter((line) => line !== '');
 	}
 
+	/** Help text: written only when there is some (D-064). */
+	function setDescription(field: FieldDefinition, text: string) {
+		if (text.trim() === '') delete field.description;
+		else field.description = text;
+	}
+
+	/** A text field's minimum: written only when set. */
+	function setMinimum(field: FieldDefinition, text: string) {
+		if (field.type !== 'text') return;
+		const value = bound(text);
+		if (value === undefined || value < 1) delete field.min_chars;
+		else field.min_chars = Math.trunc(value);
+	}
+
 	function bound(text: string): number | undefined {
 		return text.trim() === '' || !Number.isFinite(Number(text)) ? undefined : Number(text);
 	}
@@ -129,7 +160,14 @@
 		if (body !== lastSent) key = newKey();
 		lastSent = body;
 		try {
-			const result = await updateContentType(project, type.slug, $state.snapshot(draft), etag, key);
+			// Help text is sent trimmed (the server refuses spaces at either end), and left out when empty.
+			const sending = $state.snapshot(draft);
+			for (const field of sending.fields) {
+				const help = field.description?.trim() ?? '';
+				if (help === '') delete field.description;
+				else field.description = help;
+			}
+			const result = await updateContentType(project, type.slug, sending, etag, key);
 			toast.success(`Saved ${result.type.definition.name}, version ${result.type.version}`);
 			queryClient.setQueryData(['type', project, type.slug], result.type);
 			await queryClient.invalidateQueries({ queryKey: ['types', project] });
@@ -186,9 +224,31 @@
 							characters
 						</label>
 						<label class="flex items-center gap-2">
+							At least
+							<Input
+								class="h-8 w-24 tabular"
+								type="number"
+								min={1}
+								placeholder="—"
+								value={field.min_chars ?? ''}
+								oninput={(event) => setMinimum(field, event.currentTarget.value)}
+								disabled={!editable}
+							/>
+							characters
+						</label>
+						<label class="flex items-center gap-2">
 							<input type="checkbox" class="size-4 accent-primary" bind:checked={field.multiline} disabled={!editable || isTitle} />
 							Several lines
 						</label>
+					</div>
+				{:else if field.type === 'markdown'}
+					<div class="flex flex-wrap items-center gap-4 text-sm">
+						<label class="flex items-center gap-2">
+							Up to
+							<Input class="h-8 w-28 tabular" type="number" min={1} max={100000} bind:value={field.max_chars} disabled={!editable} />
+							characters
+						</label>
+						<span class="text-xs text-muted-foreground">Written in Markdown; your site turns it into a page.</span>
 					</div>
 				{:else if field.type === 'number'}
 					<div class="flex flex-wrap items-center gap-4 text-sm">
@@ -243,6 +303,18 @@
 						</select>
 					</label>
 				{/if}
+				<label class="grid max-w-xl gap-1 text-sm">
+					<span class="text-muted-foreground">Help for editors (optional)</span>
+					<Input
+						class="h-8"
+						maxlength={500}
+						placeholder="Shown under the field in the editor"
+						value={field.description ?? ''}
+						oninput={(event) => setDescription(field, event.currentTarget.value)}
+						disabled={!editable}
+						data-testid="field-description"
+					/>
+				</label>
 			</li>
 		{/each}
 	</ol>
