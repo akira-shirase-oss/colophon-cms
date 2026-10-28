@@ -44,7 +44,7 @@ export default defineConfig({
 			...localEnv(),
 			COLOPHON_LISTEN_ADDR: `127.0.0.1:${PORT}`,
 			COLOPHON_PUBLIC_URL: `http://localhost:${PORT}`,
-			COLOPHON_STUDIO_DIR: `${repo}apps/studio/build`,
+			COLOPHON_STUDIO_DIR: `${repo}apps/studio/${process.env['STUDIO_BUILD_DIR'] ?? 'build'}`,
 			COLOPHON_LOG_FORMAT: 'json'
 		},
 		// The server's log in the test output: a failed sign-in logs its reason at info.

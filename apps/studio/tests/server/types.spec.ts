@@ -1,11 +1,11 @@
 // The content-type builder against a real server (step 3.6; D-054, D-055): an owner creates a
-// type in Settings, adds a URL name and a number, and editors then give entries URL names
+// type in Content types, adds a URL name and a number, and editors then give entries URL names
 // suggested from their titles, a taken one refused. A change that would break a saved entry is
 // refused naming it, and goes through once the entry is fixed. Set STUDIO_SHOTS_DIR to keep
 // screenshots of the builder and the editor.
 
 import { expect, type Page, test } from '@playwright/test';
-import { newProject, signIn, violations } from './helpers.ts';
+import { addField, newProject, saveBuilder, signIn, violations } from './helpers.ts';
 
 const shots = process.env['STUDIO_SHOTS_DIR'];
 async function shot(page: Page, name: string) {
@@ -30,30 +30,31 @@ async function api(page: Page, method: string, path: string, body?: unknown, hea
 	);
 }
 
-test('an owner builds a content type in Settings, and its entries get URL names', async ({ page }) => {
+test('an owner builds a content type in Content types, and its entries get URL names', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);
-	await page.goto(`/studio/projects/${project}/settings`);
+	await page.goto(`/studio/projects/${project}/settings/types`);
+	await page.getByTestId('new-type').click();
 	await page.locator('#type-name').fill('Recipes');
-	await expect(page.getByLabel('URL name')).toHaveValue('recipes');
-	await page.getByRole('button', { name: 'Create and add fields' }).click();
+	await expect(page.locator('#type-slug')).toHaveValue('recipes');
+	await page.getByTestId('create').click();
 	await expect(page.getByRole('heading', { level: 1, name: 'Recipes' })).toBeVisible();
 	await expect(page.getByTestId('field-title')).toBeVisible();
+	await expect(page.getByTestId('builder-type-recipes')).toHaveAttribute('aria-current', 'page');
 
-	const add = async (label: string, type: string) => {
-		await page.getByLabel('New field').fill(label);
-		await page.getByLabel('Type').selectOption(type);
-		await page.getByRole('button', { name: 'Add field' }).click();
-	};
-	await add('URL name', 'slug');
+	await addField(page, 'URL name', 'slug');
 	await expect(page.getByTestId('field-url_name')).toBeVisible();
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Recipes, version 2')).toBeVisible();
-	await add('Serves', 'number');
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await addField(page, 'Serves', 'number');
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Recipes, version 3')).toBeVisible();
-	// A second slug field isn't offered.
-	await expect(page.getByLabel('Type').locator('option[value="slug"]')).toHaveAttribute('disabled', '');
+	await expect(page.getByTestId('save-bar')).toHaveCount(0);
+	// A second URL name field isn't offered, and the picker says why.
+	await page.getByTestId('add-field').click();
+	await expect(page.getByTestId('pick-slug')).toBeDisabled();
+	await expect(page.getByTestId('pick-slug')).toContainText('This content type already has one.');
+	await page.keyboard.press('Escape');
 	await shot(page, 'builder');
 	expect(await violations(page)).toEqual([]);
 
@@ -100,8 +101,8 @@ test('a change that would break a saved entry is refused naming it, and goes thr
 	expect(note.status).toBe(201);
 
 	await page.goto(`/studio/projects/${project}/settings/types/notes`);
-	await page.getByRole('button', { name: 'Remove Subtitle' }).click();
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await page.getByRole('button', { name: 'Delete Subtitle' }).click();
+	await saveBuilder(page);
 	const refusal = page.getByTestId('type-refusal');
 	await expect(refusal).toContainText('1 entry is in the way');
 	await expect(refusal.getByRole('link', { name: 'Kettle' })).toBeVisible();
@@ -112,7 +113,7 @@ test('a change that would break a saved entry is refused naming it, and goes thr
 	const id = (note.body['data'] as { id: string }).id;
 	const saved = await api(page, 'PUT', `${base}/collections/notes/entries/${id}`, { title: 'Kettle' }, { 'If-Match': note.etag ?? '' });
 	expect(saved.status).toBe(200);
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Notes, version 2')).toBeVisible();
 	await expect(page.getByTestId('field-subtitle')).toHaveCount(0);
 });

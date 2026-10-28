@@ -6,7 +6,7 @@
 // entry's editor lists what links to it, and warns before a take-down the server will refuse.
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, key, member, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
+import { api, applyField, editField, env, internalTerms, key, member, newContentType, newEntry, newProject, publishThroughApi, saveBuilder, signIn, startField, violations } from './helpers.ts';
 
 const PEOPLE = {
 	name: 'People',
@@ -44,27 +44,19 @@ const status = (page: Page) => page.getByTestId('save-status');
 test('a link field is built in the builder: the collection it links to, one or a list', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);
-	for (const name of ['People', 'Stories']) {
-		await page.goto(`/studio/projects/${project}/settings`);
-		await page.locator('#type-name').fill(name);
-		await page.getByRole('button', { name: 'Create and add fields' }).click();
-		await expect(page.getByTestId('field-title')).toBeVisible();
-	}
-	await page.getByLabel('New field').fill('Author');
-	await page.getByLabel('Type').selectOption({ label: 'Link to entries' });
-	await page.getByRole('button', { name: 'Add field' }).click();
-	const author = page.getByTestId('field-author');
+	for (const name of ['People', 'Stories']) await newContentType(page, project, name);
+	const author = await startField(page, 'Author', 'reference');
 	await author.getByLabel('Links to').selectOption({ label: 'People' });
 	await expect(author.getByLabel('One entry')).toBeChecked();
-	await page.getByLabel('New field').fill('Related');
-	await page.getByLabel('Type').selectOption({ label: 'Link to entries' });
-	await page.getByRole('button', { name: 'Add field' }).click();
-	const related = page.getByTestId('field-related');
+	await applyField(page);
+	const related = await startField(page, 'Related', 'reference');
 	await related.getByLabel('Links to').selectOption({ label: 'Stories (this one)' });
 	await related.getByLabel('A list of up to').check();
 	await related.getByLabel('Most entries in Related').fill('3');
 	expect(await violations(page)).toEqual([]);
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await applyField(page);
+	await expect(page.getByTestId('field-related')).toContainText('Link to entries');
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Stories, version 2')).toBeVisible();
 
 	const saved = await api(page, 'GET', `${env(project)}/content-types/stories`);
@@ -73,7 +65,7 @@ test('a link field is built in the builder: the collection it links to, one or a
 	expect(fields.find((field) => field['id'] === 'related')).toMatchObject({ type: 'reference', to: 'stories', many: true, max: 3 });
 	// Saved, a link keeps pointing where it points.
 	await page.reload();
-	await expect(page.getByTestId('field-author').getByLabel('Links to')).toBeDisabled();
+	await expect((await editField(page, 'author')).getByLabel('Links to')).toBeDisabled();
 });
 
 test('an author is chosen by searching titles; a list of three is reordered; both come back after a reload', async ({ page }) => {

@@ -6,7 +6,7 @@
 // another entry still publishes, said in the publish flow's words.
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, key, member, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
+import { api, applyField, editField, env, internalTerms, key, member, newEntry, newProject, publishThroughApi, saveBuilder, signIn, violations } from './helpers.ts';
 
 const text = (id: string, label: string, rest: Record<string, unknown> = {}) => ({ id, label, type: 'text', required: false, max_chars: 200, multiline: false, ...rest });
 const PEOPLE = {
@@ -54,25 +54,31 @@ test('the switch is offered only where a field can be unique, and left out of th
 	};
 	expect((await api(page, 'POST', `${env(project)}/content-types`, { slug: 'people', definition }, { 'Idempotency-Key': key() })).status).toBe(201);
 	await page.goto(`/studio/projects/${project}/settings/types/people`);
-	await expect(page.getByTestId('field-name').getByTestId('field-unique')).toHaveCount(1);
-	await expect(page.getByTestId('field-email').getByTestId('field-unique')).toHaveCount(1);
-	await expect(page.getByTestId('field-bio').getByTestId('field-unique')).toHaveCount(0);
-	await expect(page.getByTestId('field-contact/work').getByTestId('field-unique')).toHaveCount(0);
-	// A group can't be unique, nor anything inside one.
-	await expect(page.getByTestId('field-contact').getByTestId('field-unique')).toHaveCount(0);
-	expect(await violations(page)).toEqual([]);
+	// Offered in a field's advanced settings only where it can be: one-line text and email, not
+	// several lines; a group can't be unique, nor anything inside one.
+	for (const [place, offered] of [['name', 1], ['email', 1], ['bio', 0], ['contact/work', 0], ['contact', 0]] as const) {
+		const dialog = await editField(page, place, 'Advanced');
+		await expect(dialog.getByTestId('field-unique'), place).toHaveCount(offered);
+		if (place === 'email') expect(await violations(page)).toEqual([]);
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeHidden();
+	}
 
-	await page.getByTestId('field-email').getByLabel('No two entries may share this').check();
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await (await editField(page, 'email', 'Advanced')).getByLabel('No two entries may share this').check();
+	await applyField(page);
+	await expect(page.getByTestId('field-email')).toContainText('Unique');
+	await saveBuilder(page);
 	await expect(page.getByText('Saved People, version 2')).toBeVisible();
 	let saved = await fields(page, project, 'people');
 	expect(saved[1]).toMatchObject({ id: 'email', unique: true });
 	expect(saved[0]).not.toHaveProperty('unique');
 
 	await page.reload();
-	await expect(page.getByTestId('field-email').getByLabel('No two entries may share this')).toBeChecked();
-	await page.getByTestId('field-email').getByLabel('No two entries may share this').uncheck();
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	const email = await editField(page, 'email', 'Advanced');
+	await expect(email.getByLabel('No two entries may share this')).toBeChecked();
+	await email.getByLabel('No two entries may share this').uncheck();
+	await applyField(page);
+	await saveBuilder(page);
 	await expect(page.getByText('Saved People, version 3')).toBeVisible();
 	saved = await fields(page, project, 'people');
 	expect(saved[1]).not.toHaveProperty('unique');
@@ -136,20 +142,24 @@ test('a field made unique while two entries share a value is refused with them l
 	const second = await newEntry(page, project, 'Second', 'codes', { title: 'Second', code: 'X1' });
 
 	await page.goto(`/studio/projects/${project}/settings/types/codes`);
-	await page.getByTestId('field-code').getByLabel('No two entries may share this').check();
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await (await editField(page, 'code', 'Advanced')).getByLabel('No two entries may share this').check();
+	await applyField(page);
+	await saveBuilder(page);
 	const refusal = page.getByTestId('type-refusal');
 	await expect(refusal).toContainText('Some entries share a value in this field');
 	await expect(refusal.getByRole('link', { name: 'First' })).toBeVisible();
 	await expect(refusal.getByRole('link', { name: 'Second' })).toBeVisible();
 	await expect(refusal.getByTestId('blocker-problem').first()).toHaveText('It shares its Code with another entry.');
-	await expect(page.getByTestId('field-code').getByTestId('unique-problem')).toBeVisible();
+	await expect(page.getByTestId('field-code').getByTestId('row-problem')).toContainText('Some entries share a value in this field');
 	expect(await violations(page)).toEqual([]);
+	await page.getByTestId('field-code').getByRole('button', { name: 'Open its settings' }).click();
+	await expect(page.getByTestId('field-dialog').getByTestId('unique-problem')).toBeVisible();
+	await page.keyboard.press('Escape');
 
 	// One changes; now it can be unique.
 	const etag = await page.evaluate(async (path) => (await fetch(path)).headers.get('etag') ?? '', `${env(project)}/collections/codes/entries/${second}`);
 	expect((await api(page, 'PUT', `${env(project)}/collections/codes/entries/${second}`, { title: 'Second', code: 'X2' }, { 'If-Match': etag, 'Idempotency-Key': key() })).status).toBe(200);
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Codes, version 2')).toBeVisible();
 	expect((await fields(page, project, 'codes'))[1]).toMatchObject({ id: 'code', unique: true });
 });

@@ -7,7 +7,7 @@
 // one content type reads components but can't change them, which the server refuses too.
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, key, member, newEntry, newProject, shot, signIn, violations } from './helpers.ts';
+import { addField, api, applyField, editField, env, internalTerms, key, member, newEntry, newProject, saveBuilder, shot, signIn, startField, violations } from './helpers.ts';
 
 const TITLE = { id: 'title', label: 'Title', type: 'text', required: true, max_chars: 200, multiline: false };
 const typeUsing = (name: string) => ({ name, title_field: 'title', fields: [TITLE, { id: 'seo', label: 'SEO', type: 'component', component: 'seo', required: false }] });
@@ -33,49 +33,51 @@ async function seo(page: Page, project: string) {
 	expect(made.status, JSON.stringify(made.body)).toBe(201);
 }
 
-const add = async (page: Page, form: string, label: string, type: string) => {
-	const scope = page.getByRole('form', { name: form, exact: true });
-	await scope.getByRole('textbox').fill(label);
-	await scope.getByRole('combobox').selectOption({ label: type });
-	await scope.getByRole('button', { name: 'Add field' }).click();
-};
-
-test('a component is made in Settings, inserted into a content type, and filled in an entry like a group', async ({ page }) => {
+test('a component is made in Content types, inserted into a content type, and filled in an entry like a group', async ({ page }) => {
 	const project = await withTypes(page, [['pages', { name: 'Pages', title_field: 'title', fields: [TITLE] }]]);
-	await page.goto(`/studio/projects/${project}/settings`);
+	await page.goto(`/studio/projects/${project}/settings/types`);
+	await page.getByTestId('new-component').click();
 	await page.locator('#component-name').fill('SEO');
 	await expect(page.locator('#component-slug')).toHaveValue('seo');
-	await page.getByRole('button', { name: 'Create component' }).click();
+	await page.getByTestId('create').click();
 	await expect(page.getByRole('heading', { level: 1, name: 'SEO' })).toBeVisible();
 	await expect(page.getByTestId('component-users')).toContainText('No content type uses it yet.');
 
 	// Its fields: a title to start, and a description added here.
 	await expect(page.getByTestId('field-title')).toBeVisible();
-	await add(page, 'Add a field to SEO', 'Description', 'Text');
+	// A component can't hold another component, and the picker says so.
+	await page.getByTestId('add-field').click();
+	await expect(page.getByTestId('pick-component')).toBeDisabled();
+	await expect(page.getByTestId('pick-component')).toContainText('A component can’t hold another component.');
+	await page.keyboard.press('Escape');
+	await addField(page, 'Description', 'text');
 	expect(await violations(page)).toEqual([]);
 	expect(await internalTerms(page)).toEqual([]);
-	await page.getByRole('button', { name: 'Save component' }).click();
+	await saveBuilder(page);
 	await expect(page.getByTestId('component-saved')).toContainText('Saved SEO, version 2.');
 	await expect(page.getByTestId('component-saved')).toContainText('No content type needed a new version.');
 	await shot(page, 'component-m4');
 
 	// Inserted into Pages from its builder: shown with its fields and the way to its page.
 	await page.goto(`/studio/projects/${project}/settings/types/pages`);
-	await add(page, 'Add a field', 'Search', 'Component: SEO');
+	const dialog = await startField(page, 'Search', 'component');
+	await expect(dialog.getByRole('combobox', { name: 'Component' })).toHaveValue('seo');
+	await applyField(page);
 	const inserted = page.getByTestId('component-search');
-	await expect(inserted.getByRole('list', { name: 'Fields of SEO' }).getByRole('listitem')).toHaveText(['Title', 'Description']);
+	await expect(inserted).toContainText('Title, Description');
 	await expect(page.getByTestId('field-search')).toContainText('Component: SEO');
 	expect(await violations(page)).toEqual([]);
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Pages, version 2')).toBeVisible();
 	const pages = (await api(page, 'GET', `${env(project)}/content-types/pages`)).body?.['data'].definition.fields as Record<string, any>[];
 	expect(pages[1]).toMatchObject({ id: 'search', type: 'object', component: 'seo', fields: [{ id: 'title' }, { id: 'description' }] });
-	await page.getByTestId('component-search').getByRole('link', { name: 'Open the SEO component' }).click();
+	await page.getByTestId('component-search').getByRole('link', { name: 'Change in SEO' }).click();
 	await expect(page.getByTestId('component-users')).toContainText('Used by Pages.');
+	await expect(page.getByTestId('builder-component-seo')).toHaveAttribute('aria-current', 'page');
 
-	// Settings lists it with who uses it.
-	await page.goto(`/studio/projects/${project}/settings`);
-	await expect(page.getByTestId('components')).toContainText('2 fields · version 2 · Used by Pages');
+	// The builder's front page lists it with who uses it.
+	await page.goto(`/studio/projects/${project}/settings/types`);
+	await expect(page.getByTestId('components')).toContainText('2 fields · Used by Pages');
 
 	// In an entry it is a group of fields like any other.
 	const entry = await newEntry(page, project, 'Home', 'pages', { title: 'Home' });
@@ -108,15 +110,15 @@ test('a change reaches every content type that uses it; one their entries can’
 
 	await page.goto(`/studio/projects/${project}/settings/components/seo`);
 	await expect(page.getByTestId('component-users')).toContainText('Used by Pages, Posts.');
-	await add(page, 'Add a field to SEO', 'Description', 'Text');
-	await page.getByTestId('field-description').getByLabel('Required').check();
+	await (await startField(page, 'Description', 'text')).getByLabel('Required').check();
+	await applyField(page);
 	// The server's answer names the type: no entry is read to find it.
 	const reads: string[] = [];
 	page.on('request', (request) => {
 		if (request.method() === 'GET' && request.url().includes('/entries/')) reads.push(request.url());
 	});
 	const answer = page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().endsWith('/components/seo'));
-	await page.getByRole('button', { name: 'Save component' }).click();
+	await saveBuilder(page);
 	expect((await (await answer).json()).error.details).toMatchObject({ reason: 'needs_migration', content_type: 'posts' });
 	// Pages has no entries in the way; Posts does, so nothing changes, and Posts is named and linked.
 	const refusal = page.getByTestId('component-refusal');
@@ -130,8 +132,9 @@ test('a change reaches every content type that uses it; one their entries can’
 	expect(reads).toEqual([]);
 
 	// Optional, it goes through: both types get a new version, said with links.
-	await page.getByTestId('field-description').getByLabel('Required').uncheck();
-	await page.getByRole('button', { name: 'Save component' }).click();
+	await (await editField(page, 'description')).getByLabel('Required').uncheck();
+	await applyField(page);
+	await saveBuilder(page);
 	const saved = page.getByTestId('component-saved');
 	await expect(saved).toContainText('Saved SEO, version 2.');
 	await expect(saved).toContainText('Also changed: Pages, now version 2, Posts, now version 2.');
@@ -173,9 +176,10 @@ test('a change one content type can’t take at all is refused, naming that type
 
 	await page.goto(`/studio/projects/${project}/settings/components/seo`);
 	await expect(page.getByTestId('component-users')).toContainText('Used by Pages, Posts.');
-	await add(page, 'Add a field to SEO', 'Links', 'Group of fields');
-	await add(page, 'Add a field to Links', 'Label', 'Text');
-	await page.getByRole('button', { name: 'Save component' }).click();
+	await addField(page, 'Links', 'object');
+	await expect(page.getByTestId('builder-problems')).toContainText('Links needs at least one field.');
+	await addField(page, 'Label', 'text', 'Links');
+	await saveBuilder(page);
 	// No entries are in the way, and two types use it: only the server's answer can say which refused.
 	const refusal = page.getByTestId('component-refusal');
 	await expect(refusal.getByTestId('refusal-words')).toHaveText('Posts can’t take this change.');
@@ -202,14 +206,22 @@ test('a role that may change only one content type reads components but can’t 
 	expect(role.status, JSON.stringify(role.body)).toBe(201);
 	const designer = await member(page, browser, project, 'pages-designer');
 
-	await designer.goto(`/studio/projects/${project}/settings`);
-	await expect(designer.getByTestId('components')).toContainText('View');
-	await expect(designer.getByRole('form', { name: 'New component' })).toHaveCount(0);
-	await designer.goto(`/studio/projects/${project}/settings/components/seo`);
+	// Content types is in their menu (they may change one); New component isn't offered.
+	await designer.getByTestId('builder-link').click();
+	await expect(designer.getByTestId('component-card-seo')).toBeVisible();
+	await expect(designer.getByTestId('new-component')).toHaveCount(0);
+	await expect(designer.getByTestId('new-type')).toHaveCount(0);
+	await designer.getByTestId('builder-component-seo').click();
 	await expect(designer.getByText('Changing it takes a role that may change every content type.')).toBeVisible();
 	await expect(designer.getByTestId('field-title')).toBeVisible();
-	await expect(designer.getByRole('button', { name: 'Save component' })).toHaveCount(0);
-	await expect(designer.getByRole('form', { name: 'Add a field to SEO' })).toHaveCount(0);
+	await expect(designer.getByTestId('add-field')).toHaveCount(0);
+	await expect(designer.getByTestId('delete-field')).toHaveCount(0);
+	// Its settings open to read, not to change.
+	await designer.getByRole('button', { name: 'View Title' }).click();
+	await expect(designer.getByTestId('field-dialog').getByTestId('field-label')).toBeDisabled();
+	await expect(designer.getByTestId('field-apply')).toHaveCount(0);
+	await designer.keyboard.press('Escape');
+	await expect(designer.getByTestId('save-bar')).toHaveCount(0);
 	expect(await violations(designer)).toEqual([]);
 
 	// The server decides: the change is refused.

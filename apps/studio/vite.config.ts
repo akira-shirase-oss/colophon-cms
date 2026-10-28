@@ -3,6 +3,10 @@ import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
+// Where the built Studio goes: `build`, which the server serves; STUDIO_BUILD_DIR builds elsewhere,
+// so tests can run against new work while a server keeps serving the last build.
+const out = process.env['STUDIO_BUILD_DIR'] ?? 'build';
+
 export default defineConfig({
 	plugins: [
 		// The design system (D-053): Tailwind CSS v4 before SvelteKit, as its docs require.
@@ -15,7 +19,7 @@ export default defineConfig({
 			// A static single-page app that colophon-server serves at /studio on its own origin, so the
 			// session cookie and the CSRF token need no CORS (D-037). Absolute asset paths, because
 			// the fallback page answers for every route.
-			adapter: adapter({ fallback: '200.html' }),
+			adapter: adapter({ pages: out, assets: out, fallback: '200.html' }),
 			paths: { base: '/studio', relative: false }
 		})
 	],

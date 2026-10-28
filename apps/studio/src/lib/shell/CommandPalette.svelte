@@ -11,6 +11,7 @@
 	import MoonIcon from '@lucide/svelte/icons/moon';
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
+	import ShapesIcon from '@lucide/svelte/icons/shapes';
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -25,6 +26,7 @@
 		project,
 		types,
 		settings = false,
+		builds = false,
 		tokens = false,
 		activity = false,
 		open = $bindable(false)
@@ -33,6 +35,8 @@
 		types: ContentType[];
 		/** Whether the role sees Settings, API tokens and the activity log. */
 		settings?: boolean;
+		/** Whether the role sees the content-type builder. */
+		builds?: boolean;
 		tokens?: boolean;
 		activity?: boolean;
 		open?: boolean;
@@ -80,6 +84,7 @@
 		{ label: 'Publish requests', icon: LayersIcon, href: resolve('/projects/[project]/changesets', { project }) },
 		{ label: 'Releases', icon: PackageCheckIcon, href: resolve('/projects/[project]/releases', { project }) },
 		{ label: 'Members', icon: UsersIcon, href: resolve('/projects/[project]/members', { project }) },
+		...(builds ? [{ label: 'Content types', icon: ShapesIcon, href: resolve('/projects/[project]/settings/types', { project }) }] : []),
 		...(settings ? [{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }] : []),
 		...(tokens ? [{ label: 'API tokens', icon: KeyRoundIcon, href: resolve('/projects/[project]/settings/tokens', { project }) }] : []),
 		...(activity ? [{ label: 'Activity', icon: HistoryIcon, href: resolve('/projects/[project]/settings/activity', { project }) }] : [])

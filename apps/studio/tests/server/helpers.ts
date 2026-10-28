@@ -143,3 +143,54 @@ export async function shot(page: Page, name: string) {
 	const directory = process.env['STUDIO_SHOTS_DIR'];
 	if (directory !== undefined && directory !== '') await page.screenshot({ path: `${directory}/${name}.png`, fullPage: true });
 }
+
+/**
+ * The content-type builder (Content types): opens "Add a field" (at the top, or in `within`, such
+ * as "Hero" or "Quote section"), picks `kind` (a field type, or `component`) and fills the label.
+ * The field's settings dialog stays open for more; `addField` then adds it.
+ */
+export async function startField(page: Page, label: string, kind: string, within?: string) {
+	const add = within === undefined ? page.getByTestId('add-field') : page.getByRole('button', { name: `Add a field to ${within}`, exact: true });
+	await add.click();
+	await page.getByTestId('field-picker').getByTestId(`pick-${kind}`).click();
+	const dialog = page.getByTestId('field-dialog');
+	await dialog.getByTestId('field-label').fill(label);
+	return dialog;
+}
+
+/** Adds a field in the builder with its defaults: `startField`, then Add field. */
+export async function addField(page: Page, label: string, kind: string, within?: string) {
+	await startField(page, label, kind, within);
+	await applyField(page);
+}
+
+/** Closes the open field settings with Add field or Done. */
+export async function applyField(page: Page) {
+	const dialog = page.getByTestId('field-dialog');
+	await dialog.getByTestId('field-apply').click();
+	await expect(dialog).toBeHidden();
+}
+
+/** Opens the settings of the field at `place` ("title", "hero/heading") in the builder, on `tab`. */
+export async function editField(page: Page, place: string, tab: 'Basics' | 'Advanced' = 'Basics') {
+	await page.getByTestId(`field-${place}`).getByTestId('edit-field').first().click();
+	const dialog = page.getByTestId('field-dialog');
+	await dialog.getByRole('tab', { name: tab }).click();
+	return dialog;
+}
+
+/** Saves the content type or component from the builder's save bar. */
+export async function saveBuilder(page: Page) {
+	await page.getByTestId('save-bar').getByTestId('save').click();
+}
+
+/** Makes a content type in the builder from its left panel; its page opens. */
+export async function newContentType(page: Page, project: string, name: string, slug?: string) {
+	await page.goto(`/studio/projects/${project}/settings/types`);
+	await page.getByTestId('new-type').click();
+	await page.locator('#type-name').fill(name);
+	if (slug !== undefined) await page.locator('#type-slug').fill(slug);
+	await page.getByTestId('create').click();
+	await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
+	await expect(page.getByTestId('field-title')).toBeVisible();
+}

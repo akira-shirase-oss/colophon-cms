@@ -4,7 +4,7 @@
 // exists; and a type that already has two entries can't be made single, said plainly.
 
 import { expect, test } from '@playwright/test';
-import { api, env, internalTerms, key, newEntry, newProject, signIn, violations } from './helpers.ts';
+import { api, env, internalTerms, key, newContentType, newEntry, newProject, saveBuilder, signIn, violations } from './helpers.ts';
 
 const SETTINGS = {
 	name: 'Site settings',
@@ -16,13 +16,13 @@ const SETTINGS = {
 test('the switch makes a type hold one entry; the sidebar creates it, then opens it directly', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);
-	await page.goto(`/studio/projects/${project}/settings`);
-	await page.locator('#type-name').fill('Site settings');
-	await page.getByRole('button', { name: 'Create and add fields' }).click();
-	await expect(page.getByTestId('field-title')).toBeVisible();
+	await newContentType(page, project, 'Site settings');
+	await page.getByTestId('edit-type').click();
 	await page.getByLabel('Just one entry (like site settings or a home page)').check();
 	expect(await violations(page)).toEqual([]);
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await page.getByRole('button', { name: 'Done' }).click();
+	await expect(page.getByTestId('type-builder')).toContainText('Single type: just one entry');
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Site settings, version 2')).toBeVisible();
 	expect((await api(page, 'GET', `${env(project)}/content-types/site-settings`)).body?.['data'].definition.single).toBe(true);
 
@@ -83,8 +83,10 @@ test('a type with two entries can’t be made single, and the builder says so pl
 	await newEntry(page, project, 'One');
 	await newEntry(page, project, 'Two');
 	await page.goto(`/studio/projects/${project}/settings/types/articles`);
+	await page.getByTestId('edit-type').click();
 	await page.getByLabel('Just one entry (like site settings or a home page)').check();
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await page.getByRole('button', { name: 'Done' }).click();
+	await saveBuilder(page);
 	await expect(page.getByTestId('type-refusal')).toContainText('It has more than one entry already, so it can’t hold just one.');
 	expect(await violations(page)).toEqual([]);
 	expect((await api(page, 'GET', `${env(project)}/content-types/articles`)).body?.['data'].definition.single).toBeUndefined();

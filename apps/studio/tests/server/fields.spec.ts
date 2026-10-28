@@ -7,7 +7,7 @@
 import { expect, type Page, test } from '@playwright/test';
 import { canonicalJson } from '../../src/lib/json.ts';
 import { TRICKY, TRICKY_CANONICAL } from '../json-fixture.ts';
-import { api, env, internalTerms, key, newProject, shot, signIn, violations } from './helpers.ts';
+import { addField, api, applyField, editField, env, internalTerms, key, newContentType, newProject, saveBuilder, shot, signIn, violations } from './helpers.ts';
 
 /** A content type with one field of each new kind, made through the API. */
 const VENUES = {
@@ -75,19 +75,15 @@ const status = (page: Page) => page.getByTestId('save-status');
 test('an owner builds a content type with the seven new kinds of field, help text and limits', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);
-	await page.goto(`/studio/projects/${project}/settings`);
-	await page.locator('#type-name').fill('Venues');
-	await page.getByRole('button', { name: 'Create and add fields' }).click();
-	await expect(page.getByTestId('field-title')).toBeVisible();
-	const kinds = page.getByLabel('Type');
-	const offered = (await kinds.locator('option').allTextContents()).map((name) => name.trim());
-	for (const name of ['Email address', 'Web address', 'Date', 'Time of day', 'Structured data (JSON)', 'Markdown text', 'Colour']) {
-		expect(offered, name).toContain(name);
+	await newContentType(page, project, 'Venues');
+	await page.getByTestId('add-field').click();
+	const picker = page.getByTestId('field-picker');
+	for (const [kind, name] of [['email', 'Email address'], ['url', 'Web address'], ['date', 'Date'], ['time', 'Time of day'], ['json', 'Structured data (JSON)'], ['markdown', 'Markdown text'], ['color', 'Colour']] as const) {
+		await expect(picker.getByTestId(`pick-${kind}`), name).toContainText(name);
 	}
+	await page.keyboard.press('Escape');
 	const add = async (label: string, type: string) => {
-		await page.getByLabel('New field').fill(label);
-		await kinds.selectOption(type);
-		await page.getByRole('button', { name: 'Add field' }).click();
+		await addField(page, label, type);
 		await expect(page.getByTestId(`field-${label.toLowerCase().replaceAll(' ', '_')}`)).toBeVisible();
 	};
 	await add('Contact email', 'email');
@@ -97,12 +93,15 @@ test('an owner builds a content type with the seven new kinds of field, help tex
 	await add('Settings', 'json');
 	await add('Notes', 'markdown');
 	await add('Accent', 'color');
-	await page.getByTestId('field-title').getByLabel('At least').fill('3');
-	await page.getByTestId('field-notes').getByLabel('Up to').fill('60');
-	await page.getByTestId('field-website').getByTestId('field-description').fill('Where readers book a table ');
+	await (await editField(page, 'title', 'Advanced')).getByLabel('At least').fill('3');
+	await applyField(page);
+	await (await editField(page, 'notes', 'Advanced')).getByLabel('Up to').fill('60');
+	await applyField(page);
+	await (await editField(page, 'website')).getByTestId('field-description').fill('Where readers book a table ');
+	await applyField(page);
 	await expect(page.getByTestId('field-settings')).toContainText('Structured data (JSON)');
 	expect(await violations(page)).toEqual([]);
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Venues, version 2')).toBeVisible();
 	await shot(page, 'builder-m1');
 

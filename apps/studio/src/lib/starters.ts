@@ -40,7 +40,7 @@ export const STARTERS: StarterInfo[] = [
 	{
 		id: 'blank',
 		name: 'Start blank',
-		description: 'Set up your own kinds of content later, in Settings.',
+		description: 'Set up your own kinds of content later, in Content types.',
 		includes: 'Articles with a title and a body.'
 	}
 ];

@@ -10,6 +10,7 @@
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
 	import SearchIcon from '@lucide/svelte/icons/search';
+	import ShapesIcon from '@lucide/svelte/icons/shapes';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import { resolve } from '$app/paths';
@@ -51,6 +52,10 @@
 	const oneOf = (slug: string) => singleLists[singles.findIndex((type) => type.slug === slug)]?.data?.data[0]?.id;
 	// Settings is the developer area (D-059, rule 5): only roles that can change something there see it.
 	const settings = $derived(mayAny(mine.data, SETTINGS_ACTIONS));
+	// The content-type builder, for roles that may change content types somewhere (like Strapi's
+	// Content-Type Builder for administrators).
+	const builds = $derived(mayAny(mine.data, ['schema.change']));
+	const inBuilder = $derived(route.startsWith('/projects/[project]/settings/types') || route.startsWith('/projects/[project]/settings/components'));
 	let searching = $state(false);
 	// The home page shows someone's work in the project they last opened here.
 	$effect(() => {
@@ -64,8 +69,9 @@
 		'/projects/[project]/releases/[generation]': 'Releases',
 		'/projects/[project]/members': 'Members',
 		'/projects/[project]/settings': 'Settings',
-		'/projects/[project]/settings/types/[type]': 'Settings',
-		'/projects/[project]/settings/components/[component]': 'Settings',
+		'/projects/[project]/settings/types': 'Content types',
+		'/projects/[project]/settings/types/[type]': 'Content types',
+		'/projects/[project]/settings/components/[component]': 'Content types',
 		'/projects/[project]/settings/roles/[role]': 'Settings',
 		'/projects/[project]/settings/tokens': 'Settings',
 		'/projects/[project]/settings/activity': 'Settings'
@@ -90,7 +96,9 @@
 					? resolve('/projects/[project]/changesets', { project })
 					: section === 'Settings'
 						? resolve('/projects/[project]/settings', { project })
-						: resolve('/projects/[project]/releases', { project });
+						: section === 'Content types'
+							? resolve('/projects/[project]/settings/types', { project })
+							: resolve('/projects/[project]/releases', { project });
 			trail.push({ label: section, href: detail ? href : undefined });
 			if (route.endsWith('[generation]')) trail.push({ label: `Release ${page.params.generation}` });
 			if (route.endsWith('[changeset]')) trail.push({ label: 'Publish request' });
@@ -100,6 +108,7 @@
 			if (route.endsWith('[type]')) {
 				trail.push({ label: types.data?.find((type) => type.slug === page.params.type)?.definition.name ?? page.params.type ?? '' });
 			}
+			if (route.endsWith('[component]')) trail.push({ label: 'Component' });
 		} else {
 			trail.push({ label: 'Overview' });
 		}
@@ -233,9 +242,18 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
+					{#if builds}
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton isActive={inBuilder} tooltipContent="Content types">
+								{#snippet child({ props })}
+									<a href={resolve('/projects/[project]/settings/types', { project })} data-testid="builder-link" {...props}><ShapesIcon /><span>Content types</span></a>
+								{/snippet}
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
+					{/if}
 					{#if settings}
 						<Sidebar.MenuItem>
-							<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/settings')} tooltipContent="Settings">
+							<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/settings') && !inBuilder} tooltipContent="Settings">
 								{#snippet child({ props })}
 									<a href={resolve('/projects/[project]/settings', { project })} data-testid="settings-link" {...props}><Settings2Icon /><span>Settings</span></a>
 								{/snippet}
@@ -307,6 +325,7 @@
 	{project}
 	types={readable}
 	{settings}
+	{builds}
 	tokens={may(mine.data, 'tokens.manage')}
 	activity={may(mine.data, 'audit.read')}
 	bind:open={searching}

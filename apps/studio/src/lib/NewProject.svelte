@@ -46,7 +46,7 @@
 			await applyStarter(project, starter);
 		} catch (failure) {
 			const why = failure instanceof ApiError ? failure.message : String(failure);
-			toast.error(`The project was made, but its starting point didn't finish: ${why}. Settings → Content types can finish it.`);
+			toast.error(`The project was made, but its starting point didn't finish: ${why}. Content types, in the menu, can finish it.`);
 		}
 		await queryClient.invalidateQueries({ queryKey: ['me'] });
 		busy = false;

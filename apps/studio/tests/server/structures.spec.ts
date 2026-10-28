@@ -5,7 +5,7 @@
 // reload; a refusal deep inside shown under its own control; and "Linked from" naming the place.
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, key, newEntry, newProject, shot, signIn, violations } from './helpers.ts';
+import { addField, api, applyField, editField, env, internalTerms, key, newContentType, newEntry, newProject, saveBuilder, shot, signIn, startField, violations } from './helpers.ts';
 
 const PEOPLE = {
 	name: 'People',
@@ -54,52 +54,48 @@ const status = (page: Page) => page.getByTestId('save-status');
 
 test('a page type with a group, a list and page sections is built in the builder', async ({ page }) => {
 	const { project } = await site(page);
-	await page.goto(`/studio/projects/${project}/settings`);
-	await page.locator('#type-name').fill('Pages');
-	await page.getByRole('button', { name: 'Create and add fields' }).click();
-	await expect(page.getByTestId('field-title')).toBeVisible();
+	await newContentType(page, project, 'Pages');
 
-	const add = async (form: string, label: string, type: string) => {
-		const scope = page.getByRole('form', { name: form, exact: true });
-		await scope.getByRole('textbox').fill(label);
-		await scope.getByRole('combobox').selectOption({ label: type });
-		await scope.getByRole('button', { name: 'Add field' }).click();
-	};
-	await add('Add a field', 'Hero', 'Group of fields');
-	await add('Add a field to Hero', 'Heading', 'Text');
-	await add('Add a field', 'FAQ', 'List');
-	await page.getByLabel('What each item of FAQ is').selectOption({ label: 'Group of fields' });
-	await add('Add a field to FAQ item', 'Question', 'Text');
-	await add('Add a field to FAQ item', 'Answer', 'Markdown text');
-	await page.getByTestId('field-faq/item/question').getByLabel('Required').check();
-	await page.getByLabel('Most items in FAQ').fill('5');
-	await add('Add a field', 'Sections', 'Page sections');
+	await addField(page, 'Hero', 'object');
+	await addField(page, 'Heading', 'text', 'Hero');
+	const faq = await startField(page, 'FAQ', 'list');
+	await faq.getByLabel('What each item of FAQ is').selectOption({ label: 'Group of fields' });
+	await faq.getByLabel('Most items in FAQ').fill('5');
+	await applyField(page);
+	await addField(page, 'Question', 'text', 'FAQ item');
+	await addField(page, 'Answer', 'markdown', 'FAQ item');
+	await (await editField(page, 'faq/item/question')).getByLabel('Required').check();
+	await applyField(page);
+	await addField(page, 'Sections', 'blocks');
 	// Nothing to save yet: page sections need a kind, and each kind a field.
 	await expect(page.getByTestId('builder-problems')).toContainText('Sections needs at least one kind of section.');
-	await expect(page.getByRole('button', { name: 'Save content type' })).toBeDisabled();
+	await expect(page.getByTestId('save-bar').getByTestId('save')).toBeDisabled();
 	const kinds = page.getByRole('form', { name: 'Add a kind of section to Sections' });
 	await kinds.getByRole('textbox').fill('Quote');
 	await kinds.getByRole('button', { name: 'Add kind of section' }).click();
 	await expect(page.getByTestId('builder-problems')).toContainText('The Quote section of Sections needs at least one field.');
-	await add('Add a field to Quote section', 'Text', 'Text');
-	await add('Add a field to Quote section', 'By', 'Link to entries');
-	await page.getByTestId('field-sections/quote/by').getByLabel('Links to').selectOption({ label: 'People' });
+	await addField(page, 'Text', 'text', 'Quote section');
+	await (await startField(page, 'By', 'reference', 'Quote section')).getByLabel('Links to').selectOption({ label: 'People' });
+	await applyField(page);
 	await kinds.getByRole('textbox').fill('Call to action');
 	await kinds.getByRole('button', { name: 'Add kind of section' }).click();
-	await add('Add a field to Call to action section', 'Label', 'Text');
-	await add('Add a field to Call to action section', 'Link', 'Web address');
+	await addField(page, 'Label', 'text', 'Call to action section');
+	await addField(page, 'Link', 'url', 'Call to action section');
 	await expect(page.getByTestId('builder-problems')).toHaveCount(0);
 
 	// Three deep is the limit: inside a group inside a group inside a group, none is offered.
-	await add('Add a field to Hero', 'Inner', 'Group of fields');
-	await add('Add a field to Inner', 'Innermost', 'Group of fields');
-	await expect(page.getByRole('form', { name: 'Add a field to Innermost' }).getByTestId('nesting-limit')).toContainText('nest at most 3 deep');
-	await expect(page.getByRole('form', { name: 'Add a field to Innermost' }).getByRole('combobox').locator('option', { hasText: 'Group of fields' })).toHaveCount(0);
-	await page.getByTestId('field-hero').getByRole('button', { name: 'Remove Inner', exact: true }).click();
+	await addField(page, 'Inner', 'object', 'Hero');
+	await addField(page, 'Innermost', 'object', 'Inner');
+	await page.getByRole('button', { name: 'Add a field to Innermost', exact: true }).click();
+	await expect(page.getByTestId('field-picker').getByTestId('nesting-limit')).toContainText('nest at most 3 deep');
+	await expect(page.getByTestId('pick-object')).toBeDisabled();
+	await expect(page.getByTestId('pick-text')).toBeEnabled();
+	await page.keyboard.press('Escape');
+	await page.getByTestId('field-hero').getByRole('button', { name: 'Delete Inner', exact: true }).click();
 	expect(await violations(page)).toEqual([]);
 	await shot(page, 'builder-m3');
 
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Pages, version 2')).toBeVisible();
 	const saved = await api(page, 'GET', `${env(project)}/content-types/pages`);
 	const fields = saved.body?.['data'].definition.fields as Record<string, any>[];

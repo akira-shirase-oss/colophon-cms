@@ -84,7 +84,7 @@ test('a failed read shows the problem and a way to try again, not “Loading…�
 	await expect(page.getByTestId('first-run')).toBeVisible();
 });
 
-test('Settings shows a failed read of content types, and a way to try again', async ({ page }) => {
+test('Content types shows a failed read of content types, and a way to try again', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);
 	let failing = true;
@@ -93,9 +93,10 @@ test('Settings shows a failed read of content types, and a way to try again', as
 			? route.fulfill({ status: 503, json: { error: { code: 'unavailable', message: 'the server is busy; try again shortly' } } })
 			: route.fallback()
 	);
-	await page.goto(`/studio/projects/${project}/settings`);
+	await page.goto(`/studio/projects/${project}/settings/types`);
 	const problem = page.getByTestId('problem').filter({ hasText: 'content types' });
 	await expect(problem).toContainText("Couldn't load content types", { timeout: 20_000 });
+	await expect(page.getByTestId('builder-nav')).toContainText("Couldn't load them");
 	expect(await violations(page)).toEqual([]);
 	failing = false;
 	await problem.getByRole('button', { name: 'Try again' }).click();

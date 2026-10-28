@@ -1,6 +1,7 @@
 <!--
   A project's settings, the developer area (D-059, rule 5): what it is and where its content can
-  be read, its content types, its roles (D-058), and, for people whose role manages them, its
+  be read, a link to the content types (built in their own place, Content types), its roles
+  (D-058), and, for people whose role manages them, its
   website connections (destinations, D-046, D-050, D-051): a site rebuild (webhook), a CDN clear
   (purge), and a site check (probe) that confirms what readers actually get. Each section asks the
   role for its own permission.
@@ -8,6 +9,7 @@
 <script lang="ts">
 	import CopyIcon from '@lucide/svelte/icons/copy';
 	import GlobeIcon from '@lucide/svelte/icons/globe';
+	import ShapesIcon from '@lucide/svelte/icons/shapes';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -19,8 +21,6 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import {
 		ApiError,
-		createComponent,
-		createContentType,
 		createDestination,
 		createRole,
 		deliveryUrl,
@@ -30,7 +30,6 @@
 		setDestinationEnabled
 	} from '#lib/api.ts';
 	import { slugify } from '#lib/content.ts';
-	import { usedBy } from '#lib/fieldDefs.ts';
 	import { componentsQuery, destinationsQuery, projectQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import FormRow from '#lib/shell/FormRow.svelte';
@@ -79,75 +78,6 @@
 			roleError = failure instanceof ApiError ? failure.message : String(failure);
 		} finally {
 			roleBusy = false;
-		}
-	}
-
-	// A new content type: a name, the URL name its entries live under, and a title field to start.
-	let typeName = $state('');
-	let typeSlug = $state('');
-	let typeSlugTouched = $state(false);
-	let typeError = $state('');
-	let typeBusy = $state(false);
-	let typeKey = newKey();
-	const suggestedSlug = $derived(slugify(typeName).slice(0, 63).replace(/-+$/, ''));
-	const effectiveSlug = $derived(typeSlugTouched ? typeSlug : suggestedSlug);
-
-	async function addType(event: SubmitEvent) {
-		event.preventDefault();
-		typeBusy = true;
-		typeError = '';
-		try {
-			const created = await createContentType(
-				project,
-				effectiveSlug,
-				{
-					name: typeName.trim(),
-					title_field: 'title',
-					fields: [{ id: 'title', label: 'Title', type: 'text', required: true, max_chars: 200, multiline: false }]
-				},
-				typeKey
-			);
-			typeKey = newKey();
-			await queryClient.invalidateQueries({ queryKey: ['types', project] });
-			toast.success(`Created ${created.type.definition.name}`);
-			await goto(resolve('/projects/[project]/settings/types/[type]', { project, type: created.type.slug }));
-		} catch (failure) {
-			typeError = failure instanceof ApiError ? failure.message : String(failure);
-		} finally {
-			typeBusy = false;
-		}
-	}
-
-	// A new shared component (D-073): a name, its URL name, and a first field to start; its page
-	// adds the rest. Like a content type, it needs at least one field.
-	let componentName = $state('');
-	let componentSlug = $state('');
-	let componentSlugTouched = $state(false);
-	let componentError = $state('');
-	let componentBusy = $state(false);
-	let componentKey = newKey();
-	const suggestedComponentSlug = $derived(slugify(componentName).slice(0, 63).replace(/-+$/, ''));
-	const effectiveComponentSlug = $derived(componentSlugTouched ? componentSlug : suggestedComponentSlug);
-
-	async function addComponent(event: SubmitEvent) {
-		event.preventDefault();
-		componentBusy = true;
-		componentError = '';
-		try {
-			const created = await createComponent(
-				project,
-				effectiveComponentSlug,
-				{ name: componentName.trim(), fields: [{ id: 'title', label: 'Title', type: 'text', required: false, max_chars: 200, multiline: false }] },
-				componentKey
-			);
-			componentKey = newKey();
-			await queryClient.invalidateQueries({ queryKey: ['components', project] });
-			toast.success(`Created ${created.definition.name}`);
-			await goto(resolve('/projects/[project]/settings/components/[component]', { project, component: created.slug }));
-		} catch (failure) {
-			componentError = failure instanceof ApiError ? failure.message : String(failure);
-		} finally {
-			componentBusy = false;
 		}
 	}
 
@@ -234,119 +164,24 @@
 	</section>
 
 	<section class="mt-12 max-w-4xl" aria-labelledby="types-title">
-		<h2 id="types-title" class="mb-1 text-base font-semibold">Content types</h2>
+		<h2 id="types-title" class="mb-1 text-base font-semibold">Content types and components</h2>
 		<p class="mb-4 text-sm text-muted-foreground">
-			The kinds of content this project holds and their fields. Changes that could break saved entries are checked against them first.
+			The kinds of content this project holds and their fields are built in Content types, in the main menu.
 		</p>
-		{#if types.isError}
-			<div class="mb-6"><Problem error={types.error} what="content types" retry={() => types.refetch()} /></div>
-		{:else if types.isPending}
-			<Skeleton class="mb-6 h-24 w-full rounded-xl" />
-		{:else if types.data}
-			<ul class="mb-6 overflow-hidden rounded-xl border border-border bg-card" data-testid="content-types">
-				{#each types.data as item (item.slug)}
-					<li class="rule-dotted last:border-b-0">
-						<a
-							class="flex items-center gap-4 px-4 py-3 hover:bg-accent"
-							href={resolve('/projects/[project]/settings/types/[type]', { project, type: item.slug })}
-						>
-							<span class="min-w-0 flex-1">
-								<strong class="font-medium">{item.definition.name}</strong>
-								<span class="block text-xs text-muted-foreground">
-									{item.definition.fields.length} field{item.definition.fields.length === 1 ? '' : 's'} · version {item.version}
-								</span>
-							</span>
-							<span class="text-sm text-muted-foreground">{may(mine.data, 'schema.change', item.slug) ? 'Edit' : 'View'}</span>
-						</a>
-					</li>
-				{/each}
-			</ul>
-		{/if}
-		{#if changesTypes}
-			<form onsubmit={addType} aria-label="New content type">
-				<h3 class="mb-4 text-sm font-semibold">Add a content type</h3>
-				<FormRow label="Name" hint="For example Pages, Authors or Recipes." for="type-name">
-					<Input id="type-name" class="max-w-md" bind:value={typeName} required maxlength={100} />
-				</FormRow>
-				<FormRow label="URL name" hint="Where its entries live in addresses. It can't change later." for="type-slug">
-					<Input
-						id="type-slug"
-						class="max-w-md font-mono"
-						value={effectiveSlug}
-						oninput={(event) => {
-							typeSlugTouched = true;
-							typeSlug = event.currentTarget.value;
-						}}
-						required
-						maxlength={63}
-					/>
-				</FormRow>
-				{#if typeError}<p role="alert" class="mb-4 text-sm text-destructive">{typeError}</p>{/if}
-				<div class="flex justify-end">
-					<Button type="submit" disabled={typeBusy || typeName.trim() === '' || effectiveSlug === ''}>Create and add fields</Button>
-				</div>
-			</form>
-		{/if}
-	</section>
-
-	<section class="mt-12 max-w-4xl" aria-labelledby="components-title">
-		<h2 id="components-title" class="mb-1 text-base font-semibold">Components</h2>
-		<p class="mb-4 text-sm text-muted-foreground">
-			Groups of fields that content types share, such as SEO or a call to action. Changing one changes every content type that uses it, or none.
-		</p>
-		{#if components.isError}
-			<div class="mb-6"><Problem error={components.error} what="components" retry={() => components.refetch()} /></div>
-		{:else if components.isPending}
-			<Skeleton class="mb-6 h-16 w-full rounded-xl" />
-		{:else if components.data.length > 0}
-			<ul class="mb-6 overflow-hidden rounded-xl border border-border bg-card" data-testid="components">
-				{#each components.data as item (item.slug)}
-					{@const users = usedBy(types.data ?? [], item.slug)}
-					<li class="rule-dotted last:border-b-0">
-						<a
-							class="flex items-center gap-4 px-4 py-3 hover:bg-accent"
-							href={resolve('/projects/[project]/settings/components/[component]', { project, component: item.slug })}
-						>
-							<span class="min-w-0 flex-1">
-								<strong class="font-medium">{item.definition.name}</strong>
-								<span class="block text-xs text-muted-foreground">
-									{item.definition.fields.length} field{item.definition.fields.length === 1 ? '' : 's'} · version {item.version} ·
-									{users.length === 0 ? 'Not used yet' : `Used by ${users.map((user) => user.name).join(', ')}`}
-								</span>
-							</span>
-							<span class="text-sm text-muted-foreground">{changesTypes ? 'Edit' : 'View'}</span>
-						</a>
-					</li>
-				{/each}
-			</ul>
-		{:else}
-			<p class="mb-6 text-sm text-muted-foreground">None yet.</p>
-		{/if}
-		{#if changesTypes}
-			<form onsubmit={addComponent} aria-label="New component">
-				<h3 class="mb-4 text-sm font-semibold">Add a component</h3>
-				<FormRow label="Component name" hint="For example SEO, Call to action or Address." for="component-name">
-					<Input id="component-name" class="max-w-md" bind:value={componentName} required maxlength={100} />
-				</FormRow>
-				<FormRow label="Name in code" hint="How the API and content type definitions refer to it. It can't change later." for="component-slug">
-					<Input
-						id="component-slug"
-						class="max-w-md font-mono"
-						value={effectiveComponentSlug}
-						oninput={(event) => {
-							componentSlugTouched = true;
-							componentSlug = event.currentTarget.value;
-						}}
-						required
-						maxlength={63}
-					/>
-				</FormRow>
-				{#if componentError}<p role="alert" class="mb-4 text-sm text-destructive">{componentError}</p>{/if}
-				<div class="flex justify-end">
-					<Button type="submit" disabled={componentBusy || componentName.trim() === '' || effectiveComponentSlug === ''}>Create component</Button>
-				</div>
-			</form>
-		{/if}
+		<a
+			class="flex items-center gap-4 rounded-xl border border-border bg-card px-4 py-3 outline-none hover:bg-accent focus-visible:ring-4 focus-visible:ring-ring/25"
+			href={resolve('/projects/[project]/settings/types', { project })}
+			data-testid="open-builder"
+		>
+			<ShapesIcon class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+			<span class="min-w-0 flex-1">
+				<strong class="font-medium">Content types</strong>
+				<span class="block text-xs text-muted-foreground">
+					{#if types.data}{types.data.length} content type{types.data.length === 1 ? '' : 's'}{#if components.data} · {components.data.length} component{components.data.length === 1 ? '' : 's'}{/if}{:else}Their fields, and shared components{/if}
+				</span>
+			</span>
+			<span class="text-sm text-muted-foreground">{changesTypes ? 'Open' : 'View'}</span>
+		</a>
 	</section>
 
 	<section class="mt-12 max-w-4xl" aria-labelledby="roles-title">

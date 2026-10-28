@@ -5,7 +5,7 @@
 // a form that stored content doesn't fit lists the entries in the way.
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, key, newEntry, newProject, signIn, violations } from './helpers.ts';
+import { api, applyField, editField, env, internalTerms, key, newContentType, newEntry, newProject, saveBuilder, signIn, startField, violations } from './helpers.ts';
 
 const CODES = {
 	name: 'Products',
@@ -24,39 +24,46 @@ async function definition(page: Page, project: string, slug: string): Promise<Re
 test('an allowed form is set in the builder, kept when other options change, and refused at its input when unusable', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);
-	await page.goto(`/studio/projects/${project}/settings`);
-	await page.locator('#type-name').fill('Products');
-	await page.getByRole('button', { name: 'Create and add fields' }).click();
-	const add = page.getByRole('form', { name: 'Add a field', exact: true });
-	await add.getByRole('textbox').fill('Code');
-	await add.getByRole('combobox').selectOption({ label: 'Text' });
-	await add.getByRole('button', { name: 'Add field' }).click();
-	const code = page.getByTestId('field-code');
-	await code.getByTestId('field-pattern').fill('[A-Z]{3}-[0-9]{4}');
-	await code.getByTestId('field-description').fill('Like ABC-1234');
+	await newContentType(page, project, 'Products');
+	const dialog = await startField(page, 'Code', 'text');
+	await dialog.getByTestId('field-description').fill('Like ABC-1234');
+	await dialog.getByRole('tab', { name: 'Advanced' }).click();
+	// The allowed form is explained, with examples to start from.
+	await expect(dialog).toContainText('Only values in this form are accepted.');
+	await dialog.getByRole('button', { name: /\[A-Z\]\{3\}-\[0-9\]\{4\}/ }).click();
+	await expect(dialog.getByTestId('field-pattern')).toHaveValue('[A-Z]{3}-[0-9]{4}');
 	expect(await violations(page)).toEqual([]);
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await applyField(page);
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Products, version 2')).toBeVisible();
 	expect((await definition(page, project, 'products'))[1]).toMatchObject({ id: 'code', pattern: '[A-Z]{3}-[0-9]{4}' });
 
 	// Another option changed: the form stays.
 	await page.reload();
-	await expect(page.getByTestId('field-code').getByTestId('field-pattern')).toHaveValue('[A-Z]{3}-[0-9]{4}');
-	await page.getByTestId('field-code').getByLabel('Up to').fill('30');
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	let code = await editField(page, 'code', 'Advanced');
+	await expect(code.getByTestId('field-pattern')).toHaveValue('[A-Z]{3}-[0-9]{4}');
+	await code.getByLabel('Up to').fill('30');
+	await applyField(page);
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Products, version 3')).toBeVisible();
 	expect((await definition(page, project, 'products'))[1]).toMatchObject({ max_chars: 30, pattern: '[A-Z]{3}-[0-9]{4}' });
 
-	// A form the server can't use (look-around) is refused at its own input, plainly.
+	// A form the server can't use (look-around) is refused on its field, and at its own input.
 	await page.reload();
-	await page.getByTestId('field-code').getByTestId('field-pattern').fill('(?=A)[A-Z]+');
-	await page.getByRole('button', { name: 'Save content type' }).click();
-	await expect(page.getByTestId('field-code').getByTestId('pattern-problem')).toContainText('Colophon can’t use this allowed form');
+	code = await editField(page, 'code', 'Advanced');
+	await code.getByTestId('field-pattern').fill('(?=A)[A-Z]+');
+	await applyField(page);
+	await saveBuilder(page);
+	await expect(page.getByTestId('field-code').getByTestId('row-problem')).toContainText('Colophon can’t use this allowed form');
+	await page.getByTestId('field-code').getByTestId('edit-field').click();
+	// The settings open on the tab with the problem.
+	await expect(page.getByTestId('field-dialog').getByTestId('pattern-problem')).toContainText('Colophon can’t use this allowed form');
 	expect(await violations(page)).toEqual([]);
 
 	// Emptied, it's left out of the definition.
-	await page.getByTestId('field-code').getByTestId('field-pattern').fill('');
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await page.getByTestId('field-dialog').getByTestId('field-pattern').fill('');
+	await applyField(page);
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Products, version 4')).toBeVisible();
 	expect((await definition(page, project, 'products'))[1]).not.toHaveProperty('pattern');
 });
@@ -94,8 +101,9 @@ test('adding an allowed form that stored content doesn’t fit lists the entries
 	const project = await newProject(page);
 	await newEntry(page, project, 'lowercase title');
 	await page.goto(`/studio/projects/${project}/settings/types/articles`);
-	await page.getByTestId('field-title').getByTestId('field-pattern').fill('[A-Z].*');
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await (await editField(page, 'title', 'Advanced')).getByTestId('field-pattern').fill('[A-Z].*');
+	await applyField(page);
+	await saveBuilder(page);
 	const refusal = page.getByTestId('type-refusal');
 	await expect(refusal.getByRole('link', { name: 'lowercase title' })).toBeVisible();
 	expect(await violations(page)).toEqual([]);

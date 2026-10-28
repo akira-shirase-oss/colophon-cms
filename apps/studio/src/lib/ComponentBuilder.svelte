@@ -1,22 +1,26 @@
 <!--
-  A shared component in the builder (D-073): its name and its fields, edited like a group's (one
-  structure deep, so nothing unique, no defaults, no conditions, no URL name and no component
-  inside). A change reaches every content type that uses it: the server gives each a new version
+  A shared component in the builder (D-073): its name (in an "Edit component" dialog) and its
+  fields as a compact list (FieldList.svelte), edited like a group's (one structure deep, so
+  nothing unique, no defaults, no conditions, no URL name and no component inside), with one save
+  bar while there are unsaved changes. A change reaches every content type that uses it: the server gives each a new version
   in the same transaction, checked against its entries, or refuses the whole change. A refusal
   names the content type in the way (`details.content_type`) and lists its entries with links.
   Its page keys it on the version, so a save starts a fresh copy of the new one.
 -->
 <script lang="ts">
+	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import { resolve } from '$app/paths';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
+	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
 	import { ApiError, type Component, type ComponentDefinition, type Details, type FieldDefinition, newKey, updateComponent } from './api.ts';
 	import { plainError } from './errors.ts';
 	import { savedPaths, structureProblems, usedBy } from './fieldDefs.ts';
-	import FieldsEditor from './FieldsEditor.svelte';
+	import FieldList from './FieldList.svelte';
 	import { typesQuery } from './queries.ts';
+	import SaveBar from './SaveBar.svelte';
 
 	let {
 		project,
@@ -44,7 +48,8 @@
 	let refusal = $state<{ message: string; server: string; details: Details | null; stale: boolean; type: InTheWay | null } | null>(null);
 
 	const changed = $derived(JSON.stringify(draft) !== JSON.stringify(saved));
-	const problems = $derived(structureProblems(draft.fields));
+	const problems = $derived([...(draft.name.trim() === '' ? ['Give the component a name.'] : []), ...structureProblems(draft.fields)]);
+	let editingName = $state(false);
 
 	/** Help text is sent trimmed and left out when empty, at every depth. */
 	function trimmed(fields: FieldDefinition[]) {
@@ -135,24 +140,30 @@
 	}
 </script>
 
-<div class="max-w-4xl space-y-8" data-testid="component-builder">
-	<label class="grid max-w-md gap-1.5">
-		<span class="text-sm font-medium">Name</span>
-		<Input bind:value={draft.name} maxlength={100} disabled={!editable} />
-	</label>
+<div class="grid gap-6" data-testid="component-builder">
+	<header class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+		<div class="min-w-0 space-y-1.5">
+			<h1 class="text-2xl leading-tight font-semibold tracking-tight text-balance sm:text-[1.75rem]">{draft.name.trim() || saved.name}</h1>
+			<p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+				<Badge variant="secondary">Shared component</Badge>
+				<span>{draft.fields.length} field{draft.fields.length === 1 ? '' : 's'}</span>
+				<span>In code as <code class="font-mono text-xs">{component.slug}</code></span>
+				{#if !editable}<span>Changing it takes a role that may change every content type.</span>{/if}
+			</p>
+		</div>
+		{#if editable}
+			<Button variant="outline" size="sm" onclick={() => (editingName = true)} data-testid="edit-component"><PencilIcon data-icon="inline-start" />Edit component</Button>
+		{/if}
+	</header>
 
 	<p class="text-sm text-muted-foreground" data-testid="component-users">
 		{#if users.length === 0}
-			No content type uses it yet. Add it to one from that content type's fields.
+			No content type uses it yet. Add it to one with Add a field, then Shared component.
 		{:else}
 			Used by {users.map((user) => user.name).join(', ')}. Saving a change gives each of them a new version too, or changes nothing if one of
 			them can't take it.
 		{/if}
 	</p>
-
-	<div>
-		<FieldsEditor fields={draft.fields} depth={1} {editable} saved={savedAt} collections={types.data ?? []} self="" within={draft.name} {project} refusal={refusal?.details?.pointer ? { pointer: refusal.details.pointer, message: refusal.message } : null} />
-	</div>
 
 	{#if refusal}
 		<div role="alert" class="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm" data-testid="component-refusal">
@@ -187,15 +198,37 @@
 		</div>
 	{/if}
 
+	<FieldList
+		fields={draft.fields}
+		depth={1}
+		{editable}
+		saved={savedAt}
+		collections={types.data ?? []}
+		self=""
+		insideComponent
+		{project}
+		refusal={refusal?.details?.pointer ? { pointer: refusal.details.pointer, message: refusal.message } : null}
+	/>
+
 	{#if editable}
-		{#if changed && problems.length > 0}
-			<ul class="space-y-1 text-sm text-destructive" data-testid="builder-problems" aria-label="Before saving">
-				{#each problems as problem (problem)}<li>{problem}</li>{/each}
-			</ul>
-		{/if}
-		<div class="flex justify-end gap-2">
-			<Button variant="ghost" disabled={!changed || busy} onclick={() => ((draft = structuredClone(saved)), (refusal = null))}>Discard changes</Button>
-			<Button disabled={!changed || busy || problems.length > 0 || draft.name.trim() === ''} onclick={save}>Save component</Button>
-		</div>
+		<SaveBar {changed} {busy} {problems} what={saved.name} onsave={save} ondiscard={() => ((draft = structuredClone(saved)), (refusal = null))} />
 	{/if}
 </div>
+
+<Dialog.Root bind:open={editingName}>
+	<Dialog.Content class="sm:max-w-md">
+		<div class="grid gap-5">
+			<Dialog.Header>
+				<Dialog.Title>Edit component</Dialog.Title>
+				<Dialog.Description>Its name, as content types show it. Save to keep the change.</Dialog.Description>
+			</Dialog.Header>
+			<label class="grid gap-1.5 text-sm">
+				<span class="font-medium">Name</span>
+				<Input bind:value={draft.name} maxlength={100} disabled={!editable} data-testid="component-name-input" />
+			</label>
+			<Dialog.Footer>
+				<Button onclick={() => (editingName = false)}>Done</Button>
+			</Dialog.Footer>
+		</div>
+	</Dialog.Content>
+</Dialog.Root>

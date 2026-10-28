@@ -1,19 +1,18 @@
 <!--
-  One shared component (D-073): its fields, the content types that use it, and, after a save, the
-  new version each of them got. Changing one takes a role that may change every content type,
-  since a change reaches them all; everyone else reads.
+  One shared component (D-073) in the builder, beside the list of content types and components:
+  its fields, the content types that use it, and, after a save, the new version each of them got.
+  Changing one takes a role that may change every content type, since a change reaches them all;
+  everyone else reads.
 -->
 <script lang="ts">
-	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery } from '@tanstack/svelte-query';
-	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { type Component, getComponent, may } from '#lib/api.ts';
+	import BuilderFrame from '#lib/BuilderFrame.svelte';
 	import ComponentBuilder from '#lib/ComponentBuilder.svelte';
 	import { projectQuery, typesQuery } from '#lib/queries.ts';
-	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 
 	const project = $derived(page.params.project ?? '');
@@ -28,49 +27,36 @@
 	let saved = $state<Component | null>(null);
 </script>
 
-<svelte:head><title>{loaded.data?.component.definition.name ?? 'Component'} · Colophon Studio</title></svelte:head>
+<svelte:head><title>{loaded.data?.component.definition.name ?? 'Component'} · Content types · Colophon Studio</title></svelte:head>
 
-<PageHeader title={loaded.data?.component.definition.name ?? 'Component'}>
-	{#snippet eyebrow()}
-		<Button variant="ghost" size="xs" href={resolve('/projects/[project]/settings', { project })}>
-			<ArrowLeftIcon data-icon="inline-start" />Settings
-		</Button>
-	{/snippet}
-	{#snippet meta()}
-		{#if loaded.data}
-			<span>Component, version {loaded.data.component.version}</span>
-			<span>In code as <code class="font-mono">{loaded.data.component.slug}</code></span>
-			{#if !editable}<span>Changing it takes a role that may change every content type.</span>{/if}
-		{/if}
-	{/snippet}
-</PageHeader>
+<BuilderFrame {project} current={{ kind: 'component', slug }}>
+	{#if saved && saved.slug === slug}
+		<div role="status" class="mb-6 rounded-xl border border-border bg-card px-4 py-3 text-sm" data-testid="component-saved">
+			<p class="font-medium">Saved {saved.definition.name}, version {saved.version}.</p>
+			{#if saved.content_types?.length}
+				<p class="mt-1 text-muted-foreground">
+					Also changed:
+					{#each saved.content_types as type, index (type.slug)}{index > 0 ? ', ' : ''}<a
+							class="font-medium text-foreground underline"
+							href={resolve('/projects/[project]/settings/types/[type]', { project, type: type.slug })}>{nameOf(type.slug)}</a
+						>, now version {type.version}{/each}.
+				</p>
+			{:else}
+				<p class="mt-1 text-muted-foreground">No content type needed a new version.</p>
+			{/if}
+		</div>
+	{/if}
 
-{#if saved}
-	<div role="status" class="mb-6 max-w-4xl rounded-xl border border-border bg-card px-4 py-3 text-sm" data-testid="component-saved">
-		<p class="font-medium">Saved {saved.definition.name}, version {saved.version}.</p>
-		{#if saved.content_types?.length}
-			<p class="mt-1 text-muted-foreground">
-				Also changed:
-				{#each saved.content_types as type, index (type.slug)}{index > 0 ? ', ' : ''}<a
-						class="font-medium text-foreground underline"
-						href={resolve('/projects/[project]/settings/types/[type]', { project, type: type.slug })}>{nameOf(type.slug)}</a
-					>, now version {type.version}{/each}.
-			</p>
-		{:else}
-			<p class="mt-1 text-muted-foreground">No content type needed a new version.</p>
-		{/if}
-	</div>
-{/if}
-
-{#if loaded.isError}
-	<Problem error={loaded.error} />
-{:else if loaded.data}
-	{#key loaded.data.component.version}
-		<ComponentBuilder {project} component={loaded.data.component} etag={loaded.data.etag} {editable} onsaved={(result) => (saved = result)} />
-	{/key}
-{:else}
-	<div class="grid max-w-4xl gap-3" aria-busy="true">
-		<Skeleton class="h-10 w-80" />
-		<Skeleton class="h-24 w-full" />
-	</div>
-{/if}
+	{#if loaded.isError}
+		<Problem error={loaded.error} what="this component" retry={() => loaded.refetch()} />
+	{:else if loaded.data}
+		{#key `${loaded.data.component.slug}:${loaded.data.component.version}`}
+			<ComponentBuilder {project} component={loaded.data.component} etag={loaded.data.etag} {editable} onsaved={(result) => (saved = result)} />
+		{/key}
+	{:else}
+		<div class="grid gap-3" aria-busy="true">
+			<Skeleton class="h-10 w-80" />
+			<Skeleton class="h-16 w-full" />
+		</div>
+	{/if}
+</BuilderFrame>

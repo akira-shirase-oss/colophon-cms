@@ -255,6 +255,29 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   structures still fit three deep (`componentFits`), shows its fields read-only with a link to its page, and the
   entry editor fills it like any group. Changing one takes `schema.change` everywhere; a role without it reads it,
   and the server refuses its change too. Tests: `tests/components.spec.ts`, `tests/server/components.spec.ts`.
+- **The content-type builder, rebuilt as a CMS builder** (D-079, 2026-10-28; notes in
+  [research/cms-ui-patterns.md](../research/cms-ui-patterns.md)). *Content types* in the main navigation (shown to roles
+  with `schema.change` anywhere) opens `…/settings/types`: a left panel (`BuilderFrame.svelte`) of collections, single
+  types and components with *New content type* (a name, its address name made from it, many entries or just one) and
+  *New component*, beside the front page's cards or the one being built. A type (`TypeBuilder.svelte`) is a header
+  (name, kind, field count, address name, *See its entries*, *Edit type* for the name and *Just one entry*) over a
+  compact list of fields (`FieldList.svelte`): one row each with a drag handle, the kind's icon (`fieldIcons.ts`), the
+  label, the kind in words and badges (Title, Required, Unique, *Shown only when…*, New), and Edit and Delete (with
+  Undo; the title can't be deleted). Rows move by dragging the handle or with the arrow keys on it, said in a live
+  region. Groups, a list's item group and each kind of page section list their own fields under their row, each with
+  *Add a field to …*; a shared component's fields are listed with a link to change them. *Add a field* opens
+  `FieldPicker.svelte`, every field type as a card in Basics, Links, Structure and Advanced with one plain line
+  (`ABOUT` in `fieldDefs.ts`), greyed with the reason where it can't go (a second URL name, structures past three
+  deep, a component inside a component). Picking one, or Edit, opens `FieldDialog.svelte` on a copy: Basics (label,
+  required, help for editors, and what defines the kind: several lines, whole numbers, options, what a link points
+  to, what a list holds, a URL name's source, the component) and Advanced (length limits and ranges, the allowed
+  form with examples to start from, unique, default, *Show only when*, and the code name, made from the label and
+  editable until the field is first saved). *Add field* or *Done* stages the copy; Cancel or Escape drops it. One
+  save bar (`SaveBar.svelte`) appears with unsaved changes, lists what blocks a save, and a link elsewhere in the
+  Studio with changes unsaved asks "Leave without saving?" first. A refusal is said on its field's row (*Open its
+  settings*) and at its setting, on the tab that holds it; the entries in the way are listed above the fields.
+  Components (`ComponentBuilder.svelte`) work the same way. Settings keeps one link to it. Tests:
+  `tests/server/builder.spec.ts`, and the earlier builder specs, rewritten for these screens.
 - D-076 in the Studio: **rate limits**. The one fetch layer (`send` in `lib/api.ts`) reads a 429 `rate_limited` and
   its `Retry-After` (`retryAfterMs`: seconds or a date, a second if neither, at most a minute). A read waits that long
   and goes once more, then fails with the wait (TanStack Query doesn't retry it again); a write isn't resent there, so
@@ -311,7 +334,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 | Publishing | One of five labels (below), plus the delivery-receipt timeline. Since D-060, an approved changeset's page has a Schedule panel (`SchedulePanel.svelte`): a date, a time and a time zone (the person's own first); a time the clocks show twice or skip shows both moments, with their zone abbreviations, and schedules the one picked; a pending schedule shows when it publishes (there and here), who set it, and can be cancelled; past ones say published on time, published late, not published and why, or cancelled. Releases lists scheduled ones, then recent outcomes, and reads the new release when one publishes |
 | History | Who changed what, human or agent attribution, revision comparison, restore as a new revision |
 | Time travel | A release slider: view the site or an entry as it was at generation N; roll back as a new release |
-| Developer area | Schemas, destinations, machine credentials. Since step 3.6 (D-054, D-055) the content-type builder at Settings → Content types (`/studio/projects/{project}/settings/types/{type}`, `TypeBuilder.svelte`): rename the type and its fields, add fields of every type, change limits and requiredness, remove fields; the server decides what is safe, and a refusal lists the entries in the way with links. Field ids and types and the title field are fixed once saved. Slug fields get a "From title" suggestion in the editor (`slugify`, matching the server's rule) |
+| Developer area | Schemas, destinations, machine credentials. Since step 3.6 (D-054, D-055) the content-type builder (`TypeBuilder.svelte`): rename the type and its fields, add fields of every type, change limits and requiredness, remove fields; the server decides what is safe, and a refusal lists the entries in the way with links. Field ids and types and the title field are fixed once saved. Slug fields get a "From title" suggestion in the editor (`slugify`, matching the server's rule). Since D-079 the builder is its own item of the main navigation, *Content types* (`/studio/projects/{project}/settings/types`), for roles that may change content types; see "The content-type builder" above |
 | AI panel (optional, P5) | Suggest, improve or draft; shows sources, unsupported claims and the diff; accept or reject |
 
 ### Publishing labels (spec §05)

@@ -6,7 +6,7 @@
 // refused with the entries listed.
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, key, newEntry, newProject, signIn, violations } from './helpers.ts';
+import { api, applyField, editField, env, internalTerms, key, newEntry, newProject, saveBuilder, signIn, violations } from './helpers.ts';
 
 const media = (conditional: boolean) => ({
 	name: 'Media',
@@ -38,29 +38,37 @@ async function fields(page: Page, id: string): Promise<Record<string, any>[]> {
 	return (await api(page, 'GET', `${env(id)}/content-types/media`)).body?.['data'].definition.fields as Record<string, any>[];
 }
 
-const when = (page: Page, id: string) => page.getByTestId(`field-${id}`).getByTestId('field-when');
+/** A field's "Show only when", in its advanced settings (the dialog stays open). */
+const when = async (page: Page, id: string) => (await editField(page, id, 'Advanced')).getByTestId('field-when');
 
 test('“Show only when” is set in the builder, read back in the other field’s order, and cleared', async ({ page }) => {
 	const id = await project(page, false);
 	await page.goto(`/studio/projects/${id}/settings/types/media`);
-	await expect(page.getByTestId('field-title').getByTestId('field-when')).toHaveCount(0);
-	await when(page, 'duration').getByRole('combobox').selectOption({ label: 'Kind is…' });
-	const values = when(page, 'duration').getByRole('group', { name: 'Values of Kind that show Duration' });
+	await expect(await when(page, 'title')).toHaveCount(0);
+	await page.keyboard.press('Escape');
+	const duration = await when(page, 'duration');
+	await duration.getByRole('combobox').selectOption({ label: 'Kind is…' });
+	const values = duration.getByRole('group', { name: 'Values of Kind that show Duration' });
 	await expect(values.getByLabel('article')).toBeChecked();
 	await values.getByLabel('podcast').check();
 	await values.getByLabel('video').check();
 	await values.getByLabel('article').uncheck();
-	// Kind now decides Duration, so Kind always shows.
-	await expect(when(page, 'kind')).toContainText('Duration shows only for some of its values, so this one always shows.');
 	expect(await violations(page)).toEqual([]);
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await applyField(page);
+	await expect(page.getByTestId('field-duration')).toContainText('Shown only when Kind is video or podcast');
+	// Kind now decides Duration, so Kind always shows.
+	await expect(await when(page, 'kind')).toContainText('Duration shows only for some of its values, so this one always shows.');
+	await page.keyboard.press('Escape');
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Media, version 2')).toBeVisible();
 	expect((await fields(page, id))[2]).toMatchObject({ id: 'duration', when: { field: 'kind', is: ['video', 'podcast'] } });
 
 	await page.reload();
-	await expect(when(page, 'duration').getByRole('group').getByLabel('video')).toBeChecked();
-	await when(page, 'duration').getByRole('combobox').selectOption({ label: 'Always shown' });
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	const again = await when(page, 'duration');
+	await expect(again.getByRole('group').getByLabel('video')).toBeChecked();
+	await again.getByRole('combobox').selectOption({ label: 'Always shown' });
+	await applyField(page);
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Media, version 3')).toBeVisible();
 	expect((await fields(page, id))[2]).not.toHaveProperty('when');
 });
@@ -117,11 +125,13 @@ test('a condition stored entries don’t fit is refused with the entries listed'
 	const id = await project(page, false);
 	await newEntry(page, id, 'An article with a duration', 'media', { title: 'An article with a duration', kind: 'article', duration: 5 });
 	await page.goto(`/studio/projects/${id}/settings/types/media`);
-	await when(page, 'duration').getByRole('combobox').selectOption({ label: 'Kind is…' });
-	const values = when(page, 'duration').getByRole('group', { name: 'Values of Kind that show Duration' });
+	const duration = await when(page, 'duration');
+	await duration.getByRole('combobox').selectOption({ label: 'Kind is…' });
+	const values = duration.getByRole('group', { name: 'Values of Kind that show Duration' });
 	await values.getByLabel('video').check();
 	await values.getByLabel('article').uncheck();
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await applyField(page);
+	await saveBuilder(page);
 	const refusal = page.getByTestId('type-refusal');
 	await expect(refusal).toContainText('Some entries don’t fit this condition yet.');
 	await expect(refusal.getByRole('link', { name: 'An article with a duration' })).toBeVisible();

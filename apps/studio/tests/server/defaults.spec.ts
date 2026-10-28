@@ -5,7 +5,7 @@
 // new-entry dialog; and entries written before untouched.
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, key, newEntry, newProject, signIn, violations } from './helpers.ts';
+import { api, applyField, editField, env, internalTerms, key, newEntry, newProject, saveBuilder, signIn, violations } from './helpers.ts';
 
 const THINGS = {
 	name: 'Things',
@@ -34,20 +34,28 @@ async function fields(page: Page, project: string): Promise<Record<string, any>[
 	return (await api(page, 'GET', `${env(project)}/content-types/things`)).body?.['data'].definition.fields as Record<string, any>[];
 }
 
-const defaultOf = (page: Page, id: string) => page.getByTestId(`field-${id}`).getByTestId('field-default');
+/** A field's default, in its advanced settings (the dialog stays open). */
+const defaultOf = async (page: Page, id: string) => (await editField(page, id, 'Advanced')).getByTestId('field-default');
 
 test('defaults are set with each field’s own input, read back canonical, and cleared; not offered where they can’t be', async ({ page }) => {
 	const { project } = await things(page);
 	await page.goto(`/studio/projects/${project}/settings/types/things`);
-	await expect(page.getByTestId('field-code').getByTestId('field-default')).toHaveCount(0);
-	await expect(page.getByTestId('field-extra').getByTestId('field-default')).toHaveCount(0);
-	await defaultOf(page, 'status').getByRole('combobox').selectOption('review');
-	await defaultOf(page, 'price').getByRole('spinbutton').fill('10');
-	await defaultOf(page, 'website').getByRole('textbox').fill('HTTPS://Example.com');
-	await defaultOf(page, 'featured').getByRole('combobox').selectOption({ label: 'Yes' });
-	await defaultOf(page, 'accent').getByLabel('Default value (optional)').fill('#FF8800');
+	for (const id of ['code', 'extra']) {
+		await expect(await defaultOf(page, id), id).toHaveCount(0);
+		await page.keyboard.press('Escape');
+	}
+	await (await defaultOf(page, 'status')).getByRole('combobox').selectOption('review');
+	await applyField(page);
+	await (await defaultOf(page, 'price')).getByRole('spinbutton').fill('10');
+	await applyField(page);
+	await (await defaultOf(page, 'website')).getByRole('textbox').fill('HTTPS://Example.com');
+	await applyField(page);
+	await (await defaultOf(page, 'featured')).getByRole('combobox').selectOption({ label: 'Yes' });
+	await applyField(page);
+	await (await defaultOf(page, 'accent')).getByLabel('Default value (optional)').fill('#FF8800');
 	expect(await violations(page)).toEqual([]);
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await applyField(page);
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Things, version 2')).toBeVisible();
 	const saved = await fields(page, project);
 	expect(saved.find((item) => item['id'] === 'status')).toMatchObject({ default: 'review' });
@@ -58,9 +66,11 @@ test('defaults are set with each field’s own input, read back canonical, and c
 
 	// Read back as stored, and cleared it's left out.
 	await page.reload();
-	await expect(defaultOf(page, 'website').getByRole('textbox')).toHaveValue('https://example.com/');
-	await defaultOf(page, 'price').getByRole('spinbutton').fill('');
-	await page.getByRole('button', { name: 'Save content type' }).click();
+	await expect((await defaultOf(page, 'website')).getByRole('textbox')).toHaveValue('https://example.com/');
+	await page.keyboard.press('Escape');
+	await (await defaultOf(page, 'price')).getByRole('spinbutton').fill('');
+	await applyField(page);
+	await saveBuilder(page);
 	await expect(page.getByText('Saved Things, version 3')).toBeVisible();
 	expect((await fields(page, project)).find((item) => item['id'] === 'price')).not.toHaveProperty('default');
 
@@ -73,9 +83,11 @@ test('defaults are set with each field’s own input, read back canonical, and c
 test('a default the field doesn’t accept is refused at its input, plainly', async ({ page }) => {
 	const { project } = await things(page);
 	await page.goto(`/studio/projects/${project}/settings/types/things`);
-	await defaultOf(page, 'price').getByRole('spinbutton').fill('500');
-	await page.getByRole('button', { name: 'Save content type' }).click();
-	const problem = defaultOf(page, 'price').getByTestId('default-problem');
+	await (await defaultOf(page, 'price')).getByRole('spinbutton').fill('500');
+	await applyField(page);
+	await saveBuilder(page);
+	await expect(page.getByTestId('field-price').getByTestId('row-problem')).toContainText("The default isn't a value this field accepts");
+	const problem = (await defaultOf(page, 'price')).getByTestId('default-problem');
 	await expect(problem).toContainText("The default isn't a value this field accepts");
 	expect(await violations(page)).toEqual([]);
 });

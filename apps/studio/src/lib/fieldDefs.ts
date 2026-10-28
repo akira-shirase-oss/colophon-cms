@@ -26,6 +26,57 @@ export const NAMES: Record<FieldType, string> = {
 	slug: 'URL name'
 };
 
+/** What each kind of field is for, in one plain line: the add-a-field picker's cards. */
+export const ABOUT: Record<FieldType | 'component', string> = {
+	text: 'A title, a name, a short description.',
+	rich_text: 'Long writing with headings, lists, links and images.',
+	markdown: 'Text written in Markdown, for people who know it.',
+	number: 'A price, a quantity, a rating.',
+	boolean: 'A switch: yes or no, on or off.',
+	enum: 'One option from a list you set, like a category.',
+	datetime: 'A day and a time, like when an event starts.',
+	date: 'A day, like a birthday or a launch date.',
+	time: 'A time of day, like when a shop opens.',
+	email: 'An email address, checked as one.',
+	url: 'A link to a page on the web.',
+	color: 'A colour, like a brand accent.',
+	json: 'Any structured data, for developers.',
+	reference: 'Points to entries of another type, like an author.',
+	object: 'Fields kept together, like an address.',
+	list: 'Several values of one kind, like tags or questions.',
+	blocks: 'Pick and order blocks while writing, like a page builder.',
+	slug: 'The part of an address that names an entry, like lemon-tart.',
+	component: 'A group of fields shared between content types, like SEO.'
+};
+
+/** The add-a-field picker's groups, in order. Every field type is in one. */
+export const PICKER_GROUPS: { name: string; kinds: (FieldType | 'component')[] }[] = [
+	{ name: 'Basics', kinds: ['text', 'rich_text', 'number', 'boolean', 'enum', 'datetime', 'date', 'time'] },
+	{ name: 'Links', kinds: ['email', 'url'] },
+	{ name: 'Structure', kinds: ['reference', 'object', 'list', 'blocks', 'component'] },
+	{ name: 'Advanced', kinds: ['markdown', 'json', 'color', 'slug'] }
+];
+
+/** A code name (a field's id): a lowercase letter, then lowercase letters, digits and underscores,
+ *  64 at most, as the server requires. */
+export const CODE_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+
+/** A field's kind in plain words, naming the shared component or what a list holds. */
+export function describeField(field: FieldDefinition | ItemKind, componentName: (slug: string) => string): string {
+	if (field.type === 'object' && field.component !== undefined) return `Component: ${componentName(field.component)}`;
+	if (field.type === 'list') return `List of ${describeField(field.of, componentName).toLowerCase()}`;
+	return NAMES[field.type];
+}
+
+/** Where a refusal's JSON Pointer lands for the field at `at` ("/fields/2"): on that field itself
+ *  ("" for the whole field, or the option: "/pattern", "/of/pattern"), or null when it's elsewhere,
+ *  including deeper inside the field's own fields, whose rows say it. */
+export function refusalAt(pointer: string, at: string): string | null {
+	if (pointer !== at && !pointer.startsWith(`${at}/`)) return null;
+	const rest = pointer.slice(at.length);
+	return /^\/(fields|blocks|of\/fields)\//.test(rest) ? null : rest;
+}
+
 /** The structures, which each take one level of nesting. */
 export const STRUCTURES: FieldType[] = ['object', 'list', 'blocks'];
 
