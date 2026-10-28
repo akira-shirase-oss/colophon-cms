@@ -131,6 +131,26 @@ colophon export --env production --out export-directory
     release's `colophon-cli-*` archives, each checked against `SHA256SUMS` first, and refuses a version that isn't
     the launcher's. The package is not an npm workspace member (`!packages/cli-npm` in the root `package.json`), so
     its unpublished optional dependencies never touch the workspace lockfile.
+- **Install script**, `scripts/install.sh` (POSIX `sh`; macOS and Linux): `curl -fsSL …/install.sh | sh`, or
+  `sh -s -- --version V --dir D --target T` (also `COLOPHON_VERSION`, `COLOPHON_INSTALL_DIR`). It picks the build for
+  this machine (the native one under Rosetta), downloads `SHA256SUMS` and the archive over HTTPS with curl or wget,
+  checks the archive's SHA-256 (with `sha256sum`, `shasum` or `openssl`; without one it stops), and only then
+  installs `colophon` into `~/.local/bin` by default, by copy and rename, so an existing one is never left
+  half-written. Without `--version` it asks GitHub for the newest release, pre-releases included.
+  `COLOPHON_DOWNLOAD_URL` points it at a mirror (or a test server). Windows is told to use npm or the `.zip`. Each
+  release attaches the script, checksummed and attested.
+- **Homebrew**: `packaging/homebrew/colophon.rb.in` is the formula template; `scripts/homebrew-formula.sh V
+  SHA256SUMS` fills in each platform's archive and hash (it refuses a `SHA256SUMS` missing one), and the release
+  workflow attaches the result as `colophon.rb`. It installs the prebuilt binary on macOS (arm64, Intel) and Linux
+  (arm64, x86-64), and its `test` block checks `colophon --version`. The tap, `akira-shirase-oss/homebrew-colophon`,
+  doesn't exist yet (the maintainer creates it and commits `Formula/colophon.rb` from each release), so nothing has
+  been installed with `brew`.
+- **Cargo**: `cargo install --locked --git https://github.com/akira-shirase-oss/colophon-cms --tag vV colophon-cli`
+  builds from source (Rust 1.99 or newer, the workspace's `rust-version`). Query macros use the committed `.sqlx`
+  data when `DATABASE_URL` is unset; set `SQLX_OFFLINE=true` if your shell has a `DATABASE_URL`. The binary stamps
+  the commit Cargo checked out. `cargo install colophon-cli` from crates.io waits: the crates are `publish = false`
+  until the licence is confirmed (O-014), and `cargo package -p colophon-cli` stops because its path dependencies
+  (`colophon-db`, which needs `colophon-domain`, and `colophon-version`) would have to be published first.
 
 ### Output (spec §09, §11)
 - Default output is for humans.
@@ -203,6 +223,15 @@ colophon export --env production --out export-directory
   against `Cargo.toml`, `npm pack --dry-run` of the launcher, assembly from archives made by
   `scripts/release-package.sh` (`os`, `cpu`, version, executable binary, and each package's `npm pack --dry-run`
   file list), and refusal of a tampered archive, a missing target and a wrong version.
+- Install script and formula (milestone V; CI's `distribution` job): `scripts/test-install.sh [binary]` packs fake
+  releases with `scripts/release-package.sh`, serves them over HTTP on `127.0.0.1` from a temporary directory and
+  runs `install.sh` under `sh`, `dash` and `bash` and piped into `sh`: it installs this machine's build (detected),
+  upgrades in place, refuses a tampered archive and leaves the installed binary untouched, refuses an archive
+  `SHA256SUMS` doesn't list, a release that doesn't exist, an unknown target and a mirror without a version, and takes
+  its options from the environment (25 checks on macOS arm64). A copy of `install.sh` that skips the hash comparison
+  fails it. `scripts/test-homebrew-formula.sh` renders the formula, checks it with `ruby -c`, evaluates it with a
+  stand-in for Homebrew's DSL to check each platform block's URL and hash, and checks a missing hash is refused; a
+  template with two hashes swapped fails it.
 - `insta` snapshots of every `--json` result shape.
 - An exit-code matrix test for every error class.
 - Contract tests against a running server.

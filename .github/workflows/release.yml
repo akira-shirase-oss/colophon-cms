@@ -233,11 +233,17 @@ jobs:
           sha256sum --strict -c ./*.sha256
           cat ./*.sha256 | sort -k 2 >SHA256SUMS
           rm ./*.sha256
+          # The install script and the Homebrew formula (filled in from the archives' checksums)
+          # ship with the release, checksummed and attested like everything else.
+          cp ../scripts/install.sh install.sh
+          ../scripts/homebrew-formula.sh "$VERSION" SHA256SUMS >colophon.rb
+          sha256sum install.sh colophon.rb >>SHA256SUMS
+          sort -k 2 -o SHA256SUMS SHA256SUMS
           sha256sum --strict -c SHA256SUMS
-          # Two archives and two SBOMs for each of the five targets.
+          # Two archives and two SBOMs for each of the five targets, the script and the formula.
           count=$(wc -l <SHA256SUMS)
-          if [[ "$count" -ne 20 ]]; then
-            echo "::error::expected 20 files in SHA256SUMS, found $count"
+          if [[ "$count" -ne 22 ]]; then
+            echo "::error::expected 22 files in SHA256SUMS, found $count"
             exit 1
           fi
           {
@@ -245,6 +251,22 @@ jobs:
             echo '|---|---|'
             awk '{print "| " $2 " | `" $1 "` |"}' SHA256SUMS
           } >>"$GITHUB_STEP_SUMMARY"
+      - name: The install script installs this release's Linux x64 archive, checked against SHA256SUMS
+        run: |
+          set -euo pipefail
+          # Served as GitHub would: <base>/v<version>/<file>.
+          mkdir -p "$RUNNER_TEMP/www"
+          ln -s "$GITHUB_WORKSPACE/dist" "$RUNNER_TEMP/www/v$VERSION"
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory "$RUNNER_TEMP/www" >/dev/null 2>&1 &
+          for _ in $(seq 50); do curl -fs -o /dev/null http://127.0.0.1:8765/ && break; sleep 0.1; done
+          COLOPHON_DOWNLOAD_URL=http://127.0.0.1:8765 sh dist/install.sh --version "$VERSION" --dir "$RUNNER_TEMP/bin"
+          line=$("$RUNNER_TEMP/bin/colophon" --version)
+          if [[ "$line" != "colophon $VERSION (commit $GITHUB_SHA, built "* ]]; then
+            echo "::error::the installed colophon printed '$line'"
+            exit 1
+          fi
+      - name: The Homebrew formula pairs each platform with its archive and hash
+        run: scripts/test-homebrew-formula.sh && ruby -c dist/colophon.rb
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ needs.plan.outputs.version }}
@@ -343,6 +365,14 @@ jobs:
 
           Each archive holds one binary: \`colophon\` (the CLI) or \`colophon-server\`. The \`.cdx.json\`
           files are CycloneDX SBOMs of each binary's dependencies for that target.
+
+          Install the CLI:
+
+              npx @colophon-cms/cli@$VERSION --version
+              curl -fsSL https://github.com/$GH_REPO/releases/download/v$VERSION/install.sh | sh -s -- --version $VERSION
+              cargo install --locked --git https://github.com/$GH_REPO --tag v$VERSION colophon-cli
+
+          \`colophon.rb\` is the Homebrew formula for this release, for the tap.
           NOTES
           flags=(--draft --verify-tag --title "Colophon $VERSION" --notes-file notes.md)
           if [[ "$PRERELEASE" == true ]]; then flags+=(--prerelease); fi

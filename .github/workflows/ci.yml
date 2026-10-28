@@ -73,9 +73,10 @@ jobs:
 
   # How the CLI reaches people without Rust (D-062, milestone V): the npm launcher picks the right
   # platform package and passes exit codes through, the packages assemble from release archives
-  # checked against SHA256SUMS, and `npm pack` ships exactly the expected files.
+  # checked against SHA256SUMS, `npm pack` ships exactly the expected files, the install script
+  # verifies before it installs, and the Homebrew formula gets each platform's hash.
   distribution:
-    name: distribution (npm launcher and packages)
+    name: distribution (npm launcher and packages, install script, Homebrew formula)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -88,6 +89,10 @@ jobs:
       - name: Launcher and assembler tests (packages/cli-npm)
         working-directory: packages/cli-npm
         run: npm test
+      - name: The install script against fake releases served from a temporary directory
+        run: scripts/test-install.sh
+      - name: The Homebrew formula, rendered from a SHA256SUMS
+        run: scripts/test-homebrew-formula.sh
 
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.

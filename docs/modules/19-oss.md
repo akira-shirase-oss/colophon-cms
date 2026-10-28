@@ -104,8 +104,11 @@ evidence".
   SHA-256.
 - **sbom:** `cargo-cyclonedx` 0.5.9 (installed `--locked`) writes a CycloneDX 1.5 SBOM of each binary's dependencies
   for each target: `colophon-cli-<version>-<target>.cdx.json` and the server's.
-- **assemble:** rechecks every file against the checksum its job recorded, writes one `SHA256SUMS` (20 files: two
-  archives and two SBOMs per target) and checks it.
+- **assemble:** rechecks every file against the checksum its job recorded, adds `install.sh` and the Homebrew
+  formula `colophon.rb` (rendered from the archives' checksums), writes one `SHA256SUMS` (22 files: two archives and
+  two SBOMs per target, the script and the formula) and checks it. Then it serves the release directory over HTTP
+  on `127.0.0.1`, runs `install.sh` against it and checks the installed `colophon --version` reports this release
+  and commit, and runs the formula's test.
 - **release** (tag runs only): `actions/attest-build-provenance` signs SLSA build provenance for every file in
   `SHA256SUMS`, then `gh release create --draft` attaches them all (marked pre-release for a pre-release version).
   The maintainer checks the draft and publishes it by hand ("artifacts are verified before announcement"). Users
@@ -187,7 +190,12 @@ Roughly one working day in five is reserved for maintenance once users depend on
   other four, packed with `npm pack`, then installed into an empty project, where `npx --no-install colophon
   --version` ran the real binary (`colophon 0.1.0-alpha.1 (commit f733870…, built 2026-10-28)`); `npx` with the
   launcher alone exited 6 with the "isn't installed" message. npm 11.16 skipped the four optional packages it
-  couldn't find on the registry. `npm publish` was never run. The workflow itself has not run on GitHub.
+  couldn't find on the registry. `npm publish` was never run. The install paths: `scripts/test-install.sh` passed
+  its 25 checks with a stand-in binary and again with this Mac's release build; `scripts/test-homebrew-formula.sh`
+  passed, and the formula rendered from the release directory above; `cargo +1.99.1 install --locked --git
+  file://…/colophon --branch v/versions-distribution colophon-cli`, run from an empty directory without
+  `SQLX_OFFLINE` or `DATABASE_URL`, built and installed a `colophon` that reported commit `659f1ba…`. The workflow
+  itself has not run on GitHub.
 - CI checks:
   - `cargo deny` (advisories, licences, bans, sources);
   - secret scanning;

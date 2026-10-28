@@ -5,6 +5,12 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+homepage = "https://github.com/akira-shirase-oss/colophon-cms"
+keywords = ["cms", "headless-cms", "cli", "colophon"]
+categories = ["command-line-utilities"]
+# Not on crates.io yet (docs/modules/08-cli.md, "Install"): the licence isn't confirmed (O-014), and
+# colophon-db, colophon-domain and colophon-version would have to be published first. Until then
+# `cargo install --locked --git https://github.com/akira-shirase-oss/colophon-cms colophon-cli`.
 publish.workspace = true
 
 [[bin]]
