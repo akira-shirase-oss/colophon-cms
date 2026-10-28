@@ -107,6 +107,8 @@
 	// svelte-ignore state_referenced_locally
 	const locked = initial.draft.locked_fields ?? [];
 	const visible = definition.fields.filter((field) => !hidden.has(field.id));
+	/** Fields named by their labels, never their code names (D-082). */
+	const labelsOf = (ids: string[]) => ids.map((id) => definition.fields.find((field) => field.id === id)?.label ?? id).join(', ');
 	const plain = visible.filter((field) => field.type !== 'rich_text');
 	const rich = visible.filter((field) => field.type === 'rich_text');
 	// svelte-ignore state_referenced_locally
@@ -438,8 +440,8 @@
 		<div role="tabpanel" id="panel-content" aria-labelledby="tab-content" hidden={tab !== 'content'}>
 			{#if hidden.size > 0 || locked.length > 0}
 				<p class="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="role-limits">
-					{#if hidden.size > 0}Your role doesn’t show {[...hidden].join(', ')}; saving keeps {hidden.size === 1 ? 'it' : 'them'} as {hidden.size === 1 ? 'it is' : 'they are'}.{/if}
-					{#if locked.length > 0}Your role can read but not change {locked.join(', ')}.{/if}
+					{#if hidden.size > 0}Your role doesn’t show {labelsOf([...hidden])}; saving keeps {hidden.size === 1 ? 'it' : 'them'} as {hidden.size === 1 ? 'it is' : 'they are'}.{/if}
+					{#if locked.length > 0}Your role can read but not change {labelsOf(locked)}.{/if}
 				</p>
 			{/if}
 {#key showings}

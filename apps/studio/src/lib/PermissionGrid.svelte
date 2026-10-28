@@ -51,7 +51,10 @@
 			<tr class="border-b border-border">
 				<th scope="col" class="px-4 py-2.5 text-left font-medium text-muted-foreground"><span class="sr-only">Content type</span></th>
 				{#each WORK as column (column.action)}
-					<th scope="col" class="px-2 py-2.5 text-center font-medium whitespace-nowrap">{column.label}</th>
+					<th scope="col" class="px-2 py-2.5 text-center align-bottom font-medium" data-testid="grid-column">
+						<span class="whitespace-nowrap">{column.label}</span>
+						{#if column.hint}<span class="mx-auto block max-w-32 text-xs leading-snug font-normal text-muted-foreground" data-testid="grid-column-hint">{column.hint}</span>{/if}
+					</th>
 				{/each}
 			</tr>
 		</thead>

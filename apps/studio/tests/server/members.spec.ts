@@ -1,6 +1,7 @@
 // Members and invitations in the Studio against a real server (D-042): an owner invites with a
 // link shown once, the invitee signs in and joins, roles change what each sees, the last owner
-// can't step down, and a member can leave.
+// can't step down, and a member can leave. Inviting reaches Roles (D-082): Manage roles, and Make a
+// new role…, which comes back to the invitation with the new role chosen.
 
 import { expect, test } from '@playwright/test';
 import { keycloak, newProject, signIn, violations } from './helpers.ts';
@@ -75,4 +76,46 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await expect(guest.locator(`a[href="/studio/projects/${project}"]`)).toHaveCount(0);
 	await page.reload();
 	await expect(page.getByTestId('member')).toHaveCount(1);
+});
+
+test('Make a new role… from the invitation makes one in Roles and comes back with it chosen', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	await page.goto(`/studio/projects/${project}/members`);
+
+	// Manage roles sits beside the Role select.
+	await expect(page.getByTestId('manage-roles')).toHaveAttribute('href', `/studio/projects/${project}/settings/roles`);
+	const select = page.getByLabel('Role', { exact: true });
+	await expect(select.locator('option').last()).toHaveText('Make a new role…');
+	expect(await violations(page)).toEqual([]);
+
+	await page.getByLabel('Who is it for?').fill('Sam, copy editor');
+	await select.selectOption({ label: 'Make a new role…' });
+	await expect(page).toHaveURL(new RegExp(`/settings/roles\\?new=1&for=invite$`));
+	const dialog = page.getByRole('dialog');
+	await expect(dialog).toContainText('then go back to your invitation');
+	await page.locator('#role-name').fill('Copy desk');
+	await page.getByRole('button', { name: 'Create and choose what it may do' }).click();
+	await expect(page.getByRole('heading', { level: 1, name: 'Copy desk' })).toBeVisible();
+	await expect(page.getByTestId('role-for-invite')).toContainText('Choose what Copy desk may do, then save.');
+	expect(await violations(page)).toEqual([]);
+	await page.getByLabel('Edit: Articles').check();
+	await page.getByRole('button', { name: 'Save role' }).click();
+
+	// Back at the invitation, with the new role chosen and what was typed kept.
+	await expect(page).toHaveURL(new RegExp(`/projects/${project}/members\\?role=copy-desk#invite$`));
+	await expect(page.getByLabel('Role', { exact: true })).toHaveValue('copy-desk');
+	await expect(page.getByLabel('Who is it for?')).toHaveValue('Sam, copy editor');
+	await expect(page.getByLabel('Who is it for?')).toBeFocused();
+	await page.getByRole('button', { name: 'Create invitation link' }).click();
+	await expect(page.getByTestId('invitations')).toContainText('Copy desk');
+	expect(await violations(page)).toEqual([]);
+
+	// Back to the invitation without saving works too, and Manage roles opens Roles.
+	await page.goto(`/studio/projects/${project}/settings/roles/copy-desk?for=invite`);
+	await page.getByRole('link', { name: 'Back to the invitation' }).click();
+	await expect(page.getByLabel('Role', { exact: true })).toHaveValue('copy-desk');
+	await page.getByTestId('manage-roles').click();
+	await expect(page.getByRole('heading', { level: 1, name: 'Roles' })).toBeVisible();
+	await expect(page.getByTestId('roles')).toContainText('Copy desk');
 });

@@ -16,10 +16,24 @@
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { type Action, ApiError, type ContentType, deleteRole, type Grant, type RoleDefinition, updateRole } from '#lib/api.ts';
 	import PermissionGrid from '#lib/PermissionGrid.svelte';
-	import { cell } from '#lib/permissions.ts';
+	import { cell, fieldLabels } from '#lib/permissions.ts';
 	import FormRow from '#lib/shell/FormRow.svelte';
+	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
 
-	let { project, role, types, editable }: { project: string; role: RoleDefinition; types: ContentType[]; editable: boolean } = $props();
+	let {
+		project,
+		role,
+		types,
+		editable,
+		onsaved
+	}: {
+		project: string;
+		role: RoleDefinition;
+		types: ContentType[];
+		editable: boolean;
+		/** After a save, for a page that goes somewhere next (back to an invitation). */
+		onsaved?: () => unknown;
+	} = $props();
 
 	const queryClient = useQueryClient();
 
@@ -70,16 +84,21 @@
 	let limitOwn = $state(true);
 	let limitFields = $state<string[]>([]);
 	const limitKind = $derived(LIMITABLE.find((kind) => kind.action === limitAction));
-	const limitTypeFields = $derived(
-		limitSubject === '*'
-			? [...new Set(types.flatMap((type) => type.definition.fields.map((field) => field.id)))]
-			: (types.find((type) => type.slug === limitSubject)?.definition.fields.map((field) => field.id) ?? [])
-	);
+	// The chosen type's fields by their labels (D-082), with every type's for "Every content type";
+	// the code names the permission stores are under Technical details.
+	const limitTypeFields = $derived.by(() => {
+		const ids =
+			limitSubject === '*'
+				? [...new Set(types.flatMap((type) => type.definition.fields.map((field) => field.id)))]
+				: (types.find((type) => type.slug === limitSubject)?.definition.fields.map((field) => field.id) ?? []);
+		const labels = fieldLabels(ids, limitSubject, types);
+		return ids.map((id, index) => ({ id, label: labels[index] ?? id }));
+	});
 
 	function describe(grant: Grant): string {
 		const what = LIMITABLE.find((kind) => kind.action === grant.action)?.label ?? grant.action;
 		const where = grant.subject === '*' ? 'every content type' : (types.find((type) => type.slug === grant.subject)?.definition.name ?? grant.subject);
-		const fields = grant.fields ? `, only ${grant.fields.join(', ')}` : '';
+		const fields = grant.fields ? `, only ${fieldLabels(grant.fields, grant.subject, types).join(', ')}` : '';
 		const own = grant.condition === 'own' ? ', only their own entries' : '';
 		return `${what}: ${where}${fields}${own}`;
 	}
@@ -104,6 +123,7 @@
 				queryClient.invalidateQueries({ queryKey: ['roles', project] }),
 				queryClient.invalidateQueries({ queryKey: ['project', project] })
 			]);
+			await onsaved?.();
 		} catch (failure) {
 			stale = failure instanceof ApiError && failure.failure === 'conflict';
 			error = failure instanceof ApiError ? failure.message : String(failure);
@@ -195,13 +215,21 @@
 				{/if}
 			</div>
 			<div class="flex flex-wrap gap-x-4 gap-y-2 text-sm" role="group" aria-label="Only these fields (none ticked means every field)">
-				{#each limitTypeFields as field (field)}
+				{#each limitTypeFields as field (field.id)}
 					<label class="flex items-center gap-1.5">
-						<input type="checkbox" class="size-4 accent-primary" value={field} bind:group={limitFields} />
-						<code class="font-mono text-xs">{field}</code>
+						<input type="checkbox" class="size-4 accent-primary" value={field.id} bind:group={limitFields} />
+						<span data-user-content>{field.label}</span>
 					</label>
 				{/each}
 			</div>
+			{#if limitTypeFields.length > 0}
+				<TechnicalDetails>
+					<p>The code names the API and the permission use:</p>
+					<ul class="grid gap-0.5" data-testid="limit-field-codes">
+						{#each limitTypeFields as field (field.id)}<li><span data-user-content>{field.label}</span>: <code class="font-mono">{field.id}</code></li>{/each}
+					</ul>
+				</TechnicalDetails>
+			{/if}
 			<div>
 				<Button variant="secondary" size="sm" onclick={addLimit} disabled={!(limitOwn && limitKind?.own) && limitFields.length === 0}>Add this limit</Button>
 			</div>

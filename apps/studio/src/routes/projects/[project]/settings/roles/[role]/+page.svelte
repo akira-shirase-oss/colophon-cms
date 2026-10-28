@@ -1,13 +1,18 @@
 <!--
   One role (D-058): what it may do, who holds it, and, for people whose role manages roles, the
   editor. Every member can read it, so anyone can see what a role means before it's given to them.
-  It sits in Settings' frame, under Roles (D-081).
+  It sits in Settings' frame, under Roles (D-081). Made from Members' "Make a new role…" (`for=invite`,
+  D-082), it says so, and saving goes back to the invitation with this role chosen.
 -->
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
+	import { Button } from '@colophon/ui/ui/button';
 	import { may } from '#lib/api.ts';
+	import { backToInvite } from '#lib/inviteDraft.ts';
 	import { projectQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
 	import RoleEditor from '#lib/RoleEditor.svelte';
 	import SettingsFrame from '#lib/SettingsFrame.svelte';
@@ -24,6 +29,9 @@
 	// Every query's data is read on every pass, never behind `&&`: a query's result only tells this
 	// page about the fields it has read, so one read only after another arrived would never update.
 	const loaded = $derived([roles.data, types.data, mine.data].every((data) => data !== undefined));
+	// Made for an invitation: back there, with this role chosen.
+	const forInvite = $derived(page.url.searchParams.get('for') === 'invite');
+	const invite = $derived(backToInvite(resolve('/projects/[project]/members', { project }), key));
 </script>
 
 <svelte:head><title>{role?.name ?? 'Role'} · Colophon Studio</title></svelte:head>
@@ -45,8 +53,14 @@
 		<Problem error={types.error} />
 	{:else if loaded && types.data}
 		{#if role}
+			{#if forInvite}
+				<div class="mb-6 flex max-w-4xl flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm" data-testid="role-for-invite">
+					<p>Choose what <strong class="font-medium" data-user-content>{role.name}</strong> may do, then save. You'll go back to your invitation with it chosen.</p>
+					<Button variant="outline" size="sm" href={invite}>Back to the invitation</Button>
+				</div>
+			{/if}
 			{#key `${role.key}@${role.version}`}
-				<RoleEditor {project} {role} types={types.data} {editable} />
+				<RoleEditor {project} {role} types={types.data} {editable} onsaved={forInvite ? () => goto(invite) : undefined} />
 			{/key}
 		{:else}
 			<p class="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="role-missing">

@@ -2,7 +2,8 @@
   Settings → Roles (D-058, D-081): what each person in the project may do. Every member may read
   them, so the list shows to anyone in Settings; New role, for roles that manage roles, opens a
   dialog that asks only for a name and the short name memberships use, then opens the new role's
-  page to choose what it may do.
+  page to choose what it may do. `?new=1` opens the dialog at once; `for=invite` (Members' "Make a
+  new role…", D-082) carries on to the role's page, which goes back to the invitation once saved.
 -->
 <script lang="ts">
 	import PlusIcon from '@lucide/svelte/icons/plus';
@@ -32,6 +33,16 @@
 	// A new role: a name, and the key memberships use, suggested from it. It starts with no
 	// permissions; the role's page sets them.
 	let making = $state(false);
+	// Asked for by address (`?new=1`): the dialog opens once the project says this role may.
+	// svelte-ignore state_referenced_locally
+	let asked = page.url.searchParams.get('new') === '1';
+	const forInvite = $derived(page.url.searchParams.get('for') === 'invite');
+	$effect(() => {
+		if (asked && managesRoles) {
+			asked = false;
+			start();
+		}
+	});
 	let roleName = $state('');
 	let roleKey = $state('');
 	let roleKeyTouched = $state(false);
@@ -61,7 +72,8 @@
 			await queryClient.invalidateQueries({ queryKey: ['roles', project] });
 			toast.success(`Created ${created.name}`);
 			making = false;
-			await goto(resolve('/projects/[project]/settings/roles/[role]', { project, role: created.key }));
+			const rolePage = resolve('/projects/[project]/settings/roles/[role]', { project, role: created.key });
+			await goto(forInvite ? `${rolePage}?for=invite` : rolePage);
 		} catch (failure) {
 			roleError = failure instanceof ApiError ? failure.message : String(failure);
 		} finally {
@@ -112,7 +124,11 @@
 		<form class="grid gap-5" onsubmit={addRole} aria-label="New role">
 			<Dialog.Header>
 				<Dialog.Title>New role</Dialog.Title>
-				<Dialog.Description>A role says what the people who hold it may do. It starts able to do nothing; you choose what it may do next.</Dialog.Description>
+				<Dialog.Description>
+					A role says what the people who hold it may do. It starts able to do nothing; you choose what it may do next{forInvite
+						? ', then go back to your invitation'
+						: ''}.
+				</Dialog.Description>
 			</Dialog.Header>
 			<div class="grid gap-1.5 text-sm">
 				<label class="font-medium" for="role-name">Name</label>

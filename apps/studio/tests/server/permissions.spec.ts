@@ -4,7 +4,7 @@
 // deleted, and the owner role is shown but never edited.
 
 import { expect, test } from '@playwright/test';
-import { keycloak, newProject, signIn, violations } from './helpers.ts';
+import { env, internalTerms, key, keycloak, newProject, signIn, violations } from './helpers.ts';
 
 test('an owner makes a role, chooses what it may do, and someone invited with it holds exactly that', async ({ page, browser }) => {
 	await signIn(page);
@@ -150,7 +150,8 @@ test('an author retitles someone else’s article without seeing or erasing its 
 	await signIn(author, 'dev-editor');
 	expect((await api(author, 'POST', '/api/v1/invitations/accept', { token })).status).toBe(200);
 	await author.goto(`/studio/projects/${project}/articles/${entryId}`);
-	await expect(author.getByTestId('role-limits')).toContainText('doesn’t show body');
+	// Fields are named by their labels, never their code names (D-082).
+	await expect(author.getByTestId('role-limits')).toContainText('doesn’t show Body');
 	await expect(author.getByRole('textbox', { name: 'Body' })).toHaveCount(0);
 	await author.getByLabel('Title', { exact: true }).fill('Owner’s note, retitled');
 	await expect(author.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
@@ -164,7 +165,7 @@ test('an author retitles someone else’s article without seeing or erasing its 
 	// Saving the role from the grid keeps its limited permissions.
 	await page.goto(`/studio/projects/${project}/settings/roles/author`);
 	const limits = page.getByTestId('limited-permissions');
-	await expect(limits).toContainText('Edit: Articles, only title');
+	await expect(limits).toContainText('Edit: Articles, only Title');
 	await expect(limits).toContainText('Edit: Articles, only their own entries');
 	await page.getByLabel('Publish: Articles').check();
 	await page.getByRole('button', { name: 'Save role' }).click();
@@ -191,4 +192,57 @@ test('the role editor names the activity log in plain words, and says what manag
 	await expect(page.getByText('Version 2')).toBeVisible();
 	await expect(page.getByLabel('See the activity log')).toBeChecked();
 	expect(await violations(page)).toEqual([]);
+});
+
+// D-082: the grid's words a first-time owner can read without help, and limits named by labels.
+test('the role grid explains See, Approve, Publish and Change its fields, and limits name fields by their labels', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const products = {
+		name: 'Products',
+		title_field: 'name',
+		fields: [
+			{ id: 'name', label: 'Name', type: 'text', required: true, max_chars: 200, multiline: false },
+			{ id: 'price', label: 'Price', type: 'number', required: false }
+		]
+	};
+	expect((await api(page, 'POST', `${env(project)}/content-types`, { slug: 'products', definition: products }, { 'Idempotency-Key': key() })).status).toBe(201);
+	expect((await api(page, 'POST', `/api/v1/projects/${project}/roles`, { key: 'desk', name: 'Desk', permissions: [] })).status).toBe(201);
+	await page.goto(`/studio/projects/${project}/settings/roles/desk`);
+
+	const columns = page.getByTestId('role-grid').getByTestId('grid-column');
+	await expect(columns.locator(':scope > span:first-child')).toHaveText(['See', 'Create', 'Edit', 'Approve', 'Publish', 'Change its fields']);
+	await expect(page.getByTestId('role-grid').getByTestId('grid-column-hint')).toHaveText([
+		'read drafts',
+		'OK someone’s publish request',
+		'put it live',
+		'Add, rename or remove this type’s fields (developers)'
+	]);
+	await expect(page.getByLabel('Change its fields: Products')).toBeVisible();
+
+	// A limit on Products lists its fields by label; the code names wait under Technical details.
+	const limit = page.getByRole('group', { name: 'Add a limited permission' });
+	await limit.getByLabel('Where').selectOption('products');
+	const fields = limit.getByRole('group', { name: 'Only these fields (none ticked means every field)' });
+	await expect(fields.locator('label')).toHaveText(['Name', 'Price']);
+	await expect(fields).not.toContainText('price');
+	await expect(limit.getByTestId('limit-field-codes')).toBeHidden();
+	await limit.getByTestId('technical-details').locator('summary').click();
+	await expect(limit.getByTestId('limit-field-codes')).toContainText('Price: price');
+	await limit.getByLabel('What').selectOption('content.update');
+	await limit.getByLabel('Only their own entries').uncheck();
+	await fields.getByLabel('Price').check();
+	await limit.getByRole('button', { name: 'Add this limit' }).click();
+	await expect(page.getByTestId('limited-permissions')).toContainText('Edit: Products, only Price');
+	await page.getByLabel('See: Products').check();
+	await page.getByRole('button', { name: 'Save role' }).click();
+	await expect(page.getByText('Version 2')).toBeVisible();
+	await expect(page.getByTestId('limited-permissions')).toContainText('Edit: Products, only Price');
+	const saved = (await api(page, 'GET', `/api/v1/projects/${project}/roles`)).body?.['data'].find((role: { key: string }) => role.key === 'desk');
+	expect(saved.permissions).toContainEqual({ action: 'content.update', subject: 'products', fields: ['price'] });
+	expect(await violations(page)).toEqual([]);
+
+	// The activity log says it in a sentence, by label too.
+	await page.goto(`/studio/projects/${project}/settings/activity`);
+	await expect(page.getByTestId('activity')).toContainText('edit Products, only Price');
 });

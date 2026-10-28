@@ -2,10 +2,13 @@
   A project's members (D-042, D-058). Everyone sees who belongs and with which role, and can
   leave; people whose role manages members also change roles, remove people, and invite with a
   link that is shown only once. The server refuses giving or taking away a role with powers their
-  own role lacks, and the message says so.
+  own role lacks, and the message says so. Inviting reaches Roles (D-082): "Manage roles" beside the
+  Role select, and its last option, "Make a new role…", which makes one in Settings → Roles and
+  comes back here with it chosen and what was typed kept.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { tick } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
@@ -32,6 +35,7 @@
 		type Role
 	} from '#lib/api.ts';
 	import { plainError } from '#lib/errors.ts';
+	import { forgetInviteLabel, inviteLabel, keepInviteLabel, NEW_ROLE } from '#lib/inviteDraft.ts';
 	import { rolesQuery } from '#lib/queries.ts';
 
 	const project = $derived(page.params.project ?? '');
@@ -40,6 +44,7 @@
 	// The role comes from the project itself: me().projects lists at most 1,000 projects.
 	const mine = createQuery(() => ({ queryKey: ['project', project], queryFn: () => getProject(project) }));
 	const manages = $derived(may(mine.data, 'members.manage'));
+	const managesRoles = $derived(may(mine.data, 'roles.manage'));
 	const roles = createQuery(() => rolesQuery(project));
 	const nameOf = (key: string) => roles.data?.find((option) => option.key === key)?.name ?? key;
 	const people = createQuery(() => ({ queryKey: ['members', project], queryFn: () => listMembers(project) }));
@@ -51,8 +56,32 @@
 
 	let error = $state('');
 	let busy = $state(false);
-	let label = $state('');
-	let role = $state<Role>('editor');
+	// Back from making a role for this invitation: that role chosen, and the words typed before.
+	// svelte-ignore state_referenced_locally
+	const chosenRole = page.url.searchParams.get('role');
+	// svelte-ignore state_referenced_locally
+	let label = $state(chosenRole === null ? '' : inviteLabel(project));
+	let role = $state<Role>(chosenRole ?? 'editor');
+	// Back at the invitation: it is shown and its first field focused, once the project says this
+	// role manages members (the section is drawn only then).
+	let arriving = $state(chosenRole !== null);
+	$effect(() => {
+		if (!arriving || !manages) return;
+		arriving = false;
+		forgetInviteLabel(project);
+		void tick().then(() => {
+			document.getElementById('invite')?.scrollIntoView({ block: 'start' });
+			document.getElementById('invite-label')?.focus({ preventScroll: true });
+		});
+	});
+
+	/** The Role select: a role, or its last option, which makes a new one first. */
+	async function chooseRole(select: HTMLSelectElement) {
+		if (select.value !== NEW_ROLE) return;
+		select.value = role;
+		keepInviteLabel(project, label);
+		await goto(`${resolve('/projects/[project]/settings/roles', { project })}?new=1&for=invite`);
+	}
 	// The invitation just made: its link exists only in this answer.
 	let made = $state<Invitation | null>(null);
 	let copied = $state(false);
@@ -217,9 +246,17 @@
 				<Input id="invite-label" class="max-w-md" bind:value={label} maxlength={100} required placeholder="Sam, copy editor" />
 			</FormRow>
 			<FormRow label="Role" hint={roles.data?.find((option) => option.key === role)?.description} for="invite-role">
-				<select id="invite-role" class="{select} h-9 w-full max-w-md" bind:value={role}>
-					{#each roles.data ?? [] as option (option.key)}<option value={option.key}>{option.name}</option>{/each}
-				</select>
+				<div class="flex max-w-md flex-wrap items-center gap-x-3 gap-y-2">
+					<select id="invite-role" class="{select} h-9 min-w-0 flex-1" bind:value={role} onchange={(event) => chooseRole(event.currentTarget)}>
+						{#each roles.data ?? [] as option (option.key)}<option value={option.key}>{option.name}</option>{/each}
+						{#if managesRoles}<option value={NEW_ROLE}>Make a new role…</option>{/if}
+					</select>
+					<a
+						class="text-sm whitespace-nowrap underline decoration-border underline-offset-4 hover:decoration-foreground"
+						href={resolve('/projects/[project]/settings/roles', { project })}
+						data-testid="manage-roles">Manage roles</a
+					>
+				</div>
 			</FormRow>
 			<div class="flex justify-end"><Button type="submit" disabled={busy}>Create invitation link</Button></div>
 		</form>
