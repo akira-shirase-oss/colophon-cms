@@ -3,7 +3,8 @@
 // published one links to (409 `still_referenced`), without saying which: these work it out from
 // the publish request's own entries, so the refusal can name them and say what to do.
 
-import { ApiError, type Changeset, type ContentType, getChangeset, getEntry, getRevision, listContentTypes } from './api.ts';
+import { ApiError, type Changeset, type Content, type ContentType, type FieldDefinition, getChangeset, getEntry, getRevision, listContentTypes } from './api.ts';
+import { blockOf, isRecord } from './content.ts';
 import { PUBLISH_REQUEST, shownTitle } from './words.ts';
 
 /** An entry named in an explanation: its title, or "an entry you can't see". */
@@ -29,9 +30,10 @@ async function titled(project: string, collection: string, id: string): Promise<
  *  read is an entry the role can't see (`seen: false`), never shown by its id. */
 export const linkedQuery = (project: string, collection: string, id: string) => ({
 	queryKey: ['linked', project, collection, id],
-	queryFn: async (): Promise<{ title: string; seen: boolean }> => {
+	queryFn: async (): Promise<{ title: string; seen: boolean; content?: Content }> => {
 		try {
-			return { title: (await getEntry(project, collection, id)).draft.revision.title, seen: true };
+			const { draft } = await getEntry(project, collection, id);
+			return { title: draft.revision.title, seen: true, content: draft.content };
 		} catch (failure) {
 			if (failure instanceof ApiError && (failure.failure === 'not-found' || failure.status === 403)) return { title: '', seen: false };
 			throw failure;
@@ -39,6 +41,45 @@ export const linkedQuery = (project: string, collection: string, id: string) => 
 	},
 	staleTime: 30_000
 });
+
+/**
+ * A place in an entry in words: "Author", or inside structures "Sections → Quote 2 → By", from a
+ * path like `sections/1/by`. A page section's kind comes from the entry's content; without it the
+ * section is just "Section 2". Empty when the path names no field.
+ */
+export function placeName(fields: FieldDefinition[], path: string, content?: Content): string {
+	const names: string[] = [];
+	let here: FieldDefinition[] = fields;
+	let value: unknown = content;
+	const segments = path.split('/');
+	for (let at = 0; at < segments.length; at += 1) {
+		const field = here.find((candidate) => candidate.id === segments[at]);
+		if (field === undefined) break;
+		names.push(field.label);
+		const inside = isRecord(value) ? value[field.id] : undefined;
+		if (field.type === 'object') {
+			here = field.fields;
+			value = inside;
+		} else if (field.type === 'list' || field.type === 'blocks') {
+			const index = Number(segments[at + 1]);
+			if (!Number.isInteger(index)) break;
+			at += 1;
+			const item = Array.isArray(inside) ? inside[index] : undefined;
+			if (field.type === 'blocks') {
+				const kind = isRecord(item) ? blockOf(field, item) : undefined;
+				names.push(`${kind?.label ?? 'Section'} ${index + 1}`);
+				here = kind?.fields ?? [];
+			} else {
+				names.push(`Item ${index + 1}`);
+				here = field.of.type === 'object' ? field.of.fields : [];
+			}
+			value = item;
+		} else {
+			break;
+		}
+	}
+	return names.join(' → ');
+}
 
 const list = (names: string[]) => (names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 

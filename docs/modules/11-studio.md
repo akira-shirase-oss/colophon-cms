@@ -193,6 +193,18 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     `lib/fieldDefs.ts`). Structures are offered only while they may still nest (three deep at most) and the builder
     says so where it stops; an empty group, a kind of section without fields and page sections without kinds are
     said before saving, and Save waits. Test: `tests/server/structures.spec.ts`.
+  - **The editor** draws structures with `StructureInput.svelte`: a group of fields as a fieldset; a list as rows that
+    are added, moved and removed, up to its maximum (an added item isn't saved until something is typed into it);
+    page sections as a stack, each with its kind's label, collapsible, movable and removable, added by choosing a
+    kind. Inside, every control is the editor's own (FieldInputs, recursively; rich text through
+    `RichTextInput.svelte`; links through the picker), each at its JSON Pointer (`/faq/1/q`, `/sections/0/by`), so a
+    refusal lands under it. Values are built in definition order with `_block` first; `canonical()` compares
+    structures by their definitions' order; JSON held anywhere inside holds the save; comparisons and the conflict
+    screen read structures as their parts. "Linked from" names nested places ("Pages, in Sections → Quote 1 → By",
+    the kind from the linking entry's content; `placeName` in `lib/references.ts`). Test:
+    `tests/server/structures.spec.ts` (two kinds of section, a list of questions, a list of tags and a quote linking
+    to a person, filled in and reordered, stored canonically, nothing to save after a reload, a refusal at `/faq/1/q`
+    under its control, phone width, axe, plain words, and the person's "Linked from").
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

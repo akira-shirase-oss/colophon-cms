@@ -29,9 +29,9 @@
 		signInUrl,
 		type Summary
 	} from './api.ts';
-	import { linkedQuery } from './references.ts';
+	import { linkedQuery, placeName } from './references.ts';
 	import { shownTitle } from './words.ts';
-	import { compare } from './diff.ts';
+	import { compare, readable } from './diff.ts';
 	import { prettyJson } from './json.ts';
 	import { plainError } from './errors.ts';
 	import DiffView from './DiffView.svelte';
@@ -76,7 +76,8 @@
 				link,
 				read: linking[index]?.data,
 				collectionName: definition?.name ?? link.collection,
-				fieldLabel: definition?.fields.find((field) => field.id === link.field)?.label ?? link.field
+				// "Author", or inside structures "Sections → Quote 2 → By" (the kind from its content).
+				fieldLabel: placeName(definition?.fields ?? [], link.field, linking[index]?.data?.content) || link.field
 			};
 		})
 	);
@@ -122,6 +123,8 @@
 	const hosts: Record<string, HTMLDivElement> = {};
 	let editors = $state.raw<Record<string, Editor>>({});
 	let form = $state<Record<string, FormValue>>({});
+	/** Bumped each time the whole content is (re)shown, so nested controls start from it. */
+	let showings = $state(0);
 	let unopenable = $state('');
 
 	function current(): Content {
@@ -167,6 +170,8 @@
 		}
 		editors = next;
 		form = Object.fromEntries(plain.map((field) => [field.id, formValue(field, content[field.id])]));
+		// Controls inside structures (and their rich text) are made afresh for the new content.
+		showings += 1;
 		unopenable = '';
 	}
 
@@ -188,6 +193,7 @@
 
 	function shown(field: FieldDefinition, value: unknown): string {
 		if (value === undefined) return '(empty)';
+		if (field.type === 'object' || field.type === 'list' || field.type === 'blocks' || field.type === 'reference') return readable(field, value) || '(empty)';
 		if (field.type === 'boolean') return value === true ? 'Yes' : 'No';
 		if (field.type === 'datetime' && typeof value === 'string') return new Date(value).toLocaleString();
 		if (field.type === 'json') return prettyJson(value);
@@ -375,15 +381,17 @@
 					{#if locked.length > 0}Your role can read but not change {locked.join(', ')}.{/if}
 				</p>
 			{/if}
+{#key showings}
 			<FieldInputs
 				fields={plain}
 				bind:form
 				titleField={definition.title_field}
 				onchange={changed}
 				{locked}
-				refused={saver.status === 'refused' ? { field: saver.field, place: saver.place, message: saver.message } : null}
+				refused={saver.status === 'refused' ? { pointer: saver.pointer, message: saver.message } : null}
 				{project}
 			/>
+			{/key}
 			{#each rich as field (field.id)}
 				<div class="py-5">
 					<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>

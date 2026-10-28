@@ -2,6 +2,7 @@
 // changeset (live → pinned) and for comparing an entry's revisions. Rich text is compared as its
 // readable text, block by block; the structure check is the validator's job, not the reader's.
 
+import { blockOf, isRecord, itemField } from './content.ts';
 import { prettyJson } from './json.ts';
 import type { Content, Definition, FieldDefinition } from './api.ts';
 
@@ -53,9 +54,40 @@ export function readable(field: FieldDefinition, value: unknown): string {
 			return typeof value === 'string' ? new Date(value).toLocaleString() : String(value);
 		case 'json':
 			return prettyJson(value);
+		// Links are entries' ids: said as how many, not as ids (D-059).
+		case 'reference': {
+			const count = Array.isArray(value) ? value.length : 1;
+			return `${count} linked ${count === 1 ? 'entry' : 'entries'}`;
+		}
+		// Structures read as their parts: "Question: …; Answer: …", sections by their kind.
+		case 'object':
+			return isRecord(value) ? parts(field.fields, value) : '';
+		case 'list':
+			return Array.isArray(value) ? value.map((item) => readable(itemField(field), item)).filter((text) => text !== '').join('; ') : '';
+		case 'blocks':
+			return Array.isArray(value)
+				? value
+						.map((item, index) => {
+							if (!isRecord(item)) return '';
+							const kind = blockOf(field, item);
+							return `${kind?.label ?? 'Section'} ${index + 1}: ${parts(kind?.fields ?? [], item)}`;
+						})
+						.filter((text) => text !== '')
+						.join(' · ')
+				: '';
 		default:
 			return String(value);
 	}
+}
+
+function parts(fields: FieldDefinition[], value: Record<string, unknown>): string {
+	return fields
+		.map((field) => {
+			const text = readable(field, value[field.id]);
+			return text === '' ? '' : `${field.label}: ${text}`;
+		})
+		.filter((text) => text !== '')
+		.join('; ');
 }
 
 /** Word-level differences, keeping whitespace, by longest common subsequence. */

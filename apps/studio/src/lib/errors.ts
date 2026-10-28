@@ -87,7 +87,9 @@ const DOES: Record<Action, string> = {
 /** The server's message as a sentence, if it has no internal words; else `fallback`. */
 function plainOr(message: string, fallback: string): string {
 	if (message === '' || INTERNAL_TERMS.test(message)) return fallback;
-	const sentence = message.slice(0, 1).toUpperCase() + message.slice(1);
+	// The server quotes labels in backticks (`Question` is required); people read them plainly.
+	const words = message.replace(/`([^`]+)`/g, '$1');
+	const sentence = words.slice(0, 1).toUpperCase() + words.slice(1);
 	return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
 }
 

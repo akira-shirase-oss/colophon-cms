@@ -12,6 +12,8 @@
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { Button } from '@colophon/ui/ui/button';
 	import ReferencePicker from './ReferencePicker.svelte';
+	import RichTextInput from './RichTextInput.svelte';
+	import StructureInput from './StructureInput.svelte';
 	import type { FieldDefinition } from './api.ts';
 	import { characters, fieldProblem, type FormValue, isWebAddress, MAX_SLUG_CHARS, slugify, webAddress } from './content.ts';
 
@@ -23,7 +25,8 @@
 		stacked = false,
 		locked = [],
 		refused = null,
-		project = ''
+		project = '',
+		base = ''
 	}: {
 		fields: FieldDefinition[];
 		form: Record<string, FormValue>;
@@ -32,16 +35,28 @@
 		stacked?: boolean;
 		/** Fields the person's role can read but not change (D-058, step R.3): shown, disabled. */
 		locked?: string[];
-		/** The server's refusal of the last save, the field it named, and for a list, the place. */
-		refused?: { field: string | null; place?: number | null; message: string } | null;
+		/** The server's refusal of the last save, and where (its JSON Pointer). */
+		refused?: { pointer: string | null; message: string } | null;
 		/** For link fields, which search and read the entries they point to. */
 		project?: string;
+		/** These fields' place in the content, as a JSON Pointer ('' for the entry's own fields;
+		 *  `/sections/1` inside a page section), so refusals land under the right control. */
+		base?: string;
 	} = $props();
 
+	const at = (field: FieldDefinition) => `${base}/${field.id}`;
 	/** What is wrong with a field now: the client's check, else the server's refusal of it. */
 	function problemOf(field: FieldDefinition): string {
-		return fieldProblem(field, form[field.id]) || (refused?.field === field.id ? refused.message : '');
+		// A list of links is refused at one of its places (`/related/1`): that's this field's too.
+		const here = refused?.pointer === at(field) || (field.type === 'reference' && refusedPlace(field) !== null);
+		return fieldProblem(field, form[field.id]) || (here ? (refused?.message ?? '') : '');
 	}
+	/** For a list of links: the place of the id the server refused. */
+	function refusedPlace(field: FieldDefinition): number | null {
+		const rest = refused?.pointer?.startsWith(`${at(field)}/`) ? refused.pointer.slice(at(field).length + 1) : '';
+		return /^\d+$/.test(rest) ? Number(rest) : null;
+	}
+	const structure = (field: FieldDefinition) => field.type === 'object' || field.type === 'list' || field.type === 'blocks';
 	/** The ids describing a field: its help and its problem. */
 	function describedBy(input: string, field: FieldDefinition): string | undefined {
 		const ids = [field.description ? `${input}-help` : '', problemOf(field) ? `${input}-problem` : ''].filter((id) => id !== '');
@@ -99,7 +114,32 @@
 				? 'grid gap-1.5'
 				: 'rule-dotted grid gap-x-10 gap-y-2 py-5 first:pt-1 sm:grid-cols-[minmax(0,13rem)_minmax(0,1fr)]'}
 		>
-			{#if field.type === 'boolean'}
+			{#if structure(field) || field.type === 'rich_text'}
+				<!-- A structure has no one input to label: its name heads it, and it groups its own. -->
+				<div class="space-y-0.5">
+					<p class="text-sm font-medium" id="{input}-label">{field.label}{field.required ? '' : ' (optional)'}{locked.includes(field.id) ? ' (your role can’t change it)' : ''}</p>
+					{#if field.description}<p class="text-xs text-pretty text-muted-foreground" id="{input}-help" data-user-content>{field.description}</p>{/if}
+				</div>
+				<div class="grid min-w-0 gap-1.5">
+					{#if field.type === 'rich_text'}
+						<RichTextInput bind:value={form[field.id] as FormValue} label={field.label} labelledBy="{input}-label" disabled={locked.includes(field.id)} {onchange} />
+					{:else}
+						<StructureInput
+							{project}
+							{field}
+							bind:value={form[field.id] as FormValue}
+							base={at(field)}
+							{refused}
+							disabled={locked.includes(field.id)}
+							labelledBy="{input}-label"
+							{onchange}
+						/>
+					{/if}
+					{#if problemOf(field)}
+						<p class="text-xs text-destructive" id="{input}-problem" data-testid="field-problem" data-field={at(field).slice(1)}>{problemOf(field)}</p>
+					{/if}
+				</div>
+			{:else if field.type === 'boolean'}
 				<span class="text-sm font-medium" class:sr-only={stacked} aria-hidden="true">{field.label}</span>
 				<label for={input} class="flex items-center gap-2.5 text-sm">
 					<input id={input} disabled={locked.includes(field.id)} type="checkbox" class="size-4 accent-primary" bind:checked={form[field.id] as boolean} {onchange} />
@@ -275,8 +315,8 @@
 						bind:value={form[field.id] as string | string[]}
 						disabled={locked.includes(field.id)}
 						describedBy={describedBy(input, field)}
-						refusedAt={refused?.field === field.id ? (refused.place ?? null) : null}
-						refusal={refused?.field === field.id ? refused.message : ''}
+						refusedAt={refusedPlace(field)}
+						refusal={refusedPlace(field) === null ? '' : (refused?.message ?? '')}
 						{onchange}
 					/>
 				{:else if field.type === 'json'}
@@ -294,7 +334,7 @@
 					/>
 				{/if}
 				{#if problemOf(field)}
-					<p class="text-xs text-destructive" id="{input}-problem" data-testid="field-problem" data-field={field.id}>{problemOf(field)}</p>
+					<p class="text-xs text-destructive" id="{input}-problem" data-testid="field-problem" data-field={at(field).slice(1)}>{problemOf(field)}</p>
 				{/if}
 				</div>
 			{/if}
