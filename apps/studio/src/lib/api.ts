@@ -483,6 +483,20 @@ export async function signOut(): Promise<string | null> {
 	}
 }
 
+/** Which Colophon the server is (`GET /version`, D-062): its release version, the full git commit
+ *  and the UTC day it was built (each `unknown` when the build couldn't learn it), and the API
+ *  versions it serves. Read without signing in; fields may be added, never removed. */
+export interface ServerVersion {
+	version: string;
+	commit: string;
+	build_date: string;
+	api: string[];
+}
+
+export async function serverVersion(): Promise<ServerVersion> {
+	return (await (await send('GET', '/version')).json()) as ServerVersion;
+}
+
 /**
  * One project the signed-in person belongs to, with their role in it. Pages read the role from
  * here, not from `me().projects`, which lists at most 1,000 projects.

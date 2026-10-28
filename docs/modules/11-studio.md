@@ -76,7 +76,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   `…/settings`.
 - Finishing the Studio (branch `studio/dashboard`, 2026-10-27), slice by slice:
   - **Sign out from any screen** (`shell/AccountMenu.svelte`, in the project shell's header and the plain frame's):
-    who is signed in, *Your work and projects*, and *Sign out*, which calls `POST /auth/logout` and only then
+    who is signed in, *Your work and projects*, *About Colophon* (which version this is, below), and *Sign out*, which calls `POST /auth/logout` and only then
     reloads at the front door with a note that says so. If the server can't be reached it says you're still signed
     in. Since f4338a7 the answer names the identity provider's sign-out address, and the browser follows it
     (Keycloak asks to confirm, then returns to `/studio/`), so signing in again asks for a password; only when the
@@ -90,7 +90,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     can't see this"), offers *Try again* when that can help, and keeps the server's words in Technical details.
   - **Gaps against the API** (the audit below), closed one by one: a published entry's page says *Where readers get
     it* (its public `/content/v1` address, to open or copy; with newer changes, that readers get the version live in
-    its release). Test: `tests/server/address.spec.ts`. *Only mine* on a collection's list: the server keeps the entries the person started (the list's `created_by`), with a search too, and with none it says so and offers everyone's back; a role that reads only its own entries isn't offered it. Test: `tests/server/mine.spec.ts`.
+    its release). Test: `tests/server/address.spec.ts`. *Only mine* on a collection's list: the server keeps the entries the person started (the list's `created_by`), with a search too, and with none it says so and offers everyone's back; a role that reads only its own entries isn't offered it. Test: `tests/server/mine.spec.ts`. *About Colophon* in the account menu (`shell/AboutColophon.svelte`), so any role finds it on any screen, Settings or not: the server's version and build day from `GET /version` in words, the commit and API versions in Technical details, and *Copy details* for a problem report; if the server doesn't answer, it says so with *Try again*. Test: `tests/server/about.spec.ts`.
     Test: `tests/server/honest.spec.ts`.
   - **Plain-words errors**: `lib/errors.ts` turns a failure into a title, what happened and what to do, by status and
     `details.reason`, which the server gives every 403 and 409 (a missing permission also names it), never by the
@@ -436,7 +436,7 @@ Backend capabilities with no Studio screen or action:
 |---|---|---|
 | An entry's public address (`/content/v1/{project}/{environment}/{collection}/{entry}`) | **Done** (2026-10-28): a published entry's page says *Where readers get it*, to open or copy; with newer changes it says readers get the version live in that release; a never-published draft shows none (`tests/server/address.spec.ts`) | S |
 | `created_by` on an entry list | **Done** (2026-10-28): *Only mine* beside a collection's filters asks the server for the entries one started (`created_by`, so it holds beyond the first page and with a search); offered only where the role lists other people's entries too (`tests/server/mine.spec.ts`) | S |
-| `GET /version` (version, commit, build date, API versions) | Shown nowhere, so a problem report can't say which server it was | S |
+| `GET /version` (version, commit, build date, API versions) | **Done** (2026-10-28): *About Colophon* in the account menu (every screen, every role) shows the version and the day it was built, keeps the commit and API versions in Technical details, and *Copy details* copies them with the address, page and browser for a problem report (`tests/server/about.spec.ts`) | S |
 | Delivery reads (`/content/v1/...`) | Addresses only; no view of what readers get for an entry or release (the JSON, at a generation) | M |
 | `GET …/jobs?generation=` | Not used; the receipt already carries each destination's state, attempts and last error | none |
 | `GET …/permissions` | Not used; the Studio reads the same grants from the project | none |

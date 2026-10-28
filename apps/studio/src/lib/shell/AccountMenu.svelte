@@ -4,8 +4,10 @@
   confirm, then comes back to the front door), so the next person at this computer has to sign in
   again. Either way the page reloads, so nothing of the old session stays in memory. If the server
   can't be reached, it says so and stays signed in: it never claims a sign-out that didn't happen.
+  "About Colophon" says which version this is, for reporting a problem.
 -->
 <script lang="ts">
+	import InfoIcon from '@lucide/svelte/icons/info';
 	import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
 	import LogOutIcon from '@lucide/svelte/icons/log-out';
 	import { resolve } from '$app/paths';
@@ -15,6 +17,7 @@
 	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 	import { ApiError, signOut } from '#lib/api.ts';
 	import { meQuery } from '#lib/queries.ts';
+	import AboutColophon from './AboutColophon.svelte';
 
 	const who = createQuery(meQuery);
 	const name = $derived(who.data?.display_name ?? who.data?.subject ?? '');
@@ -27,6 +30,7 @@
 			.join('') || '?'
 	);
 	let busy = $state(false);
+	let about = $state(false);
 
 	async function leave() {
 		busy = true;
@@ -60,7 +64,10 @@
 			<DropdownMenu.Item>
 				{#snippet child({ props })}<a {...props} href={resolve('/')}><LayoutGridIcon />Your work and projects</a>{/snippet}
 			</DropdownMenu.Item>
+			<DropdownMenu.Item onSelect={() => (about = true)} data-testid="about-colophon"><InfoIcon />About Colophon</DropdownMenu.Item>
+			<DropdownMenu.Separator />
 			<DropdownMenu.Item onSelect={leave} disabled={busy} data-testid="sign-out"><LogOutIcon />{busy ? 'Signing out…' : 'Sign out'}</DropdownMenu.Item>
 		</DropdownMenu.Content>
 	</DropdownMenu.Root>
+	<AboutColophon bind:open={about} />
 {/if}
