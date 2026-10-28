@@ -16,6 +16,7 @@
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
+	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import {
 		ApiError,
 		createContentType,
@@ -166,7 +167,10 @@
 <PageHeader title="Settings" />
 
 {#if mine.isError}
-	<Problem error={mine.error} />
+	<Problem error={mine.error} what="this project's settings" retry={() => mine.refetch()} />
+{:else if mine.isPending}
+	<Skeleton class="mb-4 h-6 w-40" />
+	<Skeleton class="h-40 w-full max-w-4xl rounded-xl" />
 {:else if mine.data}
 	<section class="max-w-4xl" aria-labelledby="general">
 		<h2 id="general" class="mb-1 text-base font-semibold">General</h2>
@@ -196,7 +200,11 @@
 		<p class="mb-4 text-sm text-muted-foreground">
 			The kinds of content this project holds and their fields. Changes that could break saved entries are checked against them first.
 		</p>
-		{#if types.data}
+		{#if types.isError}
+			<div class="mb-6"><Problem error={types.error} what="content types" retry={() => types.refetch()} /></div>
+		{:else if types.isPending}
+			<Skeleton class="mb-6 h-24 w-full rounded-xl" />
+		{:else if types.data}
 			<ul class="mb-6 overflow-hidden rounded-xl border border-border bg-card" data-testid="content-types">
 				{#each types.data as item (item.slug)}
 					<li class="rule-dotted last:border-b-0">
