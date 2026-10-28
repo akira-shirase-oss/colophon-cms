@@ -252,6 +252,18 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   structures still fit three deep (`componentFits`), shows its fields read-only with a link to its page, and the
   entry editor fills it like any group. Changing one takes `schema.change` everywhere; a role without it reads it,
   and the server refuses its change too. Tests: `tests/components.spec.ts`, `tests/server/components.spec.ts`.
+- D-076 in the Studio: **rate limits**. The one fetch layer (`send` in `lib/api.ts`) reads a 429 `rate_limited` and
+  its `Retry-After` (`retryAfterMs`: seconds or a date, a second if neither, at most a minute). A read waits that long
+  and goes once more, then fails with the wait (TanStack Query doesn't retry it again); a write isn't resent there, so
+  its caller decides, and every attempt is the same request, Idempotency-Key included. The autosave waits as long as
+  the server asked (an edit or ⌘S meanwhile doesn't go sooner), says "Colophon is busy for a moment; trying again in 1
+  second. Your changes are kept on this device.", keeps the edit and the request in flight on the device, and sends the
+  same save again, so a retried save can't be stored twice. Elsewhere the words are "…; try again in N seconds." (title
+  "Colophon is busy"). Other 429s, such as too many setup code tries, keep their own words. Words: `busyFor` in
+  `lib/words.ts`. Tests: `tests/ratelimit.spec.ts` (the fetch layer with a stand-in `fetch`) and
+  `tests/server/ratelimit.spec.ts`, which starts a server of its own with `COLOPHON_RATE_LIMIT_PER_CREDENTIAL=1/40`
+  (and no limit per address) on `COLOPHON_JOURNEY_PORT`, uses up the session's limit and shows an edit surviving the
+  429.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

@@ -6,9 +6,11 @@
 //   refuses (409) and the saver opens a conflict instead of overwriting anyone.
 // - A save that gets no answer is sent again with the same Idempotency-Key, so if the first one
 //   did reach the database the server replays its answer instead of saving twice (F02).
+// - A save turned away for the rate limit (D-076) waits as long as the server asks, then goes
+//   again, key and all; the edits stay on this device meanwhile.
 
 import { ApiError, type Content, type Definition, type Draft, getEntry, type Loaded, newKey, saveEntry } from './api.ts';
-import { URL_NAME } from './words.ts';
+import { busyFor, URL_NAME } from './words.ts';
 import { canonical, same } from './content.ts';
 import { plainError } from './errors.ts';
 import { forget, keep, type Kept, type Sent } from './drafts.ts';
@@ -54,6 +56,8 @@ export class Saver {
 	conflict = $state.raw<Conflict | null>(null);
 	/** False when this browser refused to keep the edits locally. */
 	keptOnDevice = $state(true);
+	/** Waiting out a rate limit (D-076): `message` says for how long. */
+	busy = $state(false);
 	/** For a refused save: the field the server named (its JSON Pointer's first part), if any,
 	 *  and for a list, the place in it (`/related/1`). */
 	field = $state<string | null>(null);
@@ -74,6 +78,8 @@ export class Saver {
 	#key = '';
 	#keyFor = '';
 	#retries = 0;
+	/** No save goes before this time (ms since the epoch): the server asked to wait until then. */
+	#notBefore = 0;
 	/** Saving is held until the next edit (see `hold`). */
 	#held = false;
 	/** The request sent and not yet answered: kept on the device so a reload can resend it. */
@@ -178,13 +184,15 @@ export class Saver {
 		this.#keep(this.etag, content);
 		if (this.status === 'signed-out') return;
 		if (!this.#inFlight && this.status !== 'retrying') this.status = 'unsaved';
-		this.#schedule(this.status === 'retrying' ? RETRY_MS[0] ?? 1_000 : DEBOUNCE_MS);
+		this.#schedule(this.status === 'retrying' ? Math.max(RETRY_MS[0] ?? 1_000, this.#notBefore - Date.now()) : DEBOUNCE_MS);
 	}
 
-	/** Saves at once (the Save button, ⌘S). */
+	/** Saves at once (the Save button, ⌘S), or as soon as the server said it may. */
 	saveNow(): void {
 		clearTimeout(this.#timer);
-		void this.#save();
+		const wait = this.#notBefore - Date.now();
+		if (wait > 0) this.#schedule(wait);
+		else void this.#save();
 	}
 
 	/** Conflict choice: save my version on top of theirs. Theirs stays in the history. */
@@ -256,6 +264,8 @@ export class Saver {
 			this.etag = result.etag;
 			this.#saved = result.draft.content;
 			this.#retries = 0;
+			this.#notBefore = 0;
+			this.busy = false;
 			this.#keyFor = '';
 			this.message = this.#newest === null ? '' : this.message;
 			this.onSaved(result);
@@ -319,7 +329,8 @@ export class Saver {
 				}
 				return;
 			case 'retry':
-				this.#retry(error.message);
+				if (error.reason === 'rate_limited') this.#wait(error.retryAfter ?? 1_000);
+				else this.#retry(error.message);
 				return;
 			case 'signed-out':
 				this.status = 'signed-out';
@@ -346,8 +357,18 @@ export class Saver {
 		}
 	}
 
+	/** Turned away for the rate limit: the same request again once the server's wait is over. */
+	#wait(ms: number): void {
+		this.status = 'retrying';
+		this.busy = true;
+		this.message = busyFor(ms / 1000, true);
+		this.#notBefore = Date.now() + ms;
+		this.#schedule(ms);
+	}
+
 	#retry(message: string): void {
 		this.status = 'retrying';
+		this.busy = false;
 		this.message = message;
 		this.#schedule(RETRY_MS[Math.min(this.#retries, RETRY_MS.length - 1)] ?? 30_000);
 		this.#retries += 1;

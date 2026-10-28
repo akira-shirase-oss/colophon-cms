@@ -70,6 +70,15 @@ export function patternMismatch(label: string, help = ''): string {
 export const DEFAULT_VALUE = 'Default value (optional)';
 export const INVALID_DEFAULT = 'This default isn’t a value the field accepts. Check its choices, limits and allowed form, or clear it.';
 
+/** Rate limits (D-076): the server turned a request away for a moment because this person or
+ *  address sent many at once, and its `Retry-After` said how long to wait. `auto`: the Studio
+ *  sends it again by itself (a save, a read); otherwise the person does. */
+export function busyFor(seconds: number, auto: boolean): string {
+	const count = Math.max(1, Math.ceil(seconds));
+	const wait = `${count} second${count === 1 ? '' : 's'}`;
+	return `Colophon is busy for a moment; ${auto ? 'trying' : 'try'} again in ${wait}.`;
+}
+
 /** Shared components (D-073): their two refusals. */
 export const UNKNOWN_COMPONENT = 'That component doesn’t exist in this project. Choose one from the list.';
 export const INVALID_COMPONENT = 'A component can’t hold another component, a URL name, or fields that are unique, have a default, or show only sometimes.';

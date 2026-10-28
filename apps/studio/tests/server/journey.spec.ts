@@ -61,8 +61,14 @@ test.beforeAll(async () => {
 	}
 });
 
-test.afterAll(() => {
-	server?.kill();
+test.afterAll(async () => {
+	// Stopped before its database goes, and waited for, so the port is free for what runs next.
+	const running = server;
+	if (running !== undefined && running.exitCode === null) {
+		const stopped = new Promise((resolve) => running.once('exit', resolve));
+		running.kill();
+		await stopped;
+	}
 	psql(`DROP DATABASE IF EXISTS ${DATABASE} WITH (FORCE)`);
 });
 

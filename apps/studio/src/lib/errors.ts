@@ -144,7 +144,7 @@ export function describe(failure: unknown, doing?: string): Said {
 			return { title: 'Not found', text: "It isn't there any more, or your role no longer lets you see it. Reload the page.", technical };
 		case 'retry':
 			return failure.status === 429
-				? { title: 'Too many tries', text: plainOr(failure.message, 'Wait a minute, then try again.'), technical }
+				? { title: failure.reason === 'rate_limited' ? 'Colophon is busy' : 'Too many tries', text: plainOr(failure.message, 'Wait a minute, then try again.'), technical }
 				: failure.status === null
 					? { title: "Colophon didn't answer", text: 'Check your connection, then try again.', technical }
 					: { title: 'Colophon had a problem', text: 'Try again in a moment; if it keeps happening, tell whoever runs Colophon.', technical };

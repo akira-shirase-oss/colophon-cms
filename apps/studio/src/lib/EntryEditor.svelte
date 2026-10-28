@@ -289,7 +289,9 @@
 			case 'saving':
 				return 'Saving…';
 			case 'retrying':
-				return "Can't reach the server. Your changes are kept on this device; retrying.";
+				return saver.busy
+					? `${saver.message}${saver.keptOnDevice ? ' Your changes are kept on this device.' : ''}`
+					: "Can't reach the server. Your changes are kept on this device; retrying.";
 			case 'conflict':
 				return 'Not saved: someone else saved first';
 			case 'refused':

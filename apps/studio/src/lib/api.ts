@@ -3,7 +3,10 @@
 //
 // Every failure is a typed `ApiError` saying what kind it is, because the editor reacts to each
 // differently: a conflict opens the conflict screen, a refusal shows the reason, and a network
-// failure or a busy server means "keep the edit and try again".
+// failure or a busy server means "keep the edit and try again". A rate limit (429, D-076) says
+// how long to wait: a read waits and goes once more here; a write keeps its Idempotency-Key.
+
+import { busyFor } from './words.ts';
 
 export interface Project {
 	id: string;
@@ -320,7 +323,10 @@ export class ApiError extends Error {
 		/** For a conflict: the current revision's ETag. */
 		readonly current: string | null = null,
 		/** What the server said about where and why, including entries in the way. */
-		readonly details: Details | null = null
+		readonly details: Details | null = null,
+		/** For a rate limit (429 `rate_limited`, D-076): how long to wait before sending it again,
+		 *  in milliseconds, from `Retry-After`. */
+		readonly retryAfter: number | null = null
 	) {
 		super(message);
 	}
@@ -377,30 +383,56 @@ interface Envelope {
 	error?: { code?: string; message?: string; details?: Details };
 }
 
+/** How long a 429's `Retry-After` asks to wait, in milliseconds: whole seconds or an HTTP date; a
+ *  second when it says neither, and never more than a minute. */
+export function retryAfterMs(header: string | null, now = Date.now()): number {
+	const text = header?.trim() ?? '';
+	const wait = /^\d+$/.test(text) ? Number(text) * 1000 : Number.isNaN(Date.parse(text)) ? 1000 : Date.parse(text) - now;
+	return Math.min(Math.max(wait, 0), 60_000);
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function send(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
 	const write = method !== 'GET';
-	let response: Response;
-	try {
-		response = await fetch(path, {
-			method,
-			cache: 'no-store',
-			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-			headers: {
-				Accept: 'application/json',
-				...(write ? { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() } : {}),
-				...headers
-			},
-			...(body === undefined ? {} : { body: JSON.stringify(body) })
-		});
-	} catch {
-		throw new ApiError('retry', 'no answer from the server');
-	}
+	// Every attempt is the same request: a write sent again keeps its Idempotency-Key.
+	const attempt = async (): Promise<Response> => {
+		try {
+			return await fetch(path, {
+				method,
+				cache: 'no-store',
+				signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+				headers: {
+					Accept: 'application/json',
+					...(write ? { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() } : {}),
+					...headers
+				},
+				...(body === undefined ? {} : { body: JSON.stringify(body) })
+			});
+		} catch {
+			throw new ApiError('retry', 'no answer from the server');
+		}
+	};
+	const refusal = async (response: Response) => ((await response.json().catch(() => ({}))) as Envelope).error;
+	let response = await attempt();
 	if (response.ok) return response;
-	const envelope = ((await response.json().catch(() => ({}))) as Envelope).error;
+	let envelope = await refusal(response);
+	// Turned away for the rate limit (D-076), before anything ran: a read waits as asked and goes
+	// once more. A write is its caller's to send again (the autosave does, after the same wait).
+	if (!write && response.status === 429 && envelope?.details?.reason === 'rate_limited') {
+		await pause(retryAfterMs(response.headers.get('retry-after')));
+		response = await attempt();
+		if (response.ok) return response;
+		envelope = await refusal(response);
+	}
 	const message = envelope?.message ?? `HTTP ${response.status}`;
 	const details = envelope?.details ?? null;
 	const reason = details?.reason ?? null;
 	switch (true) {
+		case response.status === 429 && reason === 'rate_limited': {
+			const wait = retryAfterMs(response.headers.get('retry-after'));
+			throw new ApiError('retry', busyFor(wait / 1000, false), 429, reason, null, details, wait);
+		}
 		case response.status === 401:
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
