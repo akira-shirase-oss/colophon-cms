@@ -343,10 +343,18 @@ pub(crate) async fn open(
 ) -> Result<ProjectTransaction, ApiError> {
     let services = services(state)?;
     let project = Uuid::try_parse(project).map_err(|_| ApiError::NotFound)?;
-    scope::begin_in_project(&services.pool, caller.identity, project, environment)
-        .await
-        .map_err(ApiError::from_db)?
-        .ok_or(ApiError::NotFound)
+    let opened = match caller.project {
+        // An API token: only in its own project, with its own permissions (D-063).
+        Some(own) if own == project => {
+            scope::begin_in_project_as_token(&services.pool, caller.identity, project, environment)
+                .await
+        }
+        Some(_) => return Err(ApiError::NotFound),
+        None => {
+            scope::begin_in_project(&services.pool, caller.identity, project, environment).await
+        }
+    };
+    opened.map_err(ApiError::from_db)?.ok_or(ApiError::NotFound)
 }
 
 /// The collection's current content type and its version, or 404.

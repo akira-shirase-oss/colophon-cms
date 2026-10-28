@@ -131,7 +131,7 @@ pub(crate) struct RoleChange {
     permissions: Vec<PermissionBody>,
 }
 
-fn invalid(error: RoleError, pointer: &'static str) -> ApiError {
+pub(crate) fn invalid(error: RoleError, pointer: &'static str) -> ApiError {
     ApiError::InvalidField {
         reason: error.code(),
         pointer,
@@ -140,7 +140,7 @@ fn invalid(error: RoleError, pointer: &'static str) -> ApiError {
 }
 
 /// The permissions a body asks for, or the first one refused, by its position.
-fn policy(permissions: &[PermissionBody]) -> Result<Policy, ApiError> {
+pub(crate) fn policy(permissions: &[PermissionBody]) -> Result<Policy, ApiError> {
     if permissions.len() > MAX_PERMISSIONS {
         return Err(invalid(RoleError::TooManyPermissions, "/permissions"));
     }
@@ -276,6 +276,7 @@ pub(crate) async fn create(
         .map_err(ApiError::from_db)?
     {
         Written::Done(role) => {
+            crate::audit::record(&mut tx, "role.created", &role.key, &described(&role)).await?;
             tx.commit().await.map_err(ApiError::from_db)?;
             respond(StatusCode::CREATED, *role)
         }
@@ -298,6 +299,15 @@ pub(crate) async fn create(
 }
 
 const FIXED: &str = "the owner role is fixed: it always holds every permission";
+
+/// What the audit log keeps about a role (D-063).
+fn described(role: &StoredRole) -> serde_json::Value {
+    serde_json::json!({
+        "name": role.name,
+        "description": role.description,
+        "permissions": permission_views(&role.policy),
+    })
+}
 
 /// `PUT {P}/roles/{role}`.
 pub(crate) async fn update(
@@ -327,6 +337,9 @@ pub(crate) async fn update(
         .map_err(ApiError::from_db)?
     {
         Written::Done(role) => {
+            let change =
+                serde_json::json!({"before": described(&current), "after": described(&role)});
+            crate::audit::record(&mut tx, "role.updated", &role.key, &change).await?;
             tx.commit().await.map_err(ApiError::from_db)?;
             respond(StatusCode::OK, *role)
         }
@@ -361,6 +374,8 @@ pub(crate) async fn delete(
         .map_err(ApiError::from_db)?
     {
         Removed::Done => {
+            crate::audit::record(&mut tx, "role.deleted", &current.key, &described(&current))
+                .await?;
             tx.commit().await.map_err(ApiError::from_db)?;
             Ok(StatusCode::NO_CONTENT)
         }

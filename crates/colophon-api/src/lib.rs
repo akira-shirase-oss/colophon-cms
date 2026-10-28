@@ -4,6 +4,7 @@
 //!
 //! Design: `docs/modules/04-api.md`.
 
+mod audit;
 mod auth;
 mod body;
 mod cache;
@@ -28,6 +29,7 @@ mod setup;
 mod shape;
 pub mod state;
 pub mod studio;
+mod tokens;
 mod visibility;
 
 use axum::{
@@ -88,6 +90,15 @@ pub fn routes(state: AppState) -> Router {
             "/api/v1/projects/{project}/roles/{role}",
             get(roles::get).put(roles::update).delete(roles::delete),
         )
+        .route(
+            "/api/v1/projects/{project}/tokens",
+            get(tokens::list).post(tokens::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/tokens/{token}",
+            axum::routing::delete(tokens::revoke),
+        )
+        .route("/api/v1/projects/{project}/audit", get(audit::list))
         .route("/api/v1/invitations/lookup", post(members::lookup))
         .route("/api/v1/invitations/accept", post(members::accept))
         .route(
