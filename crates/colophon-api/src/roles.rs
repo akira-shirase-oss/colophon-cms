@@ -391,3 +391,32 @@ pub(crate) async fn delete(
         Removed::Fixed => Err(ApiError::conflict("owner_role_fixed", FIXED)),
     }
 }
+
+/// What `GET {P}/permissions` answers: the caller's own permissions here.
+#[derive(Serialize)]
+pub(crate) struct OwnView {
+    /// `person` or `token`.
+    kind: &'static str,
+    /// Its role's key, for a person; `null` for an API token.
+    role: Option<String>,
+    permissions: Vec<PermissionView>,
+}
+
+/// `GET /api/v1/projects/{project}/environments/{environment}/permissions`: what the caller, a
+/// person or an API token, may do here, as roles show permissions (D-058, D-068). An agent's MCP
+/// server lists only the tools these allow; every call is still decided by the API.
+pub(crate) async fn own(
+    State(state): State<AppState>,
+    caller: crate::session::SignedIn,
+    Path(path): Path<crate::content_types::TypesPath>,
+) -> Result<Json<Data<OwnView>>, ApiError> {
+    let token = caller.project.is_some();
+    let tx = crate::entries::open(&state, caller, &path.project, &path.environment).await?;
+    let view = OwnView {
+        kind: if token { "token" } else { "person" },
+        role: (!token).then(|| tx.role.clone()),
+        permissions: permission_views(&tx.policy),
+    };
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(Json(Data { data: view }))
+}

@@ -106,6 +106,10 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/v1/invitations/lookup", post(members::lookup))
         .route("/api/v1/invitations/accept", post(members::accept))
         .route(
+            "/api/v1/projects/{project}/environments/{environment}/permissions",
+            get(roles::own),
+        )
+        .route(
             "/api/v1/projects/{project}/environments/{environment}/content-types",
             get(content_types::list).post(content_types::create),
         )

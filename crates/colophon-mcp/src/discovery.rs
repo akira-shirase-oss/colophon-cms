@@ -1,38 +1,17 @@
 //! Discovery: which tools to list, from what the token may do (docs/modules/09-automation.md,
 //! "Typed tools": tool discovery is filtered by the caller's current authorization).
 //!
-//! The API has no route that tells a token its own permissions (`/me` refuses tokens by design,
-//! 403 `api_token_not_allowed`; `…/tokens` needs `tokens.manage`, which no token may hold). So
-//! this module asks the API questions whose answers show the permission, and that can never change
-//! anything:
-//!
-//! - **read:** `GET {P}/collections/{c}/entries?limit=1` answers 200, or 403 without
-//!   `content.read` there;
-//! - **create:** `POST {P}/collections/{c}/entries` with the body `null`. The API checks the
-//!   permission before the content, so it answers 403 without `content.create` there and 422
-//!   with it; `null` is never valid content, so nothing can be created;
-//! - **update:** `PUT {P}/collections/{c}/entries/{nil id}` with `If-Match` on the nil id and the
-//!   body `null`: 403 without `content.update` there, 404 with it (no entry has the nil id), so
-//!   nothing can be saved.
-//!
-//! A tool is listed when the token may do what it needs in at least one collection. This is
-//! discovery, not authorization: a listed tool can still be refused for one entry (field lists,
-//! `own` conditions), and every call is decided by the API alone (AU1). If the API ever checked
-//! content before permission, a write tool would be listed and then refused, never the reverse.
-//! A route that answers a token's permissions directly would replace the probes (proposed in
-//! module 09).
+//! `GET {P}/permissions` answers the caller's own permissions, a token's included (D-068). A tool
+//! is listed when the token holds the action it needs in some collection. This is discovery, not
+//! authorization: a listed tool can still be refused for one entry (field lists, `own`
+//! conditions), and every call is decided by the API alone (AU1).
 
-use reqwest::Method;
 use serde_json::Value;
-use uuid::Uuid;
 
 use crate::{
-    api::{self, Api, ApiError, Request, new_idempotency_key},
+    api::{self, Api, ApiError, Request},
     tools::{Needs, Tool},
 };
-
-/// The most collections probed for each permission; collections past these are not looked at.
-pub const MAX_PROBED: usize = 50;
 
 /// What the token may do somewhere in the project.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -64,47 +43,18 @@ impl Allowed {
             .map(Tool::definition)
             .collect()
     }
-}
 
-/// One question about a permission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Probe {
-    Read,
-    Create,
-    Update,
-}
-
-impl Probe {
-    /// Whether the token may do this in `collection`, from the API's answer.
-    async fn ask(self, api: &Api, collection: &str) -> Result<bool, ApiError> {
-        let entries = format!("/collections/{collection}/entries");
-        let nobody = Uuid::nil().to_string();
-        let key = new_idempotency_key();
-        let request = match self {
-            Self::Read => Request::get(entries).query("limit", "1"),
-            Self::Create => Request::new(Method::POST, entries)
-                .json(&Value::Null)
-                .idempotency_key(&key),
-            Self::Update => Request::new(Method::PUT, format!("{entries}/{nobody}"))
-                .json(&Value::Null)
-                .if_match(&nobody)
-                .idempotency_key(&key),
+    /// What a `GET {P}/permissions` answer allows.
+    pub fn from_permissions(permissions: &[Value]) -> Self {
+        let holds = |action: &str| {
+            permissions
+                .iter()
+                .any(|permission| permission["action"] == action)
         };
-        match (self, api.send(&request).await) {
-            (Self::Read, Ok(_)) => Ok(true),
-            (_, Ok(_)) => {
-                // Impossible while the API refuses `null` content; say so loudly if it ever doesn't.
-                tracing::error!(probe = ?self, "a discovery probe was accepted");
-                Ok(true)
-            }
-            (_, Err(error)) if error.refused_with(403) => Ok(false),
-            (Self::Create, Err(error)) if error.refused_with(422) => Ok(true),
-            (Self::Update, Err(error)) if error.refused_with(404) || error.refused_with(422) => {
-                Ok(true)
-            }
-            // The collection went away since it was listed.
-            (Self::Read | Self::Create, Err(error)) if error.refused_with(404) => Ok(false),
-            (_, Err(error)) => Err(error),
+        Self {
+            read: holds("content.read"),
+            create: holds("content.create"),
+            update: holds("content.update"),
         }
     }
 }
@@ -113,28 +63,11 @@ impl Probe {
 /// used at all (revoked, wrong project, unreachable); the caller reports it rather than listing
 /// nothing.
 pub async fn discover(api: &Api) -> Result<Allowed, ApiError> {
-    let answer = api.send(&Request::get("/content-types")).await?;
-    let collections: Vec<String> = api::data(&answer)?
+    let answer = api.send(&Request::get("/permissions")).await?;
+    let permissions = api::data(&answer)?["permissions"]
         .as_array()
-        .ok_or(ApiError::BadAnswer)?
-        .iter()
-        .filter_map(|content_type| content_type["slug"].as_str().map(str::to_owned))
-        .take(MAX_PROBED)
-        .collect();
-    let mut allowed = Allowed::default();
-    for probe in [Probe::Read, Probe::Create, Probe::Update] {
-        for collection in &collections {
-            if probe.ask(api, collection).await? {
-                match probe {
-                    Probe::Read => allowed.read = true,
-                    Probe::Create => allowed.create = true,
-                    Probe::Update => allowed.update = true,
-                }
-                break;
-            }
-        }
-    }
-    Ok(allowed)
+        .ok_or(ApiError::BadAnswer)?;
+    Ok(Allowed::from_permissions(permissions))
 }
 
 #[cfg(test)]
@@ -147,6 +80,25 @@ mod tests {
             .iter()
             .map(|tool| tool["name"].as_str().unwrap_or_default().to_owned())
             .collect()
+    }
+
+    #[test]
+    fn the_permissions_route_decides_what_is_listed() {
+        let permissions = serde_json::json!([
+            {"action": "content.read", "subject": "articles"},
+            {"action": "content.update", "subject": "articles", "fields": ["title"]}
+        ]);
+        let allowed = Allowed::from_permissions(permissions.as_array().expect("a list"));
+        assert_eq!(
+            allowed,
+            Allowed {
+                read: true,
+                create: false,
+                update: true
+            },
+            "a narrowed permission still lists its tool; the API decides each call"
+        );
+        assert_eq!(Allowed::from_permissions(&[]), Allowed::default());
     }
 
     #[test]

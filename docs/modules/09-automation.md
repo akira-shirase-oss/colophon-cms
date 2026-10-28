@@ -98,13 +98,10 @@ answers `initialize` with 2025-11-25, the one version it speaks.
 - **Nothing approves or publishes.** There is no tool to approve, publish, unpublish, schedule, or manage roles,
   members or tokens, whatever the token may do: a full-access token, which could approve and publish through the API,
   gets the same eight tools (AU2; the stack test calls thirteen such names and gets "unknown tool" for each).
-- **Discovery.** `tools/list` shows a tool when the token may do what it needs in at least one collection. No route
-  tells a token its own permissions (`/me` refuses tokens, 403 `api_token_not_allowed`), so the server asks the API
-  questions that can't change anything: a read is `GET …/entries?limit=1`; a create is `POST …/entries` with the body
-  `null` (403 without `content.create`, 422 with it: the API checks permission before content, and `null` is never
-  content); an update is `PUT …/entries/{nil id}` with the body `null` (403 without `content.update`, 404 with it). At
-  most 50 collections are asked about. Discovery grants nothing: a listed tool can still be refused for an entry (field
-  lists, `own`), and if the API ever checked content first, a tool would be listed and then refused, never the reverse.
+- **Discovery.** `tools/list` shows a tool when the token holds the action it needs in some collection, read from
+  `GET {P}/permissions` (one read; the caller's own permissions, for a person or a token). Discovery grants nothing:
+  a listed tool can still be refused for an entry (field lists, `own`), and every call is decided by the API. (The
+  first version probed the API with requests that couldn't write, because no such route existed yet.)
   A 401 or 404 on discovery is a JSON-RPC error (`-32001`) that says the token is wrong, revoked or expired, or that
   `COLOPHON_PROJECT` isn't its project.
 - **Stale versions never overwrite.** `update_draft` sends the revision the agent read; when the draft has moved on,
@@ -134,12 +131,11 @@ notifications; owning them puts the frame limit, the error codes and the "bad ar
 tests see them, and adds no external dependency (the lockfile gains only the crate itself). Revisit when remote MCP is
 built: the SDK's Streamable HTTP and authorization support may then be worth its weight.
 
-**Proposed, not built: a route that tells a caller its own permissions.** `GET {P}/permissions`, answered for people
-and API tokens alike (it sits under `/environments/`, where tokens are allowed): `{"data": {"identity_id",
-"credential": "session" | "api-token", "token_kind": "read-only" | "full-access" | "custom" | null, "permissions":
-[{"action", "subject", "fields", "condition"}], "expires_at"}}`, from the same `Policy` the evaluator uses. It would
-replace the probes with one read, make discovery exact per collection, and let the Studio and the CLI show what a role
-or token can do. It needs its own tests (tokens see only their own; nothing about other identities leaks).
+**Built: a route that tells a caller its own permissions.** `GET {P}/permissions`, answered for people and API tokens
+alike (it sits under `/environments/`, where tokens are allowed): `{"data": {"kind": "person" | "token", "role",
+"permissions": [{"action", "subject", "fields"?, "condition"?}]}}`, from the same `Policy` every check uses, through
+the same scoped transaction (a revoked token can't read it). The MCP server's discovery reads it; the Studio and the
+CLI can show from it what a role or token can do.
 
 **Not built yet (P5):**
 - Remote MCP: Streamable HTTP with the 2025-11-25 authorization requirements and audience validation.

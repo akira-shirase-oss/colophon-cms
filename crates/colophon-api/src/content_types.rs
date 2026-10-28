@@ -50,8 +50,8 @@ const UPDATE: &str = "content_type.update";
 /// The path of the collection routes.
 #[derive(Deserialize)]
 pub(crate) struct TypesPath {
-    project: String,
-    environment: String,
+    pub(crate) project: String,
+    pub(crate) environment: String,
 }
 
 /// The path of the single-type routes.
