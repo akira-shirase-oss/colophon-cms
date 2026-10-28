@@ -1,12 +1,14 @@
 <!--
   One collection as a table: search titles (on the server, so it finds beyond the first page),
-  filter by where each entry stands for readers, and start a new entry.
+  narrow it to the entries one started (also on the server), filter by where each entry stands
+  for readers, and start a new entry.
 -->
 <script lang="ts">
 	import CopyIcon from '@lucide/svelte/icons/copy';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SearchIcon from '@lucide/svelte/icons/search';
+	import UserIcon from '@lucide/svelte/icons/user';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -18,6 +20,7 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
+	import { Toggle } from '@colophon/ui/ui/toggle';
 	import { ApiError, type Content, createEntry, type EntryState, entryState, getContentType, getEntry, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
 	import { applies, blockingProblem, type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
 	import { plainError } from '#lib/errors.ts';
@@ -44,11 +47,18 @@
 		const timer = setTimeout(() => (q = next.trim()), 200);
 		return () => clearTimeout(timer);
 	});
+	// "Only mine": the entries this person started, kept by the server (the list's `created_by`), so
+	// it finds them beyond the first page and with a search. Offered only where the role lists other
+	// people's entries too; a role that reads only its own already sees nothing else.
+	const who = createQuery(meQuery);
+	let onlyMine = $state(false);
+	const readsOthers = $derived(mayOn(mine.data, 'content.read', collection, false));
+	const creator = $derived(onlyMine && readsOthers ? (who.data?.id ?? null) : null);
 	// Pages of 100, newest first, followed with the server's cursor when someone asks for more. Keyed
 	// under the collection's entries, so saving and publishing refresh it.
 	const entries = createInfiniteQuery(() => ({
-		queryKey: ['entries', project, collection, q, 'pages'],
-		queryFn: ({ pageParam }: { pageParam: string | null }) => searchEntries(project, collection, q, pageParam),
+		queryKey: ['entries', project, collection, q, creator ?? 'anyone', 'pages'],
+		queryFn: ({ pageParam }: { pageParam: string | null }) => searchEntries(project, collection, q, pageParam, creator),
 		initialPageParam: null as string | null,
 		getNextPageParam: (last: { next_cursor: string | null }) => last.next_cursor,
 		placeholderData: keepPreviousData
@@ -86,7 +96,6 @@
 	const pickedRows = $derived(loaded.filter((entry) => picked.includes(entry.id)));
 	const publishable = $derived(pickedRows.filter((entry) => entryState(entry) !== 'live'));
 	// A role that may edit only its own entries can send only those (each row says whose it is).
-	const who = createQuery(meQuery);
 	const notMine = $derived(
 		oneClick ? [] : publishable.filter((entry) => !mayOn(mine.data, 'content.update', collection, entry.created_by === who.data?.id))
 	);
@@ -283,14 +292,21 @@
 	</PageHeader>
 
 	<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-		<Tabs.Root bind:value={filter as string}>
-			<Tabs.List aria-label="Show">
-				<Tabs.Trigger value="all">All</Tabs.Trigger>
-				<Tabs.Trigger value="draft">Drafts <span class="tabular text-muted-foreground">{tally.draft}</span></Tabs.Trigger>
-				<Tabs.Trigger value="changed">Changed <span class="tabular text-muted-foreground">{tally.changed}</span></Tabs.Trigger>
-				<Tabs.Trigger value="live">Live <span class="tabular text-muted-foreground">{tally.live}</span></Tabs.Trigger>
-			</Tabs.List>
-		</Tabs.Root>
+		<div class="flex flex-wrap items-center gap-2">
+			<Tabs.Root bind:value={filter as string}>
+				<Tabs.List aria-label="Show">
+					<Tabs.Trigger value="all">All</Tabs.Trigger>
+					<Tabs.Trigger value="draft">Drafts <span class="tabular text-muted-foreground">{tally.draft}</span></Tabs.Trigger>
+					<Tabs.Trigger value="changed">Changed <span class="tabular text-muted-foreground">{tally.changed}</span></Tabs.Trigger>
+					<Tabs.Trigger value="live">Live <span class="tabular text-muted-foreground">{tally.live}</span></Tabs.Trigger>
+				</Tabs.List>
+			</Tabs.Root>
+			{#if readsOthers && !single && who.data}
+				<Toggle variant="outline" size="sm" bind:pressed={onlyMine} title="Show only the entries you started" data-testid="only-mine"
+					><UserIcon data-icon="inline-start" />Only mine</Toggle
+				>
+			{/if}
+		</div>
 		<InputGroup.Root class="sm:w-72">
 			<InputGroup.Addon><SearchIcon /></InputGroup.Addon>
 			<InputGroup.Input type="search" placeholder="Search titles" aria-label="Search titles" maxlength={100} bind:value={typed} data-testid="entry-search" />
@@ -310,7 +326,7 @@
 		</EmptyState>
 	{:else if single}
 		<p class="text-sm text-muted-foreground">Opening it…</p>
-	{:else if loaded.length === 0 && q === ''}
+	{:else if loaded.length === 0 && q === '' && creator === null}
 		<EmptyState icon={FileTextIcon} title="No {type.data.definition.name.toLowerCase()} yet" testid="entries-empty">
 			Write the first {oneOf(type.data.definition.name)}. Nobody outside the project sees it until it is published.
 			{#snippet action()}
@@ -425,7 +441,13 @@
 					{:else}
 						<Table.Row class="hover:bg-transparent">
 							<Table.Cell colspan={4 + (bulk ? 1 : 0) + (writes ? 1 : 0)} class="py-10 text-center text-muted-foreground">
-								{q === '' ? 'No entries in this view.' : `No titles match “${q}”.`}
+								{#if creator !== null && q === '' && loaded.length === 0}
+									You haven't started any here yet. <Button variant="link" size="xs" class="px-1" onclick={() => (onlyMine = false)}>Show everyone's</Button>
+								{:else if q === ''}
+									No entries in this view.
+								{:else}
+									{creator === null ? 'No titles' : 'None of your titles'} match “{q}”.
+								{/if}
 							</Table.Cell>
 						</Table.Row>
 					{/each}

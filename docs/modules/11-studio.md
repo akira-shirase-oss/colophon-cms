@@ -90,7 +90,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     can't see this"), offers *Try again* when that can help, and keeps the server's words in Technical details.
   - **Gaps against the API** (the audit below), closed one by one: a published entry's page says *Where readers get
     it* (its public `/content/v1` address, to open or copy; with newer changes, that readers get the version live in
-    its release). Test: `tests/server/address.spec.ts`.
+    its release). Test: `tests/server/address.spec.ts`. *Only mine* on a collection's list: the server keeps the entries the person started (the list's `created_by`), with a search too, and with none it says so and offers everyone's back; a role that reads only its own entries isn't offered it. Test: `tests/server/mine.spec.ts`.
     Test: `tests/server/honest.spec.ts`.
   - **Plain-words errors**: `lib/errors.ts` turns a failure into a title, what happened and what to do, by status and
     `details.reason`, which the server gives every 403 and 409 (a missing permission also names it), never by the
@@ -435,7 +435,7 @@ Backend capabilities with no Studio screen or action:
 | Capability | What's missing | Size |
 |---|---|---|
 | An entry's public address (`/content/v1/{project}/{environment}/{collection}/{entry}`) | **Done** (2026-10-28): a published entry's page says *Where readers get it*, to open or copy; with newer changes it says readers get the version live in that release; a never-published draft shows none (`tests/server/address.spec.ts`) | S |
-| `created_by` on an entry list | My work uses it; a collection's list can't be narrowed to one's own entries | S |
+| `created_by` on an entry list | **Done** (2026-10-28): *Only mine* beside a collection's filters asks the server for the entries one started (`created_by`, so it holds beyond the first page and with a search); offered only where the role lists other people's entries too (`tests/server/mine.spec.ts`) | S |
 | `GET /version` (version, commit, build date, API versions) | Shown nowhere, so a problem report can't say which server it was | S |
 | Delivery reads (`/content/v1/...`) | Addresses only; no view of what readers get for an entry or release (the JSON, at a generation) | M |
 | `GET …/jobs?generation=` | Not used; the receipt already carries each destination's state, attempts and last error | none |
