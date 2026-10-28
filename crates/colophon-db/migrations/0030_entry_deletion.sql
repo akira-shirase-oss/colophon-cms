@@ -170,7 +170,7 @@ BEGIN
         RETURN QUERY SELECT 'not_found'::text, NULL::uuid, NULL::timestamptz;
         RETURN;
     END IF;
-    IF draft <> expected THEN
+    IF draft IS DISTINCT FROM expected THEN
         RETURN QUERY SELECT 'stale'::text, draft, NULL::timestamptz;
         RETURN;
     END IF;
