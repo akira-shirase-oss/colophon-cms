@@ -1,13 +1,13 @@
 // The docs and the repository agree. Every command in a code block marked "Runnable" exists:
 // its script, its subcommand, its npm script, its crate, its test file, its CLI subcommand and
 // flags. And the references list what the code defines: every error code and every reason in
-// `details` (read from the newest branch, which the docs describe), every CLI command. The routes
+// `details` (read from the code the docs ship with, tests/site.ts codeFile), every CLI command. The routes
 // are checked in routes.spec.ts. It reads the built pages, so it checks exactly what readers see.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
-import { atRef, builtHtml, builtPages, REPO, textOf } from './site.ts';
+import { builtHtml, builtPages, codeFile, codeFiles, REPO, textOf } from './site.ts';
 
 const read = (...parts: string[]) => readFileSync(join(REPO, ...parts), 'utf8');
 
@@ -197,7 +197,7 @@ test('the checker refuses what does not exist', () => {
 });
 
 test('the errors reference lists every error code the API defines', () => {
-	const source = atRef('crates/colophon-api/src/error.rs');
+	const source = codeFile('crates/colophon-api/src/error.rs');
 	const block = source.match(/pub const fn as_str\(self\) -> &'static str \{([\s\S]*?)\n {4}\}/)?.[1] ?? '';
 	const codes = [...block.matchAll(/=> "([a-z_]+)"/g)].map((match) => match[1] ?? '');
 	expect(codes.length).toBeGreaterThan(10);
@@ -206,17 +206,18 @@ test('the errors reference lists every error code the API defines', () => {
 });
 
 test('the errors reference lists every reason the API can put in details', () => {
-	const api = ['changesets', 'content_types', 'delivery', 'destinations', 'device', 'entries', 'error', 'members', 'projects', 'roles', 'receipts', 'rich_text']
-		.map((name) => atRef(`crates/colophon-api/src/${name}.rs`))
+	// Every module of the API crate, so a new one is covered without editing this list.
+	const api = codeFiles('crates/colophon-api/src', '.rs')
+		.map((path) => codeFile(path))
 		.join('\n');
 	const reasons = new Set<string>([
 		...[...api.matchAll(/reason: "([a-z_]+)"/g)].map((match) => match[1] ?? ''),
 		...[...api.matchAll(/ErrorDetails::new\(\s*"([a-z_]+)"/g)].map((match) => match[1] ?? ''),
 		// Content and content-type refusals, checked against the definition.
-		...[...atRef('crates/colophon-domain/src/schema.rs').matchAll(/refuse\(\s*"([a-z_]+)"/g)].map((match) => match[1] ?? ''),
-		// Role and project field rules: each `code()` table.
-		...['policy', 'project'].flatMap((name) =>
-			[...(atRef(`crates/colophon-domain/src/${name}.rs`).match(/pub const fn code\(self\) -> &'static str \{[\s\S]*?\n {4}\}/g) ?? [])].flatMap((block) =>
+		...[...codeFile('crates/colophon-domain/src/schema.rs').matchAll(/refuse\(\s*"([a-z_]+)"/g)].map((match) => match[1] ?? ''),
+		// Role, project and schedule rules: each `code()` table in the domain.
+		...codeFiles('crates/colophon-domain/src', '.rs').flatMap((path) =>
+			[...(codeFile(path).match(/pub const fn code\(self\) -> &'static str \{[\s\S]*?\n {4}\}/g) ?? [])].flatMap((block) =>
 				[...block.matchAll(/=> "([a-z_]+)"/g)].map((match) => match[1] ?? '')
 			)
 		)

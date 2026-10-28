@@ -49,20 +49,38 @@ export function textOf(html: string): string {
 		.replace(/&(amp|lt|gt|quot|#39|#x27|#123|#125);/g, (_, name: string) => ENTITIES[name] ?? '');
 }
 
-/** The newest code, which the docs describe: the custom-roles branch contains main, 3.6 and R.1. */
-export const NEWEST = process.env['COLOPHON_DOCS_NEWEST_REF'] ?? 'origin/r/r.2-custom-roles';
-
 /**
- * A file as it is on a branch, read with `git show`, so the docs are checked against code that
- * isn't merged yet. Fails with a message that says what to do when the branch isn't there.
+ * The docs describe the code they ship with, so the tests read it from the checked-out tree. To
+ * check them against another commit instead (a tag, or a branch you have fetched), set
+ * COLOPHON_DOCS_CODE_REF and the files are read from it with `git show`.
  */
-export function atRef(path: string, ref = NEWEST): string {
+export const CODE_REF = process.env['COLOPHON_DOCS_CODE_REF'] || undefined;
+
+/** A source file the docs describe: from the checked-out tree, or from CODE_REF when it is set. */
+export function codeFile(path: string): string {
+	if (CODE_REF === undefined) {
+		try {
+			return readFileSync(join(REPO, path), 'utf8');
+		} catch (error) {
+			throw new Error(`could not read ${path} in the checked-out tree (${String(error)})`);
+		}
+	}
 	try {
-		return execFileSync('git', ['show', `${ref}:${path}`], { cwd: REPO, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+		return execFileSync('git', ['show', `${CODE_REF}:${path}`], { cwd: REPO, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
 	} catch (error) {
 		const detail = error instanceof Error && 'stderr' in error ? String((error as { stderr: unknown }).stderr).trim() : String(error);
-		throw new Error(
-			`could not read ${path} at ${ref} (${detail}). The docs describe the newest branch; fetch it ("git fetch origin") or set COLOPHON_DOCS_NEWEST_REF to the ref that has it.`
-		);
+		throw new Error(`could not read ${path} at COLOPHON_DOCS_CODE_REF=${CODE_REF} (${detail}); fetch that ref, or unset the variable to read the checked-out tree`);
 	}
+}
+
+/** The files directly in a source directory that end with `extension`, from the repository's root, sorted. */
+export function codeFiles(dir: string, extension: string): string[] {
+	const names =
+		CODE_REF === undefined
+			? readdirSync(join(REPO, dir))
+			: execFileSync('git', ['ls-tree', '--name-only', `${CODE_REF}:${dir}`], { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).split('\n');
+	return names
+		.filter((name) => name.endsWith(extension))
+		.sort()
+		.map((name) => `${dir}/${name}`);
 }

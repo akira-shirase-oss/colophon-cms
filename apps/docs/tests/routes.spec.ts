@@ -1,11 +1,11 @@
-// The HTTP reference and the router agree, in both directions. The router is read from the newest
-// branch with `git show` (the docs describe it; tests/site.ts NEWEST), and from main to know which
-// routes aren't merged yet: those must say Building where they are documented. A route is documented
-// as an h3 whose text is `METHOD path`, with `{P}` for the environment prefix. It reads the built
-// pages, so it checks exactly what readers see. No browser needed.
+// The HTTP reference and the router agree, in both directions. The router is the one the docs ship
+// with, read from the checked-out tree (tests/site.ts codeFile). A route is documented as an h3
+// whose text is `METHOD path`, with `{P}` for the environment prefix; a route the router has is
+// built, so it is never documented under a Planned label. It reads the built pages, so it checks
+// exactly what readers see. No browser needed.
 
 import { expect, test } from '@playwright/test';
-import { atRef, builtHtml, builtPages, textOf } from './site.ts';
+import { builtHtml, builtPages, codeFile, textOf } from './site.ts';
 
 const ROUTER = 'crates/colophon-api/src/lib.rs';
 const PREFIX = '/api/v1/projects/{project}/environments/{environment}';
@@ -28,9 +28,9 @@ export function routerRoutes(source: string): Set<string> {
 
 const expand = (route: string) => route.replace(' {P}', ` ${PREFIX}`);
 
-/** Every `METHOD path` documented as an h3, with the page and the part of the page under it. */
+/** Every `METHOD path` documented as an h3, with its page, the heading and the page's label. */
 function documented() {
-	const found: { route: string; page: string; section: string; pageLabel: string }[] = [];
+	const found: { route: string; page: string; heading: string; pageLabel: string }[] = [];
 	for (const page of builtPages()) {
 		const html = builtHtml(page);
 		const pageLabel = /<article[\s\S]*?data-capability="([a-z]+)"/.exec(html)?.[1] ?? '';
@@ -40,50 +40,51 @@ function documented() {
 			if (!heading) continue;
 			const text = textOf(heading[1] ?? '').trim();
 			const match = new RegExp(`^(${METHODS.join('|')}) (\\{P\\}\\S*|/\\S+)$`).exec(text);
-			if (match) found.push({ route: expand(`${match[1] ?? ''} ${match[2] ?? ''}`), page, section: part, pageLabel });
+			if (match) found.push({ route: expand(`${match[1] ?? ''} ${match[2] ?? ''}`), page, heading: heading[0], pageLabel });
 		}
 	}
 	return found;
 }
 
-const newest = routerRoutes(atRef(ROUTER));
-const onMain = routerRoutes(atRef(ROUTER, process.env['COLOPHON_DOCS_MAIN_REF'] ?? 'origin/main'));
+const routes = routerRoutes(codeFile(ROUTER));
 
 test('the router parser reads the router', () => {
-	expect(newest.size, 'routes on the newest branch').toBeGreaterThan(40);
-	expect(newest.has('GET /livez')).toBe(true);
-	expect(newest.has(`POST ${PREFIX}/changesets/{changeset}/publish`)).toBe(true);
-	expect(newest.has('DELETE /api/v1/projects/{project}/members/{identity}')).toBe(true);
-	expect(onMain.has('GET /api/v1/projects/{project}/roles'), 'roles are not on main yet').toBe(false);
+	expect(routes.size, 'routes in the router').toBeGreaterThan(40);
+	expect(routes.has('GET /livez')).toBe(true);
+	expect(routes.has(`POST ${PREFIX}/changesets/{changeset}/publish`)).toBe(true);
+	expect(routes.has('DELETE /api/v1/projects/{project}/members/{identity}')).toBe(true);
+	expect(routes.has('PUT /api/v1/projects/{project}/roles/{role}')).toBe(true);
+	expect(routes.has(`DELETE ${PREFIX}/schedules/{schedule}`)).toBe(true);
+	expect(routes.has('POST /api/v1/setup')).toBe(true);
 });
 
 test('every documented HTTP route exists in the router', () => {
 	const unknown = documented()
-		.filter(({ route }) => !newest.has(route))
+		.filter(({ route }) => !routes.has(route))
 		.map(({ route, page }) => `${route} (on ${page})`);
-	expect(unknown, `documented, but not in ${ROUTER} on the newest branch`).toEqual([]);
+	expect(unknown, `documented, but not in ${ROUTER}`).toEqual([]);
 });
 
 test('every route in the router is documented exactly once', () => {
 	const counts = new Map<string, string[]>();
 	for (const { route, page } of documented()) counts.set(route, [...(counts.get(route) ?? []), page]);
-	const missing = [...newest].filter((route) => !counts.has(route));
+	const missing = [...routes].filter((route) => !counts.has(route));
 	const twice = [...counts].filter(([, pages]) => pages.length > 1).map(([route, pages]) => `${route}: ${pages.join(', ')}`);
 	expect(missing, 'routes the reference doesn’t document').toEqual([]);
 	expect(twice, 'routes documented more than once').toEqual([]);
 });
 
-test('routes that are only on a branch say Building where they are documented', () => {
-	const unmarked = documented()
-		.filter(({ route }) => newest.has(route) && !onMain.has(route))
-		.filter(({ section, pageLabel }) => pageLabel !== 'building' && !section.includes('data-capability="building"'))
+test('no route the router has is documented as Planned', () => {
+	const planned = documented()
+		.filter(({ route }) => routes.has(route))
+		.filter(({ heading, pageLabel }) => pageLabel === 'planned' || heading.includes('data-capability="planned"'))
 		.map(({ route, page }) => `${route} (on ${page})`);
-	expect(unmarked).toEqual([]);
+	expect(planned).toEqual([]);
 });
 
 test('the all-routes page lists every route', () => {
 	const page = textOf(builtHtml('/reference/api/routes/'));
-	const missing = [...newest].filter((route) => {
+	const missing = [...routes].filter((route) => {
 		const [method = '', path = ''] = route.split(' ');
 		const short = path.startsWith(PREFIX) ? `{P}${path.slice(PREFIX.length)}` : path;
 		return !page.includes(`${method} ${short}`) && !(page.includes(short) && page.includes(method));
