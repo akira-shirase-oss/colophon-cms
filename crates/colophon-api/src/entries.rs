@@ -440,7 +440,10 @@ fn may_read(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError> {
     if some {
         Ok(())
     } else {
-        Err(ApiError::Forbidden("your role can't read entries here"))
+        Err(ApiError::missing(
+            Action::ContentRead,
+            "your role can't read entries here",
+        ))
     }
 }
 
@@ -506,7 +509,10 @@ pub(crate) async fn create(
     let create = tx
         .policy
         .fields(Action::ContentCreate, &path.collection, true)
-        .ok_or(ApiError::Forbidden("your role can't create entries here"))?;
+        .ok_or(ApiError::missing(
+            Action::ContentCreate,
+            "your role can't create entries here",
+        ))?;
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
@@ -552,7 +558,10 @@ pub(crate) async fn save(
             .fields(Action::ContentUpdate, &path.collection, own)
             .is_none()
     }) {
-        return Err(ApiError::Forbidden("your role can't change entries here"));
+        return Err(ApiError::missing(
+            Action::ContentUpdate,
+            "your role can't change entries here",
+        ));
     }
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
@@ -568,10 +577,10 @@ pub(crate) async fn save(
         .ok_or(ApiError::NotFound)?;
     let access = Access::of(&tx.policy, tx.identity, &path.collection, created_by);
     let read = access.read.clone().ok_or(ApiError::NotFound)?;
-    let update = access
-        .update
-        .clone()
-        .ok_or(ApiError::Forbidden("your role can't change this entry"))?;
+    let update = access.update.clone().ok_or(ApiError::missing(
+        Action::ContentUpdate,
+        "your role can't change this entry",
+    ))?;
     // The version the editor started from; revisions never change. A stale one is reported by
     // the save itself.
     let stored = entries::revision(&mut tx, &path.collection, entry, expected)

@@ -211,7 +211,8 @@ async fn may_grant(
     if granted.iter().all(|policy| fresh.covers(policy)) {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(
+        Err(ApiError::forbidden(
+            "cannot_grant",
             "a role can only be given powers your own role has",
         ))
     }
@@ -277,7 +278,8 @@ pub(crate) async fn create(
             tx.commit().await.map_err(ApiError::from_db)?;
             respond(StatusCode::CREATED, *role)
         }
-        Written::Exists => Err(ApiError::Conflict(
+        Written::Exists => Err(ApiError::conflict(
+            "role_exists",
             "this project already has a role with that key",
         )),
         Written::TooMany => Err(ApiError::InvalidField {
@@ -312,7 +314,7 @@ pub(crate) async fn update(
     let granted = policy(&body.permissions)?;
     let mut tx = open(&state, caller, &path.project).await?;
     if path.role == roles::OWNER {
-        return Err(ApiError::Conflict(FIXED));
+        return Err(ApiError::conflict("owner_role_fixed", FIXED));
     }
     let current = roles::get(&mut tx, &path.role)
         .await
@@ -329,7 +331,7 @@ pub(crate) async fn update(
         }
         Written::Stale { current } => Err(ApiError::StaleRole { current }),
         Written::NotFound => Err(ApiError::NotFound),
-        Written::Fixed => Err(ApiError::Conflict(FIXED)),
+        Written::Fixed => Err(ApiError::conflict("owner_role_fixed", FIXED)),
         Written::Exists | Written::TooMany => Err(ApiError::internal(std::io::Error::other(
             "changing a role answered as a creation",
         ))),
@@ -346,7 +348,7 @@ pub(crate) async fn delete(
     let expected = if_match(&headers)?;
     let mut tx = open(&state, caller, &path.project).await?;
     if path.role == roles::OWNER {
-        return Err(ApiError::Conflict(FIXED));
+        return Err(ApiError::conflict("owner_role_fixed", FIXED));
     }
     let current = roles::get(&mut tx, &path.role)
         .await
@@ -370,6 +372,6 @@ pub(crate) async fn delete(
         }),
         Removed::Stale { current } => Err(ApiError::StaleRole { current }),
         Removed::NotFound => Err(ApiError::NotFound),
-        Removed::Fixed => Err(ApiError::Conflict(FIXED)),
+        Removed::Fixed => Err(ApiError::conflict("owner_role_fixed", FIXED)),
     }
 }

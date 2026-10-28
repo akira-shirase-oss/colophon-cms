@@ -355,9 +355,10 @@ pub(crate) async fn create(
     )
     .await
     .map_err(|error| match error {
-        colophon_db::DbError::Conflict => {
-            ApiError::Conflict("a content type with this slug already exists")
-        }
+        colophon_db::DbError::Conflict => ApiError::conflict(
+            "content_type_exists",
+            "a content type with this slug already exists",
+        ),
         other => ApiError::from_db(other),
     })?;
     finish(tx, CREATE, key, StatusCode::CREATED, version).await

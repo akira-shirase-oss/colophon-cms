@@ -50,7 +50,14 @@ create → conflict → review → publish scenario produce equivalent durable r
   2. propagate request ID;
   3. trace (one span per request; per-request lines at DEBUG, so the default `info` level logs no line per request);
   4. error envelope: every 4xx/5xx becomes `{"error":{"code","message","request_id"}}`, including axum's 405 and
-     tower-http's 413 and 504;
+     tower-http's 413 and 504. Every 403 and 409 the handlers send also has `details.reason`, a stable code
+     clients act on instead of the wording: `missing_permission` (with `details.permission`, such as
+     `content.publish`), `cannot_grant`, `administrators_only`, `not_set_up`, `browser_session_required`,
+     `origin_not_allowed`, `csrf_token_invalid`; and `already_published`, `not_approved`, `not_submitted`,
+     `entries_moved_on`, `approval_expired`, `already_scheduled`, `schedule_published`, `schedule_blocked`,
+     `schedule_cancelled`, `last_owner`, `already_member`, `owner_role_fixed`, `role_exists`, `project_exists`,
+     `content_type_exists`, beside the older `stale_revision`, `stale_changeset`, `generation_moved` and the rest.
+     A unit test refuses a refusal without a snake-case reason;
   5. body hygiene: never close a connection silently over an unread request body. Declared oversized bodies are
      refused after being drained, bodies a handler leaves unread are drained afterwards (up to 32 MiB, within 2 s),
      and otherwise the response says `Connection: close` (RFC 9112 §9.6; found by the testbed);

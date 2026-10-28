@@ -147,7 +147,10 @@ impl FromRequestParts<AppState> for SignedIn {
                     .iter()
                     .any(|trusted| trusted == origin)
             }) {
-                return Err(ApiError::Forbidden("this origin may not make changes"));
+                return Err(ApiError::forbidden(
+                    "origin_not_allowed",
+                    "this origin may not make changes",
+                ));
             }
             let csrf = parts
                 .headers
@@ -155,7 +158,10 @@ impl FromRequestParts<AppState> for SignedIn {
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or_default();
             if !tokens::same_secret(&tokens::hash(csrf), &session.csrf_hash) {
-                return Err(ApiError::Forbidden("missing or invalid CSRF token"));
+                return Err(ApiError::forbidden(
+                    "csrf_token_invalid",
+                    "missing or invalid CSRF token",
+                ));
             }
         }
         // At most one write a minute per session: most requests only read.

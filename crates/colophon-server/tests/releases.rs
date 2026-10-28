@@ -205,6 +205,15 @@ async fn releases_are_numbered_delivered_and_never_leak_drafts() {
         StatusCode::FORBIDDEN,
         "editors don't publish"
     );
+    assert_eq!(
+        (
+            &by_editor.body["error"]["details"]["reason"],
+            &by_editor.body["error"]["details"]["permission"]
+        ),
+        (&json!("missing_permission"), &json!("content.publish")),
+        "a refusal says why in codes a client can act on: {}",
+        by_editor.body
+    );
     let publish_key = key();
     let released = publish(&owner, &path, &hash, 0, &publish_key).await;
     assert_eq!(released.status, StatusCode::CREATED, "{}", released.body);
@@ -227,6 +236,10 @@ async fn releases_are_numbered_delivered_and_never_leak_drafts() {
         StatusCode::CONFLICT,
         "published once: {}",
         again.body
+    );
+    assert_eq!(
+        again.body["error"]["details"]["reason"],
+        "already_published"
     );
     let shown = call(&owner, Method::GET, &path, None, &[])
         .await

@@ -388,7 +388,8 @@ async fn may_change_entries(tx: &mut ProjectTransaction, entries: &[Uuid]) -> Re
     if allowed {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(
+        Err(ApiError::missing(
+            Action::ContentUpdate,
             "your role can't change content in this changeset",
         ))
     }
@@ -658,7 +659,8 @@ pub(crate) async fn review(
         "your role can't review changes to this content",
     )?;
     if head.submitted_by.is_none() {
-        return Err(ApiError::Conflict(
+        return Err(ApiError::conflict(
+            "not_submitted",
             "this changeset hasn't been submitted for review yet",
         ));
     }
@@ -668,7 +670,8 @@ pub(crate) async fn review(
         .iter()
         .any(changesets::Item::moved);
     if edited {
-        return Err(ApiError::Conflict(
+        return Err(ApiError::conflict(
+            "entries_moved_on",
             "an entry moved on after this changeset pinned it; refresh the changeset, then review it",
         ));
     }
@@ -700,18 +703,24 @@ pub(crate) struct PublishedView {
 pub(crate) fn publishable(status: &Status) -> Result<(), ApiError> {
     match status {
         Status::Approved { .. } => Ok(()),
-        Status::Published { .. } => Err(ApiError::Conflict(
+        Status::Published { .. } => Err(ApiError::conflict(
+            "already_published",
             "this changeset has already been published",
         )),
-        Status::Stale { .. } => Err(ApiError::Conflict(
+        Status::Stale { .. } => Err(ApiError::conflict(
+            "entries_moved_on",
             "an entry moved on after this changeset pinned it; refresh and review it again before publishing",
         )),
-        Status::ApprovalExpired => Err(ApiError::Conflict(
+        Status::ApprovalExpired => Err(ApiError::conflict(
+            "approval_expired",
             "the approval has expired; it needs reviewing again before publishing",
         )),
-        Status::Open | Status::AwaitingReview | Status::ChangesRequested { .. } => Err(
-            ApiError::Conflict("only an approved changeset can be published"),
-        ),
+        Status::Open | Status::AwaitingReview | Status::ChangesRequested { .. } => {
+            Err(ApiError::conflict(
+                "not_approved",
+                "only an approved changeset can be published",
+            ))
+        }
     }
 }
 
@@ -734,7 +743,10 @@ fn refused(refusal: Refusal) -> ApiError {
         Refusal::HashMoved { current } => ApiError::StaleChangeset {
             current: content_hash(&current),
         },
-        Refusal::NotPermitted => ApiError::Forbidden("your role can't publish this content"),
+        Refusal::NotPermitted => ApiError::missing(
+            Action::ContentPublish,
+            "your role can't publish this content",
+        ),
         Refusal::NotPublishable(status) => publishable(&status).err().unwrap_or_else(|| {
             ApiError::internal(std::io::Error::other("a publishable changeset was refused"))
         }),
