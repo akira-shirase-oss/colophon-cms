@@ -113,6 +113,10 @@ export type FieldDefinition = {
 	 *  top-level field that isn't unique and holds text, Markdown, a number, true or false, a
 	 *  choice, a date, a time, a date-time, an email, a URL or a colour. Written only when set. */
 	default?: unknown;
+	/** Applies only while another top-level yes-or-no or choice field holds one of these values
+	 *  (D-072); left out of content otherwise, and not required then. Written as a list, in that
+	 *  field's order, only when set. */
+	when?: { field: string; is: unknown[] };
 } & (
 	/** `pattern` (D-069): the form every value must take, a regular expression matched against the
 	 *  whole value on the server (Rust syntax; the Studio never imitates it). */

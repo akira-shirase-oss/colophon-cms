@@ -15,7 +15,7 @@
 	import { type ContentType, FIELD_TYPES, type FieldDefinition, type FieldType, type ItemKind, MAX_DEPTH } from './api.ts';
 	import { blank, blankBlock, blankKind, canBeUnique, canHaveDefault, canNest, defaultInput, idFrom, ITEM_TYPES, NAMES, STRUCTURES } from './fieldDefs.ts';
 	import { toLocal, toUtc } from './content.ts';
-	import { DEFAULT_VALUE, INVALID_UNIQUE, UNIQUE } from './words.ts';
+	import { DEFAULT_VALUE, INVALID_UNIQUE, SHOW_WHEN, UNIQUE } from './words.ts';
 	import FieldsEditor from './FieldsEditor.svelte';
 
 	let {
@@ -101,6 +101,28 @@
 		const value = bound(text);
 		if (value === undefined || value < 1) delete field.min_chars;
 		else field.min_chars = Math.trunc(value);
+	}
+
+	/** The values a yes-or-no or choice field can hold, in its order: what a condition picks from. */
+	const valuesOf = (field: FieldDefinition | undefined): unknown[] =>
+		field?.type === 'boolean' ? [true, false] : field?.type === 'enum' ? field.values : [];
+	const said = (value: unknown) => (value === true ? 'Yes' : value === false ? 'No' : String(value));
+	/** Shows a field only while another holds some values (D-072); "Always shown" removes it. The
+	 *  first value starts ticked. */
+	function setWhen(field: FieldDefinition, depends: string) {
+		if (depends === '') {
+			delete field.when;
+			return;
+		}
+		const first = valuesOf(fields.find((other) => other.id === depends))[0];
+		field.when = { field: depends, is: first === undefined ? [] : [first] };
+	}
+	/** Ticks or unticks a value, keeping them in the order the other field defines them. */
+	function tickWhen(field: FieldDefinition, value: unknown, on: boolean) {
+		if (field.when === undefined) return;
+		const when = field.when;
+		const order = valuesOf(fields.find((other) => other.id === when.field));
+		field.when = { field: when.field, is: order.filter((one) => (one === value ? on : when.is.includes(one))) };
 	}
 
 	/** A default (D-071): the field's own kind of value, written only when set. */
@@ -372,6 +394,40 @@
 						<span class="text-xs text-muted-foreground">Each value belongs to one entry, among drafts and among what readers get.</span>
 					{/if}
 					{#if refusal?.pointer === `${pointer}/${index}/unique`}<span class="text-xs text-destructive" data-testid="unique-problem">{refusal.message}</span>{/if}
+				</div>
+			{/if}
+			{#if depth === 0 && !isTitle}
+				{@const choices = fields.filter((other) => other.id !== field.id && (other.type === 'boolean' || other.type === 'enum') && other.when === undefined)}
+				{@const dependedOn = fields.filter((other) => other.when?.field === field.id).map((other) => other.label)}
+				{@const controller = fields.find((other) => other.id === field.when?.field)}
+				<div class="grid max-w-xl gap-1.5 text-sm" data-testid="field-when">
+					{#if dependedOn.length > 0 && field.when === undefined}
+						<span class="text-xs text-muted-foreground">{dependedOn.join(', ')} {dependedOn.length === 1 ? 'shows' : 'show'} only for some of its values, so this one always shows.</span>
+					{:else}
+						<label class="flex flex-wrap items-center gap-2">
+							<span class="text-muted-foreground">{SHOW_WHEN}</span>
+							<select class={select} value={field.when?.field ?? ''} onchange={(event) => setWhen(field, event.currentTarget.value)} disabled={!editable}>
+								<option value="">Always shown</option>
+								{#each choices as other (other.id)}<option value={other.id}>{other.label} is…</option>{/each}
+								{#if field.when !== undefined && !choices.some((other) => other.id === field.when?.field)}
+									<option value={field.when.field}>{controller?.label ?? field.when.field} is…</option>
+								{/if}
+							</select>
+						</label>
+						{#if field.when !== undefined}
+							<div class="flex flex-wrap gap-x-4 gap-y-1" role="group" aria-label="Values of {controller?.label ?? field.when.field} that show {field.label}">
+								{#each valuesOf(controller) as value (String(value))}
+									<label class="flex items-center gap-1.5">
+										<input type="checkbox" class="size-4 accent-primary" checked={field.when.is.includes(value)} onchange={(event) => tickWhen(field, value, event.currentTarget.checked)} disabled={!editable} />
+										{said(value)}
+									</label>
+								{/each}
+							</div>
+							{#if field.when.is.length === 0}<span class="text-xs text-destructive">Tick at least one value, or choose Always shown.</span>{/if}
+							<span class="text-xs text-muted-foreground">While hidden, it's left out of the entry and isn't required.</span>
+						{/if}
+					{/if}
+					{#if refusal?.pointer === `${pointer}/${index}/when`}<span class="text-xs text-destructive" data-testid="when-problem">{refusal.message}</span>{/if}
 				</div>
 			{/if}
 			{#if canHaveDefault(field, depth) || field.default !== undefined}

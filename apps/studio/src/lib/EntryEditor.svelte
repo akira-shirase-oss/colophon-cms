@@ -30,7 +30,7 @@
 		type Summary
 	} from './api.ts';
 	import { linkedQuery, placeName } from './references.ts';
-	import { shownTitle } from './words.ts';
+	import { clearedNote, shownTitle } from './words.ts';
 	import { compare, readable } from './diff.ts';
 	import { prettyJson } from './json.ts';
 	import { plainError } from './errors.ts';
@@ -41,7 +41,7 @@
 	import StatusBadge from './shell/StatusBadge.svelte';
 	import TechnicalDetails from './shell/TechnicalDetails.svelte';
 	import { releaseName } from './words.ts';
-	import { blockingProblem, EMPTY_DOCUMENT, type FormValue, formValue, storedValue } from './content.ts';
+	import { applies, blockingProblem, EMPTY_DOCUMENT, type FormValue, formValue, storedValue } from './content.ts';
 	import { kept } from './drafts.ts';
 	import FieldInputs from './FieldInputs.svelte';
 	import { Saver } from './saver.svelte.ts';
@@ -127,9 +127,20 @@
 	let showings = $state(0);
 	let unopenable = $state('');
 
+	// Conditional fields (D-072): a field applies while the field it depends on holds one of its
+	// values, judged from what this editor would save. One that doesn't apply is hidden and left
+	// out of every save, so a save never earns `not_applicable`.
+	const controllers = definition.fields.filter((field) => definition.fields.some((other) => other.when?.field === field.id));
+	const deciding = $derived(Object.fromEntries(controllers.map((field) => [field.id, storedValue(field, form[field.id])])));
+	const appliesNow = (field: FieldDefinition) => applies(field, deciding);
+	/** What was cleared because it stopped applying, said quietly until it applies again. */
+	let cleared = $state<Record<string, string>>({});
+
 	function current(): Content {
 		const content: Content = {};
+		const decided = Object.fromEntries(controllers.map((field) => [field.id, storedValue(field, form[field.id])]));
 		for (const field of visible) {
+			if (!applies(field, decided)) continue;
 			const editor = editors[field.id];
 			const value = field.type === 'rich_text' ? editor && toStored(editor.getJSON()) : storedValue(field, form[field.id]);
 			if (value !== undefined) content[field.id] = value;
@@ -137,9 +148,30 @@
 		return content;
 	}
 
+	/** Clears what stopped applying, and says so; forgets the note once it applies again. */
+	function clearInapplicable() {
+		const decided = Object.fromEntries(controllers.map((field) => [field.id, storedValue(field, form[field.id])]));
+		for (const field of visible) {
+			if (field.when === undefined) continue;
+			if (applies(field, decided)) {
+				if (cleared[field.id] !== undefined) delete cleared[field.id];
+				continue;
+			}
+			const editor = editors[field.id];
+			const filled = field.type === 'rich_text' ? editor !== undefined && !editor.isEmpty : storedValue(field, form[field.id]) !== undefined;
+			if (!filled) continue;
+			if (field.type === 'rich_text') editor?.commands.clearContent();
+			else form[field.id] = formValue(field, undefined);
+			const dependsOn = definition.fields.find((other) => other.id === field.when?.field);
+			const values = field.when.is.map((value) => (value === true ? 'Yes' : value === false ? 'No' : String(value)));
+			cleared[field.id] = clearedNote(field.label, dependsOn?.label ?? field.when.field, values);
+		}
+	}
+
 	function changed() {
+		clearInapplicable();
 		// JSON that doesn't read yet can't be sent (it would be lost or stored as text): hold.
-		const blocked = blockingProblem(plain, form);
+		const blocked = blockingProblem(plain.filter(appliesNow), form);
 		if (blocked !== '') saver.hold(blocked);
 		else saver.edit(current());
 	}
@@ -382,8 +414,15 @@
 				</p>
 			{/if}
 {#key showings}
+			{#if Object.keys(cleared).length > 0}
+				<div role="status" data-testid="cleared-notes">
+					<ul class="mb-2 space-y-1 text-xs text-muted-foreground">
+						{#each Object.entries(cleared) as [id, note] (id)}<li>{note}</li>{/each}
+					</ul>
+				</div>
+			{/if}
 			<FieldInputs
-				fields={plain}
+				fields={plain.filter(appliesNow)}
 				bind:form
 				titleField={definition.title_field}
 				onchange={changed}
@@ -406,7 +445,7 @@
 			/>
 			{/key}
 			{#each rich as field (field.id)}
-				<div class="py-5">
+				<div class="py-5" hidden={!appliesNow(field)}>
 					<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
 					<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60">
 						<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" />

@@ -70,6 +70,15 @@ export function patternMismatch(label: string, help = ''): string {
 export const DEFAULT_VALUE = 'Default value (optional)';
 export const INVALID_DEFAULT = 'This default isn’t a value the field accepts. Check its choices, limits and allowed form, or clear it.';
 
+/** Conditional fields (D-072): the builder's control, its refusal (`invalid_condition`), and what
+ *  the editor says when a field stops applying and its value is cleared. */
+export const SHOW_WHEN = 'Show only when';
+export const INVALID_CONDITION =
+	'This condition can’t be used: it must name a yes-or-no or choice field that always applies, with some of its values, and the title always shows.';
+export function clearedNote(label: string, dependsOn: string, values: string[]): string {
+	return `${label} is cleared because it only applies when ${dependsOn} is ${values.join(' or ')}.`;
+}
+
 /** A unique field (D-070), as the builder offers it. */
 export const UNIQUE = 'No two entries may share this';
 /** A value another entry already has (`value_taken` on a save), said under the field. */

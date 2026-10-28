@@ -19,7 +19,7 @@
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
 	import { ApiError, type Content, createEntry, type EntryState, entryState, getContentType, getEntry, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
-	import { blockingProblem, type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
+	import { applies, blockingProblem, type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
 	import { plainError } from '#lib/errors.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
 	import { oneOf } from '#lib/firstRun.ts';
@@ -171,6 +171,19 @@
 				field.required && field.type !== 'rich_text' && field.type !== 'boolean' && !(field.type === 'slug' && field.source !== undefined)
 		)
 	);
+	// Of those, the ones that apply (D-072), judged from what the new entry would start with: its
+	// starting values, the defaults, and what is typed here.
+	const askedNow = $derived.by(() => {
+		const definition = type.data?.definition;
+		if (definition === undefined) return asked;
+		const start: Record<string, unknown> = { ...starter(definition) };
+		for (const field of definition.fields) if (field.default !== undefined && start[field.id] === undefined) start[field.id] = field.default;
+		for (const field of asked) {
+			const value = storedValue(field, form[field.id]);
+			if (value !== undefined) start[field.id] = value;
+		}
+		return asked.filter((field) => applies(field, start));
+	});
 	// `?new=1` (the first-run checklist's "Write") opens the new-entry dialog at once.
 	let creating = $state(page.url.searchParams.get('new') === '1');
 	let form = $state<Record<string, FormValue>>({});
@@ -201,7 +214,7 @@
 		const definition = type.data?.definition;
 		if (definition === undefined) return;
 		// JSON that doesn't read yet would be lost or stored as text: say so, send nothing.
-		const blocked = blockingProblem(asked, form);
+		const blocked = blockingProblem(askedNow, form);
 		if (blocked !== '') {
 			error = blocked;
 			return;
@@ -210,10 +223,15 @@
 		error = '';
 		exists = false;
 		const content = starter(definition);
-		for (const field of asked) {
+		for (const field of askedNow) {
 			const value = storedValue(field, form[field.id] ?? formValue(field, content[field.id]));
 			if (value !== undefined) content[field.id] = value;
 		}
+		// Nothing that doesn't apply is sent (D-072), judged with the defaults the server will fill.
+		const decided: Record<string, unknown> = {};
+		for (const field of definition.fields) if (field.default !== undefined) decided[field.id] = field.default;
+		Object.assign(decided, content);
+		for (const field of definition.fields) if (content[field.id] !== undefined && !applies(field, decided)) delete content[field.id];
 		// A URL name made here from the title; if another entry has it, the next free one ("-2", "-3"…),
 		// as the server's uniqueness rule (D-054) asks. It can be changed in the editor.
 		const made = definition.fields.find(
@@ -432,7 +450,7 @@
 				<Dialog.Description>It starts as a draft. Readers see it only once it is published.</Dialog.Description>
 			</Dialog.Header>
 			<form class="grid gap-4" onsubmit={create} aria-label="New entry">
-				<FieldInputs fields={asked} bind:form titleField={type.data.definition.title_field} stacked {project} />
+				<FieldInputs fields={askedNow} bind:form titleField={type.data.definition.title_field} stacked {project} />
 				{#if error}
 					<div role="alert" class="grid gap-2 text-sm text-destructive" data-testid="create-error">
 						<p>{error}</p>

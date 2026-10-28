@@ -72,13 +72,18 @@
 			if (failure instanceof ApiError && failure.failure !== 'retry') {
 				// A refusal the Studio has words for gets them; the developer area keeps the server's otherwise.
 				const words =
-					failure.reason === 'too_many_entries' || failure.reason === 'invalid_pattern' || failure.reason === 'invalid_unique'
+					failure.reason === 'too_many_entries' ||
+					failure.reason === 'invalid_pattern' ||
+					failure.reason === 'invalid_unique' ||
+					failure.reason === 'invalid_condition'
 						? plainError(failure)
 						: failure.reason === 'invalid_default'
 							? plainOr(failure.message, INVALID_DEFAULT)
 						: failure.reason === 'needs_migration' && failure.details?.pointer?.endsWith('/unique')
 							? 'Some entries share a value in this field, so it can’t be kept unique yet. Change them (they are listed below), then save again.'
-							: failure.message;
+							: failure.reason === 'needs_migration' && (failure.details?.pointer?.endsWith('/when') || (failure.details?.entries ?? []).some((entry) => entry.problem?.reason === 'not_applicable'))
+								? 'Some entries don’t fit this condition yet. Change them (they are listed below), then save again.'
+								: failure.message;
 				refusal = { message: words, details: failure.details, stale: failure.failure === 'conflict' };
 			} else {
 				toast.error(failure instanceof Error ? failure.message : String(failure));
@@ -90,9 +95,12 @@
 
 	/** A stored entry's problem with the change, in words: a shared unique value names its field. */
 	function problemWords(problem: { reason: string; pointer: string; message: string }): string {
-		if (problem.reason !== 'value_taken') return problem.message;
 		const field = draft.fields.find((item) => `/${item.id}` === problem.pointer);
-		return `It shares its ${field?.label ?? 'value'} with another entry.`;
+		const label = field?.label ?? 'value';
+		if (problem.reason === 'value_taken') return `It shares its ${label} with another entry.`;
+		if (problem.reason === 'not_applicable') return `It has a ${label}, which wouldn't apply to it.`;
+		if (problem.reason === 'missing_field') return `It has no ${label}, which it would need.`;
+		return problem.message;
 	}
 
 	async function reload() {

@@ -64,6 +64,15 @@ export function itemField(field: Extract<FieldDefinition, { type: 'list' }>): Fi
 	return { id: 'item', label: field.label, required: true, ...field.of } as FieldDefinition;
 }
 
+/** Whether a field applies to `content` (D-072): always, or while the field it depends on holds one
+ *  of its values. An absent value holds none, as on the server. */
+export function applies(field: FieldDefinition, content: Record<string, unknown>): boolean {
+	const when = field.when;
+	if (when === undefined) return true;
+	const value = content[when.field];
+	return value !== undefined && when.is.some((one) => one === value);
+}
+
 /** The kind of page section an item is, by its `_block`. */
 export function blockOf(field: Extract<FieldDefinition, { type: 'blocks' }>, item: Record<string, unknown>): BlockKind | undefined {
 	return field.blocks.find((block) => block.name === item['_block']);

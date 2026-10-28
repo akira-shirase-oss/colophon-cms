@@ -233,6 +233,14 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   them on creation (the starter no longer picks a required choice's first option or false over a default), and the
   new-entry dialog shows a required field's default already chosen. Entries written before are never touched. Tests:
   `tests/defaults.spec.ts`, `tests/server/defaults.spec.ts`.
+- D-072 in the Studio: **conditional fields**. The builder's *Show only when* (on top-level fields but the title) picks a
+  yes-or-no or choice field that always applies and ticks its values, kept in that field's order; *Always shown*
+  removes it; a field others depend on says it always shows; `invalid_condition` is said at the control. In the
+  editor (`applies` in `lib/content.ts`, the server's rule), a field shows only while its condition holds, is required
+  only then, and when it stops applying its value is cleared and said so quietly ("Duration is cleared because it only
+  applies when Kind is video or podcast."), so a save never earns `not_applicable`; the new-entry dialog asks only for
+  fields that apply and sends nothing that doesn't. A condition stored entries don't fit is listed like other changes
+  in the way. Tests: `tests/conditions.spec.ts`, `tests/server/conditions.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 
