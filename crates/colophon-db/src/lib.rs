@@ -91,6 +91,9 @@ pub enum DbError {
     /// (migration 0016, D-054).
     #[error("the slug is taken")]
     SlugTaken,
+    /// The collection is a single type and already has its entry (migration 0026, D-067).
+    #[error("this single type already has its entry")]
+    SingleExists,
     /// A reference field names an entry that isn't one of its collection's (migration 0024,
     /// D-065); nothing was written.
     #[error("a reference names no entry of its collection")]
@@ -126,6 +129,7 @@ impl DbError {
             sqlx::Error::Database(database) if database.is_unique_violation() => {
                 match database.constraint() {
                     Some("entries_draft_slug" | "publications_live_slug") => Self::SlugTaken,
+                    Some("entries_single") => Self::SingleExists,
                     _ => Self::Conflict,
                 }
             }

@@ -91,6 +91,8 @@ invariant. Production adapters and the simulator both run this code unchanged.
   `blocks` (a page builder: up to 20 named kinds of block with their own fields; items carry `_block`, written first).
   Structures nest at most three deep; slugs stay top-level. Validation, the canonical form and the change rules recurse;
   a reference anywhere keeps its path, and retargeting one at any depth is `Refused`. Reusable shared components are M.4.
+- Built in step M.4 (D-067): `"single": true` makes a content type hold at most one entry (`ContentType::single`),
+  written into the canonical definition only when true.
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the

@@ -117,8 +117,14 @@ pub async fn create(
     revision: NewRevision<'_>,
 ) -> Result<Draft, DbError> {
     let entry = sqlx::query!(
-        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                 -- Single types (D-067): the current version's flag, held still by the caller's
+                 -- shared lock on the content type. `entries_single` refuses a second entry.
+                 coalesce((SELECT (v.definition::jsonb ->> 'single')::boolean
+                           FROM content_type_versions v
+                           WHERE v.project_id = $1 AND v.environment_id = $2 AND v.collection = $4
+                           ORDER BY v.version DESC LIMIT 1), false))
          RETURNING created_at, updated_at",
         tx.project,
         tx.environment,
