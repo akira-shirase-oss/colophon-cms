@@ -439,6 +439,103 @@ fn description(object: &Map<String, Value>, pointer: &Pointer) -> Result<String,
     }
 }
 
+/// Writes field definitions canonically, in their order: `[...]`'s contents.
+fn write_fields(out: &mut String, fields: &[Field]) {
+    for (index, field) in fields.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str(r#"{"id":"#);
+        write_string(out, &field.id);
+        out.push_str(r#","label":"#);
+        write_string(out, &field.label);
+        // Only when set, so a definition written before step M.1 keeps its bytes and hash.
+        if !field.description.is_empty() {
+            out.push_str(r#","description":"#);
+            write_string(out, &field.description);
+        }
+        out.push_str(r#","type":"#);
+        write_string(out, field.kind.name());
+        out.push_str(if field.required {
+            r#","required":true"#
+        } else {
+            r#","required":false"#
+        });
+        match &field.kind {
+            FieldKind::Text {
+                min_chars,
+                max_chars,
+                multiline,
+            } => {
+                if *min_chars > 0 {
+                    out.push_str(r#","min_chars":"#);
+                    out.push_str(&min_chars.to_string());
+                }
+                out.push_str(r#","max_chars":"#);
+                out.push_str(&max_chars.to_string());
+                out.push_str(if *multiline {
+                    r#","multiline":true"#
+                } else {
+                    r#","multiline":false"#
+                });
+            }
+            FieldKind::Number { integer, min, max } => {
+                out.push_str(if *integer {
+                    r#","integer":true"#
+                } else {
+                    r#","integer":false"#
+                });
+                for (key, value) in [(r#","min":"#, min), (r#","max":"#, max)] {
+                    if let Some(value) = value {
+                        out.push_str(key);
+                        write_number(out, *value, *integer);
+                    }
+                }
+            }
+            FieldKind::Enum { values } => {
+                out.push_str(r#","values":["#);
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    write_string(out, value);
+                }
+                out.push(']');
+            }
+            FieldKind::Slug { source } => {
+                if let Some(source) = source {
+                    out.push_str(r#","source":"#);
+                    write_string(out, source);
+                }
+            }
+            FieldKind::Markdown { max_chars } => {
+                out.push_str(r#","max_chars":"#);
+                out.push_str(&max_chars.to_string());
+            }
+            FieldKind::Reference { to, many, max } => {
+                out.push_str(r#","to":"#);
+                write_string(out, to);
+                if *many {
+                    out.push_str(r#","many":true,"max":"#);
+                    out.push_str(&max.to_string());
+                } else {
+                    out.push_str(r#","many":false"#);
+                }
+            }
+            FieldKind::RichText
+            | FieldKind::Boolean
+            | FieldKind::DateTime
+            | FieldKind::Email
+            | FieldKind::Url
+            | FieldKind::Date
+            | FieldKind::Time
+            | FieldKind::Json
+            | FieldKind::Color => {}
+        }
+        out.push('}');
+    }
+}
+
 /// A slug field's `source`: the id of the field the Studio suggests it from, if any.
 fn slug_source(object: &Map<String, Value>, pointer: &Pointer) -> Result<Option<String>, Refusal> {
     match object.get("source") {
@@ -1007,27 +1104,7 @@ impl ContentType {
                     "`fields` is a list of fields",
                 )
             })?;
-        if list.is_empty() || list.len() > MAX_FIELDS {
-            return Err(refuse(
-                "invalid_fields",
-                &at(&root, "fields"),
-                format!("a content type has 1 to {MAX_FIELDS} fields"),
-            ));
-        }
-        let mut fields: Vec<Field> = Vec::with_capacity(list.len());
-        for (index, item) in list.iter().enumerate() {
-            let mut pointer = at(&root, "fields");
-            pointer.push_index(index);
-            let field = Self::field(item, &pointer)?;
-            if fields.iter().any(|seen| seen.id == field.id) {
-                return Err(refuse(
-                    "duplicate_field",
-                    &at(&pointer, "id"),
-                    format!("`{}` is used by two fields", field.id),
-                ));
-            }
-            fields.push(field);
-        }
+        let fields = Self::fields_at(list, &at(&root, "fields"), 0)?;
         check_slug_fields(&fields)?;
         let title_field = object
             .get("title_field")
@@ -1065,7 +1142,34 @@ impl ContentType {
         })
     }
 
-    fn field(value: &Value, pointer: &Pointer) -> Result<Field, Refusal> {
+    /// A list of 1 to [`MAX_FIELDS`] field definitions with distinct ids, at `pointer`,
+    /// `depth` structures deep (0: the content type's own fields).
+    fn fields_at(list: &[Value], pointer: &Pointer, depth: usize) -> Result<Vec<Field>, Refusal> {
+        if list.is_empty() || list.len() > MAX_FIELDS {
+            return Err(refuse(
+                "invalid_fields",
+                pointer,
+                format!("a content type or structure has 1 to {MAX_FIELDS} fields"),
+            ));
+        }
+        let mut fields: Vec<Field> = Vec::with_capacity(list.len());
+        for (index, item) in list.iter().enumerate() {
+            let mut at_item = pointer.clone();
+            at_item.push_index(index);
+            let field = Self::field(item, &at_item, depth)?;
+            if fields.iter().any(|seen| seen.id == field.id) {
+                return Err(refuse(
+                    "duplicate_field",
+                    &at(&at_item, "id"),
+                    format!("`{}` is used by two fields", field.id),
+                ));
+            }
+            fields.push(field);
+        }
+        Ok(fields)
+    }
+
+    fn field(value: &Value, pointer: &Pointer, depth: usize) -> Result<Field, Refusal> {
         let object = value
             .as_object()
             .ok_or_else(|| refuse("not_an_object", pointer, "a field is a JSON object"))?;
@@ -1096,7 +1200,7 @@ impl ContentType {
         let required = bool_or(object, "required", false, pointer)?;
         let description = description(object, pointer)?;
         let common = ["id", "label", "description", "type", "required"];
-        let kind = Self::kind(object, &common, pointer)?;
+        let kind = Self::kind(object, &common, pointer, depth)?;
         Ok(Field {
             id,
             label,
@@ -1111,7 +1215,9 @@ impl ContentType {
         object: &Map<String, Value>,
         common: &[&str],
         pointer: &Pointer,
+        depth: usize,
     ) -> Result<FieldKind, Refusal> {
+        let _ = depth;
         Ok(match object.get("type").and_then(Value::as_str) {
             Some("text") => {
                 only(
@@ -1198,99 +1304,7 @@ impl ContentType {
         out.push_str(r#","title_field":"#);
         write_string(&mut out, &self.title_field);
         out.push_str(r#","fields":["#);
-        for (index, field) in self.fields.iter().enumerate() {
-            if index > 0 {
-                out.push(',');
-            }
-            out.push_str(r#"{"id":"#);
-            write_string(&mut out, &field.id);
-            out.push_str(r#","label":"#);
-            write_string(&mut out, &field.label);
-            // Only when set, so a definition written before step M.1 keeps its bytes and hash.
-            if !field.description.is_empty() {
-                out.push_str(r#","description":"#);
-                write_string(&mut out, &field.description);
-            }
-            out.push_str(r#","type":"#);
-            write_string(&mut out, field.kind.name());
-            out.push_str(if field.required {
-                r#","required":true"#
-            } else {
-                r#","required":false"#
-            });
-            match &field.kind {
-                FieldKind::Text {
-                    min_chars,
-                    max_chars,
-                    multiline,
-                } => {
-                    if *min_chars > 0 {
-                        out.push_str(r#","min_chars":"#);
-                        out.push_str(&min_chars.to_string());
-                    }
-                    out.push_str(r#","max_chars":"#);
-                    out.push_str(&max_chars.to_string());
-                    out.push_str(if *multiline {
-                        r#","multiline":true"#
-                    } else {
-                        r#","multiline":false"#
-                    });
-                }
-                FieldKind::Number { integer, min, max } => {
-                    out.push_str(if *integer {
-                        r#","integer":true"#
-                    } else {
-                        r#","integer":false"#
-                    });
-                    for (key, value) in [(r#","min":"#, min), (r#","max":"#, max)] {
-                        if let Some(value) = value {
-                            out.push_str(key);
-                            write_number(&mut out, *value, *integer);
-                        }
-                    }
-                }
-                FieldKind::Enum { values } => {
-                    out.push_str(r#","values":["#);
-                    for (index, value) in values.iter().enumerate() {
-                        if index > 0 {
-                            out.push(',');
-                        }
-                        write_string(&mut out, value);
-                    }
-                    out.push(']');
-                }
-                FieldKind::Slug { source } => {
-                    if let Some(source) = source {
-                        out.push_str(r#","source":"#);
-                        write_string(&mut out, source);
-                    }
-                }
-                FieldKind::Markdown { max_chars } => {
-                    out.push_str(r#","max_chars":"#);
-                    out.push_str(&max_chars.to_string());
-                }
-                FieldKind::Reference { to, many, max } => {
-                    out.push_str(r#","to":"#);
-                    write_string(&mut out, to);
-                    if *many {
-                        out.push_str(r#","many":true,"max":"#);
-                        out.push_str(&max.to_string());
-                    } else {
-                        out.push_str(r#","many":false"#);
-                    }
-                }
-                FieldKind::RichText
-                | FieldKind::Boolean
-                | FieldKind::DateTime
-                | FieldKind::Email
-                | FieldKind::Url
-                | FieldKind::Date
-                | FieldKind::Time
-                | FieldKind::Json
-                | FieldKind::Color => {}
-            }
-            out.push('}');
-        }
+        write_fields(&mut out, &self.fields);
         out.push_str("]}");
         out
     }
@@ -1299,24 +1313,59 @@ impl ContentType {
     /// definition order, absent optional fields left out.
     pub fn validate(&self, value: &Value) -> Result<Content, Refusal> {
         let root = Pointer::new();
-        let object = value
-            .as_object()
-            .ok_or_else(|| refuse("not_an_object", &root, "content is a JSON object"))?;
-        let ids: Vec<&str> = self.fields.iter().map(|field| field.id.as_str()).collect();
-        only(object, &ids, &root)?;
         let mut out = String::with_capacity(256);
-        let mut title = String::new();
-        let mut slug = None;
         let mut references = Vec::new();
+        Self::fields_value(&self.fields, value, &root, &mut out, &mut references)?;
+        // The title and the slug are top-level fields, already checked.
+        let title = value
+            .get(&self.title_field)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let slug = self
+            .fields
+            .iter()
+            .find(|field| matches!(field.kind, FieldKind::Slug { .. }))
+            .and_then(|field| value.get(&field.id))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        Ok(Content {
+            canonical: out,
+            title,
+            slug,
+            references,
+        })
+    }
+
+    /// An object holding `fields`: unknown keys refused, required ones present, each value
+    /// fitting its field, written as `{...}` in definition order with absent optional fields
+    /// left out. Collects the references it holds.
+    fn fields_value(
+        fields: &[Field],
+        value: &Value,
+        pointer: &Pointer,
+        out: &mut String,
+        references: &mut Vec<ContentReference>,
+    ) -> Result<(), Refusal> {
+        let object = value.as_object().ok_or_else(|| {
+            let what = if pointer.as_str().is_empty() {
+                "content is a JSON object"
+            } else {
+                "this is a JSON object"
+            };
+            refuse("not_an_object", pointer, what)
+        })?;
+        let ids: Vec<&str> = fields.iter().map(|field| field.id.as_str()).collect();
+        only(object, &ids, pointer)?;
         out.push('{');
         let mut first = true;
-        for field in &self.fields {
-            let pointer = at(&root, &field.id);
+        for field in fields {
+            let at_field = at(pointer, &field.id);
             let Some(value) = object.get(&field.id) else {
                 if field.required {
                     return Err(refuse(
                         "missing_field",
-                        &pointer,
+                        &at_field,
                         format!("`{}` is required", field.label),
                     ));
                 }
@@ -1326,37 +1375,12 @@ impl ContentType {
                 out.push(',');
             }
             first = false;
-            write_string(&mut out, &field.id);
+            write_string(out, &field.id);
             out.push(':');
-            Self::value(field, value, &pointer, &mut out)?;
-            if field.id == self.title_field {
-                value.as_str().unwrap_or_default().clone_into(&mut title);
-            }
-            if matches!(field.kind, FieldKind::Slug { .. }) {
-                slug = value.as_str().map(str::to_owned);
-            }
-            if let FieldKind::Reference { to, many, .. } = &field.kind {
-                let ids = value
-                    .as_array()
-                    .map_or_else(|| vec![value], |list| list.iter().collect());
-                for (position, id) in ids.into_iter().enumerate() {
-                    references.push(ContentReference {
-                        field: field.id.clone(),
-                        collection: to.clone(),
-                        position: u16::try_from(position).unwrap_or(u16::MAX),
-                        many: *many,
-                        entry: id.as_str().unwrap_or_default().to_owned(),
-                    });
-                }
-            }
+            Self::value(&field.kind, &field.label, value, &at_field, out, references)?;
         }
         out.push('}');
-        Ok(Content {
-            canonical: out,
-            title,
-            slug,
-            references,
-        })
+        Ok(())
     }
 
     /// A reference value: one entry id, or (`many`) a list of 1 to `max` distinct ones. Whether
@@ -1572,13 +1596,14 @@ impl ContentType {
     }
 
     fn value(
-        field: &Field,
+        kind: &FieldKind,
+        label: &str,
         value: &Value,
         pointer: &Pointer,
         out: &mut String,
+        references: &mut Vec<ContentReference>,
     ) -> Result<(), Refusal> {
-        let label = &field.label;
-        match &field.kind {
+        match kind {
             FieldKind::Text {
                 min_chars,
                 max_chars,
@@ -1598,10 +1623,24 @@ impl ContentType {
             | FieldKind::Url
             | FieldKind::Date
             | FieldKind::Time
-            | FieldKind::Color => Self::formatted(&field.kind, label, value, pointer, out)?,
+            | FieldKind::Color => Self::formatted(kind, label, value, pointer, out)?,
             FieldKind::Json => Self::json(label, value, pointer, out)?,
-            FieldKind::Reference { many, max, .. } => {
+            FieldKind::Reference { to, many, max } => {
                 Self::reference(label, value, (*many, *max), pointer, out)?;
+                // Its path for the database: the pointer without its leading slash.
+                let field = pointer.as_str().trim_start_matches('/').to_owned();
+                let ids = value
+                    .as_array()
+                    .map_or_else(|| vec![value], |list| list.iter().collect());
+                for (position, id) in ids.into_iter().enumerate() {
+                    references.push(ContentReference {
+                        field: field.clone(),
+                        collection: to.clone(),
+                        position: u16::try_from(position).unwrap_or(u16::MAX),
+                        many: *many,
+                        entry: id.as_str().unwrap_or_default().to_owned(),
+                    });
+                }
             }
             FieldKind::RichText => {
                 let document = rich_text::validate(value).map_err(|rejection| Refusal {
