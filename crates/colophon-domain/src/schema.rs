@@ -17,10 +17,26 @@
 //!
 //! A slug field (D-054) holds an entry's URL name, unique in its collection: the database
 //! enforces that, among drafts and among published entries. A content type has at most one.
+//!
+//! Step M.1 (D-064) added email, URL, date, time, JSON, markdown and colour fields, a
+//! `description` on any field and a `min_chars` on text. Each new value is written in one form
+//! the Studio can reproduce (a URL as WHATWG `href`, JSON with its keys sorted), and the new
+//! options are written only when set, so older definitions keep their bytes and their hashes.
 
 use serde_json::{Map, Value};
 
 use crate::rich_text::{self, json::write_string, pointer::Pointer};
+
+/// Longest field description.
+pub const MAX_DESCRIPTION_CHARS: usize = 500;
+/// Longest email address (RFC 5321's path limit).
+pub const MAX_EMAIL_CHARS: usize = 254;
+/// Longest URL.
+pub const MAX_URL_CHARS: usize = 2048;
+/// Largest JSON value, written canonically.
+pub const MAX_JSON_BYTES: usize = 64 * 1024;
+/// Deepest nesting in a JSON value.
+pub const MAX_JSON_DEPTH: usize = 32;
 
 /// Most fields in a content type.
 pub const MAX_FIELDS: usize = 100;
@@ -67,6 +83,8 @@ pub enum FieldKind {
     /// A string of at most `max_chars` characters. Single-line text has no control characters
     /// and no spaces at either end; multi-line text may also hold line breaks and tabs.
     Text {
+        /// The fewest characters allowed (0: no minimum; step M.1).
+        min_chars: u64,
         /// The most characters allowed.
         max_chars: u64,
         /// Whether line breaks are allowed.
@@ -98,6 +116,25 @@ pub enum FieldKind {
         /// server never derives a slug.
         source: Option<String>,
     },
+    /// An email address, `local@domain.tld` (step M.1): checked for shape, never for delivery.
+    Email,
+    /// An `http` or `https` URL without credentials, stored in its WHATWG form (what a browser's
+    /// `new URL(text).href` gives), so the Studio writes the same bytes.
+    Url,
+    /// A calendar date, `YYYY-MM-DD`.
+    Date,
+    /// A time of day, `HH:MM` or `HH:MM:SS`, 24-hour.
+    Time,
+    /// Any JSON value, up to [`MAX_JSON_BYTES`] and [`MAX_JSON_DEPTH`]: objects with their keys
+    /// sorted, numbers as number fields write them.
+    Json,
+    /// Markdown source: multi-line text the site renders, never HTML stored here.
+    Markdown {
+        /// The most characters allowed.
+        max_chars: u64,
+    },
+    /// A colour, `#rrggbb` in lowercase.
+    Color,
 }
 
 impl FieldKind {
@@ -111,6 +148,13 @@ impl FieldKind {
             Self::Enum { .. } => "enum",
             Self::DateTime => "datetime",
             Self::Slug { .. } => "slug",
+            Self::Email => "email",
+            Self::Url => "url",
+            Self::Date => "date",
+            Self::Time => "time",
+            Self::Json => "json",
+            Self::Markdown { .. } => "markdown",
+            Self::Color => "color",
         }
     }
 }
@@ -135,6 +179,8 @@ pub struct Field {
     pub id: String,
     /// What editors see.
     pub label: String,
+    /// Help shown under it in the editor (empty: none; step M.1).
+    pub description: String,
     /// Whether content must have it.
     pub required: bool,
     /// What it holds.
@@ -337,6 +383,205 @@ fn is_utc_timestamp(text: &str) -> bool {
     year >= 1 && (1..=days).contains(&day) && hour < 24 && minute < 60 && second < 60
 }
 
+/// A field's `description`: empty when absent; otherwise plain text of at most
+/// [`MAX_DESCRIPTION_CHARS`].
+fn description(object: &Map<String, Value>, pointer: &Pointer) -> Result<String, Refusal> {
+    match object.get("description") {
+        None => Ok(String::new()),
+        Some(value) => Ok(value
+            .as_str()
+            .filter(|text| text.is_empty() || plain_text(text, MAX_DESCRIPTION_CHARS))
+            .ok_or_else(|| {
+                refuse(
+                    "invalid_description",
+                    &at(pointer, "description"),
+                    format!(
+                        "a description is at most {MAX_DESCRIPTION_CHARS} characters, without control characters or spaces at either end"
+                    ),
+                )
+            })?
+            .to_owned()),
+    }
+}
+
+/// A slug field's `source`: the id of the field the Studio suggests it from, if any.
+fn slug_source(object: &Map<String, Value>, pointer: &Pointer) -> Result<Option<String>, Refusal> {
+    match object.get("source") {
+        None => Ok(None),
+        Some(value) => Ok(Some(
+            value
+                .as_str()
+                .filter(|source| is_field_id(source))
+                .ok_or_else(|| {
+                    refuse(
+                        "invalid_source",
+                        &at(pointer, "source"),
+                        "`source` is the id of a field",
+                    )
+                })?
+                .to_owned(),
+        )),
+    }
+}
+
+/// The kinds step M.1 added that take no options: their type name, or `None`.
+fn simple_kind(name: &str) -> Option<FieldKind> {
+    Some(match name {
+        "email" => FieldKind::Email,
+        "url" => FieldKind::Url,
+        "date" => FieldKind::Date,
+        "time" => FieldKind::Time,
+        "json" => FieldKind::Json,
+        "color" => FieldKind::Color,
+        _ => return None,
+    })
+}
+
+/// `local@domain`, as most mail software accepts it: a dot-atom local part of at most 64
+/// characters and a host name with at least one dot. A check of shape, never of delivery.
+fn is_email(text: &str) -> bool {
+    let Some((local, domain)) = text.split_once('@') else {
+        return false;
+    };
+    text.len() <= MAX_EMAIL_CHARS
+        && (1..=64).contains(&local.len())
+        && !local.starts_with('.')
+        && !local.ends_with('.')
+        && !local.contains("..")
+        && local
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-/=?^_`{|}~.".contains(&byte))
+        && domain.contains('.')
+        && is_host_name(domain)
+}
+
+/// Letters, digits and hyphens in dot-separated labels of 1 to 63 characters, at most 253 in all.
+fn is_host_name(text: &str) -> bool {
+    text.len() <= 253
+        && text.split('.').all(|label| {
+            (1..=63).contains(&label.len())
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+}
+
+/// The WHATWG form of an `http` or `https` URL with a host and no user name or password, or
+/// `None`.
+fn web_address(text: &str) -> Option<String> {
+    if text.len() > MAX_URL_CHARS || text.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let parsed = url::Url::parse(text).ok()?;
+    let fits = matches!(parsed.scheme(), "http" | "https")
+        && parsed.host_str().is_some_and(|host| !host.is_empty())
+        && parsed.username().is_empty()
+        && parsed.password().is_none();
+    let href = String::from(parsed);
+    (fits && href.len() <= MAX_URL_CHARS).then_some(href)
+}
+
+/// `YYYY-MM-DD`, a real calendar date.
+fn is_date(text: &str) -> bool {
+    text.len() == 10 && is_utc_timestamp(&format!("{text}T00:00:00Z"))
+}
+
+/// `HH:MM` or `HH:MM:SS`, 24-hour.
+fn is_time(text: &str) -> bool {
+    match text.len() {
+        5 => is_utc_timestamp(&format!("2000-01-01T{text}:00Z")),
+        8 => is_utc_timestamp(&format!("2000-01-01T{text}Z")),
+        _ => false,
+    }
+}
+
+/// `#rrggbb` in lowercase.
+fn is_color(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() == 7
+        && bytes[0] == b'#'
+        && bytes[1..]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+}
+
+/// Why a JSON field's value was refused.
+enum JsonProblem {
+    /// Written canonically, it passes [`MAX_JSON_BYTES`].
+    TooLarge,
+    /// Too deep, or a number out of range.
+    Invalid(String),
+}
+
+impl From<String> for JsonProblem {
+    fn from(message: String) -> Self {
+        Self::Invalid(message)
+    }
+}
+
+/// Writes a JSON field's value canonically: object keys sorted (by UTF-16 code units, as
+/// JavaScript sorts them), strings as `JSON.stringify` escapes them, numbers as number fields
+/// write them (whole numbers in the safe range, or decimals with at most six places). `start` is
+/// where the value began in `out`, so its size is its own.
+fn write_json(
+    value: &Value,
+    depth: usize,
+    out: &mut String,
+    start: usize,
+) -> Result<(), JsonProblem> {
+    if depth > MAX_JSON_DEPTH {
+        return Err(JsonProblem::Invalid(format!(
+            "JSON nests at most {MAX_JSON_DEPTH} levels deep"
+        )));
+    }
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
+        Value::Number(number) => {
+            let float = number
+                .as_f64()
+                .ok_or_else(|| "a number in JSON is too large".to_owned())?;
+            let integer = number.is_i64() || number.is_u64() || float.fract() == 0.0;
+            check_number(float, integer)?;
+            write_number(out, float, integer);
+        }
+        Value::String(text) => write_string(out, text),
+        Value::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_json(item, depth + 1, out, start)?;
+                if out.len() - start > MAX_JSON_BYTES {
+                    return Err(JsonProblem::TooLarge);
+                }
+            }
+            out.push(']');
+        }
+        Value::Object(object) => {
+            let mut keys: Vec<&String> = object.keys().collect();
+            keys.sort_by(|one, other| one.encode_utf16().cmp(other.encode_utf16()));
+            out.push('{');
+            for (index, key) in keys.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_string(out, key);
+                out.push(':');
+                write_json(&object[key], depth + 1, out, start)?;
+                if out.len() - start > MAX_JSON_BYTES {
+                    return Err(JsonProblem::TooLarge);
+                }
+            }
+            out.push('}');
+        }
+    }
+    Ok(())
+}
+
 /// A text field's limits: `max_chars` (default 200) and `multiline` (default false).
 fn text_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind, Refusal> {
     let max_chars = match object.get("max_chars") {
@@ -352,10 +597,42 @@ fn text_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind
                 )
             })?,
     };
+    let min_chars = match object.get("min_chars") {
+        None => 0,
+        Some(value) => value
+            .as_u64()
+            .filter(|min| (1..=max_chars).contains(min))
+            .ok_or_else(|| {
+                refuse(
+                    "out_of_range",
+                    &at(pointer, "min_chars"),
+                    "`min_chars` is a whole number from 1 to `max_chars`",
+                )
+            })?,
+    };
     Ok(FieldKind::Text {
+        min_chars,
         max_chars,
         multiline: bool_or(object, "multiline", false, pointer)?,
     })
+}
+
+/// A markdown field's `max_chars` (default 100,000).
+fn markdown_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind, Refusal> {
+    let max_chars = match object.get("max_chars") {
+        None => MAX_TEXT_CHARS,
+        Some(value) => value
+            .as_u64()
+            .filter(|max| (1..=MAX_TEXT_CHARS).contains(max))
+            .ok_or_else(|| {
+                refuse(
+                    "out_of_range",
+                    &at(pointer, "max_chars"),
+                    format!("`max_chars` is a whole number from 1 to {MAX_TEXT_CHARS}"),
+                )
+            })?,
+    };
+    Ok(FieldKind::Markdown { max_chars })
 }
 
 /// A number field's limits: `integer` (default false), and optional `min` and `max`.
@@ -430,18 +707,34 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
     match (old, new) {
         (
             FieldKind::Text {
+                min_chars: old_min,
                 max_chars: old_max,
                 multiline: old_multiline,
             },
             FieldKind::Text {
+                min_chars: new_min,
                 max_chars: new_max,
                 multiline: new_multiline,
             },
-        ) => new_max >= old_max && (*new_multiline || !old_multiline),
+        ) => new_min <= old_min && new_max >= old_max && (*new_multiline || !old_multiline),
+        // Markdown accepts any text that fits, line breaks included.
+        (
+            FieldKind::Text {
+                max_chars: old_max, ..
+            }
+            | FieldKind::Markdown { max_chars: old_max },
+            FieldKind::Markdown { max_chars: new_max },
+        ) => new_max >= old_max,
         (FieldKind::RichText, FieldKind::RichText)
         | (FieldKind::Boolean, FieldKind::Boolean)
         | (FieldKind::DateTime, FieldKind::DateTime)
-        | (FieldKind::Slug { .. }, FieldKind::Slug { .. }) => true,
+        | (FieldKind::Slug { .. }, FieldKind::Slug { .. })
+        | (FieldKind::Email, FieldKind::Email)
+        | (FieldKind::Url, FieldKind::Url)
+        | (FieldKind::Date, FieldKind::Date)
+        | (FieldKind::Time, FieldKind::Time)
+        | (FieldKind::Json, FieldKind::Json)
+        | (FieldKind::Color, FieldKind::Color) => true,
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -562,8 +855,10 @@ impl ContentType {
                 Field {
                     id: "title".to_owned(),
                     label: "Title".to_owned(),
+                    description: String::new(),
                     required: true,
                     kind: FieldKind::Text {
+                        min_chars: 0,
                         max_chars: 200,
                         multiline: false,
                     },
@@ -571,6 +866,7 @@ impl ContentType {
                 Field {
                     id: "body".to_owned(),
                     label: "Body".to_owned(),
+                    description: String::new(),
                     required: true,
                     kind: FieldKind::RichText,
                 },
@@ -694,12 +990,13 @@ impl ContentType {
             })?
             .to_owned();
         let required = bool_or(object, "required", false, pointer)?;
-        let common = ["id", "label", "type", "required"];
+        let description = description(object, pointer)?;
+        let common = ["id", "label", "description", "type", "required"];
         let kind = match object.get("type").and_then(Value::as_str) {
             Some("text") => {
                 only(
                     object,
-                    &[&common[..], &["max_chars", "multiline"]].concat(),
+                    &[&common[..], &["min_chars", "max_chars", "multiline"]].concat(),
                     pointer,
                 )?;
                 text_kind(object, pointer)?
@@ -732,35 +1029,30 @@ impl ContentType {
             }
             Some("slug") => {
                 only(object, &[&common[..], &["source"]].concat(), pointer)?;
-                let source = match object.get("source") {
-                    None => None,
-                    Some(value) => Some(
-                        value
-                            .as_str()
-                            .filter(|source| is_field_id(source))
-                            .ok_or_else(|| {
-                                refuse(
-                                    "invalid_source",
-                                    &at(pointer, "source"),
-                                    "`source` is the id of a field",
-                                )
-                            })?
-                            .to_owned(),
-                    ),
-                };
-                FieldKind::Slug { source }
+                FieldKind::Slug {
+                    source: slug_source(object, pointer)?,
+                }
+            }
+            Some(name) if simple_kind(name).is_some() => {
+                only(object, &common, pointer)?;
+                simple_kind(name).unwrap_or(FieldKind::Json)
+            }
+            Some("markdown") => {
+                only(object, &[&common[..], &["max_chars"]].concat(), pointer)?;
+                markdown_kind(object, pointer)?
             }
             _ => {
                 return Err(refuse(
                     "invalid_type",
                     &at(pointer, "type"),
-                    "`type` is one of text, rich_text, number, boolean, enum, datetime, slug",
+                    "`type` is one of text, rich_text, number, boolean, enum, datetime, slug, email, url, date, time, json, markdown, color",
                 ));
             }
         };
         Ok(Field {
             id,
             label,
+            description,
             required,
             kind,
         })
@@ -797,6 +1089,11 @@ impl ContentType {
             write_string(&mut out, &field.id);
             out.push_str(r#","label":"#);
             write_string(&mut out, &field.label);
+            // Only when set, so a definition written before step M.1 keeps its bytes and hash.
+            if !field.description.is_empty() {
+                out.push_str(r#","description":"#);
+                write_string(&mut out, &field.description);
+            }
             out.push_str(r#","type":"#);
             write_string(&mut out, field.kind.name());
             out.push_str(if field.required {
@@ -806,9 +1103,14 @@ impl ContentType {
             });
             match &field.kind {
                 FieldKind::Text {
+                    min_chars,
                     max_chars,
                     multiline,
                 } => {
+                    if *min_chars > 0 {
+                        out.push_str(r#","min_chars":"#);
+                        out.push_str(&min_chars.to_string());
+                    }
                     out.push_str(r#","max_chars":"#);
                     out.push_str(&max_chars.to_string());
                     out.push_str(if *multiline {
@@ -846,7 +1148,19 @@ impl ContentType {
                         write_string(&mut out, source);
                     }
                 }
-                FieldKind::RichText | FieldKind::Boolean | FieldKind::DateTime => {}
+                FieldKind::Markdown { max_chars } => {
+                    out.push_str(r#","max_chars":"#);
+                    out.push_str(&max_chars.to_string());
+                }
+                FieldKind::RichText
+                | FieldKind::Boolean
+                | FieldKind::DateTime
+                | FieldKind::Email
+                | FieldKind::Url
+                | FieldKind::Date
+                | FieldKind::Time
+                | FieldKind::Json
+                | FieldKind::Color => {}
             }
             out.push('}');
         }
@@ -902,6 +1216,134 @@ impl ContentType {
         })
     }
 
+    /// A JSON value, written canonically within [`MAX_JSON_BYTES`] and [`MAX_JSON_DEPTH`].
+    fn json(
+        label: &str,
+        value: &Value,
+        pointer: &Pointer,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        let start = out.len();
+        let written = write_json(value, 0, out, start);
+        if matches!(written, Err(JsonProblem::TooLarge)) || out.len() - start > MAX_JSON_BYTES {
+            return Err(refuse(
+                "too_long",
+                pointer,
+                format!("{label} is at most {} KiB of JSON", MAX_JSON_BYTES / 1024),
+            ));
+        }
+        if let Err(JsonProblem::Invalid(message)) = written {
+            return Err(refuse(
+                "invalid_json",
+                pointer,
+                format!("{label}: {message}"),
+            ));
+        }
+        Ok(())
+    }
+
+    /// A number value, whole if `integer`, within `(min, max)`.
+    fn number(
+        label: &str,
+        value: &Value,
+        integer: bool,
+        (min, max): (Option<f64>, Option<f64>),
+        pointer: &Pointer,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        let number = value
+            .as_f64()
+            .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is a number")))?;
+        check_number(number, integer).map_err(|message| {
+            refuse(
+                if integer {
+                    "not_an_integer"
+                } else {
+                    "too_precise"
+                },
+                pointer,
+                format!("{label}: {message}"),
+            )
+        })?;
+        if min.is_some_and(|min| number < min) || max.is_some_and(|max| number > max) {
+            return Err(refuse(
+                "out_of_range",
+                pointer,
+                format!("{label} is outside its allowed range"),
+            ));
+        }
+        write_number(out, number, integer);
+        Ok(())
+    }
+
+    /// A text or markdown value: within `(min, max)` characters, with line breaks only if
+    /// `multiline`.
+    fn text(
+        label: &str,
+        value: &Value,
+        (min_chars, max_chars): (u64, u64),
+        multiline: bool,
+        pointer: &Pointer,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        let text = value
+            .as_str()
+            .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is text")))?;
+        check_text(text, label, max_chars, multiline, pointer)?;
+        if u64::try_from(text.chars().count()).unwrap_or(u64::MAX) < min_chars {
+            return Err(refuse(
+                "too_short",
+                pointer,
+                format!("{label} is at least {min_chars} characters"),
+            ));
+        }
+        write_string(out, text);
+        Ok(())
+    }
+
+    /// A value of one of the kinds that hold a string in a fixed format (step M.1), written
+    /// canonically.
+    fn formatted(
+        kind: &FieldKind,
+        label: &str,
+        value: &Value,
+        pointer: &Pointer,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        let text = value.as_str();
+        let (code, example, canonical) = match kind {
+            FieldKind::Email => (
+                "invalid_email",
+                "an email address like name@example.com",
+                text.filter(|text| is_email(text)).map(str::to_owned),
+            ),
+            FieldKind::Url => (
+                "invalid_url",
+                "a web address starting with https:// or http://",
+                text.and_then(web_address),
+            ),
+            FieldKind::Date => (
+                "invalid_date",
+                "a date like 2026-10-28",
+                text.filter(|text| is_date(text)).map(str::to_owned),
+            ),
+            FieldKind::Time => (
+                "invalid_time",
+                "a time like 14:30 or 14:30:15",
+                text.filter(|text| is_time(text)).map(str::to_owned),
+            ),
+            _ => (
+                "invalid_color",
+                "a colour like #1a2b3c, in lowercase",
+                text.filter(|text| is_color(text)).map(str::to_owned),
+            ),
+        };
+        let canonical =
+            canonical.ok_or_else(|| refuse(code, pointer, format!("{label} is {example}")))?;
+        write_string(out, &canonical);
+        Ok(())
+    }
+
     /// Whether this definition accepts `stored`, the canonical content of a revision validated
     /// against an earlier version: the check behind [`Successor::CheckContent`]. Stored content
     /// is never rewritten; it only has to stay valid.
@@ -925,15 +1367,26 @@ impl ContentType {
         let label = &field.label;
         match &field.kind {
             FieldKind::Text {
+                min_chars,
                 max_chars,
                 multiline,
-            } => {
-                let text = value
-                    .as_str()
-                    .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is text")))?;
-                check_text(text, label, *max_chars, *multiline, pointer)?;
-                write_string(out, text);
+            } => Self::text(
+                label,
+                value,
+                (*min_chars, *max_chars),
+                *multiline,
+                pointer,
+                out,
+            )?,
+            FieldKind::Markdown { max_chars } => {
+                Self::text(label, value, (0, *max_chars), true, pointer, out)?;
             }
+            FieldKind::Email
+            | FieldKind::Url
+            | FieldKind::Date
+            | FieldKind::Time
+            | FieldKind::Color => Self::formatted(&field.kind, label, value, pointer, out)?,
+            FieldKind::Json => Self::json(label, value, pointer, out)?,
             FieldKind::RichText => {
                 let document = rich_text::validate(value).map_err(|rejection| Refusal {
                     code: rejection.code.as_str(),
@@ -943,28 +1396,7 @@ impl ContentType {
                 out.push_str(document.canonical_json());
             }
             FieldKind::Number { integer, min, max } => {
-                let number = value
-                    .as_f64()
-                    .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is a number")))?;
-                check_number(number, *integer).map_err(|message| {
-                    refuse(
-                        if *integer {
-                            "not_an_integer"
-                        } else {
-                            "too_precise"
-                        },
-                        pointer,
-                        format!("{label}: {message}"),
-                    )
-                })?;
-                if min.is_some_and(|min| number < min) || max.is_some_and(|max| number > max) {
-                    return Err(refuse(
-                        "out_of_range",
-                        pointer,
-                        format!("{label} is outside its allowed range"),
-                    ));
-                }
-                write_number(out, number, *integer);
+                Self::number(label, value, *integer, (*min, *max), pointer, out)?;
             }
             FieldKind::Boolean => {
                 let flag = value.as_bool().ok_or_else(|| {
@@ -1596,5 +2028,204 @@ mod tests {
         ] {
             assert!(!is_utc_timestamp(bad), "{bad}");
         }
+    }
+
+    /// Every kind step M.1 added, one optional field each, with a description on one.
+    fn profile_type() -> ContentType {
+        ContentType::parse(&json!({
+            "name": "Profiles",
+            "title_field": "name",
+            "fields": [
+                {"id": "name", "label": "Name", "type": "text", "required": true, "min_chars": 2, "max_chars": 80},
+                {"id": "email", "label": "Email", "description": "Shown to visitors.", "type": "email"},
+                {"id": "website", "label": "Website", "type": "url"},
+                {"id": "born", "label": "Born", "type": "date"},
+                {"id": "opens", "label": "Opens", "type": "time"},
+                {"id": "settings", "label": "Settings", "type": "json"},
+                {"id": "notes", "label": "Notes", "type": "markdown", "max_chars": 200},
+                {"id": "accent", "label": "Accent", "type": "color"}
+            ]
+        }))
+        .expect("a valid definition")
+    }
+
+    fn refusal(content: &Value) -> (&'static str, String) {
+        let refused = profile_type().validate(content).expect_err("refused");
+        (refused.code, refused.pointer)
+    }
+
+    #[test]
+    fn the_new_kinds_store_one_canonical_form() {
+        let content = profile_type()
+            .validate(&json!({
+                "name": "Ada",
+                "email": "ada.lovelace+notes@example.co.uk",
+                "website": "HTTPS://Example.COM",
+                "born": "2028-02-29",
+                "opens": "09:30",
+                "settings": {"theme": {"dark": true, "size": 1.5}, "alpha": [1, null, "x"]},
+                "notes": "# Notes\n\n- one\n- two",
+                "accent": "#1a2b3c"
+            }))
+            .expect("valid");
+        assert_eq!(
+            content.canonical_json(),
+            r##"{"name":"Ada","email":"ada.lovelace+notes@example.co.uk","website":"https://example.com/","born":"2028-02-29","opens":"09:30","settings":{"alpha":[1,null,"x"],"theme":{"dark":true,"size":1.5}},"notes":"# Notes\n\n- one\n- two","accent":"#1a2b3c"}"##
+        );
+        // Stored content validates to the same bytes again.
+        let again: Value = serde_json::from_str(content.canonical_json()).expect("JSON");
+        assert_eq!(
+            profile_type()
+                .validate(&again)
+                .expect("valid")
+                .canonical_json(),
+            content.canonical_json()
+        );
+    }
+
+    #[test]
+    fn values_of_the_new_kinds_that_do_not_fit_are_refused() {
+        for (field, value, code) in [
+            ("name", json!("A"), "too_short"),
+            ("email", json!("ada@localhost"), "invalid_email"),
+            ("email", json!("ada..l@example.com"), "invalid_email"),
+            ("email", json!("@example.com"), "invalid_email"),
+            ("email", json!("ada @example.com"), "invalid_email"),
+            ("website", json!("ftp://example.com"), "invalid_url"),
+            ("website", json!("javascript:alert(1)"), "invalid_url"),
+            (
+                "website",
+                json!("https://user:secret@example.com"),
+                "invalid_url",
+            ),
+            ("website", json!("https://example.com/a b"), "invalid_url"),
+            ("born", json!("2026-02-29"), "invalid_date"),
+            ("born", json!("2026-1-1"), "invalid_date"),
+            ("opens", json!("24:00"), "invalid_time"),
+            ("opens", json!("9:30"), "invalid_time"),
+            ("accent", json!("#1A2B3C"), "invalid_color"),
+            ("accent", json!("#123"), "invalid_color"),
+            ("settings", json!({"x": 1e30}), "invalid_json"),
+            ("notes", json!("bell \u{7}"), "invalid_text"),
+            ("notes", json!("x".repeat(201)), "too_long"),
+        ] {
+            let mut content = json!({"name": "Ada"});
+            content[field] = value.clone();
+            assert_eq!(
+                refusal(&content),
+                (code, format!("/{field}")),
+                "{field} = {value}"
+            );
+        }
+        let mut deep = json!(0);
+        for _ in 0..=MAX_JSON_DEPTH {
+            deep = json!([deep]);
+        }
+        assert_eq!(
+            refusal(&json!({"name": "Ada", "settings": deep})).0,
+            "invalid_json"
+        );
+        let big: Vec<String> = (0..10_000).map(|n| format!("item {n}")).collect();
+        assert_eq!(
+            refusal(&json!({"name": "Ada", "settings": big})).0,
+            "too_long"
+        );
+    }
+
+    #[test]
+    fn definitions_written_before_the_new_kinds_keep_their_bytes() {
+        // A definition with none of step M.1's options is written exactly as before, so its
+        // hash, which publish requests pin, doesn't move.
+        assert!(
+            post_type().canonical_json().starts_with(
+                r#"{"name":"Posts","title_field":"headline","fields":[{"id":"headline","label":"Headline","type":"text","required":true,"max_chars":120,"multiline":false}"#
+            )
+        );
+        let canonical = profile_type().canonical_json();
+        assert!(canonical.contains(r#"{"id":"name","label":"Name","type":"text","required":true,"min_chars":2,"max_chars":80,"multiline":false}"#), "{canonical}");
+        assert!(canonical.contains(r#"{"id":"email","label":"Email","description":"Shown to visitors.","type":"email","required":false}"#), "{canonical}");
+        assert!(canonical.contains(r#"{"id":"notes","label":"Notes","type":"markdown","required":false,"max_chars":200}"#), "{canonical}");
+        let again =
+            ContentType::parse(&serde_json::from_str(&canonical).expect("JSON")).expect("valid");
+        assert_eq!(again.canonical_json(), canonical);
+    }
+
+    #[test]
+    fn the_new_options_are_checked_where_they_are_defined() {
+        let field = |extra: Value| {
+            let mut field = json!({"id": "x", "label": "X", "type": "text"});
+            for (key, value) in extra.as_object().expect("object") {
+                field[key] = value.clone();
+            }
+            ContentType::parse(&json!({
+                "name": "T", "title_field": "t",
+                "fields": [{"id": "t", "label": "T", "type": "text", "required": true}, field]
+            }))
+            .map(|_| ())
+            .map_err(|refused| (refused.code, refused.pointer))
+        };
+        assert_eq!(
+            field(json!({"min_chars": 300})),
+            Err(("out_of_range", "/fields/1/min_chars".to_owned()))
+        );
+        assert_eq!(
+            field(json!({"min_chars": 0})),
+            Err(("out_of_range", "/fields/1/min_chars".to_owned()))
+        );
+        assert_eq!(
+            field(json!({"description": " padded "})),
+            Err(("invalid_description", "/fields/1/description".to_owned()))
+        );
+        assert_eq!(
+            field(json!({"type": "email", "max_chars": 10})),
+            Err(("unknown_field", "/fields/1/max_chars".to_owned()))
+        );
+        assert_eq!(
+            field(json!({"type": "markdown", "max_chars": 0})),
+            Err(("out_of_range", "/fields/1/max_chars".to_owned()))
+        );
+        assert_eq!(
+            field(json!({"type": "colour"})).map_err(|e| e.0),
+            Err("invalid_type")
+        );
+        assert_eq!(field(json!({"description": ""})), Ok(()));
+    }
+
+    #[test]
+    fn changes_to_the_new_kinds_follow_the_same_rules() {
+        let with = |field: Value| {
+            ContentType::parse(&json!({
+                "name": "T", "title_field": "t",
+                "fields": [{"id": "t", "label": "T", "type": "text", "required": true}, field]
+            }))
+            .expect("valid")
+        };
+        let text = with(
+            json!({"id": "x", "label": "X", "type": "text", "multiline": true, "max_chars": 500}),
+        );
+        let markdown =
+            with(json!({"id": "x", "label": "X", "type": "markdown", "max_chars": 1000}));
+        let email = with(json!({"id": "x", "label": "X", "type": "email"}));
+        let picky = with(json!({"id": "x", "label": "X", "type": "text", "min_chars": 5}));
+        let plain = with(json!({"id": "x", "label": "X", "type": "text"}));
+        assert_eq!(
+            text.successor(&markdown),
+            Successor::Compatible,
+            "markdown holds any text that fits"
+        );
+        assert!(matches!(
+            markdown.successor(&text),
+            Successor::CheckContent(_)
+        ));
+        assert!(
+            matches!(text.successor(&email), Successor::CheckContent(_)),
+            "text becomes email only if every stored value is one"
+        );
+        assert!(
+            matches!(plain.successor(&picky), Successor::CheckContent(_)),
+            "a new minimum needs the content checked"
+        );
+        assert_eq!(picky.successor(&plain), Successor::Compatible);
+        assert_eq!(email.successor(&email), Successor::Compatible);
     }
 }

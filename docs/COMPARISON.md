@@ -120,9 +120,9 @@ that builds them.
 | Components / objects, repeatable lists | ✓ | ✓ | M |
 | Dynamic zones / block arrays (page builder) | ✓ | ✓ | M |
 | Single types / singletons | ✓ | ✓ | M |
-| Email, URL, date, time, JSON, Markdown, colour, geopoint fields | ✓ | ✓ | M |
+| Email, URL, date, time, JSON, Markdown, colour, geopoint fields | ✓ | ✓ | built in M.1 (D-064) but geopoint; the Studio's editor for them is next |
 | Validation: pattern, unique, length, value; conditional fields; defaults | ✓ | ✓ | M |
-| Field descriptions, groups and tabs, custom previews | ✓ | ✓ | M |
+| Field descriptions, groups and tabs, custom previews | ✓ | ✓ | descriptions in M.1 (D-064); groups, tabs and previews in M |
 | Schema migrations with a plan | Rename only | Scripts | M |
 | Media library: uploads, folders, alt text, image transforms, hotspot and crop | ✓ | ✓ | P4 |
 | Review before publish | Review workflows (paid) | Tasks, comments | done: changesets and hash-bound reviews (P2); stages in E |
