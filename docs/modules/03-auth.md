@@ -109,6 +109,13 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - The CSRF token is per session, stored hashed, and sent to the page in a readable `SameSite=Strict` cookie; writes
   echo it in `X-CSRF-Token`. Trusted origins are the public origin plus `COLOPHON_TRUSTED_ORIGINS`, compared exactly.
 - Nothing caches sessions, so revocation (logout) takes effect on the next request.
+- Signing out (`POST /auth/logout`) ends the session at once, whatever the identity provider does, and answers where
+  the browser should go to end its session at the provider too (OpenID Connect RP-Initiated Logout 1.0:
+  `provider_sign_out`, the provider's end-session page with the client's id and the Studio's front door to come back
+  to; `null` if the provider has none or can't be reached). Without it, the next person at a shared computer was
+  signed straight back in without a password. No ID token hint is sent, so the provider asks the person to confirm.
+  The development realm lists each local port's `/studio/` as a post-logout address. Built after R.4, from a gap
+  the Studio's sign-out showed; tested end to end against Keycloak (a provider without an end-session page is not).
 - CORS is narrowly scoped, and no secrets ever appear in URLs.
 - Sensitive actions require fresh authentication: deleting a project, export, credential and role changes.
 
