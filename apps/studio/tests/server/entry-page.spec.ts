@@ -1,10 +1,11 @@
 // The entry page, tidied like the builder (D-081): the trail names the entry by its title; the side
 // panel says where it stands in one line (not "Live in" and "Readers see this version" both);
 // "Save now" shows only with something to save; the public address and "See what readers get" wait
-// in Technical details; and on a phone the status and Publish share one bar at the bottom.
+// in Technical details; and on a phone the status and Publish share one bar at the bottom. The
+// fields follow the type's order, rich text included (D-082).
 
 import { expect, test } from '@playwright/test';
-import { newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
+import { api, env, key, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
 
 const paragraphs = (count: number) => ({
 	schema: 'colophon/rich-text',
@@ -136,4 +137,54 @@ test('on a phone, the status and Publish share one bar that stays at the bottom 
 	expect(await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), 'the editor scrolls sideways on a phone').toBeLessThanOrEqual(0);
 	expect(await violations(phone)).toEqual([]);
 	await phone.context().close();
+});
+
+test('the editor shows fields in the order the type lists them, with rich text full width where it sits', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const products = {
+		name: 'Products',
+		title_field: 'name',
+		fields: [
+			{ id: 'name', label: 'Name', type: 'text', required: true, max_chars: 200, multiline: false },
+			{ id: 'description', label: 'Description', type: 'rich_text', required: false },
+			{ id: 'price', label: 'Price', type: 'number', required: false },
+			{ id: 'care', label: 'Care notes', type: 'rich_text', required: false },
+			{ id: 'on_sale', label: 'On sale', type: 'boolean', required: false }
+		]
+	};
+	expect((await api(page, 'POST', `${env(project)}/content-types`, { slug: 'products', definition: products }, { 'Idempotency-Key': key() })).status).toBe(201);
+	const entry = await newEntry(page, project, 'Tote', 'products', { name: 'Tote' });
+	await page.goto(`/studio/projects/${project}/products/${entry}`);
+	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
+
+	// Top to bottom as the builder lists them, not plain fields first and rich text last.
+	const fields = [
+		page.getByLabel('Name', { exact: true }),
+		page.getByRole('textbox', { name: 'Description' }),
+		page.getByLabel('Price (optional)', { exact: true }),
+		page.getByRole('textbox', { name: 'Care notes' }),
+		page.getByLabel('On sale', { exact: true })
+	];
+	const tops: number[] = [];
+	for (const field of fields) tops.push((await field.boundingBox())?.y ?? Number.NaN);
+	expect(tops).toEqual([...tops].sort((a, b) => a - b));
+	// Each rich text field takes the content's full width.
+	const panel = await page.locator('#panel-content').boundingBox();
+	for (const rich of await page.getByTestId('rich-field').all()) expect((await rich.boundingBox())?.width).toBeCloseTo(panel?.width ?? 0, 0);
+	expect(await violations(page)).toEqual([]);
+
+	// Fields after a rich text field save like any other.
+	await page.getByLabel('Price (optional)', { exact: true }).fill('24');
+	await page.getByRole('textbox', { name: 'Care notes' }).click();
+	await page.keyboard.type('Wash cold.');
+	await page.getByLabel('On sale', { exact: true }).check();
+	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
+	const saved = (await api(page, 'GET', `${env(project)}/collections/products/entries/${entry}`)).body?.['data'].content;
+	expect(saved.price).toBe(24);
+	expect(saved.on_sale).toBe(true);
+	expect(JSON.stringify(saved.care)).toContain('Wash cold.');
+	await page.reload();
+	await expect(page.getByLabel('Price (optional)', { exact: true })).toHaveValue('24');
+	await expect(page.getByRole('textbox', { name: 'Care notes' })).toContainText('Wash cold.');
 });

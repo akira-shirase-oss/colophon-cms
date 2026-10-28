@@ -111,6 +111,16 @@
 	const labelsOf = (ids: string[]) => ids.map((id) => definition.fields.find((field) => field.id === id)?.label ?? id).join(', ');
 	const plain = visible.filter((field) => field.type !== 'rich_text');
 	const rich = visible.filter((field) => field.type === 'rich_text');
+	/** The fields in the definition's order, as the builder lists them (D-082): runs of plain
+	 *  fields, each a block of rows, between rich-text fields, each full width where it sits. */
+	type Segment = { kind: 'plain'; fields: FieldDefinition[] } | { kind: 'rich'; field: FieldDefinition };
+	const segments: Segment[] = [];
+	for (const field of visible) {
+		const last = segments.at(-1);
+		if (field.type === 'rich_text') segments.push({ kind: 'rich', field });
+		else if (last?.kind === 'plain') last.fields.push(field);
+		else segments.push({ kind: 'plain', fields: [field] });
+	}
 	// svelte-ignore state_referenced_locally
 	let latest = $state.raw<Draft>(initial.draft);
 	// svelte-ignore state_referenced_locally
@@ -444,7 +454,6 @@
 					{#if locked.length > 0}Your role can read but not change {labelsOf(locked)}.{/if}
 				</p>
 			{/if}
-{#key showings}
 			{#if Object.keys(cleared).length > 0}
 				<div role="status" data-testid="cleared-notes">
 					<ul class="mb-2 space-y-1 text-xs text-muted-foreground">
@@ -452,37 +461,43 @@
 					</ul>
 				</div>
 			{/if}
-			<FieldInputs
-				fields={plain.filter(appliesNow)}
-				bind:form
-				titleField={definition.title_field}
-				onchange={changed}
-				{locked}
-				refused={saver.status === 'refused'
-					? {
-							pointer: saver.pointer,
-							message: saver.message,
-							reason: saver.reason,
-							holder:
-								saver.holder === null
-									? null
-									: {
-											title: saver.holder.title,
-											href: resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: saver.holder.entry })
-										}
-						}
-					: null}
-				{project}
-			/>
-			{/key}
-			{#each rich as field (field.id)}
-				<div class="py-5" hidden={!appliesNow(field)}>
-					<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
-					<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60">
-						<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" />
-						<div class="editor px-6 py-5 sm:px-8" bind:this={hosts[field.id]}></div>
+			<!-- In the definition's order (D-082): runs of fields as rows, rich text full width where it sits. -->
+			{#each segments as segment, index (index)}
+				{#if segment.kind === 'plain'}
+					{#key showings}
+						<FieldInputs
+							fields={segment.fields.filter(appliesNow)}
+							bind:form
+							titleField={definition.title_field}
+							onchange={changed}
+							{locked}
+							refused={saver.status === 'refused'
+								? {
+										pointer: saver.pointer,
+										message: saver.message,
+										reason: saver.reason,
+										holder:
+											saver.holder === null
+												? null
+												: {
+														title: saver.holder.title,
+														href: resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: saver.holder.entry })
+													}
+									}
+								: null}
+							{project}
+						/>
+					{/key}
+				{:else}
+					{@const field = segment.field}
+					<div class="py-5" hidden={!appliesNow(field)} data-testid="rich-field" data-field={field.id}>
+						<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
+						<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60">
+							<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" />
+							<div class="editor px-6 py-5 sm:px-8" bind:this={hosts[field.id]}></div>
+						</div>
 					</div>
-				</div>
+				{/if}
 			{/each}
 		</div>
 
