@@ -65,6 +65,12 @@ pub enum Refusal {
     SlugTaken,
 }
 
+/// Whether a project needs someone other than the submitter to approve (D-044). Projects can't
+/// require it yet: the rule is in place in the domain for when project settings can. The project
+/// view reports it, so the Studio's one-click publish follows the same rule as a publish, by hand
+/// or on a schedule (D-059).
+pub const REQUIRE_DIFFERENT_REVIEWER: bool = false;
+
 /// The domain's decision for `head`, from its reviews (newest first), `edited` of its entries
 /// having moved on, at `now`.
 pub fn status(
@@ -94,8 +100,7 @@ pub fn status(
         stale_items: edited,
         reviews: &reviews,
         now: now.unix_timestamp(),
-        // Projects can't require a different reviewer yet; the rule is in place for when they can.
-        require_different_reviewer: false,
+        require_different_reviewer: REQUIRE_DIFFERENT_REVIEWER,
         published: head.published,
     })
 }

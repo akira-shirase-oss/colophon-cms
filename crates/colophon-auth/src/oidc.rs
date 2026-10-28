@@ -104,6 +104,20 @@ struct Metadata {
     authorization_endpoint: String,
     token_endpoint: String,
     jwks_uri: String,
+    /// The `prompt` values the provider understands; `create` means it can show its own sign-up
+    /// form (OpenID Connect Prompt Create 1.0).
+    #[serde(default)]
+    prompt_values_supported: Vec<String>,
+}
+
+/// Which of the provider's pages a sign-in starts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Start {
+    /// Its sign-in form.
+    SignIn,
+    /// Its form for making an account, when it has one (`prompt=create`); its sign-in form
+    /// otherwise, which may link to one.
+    CreateAccount,
 }
 
 #[derive(Debug, Deserialize)]
@@ -201,12 +215,13 @@ impl OidcClient {
             .await
     }
 
-    /// The provider's sign-in URL for this attempt.
+    /// The provider's sign-in URL for this attempt, starting on the page `start` names.
     pub async fn authorization_url(
         &self,
         state: &str,
         nonce: &str,
         pkce_verifier: &str,
+        start: Start,
     ) -> Result<Url, OidcError> {
         let metadata = self.metadata().await?;
         let mut url = Url::parse(&metadata.authorization_endpoint)
@@ -220,6 +235,14 @@ impl OidcClient {
             .append_pair("nonce", nonce)
             .append_pair("code_challenge", &tokens::pkce_challenge(pkce_verifier))
             .append_pair("code_challenge_method", "S256");
+        if start == Start::CreateAccount
+            && metadata
+                .prompt_values_supported
+                .iter()
+                .any(|value| value == "create")
+        {
+            url.query_pairs_mut().append_pair("prompt", "create");
+        }
         Ok(url)
     }
 

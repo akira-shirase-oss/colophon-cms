@@ -11,6 +11,7 @@
 		{ href: resolve('/contract'), label: 'API contract' },
 		{ href: resolve('/rich-text'), label: 'Rich text' },
 		{ href: resolve('/session'), label: 'Session' },
+		{ href: resolve('/setup'), label: 'Setup' },
 		{ href: resolve('/entries'), label: 'Entries' },
 		{ href: resolve('/content-types'), label: 'Content types' },
 		{ href: resolve('/device'), label: 'Device sign-in' },

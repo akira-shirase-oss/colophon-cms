@@ -140,7 +140,10 @@ on Colophon (D-052; the reference blog with a generation marker and the build-an
 (D-053, D-056; the design system, entry states, title search, revision comparison, review diffs, the sign-in theme) · 3.6
 content modelling in the Studio (slugs, a content-type builder whose changes are checked against stored content; D-054,
 D-055) · 3.7 the non-technical path (D-059: plain words from one glossary, one-click publish, a first-run checklist,
-teaching empty states, developer settings out of the way, phone-friendly review) · 3.8 my site goes live, and the first
+teaching empty states, developer settings out of the way, phone-friendly review; with sign-up and a setup code for a
+fresh installation's first administrator, D-061; built: the journey from sign-up to a first release, its Playwright
+journey and plain-words test, the testbed's Setup page and `perf/k6/setup.js`; phone-friendly review not yet
+checked at phone width) · 3.8 my site goes live, and the first
 public demo (docs skeleton, simulator cache and delivery faults, the mixed-release checker, a
 recorded crash loop).
 

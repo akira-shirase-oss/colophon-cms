@@ -77,7 +77,7 @@ test('an owner builds a content type in Settings, and its entries get URL names'
 	await expect(status(page)).toHaveAttribute('data-status', 'saved');
 	await page.getByLabel('URL name (optional)').fill('lemon-tart');
 	await expect(status(page)).toHaveAttribute('data-status', 'refused');
-	await expect(status(page)).toContainText('already the slug of another entry');
+	await expect(status(page)).toContainText('another entry already uses this URL name (“Lemon tart”)');
 });
 
 test('a change that would break a saved entry is refused naming it, and goes through once it is fixed', async ({ page }) => {

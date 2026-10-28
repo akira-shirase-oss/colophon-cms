@@ -56,6 +56,8 @@ pub enum ErrorCode {
     UnsupportedMediaType,
     /// The server could not produce a response before the request deadline.
     DeadlineExceeded,
+    /// Too many attempts lately; `Retry-After` says how many seconds to wait.
+    RateLimited,
     /// The server is temporarily unable to handle the request.
     Unavailable,
     /// A bug or an unexpected failure. Details are logged, never returned.
@@ -81,6 +83,7 @@ impl ErrorCode {
             Self::PayloadTooLarge => "payload_too_large",
             Self::UnsupportedMediaType => "unsupported_media_type",
             Self::DeadlineExceeded => "deadline_exceeded",
+            Self::RateLimited => "rate_limited",
             Self::Unavailable => "unavailable",
             Self::Internal => "internal",
         }
@@ -100,6 +103,7 @@ impl ErrorCode {
             StatusCode::UNSUPPORTED_MEDIA_TYPE => Self::UnsupportedMediaType,
             StatusCode::REQUEST_TIMEOUT | StatusCode::GATEWAY_TIMEOUT => Self::DeadlineExceeded,
             StatusCode::SERVICE_UNAVAILABLE => Self::Unavailable,
+            StatusCode::TOO_MANY_REQUESTS => Self::RateLimited,
             status if status.is_client_error() => Self::BadRequest,
             _ => Self::Internal,
         }
@@ -297,6 +301,15 @@ pub enum ApiError {
     /// An `Idempotency-Key` was used before for a different request.
     #[error("this Idempotency-Key was already used for a different request")]
     IdempotencyKeyReused,
+    /// The installation has an administrator already: setup codes no longer do anything (D-061).
+    #[error("this installation already has an administrator; ask them to invite you to a project")]
+    AlreadySetUp,
+    /// Too many attempts lately; the response's `Retry-After` says how many seconds to wait.
+    #[error("too many attempts; try again in {} minute(s)", .retry_after.div_ceil(60))]
+    RateLimited {
+        /// Seconds until there is room again.
+        retry_after: u32,
+    },
     /// A slug is another entry's, as its draft's slug or its published one (D-054). The entries
     /// name that entry when a precheck found it; a write that lost a race to it can't. 409.
     #[error("{}", .0.message)]
@@ -418,7 +431,9 @@ impl ApiError {
             | Self::StaleRole { .. }
             | Self::RoleInUse { .. }
             | Self::IdempotencyKeyReused
+            | Self::AlreadySetUp
             | Self::SlugTaken(_) => StatusCode::CONFLICT,
+            Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -450,7 +465,9 @@ impl ApiError {
             | Self::StaleRole { .. }
             | Self::RoleInUse { .. }
             | Self::IdempotencyKeyReused
+            | Self::AlreadySetUp
             | Self::SlugTaken(_) => ErrorCode::Conflict,
+            Self::RateLimited { .. } => ErrorCode::RateLimited,
             Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
@@ -474,6 +491,7 @@ impl ApiError {
             Self::StaleRole { .. } => Some(ErrorDetails::new("stale_role", "")),
             Self::RoleInUse { .. } => Some(ErrorDetails::new("role_in_use", "")),
             Self::IdempotencyKeyReused => Some(ErrorDetails::new("idempotency_key_reused", "")),
+            Self::AlreadySetUp => Some(ErrorDetails::new("already_set_up", "")),
             Self::InvalidField {
                 reason, pointer, ..
             } => Some(ErrorDetails::new(reason, *pointer)),
@@ -566,6 +584,11 @@ impl IntoResponse for ApiError {
                 response
                     .headers_mut()
                     .insert(crate::delivery::GENERATION, HeaderValue::from(current));
+            }
+            Self::RateLimited { retry_after } => {
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from(retry_after));
             }
             _ => {}
         }
@@ -671,6 +694,7 @@ mod tests {
             (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large"),
             (StatusCode::GATEWAY_TIMEOUT, "deadline_exceeded"),
             (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+            (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             (StatusCode::IM_A_TEAPOT, "bad_request"),
             (StatusCode::BAD_GATEWAY, "internal"),
         ];

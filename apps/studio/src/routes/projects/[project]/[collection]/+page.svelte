@@ -16,10 +16,11 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
-	import { ApiError, createEntry, type EntryState, entryState, getContentType, newKey } from '#lib/api.ts';
-	import { type FormValue, formValue, starter, storedValue } from '#lib/content.ts';
+	import { ApiError, createEntry, type EntryState, entryState, getContentType, may, newKey } from '#lib/api.ts';
+	import { type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
-	import { ago, entriesQuery } from '#lib/queries.ts';
+	import { oneOf } from '#lib/firstRun.ts';
+	import { ago, entriesQuery, projectQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -28,6 +29,8 @@
 	const project = $derived(page.params.project ?? '');
 	const collection = $derived(page.params.collection ?? '');
 	const type = createQuery(() => ({ queryKey: ['type', project, collection], queryFn: () => getContentType(project, collection) }));
+	const mine = createQuery(() => projectQuery(project));
+	const writes = $derived(mine.data === undefined || may(mine.data, 'content.create', collection));
 
 	let typed = $state('');
 	let q = $state('');
@@ -49,11 +52,16 @@
 		)
 	);
 
-	// A new entry asks only for the required fields that have no natural starting value.
+	// A new entry asks only for the required fields that have no natural starting value. A URL name
+	// with a source field is made from it (the title, usually), and can be changed in the editor.
 	const asked = $derived(
-		(type.data?.definition.fields ?? []).filter((field) => field.required && field.type !== 'rich_text' && field.type !== 'boolean')
+		(type.data?.definition.fields ?? []).filter(
+			(field) =>
+				field.required && field.type !== 'rich_text' && field.type !== 'boolean' && !(field.type === 'slug' && field.source !== undefined)
+		)
 	);
-	let creating = $state(false);
+	// `?new=1` (the first-run checklist's "Write") opens the new-entry dialog at once.
+	let creating = $state(page.url.searchParams.get('new') === '1');
 	let form = $state<Record<string, FormValue>>({});
 	let error = $state('');
 	let busy = $state(false);
@@ -71,14 +79,35 @@
 			const value = storedValue(field, form[field.id] ?? formValue(field, content[field.id]));
 			if (value !== undefined) content[field.id] = value;
 		}
+		// A URL name made here from the title; if another entry has it, the next free one ("-2", "-3"…),
+		// as the server's uniqueness rule (D-054) asks. It can be changed in the editor.
+		const made = definition.fields.find(
+			(field) => field.type === 'slug' && field.required && field.source !== undefined && content[field.id] === undefined
+		);
+		const base = made?.type === 'slug' && made.source !== undefined && typeof content[made.source] === 'string' ? slugify(content[made.source] as string) : '';
 		try {
-			const loaded = await createEntry(project, collection, content, key);
-			key = newKey();
-			creating = false;
-			form = {};
-			await goto(resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: loaded.draft.id }));
+			for (let attempt = 1; ; attempt += 1) {
+				if (made !== undefined) content[made.id] = attempt === 1 ? base : `${base}-${attempt}`;
+				try {
+					const loaded = await createEntry(project, collection, content, key);
+					key = newKey();
+					creating = false;
+					form = {};
+					await goto(resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: loaded.draft.id }));
+					return;
+				} catch (failure) {
+					if (!(made !== undefined && failure instanceof ApiError && failure.reason === 'slug_taken' && attempt < 9)) throw failure;
+					// A refused create left nothing behind; the next try is a different request.
+					key = newKey();
+				}
+			}
 		} catch (failure) {
-			error = failure instanceof ApiError ? failure.message : String(failure);
+			error =
+				failure instanceof ApiError && failure.reason === 'slug_taken'
+					? 'Another entry already uses that URL name. Give this one a different title.'
+					: failure instanceof ApiError
+						? failure.message
+						: String(failure);
 		} finally {
 			busy = false;
 		}
@@ -93,11 +122,9 @@
 	<Problem error={type.error} />
 {:else}
 	<PageHeader title={type.data.definition.name}>
-		{#snippet meta()}
-			<span>{type.data.definition.fields.length} fields</span><span aria-hidden="true">·</span><span>version {type.data.version}</span>
-		{/snippet}
+		{#snippet description()}Everything here saves as you type and stays a draft until it is published.{/snippet}
 		{#snippet actions()}
-			<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>
+			{#if writes}<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>{/if}
 		{/snippet}
 	</PageHeader>
 
@@ -121,7 +148,12 @@
 	{:else if entries.isError}
 		<Problem error={entries.error} />
 	{:else if entries.data.data.length === 0 && q === ''}
-		<EmptyState icon={FileTextIcon} title="Nothing here yet">Create the first {type.data.definition.name.toLowerCase()} entry.</EmptyState>
+		<EmptyState icon={FileTextIcon} title="No {type.data.definition.name.toLowerCase()} yet" testid="entries-empty">
+			Write the first {oneOf(type.data.definition.name)}. Nobody outside the project sees it until it is published.
+			{#snippet action()}
+				{#if writes}<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />Write the first {oneOf(type.data.definition.name)}</Button>{/if}
+			{/snippet}
+		</EmptyState>
 	{:else}
 		<div class="overflow-hidden rounded-xl border border-border bg-card" class:opacity-60={entries.isPlaceholderData}>
 			<Table.Root>
@@ -166,8 +198,8 @@
 	<Dialog.Root bind:open={creating}>
 		<Dialog.Content class="sm:max-w-lg">
 			<Dialog.Header>
-				<Dialog.Title>New {type.data.definition.name.toLowerCase()} entry</Dialog.Title>
-				<Dialog.Description>It starts as a draft. Nothing is published until a changeset with it is approved and published.</Dialog.Description>
+				<Dialog.Title>New {oneOf(type.data.definition.name)}</Dialog.Title>
+				<Dialog.Description>It starts as a draft. Readers see it only once it is published.</Dialog.Description>
 			</Dialog.Header>
 			<form class="grid gap-4" onsubmit={create} aria-label="New entry">
 				<FieldInputs fields={asked} bind:form titleField={type.data.definition.title_field} stacked />

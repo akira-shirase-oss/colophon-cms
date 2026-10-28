@@ -60,17 +60,17 @@ test('a changeset is approved as the exact version on screen, and an edit makes 
 
 	await page.goto(`/studio/projects/${project}`);
 	await page.getByTestId('changesets-link').click();
-	await page.getByRole('button', { name: 'New changeset' }).click();
+	await page.getByRole('button', { name: 'New publish request' }).click();
 	await page.getByLabel('Title', { exact: true }).fill('Launch week');
 	await page.getByLabel('Spring launch', { exact: true }).check();
 	await page.getByLabel('Pricing page', { exact: true }).check();
 	expect(await violations(page)).toEqual([]);
-	await page.getByRole('button', { name: 'Create changeset' }).click();
+	await page.getByRole('button', { name: 'Create publish request' }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'open');
 	await expect(page.getByTestId('changeset-items').getByRole('listitem')).toHaveCount(2);
 	const changesetPath = new URL(page.url()).pathname;
 
-	await page.getByRole('button', { name: 'Submit for review' }).click();
+	await page.getByRole('button', { name: 'Ask for review' }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'awaiting_review');
 	await page.getByLabel('Comment (optional)').fill('Looks right.');
 	await page.getByRole('button', { name: 'Approve this version' }).click();
@@ -84,7 +84,7 @@ test('a changeset is approved as the exact version on screen, and an edit makes 
 	await expect(status(page)).toHaveAttribute('data-state', 'stale');
 	await expect(page.getByTestId('edited')).toHaveCount(1);
 	await expect(page.getByRole('button', { name: 'Approve this version' })).toHaveCount(0);
-	await page.getByRole('button', { name: 'Refresh to the current versions' }).click();
+	await page.getByRole('button', { name: 'Update to the latest versions' }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'awaiting_review');
 	await expect(page.getByTestId('changeset-items')).toContainText('Spring launch, final');
 	await expect(page.getByTestId('changeset-reviews')).toContainText('on an earlier version');
@@ -97,7 +97,7 @@ test('a changeset is approved as the exact version on screen, and an edit makes 
 	await expect(status(other)).toHaveAttribute('data-state', 'awaiting_review');
 	await retitle(page, project, first, 'Spring launch, really final');
 	await page.reload();
-	await page.getByRole('button', { name: 'Refresh to the current versions' }).click();
+	await page.getByRole('button', { name: 'Update to the latest versions' }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'awaiting_review');
 	await other.getByRole('button', { name: 'Approve this version' }).click();
 	await expect(other.getByTestId('changeset-notice')).toContainText('changed since you loaded it');

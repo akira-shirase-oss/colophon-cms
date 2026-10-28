@@ -4,7 +4,7 @@
   "loginTheme": "colophon",
   "enabled": true,
   "sslRequired": "external",
-  "registrationAllowed": false,
+  "registrationAllowed": true,
   "resetPasswordAllowed": false,
   "rememberMe": false,
   "clients": [
@@ -26,7 +26,13 @@
         "http://localhost:58090/auth/callback",
         "http://localhost:58091/auth/callback",
         "http://localhost:58092/auth/callback",
-        "http://localhost:58093/auth/callback"
+        "http://localhost:58093/auth/callback",
+        "http://localhost:58400/auth/callback",
+        "http://localhost:58401/auth/callback",
+        "http://localhost:58402/auth/callback",
+        "http://localhost:58403/auth/callback",
+        "http://localhost:58404/auth/callback",
+        "http://localhost:58405/auth/callback"
       ],
       "webOrigins": [],
       "attributes": {

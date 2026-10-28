@@ -35,9 +35,9 @@ test('a destination added in Settings gets each release, once', async ({ page })
 		await signIn(page);
 		const project = await newProject(page);
 		await page.goto(`/studio/projects/${project}/settings`);
-		await page.getByLabel('Destination name').fill('Site rebuild');
+		await page.getByLabel('Connection name').fill('Site rebuild');
 		await page.getByLabel('Webhook URL (https)').fill(hook.url);
-		await page.getByRole('button', { name: 'Add destination' }).click();
+		await page.getByRole('button', { name: 'Add website connection' }).click();
 		await expect(page.getByTestId('destinations')).toContainText('Site rebuild');
 		expect(await violations(page)).toEqual([]);
 
@@ -98,9 +98,9 @@ test('a CDN added in Settings is asked to purge what each release changed', asyn
 		const project = await newProject(page);
 		await page.goto(`/studio/projects/${project}/settings`);
 		await page.getByLabel('Kind').selectOption('cdn');
-		await page.getByLabel('Destination name').fill('Edge cache');
+		await page.getByLabel('Connection name').fill('Edge cache');
 		await page.getByLabel('Purge URL (https)').fill(cdn.url);
-		await page.getByRole('button', { name: 'Add destination' }).click();
+		await page.getByRole('button', { name: 'Add website connection' }).click();
 		await expect(page.getByTestId('destinations')).toContainText('Edge cache');
 		await expect(page.getByTestId('destinations')).toContainText('Purge on release');
 		expect(await violations(page)).toEqual([]);
@@ -152,9 +152,9 @@ test('a probe added in Settings verifies a release, and its receipt shows what i
 		const project = await newProject(page);
 		await page.goto(`/studio/projects/${project}/settings`);
 		await page.getByLabel('Kind').selectOption('probe');
-		await page.getByLabel('Destination name').fill('Home page');
+		await page.getByLabel('Connection name').fill('Home page');
 		await page.getByLabel('URL to check (https)').fill(checked.url);
-		await page.getByRole('button', { name: 'Add destination' }).click();
+		await page.getByRole('button', { name: 'Add website connection' }).click();
 		await expect(page.getByTestId('destinations')).toContainText('Check each release');
 		expect(await violations(page)).toEqual([]);
 

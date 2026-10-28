@@ -11,7 +11,7 @@
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
-	import { acceptInvitation, ApiError, lookupInvitation, me, signInUrl } from '#lib/api.ts';
+	import { acceptInvitation, ApiError, lookupInvitation, me, signInUrl, signUpUrl } from '#lib/api.ts';
 
 	const KEPT = 'colophon-invitation';
 
@@ -83,8 +83,11 @@
 {:else if who.isPending}
 	<p class="text-sm text-muted-foreground">Loading…</p>
 {:else if who.data === null}
-	<p data-testid="signed-out">Sign in first; this page will show the invitation afterwards.</p>
-	<Button href={signInUrl(resolve('/invite'))} data-sveltekit-reload>Sign in</Button>
+	<p data-testid="signed-out">Sign in first, or create an account if you don't have one; this page shows the invitation afterwards.</p>
+	<div class="flex flex-wrap gap-2">
+		<Button href={signInUrl(resolve('/invite'))} data-sveltekit-reload>Sign in</Button>
+		<Button variant="outline" href={signUpUrl(resolve('/invite'))} data-sveltekit-reload data-testid="create-account">Create an account</Button>
+	</div>
 {:else if outcome === 'joined' && offer.data}
 	<p data-testid="invite-outcome" role="status">
 		You joined <a class="underline underline-offset-2" href={resolve("/projects/[project]", { project: offer.data.project_id })}>{offer.data.project_name}</a>

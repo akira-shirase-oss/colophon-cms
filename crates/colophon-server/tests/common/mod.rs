@@ -13,10 +13,40 @@ use std::{
 use reqwest::{Method, StatusCode, header};
 use serde_json::Value;
 
-/// The port these tests run the server on; its callback is registered in the development realm.
-pub(crate) const PORT: u16 = 58092;
-/// The server's public origin.
-pub(crate) const ORIGIN: &str = "http://localhost:58092";
+/// The server's public origin: `http://localhost:58092`, or `COLOPHON_TEST_ORIGIN` when these
+/// tests were compiled with it set, so two checkouts can run them at once on different ports.
+/// Either way its callback must be registered in the development realm.
+pub(crate) const ORIGIN: &str = match option_env!("COLOPHON_TEST_ORIGIN") {
+    Some(origin) => origin,
+    None => "http://localhost:58092",
+};
+/// The port these tests run the server on: the one [`ORIGIN`] ends with.
+pub(crate) const PORT: u16 = port_of(ORIGIN);
+
+/// The digits after the last `:` of an origin, as a port; a compile error if there are none.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the loop asserts the port is at most 65535"
+)]
+const fn port_of(origin: &str) -> u16 {
+    let bytes = origin.as_bytes();
+    let mut start = bytes.len();
+    while start > 0 && bytes[start - 1].is_ascii_digit() {
+        start -= 1;
+    }
+    assert!(
+        start > 0 && start < bytes.len() && bytes[start - 1] == b':',
+        "COLOPHON_TEST_ORIGIN must end with :<port>"
+    );
+    let mut port: u32 = 0;
+    let mut index = start;
+    while index < bytes.len() {
+        port = port * 10 + (bytes[index] - b'0') as u32;
+        assert!(port <= 65_535, "the port is at most 65535");
+        index += 1;
+    }
+    port as u16
+}
 
 /// The real binary, killed when dropped.
 pub(crate) struct Server(Child);

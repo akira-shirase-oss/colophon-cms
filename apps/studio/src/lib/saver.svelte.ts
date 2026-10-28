@@ -8,6 +8,7 @@
 //   did reach the database the server replays its answer instead of saving twice (F02).
 
 import { ApiError, type Content, type Definition, type Draft, getEntry, type Loaded, newKey, saveEntry } from './api.ts';
+import { URL_NAME } from './words.ts';
 import { canonical, same } from './content.ts';
 import { forget, keep, type Kept, type Sent } from './drafts.ts';
 
@@ -289,7 +290,11 @@ export class Saver {
 			case 'not-found':
 				this.#sent = null;
 				this.status = 'refused';
-				this.message = error.message;
+				// The API names it a slug; the Studio says URL name (D-059), and which entry has it.
+				this.message =
+					error.reason === 'slug_taken'
+						? `another entry already uses this ${URL_NAME}${error.details?.entries?.[0] ? ` (“${error.details.entries[0].title}”)` : ''}: choose another`
+						: error.message;
 				return;
 		}
 	}

@@ -191,6 +191,9 @@ pub struct Identity {
     pub display_name: Option<String>,
     /// Whether it is one of the installation's administrators (D-043).
     pub administrator: bool,
+    /// Whether the installation has an administrator at all: until it does, a setup code from the
+    /// server's terminal makes the first one (D-061).
+    pub installation_set_up: bool,
 }
 
 /// An identity and the projects it is a member of: everything `/me` shows.
@@ -215,7 +218,8 @@ pub async fn profile(pool: &PgPool, id: Uuid) -> Result<Option<Profile>, DbError
     let identity = sqlx::query_as!(
         Identity,
         r#"SELECT i.id, i.issuer, i.subject, i.display_name,
-                  EXISTS (SELECT 1 FROM administrators a WHERE a.identity_id = i.id) AS "administrator!"
+                  EXISTS (SELECT 1 FROM administrators a WHERE a.identity_id = i.id) AS "administrator!",
+                  colophon_installation_set_up() AS "installation_set_up!"
            FROM identities i WHERE i.id = $1"#,
         id
     )

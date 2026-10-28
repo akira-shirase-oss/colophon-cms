@@ -53,7 +53,7 @@
 		boolean: 'Yes or no',
 		enum: 'Choice',
 		datetime: 'Date and time',
-		slug: 'Slug'
+		slug: 'URL name'
 	};
 
 	/** A field id from a label: lowercase letters, digits and underscores, starting with a letter. */
@@ -94,7 +94,7 @@
 				: draft.fields.some((field) => field.id === newId)
 					? `A field with the id ${newId} already exists.`
 					: newType === 'slug' && hasSlug
-						? 'A content type has at most one slug field.'
+						? 'A content type has at most one URL name field.'
 						: ''
 	);
 

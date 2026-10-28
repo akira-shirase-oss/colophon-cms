@@ -1,7 +1,8 @@
 <!--
-  A project's changesets (D-044): what each is waiting for, and a dialog to pin entries into a new
-  one. A changeset holds the exact revisions it was made from; reviews approve exactly those. An
-  entry can be picked to publish its current version or to take its published one down (D-049).
+  A project's publish requests (changesets, D-044; the words are D-059's): what each is waiting
+  for, and a dialog to gather several entries into a new one. A request holds the exact versions
+  it was made from; reviews approve exactly those. An entry can be picked to publish its current
+  version or to take its published one down (D-049). One entry is published from its editor.
 -->
 <script lang="ts">
 	import LayersIcon from '@lucide/svelte/icons/layers';
@@ -16,16 +17,22 @@
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
-	import { ApiError, createChangeset, entryState, listContentTypes, listEntries, newKey } from '#lib/api.ts';
-	import { ago, changesetsQuery } from '#lib/queries.ts';
+	import { ApiError, createChangeset, entryState, listContentTypes, listEntries, may, newKey } from '#lib/api.ts';
+	import { ago, changesetsQuery, projectQuery, typesQuery } from '#lib/queries.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
+	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
 
 	const project = $derived(page.params.project ?? '');
 	const sets = createQuery(() => changesetsQuery(project));
+	const mine = createQuery(() => projectQuery(project));
+	const types = createQuery(() => typesQuery(project));
+	// Making a request needs edit rights where its entries are; the server checks each one.
+	const makes = $derived(mine.data === undefined || may(mine.data, 'content.update'));
+	const firstType = $derived(types.data?.find((type) => type.slug !== 'articles') ?? types.data?.[0]);
 	let creating = $state(false);
 	// Every entry, by content type, to pick from: loaded when the dialog opens.
 	const choices = createQuery(() => ({
@@ -63,14 +70,15 @@
 	}
 </script>
 
-<svelte:head><title>Changesets · Colophon Studio</title></svelte:head>
+<svelte:head><title>Publish requests · Colophon Studio</title></svelte:head>
 
-<PageHeader title="Changesets">
+<PageHeader title="Publish requests">
 	{#snippet description()}
-		A changeset pins exact versions of entries. Someone reviews exactly those versions, and publishing makes them the next release.
+		A publish request holds exact versions of entries. Someone approves exactly those versions, and publishing makes them the next release. To publish
+		one entry, press Publish in its editor; here you can gather several into one request.
 	{/snippet}
 	{#snippet actions()}
-		<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New changeset</Button>
+		{#if makes}<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New publish request</Button>{/if}
 	{/snippet}
 </PageHeader>
 
@@ -79,7 +87,14 @@
 {:else if sets.isError}
 	<Problem error={sets.error} />
 {:else if sets.data.length === 0}
-	<EmptyState icon={LayersIcon} title="No changesets yet">Pick the entries you want to publish, and send them for review.</EmptyState>
+	<EmptyState icon={LayersIcon} title="No publish requests yet" testid="requests-empty">
+		This is how changes reach your website. Press Publish (or Ask for review) on an entry, or gather several entries into one request here.
+		{#snippet action()}
+			{#if firstType}
+				<Button variant="outline" href={resolve('/projects/[project]/[collection]', { project, collection: firstType.slug })}>Go to {firstType.definition.name}</Button>
+			{/if}
+		{/snippet}
+	</EmptyState>
 {:else}
 	<div class="overflow-hidden rounded-xl border border-border bg-card">
 		<Table.Root>
@@ -111,19 +126,24 @@
 	</div>
 {/if}
 
+<TechnicalDetails class="mt-8">
+	<p>The API and the CLI call publish requests <em>changesets</em>: each pins exact revisions and is identified by the SHA-256 of them.</p>
+	<p class="font-mono break-all">/api/v1/projects/{project}/environments/production/changesets</p>
+</TechnicalDetails>
+
 <Dialog.Root bind:open={creating}>
 	<Dialog.Content class="max-h-[90svh] overflow-y-auto sm:max-w-2xl">
 		<Dialog.Header>
-			<Dialog.Title>New changeset</Dialog.Title>
+			<Dialog.Title>New publish request</Dialog.Title>
 			<Dialog.Description>
-				It pins the current version of each entry you pick to publish, and the published version of each entry you pick to unpublish.
-				Later edits don't change it until you refresh it.
+				It holds the current version of each entry you pick to publish, and the live version of each entry you pick to unpublish. Later edits
+				don't change it until you update it.
 			</Dialog.Description>
 		</Dialog.Header>
 		<form class="grid gap-5" onsubmit={create} aria-label="New changeset">
 			<div class="grid gap-1.5">
-				<Label for="changeset-title">Title</Label>
-				<Input id="changeset-title" bind:value={title} required maxlength={200} placeholder="Spring launch" />
+				<Label for="request-title">Title</Label>
+				<Input id="request-title" bind:value={title} required maxlength={200} placeholder="Spring launch" />
 			</div>
 			{#if choices.isPending}
 				<Skeleton class="h-32 w-full rounded-lg" />
@@ -165,14 +185,14 @@
 							</fieldset>
 						{/if}
 					{:else}
-						<p class="text-sm text-muted-foreground">No entries to pick yet.</p>
+						<p class="text-sm text-muted-foreground">Nothing is written yet: write an entry first, then come back to publish it.</p>
 					{/each}
 				</div>
 			{/if}
 			{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
 			<Dialog.Footer>
 				<Button variant="outline" type="button" onclick={() => (creating = false)}>Cancel</Button>
-				<Button type="submit" disabled={busy || picked.length + takenDown.length === 0}>Create changeset</Button>
+				<Button type="submit" disabled={busy || picked.length + takenDown.length === 0}>Create publish request</Button>
 			</Dialog.Footer>
 		</form>
 	</Dialog.Content>

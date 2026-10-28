@@ -22,6 +22,7 @@ pub mod releases;
 pub mod roles;
 pub mod schedules;
 pub mod scope;
+pub mod setup;
 
 use std::{str::FromStr, time::Duration};
 
