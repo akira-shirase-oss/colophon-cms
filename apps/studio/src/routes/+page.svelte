@@ -78,7 +78,7 @@
 	<div class="mx-auto max-w-md py-16 text-center">
 		{#if page.url.searchParams.get('signed-out') === '1'}
 			<p role="status" class="mb-8 rounded-xl border border-border bg-card px-4 py-3 text-sm text-pretty" data-testid="signed-out-note">
-				You're signed out of Colophon. On a shared computer, close the browser too: the sign-in page may still remember you.
+				You're signed out of Colophon. The sign-in page may still remember you, so on a shared computer, close the browser.
 			</p>
 		{/if}
 		<h1 class="text-3xl font-semibold tracking-tight">Welcome to Colophon</h1>

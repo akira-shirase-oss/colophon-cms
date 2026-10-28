@@ -1,8 +1,9 @@
 <!--
   Who is signed in, and signing out, from any screen. Signing out ends the session on the server
-  first; only then does the page reload at the front door, so nothing of the old session stays
-  in memory. If the server can't be reached, it says so and stays signed in: it never claims a
-  sign-out that didn't happen.
+  first; then the browser goes to the identity provider to end its session there too (it asks to
+  confirm, then comes back to the front door), so the next person at this computer has to sign in
+  again. Either way the page reloads, so nothing of the old session stays in memory. If the server
+  can't be reached, it says so and stays signed in: it never claims a sign-out that didn't happen.
 -->
 <script lang="ts">
 	import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
@@ -30,8 +31,8 @@
 	async function leave() {
 		busy = true;
 		try {
-			await signOut();
-			window.location.assign(`${resolve('/')}?signed-out=1`);
+			const provider = await signOut();
+			window.location.assign(provider ?? `${resolve('/')}?signed-out=1`);
 		} catch (failure) {
 			busy = false;
 			const why =

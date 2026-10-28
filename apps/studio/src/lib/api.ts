@@ -329,13 +329,17 @@ export async function me(): Promise<Me | null> {
 	}
 }
 
-/** Ends this browser's session (`POST /auth/logout`, CSRF-checked). Already signed out counts as
- *  done: the outcome the person asked for holds either way. */
-export async function signOut(): Promise<void> {
+/**
+ * Ends this browser's session (`POST /auth/logout`, CSRF-checked) and answers where to end it at
+ * the identity provider too, so the next person at this computer must sign in again; `null` when
+ * the provider can't say. Already signed out counts as done: the outcome asked for holds either way.
+ */
+export async function signOut(): Promise<string | null> {
 	try {
-		await send('POST', '/auth/logout');
+		const answer = (await (await send('POST', '/auth/logout')).json().catch(() => null)) as { data?: { provider_sign_out?: string | null } } | null;
+		return answer?.data?.provider_sign_out ?? null;
 	} catch (error) {
-		if (error instanceof ApiError && error.failure === 'signed-out') return;
+		if (error instanceof ApiError && error.failure === 'signed-out') return null;
 		throw error;
 	}
 }

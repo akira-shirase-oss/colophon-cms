@@ -78,8 +78,10 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   - **Sign out from any screen** (`shell/AccountMenu.svelte`, in the project shell's header and the plain frame's):
     who is signed in, *Your work and projects*, and *Sign out*, which calls `POST /auth/logout` and only then
     reloads at the front door with a note that says so. If the server can't be reached it says you're still signed
-    in. The identity provider's own session is not ended (no RP-initiated logout yet), so the note tells people on
-    a shared computer to close the browser. Test: `tests/server/signout.spec.ts`.
+    in. Since f4338a7 the answer names the identity provider's sign-out address, and the browser follows it
+    (Keycloak asks to confirm, then returns to `/studio/`), so signing in again asks for a password; only when the
+    provider gives no address does the front door say to close the browser on a shared computer. Test:
+    `tests/server/signout.spec.ts`.
   - **Honest states and permission-aware navigation**: the sidebar, the Overview, the command palette and the new
     publish request dialog show only collections the role may read (the server refuses the others' lists), so the
     Overview and its checklist load for a role that can't read every collection. Each Overview section waits only for
