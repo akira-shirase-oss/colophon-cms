@@ -150,6 +150,109 @@ pub async fn begin_as_member(
     }))
 }
 
+/// Begins a transaction as the API token that acts as `identity`, in `project` (step R.4,
+/// D-063): checks, inside the project's context, that the token belongs to the project and is
+/// neither revoked nor expired, and reads its permissions. The check holds a share lock on the
+/// token's row until the transaction ends, so revoking the token waits for this request, and no
+/// request runs under a token once its revocation has committed. `None` if any check fails.
+pub async fn begin_as_token(
+    pool: &PgPool,
+    identity: Uuid,
+    project: Uuid,
+) -> Result<Option<MemberTransaction>, DbError> {
+    let mut transaction = begin(
+        pool,
+        Scope {
+            identity: Some(identity),
+            project: Some(project),
+        },
+    )
+    .await?;
+    let token = sqlx::query_scalar!(
+        "SELECT id FROM api_tokens
+         WHERE project_id = $1 AND identity_id = $2 AND revoked_at IS NULL AND expires_at > now()
+         FOR SHARE",
+        project,
+        identity
+    )
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    // Returning drops the transaction, which rolls it back.
+    let Some(token) = token else {
+        return Ok(None);
+    };
+    let permissions = sqlx::query!(
+        r#"SELECT coalesce(array_agg(action ORDER BY action, subject), '{}') AS "actions!",
+                  coalesce(array_agg(subject ORDER BY action, subject), '{}') AS "subjects!",
+                  coalesce(array_agg(array_to_string(fields, ',') ORDER BY action, subject), '{}')
+                      AS "fields!: Vec<Option<String>>",
+                  coalesce(array_agg(condition ORDER BY action, subject), '{}')
+                      AS "conditions!: Vec<Option<String>>"
+           FROM api_token_permissions
+           WHERE project_id = $1 AND token_id = $2"#,
+        project,
+        token
+    )
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    let policy = policy(
+        permissions.actions,
+        permissions.subjects,
+        permissions.fields,
+        permissions.conditions,
+    )?;
+    Ok(Some(MemberTransaction {
+        transaction,
+        identity,
+        project,
+        role: TOKEN_ROLE.to_owned(),
+        policy,
+    }))
+}
+
+/// What a token's transaction reports as its role: no role has this key (role keys are
+/// lowercase letters, digits and hyphens), so nothing that looks a role up finds it.
+pub const TOKEN_ROLE: &str = "API token";
+
+/// [`begin_as_token`], then resolves the environment slug. `None` if either check fails.
+pub async fn begin_in_project_as_token(
+    pool: &PgPool,
+    identity: Uuid,
+    project: Uuid,
+    environment: &str,
+) -> Result<Option<ProjectTransaction>, DbError> {
+    let Some(token) = begin_as_token(pool, identity, project).await? else {
+        return Ok(None);
+    };
+    in_environment(token, environment).await
+}
+
+/// A member's (or a token's) transaction, narrowed to the environment with this slug. `None` if
+/// the project has none.
+async fn in_environment(
+    mut member: MemberTransaction,
+    environment: &str,
+) -> Result<Option<ProjectTransaction>, DbError> {
+    let environment = sqlx::query_scalar!(
+        "SELECT id FROM environments WHERE project_id = $1 AND slug = $2",
+        member.project,
+        environment
+    )
+    .fetch_optional(&mut *member.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(environment.map(|environment| ProjectTransaction {
+        transaction: member.transaction,
+        identity: member.identity,
+        project: member.project,
+        environment,
+        role: member.role,
+        policy: member.policy,
+    }))
+}
+
 /// A role's permissions from the arrays `begin_as_member` reads. A stored action or condition the
 /// code doesn't know is corrupt data, not a permission to skip.
 pub(crate) fn policy(
@@ -187,25 +290,10 @@ pub async fn begin_in_project(
     project: Uuid,
     environment: &str,
 ) -> Result<Option<ProjectTransaction>, DbError> {
-    let Some(mut member) = begin_as_member(pool, identity, project).await? else {
+    let Some(member) = begin_as_member(pool, identity, project).await? else {
         return Ok(None);
     };
-    let environment = sqlx::query_scalar!(
-        "SELECT id FROM environments WHERE project_id = $1 AND slug = $2",
-        project,
-        environment
-    )
-    .fetch_optional(&mut *member.transaction)
-    .await
-    .map_err(DbError::from_query)?;
-    Ok(environment.map(|environment| ProjectTransaction {
-        transaction: member.transaction,
-        identity,
-        project,
-        environment,
-        role: member.role,
-        policy: member.policy,
-    }))
+    in_environment(member, environment).await
 }
 
 /// [`begin_as_member`], in an environment named by id (a schedule falling due knows its

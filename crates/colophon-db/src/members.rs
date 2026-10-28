@@ -472,6 +472,21 @@ pub async fn offer(
     }))
 }
 
+/// The role `identity` holds in the transaction's project, if they are a member.
+pub async fn role_of(
+    tx: &mut MemberTransaction,
+    identity: Uuid,
+) -> Result<Option<String>, DbError> {
+    sqlx::query_scalar!(
+        "SELECT role FROM memberships WHERE project_id = $1 AND identity_id = $2",
+        tx.project,
+        identity
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
 /// Accepts the invitation with this token hash as `identity`: the membership and the invitation's
 /// use, in one transaction.
 pub async fn accept(
@@ -526,6 +541,17 @@ pub async fn accept(
     .execute(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
+    // Recorded as the person who joined (D-063). Role keys are lowercase letters, digits and
+    // hyphens (migration 0017), so they need no escaping in the JSON.
+    crate::audit::record_in(
+        &mut transaction,
+        found.project_id,
+        identity,
+        "invitation.accepted",
+        &found.id.to_string(),
+        &format!(r#"{{"role":"{}"}}"#, found.role),
+    )
+    .await?;
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(Accepted::Joined {
         project_id: found.project_id,

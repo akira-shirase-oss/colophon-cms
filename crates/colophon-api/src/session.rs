@@ -4,6 +4,12 @@
 //! - A request with `Authorization: Bearer <token>` is authenticated by that token alone: a
 //!   bearer token is never sent by a browser on its own, so it needs no CSRF token, and an invalid
 //!   one is 401 rather than a fall back to the cookie.
+//! - A bearer token that starts with [`API_TOKEN_PREFIX`] is a project's API token (step R.4,
+//!   D-063): it acts as its own identity with its own permissions, only on its project's content
+//!   routes (`/api/v1/projects/{project}/environments/...`, and the stateless rich-text
+//!   validator). Another project's routes are 404 to it, as projects a person isn't in are; every
+//!   other route is 403 `api_token_not_allowed`, and so is scheduling, which runs later as a
+//!   person. A revoked or expired token is 401.
 //!
 //! - The session cookie holds a random token; only its hash is stored. `HttpOnly; Secure;
 //!   SameSite=Lax`, so scripts can't read it and other sites can't send it with their writes.
@@ -17,7 +23,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, header, request::Parts},
 };
 use colophon_auth::tokens;
-use colophon_db::{access, identity};
+use colophon_db::{access, identity, tokens as api_tokens};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -74,7 +80,13 @@ pub enum Credential {
     Session,
     /// A personal access token (`Authorization: Bearer`), as the CLI uses.
     Token,
+    /// A project's API token (`Authorization: Bearer colophon_api_…`, step R.4).
+    ApiToken,
 }
+
+/// What every API token's secret starts with, so it can't be mistaken for a personal token and
+/// secret scanners can recognise one that leaked.
+pub const API_TOKEN_PREFIX: &str = "colophon_api_";
 
 /// A signed-in caller. Extracting it checks the token, or the session and, for writes, CSRF and
 /// `Origin`.
@@ -84,18 +96,29 @@ pub struct SignedIn {
     pub identity: Uuid,
     /// The session's or the token's id (not the secret).
     pub session: Uuid,
-    /// Which of the two it is.
+    /// Which of them it is.
     pub credential: Credential,
+    /// For an API token, the one project it belongs to; `None` for people.
+    pub project: Option<Uuid>,
 }
 
 /// The caller behind `Authorization: Bearer <token>`.
-async fn bearer(services: &Services, value: &HeaderValue) -> Result<SignedIn, ApiError> {
+async fn bearer(
+    services: &Services,
+    value: &HeaderValue,
+    path: &str,
+) -> Result<SignedIn, ApiError> {
     let token = value
         .to_str()
         .ok()
         .and_then(|text| text.strip_prefix("Bearer "))
-        .filter(|token| token.len() == 43)
         .ok_or(ApiError::Unauthorized)?;
+    if let Some(secret) = token.strip_prefix(API_TOKEN_PREFIX) {
+        return api_token(services, secret, token, path).await;
+    }
+    if token.len() != 43 {
+        return Err(ApiError::Unauthorized);
+    }
     let found = access::find_access_token(&services.pool, &tokens::hash(token))
         .await
         .map_err(ApiError::from_db)?
@@ -109,7 +132,70 @@ async fn bearer(services: &Services, value: &HeaderValue) -> Result<SignedIn, Ap
         identity: found.identity_id,
         session: found.id,
         credential: Credential::Token,
+        project: None,
     })
+}
+
+/// The project API token `token` (whose random part is `secret`), on `path`.
+async fn api_token(
+    services: &Services,
+    secret: &str,
+    token: &str,
+    path: &str,
+) -> Result<SignedIn, ApiError> {
+    if secret.len() != 43 {
+        return Err(ApiError::Unauthorized);
+    }
+    let found = api_tokens::find(&services.pool, &tokens::hash(token))
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::Unauthorized)?;
+    let now = OffsetDateTime::now_utc();
+    if found.revoked_at.is_some() || found.expires_at <= now {
+        return Err(ApiError::Unauthorized);
+    }
+    let own = format!("/api/v1/projects/{}/", found.project_id);
+    if let Some(rest) = path.strip_prefix(&own) {
+        if !rest.starts_with("environments/") {
+            return Err(not_for_tokens(
+                "an API token works only with its project's content; members, roles, tokens and the audit log stay with people",
+            ));
+        }
+        if rest.ends_with("/schedule") {
+            return Err(not_for_tokens(
+                "a schedule publishes later as the person who made it, so API tokens can't schedule",
+            ));
+        }
+    } else if path.starts_with("/api/v1/projects/") {
+        // Another project: as unknown to the token as one a person isn't in.
+        return Err(ApiError::NotFound);
+    } else if path != "/api/v1/rich-text/validate" {
+        return Err(not_for_tokens(
+            "an API token works only with its project's content",
+        ));
+    }
+    if found
+        .last_used_at
+        .is_none_or(|last| now - last >= api_tokens_touch_interval())
+        && let Err(error) = api_tokens::touch(&services.pool, &found).await
+    {
+        tracing::warn!(%error, "could not record API token use");
+    }
+    Ok(SignedIn {
+        identity: found.identity_id,
+        session: found.id,
+        credential: Credential::ApiToken,
+        project: Some(found.project_id),
+    })
+}
+
+fn not_for_tokens(message: &'static str) -> ApiError {
+    ApiError::forbidden("api_token_not_allowed", message)
+}
+
+/// How often an API token's last use is written: at most once a minute, like a session's.
+const fn api_tokens_touch_interval() -> time::Duration {
+    time::Duration::MINUTE
 }
 
 impl FromRequestParts<AppState> for SignedIn {
@@ -118,7 +204,7 @@ impl FromRequestParts<AppState> for SignedIn {
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let services = services(state)?;
         if let Some(value) = parts.headers.get(header::AUTHORIZATION) {
-            return bearer(services, value).await;
+            return bearer(services, value, parts.uri.path()).await;
         }
         let token = cookie(&parts.headers, SESSION_COOKIE).ok_or(ApiError::Unauthorized)?;
         if token.len() != 43 {
@@ -174,6 +260,7 @@ impl FromRequestParts<AppState> for SignedIn {
             identity: session.identity_id,
             session: session.id,
             credential: Credential::Session,
+            project: None,
         })
     }
 }

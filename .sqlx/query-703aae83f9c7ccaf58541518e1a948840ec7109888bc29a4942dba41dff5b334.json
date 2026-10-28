@@ -1,0 +1,107 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.id, e.at, e.actor_id, n.display_name AS actor_name,\n                  coalesce(n.issuer = $6, false) AS \"actor_is_token!\", e.action, e.subject,\n                  e.detail::text AS \"detail!\"\n           FROM audit_events e\n           LEFT JOIN identities n ON n.id = e.actor_id\n           WHERE e.project_id = $1\n             AND ($2::uuid IS NULL OR e.id < $2)\n             AND ($4::text IS NULL OR e.action = $4)\n             AND ($5::uuid IS NULL OR e.actor_id = $5)\n           ORDER BY e.id DESC\n           LIMIT $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "audit_events",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "audit_events",
+            "name": "at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "actor_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "audit_events",
+            "name": "actor_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "actor_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "identities",
+            "name": "display_name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "actor_is_token!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "action",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "audit_events",
+            "name": "action"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "subject",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "audit_events",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "detail!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Text",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      null,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "703aae83f9c7ccaf58541518e1a948840ec7109888bc29a4942dba41dff5b334"
+}

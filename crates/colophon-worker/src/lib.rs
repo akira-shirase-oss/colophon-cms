@@ -47,7 +47,7 @@ pub struct Settings {
     pub slots: usize,
     /// Whether destinations may be private addresses (a development server on loopback only).
     pub allow_private: bool,
-    /// Where it runs, as probes report it (`COLOPHON_PROBE_LOCATION`); it only runs probes pinned
+    /// Where it runs, as probes report it (`COLOPHON_WORKER_LOCATION`); it only runs probes pinned
     /// to this location, or to none.
     pub location: String,
 }

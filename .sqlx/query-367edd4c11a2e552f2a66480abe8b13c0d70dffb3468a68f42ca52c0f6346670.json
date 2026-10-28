@@ -1,0 +1,177 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT t.id, t.identity_id, t.name, t.description, t.kind, t.created_by,\n                  n.display_name AS created_by_name, t.created_at, t.expires_at, t.last_used_at,\n                  t.revoked_at,\n                  coalesce(p.actions, '{}') AS \"actions!\",\n                  coalesce(p.subjects, '{}') AS \"subjects!\",\n                  coalesce(p.fields, '{}') AS \"fields!: Vec<Option<String>>\",\n                  coalesce(p.conditions, '{}') AS \"conditions!: Vec<Option<String>>\"\n           FROM api_tokens t\n           LEFT JOIN identities n ON n.id = t.created_by\n           LEFT JOIN LATERAL (\n               SELECT array_agg(action ORDER BY action, subject) AS actions,\n                      array_agg(subject ORDER BY action, subject) AS subjects,\n                      array_agg(array_to_string(fields, ',') ORDER BY action, subject) AS fields,\n                      array_agg(condition ORDER BY action, subject) AS conditions\n               FROM api_token_permissions\n               WHERE project_id = t.project_id AND token_id = t.id\n           ) p ON true\n           WHERE t.project_id = $1 AND ($2::uuid IS NULL OR t.id = $2)\n           ORDER BY t.created_at DESC, t.id DESC\n           LIMIT 200",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "api_tokens",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "identity_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "api_tokens",
+            "name": "identity_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "api_tokens",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "description",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "api_tokens",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "api_tokens",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "api_tokens",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "created_by_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "identities",
+            "name": "display_name"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "api_tokens",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "api_tokens",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "last_used_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "api_tokens",
+            "name": "last_used_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "revoked_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "api_tokens",
+            "name": "revoked_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "actions!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
+        "name": "subjects!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 13,
+        "name": "fields!: Vec<Option<String>>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 14,
+        "name": "conditions!: Vec<Option<String>>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "367edd4c11a2e552f2a66480abe8b13c0d70dffb3468a68f42ca52c0f6346670"
+}

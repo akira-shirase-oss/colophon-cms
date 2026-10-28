@@ -62,6 +62,10 @@ pub(crate) async fn open(
 ) -> Result<MemberTransaction, ApiError> {
     let services = services(state)?;
     let project = Uuid::try_parse(project).map_err(|_| ApiError::NotFound)?;
+    // Members' routes are people's: an API token is never a member (D-063).
+    if caller.project.is_some() {
+        return Err(ApiError::NotFound);
+    }
     scope::begin_as_member(&services.pool, caller.identity, project)
         .await
         .map_err(ApiError::from_db)?
@@ -234,10 +238,21 @@ pub(crate) async fn change(
         None,
         "only people whose role manages members can change roles",
     )?;
+    let before = members::role_of(&mut tx, identity)
+        .await
+        .map_err(ApiError::from_db)?;
     let outcome = members::change_role(&mut tx, identity, role)
         .await
         .map_err(ApiError::from_db)?;
     if outcome == Change::Done {
+        let change = serde_json::json!({"from": before, "to": role});
+        crate::audit::record(
+            &mut tx,
+            "member.role_changed",
+            &identity.to_string(),
+            &change,
+        )
+        .await?;
         tx.commit().await.map_err(ApiError::from_db)?;
     }
     change_result(outcome)
@@ -260,10 +275,20 @@ pub(crate) async fn remove(
             "only people whose role manages members can remove them",
         )?;
     }
+    let before = members::role_of(&mut tx, identity)
+        .await
+        .map_err(ApiError::from_db)?;
     let outcome = members::remove(&mut tx, identity)
         .await
         .map_err(ApiError::from_db)?;
     if outcome == Change::Done {
+        let action = if identity == caller.identity {
+            "member.left"
+        } else {
+            "member.removed"
+        };
+        let change = serde_json::json!({"role": before});
+        crate::audit::record(&mut tx, action, &identity.to_string(), &change).await?;
         tx.commit().await.map_err(ApiError::from_db)?;
     }
     change_result(outcome)
@@ -341,6 +366,15 @@ pub(crate) async fn invite(
     let invitation = members::invite(&mut tx, &tokens::hash(&token), role, label, expires_at)
         .await
         .map_err(ApiError::from_db)?;
+    // The link is the secret: the log keeps the role and label, never the token.
+    let made = serde_json::json!({"role": role, "label": label});
+    crate::audit::record(
+        &mut tx,
+        "invitation.created",
+        &invitation.id.to_string(),
+        &made,
+    )
+    .await?;
     tx.commit().await.map_err(ApiError::from_db)?;
     let origin = services
         .trusted_origins
@@ -374,6 +408,8 @@ pub(crate) async fn revoke(
         .await
         .map_err(ApiError::from_db)?
     {
+        let none = serde_json::json!({});
+        crate::audit::record(&mut tx, "invitation.revoked", &id.to_string(), &none).await?;
         tx.commit().await.map_err(ApiError::from_db)?;
         Ok(StatusCode::NO_CONTENT)
     } else {
