@@ -86,30 +86,36 @@
 					>{releaseName(generation)}</a
 				>{/if}.
 		</p>
-	{:else if outcome?.kind === 'published' || outcome?.kind === 'requested'}
-		<!-- Said below; pressing again would only make a second request. -->
-	{:else if oneClick || asks}
-		<Button class="w-full" onclick={() => go()} disabled={!saved || step !== ''} data-testid="publish-button">
-			{step !== '' ? step : oneClick ? (standing === 'changed' ? 'Publish changes' : 'Publish') : 'Ask for review'}
-		</Button>
-		<p class="text-xs text-muted-foreground">
-			{#if !saved}
-				Saving first…
-			{:else if oneClick}
-				Goes live for readers at once, as the next release. Your approval is recorded.
-			{:else}
-				Someone who can publish approves it and puts it live.
-			{/if}
-		</p>
-	{:else}
+	{:else if !(oneClick || asks)}
 		<p class="text-xs text-muted-foreground">Your role can't publish or ask for review here.</p>
 	{/if}
 
-	{#if (standing !== 'draft' || outcome?.kind === 'published') && outcome?.kind !== 'unpublished' && outcome?.kind !== 'requested' && (oneClick || asks)}
-		<!-- Taking it down is the same path in reverse, and undone by publishing again (D-059, rule 6). -->
-		<Button class="w-full" variant="outline" onclick={() => go(true)} disabled={step !== ''} data-testid="unpublish-button">
-			{oneClick ? 'Unpublish' : 'Ask to unpublish'}
-		</Button>
+	{#if mine !== undefined && (oneClick || asks)}
+		<!-- Side by side in the phone's bar, stacked in the desktop card. -->
+		<div class="flex gap-2 xl:grid">
+			{#if !(standing === 'live' && saved && outcome === null) && outcome?.kind !== 'published' && outcome?.kind !== 'requested'}
+				<Button class="flex-1" onclick={() => go()} disabled={!saved || step !== ''} data-testid="publish-button">
+					{step !== '' ? step : oneClick ? (standing === 'changed' ? 'Publish changes' : 'Publish') : 'Ask for review'}
+				</Button>
+			{/if}
+			{#if (standing !== 'draft' || outcome?.kind === 'published') && outcome?.kind !== 'unpublished' && outcome?.kind !== 'requested'}
+				<!-- Taking it down is the same path in reverse, and undone by publishing again (D-059, rule 6). -->
+				<Button class="flex-1" variant="outline" onclick={() => go(true)} disabled={step !== ''} data-testid="unpublish-button">
+					{oneClick ? 'Unpublish' : 'Ask to unpublish'}
+				</Button>
+			{/if}
+		</div>
+		{#if !(standing === 'live' && saved && outcome === null) && outcome === null}
+			<p class="text-xs text-muted-foreground {saved ? 'hidden xl:block' : ''}">
+				{#if !saved}
+					Saving first…
+				{:else if oneClick}
+					Goes live for readers at once, as the next release. Your approval is recorded.
+				{:else}
+					Someone who can publish approves it and puts it live.
+				{/if}
+			</p>
+		{/if}
 	{/if}
 
 	{#if outcome?.kind === 'unpublished'}

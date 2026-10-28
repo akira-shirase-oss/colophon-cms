@@ -115,6 +115,12 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     nothing new are left out and said so. *Duplicate* on each row copies what the role can read, adds "(copy)" to the
     title and takes the next free URL name, and opens the copy. One-click publishing lives in `lib/publishing.ts`,
     shared with the editor. Test: `tests/server/bulk.spec.ts`.
+  - **Phone-friendly review** (closes ROADMAP 3.7's open item): below `xl` the editor's save status and Publish /
+    Unpublish are a bar that stays at the bottom of the screen while the fields scroll (the details and Technical
+    details stay on the wide card); below `lg` a publish request's Review panel comes first, so Approve is on the first
+    screen. `tests/server/journey.spec.ts` now opens every project screen at 390x844 (home, overview, a collection,
+    the editor, publish requests, a request waiting for review, releases, a receipt, members, settings): no sideways
+    scroll, axe in light and dark, plain words outside Settings, Publish and Approve in view without scrolling.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

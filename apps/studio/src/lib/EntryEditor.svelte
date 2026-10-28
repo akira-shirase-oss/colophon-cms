@@ -400,8 +400,18 @@
 		</div>
 	</div>
 
-	<aside class="xl:sticky xl:top-20 xl:self-start">
-		<div class="rounded-xl border border-border bg-card p-4 shadow-xs">
+	<!--
+	  Saving and publishing: a card beside the fields on wide screens; below xl, a bar that stays at
+	  the bottom of the screen while the fields scroll, so Publish never sits under a long body
+	  (D-059, rule 7). The details and Technical details are on the wide card only.
+	-->
+	<aside
+		class="sticky bottom-0 z-20 -mx-5 border-t border-border bg-background/95 px-5 py-3 backdrop-blur sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10 xl:top-20 xl:bottom-auto xl:mx-0 xl:self-start xl:border-t-0 xl:bg-transparent xl:p-0 xl:backdrop-blur-none"
+		aria-label="Saving and publishing"
+		data-testid="entry-actions"
+	>
+		<div class="grid gap-x-6 gap-y-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,18rem)] sm:items-center xl:block xl:rounded-xl xl:border xl:border-border xl:bg-card xl:p-4 xl:shadow-xs">
+			<div class="min-w-0">
 			<p class="flex items-start gap-2 text-sm font-medium" role="status" data-testid="save-status" data-status={saver.status}>
 				{#if saver.status === 'saved'}
 					<CloudCheckIcon class="pop mt-0.5 size-4 shrink-0 text-live" aria-hidden="true" />
@@ -420,11 +430,12 @@
 			{#if saver.status === 'signed-out'}
 				<p class="mt-2 text-xs"><a class="underline" href={signInUrl(window.location.pathname)} data-sveltekit-reload>Sign in again</a> to save them.</p>
 			{/if}
-			<Button class="mt-3 w-full" variant="outline" size="sm" onclick={() => saver.saveNow()} disabled={saver.status === 'saved' || saver.status === 'conflict'}>
+			</div>
+			<Button class="mt-3 hidden w-full xl:flex" variant="outline" size="sm" onclick={() => saver.saveNow()} disabled={saver.status === 'saved' || saver.status === 'conflict'}>
 				Save now <kbd class="ml-auto font-sans text-[0.6875rem] text-muted-foreground">⌘S</kbd>
 			</Button>
 
-			<dl class="mt-4 space-y-2.5 border-t border-dotted border-border pt-4 text-sm">
+			<dl class="mt-4 hidden space-y-2.5 border-t border-dotted border-border pt-4 text-sm xl:block">
 				<div class="flex items-center justify-between gap-2">
 					<dt class="text-muted-foreground">Status</dt>
 					<dd><StatusBadge state={standing} generation={published?.generation ?? null} /></dd>
@@ -442,7 +453,7 @@
 					<dd>{new Date(latest.created_at).toLocaleDateString()}</dd>
 				</div>
 			</dl>
-			<div class="mt-4 border-t border-dotted border-border pt-4">
+			<div class="xl:mt-4 xl:border-t xl:border-dotted xl:border-border xl:pt-4">
 				<PublishEntry
 					{project}
 					{collection}
@@ -455,7 +466,7 @@
 					seenGeneration={releases.data?.generation}
 				/>
 			</div>
-			<TechnicalDetails class="mt-4 border-t border-dotted border-border pt-3">
+			<TechnicalDetails class="mt-4 hidden border-t border-dotted border-border pt-3 xl:block">
 				<p>Entry <span class="font-mono break-all">{entry}</span> in collection <span class="font-mono">{collection}</span></p>
 				<p>Revision <span class="font-mono break-all">{latest.revision.id}</span></p>
 				<p>Content hash <span class="font-mono break-all">{latest.revision.content_hash}</span></p>

@@ -220,14 +220,20 @@
 			</ul>
 		</section>
 
-		<div class="space-y-8">
+		<!-- Beside the entries on wide screens. Below lg its parts join the page's column, and the
+		     Review panel moves to the top, so a reviewer on a phone finds Approve without scrolling
+		     past every comparison (D-059, rule 7). -->
+		<div class="contents lg:block lg:space-y-8">
 			{#if shown.status.state !== 'open' && shown.status.state !== 'stale'}
 				<SchedulePanel {project} changeset={shown} canSchedule={publisher} />
 			{/if}
 			{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale' && shown.status.state !== 'published'}
-				<section class="rounded-xl border border-border bg-card p-4 shadow-xs" aria-label="Review">
+				<section class="-order-1 rounded-xl border border-border bg-card p-4 shadow-xs lg:order-none" aria-label="Review" data-testid="review-panel">
 					<h2 class="text-base font-semibold">Review</h2>
-					<p class="mt-1 text-sm text-muted-foreground">You approve exactly what is shown here. If it changes, your approval no longer counts.</p>
+					<p class="mt-1 text-sm text-muted-foreground">
+						You approve exactly the {shown.items.length === 1 ? 'version' : 'versions'} on this page<span class="lg:hidden">: the changes are below</span>. If
+						{shown.items.length === 1 ? 'it changes' : 'they change'}, your approval no longer counts.
+					</p>
 					<div class="mt-4 grid gap-1.5">
 						<Label for="review-comment">Comment (optional)</Label>
 						<Textarea id="review-comment" bind:value={comment} rows={3} maxlength={2000} />
