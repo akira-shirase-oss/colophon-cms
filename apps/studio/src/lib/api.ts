@@ -189,6 +189,9 @@ export interface Definition {
 	name: string;
 	title_field: string;
 	fields: FieldDefinition[];
+	/** A single type (D-067): it holds one entry, like site settings or a home page. Written only
+	 *  when true. */
+	single?: boolean;
 }
 
 /** One version of a content type. */

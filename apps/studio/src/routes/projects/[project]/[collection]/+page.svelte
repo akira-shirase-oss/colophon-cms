@@ -54,6 +54,14 @@
 		placeholderData: keepPreviousData
 	}));
 	const loaded = $derived((entries.data?.pages ?? []).flatMap((one) => one.data));
+	// A single type (D-067) holds one entry: this page opens it, or offers to create it.
+	const single = $derived(type.data?.definition.single === true);
+	const only = $derived(single && q === '' ? loaded[0] : undefined);
+	$effect(() => {
+		if (only !== undefined && !creating) {
+			void goto(resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: only.id }), { replaceState: true });
+		}
+	});
 	let filter = $state<'all' | EntryState>('all');
 	const rows = $derived(loaded.filter((entry) => filter === 'all' || entryState(entry) === filter));
 	const tally = $derived(
@@ -167,6 +175,8 @@
 	let creating = $state(page.url.searchParams.get('new') === '1');
 	let form = $state<Record<string, FormValue>>({});
 	let error = $state('');
+	/** The single type already has its entry (409 `single_exists`): offer to open it. */
+	let exists = $state(false);
 	let busy = $state(false);
 	// One key per entry being created: pressing Create again after a lost answer is safe.
 	let key = newKey();
@@ -183,6 +193,7 @@
 		}
 		busy = true;
 		error = '';
+		exists = false;
 		const content = starter(definition);
 		for (const field of asked) {
 			const value = storedValue(field, form[field.id] ?? formValue(field, content[field.id]));
@@ -215,6 +226,7 @@
 				failure instanceof ApiError && failure.reason === 'slug_taken'
 					? 'Another entry already uses that URL name. Give this one a different title.'
 					: plainError(failure, 'create entries here');
+			exists = failure instanceof ApiError && failure.reason === 'single_exists';
 		} finally {
 			busy = false;
 		}
@@ -231,7 +243,7 @@
 	<PageHeader title={type.data.definition.name}>
 		{#snippet description()}Everything here saves as you type and stays a draft until it is published.{/snippet}
 		{#snippet actions()}
-			{#if writes}<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>{/if}
+			{#if writes && !single}<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>{/if}
 		{/snippet}
 	</PageHeader>
 
@@ -254,6 +266,15 @@
 		<Skeleton class="h-48 w-full rounded-xl" />
 	{:else if entries.isError}
 		<Problem error={entries.error} what={type.data.definition.name} retry={() => entries.refetch()} />
+	{:else if single && loaded.length === 0}
+		<EmptyState icon={FileTextIcon} title="{type.data.definition.name} isn't written yet" testid="single-empty">
+			There's one {type.data.definition.name.toLowerCase()} for the whole site. Create it to start; after that, this opens it.
+			{#snippet action()}
+				{#if writes}<Button onclick={() => (creating = true)} data-testid="single-create">Create it</Button>{/if}
+			{/snippet}
+		</EmptyState>
+	{:else if single}
+		<p class="text-sm text-muted-foreground">Opening it…</p>
 	{:else if loaded.length === 0 && q === ''}
 		<EmptyState icon={FileTextIcon} title="No {type.data.definition.name.toLowerCase()} yet" testid="entries-empty">
 			Write the first {oneOf(type.data.definition.name)}. Nobody outside the project sees it until it is published.
@@ -395,7 +416,24 @@
 			</Dialog.Header>
 			<form class="grid gap-4" onsubmit={create} aria-label="New entry">
 				<FieldInputs fields={asked} bind:form titleField={type.data.definition.title_field} stacked {project} />
-				{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
+				{#if error}
+					<div role="alert" class="grid gap-2 text-sm text-destructive" data-testid="create-error">
+						<p>{error}</p>
+						{#if exists}
+							<div>
+								<Button
+									variant="outline"
+									size="sm"
+									onclick={async () => {
+										creating = false;
+										error = '';
+										await queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
+									}}>Open it</Button
+								>
+							</div>
+						{/if}
+					</div>
+				{/if}
 				<Dialog.Footer>
 					<Button variant="outline" type="button" onclick={() => (creating = false)}>Cancel</Button>
 					<Button type="submit" disabled={busy}>Create</Button>

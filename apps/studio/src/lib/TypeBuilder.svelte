@@ -15,6 +15,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
 	import { ApiError, type ContentType, type Definition, type Details, type FieldDefinition, newKey, updateContentType } from './api.ts';
+	import { plainError } from './errors.ts';
 	import { savedPaths, structureProblems } from './fieldDefs.ts';
 	import FieldsEditor from './FieldsEditor.svelte';
 	import { typesQuery } from './queries.ts';
@@ -68,7 +69,9 @@
 			await queryClient.invalidateQueries({ queryKey: ['types', project] });
 		} catch (failure) {
 			if (failure instanceof ApiError && failure.failure !== 'retry') {
-				refusal = { message: failure.message, details: failure.details, stale: failure.failure === 'conflict' };
+				// A refusal the Studio has words for gets them; the developer area keeps the server's otherwise.
+				const words = failure.reason === 'too_many_entries' ? plainError(failure) : failure.message;
+				refusal = { message: words, details: failure.details, stale: failure.failure === 'conflict' };
 			} else {
 				toast.error(failure instanceof Error ? failure.message : String(failure));
 			}
@@ -86,6 +89,24 @@
 	<label class="grid max-w-md gap-1.5">
 		<span class="text-sm font-medium">Name</span>
 		<Input bind:value={draft.name} maxlength={100} disabled={!editable} />
+	</label>
+
+	<label class="flex max-w-xl items-start gap-3 rounded-xl border border-border bg-card px-4 py-3" data-testid="single-switch">
+		<input
+			type="checkbox"
+			class="mt-0.5 size-4 accent-primary"
+			checked={draft.single === true}
+			onchange={(event) => {
+				// Written only when true, as the server writes definitions.
+				if (event.currentTarget.checked) draft.single = true;
+				else delete draft.single;
+			}}
+			disabled={!editable}
+		/>
+		<span>
+			<span class="block text-sm font-medium">Just one entry (like site settings or a home page)</span>
+			<span class="block text-xs text-muted-foreground">Editors open it straight from the sidebar instead of a list, and nobody can add a second.</span>
+		</span>
 	</label>
 
 	<div>

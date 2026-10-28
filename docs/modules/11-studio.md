@@ -205,6 +205,11 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     `tests/server/structures.spec.ts` (two kinds of section, a list of questions, a list of tags and a quote linking
     to a person, filled in and reordered, stored canonically, nothing to save after a reload, a refusal at `/faq/1/q`
     under its control, phone width, axe, plain words, and the person's "Linked from").
+- Step M.4 in the Studio (D-067): **single types**. The builder's switch *Just one entry (like site settings or a home
+  page)* writes `single: true` (left out otherwise). The sidebar opens a single type's one entry directly, and its page
+  redirects there; with none yet, it offers *Create it*. A second entry (409 `single_exists`) is refused as "This
+  already has its entry; edit that one." with *Open it*; making a type with several entries single (422
+  `too_many_entries`) is said plainly in the builder. Test: `tests/server/single.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

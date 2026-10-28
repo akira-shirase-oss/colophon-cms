@@ -50,6 +50,9 @@ const BY_REASON: Record<string, string> = {
 	reference_not_found: 'A linked entry isn’t there, or isn’t in the collection the field links to. Remove it and choose again.',
 	references_unpublished: `An entry in it links to an entry that isn't published yet. Publish that entry first, or in the same ${PUBLISH_REQUEST}.`,
 	still_referenced: `A published entry still links to an entry this takes down. Change or take down that entry first, or in the same ${PUBLISH_REQUEST}.`,
+	// Single types (D-067).
+	single_exists: 'This already has its entry; edit that one.',
+	too_many_entries: 'It has more than one entry already, so it can’t hold just one. Keep it as a list of entries, or make a new content type for the single entry.',
 	// 422s for API tokens.
 	not_for_tokens: 'An API token can’t manage people, roles, tokens or the activity log.',
 	invalid_expiry: 'A token lasts between 1 and 366 days.',
