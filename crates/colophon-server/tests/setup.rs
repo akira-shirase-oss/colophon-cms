@@ -289,8 +289,28 @@ async fn owner_publishes_in_one_click(seen: &mut Seen, owner: &Session, project:
     );
 }
 
+/// `GET /api/v1/installation` without signing in: its body, after checking it isn't cached.
+async fn installation() -> Value {
+    let response = reqwest::get(format!("http://127.0.0.1:{PORT}/api/v1/installation"))
+        .await
+        .expect("request");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
+    response.json().await.expect("JSON")
+}
+
 #[tokio::test]
 #[ignore = "needs the stack and its Keycloak"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one journey from a fresh installation to its first administrator, checked at each step"
+)]
 async fn a_setup_code_from_the_terminal_makes_the_first_administrator_once() {
     let database = FreshDatabase::new().await;
     let dir = scratch("setup-once");
@@ -300,6 +320,11 @@ async fn a_setup_code_from_the_terminal_makes_the_first_administrator_once() {
     let editor = sign_in("dev-editor").await;
     let owner = sign_in("dev-owner").await;
 
+    // Signed out, the front door can tell the installation is new (D-082), and not who runs it.
+    assert_eq!(
+        installation().await,
+        json!({"data": {"has_administrator": false}})
+    );
     let me = seen.call(&editor, Method::GET, "/me", None).await;
     assert_eq!(
         (
@@ -353,6 +378,10 @@ async fn a_setup_code_from_the_terminal_makes_the_first_administrator_once() {
             me.body["data"]["installation"]["has_administrator"].as_bool()
         ),
         (Some(true), Some(true))
+    );
+    assert_eq!(
+        installation().await,
+        json!({"data": {"has_administrator": true}})
     );
     let made = seen
         .call(

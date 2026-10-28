@@ -73,6 +73,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/auth/device/token", post(device::token))
         .route("/auth/device/{code}", get(device::show))
         .route("/me", get(auth::me))
+        .route("/api/v1/installation", get(setup::installation))
         .route("/api/v1/setup", post(setup::claim))
         .route(
             "/api/v1/projects",

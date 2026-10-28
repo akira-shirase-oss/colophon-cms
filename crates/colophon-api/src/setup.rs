@@ -12,6 +12,7 @@
 use axum::{
     Json,
     extract::{State, rejection::JsonRejection},
+    response::{IntoResponse, Response},
 };
 use colophon_auth::tokens;
 use colophon_db::setup::{self, Attempt, Claimed, LiveCode};
@@ -20,6 +21,7 @@ use uuid::Uuid;
 
 use crate::{
     ApiError, AppState,
+    health::no_store,
     session::{SignedIn, services},
     shape::Data,
 };
@@ -137,4 +139,28 @@ mod tests {
             Some("setup_code_invalid")
         );
     }
+}
+
+/// What anyone may know about the installation before signing in.
+#[derive(Serialize)]
+struct InstallationView {
+    /// Whether anyone is an administrator yet. Until someone is, the Studio's front door says this
+    /// Colophon is new and leads to creating the first account (D-082).
+    has_administrator: bool,
+}
+
+/// `GET /api/v1/installation`: whether the installation has an administrator yet. Unauthenticated,
+/// because the signed-out front door needs it; it says yes or no, never who. Not cached: it
+/// changes once, when someone presents the setup code.
+pub(crate) async fn installation(State(state): State<AppState>) -> Result<Response, ApiError> {
+    let services = services(&state)?;
+    let has_administrator = setup::has_administrator(&services.pool)
+        .await
+        .map_err(ApiError::from_db)?;
+    Ok(no_store(
+        Json(Data {
+            data: InstallationView { has_administrator },
+        })
+        .into_response(),
+    ))
 }
