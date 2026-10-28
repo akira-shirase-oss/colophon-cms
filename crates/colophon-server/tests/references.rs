@@ -11,7 +11,7 @@
 
 mod common;
 
-use common::{Reply, Server, Session, call, key, project, sign_in};
+use common::{Reply, Server, Session, call, join, key, project, sign_in};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 
@@ -192,6 +192,20 @@ async fn readers_never_get_a_reference_to_an_entry_they_cannot_get() {
         in_list.body
     );
 
+    // The author's page says who names them, in draft so far.
+    let read_ada = |session| {
+        let path = format!("{}/collections/people/entries/{ada}", base(&project));
+        async move {
+            call(session, Method::GET, &path, None, &[])
+                .await
+                .expect("request")
+        }
+    };
+    assert_eq!(
+        read_ada(&owner).await.body["data"]["referenced_by"],
+        json!([{"entry_id": story, "collection": "stories", "field": "author", "in_draft": true, "published": false}])
+    );
+
     // Publishing the story alone would show readers an author they can't get.
     let alone = try_release(
         &owner,
@@ -213,6 +227,24 @@ async fn readers_never_get_a_reference_to_an_entry_they_cannot_get() {
     )
     .await;
     assert_eq!(both.status, StatusCode::CREATED, "{}", both.body);
+    assert_eq!(
+        read_ada(&owner).await.body["data"]["referenced_by"][0]["published"],
+        true
+    );
+    // Someone whose role reads people but not stories isn't told about the story.
+    let roles = format!("/api/v1/projects/{project}/roles");
+    let reader = json!({"key": "people-reader", "name": "People reader", "permissions": [{"action": "content.read", "subject": "people"}]});
+    assert_eq!(
+        send(&owner, Method::POST, &roles, Some(&reader))
+            .await
+            .status,
+        StatusCode::CREATED
+    );
+    let guest = sign_in("dev-editor").await;
+    join(&owner, &guest, &project, "people-reader").await;
+    let seen = read_ada(&guest).await;
+    assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
+    assert_eq!(seen.body["data"]["referenced_by"], json!([]));
 
     // Taking the author down while the story names them is refused; both together works.
     let author_only = try_release(
