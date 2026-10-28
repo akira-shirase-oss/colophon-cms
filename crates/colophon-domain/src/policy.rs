@@ -2,8 +2,8 @@
 //!
 //! A role is data: a project's roles each hold a list of [`Permission`]s, and [`Policy::allows`]
 //! is the one deny-by-default evaluator every handler asks. A permission names an [`Action`] and
-//! what it applies to (one collection or all of them); field lists and the `own` condition are
-//! stored with it for milestone R's later steps and don't narrow anything yet. Every project
+//! what it applies to (one collection or all of them), and may be narrowed to some fields or to
+//! the member's own entries (since step R.3, below). Every project
 //! starts with the four built-in roles of D-042, whose permissions ([`Policy::builtin`]) give
 //! exactly the powers that table gave.
 //!

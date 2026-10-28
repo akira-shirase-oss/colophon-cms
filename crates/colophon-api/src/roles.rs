@@ -44,7 +44,8 @@ pub(crate) struct PermissionView {
     condition: Option<&'static str>,
 }
 
-/// A policy's permissions as the API shows them: `{"action", "subject"}`, sorted.
+/// A policy's permissions as the API shows them: `{"action", "subject"}`, with `fields` and
+/// `condition` where they narrow it, sorted.
 pub(crate) fn permission_views(policy: &Policy) -> Vec<PermissionView> {
     policy
         .permissions()

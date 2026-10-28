@@ -716,7 +716,7 @@ pub(crate) async fn list(
     let anyone = tx
         .policy
         .fields(Action::ContentRead, &path.collection, false);
-    let only_by = anyone.is_none().then_some(tx.identity);
+    let mut only_by = anyone.is_none().then_some(tx.identity);
     let title_field = match anyone {
         Some(Fields::All) => None,
         _ => Some(
@@ -727,6 +727,25 @@ pub(crate) async fn list(
                 .to_owned(),
         ),
     };
+    // A search matches titles, so it looks only where the role reads them: otherwise which
+    // entries match would confirm a guess at a title the answer leaves blank.
+    if let (Some(_), Some(title_field)) = (search, &title_field) {
+        let reads_title = |own: bool| {
+            tx.policy
+                .fields(Action::ContentRead, &path.collection, own)
+                .is_some_and(|fields| fields.includes(title_field))
+        };
+        if !reads_title(false) {
+            if reads_title(true) {
+                only_by = Some(tx.identity);
+            } else {
+                return Err(ApiError::forbidden(
+                    "titles_not_readable",
+                    "your role can't read titles here, so it can't search them",
+                ));
+            }
+        }
+    }
     let mut rows: Vec<Summary> = entries::list(
         &mut tx,
         &path.collection,

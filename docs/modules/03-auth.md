@@ -162,7 +162,9 @@ Built in step 1.7 (D-042), for people:
 - Entries enforce it (`colophon_api::visibility`): a read leaves out what the role can't read (`hidden_fields`) and
   marks what it can read but not change (`locked_fields`); an entry it can't read at all is 404; a list holds only
   the caller's own entries when that is all the role may read, with titles blank where the title field is hidden;
-  revisions and history the same. Creating may only set fields the role may create. Saving puts back every field
+  revisions and history the same. A title search (`?q=`) looks only where the role reads titles: its own entries
+  when it reads only theirs, and none (403 `titles_not_readable`) when it reads none, so which entries match can't
+  confirm a guess at a hidden title (found by the docs rewrite, fixed with a test that failed before). Creating may only set fields the role may create. Saving puts back every field
   the saver can't read exactly as stored, refuses one sent with a different value, and refuses any change to a
   field the role can't change (422 `field_not_permitted`, pointing at the field), measured against the immutable
   revision the editor started from. A publish request may pin an entry only if the role may change it.

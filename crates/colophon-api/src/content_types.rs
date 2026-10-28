@@ -8,9 +8,9 @@
 //!   required), allowed only if every stored entry stays valid; anything else is refused with
 //!   `needs_migration`.
 //!
-//! Any member may read them; only the project's owners and developers may change them. The
-//! slugs in [`RESERVED_SLUGS`] name Studio pages beside a project's collections, so no content
-//! type may take them (D-042).
+//! Any member may read them; a role with `schema.change` may change them (the built-in owners
+//! and developers, and any role an owner gives it, D-058). The slugs in [`RESERVED_SLUGS`] name
+//! Studio pages beside a project's collections, so no content type may take them (D-042).
 
 use std::sync::Arc;
 
