@@ -143,6 +143,14 @@ pub struct ErrorDetails {
     /// the reason are that type's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
+    /// For a refused deletion (`still_referenced`, D-080): the entries that still name it, in
+    /// collections the caller reads, shaped like a read's `referenced_by`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub referenced_by: Vec<Referrer>,
+    /// For a refused deletion (`entry_in_changeset`, D-080): the changesets, not yet published,
+    /// that would publish it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub changesets: Vec<PendingChangeset>,
 }
 
 impl ErrorDetails {
@@ -155,8 +163,50 @@ impl ErrorDetails {
             candidates: Vec::new(),
             permission: None,
             content_type: None,
+            referenced_by: Vec::new(),
+            changesets: Vec::new(),
         }
     }
+}
+
+/// An entry that names another (D-065), as a refusal lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Referrer {
+    /// The entry that names it.
+    pub entry_id: Uuid,
+    /// Its collection.
+    pub collection: String,
+    /// The reference field that names it.
+    pub field: String,
+    /// Its draft names it.
+    pub in_draft: bool,
+    /// What readers get of it names it.
+    pub published: bool,
+}
+
+/// A changeset that hasn't been published, as a refusal lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PendingChangeset {
+    /// The changeset.
+    pub id: Uuid,
+    /// Its title.
+    pub title: String,
+    /// Whether a schedule will publish it.
+    pub scheduled: bool,
+}
+
+/// A deletion refused because something still depends on the entry (D-080), with what it is.
+/// Boxed in [`ApiError`], so every `Result` in the API stays small.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StillNeeded {
+    /// `still_referenced` or `entry_in_changeset`.
+    pub reason: &'static str,
+    /// What is wrong and what to do, for people.
+    pub message: String,
+    /// For `still_referenced`: the referrers the caller may see.
+    pub referenced_by: Vec<Referrer>,
+    /// For `entry_in_changeset`: the changesets.
+    pub changesets: Vec<PendingChangeset>,
 }
 
 /// The most entries a `needs_migration` refusal lists.
@@ -338,6 +388,10 @@ pub enum ApiError {
     /// A content type change would make stored drafts or publications invalid (D-055). 422.
     #[error("{}", .0.message)]
     NeedsMigration(Box<InTheWay>),
+    /// A deletion refused while other entries name the entry or a changeset would publish it
+    /// (D-080). 409, naming them.
+    #[error("{}", .0.message)]
+    StillNeeded(Box<StillNeeded>),
     /// A local time the clocks show twice or skip in its time zone: the request must say which of
     /// the two instants it means (D-060). 422.
     #[error("{message}")]
@@ -453,6 +507,12 @@ impl ApiError {
                 "single_exists",
                 "this collection is a single type and already has its entry; edit that one",
             ),
+            // A pin or publication of an entry deleted meanwhile (D-080); callers that can say
+            // more match it first.
+            DbError::EntryDeleted { .. } => Self::conflict(
+                "entry_deleted",
+                "an entry this needs has just been deleted; look again and leave it out",
+            ),
             // 422, at the very place in the content (D-065).
             DbError::MissingReference {
                 field,
@@ -531,7 +591,8 @@ impl ApiError {
             | Self::RoleInUse { .. }
             | Self::IdempotencyKeyReused
             | Self::AlreadySetUp
-            | Self::Taken(_) => StatusCode::CONFLICT,
+            | Self::Taken(_)
+            | Self::StillNeeded(_) => StatusCode::CONFLICT,
             Self::RateLimited { .. } | Self::TooManyRequests { .. } => {
                 StatusCode::TOO_MANY_REQUESTS
             }
@@ -567,7 +628,8 @@ impl ApiError {
             | Self::RoleInUse { .. }
             | Self::IdempotencyKeyReused
             | Self::AlreadySetUp
-            | Self::Taken(_) => ErrorCode::Conflict,
+            | Self::Taken(_)
+            | Self::StillNeeded(_) => ErrorCode::Conflict,
             Self::RateLimited { .. } | Self::TooManyRequests { .. } => ErrorCode::RateLimited,
             Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
@@ -615,6 +677,11 @@ impl ApiError {
                 total: way.total,
                 content_type: way.content_type.clone(),
                 ..ErrorDetails::new(way.reason, way.pointer.clone())
+            }),
+            Self::StillNeeded(needed) => Some(ErrorDetails {
+                referenced_by: needed.referenced_by.clone(),
+                changesets: needed.changesets.clone(),
+                ..ErrorDetails::new(needed.reason, "")
             }),
             _ => None,
         };

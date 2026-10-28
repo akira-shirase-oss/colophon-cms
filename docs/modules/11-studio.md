@@ -498,6 +498,8 @@ Backend capabilities with no Studio screen or action:
 | `GET …/jobs?generation=` | Not used; the receipt already carries each destination's state, attempts and last error | none |
 | `GET …/permissions` | Not used; the Studio reads the same grants from the project | none |
 | `POST /api/v1/rich-text/validate` | Not used; the Studio validates with the same package before saving | none |
+| `DELETE …/entries/{entry}` (D-080) | No delete action in the Studio: an entry's page and a list's row actions should offer it, saying why when it's refused (published, still referenced, in a publish request) | S |
+| `GET /api/v1/projects?limit=&cursor=&q=` | The home lists every project from `/me` as one grid; it should page and search through this route, recent first once the API knows "recent" | S |
 
 Asked about, and complete for what the API offers: scheduled publishing (a local time with the two instants when
 clocks change, cancel, upcoming on Releases and My work; changing a time is cancel and schedule again, as in the API);
@@ -507,7 +509,7 @@ revoke); the activity log (by kind and person, older pages; the API has no date 
 picker in groups, list items and page sections; history (compare any revision, restore as a new one); bulk publish
 and unpublish from a list, and duplicate.
 
-Needs a backend route first (each M unless said): deleting entries, content types and components; renaming or
+Needs a backend route first (each M unless said): deleting content types and components; renaming or
 removing a project; changing or removing a website connection (only on and off today); rotating a token; seeing and
 ending one's sessions; defaults and conditions inside structures; geopoint fields. Later milestones (L): media
 library (P4), localization, comments and tasks, presence, visual preview (E), query filters and webhooks by event (D).

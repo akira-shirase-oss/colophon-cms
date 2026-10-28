@@ -1,6 +1,7 @@
 // Drafts through the testbed, in a real browser: create, edit and save with If-Match, replay a
-// save with its Idempotency-Key, and two tabs editing one article where the later save is
-// refused instead of overwriting the earlier one.
+// save with its Idempotency-Key, two tabs editing one article where the later save is refused
+// instead of overwriting the earlier one, and deleting (D-080): refused with its reason while a
+// changeset holds the article, then deleted, replayed with its key, and gone.
 
 import { expect, type Page, test } from '@playwright/test';
 import { signIn } from './sign-in.ts';
@@ -117,4 +118,50 @@ test('titles are searched with wildcards taken literally, and any revision reads
 	await expect(page.getByTestId('revision-content')).toContainText('Kitchen sink');
 	await expect(page.getByTestId('revision-content')).toContainText('Everything.');
 	await expect(page.getByTestId('revision-content')).not.toContainText('revised');
+});
+
+/** Creates a changeset holding `entry`, through the API as the signed-in page; its status. */
+async function newChangeset(page: Page, projectId: string, entry: string, title: string): Promise<number> {
+	return page.evaluate(
+		async ({ projectId, entry, title }) => {
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const response = await fetch(`/server/api/v1/projects/${projectId}/environments/production/changesets`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': crypto.randomUUID() },
+				body: JSON.stringify({ title, entries: [entry] })
+			});
+			return response.status;
+		},
+		{ projectId, entry, title }
+	);
+}
+
+test('delete an article: refused with its reason while a changeset holds it, then gone, and the deletion replays', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	await openEntries(page, projectId);
+
+	// An article a changeset holds: deleting it is refused, naming the changeset.
+	await page.getByLabel('New title').fill('Held article');
+	await page.getByRole('button', { name: 'Create article' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created Held article');
+	const held = await page.getByTestId('entries').locator('li', { hasText: 'Held article' }).getAttribute('data-id');
+	expect(held).not.toBeNull();
+	expect(await newChangeset(page, projectId, held ?? '', 'Testbed changeset')).toBe(201);
+	await page.getByRole('button', { name: 'Delete', exact: true }).click();
+	await expect(page.getByTestId('message')).toHaveText('409 conflict (entry_in_changeset)');
+	await expect(page.getByTestId('in-the-way')).toHaveText(['in changeset Testbed changeset']);
+	await expect(page.getByTestId('entries')).toContainText('Held article');
+
+	// An article nothing needs: deleted, gone from the list, and a retry with the same key replays.
+	await page.getByLabel('New title').fill('Short-lived article');
+	await page.getByRole('button', { name: 'Create article' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created Short-lived article');
+	await page.getByRole('button', { name: 'Delete', exact: true }).click();
+	await expect(page.getByTestId('message')).toHaveText('deleted Short-lived article');
+	await expect(page.getByTestId('editor')).toHaveCount(0);
+	await expect(page.getByTestId('entries')).not.toContainText('Short-lived article');
+	await expect(page.getByTestId('entries')).toContainText('Held article');
+	await page.getByRole('button', { name: 'Retry last delete' }).click();
+	await expect(page.getByTestId('message')).toHaveText('replayed deletion of Short-lived article');
 });

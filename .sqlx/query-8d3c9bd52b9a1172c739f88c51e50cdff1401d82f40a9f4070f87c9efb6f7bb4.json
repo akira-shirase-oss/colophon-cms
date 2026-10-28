@@ -1,0 +1,79 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT p.id, p.slug, p.name, m.role, r.name AS role_name FROM projects p\n         JOIN memberships m ON m.project_id = p.id AND m.identity_id = $1\n         JOIN roles r ON r.project_id = m.project_id AND r.key = m.role\n         WHERE ($2::uuid IS NULL\n                OR (p.name, p.id) > (SELECT a.name, a.id FROM projects a WHERE a.id = $2))\n           AND ($3::text IS NULL OR p.name ILIKE $3 ESCAPE '\\' OR p.slug ILIKE $3 ESCAPE '\\')\n         ORDER BY p.name, p.id\n         LIMIT $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "slug",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "role",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "memberships",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "role_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8d3c9bd52b9a1172c739f88c51e50cdff1401d82f40a9f4070f87c9efb6f7bb4"
+}

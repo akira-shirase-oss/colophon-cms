@@ -116,6 +116,58 @@ pub async fn list(pool: &PgPool, identity: Uuid) -> Result<Vec<Project>, DbError
     Ok(projects)
 }
 
+/// The most projects one page holds.
+pub const MAX_PAGE: i64 = 100;
+/// The longest project search, in characters.
+pub const MAX_SEARCH: usize = 100;
+
+/// A page of `identity`'s projects by name: those after the project `after` (by its name, then
+/// id), and with `search`, only those whose name or slug contains it in any case. A cursor naming
+/// a project the caller isn't in gives an empty page.
+pub async fn page(
+    pool: &PgPool,
+    identity: Uuid,
+    after: Option<Uuid>,
+    search: Option<&str>,
+    limit: i64,
+) -> Result<Vec<Project>, DbError> {
+    let pattern = search.map(|text| {
+        let escaped = text
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        format!("%{escaped}%")
+    });
+    let mut transaction = scope::begin(
+        pool,
+        Scope {
+            identity: Some(identity),
+            project: None,
+        },
+    )
+    .await?;
+    let projects = sqlx::query_as!(
+        Project,
+        r#"SELECT p.id, p.slug, p.name, m.role, r.name AS role_name FROM projects p
+         JOIN memberships m ON m.project_id = p.id AND m.identity_id = $1
+         JOIN roles r ON r.project_id = m.project_id AND r.key = m.role
+         WHERE ($2::uuid IS NULL
+                OR (p.name, p.id) > (SELECT a.name, a.id FROM projects a WHERE a.id = $2))
+           AND ($3::text IS NULL OR p.name ILIKE $3 ESCAPE '\' OR p.slug ILIKE $3 ESCAPE '\')
+         ORDER BY p.name, p.id
+         LIMIT $4"#,
+        identity,
+        after,
+        pattern,
+        limit
+    )
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(projects)
+}
+
 /// [`list`], inside a transaction already scoped to `identity`.
 pub(crate) async fn list_in(
     connection: &mut PgConnection,

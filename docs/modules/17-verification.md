@@ -72,6 +72,7 @@ quality claim (spec §30).
 | F12 | Duplicate/reordered external events | Authoritative reconciliation and exactly one logical effect (the spec's payment case is parked; applied to delivery and webhook receipts) |
 | F13 | Restore backup containing an old outbox | New recovery epoch; reconcile external effects before replay; no blind resend |
 | F14 | Deleted project appears in a restored backup | Deletion ledger reapplied before read APIs and caches are enabled |
+| F15 | An entry is deleted while a save adds a reference to it, a changeset pins it, or a release publishes it (D-080) | Never both: the one that waits finds the other committed, so the reference, pin or publication is refused as for a missing entry, or the deletion is refused (`still_referenced`, `published`). In place: `crates/colophon-db/tests/deletion.rs`, two real transactions, both orders |
 
 **In place (step 1.2):** F01 and F02 run against the real binary in
 `crates/colophon-server/tests/faults.rs`. A build with the `fault-injection` feature exits at a named point

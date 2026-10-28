@@ -12,6 +12,7 @@
 		{ href: resolve('/rich-text'), label: 'Rich text' },
 		{ href: resolve('/session'), label: 'Session' },
 		{ href: resolve('/setup'), label: 'Setup' },
+		{ href: resolve('/projects'), label: 'Projects' },
 		{ href: resolve('/entries'), label: 'Entries' },
 		{ href: resolve('/content-types'), label: 'Content types' },
 		{ href: resolve('/modelling'), label: 'Content modelling' },

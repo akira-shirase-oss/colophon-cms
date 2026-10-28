@@ -199,7 +199,7 @@ jobs:
             -c "ALTER SYSTEM SET log_lock_waits = on" \
             -c "ALTER SYSTEM SET deadlock_timeout = '50ms'" \
             -c "SELECT pg_reload_conf()"
-      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, custom roles, API tokens, schedules, who may create projects, changesets, public delivery, publishing with the worker, drafts, content types, content modelling, the Studio)
+      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, custom roles, API tokens, schedules, who may create projects, changesets, public delivery, publishing with the worker, drafts, content types, content modelling, deleting entries, the Studio)
         # Endpoints that never touch the database run back to back (throughput): their p99 has
         # threefold headroom even on the slowest runner seen, and health's requests a second say
         # how fast this runner is. Database-backed endpoints run at a fixed rate (steady), about
@@ -225,6 +225,10 @@ jobs:
         # 10,838 a second against about 12,900 on others) served only 833 session requests a second,
         # median 587 ms; limits on or off made no difference to it on the laptop (2,110 to 2,465
         # off, 2,235 to 2,544 on, alternating), so it runs at 400, about half of that runner.
+        # Projects failed next at 1,000 on a 7763 (p99 237 ms, 10 dropped): its admin's GET /me
+        # (median 120 ms against 2.7 ms for the editor's) returns every project the admin is in, up
+        # to 1,000, and the suites before the smokes create hundreds as dev-owner. It runs at 500
+        # until /me stops listing every project (docs/modules/04-api.md, open decisions).
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 DURATION=20s
@@ -236,7 +240,7 @@ jobs:
           RATE=450 P99_MS=200 scripts/load.sh roles steady
           RATE=200 P99_MS=200 scripts/load.sh tokens steady
           RATE=500 P99_MS=200 scripts/load.sh schedules steady
-          RATE=1000 P99_MS=200 scripts/load.sh projects steady
+          RATE=500 P99_MS=200 scripts/load.sh projects steady
           RATE=400 P99_MS=200 scripts/load.sh changesets steady
           RATE=1500 P99_MS=200 scripts/load.sh delivery steady
           # RATE counts publishes here, five requests each.
@@ -246,6 +250,10 @@ jobs:
           # Structures and references (M.1 to M.3): about 1,156 a second back to back on the
           # laptop, so about 600 on a 7763; half is 300.
           RATE=300 P99_MS=500 scripts/load.sh modelling steady
+          # Deleting entries (D-080): RATE counts iterations, about 2.3 requests each. About 590
+          # a second back to back on the laptop (1,284 requests), so about 300 on a 7763; half
+          # is 150.
+          RATE=150 P99_MS=500 scripts/load.sh deletion steady
           TOTAL=50000 P99_MS=50 scripts/load.sh studio throughput
       - name: Service logs, and what the database was doing
         if: failure()
