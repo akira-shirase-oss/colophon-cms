@@ -17,7 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use colophon_db::DbError;
-use colophon_domain::{rich_text::Rejection, schema::Refusal};
+use colophon_domain::{policy::Action, rich_text::Rejection, schema::Refusal};
 use serde::{Serialize, Serializer};
 use uuid::Uuid;
 
@@ -134,6 +134,10 @@ pub struct ErrorDetails {
     /// `skipped_local_time`), earlier first, as RFC 3339.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub candidates: Vec<String>,
+    /// The permission the caller's role lacks (`missing_permission`), as roles name it:
+    /// `content.publish`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission: Option<&'static str>,
 }
 
 impl ErrorDetails {
@@ -144,6 +148,7 @@ impl ErrorDetails {
             entries: Vec::new(),
             total: None,
             candidates: Vec::new(),
+            permission: None,
         }
     }
 }
@@ -341,18 +346,33 @@ pub enum ApiError {
     /// Not signed in, or the session ended.
     #[error("sign in first")]
     Unauthorized,
-    /// Not allowed; the reason is safe to show.
-    #[error("{0}")]
-    Forbidden(&'static str),
+    /// Not allowed. `details.reason` says why in a stable code (`missing_permission`,
+    /// `cannot_grant`, …) and, for a missing permission, `details.permission` names it; the
+    /// message is safe to show.
+    #[error("{message}")]
+    Forbidden {
+        /// A stable code clients can act on.
+        reason: &'static str,
+        /// The permission the caller's role lacks, for `missing_permission`.
+        permission: Option<&'static str>,
+        /// What is wrong, for people.
+        message: &'static str,
+    },
     /// No such resource (or one the caller may not see).
     #[error("no such resource")]
     NotFound,
     /// Public content that was published and has been taken down: 410, never cached.
     #[error("this was published and has been taken down")]
     Gone,
-    /// A conflict with the current state; the reason is safe to show.
-    #[error("{0}")]
-    Conflict(&'static str),
+    /// A conflict with the current state. `details.reason` says which in a stable code
+    /// (`already_published`, `last_owner`, …); the message is safe to show.
+    #[error("{message}")]
+    Conflict {
+        /// A stable code clients can act on.
+        reason: &'static str,
+        /// What is wrong, for people.
+        message: &'static str,
+    },
     /// Temporarily unable to serve; the reason is safe to show.
     #[error("{0}")]
     Unavailable(&'static str),
@@ -369,6 +389,29 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    /// Not allowed, for the stable `reason`.
+    pub(crate) const fn forbidden(reason: &'static str, message: &'static str) -> Self {
+        Self::Forbidden {
+            reason,
+            permission: None,
+            message,
+        }
+    }
+
+    /// Not allowed because the caller's role lacks `permission` here (D-058).
+    pub(crate) const fn missing(permission: Action, message: &'static str) -> Self {
+        Self::Forbidden {
+            reason: "missing_permission",
+            permission: Some(permission.as_str()),
+            message,
+        }
+    }
+
+    /// A conflict with the current state, for the stable `reason`.
+    pub(crate) const fn conflict(reason: &'static str, message: &'static str) -> Self {
+        Self::Conflict { reason, message }
+    }
+
     /// Wraps any error as an internal failure.
     pub fn internal(cause: impl Into<Box<dyn StdError + Send + Sync>>) -> Self {
         Self::Internal(cause.into())
@@ -422,8 +465,8 @@ impl ApiError {
             Self::InvalidHeader(_) => StatusCode::BAD_REQUEST,
             Self::PreconditionRequired(_) => StatusCode::PRECONDITION_REQUIRED,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
-            Self::Forbidden(_) => StatusCode::FORBIDDEN,
-            Self::Conflict(_)
+            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
+            Self::Conflict { .. }
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
@@ -454,10 +497,10 @@ impl ApiError {
             | Self::NeedsMigration(_) => ErrorCode::ValidationFailed,
             Self::PreconditionRequired(_) => ErrorCode::PreconditionRequired,
             Self::Unauthorized => ErrorCode::Unauthorized,
-            Self::Forbidden(_) => ErrorCode::Forbidden,
+            Self::Forbidden { .. } => ErrorCode::Forbidden,
             Self::NotFound => ErrorCode::NotFound,
             Self::Gone => ErrorCode::Gone,
-            Self::Conflict(_)
+            Self::Conflict { .. }
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
@@ -492,6 +535,13 @@ impl ApiError {
             Self::RoleInUse { .. } => Some(ErrorDetails::new("role_in_use", "")),
             Self::IdempotencyKeyReused => Some(ErrorDetails::new("idempotency_key_reused", "")),
             Self::AlreadySetUp => Some(ErrorDetails::new("already_set_up", "")),
+            Self::Forbidden {
+                reason, permission, ..
+            } => Some(ErrorDetails {
+                permission: *permission,
+                ..ErrorDetails::new(reason, "")
+            }),
+            Self::Conflict { reason, .. } => Some(ErrorDetails::new(reason, "")),
             Self::InvalidField {
                 reason, pointer, ..
             } => Some(ErrorDetails::new(reason, *pointer)),
@@ -685,6 +735,71 @@ mod tests {
         let internal = ApiError::internal(io::Error::other("x"));
         assert_eq!(internal.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(internal.code().as_str(), "internal");
+    }
+
+    #[test]
+    fn refusals_say_why_in_a_stable_code() {
+        // A client (the Studio, the CLI, an agent) acts on the reason, never on the wording.
+        let missing = ApiError::missing(
+            Action::ContentPublish,
+            "your role can't publish this content",
+        );
+        assert_eq!(missing.status(), StatusCode::FORBIDDEN);
+        let details = missing.public().details.expect("details");
+        assert_eq!(
+            (details.reason, details.permission),
+            ("missing_permission", Some("content.publish"))
+        );
+        let grant = ApiError::forbidden(
+            "cannot_grant",
+            "a role can only be given powers your own role has",
+        );
+        let details = grant.public().details.expect("details");
+        assert_eq!((details.reason, details.permission), ("cannot_grant", None));
+        let conflict = ApiError::conflict(
+            "already_published",
+            "this changeset has already been published",
+        );
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        assert_eq!(conflict.code().as_str(), "conflict");
+        let public = conflict.public();
+        assert_eq!(public.message, "this changeset has already been published");
+        assert_eq!(public.details.expect("details").reason, "already_published");
+    }
+
+    #[test]
+    fn every_refusal_reason_in_the_api_is_a_stable_code() {
+        // Reasons are API: lowercase snake case, and each names one situation. This reads the
+        // handlers' source, so a new refusal without a proper code fails here.
+        let mut seen = Vec::new();
+        for file in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src")).expect("src") {
+            let path = file.expect("entry").path();
+            if path.ends_with("error.rs") {
+                continue; // the constructors and this test, not refusals
+            }
+            let source = std::fs::read_to_string(&path).expect("source");
+            for call in ["ApiError::forbidden(", "ApiError::conflict("] {
+                for (at, _) in source.match_indices(call) {
+                    let rest = source[at + call.len()..].trim_start();
+                    let Some(rest) = rest.strip_prefix('"') else {
+                        continue;
+                    };
+                    let reason = &rest[..rest.find('"').expect("a closing quote")];
+                    assert!(
+                        !reason.is_empty()
+                            && reason.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
+                        "{}: reason {reason:?} is not snake case",
+                        path.display()
+                    );
+                    seen.push(reason.to_owned());
+                }
+            }
+        }
+        assert!(
+            seen.len() >= 20,
+            "found only {} refusals: did the call style change?",
+            seen.len()
+        );
     }
 
     #[test]

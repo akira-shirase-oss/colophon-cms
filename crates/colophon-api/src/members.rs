@@ -51,7 +51,7 @@ pub(crate) fn require(
     if policy.allows(action, collection) {
         Ok(())
     } else {
-        Err(ApiError::Forbidden(why))
+        Err(ApiError::missing(action, why))
     }
 }
 
@@ -185,8 +185,12 @@ fn change_result(change: Change) -> Result<StatusCode, ApiError> {
     match change {
         Change::Done => Ok(StatusCode::NO_CONTENT),
         Change::NotFound => Err(ApiError::NotFound),
-        Change::LastOwner => Err(ApiError::Conflict("a project must keep at least one owner")),
-        Change::NotPermitted => Err(ApiError::Forbidden(
+        Change::LastOwner => Err(ApiError::conflict(
+            "last_owner",
+            "a project must keep at least one owner",
+        )),
+        Change::NotPermitted => Err(ApiError::forbidden(
+            "cannot_grant",
             "your role can't make this change: it gives or takes away only roles whose every power it has",
         )),
         Change::UnknownRole => Err(unknown_role()),
@@ -325,7 +329,8 @@ pub(crate) async fn invite(
     )?;
     let offered = offered.ok_or_else(unknown_role)?;
     if !fresh.covers(&offered) {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
+            "cannot_grant",
             "you can only invite people to roles whose every power your own role has",
         ));
     }
@@ -444,7 +449,8 @@ pub(crate) async fn accept(
                 data: JoinedView { project_id, role },
             }))
         }
-        Accepted::AlreadyMember => Err(ApiError::Conflict(
+        Accepted::AlreadyMember => Err(ApiError::conflict(
+            "already_member",
             "you are already a member of this project",
         )),
         Accepted::Gone => Err(ApiError::NotFound),

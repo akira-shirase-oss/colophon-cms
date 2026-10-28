@@ -180,7 +180,8 @@ pub(crate) async fn approve(
 ) -> Result<StatusCode, ApiError> {
     let services = services(&state)?;
     if caller.credential != Credential::Session {
-        return Err(ApiError::Forbidden(
+        return Err(ApiError::forbidden(
+            "browser_session_required",
             "approve a device from a browser where you are signed in",
         ));
     }

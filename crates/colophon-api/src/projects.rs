@@ -102,12 +102,14 @@ pub(crate) async fn create(
     {
         Standing::Administrator => {}
         Standing::Member => {
-            return Err(ApiError::Forbidden(
+            return Err(ApiError::forbidden(
+                "administrators_only",
                 "only an administrator can create projects; ask one to invite you to a project",
             ));
         }
         Standing::NotBootstrapped => {
-            return Err(ApiError::Forbidden(
+            return Err(ApiError::forbidden(
+                "not_set_up",
                 "this installation has no administrator yet: enter the setup code its server printed when it started, or its operator runs `colophon admin bootstrap`",
             ));
         }
@@ -120,7 +122,9 @@ pub(crate) async fn create(
     )
     .await
     .map_err(|error| match error {
-        DbError::Conflict => ApiError::Conflict("a project with this slug already exists"),
+        DbError::Conflict => {
+            ApiError::conflict("project_exists", "a project with this slug already exists")
+        }
         other => ApiError::from_db(other),
     })?;
     Ok((

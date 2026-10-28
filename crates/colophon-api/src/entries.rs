@@ -111,11 +111,21 @@ struct DraftView {
     /// Fields the caller's role can read but not change: an editor shows them locked.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     locked_fields: Vec<String>,
+    /// On a read, what readers get now: the live version, or `null` when the entry isn't
+    /// published (as on a list's summaries). Left out of create and save answers, which don't
+    /// look it up; a save never changes what is live.
+    #[serde(skip_serializing_if = "Publication::not_looked_up")]
+    published: Publication,
 }
 
 impl DraftView {
     /// The draft as the caller may see it: `None` if their role can't read it.
-    fn shown(draft: Draft, access: &Access, content_type: &ContentType) -> Result<Self, ApiError> {
+    fn shown(
+        draft: Draft,
+        published: Publication,
+        access: &Access,
+        content_type: &ContentType,
+    ) -> Result<Self, ApiError> {
         let read = access.read.as_ref().ok_or(ApiError::NotFound)?;
         let fields = field_ids(content_type);
         let (content, hidden_fields) = visibility::project(draft.content, read, &fields)?;
@@ -133,6 +143,7 @@ impl DraftView {
             content: RawValue::from_string(content).map_err(ApiError::internal)?,
             locked_fields: visibility::locked(access, &fields),
             hidden_fields,
+            published,
         })
     }
 }
@@ -148,11 +159,49 @@ fn field_ids(content_type: &ContentType) -> Vec<String> {
 #[derive(Serialize)]
 struct SummaryView {
     id: Uuid,
+    /// Who created it: the member whose own entry it is (D-058).
+    created_by: Uuid,
     updated_at: String,
     revision: RevisionView,
     /// What readers get now, if the entry is published: so a list can say draft, live or
     /// changed since it went live.
     published: Option<LiveView>,
+}
+
+/// Whether an entry is live, as an answer about it says.
+enum Publication {
+    /// The answer didn't look it up: the field is left out.
+    NotLookedUp,
+    /// Not published: `null`.
+    Unpublished,
+    /// Published: the live version and its release.
+    Live(LiveView),
+}
+
+impl Publication {
+    fn not_looked_up(&self) -> bool {
+        matches!(self, Self::NotLookedUp)
+    }
+}
+
+impl From<Option<(Uuid, i64)>> for Publication {
+    fn from(live: Option<(Uuid, i64)>) -> Self {
+        live.map_or(Self::Unpublished, |(revision_id, generation)| {
+            Self::Live(LiveView {
+                revision_id,
+                generation,
+            })
+        })
+    }
+}
+
+impl Serialize for Publication {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Live(live) => live.serialize(serializer),
+            Self::NotLookedUp | Self::Unpublished => serializer.serialize_none(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -391,7 +440,10 @@ fn may_read(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError> {
     if some {
         Ok(())
     } else {
-        Err(ApiError::Forbidden("your role can't read entries here"))
+        Err(ApiError::missing(
+            Action::ContentRead,
+            "your role can't read entries here",
+        ))
     }
 }
 
@@ -457,7 +509,10 @@ pub(crate) async fn create(
     let create = tx
         .policy
         .fields(Action::ContentCreate, &path.collection, true)
-        .ok_or(ApiError::Forbidden("your role can't create entries here"))?;
+        .ok_or(ApiError::missing(
+            Action::ContentCreate,
+            "your role can't create entries here",
+        ))?;
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
@@ -481,7 +536,7 @@ pub(crate) async fn create(
         .await
         .map_err(ApiError::from_db)?;
     let access = Access::of(&tx.policy, tx.identity, &path.collection, draft.created_by);
-    let view = DraftView::shown(draft, &access, &content_type)?;
+    let view = DraftView::shown(draft, Publication::NotLookedUp, &access, &content_type)?;
     finish(tx, CREATE, key, StatusCode::CREATED, view).await
 }
 
@@ -503,7 +558,10 @@ pub(crate) async fn save(
             .fields(Action::ContentUpdate, &path.collection, own)
             .is_none()
     }) {
-        return Err(ApiError::Forbidden("your role can't change entries here"));
+        return Err(ApiError::missing(
+            Action::ContentUpdate,
+            "your role can't change entries here",
+        ));
     }
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
@@ -519,10 +577,10 @@ pub(crate) async fn save(
         .ok_or(ApiError::NotFound)?;
     let access = Access::of(&tx.policy, tx.identity, &path.collection, created_by);
     let read = access.read.clone().ok_or(ApiError::NotFound)?;
-    let update = access
-        .update
-        .clone()
-        .ok_or(ApiError::Forbidden("your role can't change this entry"))?;
+    let update = access.update.clone().ok_or(ApiError::missing(
+        Action::ContentUpdate,
+        "your role can't change this entry",
+    ))?;
     // The version the editor started from; revisions never change. A stale one is reported by
     // the save itself.
     let stored = entries::revision(&mut tx, &path.collection, entry, expected)
@@ -569,7 +627,7 @@ pub(crate) async fn save(
         .map_err(ApiError::from_db)?
     {
         Saved::Saved(draft) => {
-            let view = DraftView::shown(*draft, &access, &content_type)?;
+            let view = DraftView::shown(*draft, Publication::NotLookedUp, &access, &content_type)?;
             finish(tx, SAVE, key, StatusCode::OK, view).await
         }
         Saved::Stale { current } => Err(ApiError::StaleRevision { current }),
@@ -586,7 +644,7 @@ pub(crate) async fn get(
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_read(&tx, &path.collection)?;
-    let draft = entries::get(&mut tx, &path.collection, entry)
+    let (draft, published) = entries::get_with_live(&mut tx, &path.collection, entry)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
@@ -595,7 +653,7 @@ pub(crate) async fn get(
     tx.commit().await.map_err(ApiError::from_db)?;
     let revision = draft.revision.id;
     let body = serde_json::to_string(&Data {
-        data: DraftView::shown(draft, &access, &content_type)?,
+        data: DraftView::shown(draft, published.into(), &access, &content_type)?,
     })
     .map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, Some(revision), false))
@@ -697,6 +755,7 @@ pub(crate) async fn list(
             }
             Ok(SummaryView {
                 id: row.entry_id,
+                created_by: row.created_by,
                 updated_at: rfc3339(row.updated_at)?,
                 revision: RevisionView::new(row.revision)?,
                 published: row.published.map(|(revision_id, generation)| LiveView {
