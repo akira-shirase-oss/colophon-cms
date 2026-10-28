@@ -32,6 +32,7 @@ test("the theme switch, the mark and the brand icons are the website's own files
 test("the status words and what they promise are the website's", () => {
 	expect(docsStatus.STATUS_WORD).toEqual(siteStatus.STATUS_WORD);
 	expect(docsStatus.STATUS_MEANING).toEqual(siteStatus.STATUS_MEANING);
+	expect(docsStatus.MILESTONE_MEANING).toEqual(siteStatus.MILESTONE_MEANING);
 });
 
 for (const [scheme, background, foreground] of [
@@ -63,6 +64,10 @@ test('a page says where it stands in the website’s words', async ({ page }) =>
 	await expect(page.locator('article header [data-capability]')).toHaveText(/Planned\s*·\s*P6/);
 	await page.goto(docs('/concepts/publish-requests/'), { waitUntil: 'networkidle' });
 	await expect(page.locator('article header [data-capability]')).toHaveText(/Done\s*·\s*2\.1/);
+	// A milestone under way isn't on a branch, and its label's title says so; a branch's does.
+	await page.goto(docs('/resources/roadmap/'), { waitUntil: 'networkidle' });
+	await expect(page.locator('[data-capability="building"]', { hasText: /·\s*P3\s*$/ }).first()).toHaveAttribute('title', docsStatus.MILESTONE_MEANING.building);
+	await expect(page.locator('[data-capability="building"]', { hasText: /·\s*site\/docs\s*$/ }).first()).toHaveAttribute('title', docsStatus.STATUS_MEANING.building);
 });
 
 test.describe('with motion', () => {

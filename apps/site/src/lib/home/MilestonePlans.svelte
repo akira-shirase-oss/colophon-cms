@@ -113,7 +113,7 @@
 			<div>
 				<p class="flex flex-wrap items-center gap-2 text-lg leading-[1.4] font-medium text-ink-2">
 					Milestone {middle.id}
-					<StatusBadge kind={middle.kind} />
+					<StatusBadge kind={middle.kind} of="milestone" />
 				</p>
 				<p class="t-h3 mt-1">{showing === 'now' ? 'Under way' : 'Up next'}</p>
 				<p class="t-body-lg mt-6">{middle.name}.</p>

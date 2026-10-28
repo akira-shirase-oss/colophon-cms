@@ -50,7 +50,7 @@
 							>
 								{milestone.id}
 							</span>
-							<StatusBadge kind={milestone.kind} at={milestone.label} />
+							<StatusBadge kind={milestone.kind} at={milestone.label} of="milestone" />
 							<span class="text-sm text-muted-foreground">Estimate: {milestone.estimate}</span>
 						</div>
 						<h2 class="t-h2 mt-4">{milestone.name}</h2>

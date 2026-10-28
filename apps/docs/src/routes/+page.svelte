@@ -219,7 +219,7 @@
 				</div>
 				<div class="grid gap-2 p-5 sm:grid-cols-[10rem_minmax(0,1fr)]">
 					<dt><CapabilityLabel capability={building('site/docs')} /></dt>
-					<dd class="t-body text-[0.9375rem]">{STATUS_MEANING.building} The step, or the branch when there is no step yet.</dd>
+					<dd class="t-body text-[0.9375rem]">{STATUS_MEANING.building} The step, or the branch when there is no step yet. On a milestone it means under way: some of its steps are merged, and its proof gate isn’t met yet.</dd>
 				</div>
 				<div class="grid gap-2 p-5 sm:grid-cols-[10rem_minmax(0,1fr)]">
 					<dt><CapabilityLabel capability={planned('P4')} /></dt>

@@ -6,6 +6,7 @@ import { expect, type Page, test } from '@playwright/test';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MILESTONE_MEANING } from '../src/lib/status.ts';
 import { PAGES } from './pages.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -126,6 +127,15 @@ test('every feature says done, building or planned', async ({ page }) => {
 		expect(['done', 'building', 'planned']).toContain(status);
 	}
 	await expect(page.getByText('Planned').first()).toBeVisible();
+});
+
+test('a milestone under way says so, never that it is on a branch', async ({ page }) => {
+	await page.goto('/roadmap/');
+	for (const id of ['p3', 'r', 'e']) {
+		const badge = page.locator(`#${id} [data-status="building"]`).first();
+		await expect(badge, id).toHaveAttribute('title', MILESTONE_MEANING.building);
+	}
+	await expect(page.locator('#p0 [data-status="done"]').first()).toHaveAttribute('title', MILESTONE_MEANING.done);
 });
 
 test('the licence is described as proposed, not confirmed', async ({ page }) => {
