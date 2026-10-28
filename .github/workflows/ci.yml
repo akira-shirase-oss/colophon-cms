@@ -39,6 +39,8 @@ jobs:
       - name: Clippy on the crash tests (built only with the fault points)
         run: cargo clippy -p colophon-server --features fault-injection --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - name: Micro-benchmarks, each run once unoptimized (they build and their inputs hold)
+        run: cargo test -p colophon-bench --benches --locked
       - run: cargo doc --workspace --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
