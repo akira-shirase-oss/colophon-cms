@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-Colophon's database schema changes through numbered SQL files in `crates/colophon-db/migrations/`. There are 15 on `main` and three more on branches being built. They are forward-only: there are no down migrations, so the way back from one is a copy of the database taken before it. There are no versioned releases yet, so an upgrade today means moving from one commit to a later one; the [upgrade guides](/operations/upgrades/#upgrade-guides) group the migrations by milestone.
+Colophon's database schema changes through numbered SQL files in `crates/colophon-db/migrations/`. There are 22. They are forward-only: there are no down migrations, so the way back from one is a copy of the database taken before it. There are no versioned releases yet, so an upgrade today means moving from one commit to a later one; the [upgrade guides](/operations/upgrades/#upgrade-guides) group the migrations by milestone, or by what merged together.
 
 ## How migrations are applied
 
@@ -72,22 +72,26 @@ The migrations aren't written yet for an old and a new server running side by si
 | 0013 | `purges` | 3.2 | <Status done="3.2" /> | Destinations may be CDNs; the worker may read what releases closed and took down, to build purge tags. |
 | 0014 | `receipts` | 3.3 | <Status done="3.3" /> | Destinations may be probes, optionally pinned to a location; `observations` keeps what every probe attempt saw. |
 | 0015 | `draft_titles` | fix after 3.5 (`065e614`) | <Status done="3.5" /> | `entries.draft_title`, backfilled from each entry's draft, with a `pg_trgm` index for title search. |
-| 0016 | `slugs` | 3.6 | <Status building="3.6" /> | URL names: a slug on revisions, entries' drafts and publications, unique per collection among drafts and among what is live, by two partial unique indexes. Nothing to backfill. |
-| 0017 | `roles` | R.1 | <Status building="R.1" /> | `roles` and `role_permissions`. Every project is seeded with the four built-in roles; memberships and invitations now name one of the project's roles. |
-| 0018 | `custom_roles` | R.2 | <Status building="R.2" /> | Roles get a version for `If-Match`; triggers keep the owner role fixed; invitations stop pinning a role by foreign key; the application may change and delete roles. |
+| 0016 | `slugs` | 3.6 | <Status done="3.6" /> | URL names: a slug on revisions, entries' drafts and publications, unique per collection among drafts and among what is live, by two partial unique indexes. Nothing to backfill. |
+| 0017 | `roles` | R.1 | <Status done="R.1" /> | `roles` and `role_permissions`. Every project is seeded with the four built-in roles; memberships and invitations now name one of the project's roles. |
+| 0018 | `custom_roles` | R.2 | <Status done="R.2" /> | Roles get a version for `If-Match`; triggers keep the owner role fixed; invitations stop pinning a role by foreign key; the application may change and delete roles. |
+| 0019 | `schedules` | scheduled publishing | <Status done="D-060" /> | `schedules`: the local time, zone and choice as given, the instant, the hash and approval a schedule publishes under, and its outcome; one pending schedule per publish request; partial indexes for pending and recently finished ones. |
+| 0020 | `setup_codes` | 3.7 | <Status done="3.7" /> | `setup_codes` and `setup_attempts`, which the application can't read or write, and four `SECURITY DEFINER` functions that issue, rate-limit, list and claim setup codes, all refusing once anyone is an administrator. |
+| 0021 | `narrowed_permissions` | R.3 | <Status done="R.3" /> | One permission row per action, subject and condition; checks that field lists name field ids and apply only to read, create and update, and `own` only to read, update and delete. |
+| 0022 | `owners_may_delete` | R.3 | <Status done="R.3" /> | `content.delete` for every owner role, new and existing, as D-058 says owners hold every permission. No route deletes entries yet. |
 
-Every migration on `main` has stayed byte for byte as it was merged (`git log --first-parent main` shows each file once). The three on branches may still change or be renumbered before they merge.
+0001 to 0015 have stayed byte for byte as they were merged into `main` (`git log --first-parent main` shows each file once). Of 0016 to 0022, one changed after it was merged: 0019's opening comment was corrected by R.3's branch (`db542c4`), which merged after scheduling, so a database migrated by the `e/schedules` branch, or at the schedules merge `bf0ecd7`, is refused by later builds (see below).
 
 ## Upgrade guides
 
-One guide per milestone's range of migrations, each with an "are you affected?" check, the steps and how to see that it worked:
+One guide per range of migrations, each with an "are you affected?" check, the steps and how to see that it worked:
 
 | Guide | Migrations | Status |
 |---|---|---|
 | [Upgrading to P1](/upgrading/p1/) | 0001 to 0006 | <Status done="1.8" /> |
 | [Upgrading to P2](/upgrading/p2/) | 0007 to 0010 | <Status done="2.4" /> |
 | [Upgrading to P3](/upgrading/p3/) | 0011 to 0015 | <Status done="3.5" /> |
-| [Unreleased](/upgrading/unreleased/) | 0016 to 0018 | <Status building="R.2" /> |
+| [3.6, 3.7, R.1 to R.3 and scheduled publishing](/upgrading/p3-roles-schedules/) | 0016 to 0022 | <Status done="0016–0022" /> |
 
 ## Rolling back
 
@@ -97,7 +101,7 @@ One guide per milestone's range of migrations, each with an "are you affected?" 
 
 ## Branch databases
 
-A database migrated by a branch is ahead of `main`, and `main`'s binaries refuse it. That is why the scripts and tests follow `COLOPHON_TEST_DATABASE`: a step branch runs against a database of its own and never migrates the one other checkouts share. If a branch renumbered or edited a migration after you applied it (the 3.6 branch's slugs were `0015_slugs` before `main` took 0015), `admin migrate` stops with `was previously applied but has been modified`: drop that database and start it again.
+A database migrated by a step branch can be ahead of `main`, and `main`'s binaries refuse it. That is why the scripts and tests follow `COLOPHON_TEST_DATABASE`: a step branch runs against a database of its own and never migrates the one other checkouts share. If a branch renumbered or edited a migration after you applied it (the 3.6 branch's slugs were `0015_slugs` before `main` took 0015, `0018_custom_roles` changed its comment in `5cc99e4`, and `0019_schedules` its comment in `db542c4`), `admin migrate` stops with `was previously applied but has been modified`: drop that database and start it again.
 
 ## Adding a migration
 

@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-The worker does everything that has to happen outside the database after a publish: it announces each release to webhooks, asks CDNs to purge what changed, and looks for the release on your website to fill in its receipt. It finds all its work in PostgreSQL, so a worker that crashes, restarts or runs twice loses nothing and doubles nothing it could prevent. This page is for running it; [The outbox and the worker](/concepts/outbox-and-worker/) explains the idea. The code is `crates/colophon-worker/src/lib.rs`, `crates/colophon-db/src/jobs.rs` and `crates/colophon-domain/src/job.rs`.
+The worker does everything that has to happen outside a request: it announces each release to webhooks, asks CDNs to purge what changed, looks for the release on your website to fill in its receipt, and publishes [schedules](#schedules) when they fall due. It finds all its work in PostgreSQL, so a worker that crashes, restarts or runs twice loses nothing and doubles nothing it could prevent. This page is for running it; [The outbox and the worker](/concepts/outbox-and-worker/) explains the idea. The code is `crates/colophon-worker/src/lib.rs` and `schedules.rs`, `crates/colophon-db/src/jobs.rs` and `schedules.rs`, and `crates/colophon-domain/src/job.rs` and `schedule.rs`.
 
 ## Running it
 
@@ -18,7 +18,7 @@ The worker runs inside `colophon-server`. The role decides whether it starts:
 cargo run --release -p colophon-server -- --role worker
 ```
 
-`--role all` in one process is the v0.1 reference profile and what the local stack and the demo run. To split them, run one process with `--role api` and one with `--role worker`. Today `--role worker` still binds `COLOPHON_LISTEN_ADDR` and answers every route, the API included (D-046), so give it its own address and keep it off the public network. Nothing breaks if no process runs the worker: releases still commit and public delivery still serves them; their webhooks, purges and probes wait, and receipts say *Website update pending*, until a worker runs.
+`--role all` in one process is the v0.1 reference profile and what the local stack and the demo run. To split them, run one process with `--role api` and one with `--role worker`. Today `--role worker` still binds `COLOPHON_LISTEN_ADDR` and answers every route, the API included (D-046), so give it its own address and keep it off the public network. Nothing breaks if no process runs the worker: releases still commit and public delivery still serves them; their webhooks, purges and probes wait, and receipts say *Website update pending*, until a worker runs. Schedules wait too, and run labelled *delayed* when a worker comes back.
 
 More than one worker may run at once, against the same database. They never claim the same job (`FOR UPDATE SKIP LOCKED`; tested in `crates/colophon-db/tests/jobs.rs`).
 
@@ -65,11 +65,22 @@ A failed job turns the release's receipt to *Needs attention*. Any member can li
 - **The database goes away:** claims fail and are retried at the next poll; nothing is kept only in memory, so nothing is lost. Readiness reports the database `down`.
 - **The crash loop** (`crates/colophon-server/tests/crash_loop.rs`) kills the whole server, worker included, with `SIGKILL` at random moments while it publishes, and checks that every announcement ends delivered or superseded and that the receiver never got an older release after a newer one. See [Crash tests](/operations/crash-tests/).
 
+## Schedules
+
+Scheduled publishing (D-060) runs in a loop of its own beside the deliveries, on the worker's database pool, so a slow destination never holds a schedule back. Every `COLOPHON_WORKER_POLL_MS` it asks PostgreSQL for schedules whose time has come, at most 20 at a time in time order, and runs each:
+
+1. It opens the project **as the person who scheduled it**, with their role as it is now, in the project's row-level-security context, exactly as their own request would. If they are no longer a member, the schedule is blocked.
+2. It takes the schedule's row `FOR UPDATE SKIP LOCKED`, so two workers never both run one; the second skips it.
+3. It publishes through `colophon_db::publish`, the routine `POST …/publish` uses, with every check a publish makes: the changeset still has the hash it was scheduled with, no pinned entry moved on, the approval hasn't expired, the role may publish every collection, and no URL name is another entry's. It publishes on the latest generation, retrying up to three times if another release commits first.
+4. The release, its delivery jobs and the schedule's `published` state commit in **one transaction**, so a crash leaves both or neither. If anything refused, the schedule is marked `blocked` with the reason in plain words, and nothing is published.
+
+A run that starts more than 60 seconds after its time is labelled `delayed`, never on time. Schedules missed while no worker ran are found at the next look. Stopping the worker lets a run in progress finish. Finding what is due, and blocking, happen as `colophon_worker`, which may read only a schedule's ids, time, state and author, and write only its outcome (migration 0019). Tests: `crates/colophon-db/tests/schedules.rs` (with the clock passed in, including two workers at once) and `crates/colophon-server/tests/schedules.rs` (the real binary and worker). The API is on [Publish requests](/reference/api/publish-requests/#schedules).
+
 ## Settings
 
 | Variable | Default | What it does |
 |---|---|---|
-| `COLOPHON_WORKER_POLL_MS` | 500 | How long it sleeps when there was nothing to claim. With work waiting it claims as soon as a slot frees, so a backlog drains at the destinations' speed. |
+| `COLOPHON_WORKER_POLL_MS` | 500 | How long it sleeps when there was nothing to claim. With work waiting it claims as soon as a slot frees, so a backlog drains at the destinations' speed. The scheduler looks for due schedules at the same interval. |
 | `COLOPHON_WORKER_LEASE_MS` | 30,000 | How long a claim lasts: how long a crashed worker's jobs wait before another worker takes them. |
 | `COLOPHON_WORKER_ATTEMPT_MS` | 10,000 | One attempt's deadline, connection included; must be shorter than the lease. |
 | `COLOPHON_WORKER_SLOTS` | 8 | Attempts in flight at once, across all destinations. |
@@ -80,7 +91,7 @@ Ranges and the rules between them are in [Configuration](/operations/configurati
 
 ## Database role
 
-The worker logs in with the server's `COLOPHON_DATABASE_URL` (`colophon_app` locally) and switches each transaction to `colophon_worker` (`SET LOCAL ROLE`). That role sees jobs in every project, their destinations and the releases being announced (which entries changed, never their content), and writes only jobs and probe observations. It can't read drafts: `crates/colophon-db/tests/jobs.rs` checks it.
+The worker logs in with the server's `COLOPHON_DATABASE_URL` (`colophon_app` locally) and switches each transaction to `colophon_worker` (`SET LOCAL ROLE`). That role sees jobs in every project, their destinations and the releases being announced (which entries changed, never their content), and writes only jobs and probe observations; since D-060 it also reads which schedules are due and writes a blocked schedule's outcome. It can't read drafts: `crates/colophon-db/tests/jobs.rs` checks it. A scheduled publish doesn't run as `colophon_worker`: it runs as its author, with the application's privileges and row-level security, like a request.
 
 ## Locations and receipts
 
@@ -95,10 +106,10 @@ Destinations must be `https://` and resolve only to public addresses: the worker
 - Signed announcements (an HMAC header with destination secrets). <Status planned="not scheduled" />
 - Per-destination and per-project concurrency limits, and admission budgets that refuse new work before it is accepted (F09). <Status planned="P6" />
 - Wake-ups instead of polling (O-010), and reconciliation beyond repeating with the same key. <Status planned="not scheduled" />
-- Scheduled publishing, which the worker will run when it is due. <Status building="e/schedules" />
+- Recurring schedules. <Status planned="not scheduled" />
 - `colophon jobs inspect` on the command line. <Status planned="not scheduled" />
 - A worker that doesn't serve HTTP. <Status planned="not scheduled" />
 
 ## Design
 
-[Module 05, the worker](/design/modules/05-worker/); decisions D-046 (the outbox and leases), D-047 (one announcement in flight), D-050 (purges) and D-051 (probes) in the [decisions](/design/decisions/).
+[Module 05, the worker](/design/modules/05-worker/); decisions D-046 (the outbox and leases), D-047 (one announcement in flight), D-050 (purges), D-051 (probes) and D-060 (scheduled publishing) in the [decisions](/design/decisions/).

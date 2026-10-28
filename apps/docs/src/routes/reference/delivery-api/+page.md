@@ -72,7 +72,7 @@ One published entry.
 |---|---|
 | `id`, `revision_id` | The entry, and the exact revision readers get. |
 | `collection`, `title` | Its collection, and its title in that revision. |
-| `slug` <Status building="3.6" /> | Its URL name, when its content type has a slug field and the entry sets it. Left out otherwise, so answers cached before slugs existed read the same. |
+| `slug` | Its URL name, when its content type has a slug field and the entry sets it. Left out otherwise, so answers cached before slugs existed read the same. |
 | `content` | The revision's canonical JSON, exactly as stored. |
 | `content_hash` | SHA-256 of `content`. |
 | `published_in` | The generation of the release that published this revision. |

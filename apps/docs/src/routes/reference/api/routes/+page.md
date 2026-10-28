@@ -1,10 +1,4 @@
-<script>
-	import Status from '#lib/components/Status.svelte';
-</script>
-
-Every route `colophon-server` answers, from its router (`crates/colophon-api/src/lib.rs` on the newest branch, `r/r.2-custom-roles`), each linked to its section. Below, `{P}` stands for `/api/v1/projects/{project}/environments/{environment}`. "Any member" means anyone who belongs to the project; the permission names (`content.update`, …) are the R.2 policy's, and the roles in brackets are the built-in roles that hold them ([Roles](/reference/api/roles/#built-in-roles)). The headers every write needs are on [API conventions](/reference/api/).
-
-Routes that exist only on a branch carry their label. Everything else is on `main`.
+Every route `colophon-server` answers, from its router (`crates/colophon-api/src/lib.rs`), each linked to its section; a test fails when the router and this reference disagree. Below, `{P}` stands for `/api/v1/projects/{project}/environments/{environment}`. "Any member" means anyone who belongs to the project; the permission names (`content.update`, …) are the policy's, and the roles in brackets are the built-in roles that hold them ([Roles](/reference/api/roles/#built-in-roles)). A role's permission on content may be narrowed to some fields or to its holder's own entries ([narrowing](/reference/api/roles/#narrowing-a-permission)). The headers every write needs are on [API conventions](/reference/api/).
 
 ## Health and sign-in
 
@@ -20,6 +14,7 @@ Routes that exist only on a branch carry their label. Everything else is on `mai
 | [`GET /auth/device/{code}`](/reference/api/auth/#get-authdevicecode) | signed in |
 | [`POST /auth/device/approve`](/reference/api/auth/#post-authdeviceapprove) | signed in with a browser session |
 | [`POST /auth/device/token`](/reference/api/auth/#post-authdevicetoken) | the device holding the secret |
+| [`POST /api/v1/setup`](/reference/api/auth/#post-apiv1setup) | signed in, holding the setup code, while the installation has no administrator |
 
 ## Projects, members and invitations
 
@@ -37,7 +32,7 @@ Routes that exist only on a branch carry their label. Everything else is on `mai
 | [`POST /api/v1/invitations/lookup`](/reference/api/projects/#post-apiv1invitationslookup) | signed in, holding the link |
 | [`POST /api/v1/invitations/accept`](/reference/api/projects/#post-apiv1invitationsaccept) | signed in, holding the link |
 
-## Roles <Status building="R.2" />
+## Roles
 
 | Method and path | Who may call it |
 |---|---|
@@ -60,7 +55,7 @@ Routes that exist only on a branch carry their label. Everything else is on `mai
 
 | Method and path | Who may call it |
 |---|---|
-| [`GET {P}/collections/{collection}/entries`](/reference/api/entries/#get-pcollectionscollectionentries) | `content.read` (every built-in role) |
+| [`GET {P}/collections/{collection}/entries`](/reference/api/entries/#get-pcollectionscollectionentries) | `content.read` (every built-in role); only your own entries when that is all your role may read |
 | [`POST {P}/collections/{collection}/entries`](/reference/api/entries/#post-pcollectionscollectionentries) | `content.create` (every built-in role) |
 | [`GET {P}/collections/{collection}/entries/{entry}`](/reference/api/entries/#get-pcollectionscollectionentriesentry) | `content.read` |
 | [`PUT {P}/collections/{collection}/entries/{entry}`](/reference/api/entries/#put-pcollectionscollectionentriesentry) | `content.update` (every built-in role) |
@@ -79,6 +74,14 @@ Routes that exist only on a branch carry their label. Everything else is on `mai
 | [`POST {P}/changesets/{changeset}/refresh`](/reference/api/publish-requests/#post-pchangesetschangesetrefresh) | `content.update` in each collection |
 | [`POST {P}/changesets/{changeset}/reviews`](/reference/api/publish-requests/#post-pchangesetschangesetreviews) | `content.review` in each collection (owners, publishers) |
 | [`POST {P}/changesets/{changeset}/publish`](/reference/api/publish-requests/#post-pchangesetschangesetpublish) | `content.publish` in each collection (owners, publishers) |
+
+## Schedules
+
+| Method and path | Who may call it |
+|---|---|
+| [`POST {P}/changesets/{changeset}/schedule`](/reference/api/publish-requests/#post-pchangesetschangesetschedule) | `content.publish` in each collection (owners, publishers) |
+| [`GET {P}/schedules`](/reference/api/publish-requests/#get-pschedules) | any member |
+| [`DELETE {P}/schedules/{schedule}`](/reference/api/publish-requests/#delete-pschedulesschedule) | whoever scheduled it, or `content.publish` in each collection |
 
 ## Releases and receipts
 
@@ -106,5 +109,3 @@ Routes that exist only on a branch carry their label. Everything else is on `mai
 ## Outside the router
 
 With `COLOPHON_STUDIO_DIR` set, the server also mounts the Studio's files at `/studio/` (`crates/colophon-api/src/studio.rs`, added by `colophon-server`). Any path no route matches answers `404` `route_not_found`; a path that exists for other methods answers `405` `method_not_allowed` with an `Allow` header.
-
-Before R.2, on `main`, the same routes check the four fixed roles of D-042 instead of permissions; for the built-in roles the answers are the same.

@@ -13,7 +13,7 @@ What a self-hosted Colophon needs today, read from the code, and what is missing
 | An OpenID Connect provider | yes, for anyone to sign in | People sign in there; Colophon keeps its own sessions. |
 | Valkey (or another Redis-protocol server) | no | A disposable cache for public reads. |
 | The Studio build | for editors | Static files built with Node, served by `colophon-server` at `/studio`. |
-| `colophon` | for the operator | The CLI: migrations and the first administrator. |
+| `colophon` | for the operator | The CLI: migrations, and the first administrator if you don't use the setup code. |
 | Your website | optional | Anything that reads `/content/v1`; `apps/web` is the reference site, a Node 24 runner. |
 
 Not used yet: S3-compatible object storage. Garage is in the local stack for media, which arrives in P4; the server reads no storage settings today. <Status planned="P4" />
@@ -72,9 +72,10 @@ Colophon has no passwords of its own. Any provider that does the following shoul
 - the Authorization Code flow with PKCE (`S256`), scope `openid profile`, for a confidential client that authenticates with `client_secret_post`;
 - ID tokens signed with RS256, PS256, ES256 or EdDSA (never `none` or HMAC), with a stable `sub`: a person is their issuer and subject, never their email address;
 - `https://` endpoints (plain `http://` is accepted only for `localhost`, `127.0.0.1` and `::1`);
-- the redirect URI `COLOPHON_PUBLIC_URL` plus `/auth/callback` registered for the client.
+- the redirect URI `COLOPHON_PUBLIC_URL` plus `/auth/callback` registered for the client;
+- optionally, `create` in its discovery document's `prompt_values_supported`, so the Studio's *Create an account* opens the provider's sign-up form directly (OpenID Connect Prompt Create 1.0). Without it, that link opens the sign-in form. Whether anyone may sign up is the provider's decision; an account grants nothing in Colophon by itself.
 
-After the first migration, make one person the installation's administrator with `colophon admin bootstrap --subject S` ([Command line](/reference/cli/#colophon-admin-bootstrap)). Only administrators create projects, and no HTTP route can make one.
+Only administrators create projects. The first one is made in either of two ways: the operator runs `colophon admin bootstrap --subject S` after the first migration, with the migrator's credentials ([Command line](/reference/cli/#colophon-admin-bootstrap)); or, while nobody is an administrator, the server prints a one-time setup code to its standard error at every start, and the first person to sign in to the Studio and enter it becomes the administrator ([setup codes](/reference/api/auth/#setting-up-a-fresh-installation), D-061). Collected logs capture standard error, so a code can sit in them for its hour; it dies at first use. To never issue one, bootstrap before the first start. Once anyone is an administrator, no HTTP route can make another.
 
 ## Network
 
@@ -91,7 +92,8 @@ Nobody has measured a production install. The load results in [Performance](/res
 
 ## What is not ready
 
-- **No release:** no versions, binaries, container images, packages or `init` command, and no licence chosen yet (O-014 proposes Apache-2.0). <Status planned="P6" />
+- **No release:** no versions, binaries, container images, packages or `init` command, and no licence chosen yet (O-014 proposes Apache-2.0). Versions, binaries, packages and container images are milestone V (D-062); the release itself with signed artifacts is P6. <Status planned="V, P6" />
+- **One server, proven.** Several servers or workers against one database are designed for (leases, `SKIP LOCKED`, rate limits counted in PostgreSQL), but no multi-instance stack behind a load balancer has been tested yet (D-062). <Status planned="S" />
 - **No backups or restore procedure.** [Backups and restore](/operations/backups/) explains what P6 plans and what not to rely on meanwhile. <Status planned="P6" />
 - **Upgrades need downtime.** Migrations are forward-only and not yet written for old and new servers side by side; see [Upgrades and migrations](/operations/upgrades/).
 - **No metrics or trace export.** Logs go to stdout, as JSON lines by default. <Status planned="P6" />

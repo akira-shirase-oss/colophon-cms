@@ -6,7 +6,18 @@ An entry is one piece of content in a collection. Every save is a new **revision
 
 `{collection}` is a content type's slug, `articles` in every new project. Content is checked against the collection's [content type](/reference/api/content-types/) on every create and save.
 
-Since R.2 each route checks its permission on this collection: `content.read`, `content.create` or `content.update`, on `*` or on the collection's slug <Status building="R.2" />. Every built-in role holds all three everywhere, so on `main` any member may read and write entries. Since 3.6, creates and saves take the collection's lock shared, so they wait while a [content type change](/reference/api/content-types/#changing-a-content-type) is being checked <Status building="3.6" />.
+Each route checks its permission on this collection: `content.read`, `content.create` or `content.update`, on `*` or on the collection's slug. Every built-in role holds all three everywhere, without limits, so any member of a project with only built-in roles may read and write every field of every entry. Creates and saves take the collection's lock shared, so they wait while a [content type change](/reference/api/content-types/#changing-a-content-type) is being checked (step 3.6).
+
+## Fields and own entries
+
+Since step R.3 (D-058), a role's permission can be narrowed to some fields, or to the entries its holder created ([Roles](/reference/api/roles/#narrowing-a-permission)). Entries enforce it, per entry, from who created it (`crates/colophon-api/src/visibility.rs`):
+
+- **Reads leave out what your role can't read.** The draft's `content` holds only the fields you may read, and `hidden_fields` lists the content type's fields it left out. `revision.title` is empty when you can't read the title field. The same holds for revisions and their content.
+- **Fields you can read but not change** are listed in `locked_fields`; the Studio shows them disabled.
+- **An entry you can't read at all is `404`**, exactly like one that doesn't exist. A list holds only your own entries when that is all your role may read, with titles blank where the title field is hidden. Title search (`q`) matches the draft titles of every entry the list may hold, including titles your role can't read: such an entry is listed, with its title blank.
+- **Creating** may set only fields your role may create; setting another is refused with `field_not_permitted`.
+- **Saving** puts back every field you can't read exactly as stored, so leaving one out never erases it; sending one with a different value is refused. A change to any field your role can't change is refused too. Both are `422` `field_not_permitted`, with `details.pointer` at the field (`/price`), measured against the revision named in `If-Match`, which never changes.
+- **Publish requests** may pin an entry only if your role may change it ([Publish requests](/reference/api/publish-requests/)).
 
 ## The draft object
 
@@ -18,6 +29,7 @@ A create, a save and a read answer with the entry's draft:
     "id": "0193f6b0-2c4d-7e5f-8a91-b2c3d4e5f607",
     "collection": "articles",
     "created_at": "2026-10-27T09:10:02.316552Z",
+    "created_by": "0193f6c4-9e0f-7a1b-8c2d-3e4f5a6b7c8d",
     "updated_at": "2026-10-27T09:14:03.512841Z",
     "revision": {
       "id": "0193f6b4-1e2f-7a3b-8c4d-5e6f7a8b9c0d",
@@ -44,7 +56,10 @@ A create, a save and a read answer with the entry's draft:
 | `revision.author_id` | Who saved it (an identity id). |
 | `revision.content_hash` | SHA-256 of the canonical content. |
 | `revision.title` | The value of the content type's title field. |
-| `content` | The canonical content exactly as stored: fields in definition order, absent optional fields left out, rich text canonical. A URL name, when the type has one, is a field here like any other. |
+| `created_by` | Who created the entry (an identity id): the "own" in a permission limited to one's own entries. |
+| `content` | The canonical content exactly as stored: fields in definition order, absent optional fields left out, rich text canonical. A URL name, when the type has one, is a field here like any other. Only the fields your role may read. |
+| `hidden_fields` | The content type's fields left out of `content` because your role can't read them. Absent when none are. |
+| `locked_fields` | Fields your role can read but not change. Absent when none are. |
 
 ## Routes
 
@@ -52,7 +67,7 @@ A create, a save and a read answer with the entry's draft:
 
 The collection's entries, newest first, each with its draft's revision and what readers get now.
 
-- **Who:** `content.read` (every built-in role).
+- **Who:** `content.read` (every built-in role), on anyone's entries or only your own.
 - **Query:**
 
 | Parameter | Meaning |
@@ -82,14 +97,14 @@ The collection's entries, newest first, each with its draft's revision and what 
 | Status | `code` | When |
 |---|---|---|
 | `400` | `bad_request` | `limit` outside 1 to 100, a cursor from another list, or a search over 100 characters. |
-| `403` | `forbidden` | Your role can't read entries here (R.2). |
+| `403` | `forbidden` | Your role can't read entries here, not even your own. |
 | `404` | `not_found` | No such project, environment or collection, or you aren't a member. |
 
 ### `POST {P}/collections/{collection}/entries`
 
 Creates an entry and its first revision.
 
-- **Who:** `content.create` (every built-in role).
+- **Who:** `content.create` (every built-in role), for every field the content sets.
 - **Headers:** `Idempotency-Key` (required).
 - **Body:** the content itself, as the collection's content type defines it:
 
@@ -108,7 +123,8 @@ Creates an entry and its first revision.
 | `403` | `forbidden` | | Your role can't create entries here. |
 | `404` | `not_found` | | No such project, environment or collection. |
 | `409` | `conflict` | `idempotency_key_reused` | The key was used for different content. |
-| `409` | `conflict` | `slug_taken` | Another entry of the collection has this URL name, as its draft or published; `details.entries` names it <Status building="3.6" />. |
+| `409` | `conflict` | `slug_taken` | Another entry of the collection has this URL name, as its draft or published; `details.entries` names it. |
+| `422` | `validation_failed` | `field_not_permitted` | The content sets a field your role can't create. |
 | `422` | `validation_failed` | a [content code](/reference/api/errors/#content-and-content-types) | The content doesn't fit the content type; `details.pointer` points at the value. |
 | `428` | `precondition_required` | | No `Idempotency-Key`. |
 
@@ -116,19 +132,19 @@ Creates an entry and its first revision.
 
 The entry's draft.
 
-- **Who:** `content.read`.
+- **Who:** `content.read` on this entry: anyone's, or yours when your role is limited to your own.
 
 **Response:** `200`, `ETag: "<revision id>"`, [the draft](#the-draft-object).
 
 | Status | `code` | When |
 |---|---|---|
-| `404` | `not_found` | No such entry in this collection. |
+| `404` | `not_found` | No such entry in this collection, or your role can't read it. |
 
 ### `PUT {P}/collections/{collection}/entries/{entry}`
 
 Saves a new revision on top of the one named in `If-Match`, and moves the draft to it.
 
-- **Who:** `content.update` (every built-in role).
+- **Who:** `content.update` on this entry (every built-in role), for every field the save changes.
 - **Headers:** `If-Match`, the draft's `ETag` as you read it, and `Idempotency-Key` (both required).
 - **Body:** the whole content, not a patch, as for creating.
 
@@ -147,11 +163,12 @@ Content-Type: application/json
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
 | `400` | `bad_request` | | `If-Match` isn't one revision `ETag` exactly as given (no `*`, no `W/`, no list), or the key is malformed. |
-| `403` | `forbidden` | | Your role can't change entries here. |
-| `404` | `not_found` | | No such entry in this collection. |
+| `403` | `forbidden` | | Your role can't change entries here, or can't change this one (another person's, when yours is limited to your own). |
+| `404` | `not_found` | | No such entry in this collection, or your role can't read it. |
 | `409` | `conflict` | `stale_revision` | The draft has moved on; `ETag` names its revision now. |
 | `409` | `conflict` | `idempotency_key_reused` | The key was used for a different save. |
-| `409` | `conflict` | `slug_taken` | Another entry has this URL name <Status building="3.6" />. |
+| `409` | `conflict` | `slug_taken` | Another entry has this URL name. |
+| `422` | `validation_failed` | `field_not_permitted` | The save changes a field your role can't change, or sends a field it can't read with a different value than stored; `details.pointer` names the field. |
 | `422` | `validation_failed` | a [content code](/reference/api/errors/#content-and-content-types) | The content doesn't fit the content type. |
 | `428` | `precondition_required` | | No `If-Match`, or no `Idempotency-Key`. |
 
@@ -161,7 +178,7 @@ Tests: `a_stale_save_is_refused_with_the_current_etag_and_writes_nothing` and `w
 
 The entry's history.
 
-- **Who:** `content.read`.
+- **Who:** `content.read` on this entry. Titles are blank when your role can't read the title field.
 
 **Response:** `200`, newest first, the newest 100, without content and without `next_cursor`:
 
@@ -176,13 +193,13 @@ The entry's history.
 
 | Status | `code` | When |
 |---|---|---|
-| `404` | `not_found` | No such entry in this collection. |
+| `404` | `not_found` | No such entry in this collection, or your role can't read it. |
 
 ### `GET {P}/collections/{collection}/entries/{entry}/revisions/{revision}`
 
 One revision with its content, for comparing versions.
 
-- **Who:** `content.read`.
+- **Who:** `content.read` on this entry. The content holds only the fields your role may read, as in the draft.
 
 **Response:** `200`, no `ETag` (a revision never changes).
 
@@ -197,7 +214,7 @@ One revision with its content, for comparing versions.
 
 | Status | `code` | When |
 |---|---|---|
-| `404` | `not_found` | No such revision of this entry in this collection. |
+| `404` | `not_found` | No such revision of this entry in this collection, or your role can't read the entry. |
 
 ### `POST /api/v1/rich-text/validate`
 
@@ -236,5 +253,3 @@ A rich-text document's canonical form, or the rule it breaks, without storing an
 
 - Deleting entries: the `content.delete` permission exists, and no route uses it yet. <Status planned="not scheduled" />
 - A query API: filters beyond title search, sorting, field selection and reference population. <Status planned="D" />
-- Field-level permissions, so a save that changes a field your role may not change is refused with `field_not_permitted`. <Status planned="R.3" />
-- Scheduled publishing of an entry. See [Scheduled publishing](/concepts/scheduled-publishing/). <Status building="e/schedules" />

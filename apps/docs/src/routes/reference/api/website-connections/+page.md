@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-A **destination** (a *website connection* in the Studio) is something Colophon tells about each release: a webhook that rebuilds a site, a CDN that clears its copies, or a probe that checks the site. Each publish writes one **job** per enabled destination in the same transaction, and the worker carries them out. This page covers configuring destinations and reading jobs; what the worker sends, and what a receiver should answer, is on [Webhooks](/reference/webhooks/). Handler: `crates/colophon-api/src/destinations.rs`; address rules: `crates/colophon-domain/src/destination.rs`. The ideas are in [The outbox and the worker](/concepts/outbox-and-worker/) and [Receipts and probes](/concepts/receipts-and-probes/).
+A **destination** (a *website connection* in the Studio) is something Colophon tells about each release: a webhook that rebuilds a site, a CDN that clears its copies, or a probe that checks the site. The Studio names the three kinds in plain words, *Site rebuild*, *CDN clear* and *Site check* (`apps/studio/src/lib/words.ts`, D-059), under Settings. Each publish writes one **job** per enabled destination in the same transaction, and the worker carries them out. This page covers configuring destinations and reading jobs; what the worker sends, and what a receiver should answer, is on [Webhooks](/reference/webhooks/). Handler: `crates/colophon-api/src/destinations.rs`; address rules: `crates/colophon-domain/src/destination.rs`. The ideas are in [The outbox and the worker](/concepts/outbox-and-worker/) and [Receipts and probes](/concepts/receipts-and-probes/).
 
 Destinations are seen and changed only with `destinations.manage` (owners and developers), because an address can carry a secret. Jobs, which name a destination but not its address, are visible to any member.
 
@@ -149,4 +149,3 @@ The worker's jobs: one per destination per release.
 
 - An authenticated CDN adapter (Cloudflare), with its credentials in the environment, never the database. Today's `cdn` kind posts to a URL with no credentials, which suits the test CDN. <Status planned="P3" />
 - Website connections for other events than a release. <Status planned="D" />
-- Plain-word names in the Studio ("rebuild the site", "clear the CDN", "check the site"). <Status building="3.7" />

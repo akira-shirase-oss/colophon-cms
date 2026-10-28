@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-How a person or a program proves who they are: the health checks that need no one, OpenID Connect sign-in for browsers, sessions, `/me`, and the device sign-in the command line uses to get a personal bearer token. The rules every request shares (cookies, CSRF, `Origin`, bearer tokens) are on [API conventions](/reference/api/#authentication); the security reasoning is in [Roles and permissions](/concepts/roles-and-permissions/) and the [Security model](/resources/security/). Handlers: `crates/colophon-api/src/health.rs`, `auth.rs`, `session.rs` and `device.rs`.
+How a person or a program proves who they are: the health checks that need no one, OpenID Connect sign-in for browsers, sessions, `/me`, the device sign-in the command line uses to get a personal bearer token, and the setup code that makes a fresh installation's first administrator. The rules every request shares (cookies, CSRF, `Origin`, bearer tokens) are on [API conventions](/reference/api/#authentication); the security reasoning is in [Roles and permissions](/concepts/roles-and-permissions/) and the [Security model](/resources/security/). Handlers: `crates/colophon-api/src/health.rs`, `auth.rs`, `session.rs`, `device.rs` and `setup.rs`.
 
 ## Health
 
@@ -45,7 +45,9 @@ A browser signs in through the identity provider configured with `COLOPHON_OIDC_
 Starts a sign-in and sends the browser to the provider, with a fresh `state`, `nonce` and PKCE verifier.
 
 - **Who:** anyone. A browser follows it; there is nothing to call it with from a script.
-- **Query:** `return_to`, where to go afterwards: a path on this server, at most 2,048 characters, starting with one `/`, without `\` or control characters. Anything else, including an absolute URL or `//host`, becomes `/`.
+- **Query:**
+  - `return_to`, where to go afterwards: a path on this server, at most 2,048 characters, starting with one `/`, without `\` or control characters. Anything else, including an absolute URL or `//host`, becomes `/`.
+  - `start=create`, to open the provider's form for making an account instead of its sign-in form, when its discovery document lists `create` in `prompt_values_supported` (the request then carries `prompt=create`, from OpenID Connect Prompt Create 1.0). A provider without it shows its sign-in form, which may link to sign-up. Any other value is ignored. Either way the person comes back signed in, and a new account grants nothing by itself (D-043): no project and no administrator. The local stack's development realm allows sign-up; a production provider decides for itself.
 
 **Response:** `303 See Other` to the provider's authorization URL, with `Cache-Control: no-store` and a cookie that binds the attempt to this browser:
 
@@ -102,7 +104,7 @@ Ends the session that sent it, or revokes the bearer token that sent it.
 
 ### `GET /me`
 
-Who is signed in, whether they are an administrator, and their projects.
+Who is signed in, whether they are an administrator, whether the installation has one yet, and their projects.
 
 - **Who:** signed in, with a session or a token.
 
@@ -116,6 +118,7 @@ Who is signed in, whether they are an administrator, and their projects.
     "subject": "f3c1a9e2-6b7d-4c8e-9a0b-1c2d3e4f5a6b",
     "display_name": "Ada Owner",
     "administrator": true,
+    "installation": { "has_administrator": true },
     "projects": [
       {
         "id": "0193f6a2-5b1c-7d3e-9f40-1a2b3c4d5e6f",
@@ -135,7 +138,8 @@ Who is signed in, whether they are an administrator, and their projects.
 | `issuer`, `subject` | string | Who you are at the identity provider; the operator needs `subject` for `colophon admin bootstrap`. |
 | `display_name` | string or null | From the provider. |
 | `administrator` | boolean | Whether you may create projects (D-043). |
-| `projects` | array | Your projects, by name, at most 1,000: `id`, `slug`, `name`, your `role` (its key) and `role_name` <Status building="R.2" />. |
+| `installation.has_administrator` | boolean | Whether anyone is an administrator yet. While nobody is, the setup code the server printed makes the first one ([`POST /api/v1/setup`](#post-apiv1setup)); the Studio shows its setup screen when this is `false`. |
+| `projects` | array | Your projects, by name, at most 1,000: `id`, `slug`, `name`, your `role` (its key) and `role_name`. |
 
 | Status | `code` | When |
 |---|---|---|
@@ -262,6 +266,49 @@ Send the token as `Authorization: Bearer` followed by it. It lasts 30 days; its 
 | Status | `code` | When |
 |---|---|---|
 | `404` | `not_found` | Unknown, expired or already exchanged: start again. A secret that isn't 43 characters is also `404`. |
+
+## Setting up a fresh installation
+
+A new installation has no administrator, so nobody can create a project. Two ways make the first one: the operator runs `colophon admin bootstrap --subject S` with the database owner's credentials ([Command line](/reference/cli/)), or a signed-in person enters the **setup code** the server printed to its terminal (D-061, amending D-043). Once anyone is an administrator, codes do nothing and later starts print none.
+
+While nobody is an administrator, every server process that serves the API (`--role api` or `all`) issues one code when it starts, stores only its SHA-256 hash, and prints it to standard error, outside the structured log, with the Studio's address and the time it expires:
+
+```text
+Setup code: 7K3QD-0ZX1V-ABCDE-FGHJK
+```
+
+The log says only that a code was printed, never the code. A code is 20 characters of Crockford's base-32 alphabet (100 random bits) in four groups of five, and works once, for one hour. At most ten codes are live at once; a start that finds ten unused, unexpired codes prints none and logs a warning. If the database can't be reached at start, issuing is retried for about five minutes, then the server logs that it gave up. Handler: `crates/colophon-api/src/setup.rs`; storage: `colophon_db::setup` and migration 0020.
+
+### `POST /api/v1/setup`
+
+Presents a setup code and makes you the installation's first administrator.
+
+- **Who:** signed in, with a session or a token. With a cookie it is a write: it needs the `Origin` and `X-CSRF-Token` headers.
+- **Body:**
+
+```json
+{ "code": "7K3QD-0ZX1V-ABCDE-FGHJK" }
+```
+
+| Field | Type | Rules |
+|---|---|---|
+| `code` | string | Required. Letter case, spaces and dashes don't matter, and `O`, `I` and `L` are read as `0`, `1` and `1`. Anything over 64 characters, or that isn't 20 characters of the alphabet once spaces and dashes are dropped, is a wrong code. No other field is accepted. |
+
+The code is hashed as soon as the body is read; only hashes reach PostgreSQL, the hash is compared with every live one in constant time, and neither the code nor the body is ever logged or returned. Using a code and recording the administrator happen in one transaction, exactly as `colophon admin bootstrap` records one.
+
+**Response:** `200`.
+
+```json
+{ "data": { "administrator": true } }
+```
+
+| Status | `code` | `details.reason` | When |
+|---|---|---|---|
+| `401` | `unauthorized` | | Not signed in. |
+| `403` | `forbidden` | | A cookie write without a trusted `Origin` or a matching CSRF token. |
+| `409` | `conflict` | `already_set_up` | The installation has an administrator already; ask one to invite you to a project. Nothing is recorded. |
+| `422` | `validation_failed` | `setup_code_invalid` | Wrong, already used or expired: one answer for all three, at `/code`, so a guesser can't tell which codes once existed. |
+| `429` | `rate_limited` | | More than five attempts by you, or twenty by anyone, in the last fifteen minutes. `Retry-After` says how many seconds until there is room; a refused attempt isn't counted. The limits are counted in PostgreSQL, so every server process shares them. |
 
 ## Not built yet
 

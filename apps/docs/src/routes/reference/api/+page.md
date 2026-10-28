@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-The management API lives under `/api/v1` on the Colophon server, beside sign-in (`/auth/*`), `/me`, the health checks and the public [Delivery API](/reference/delivery-api/) (`/content/v1`). The Studio, the command line and scripts all use it, with the same checks: there is no private path. This page holds the rules every route shares; [All routes](/reference/api/routes/) lists the routes, and each area page documents them one by one. Everything here is read from `crates/colophon-api/src/` on the newest branch, `r/r.2-custom-roles`.
+The management API lives under `/api/v1` on the Colophon server, beside sign-in (`/auth/*`), `/me`, the health checks and the public [Delivery API](/reference/delivery-api/) (`/content/v1`). The Studio, the command line and scripts all use it, with the same checks: there is no private path. This page holds the rules every route shares; [All routes](/reference/api/routes/) lists the routes, and each area page documents them one by one. Everything here is read from `crates/colophon-api/src/`.
 
 ## Addresses
 
@@ -63,7 +63,7 @@ Idempotency-Key: 4d1f6a0e-studio-save-0003
 
 There are no API tokens for scripts and agents yet; a token is always a person's. <Status planned="R.4" />
 
-**Who may do what** is decided per project by the caller's role, which since R.2 is a list of permissions such as `content.update` on one collection or on all of them <Status building="R.2" />. Each route below names the permission it needs and the built-in roles that hold it; [Roles](/reference/api/roles/#built-in-roles) has the full table. A caller without the permission gets `403` `forbidden`, but only inside a project they can see: outside it, `404`.
+**Who may do what** is decided per project by the caller's role, a list of permissions such as `content.update` on one collection or on all of them, which may be narrowed to some fields or to the caller's own entries ([Roles](/reference/api/roles/)). Each route below names the permission it needs and the built-in roles that hold it; [Roles](/reference/api/roles/#built-in-roles) has the full table. A caller without the permission gets `403` `forbidden`, but only inside a project they can see: outside it, `404`.
 
 ## Preconditions: If-Match and ETags
 
@@ -73,8 +73,8 @@ Reading a single resource returns an `ETag`; changing it requires that value in 
 |---|---|---|---|
 | An entry's draft | `"<revision id>"` | `PUT` of the entry | `409`, `stale_revision` |
 | A content type | `"v<version>"` | `PUT` of the content type | `409`, `stale_version` |
-| A role <Status building="R.2" /> | `"v<version>"` | `PUT` and `DELETE` of the role | `409`, `stale_role` |
-| A changeset | `"sha256:<hex>"`, its hash | `submit`, `refresh`, `reviews`, `publish` | `409`, `stale_changeset` |
+| A role | `"v<version>"` | `PUT` and `DELETE` of the role | `409`, `stale_role` |
+| A changeset | `"sha256:<hex>"`, its hash | `submit`, `refresh`, `reviews`, `publish`, `schedule` | `409`, `stale_changeset` |
 | A delivery answer | `"<32 hex digits>"` | (read with `If-None-Match`) | `304 Not Modified` when unchanged |
 
 - `If-Match` holds exactly one strong tag, as the `ETag` header gave it. A missing one is `428` `precondition_required`; a malformed one, a weak `W/` tag, a list or `*` is `400` `bad_request`.
@@ -131,13 +131,14 @@ Every other list answers on one page, with `next_cursor` always `null`, and is c
 | Projects (`GET /api/v1/projects`, `/me`) | by name | 1,000 |
 | Members | owners first, then by name | 1,000 |
 | Pending invitations | newest first | 1,000 |
-| Roles <Status building="R.2" /> | built-in first, then as created | 100 (a project's maximum) |
+| Roles | built-in first, then as created | 100 (a project's maximum) |
 | Content types | by slug | all |
 | A version history | newest first | 100 |
 | Changesets | newest first | 100 |
 | Releases | newest first | 100 |
 | Website connections | as created | 100 |
 | Jobs | newest release first | 100 |
+| Schedules | pending ones by time, then finished ones newest first | 100 pending and 20 finished |
 
 ## Limits
 
@@ -151,7 +152,7 @@ Every other list answers on one page, with `next_cursor` always `null`, and is c
 
 A body whose declared `Content-Length` is over the limit is refused before any handler runs. The server reads and discards what a client sends but a handler didn't read, up to 32 MiB within 2 seconds, so the connection stays usable; past that, the response says `Connection: close` (`crates/colophon-api/src/body.rs`).
 
-There is no rate limit per person yet, so this API never answers `429`. The worker does honour `429` from the sites it calls.
+The only rate limit is on setup codes ([below](#other-rules)), so `POST /api/v1/setup` is the one route that answers `429`. The worker honours `429` from the sites it calls.
 
 ## Status codes
 
@@ -172,6 +173,7 @@ There is no rate limit per person yet, so this API never answers `429`. The work
 | `415` | Not `Content-Type: application/json`. |
 | `422` | Valid JSON that breaks a rule; `details` names the rule and a JSON Pointer to the value. |
 | `428` | A required `If-Match` or `Idempotency-Key` is missing. |
+| `429` | Too many setup-code attempts; `Retry-After` says how long to wait. |
 | `500` | A bug or an unexpected failure; the cause is logged, never shown. |
 | `503` | At capacity (with `Retry-After`), or a dependency is missing or down. |
 | `504` | The request ran out of time. |
@@ -182,10 +184,11 @@ The [errors page](/reference/api/errors/) lists every `code` and every `details.
 
 - **No CORS.** No route sends `Access-Control-Allow-Origin`. The Studio is served from the API's own origin, so it needs none; other browser pages can't call `/api/v1` with the session cookie. Read `/content/v1` from your site's server or build, or put it behind a proxy on your site's origin.
 - **`HEAD`** works wherever `GET` does.
+- **Rate limits.** Only setup-code attempts are limited today: five a person and twenty in all per fifteen minutes, counted in PostgreSQL, answered with `429` `rate_limited` and `Retry-After` ([`POST /api/v1/setup`](/reference/api/auth/#post-apiv1setup)). Limits on other routes are planned in milestone S. <Status planned="S" />
 - **Unknown query parameters are ignored**; a known one that doesn't parse (`limit=ten`) is `400` `bad_request`.
 - **The Studio.** With `COLOPHON_STUDIO_DIR` set, `/studio/` serves the Studio's files, and its `200.html` for any other path under it, with `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'` and `Referrer-Policy: same-origin` on every response. Any path no route matches answers `404` `route_not_found`.
 - **Health.** `GET /livez` checks only that the process answers; `GET /readyz` reports whether it can serve. See [Sign-in and sessions](/reference/api/auth/#get-livez) and [Health checks](/operations/health-checks/).
 
 ## Design
 
-[Module 04, API](/design/modules/04-api/); decisions D-034, D-035, D-041 and D-044 to D-048 in the [decisions](/design/decisions/), and D-054, D-055 and D-058 [on the R.2 branch](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.2-custom-roles/docs/DECISIONS.md).
+[Module 04, API](/design/modules/04-api/); decisions D-034, D-035, D-041 and D-044 to D-048 in the [decisions](/design/decisions/), and D-054, D-055 and D-058 to D-061.

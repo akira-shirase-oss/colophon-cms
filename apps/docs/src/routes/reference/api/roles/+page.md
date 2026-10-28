@@ -2,14 +2,15 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-A role belongs to a project and is a list of permissions. Every project starts with four built-in roles; people whose role has `roles.manage` (owners, by default) define more, change them and delete them. Every route on this page is new in step R.2, on the branch `r/r.2-custom-roles` (D-058, migration 0018), which builds on R.1's roles as data (migration 0017). On `main`, the four roles are a fixed table and these routes answer `404` `route_not_found`. Handler: `crates/colophon-api/src/roles.rs`; evaluator: `crates/colophon-domain/src/policy.rs`. The concepts are in [Roles and permissions](/concepts/roles-and-permissions/).
+A role belongs to a project and is a list of permissions. Every project starts with four built-in roles; people whose role has `roles.manage` (owners, by default) define more, change them and delete them. Milestone R built them in steps (D-058): R.1 stored the four roles as data with unchanged powers (migration 0017), R.2 added these routes and custom roles (migration 0018), and R.3 lets a permission be narrowed to some fields or to its holder's own entries (migration 0021). Handler: `crates/colophon-api/src/roles.rs`; evaluator: `crates/colophon-domain/src/policy.rs`. The concepts are in [Roles and permissions](/concepts/roles-and-permissions/).
 
 ## Permissions
 
-A permission is an action and what it applies to:
+A permission is an action and what it applies to, optionally narrowed to some fields or to the entries its holder created:
 
 ```json
 { "action": "content.update", "subject": "pages" }
+{ "action": "content.update", "subject": "articles", "fields": ["title", "body"], "condition": "own" }
 ```
 
 | Action | Allows | Per collection |
@@ -28,11 +29,23 @@ A permission is an action and what it applies to:
 
 - `subject` is `*` (every collection, and the project itself) or one collection's slug. A slug that no content type has yet is allowed, so a role can be ready before its collection is.
 - The last four actions belong to the whole project, so their `subject` must be `*`.
-- **Deny by default.** A request is allowed only if a permission names its action on `*` or on that very collection. A publish request that spans several collections needs the action in every one of them.
+- **Deny by default.** A request is allowed only if a permission names its action on `*` or on that very collection. A publish request that spans several collections needs the action in every one of them. A narrowed permission counts only where an entry's fields or creator are asked about (below); it never grants the action collection-wide.
 - **Nobody hands out more than they hold.** A role's powers cover another's when every permission of the other is allowed by the first. Creating, changing or deleting a role, giving someone a role or taking it away, and inviting to a role all need the caller's role, as it is at that moment, to cover the roles involved. So no chain of grants ends with more power than it started with (`nobody_hands_out_more_than_they_hold` in `crates/colophon-server/tests/permissions.rs`).
-- **Field lists and conditions are refused**, not ignored: a permission with `fields` or `condition` is `422` `not_yet_enforced` until step R.3 enforces them. <Status planned="R.3" />
-
 A changed role holds from its holders' next request; a request already running acts on the permissions it read when it began.
+
+### Narrowing a permission
+
+Since step R.3, two optional members narrow a permission:
+
+| Member | On | Means |
+|---|---|---|
+| `fields` | `content.read`, `content.create`, `content.update` | Only these fields: 1 to 100 field ids (1 to 64 lowercase letters, digits and underscores, starting with a letter), sorted and without duplicates when stored. A field no content type has yet is allowed. |
+| `condition` | `content.read`, `content.update`, `content.delete` | `"own"`, the one condition: only entries the member created. |
+
+- **Decided per entry.** For an entry, every permission that applies (its action, its subject `*` or the entry's collection, its condition met) adds its fields, and one without `fields` allows them all. So "titles of any article" beside "every field of my own articles" lets its holder change every field of their own articles and the titles of the rest. What [entries](/reference/api/entries/#fields-and-own-entries) do with it: leave out fields a role can't read, refuse changes to fields it can't change (`field_not_permitted`), and answer `404` for an entry it can't read at all.
+- **One permission per action, subject and condition.** Permissions that share all three are merged, with the union of their fields (or every field, if one has no list); a role may hold the same action twice, once for every entry and once for its own. Migration 0021 holds the same rule in the database.
+- **Covering is exact.** Nobody hands out a field or an entry they can't reach themselves: giving `content.update` on `title`, or on one's own entries, needs that much or more.
+- **The other actions can't be narrowed.** `content.review`, `content.publish`, `schema.change` and the four project-wide actions take neither member.
 
 ## Built-in roles
 
@@ -45,7 +58,7 @@ Seeded in every project with exactly D-042's powers (migration 0017; `the_built_
 | `editor` | Editor | yes | no | no | no |
 | `publisher` | Publisher | yes | yes | no | no |
 
-No built-in role holds `content.delete`. The owner role is **fixed**: it always holds every permission it was seeded with, and can't be changed or deleted (`409`); migration 0018's triggers refuse it even for a direct database write. The other three are ordinary roles marked `built_in`: they can be changed, and deleted when nobody holds them.
+Owners also hold `content.delete` (migration 0022), so that it can be given at all, since nobody hands out what they don't hold; no route deletes entries yet. The owner role is **fixed**: it always holds every permission, and can't be changed or deleted (`409`); migration 0018's triggers refuse it even for a direct database write. The other three are ordinary roles marked `built_in`: they can be changed, and deleted when nobody holds them.
 
 ## The role object
 
@@ -59,6 +72,8 @@ No built-in role holds `content.delete`. The owner role is **fixed**: it always 
   "version": 2,
   "permissions": [
     { "action": "content.read", "subject": "*" },
+    { "action": "content.update", "subject": "articles", "fields": ["title"] },
+    { "action": "content.update", "subject": "articles", "condition": "own" },
     { "action": "content.update", "subject": "pages" }
   ],
   "members": 3,
@@ -74,7 +89,7 @@ No built-in role holds `content.delete`. The owner role is **fixed**: it always 
 | `built_in` | boolean | One of the four every project starts with. |
 | `fixed` | boolean | The owner role. |
 | `version` | integer | Starts at 1; every change adds one. Its `ETag` is `"v<version>"`. |
-| `permissions` | array | Sorted by action, then subject. |
+| `permissions` | array | Sorted. Each has `action` and `subject`, and `fields` and `condition` only when it is narrowed. |
 | `members` | integer | Members who hold it. |
 | `invitations` | integer | Pending invitations that offer it. |
 | `updated_at` | string | When it last changed. |
@@ -144,7 +159,7 @@ Creates a role.
 | `key` | string | Required. 1 to 63 lowercase letters, digits and hyphens, starting with a letter. Unique in the project. |
 | `name` | string | Required. Trimmed, 1 to 100 characters, no control characters. |
 | `description` | string | Optional, default empty. Trimmed, at most 500 characters, no control characters (no line breaks). |
-| `permissions` | array | Required, at most 500; may be empty. Each `{"action", "subject"}`; duplicates are merged. |
+| `permissions` | array | Required, at most 500; may be empty. Each `{"action", "subject"}`, with optional `fields` and `condition` ([narrowing](#narrowing-a-permission)); permissions with the same action, subject and condition are merged. No other member is accepted. |
 
 **Response:** `201 Created`, `ETag: "v1"`, `{"data": …}` with [the role object](#the-role-object).
 
@@ -159,7 +174,10 @@ Creates a role.
 | `422` | `validation_failed` | `unknown_action` | A permission's action isn't one of the eleven. The message names its position. |
 | `422` | `validation_failed` | `invalid_subject` | A `subject` is neither `*` nor a collection slug. |
 | `422` | `validation_failed` | `project_wide_action` | A project-wide action names one collection. |
-| `422` | `validation_failed` | `not_yet_enforced` | A permission has `fields` or `condition`. |
+| `422` | `validation_failed` | `fields_not_applicable` | `fields` on an action other than `content.read`, `content.create` or `content.update`. |
+| `422` | `validation_failed` | `invalid_fields` | `fields` is empty, has more than 100 ids, or names something that isn't a field id. |
+| `422` | `validation_failed` | `unknown_condition` | `condition` isn't `own`. |
+| `422` | `validation_failed` | `condition_not_applicable` | `own` on an action other than `content.read`, `content.update` or `content.delete`. |
 | `422` | `validation_failed` | `too_many_roles` | The project has 100 roles already. |
 
 ### `GET /api/v1/projects/{project}/roles/{role}`
@@ -224,13 +242,13 @@ A role that members hold, or that pending invitations offer, can't be deleted: g
 
 ## Proof
 
-- `crates/colophon-domain/src/policy.rs`: the built-in table, collection scoping, `covers`, and permission parsing, as unit tests.
-- `crates/colophon-db/tests/roles.rs`: roles against real PostgreSQL, including the fixed owner role and versions.
-- `crates/colophon-server/tests/permissions.rs`: against the real binary, a role the owner defines decides what its holder may do, and nobody hands out more than they hold.
-- `perf/k6/roles.js`: a load scenario with custom roles.
+- `crates/colophon-domain/src/policy.rs`: the built-in table, collection scoping, `covers`, permission parsing, and fields and `own` decided per entry, as unit tests.
+- `crates/colophon-db/tests/roles.rs`: roles against real PostgreSQL, including the fixed owner role, versions, and narrowed permissions stored one per action, subject and condition.
+- `crates/colophon-server/tests/permissions.rs`: against the real binary, a role the owner defines decides what its holder may do, nobody hands out more than they hold, and field lists and `own` hold on reads, saves, unreadable entries (`404`) and publish requests (`an_author_reads_and_edits_titles_of_any_article_and_all_of_their_own`).
+- `crates/colophon-api/src/visibility.rs`: what a read leaves out and what a save may change, as unit tests.
+- `perf/k6/roles.js`: a load scenario with custom roles; its full runs are on [Performance](/resources/performance/).
 
 ## Not built yet
 
-- Field lists (which fields a role may read or change, refused with `field_not_permitted`) and the `own` condition (only entries the caller created). <Status planned="R.3" />
 - API tokens with the same permissions, and an audit log of role, membership and token changes. <Status planned="R.4" />
 - `media.*` actions with the media library, and `locales.*` with localization. <Status planned="P4, E" />

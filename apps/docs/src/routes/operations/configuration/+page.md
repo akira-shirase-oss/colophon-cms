@@ -11,7 +11,7 @@ set -a; . deploy/local.env; set +a
 cargo run --release -p colophon-server
 ```
 
-This page lists every `COLOPHON_*` variable the server, the worker inside it, the command line, the scripts and the tests read, found with `git grep COLOPHON_` over the code on the R.2 branch, plus the few other variables they read by name (`XDG_CONFIG_HOME` and `HOME` for the CLI's credentials, `SQLX_OFFLINE` for the build).
+This page lists every `COLOPHON_*` variable the server, the worker inside it, the command line, the scripts and the tests read, found with `git grep COLOPHON_` over the code, plus the few other variables they read by name (`XDG_CONFIG_HOME` and `HOME` for the CLI's credentials, `SQLX_OFFLINE` for the build).
 
 ## The process role
 
@@ -21,13 +21,15 @@ This page lists every `COLOPHON_*` variable the server, the worker inside it, th
 
 Every role binds `COLOPHON_LISTEN_ADDR` and answers every route, the API included: a separate worker process is today a whole server with the worker switched on (D-046 records this). Give each process its own listen address. [The worker](/operations/worker/) has the details.
 
+While the installation has no administrator, every `api` and `all` process prints a one-time setup code to standard error when it starts (D-061); a `worker` process doesn't. There is no setting for it: the code lives one hour, and running `colophon admin bootstrap` before the first start means none is ever issued ([Sign-in and sessions](/reference/api/auth/#setting-up-a-fresh-installation)).
+
 ## The server
 
 | Variable | Default | Accepted | What it does |
 |---|---|---|---|
 | `COLOPHON_DATABASE_URL` | required | A PostgreSQL URL | The application's login (`colophon_app` locally), which row-level security applies to. Never the table owner's. |
 | `COLOPHON_LISTEN_ADDR` | `127.0.0.1:58000` | An IP address and port | Where it listens, plain HTTP. On a loopback address, the development rules apply (below). |
-| `COLOPHON_PUBLIC_URL` | `http://localhost:58000` | An `http(s)` origin, no path | The address browsers use: the sign-in redirect is this plus `/auth/callback`, and it is the first trusted origin. |
+| `COLOPHON_PUBLIC_URL` | `http://localhost:58000` | An `http(s)` origin, no path | The address browsers use: the sign-in redirect is this plus `/auth/callback`, and it is the first trusted origin. The setup code's message names this plus `/studio/`. |
 | `COLOPHON_TRUSTED_ORIGINS` | none | Origins, comma-separated | More origins allowed to send cookie-authenticated writes, such as a separate preview site. |
 | `COLOPHON_CACHE_URL` | none | A `redis://` URL | Valkey, for `/content/v1` answers and readiness. Without it, public reads go to PostgreSQL and readiness reports the cache `not_configured`. |
 | `COLOPHON_STUDIO_DIR` | none | A directory | A Studio build (`apps/studio/build`) to serve at `/studio`. Checked at startup: no build there, no start. |
@@ -59,11 +61,11 @@ Read by every role, used only by `worker` and `all`.
 
 | Variable | Default | Accepted | What it does |
 |---|---|---|---|
-| `COLOPHON_WORKER_POLL_MS` | 500 | 10 to 60,000 | How long it sleeps when it found nothing to do. With work waiting, it claims again as soon as a slot frees. |
+| `COLOPHON_WORKER_POLL_MS` | 500 | 10 to 60,000 | How long it sleeps when it found nothing to do. With work waiting, it claims again as soon as a slot frees. The scheduler looks for due schedules at the same interval. |
 | `COLOPHON_WORKER_LEASE_MS` | 30,000 | 1,000 to 600,000 | How long a claim on a job lasts. A crashed worker's jobs are claimed again after it. |
 | `COLOPHON_WORKER_ATTEMPT_MS` | 10,000 | 100 to 60,000 | One delivery's deadline; must be shorter than the lease, so no request outlives its claim. |
 | `COLOPHON_WORKER_SLOTS` | 8 | 1 to 64 | Deliveries in flight at once. |
-| `COLOPHON_WORKER_DB_CONNECTIONS` | 4 | 1 to 100 | The worker's own pool, so deliveries can't take the connections editors' requests need. |
+| `COLOPHON_WORKER_DB_CONNECTIONS` | 4 | 1 to 100 | The worker's own pool, so deliveries and scheduled publishes can't take the connections editors' requests need. |
 | `COLOPHON_WORKER_LOCATION` | `local` | 1 to 63 lowercase letters, digits and dashes, starting with a letter or digit | Where this worker runs: probes pinned to a location run only on workers there, and their evidence names it. |
 
 ## Rules between settings
@@ -103,6 +105,9 @@ These are constants in the code, not settings:
 | A probe's "not yet" | retried no sooner than 5 s later | `colophon_domain::receipt` |
 | Failing jobs that ran out of time | every 10 s | `crates/colophon-worker/src/lib.rs` |
 | Stopping the worker and probes at shutdown | 5 s | `crates/colophon-server/src/lib.rs` |
+| A setup code's lifetime; codes live at once | 1 hour; 10 | `crates/colophon-server/src/setup_code.rs`, migration 0020 |
+| Setup-code attempts | 5 a person and 20 in all per 15 minutes | migration 0020 |
+| Due schedules one look takes; late before "delayed" | 20; 60 s | `crates/colophon-worker/src/schedules.rs`, `colophon_domain::schedule` |
 
 ## The command line
 
@@ -123,7 +128,7 @@ These are constants in the code, not settings:
 | `COLOPHON_VALKEY_PORT` | 56379 | `deploy/compose.yaml` | Valkey's port. |
 | `COLOPHON_S3_PORT`, `COLOPHON_S3_ADMIN_PORT` | 53900, 53903 | `deploy/compose.yaml` | Garage's S3 and admin ports. |
 | `COLOPHON_KEYCLOAK_PORT` | 58080 | `deploy/compose.yaml` | Keycloak's port, and so the issuer's address. |
-| `COLOPHON_TEST_DATABASE` | none (`colophon_check` in `scripts/check.sh`, `colophon_demo` in `scripts/demo.sh`) | `scripts/local-env.sh` and the scripts that source it, the Rust stack tests, the Playwright configs | A database name: both database URLs point at it instead of `colophon`, on the same PostgreSQL. 1 to 63 lowercase letters, digits and underscores, starting with a letter. |
+| `COLOPHON_TEST_DATABASE` | none (`colophon_check` in `scripts/check.sh`, `colophon_demo` in `scripts/demo.sh`, `colophon_first_run` in `scripts/first-run.sh`) | `scripts/local-env.sh` and the scripts that source it, the Rust stack tests, the Playwright configs | A database name: both database URLs point at it instead of `colophon`, on the same PostgreSQL. 1 to 63 lowercase letters, digits and underscores, starting with a letter. |
 | `QUICK` | `0` | `scripts/check.sh` | `1` skips the integration half. |
 
 Moving a port in `deploy/compose.yaml` doesn't change `deploy/local.env`: edit the URLs there to match. `scripts/load.sh` also reads `TOTAL`, `RATE`, `VUS`, `DURATION`, `P99_MS`, `KEEP`, `LOAD_PORT`, `SITE_PORT`, `RECEIVER_PORT` and `SERVER_LOG`; its header comment explains them, and [Performance](/resources/performance/) the results.
@@ -139,6 +144,12 @@ None of these does anything in a normal server.
 | `COLOPHON_CRASH_LOOP_SEED` | 2400 | `crates/colophon-server/tests/crash_loop.rs` | The seed for the kill timing; each run prints its own. |
 | `COLOPHON_TEST_DATABASE` | none | `crates/colophon-server/tests/common/mod.rs` | As above: the server under test and the owner connection use that database. |
 | `COLOPHON_TEST_PG_HOST` | `127.0.0.1:55432` | `crates/colophon-db/tests/common/mod.rs` | Where the database tests create a fresh database for each test. |
+| `COLOPHON_TEST_ORIGIN` | `http://localhost:58092` | `crates/colophon-server/tests/common/mod.rs`, **when the tests are compiled** (`option_env!`) | The public origin, and so the port, of the server the real-binary tests start, so a second checkout can run them at once. Its callback must be registered in the development realm (58400 to 58405 are). |
+| `COLOPHON_STUDIO_PORT` | 58093 | `apps/studio/playwright.server.config.ts` | The port of the server the Studio's server suite starts. |
+| `COLOPHON_STUDIO_SITE_PORT` | 58094 | `apps/studio/tests/server/site.spec.ts` | The reference site that suite builds and serves. |
+| `COLOPHON_JOURNEY_PORT` | 58402 | `apps/studio/tests/server/journey.spec.ts` | The never-bootstrapped installation the first-run journey starts, with a database of its own. |
+| `COLOPHON_TESTBED_SERVER_PORT`, `COLOPHON_TESTBED_PORT` | 58091, 58101 | `apps/testbed/playwright.config.ts` | The server and the testbed its suite starts. |
+| `VITE_COLOPHON_SERVER_ORIGIN` | `http://localhost:58000` | the testbed's build | The server the testbed's pages call; `scripts/testbed.sh` builds it for 58091. |
 | `COLOPHON_DATABASE_URL`, `COLOPHON_CACHE_URL` | the stack's URLs | two ignored stack tests (`colophon-db`'s ping, `colophon-server`'s cache probe) | They reuse the server's variables. |
 
 The build itself reads one more: `.cargo/config.toml` sets `SQLX_OFFLINE=true`, so compiling uses the query data committed in `.sqlx/` and needs no database.

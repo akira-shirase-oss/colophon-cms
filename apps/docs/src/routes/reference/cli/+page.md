@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-`colophon` is the command line for people and scripts. Its normal commands call the same HTTP API as the Studio, with the same permissions, and never need a database password. One separate group, `colophon admin`, is for the operator and talks to PostgreSQL directly. Everything here is read from `crates/colophon-cli/src/` on `main` (the R.2 branch has the same CLI).
+`colophon` is the command line for people and scripts. Its normal commands call the same HTTP API as the Studio, with the same permissions, and never need a database password. One separate group, `colophon admin`, is for the operator and talks to PostgreSQL directly. Everything here is read from `crates/colophon-cli/src/`, and a test fails when this page misses a command it defines.
 
 There are no release binaries yet. From a clone of the repository, run it through Cargo, or build it once and use `target/release/colophon`:
 
@@ -43,7 +43,7 @@ There are no global flags: each command takes its own. `colophon` with no argume
 | 5 | Transient failure, or unavailable | `429`, `5xx` | no answer, or no answer in time; the database unreachable (`admin`) |
 | 6 | Internal failure | anything else, such as a redirect (the CLI follows none) | an incomplete answer from the server; a credentials file it can't write; a migration that failed |
 
-`404` counts as denied because a project you can't see answers exactly like one that doesn't exist. A `409` includes reusing an idempotency key for a different request, and, on the 3.6 branch, a URL name another entry already has. <Status building="3.6" />
+`404` counts as denied because a project you can't see answers exactly like one that doesn't exist. A `409` includes reusing an idempotency key for a different request, and a URL name another entry already has (step 3.6).
 
 The server's error message is printed with its status, and with the JSON pointer of the field at fault when there is one: `error: … (at /title) [HTTP 422]`. Every request gives up after 30 seconds (5 to connect).
 
@@ -247,6 +247,8 @@ Makes one person the installation's first administrator, the only kind of person
 
 It runs once per installation. Run again for the same person, it changes nothing and exits 0 with `already_bootstrapped`; for anyone else it is refused and exits 4. The `installation` table's triggers refuse any change afterwards, even from the table owner.
 
+The other way to make the first administrator needs no database credentials: while nobody is one, the server prints a one-time setup code to its terminal when it starts, and a person who signs in to the Studio and enters it becomes the first administrator, recorded exactly as this command records one ([`POST /api/v1/setup`](/reference/api/auth/#post-apiv1setup), D-061). Running this command before the server's first start means no code is ever issued.
+
 ```json
 { "version": 1, "command": "admin bootstrap", "status": "bootstrapped", "identity": "…", "issuer": "http://localhost:58080/realms/colophon", "subject": "00000000-0000-4000-8000-00000000c001" }
 ```
@@ -278,7 +280,8 @@ The merged command contract ([module 08](/design/modules/08-cli/), D-008) lists 
 | `init`, `migrate plan`, `migrate apply` | <Status planned="P6" /> |
 | `schema validate`, `schema diff`, `dev` | <Status planned="not scheduled" /> |
 | API tokens for scripts, with the same permissions as a role | <Status planned="R.4" /> |
+| Prebuilt binaries, `npx @colophon-cms/cli`, `cargo install colophon-cli`, a Homebrew tap and an install script; `--version` with the commit and build date, and a plain-words answer when the CLI is too old or too new for the server (D-062) | <Status planned="V" /> |
 
 ## Design
 
-[Module 08, the CLI](/design/modules/08-cli/); decisions D-008, D-041 (device sign-in) and D-043 (the first administrator) in the [decisions](/design/decisions/). The exit-code contract is tested in `crates/colophon-cli/tests/exit_codes.rs` and `tests/doctor.rs`, and the whole sign-in and create flow against a real server in `crates/colophon-server/tests/cli.rs`.
+[Module 08, the CLI](/design/modules/08-cli/); decisions D-008, D-041 (device sign-in), D-043 (the first administrator), D-061 (setup codes) and D-062 (versions and packages) in the [decisions](/design/decisions/). The exit-code contract is tested in `crates/colophon-cli/tests/exit_codes.rs` and `tests/doctor.rs`, and the whole sign-in and create flow against a real server in `crates/colophon-server/tests/cli.rs`.

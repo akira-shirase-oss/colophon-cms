@@ -4,7 +4,7 @@
 
 A project is the unit of isolation: its own members, roles, content types, entries and releases, kept apart by the database's row-level security. This page covers creating and reading projects, the member list, and single-use invitation links. Handlers: `crates/colophon-api/src/projects.rs` and `members.rs`. The reasoning is in [Roles and permissions](/concepts/roles-and-permissions/); the editor's side is [Joining a project](/editors/joining/).
 
-Since R.2, a member's role is any of the project's roles, by its key, and nobody gives, takes away or offers a role with a power their own role lacks <Status building="R.2" />. On `main`, a role is one of the four built-in ones and only owners manage members; for those four roles, the answers are the same.
+A member's role is any of the project's roles, by its key: the four built-in ones or one its owners defined ([Roles](/reference/api/roles/)). Nobody gives, takes away or offers a role with a power their own role lacks (step R.2, D-058).
 
 ## Projects
 
@@ -31,13 +31,13 @@ The projects you belong to.
 | `slug` | string | Its unique, URL-safe name. |
 | `name` | string | Its display name. |
 | `role` | string | Your role's key. |
-| `role_name` | string | Your role's name <Status building="R.2" />. |
+| `role_name` | string | Your role's name. |
 
 ### `POST /api/v1/projects`
 
 Creates a project, with a `production` environment, the built-in `articles` content type and the four built-in roles, and makes you its owner, in one transaction.
 
-- **Who:** administrators only (D-043). The first administrator is made by the operator from a terminal, `colophon admin bootstrap` ([Command line](/reference/cli/)); no HTTP route can make one.
+- **Who:** administrators only (D-043). The first administrator is made with the setup code the server prints to its terminal, entered while nobody is an administrator ([`POST /api/v1/setup`](/reference/api/auth/#post-apiv1setup), D-061), or by the operator with `colophon admin bootstrap` ([Command line](/reference/cli/)). Once anyone is an administrator, no HTTP route can make another.
 - **Headers:** no `Idempotency-Key`: a retry is refused as a taken slug.
 - **Body:**
 
@@ -54,7 +54,7 @@ Creates a project, with a `production` environment, the built-in `articles` cont
 
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
-| `403` | `forbidden` | | You aren't an administrator, or the installation has none yet. The message says which. |
+| `403` | `forbidden` | | You aren't an administrator, or the installation has none yet; then the message says to enter the setup code the server printed when it started, or to have its operator run `colophon admin bootstrap`. |
 | `409` | `conflict` | | A project with this slug exists. |
 | `422` | `validation_failed` | `invalid_slug` | `/slug` breaks the rule. |
 | `422` | `validation_failed` | `invalid_name` | `/name` breaks the rule. |
@@ -78,12 +78,13 @@ One project, with what your role may do in it, so a client can offer only what w
     "permissions": [
       { "action": "content.read", "subject": "*" },
       { "action": "content.update", "subject": "pages" }
-    ]
+    ],
+    "self_review": true
   }
 }
 ```
 
-`permissions` <Status building="R.2" /> lists your role's permissions, sorted, in the [roles' shape](/reference/api/roles/#permissions). It appears only here, not in lists or `/me`.
+`permissions` lists your role's permissions, sorted, in the [roles' shape](/reference/api/roles/#permissions), with `fields` and `condition` where a permission is narrowed. `self_review` says whether whoever submits a publish request may also approve it (D-044); it is always `true` today, because projects can't yet require another reviewer, and the Studio's one-click publish reads it (D-059). Both appear only here, not in lists or `/me`.
 
 | Status | `code` | When |
 |---|---|---|
@@ -113,7 +114,7 @@ Who is in the project.
 
 Gives a member another role.
 
-- **Who:** `members.manage` (owners). Since R.2 your role, as it is at that moment, must also hold every power of both the member's current role and the new one, so a role that manages members can't promote itself to owner or demote a developer <Status building="R.2" />.
+- **Who:** `members.manage` (owners). Your role, as it is at that moment, must also hold every power of both the member's current role and the new one, so a role that manages members can't promote itself to owner or demote a developer.
 - **Path:** `identity`, the member's `identity_id`.
 - **Body:**
 
@@ -131,23 +132,23 @@ Owner rows are locked before the change and the caller's role is read again unde
 
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
-| `403` | `forbidden` | | Your role lacks `members.manage`, or (R.2) one of the two roles' powers. |
+| `403` | `forbidden` | | Your role lacks `members.manage`, or one of the two roles' powers. |
 | `404` | `not_found` | | No such member. |
 | `409` | `conflict` | | The project would lose its last owner. |
 | `422` | `validation_failed` | `invalid_role` | `/role` isn't shaped like a role key. |
-| `422` | `validation_failed` | `unknown_role` | The project has no role with that key <Status building="R.2" />. |
+| `422` | `validation_failed` | `unknown_role` | The project has no role with that key. |
 
 ### `DELETE /api/v1/projects/{project}/members/{identity}`
 
 Removes a member, or lets you leave.
 
-- **Who:** anyone, to remove themselves. To remove someone else: `members.manage` (owners), and since R.2 every power of the role they hold <Status building="R.2" />.
+- **Who:** anyone, to remove themselves. To remove someone else: `members.manage` (owners), and every power of the role they hold.
 
 **Response:** `204 No Content`.
 
 | Status | `code` | When |
 |---|---|---|
-| `403` | `forbidden` | Removing someone else without the permission or (R.2) their role's powers. |
+| `403` | `forbidden` | Removing someone else without the permission or their role's powers. |
 | `404` | `not_found` | No such member. |
 | `409` | `conflict` | The project would lose its last owner, you included. |
 
@@ -176,7 +177,7 @@ The pending invitations: not accepted, revoked or expired.
 
 Makes an invitation link.
 
-- **Who:** `members.manage` (owners), read as your role is at that moment; since R.2, only to a role whose every power your own role has <Status building="R.2" />.
+- **Who:** `members.manage` (owners), read as your role is at that moment, and only to a role whose every power your own role has.
 - **Headers:** no `Idempotency-Key`: a retry makes a second link, and the first can be revoked.
 - **Body:**
 
@@ -206,9 +207,9 @@ Makes an invitation link.
 
 | Status | `code` | `details.reason` | When |
 |---|---|---|---|
-| `403` | `forbidden` | | Your role lacks `members.manage`, or (R.2) a power of the role offered. |
+| `403` | `forbidden` | | Your role lacks `members.manage`, or a power of the role offered. |
 | `422` | `validation_failed` | `invalid_role` | `/role` isn't shaped like a role key. |
-| `422` | `validation_failed` | `unknown_role` | The project has no such role <Status building="R.2" />. |
+| `422` | `validation_failed` | `unknown_role` | The project has no such role. |
 | `422` | `validation_failed` | `invalid_label` | `/label` breaks the rule. |
 
 ### `DELETE /api/v1/projects/{project}/invitations/{invitation}`
@@ -251,7 +252,7 @@ What an invitation offers, for the person holding the link, before they accept.
 }
 ```
 
-`role_name` and `role_description` <Status building="R.2" /> let the page say what the role means before anyone joins.
+`role_name` and `role_description` let the page say what the role means before anyone joins.
 
 | Status | `code` | When |
 |---|---|---|
@@ -277,6 +278,5 @@ Joins the project with the invitation's role, bound to whoever is signed in.
 
 ## Not built yet
 
-- Field-level permissions and "only entries I created" conditions on roles. <Status planned="R.3" />
 - An audit log of role and membership changes. <Status planned="R.4" />
 - More than one administrator, through a grant flow. <Status planned="not scheduled" />

@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-Colophon is pre-release: v0.1 is not out, there are no release binaries, and nothing here is for production. So "operations" today means running Colophon on your own machine or as a test install you can throw away, and reproducing the evidence behind it. Running it for real, with backups, restores and an upgrade runbook, is milestone P6. Every page in this section is read from the code on `main` and the step branches, and says which parts exist.
+Colophon is pre-release: v0.1 is not out, there are no release binaries, and nothing here is for production. So "operations" today means running Colophon on your own machine or as a test install you can throw away, and reproducing the evidence behind it. Running it for real, with backups, restores and an upgrade runbook, is milestone P6. Every page in this section is read from the code it ships with, and says which parts exist.
 
 ## What a running Colophon is
 
@@ -29,7 +29,8 @@ Load results, each with the machine and date it ran on, are in [Performance](/re
 | Apply migrations, make `dev-owner` the first administrator | `scripts/migrate.sh` |
 | Run everything, with a seeded demo project | `scripts/demo.sh` |
 | Apply migrations to any database | `colophon admin migrate` |
-| Make the first administrator | `colophon admin bootstrap --subject S` |
+| Make the first administrator | `colophon admin bootstrap --subject S`, or the setup code the server prints while there is none |
+| Try a brand-new installation, from sign-up to the first release | `scripts/first-run.sh` |
 | Is the server ready? | `colophon doctor`, or `GET /readyz` |
 | Run only the worker | `colophon-server --role worker` |
 | Everything CI runs | `scripts/check.sh` |
@@ -47,3 +48,5 @@ It takes a while and needs the whole stack. These docs never ask you to run it t
 ## Not built yet
 
 Module 18 plans the rest for P6: a production topology (a TLS proxy in front, non-root containers, private networks), backups with WAL archiving and a restore drill, the upgrade runbook, metrics and trace export, budgets and runbooks for PostgreSQL, cache, backlog, credential and disk incidents. <Status planned="P6" />
+
+Decision D-062 adds two milestones: several servers and workers behind a load balancer, proven by kill, drain, connection-budget and shared rate-limit tests, with a stress run for every load scenario and Rust benchmarks in CI <Status planned="S" />; and one version across the server, the CLI, the SDK and the MCP server, with the CLI installable from npm, Cargo, Homebrew and a script, and container images for the server and worker <Status planned="V" />.

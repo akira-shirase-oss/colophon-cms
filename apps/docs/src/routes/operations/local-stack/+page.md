@@ -48,7 +48,8 @@ Keycloak keeps no data of its own: its realm (`deploy/keycloak/colophon-realm.js
 
 - One client, `colophon-server`, with the public secret `colophon-dev-client-secret`, which the server refuses to use unless it listens on a loopback address.
 - Only the Authorization Code flow with PKCE (`S256`); the password grant and the implicit flow are off.
-- Only these redirect addresses, each `/auth/callback`: port 58000 (the development server), 58090 (load tests), 58091 (the testbed), 58092 (the server's integration tests) and 58093 (the Studio's tests).
+- Only these redirect addresses, each `/auth/callback`: port 58000 (the development server), 58090 (load tests), 58091 (the testbed), 58092 (the server's integration tests), 58093 (the Studio's tests), and 58400 to 58405 (step 3.7: `scripts/first-run.sh` on 58400, the first-run journey on 58402, and a second checkout's test runs moved there with `COLOPHON_TEST_ORIGIN`, `COLOPHON_STUDIO_PORT`, `COLOPHON_TESTBED_SERVER_PORT` and `LOAD_PORT`).
+- **Self-registration is on** (step 3.7): the sign-in page offers *Register*, and `/auth/login?start=create` opens the form directly. Accounts made there are ordinary users with no projects and no administrator rights; email isn't verified, because the stack has no mail server. A production identity provider decides for itself whether to allow sign-up.
 - Two users whose ids, their subjects in ID tokens, are fixed: `dev-owner` is `00000000-0000-4000-8000-00000000c001` and `dev-editor` is `…c002`. `scripts/migrate.sh` makes `dev-owner` the installation's first administrator, so tests create projects as `dev-owner` and invite `dev-editor`.
 
 A Keycloak started before step 1.8 has random user ids. Recreate it, and do the same after editing the realm:
@@ -68,11 +69,23 @@ Everything listens on `127.0.0.1` or `localhost`:
 | 58090, 58096, 58097 | `scripts/load.sh`: its server, test receiver and site |
 | 58091, 58100, 58101 | the testbed: its server, dev server and preview |
 | 58092 | the server's integration tests |
-| 58093 | the Studio's Playwright tests |
+| 58093, 58094 | the Studio's Playwright tests: its server, and the reference site one suite builds |
+| 58400 | `scripts/first-run.sh`: a brand-new installation, below |
+| 58402 | the Studio's first-run journey test, on a database of its own |
+
+## A brand-new installation
+
+To try what a new operator sees, from sign-up to the first release, without the `dev-owner` bootstrap:
+
+```sh runnable
+scripts/first-run.sh
+```
+
+It builds the server, the CLI and the Studio, creates an empty database of its own (`colophon_first_run`, or `COLOPHON_TEST_DATABASE`), applies the migrations without bootstrapping anyone, and starts the server with the Studio and the worker on `http://localhost:58400`. The server prints a one-time setup code to that terminal; sign up or sign in at `/studio/`, enter the code, and you are the installation's first administrator (D-061). `--reset` starts again from an empty database; Ctrl-C stops the server and keeps the database. It needs the stack running, with a Keycloak recreated after step 3.7's realm change.
 
 ## A database of your own
 
-The scripts, the Rust stack tests and the Playwright configs all follow `COLOPHON_TEST_DATABASE`: set it to a database name and both database URLs in `deploy/local.env` point at that database on the same PostgreSQL, instead of `colophon`. `scripts/check.sh` uses a fresh `colophon_check` on every run, `scripts/demo.sh` keeps `colophon_demo`, and a step branch whose migrations are ahead of `main` should use one too, so it never migrates the database other checkouts share. A database that every run adds to grows until saves slow down: on 2026-10-27, on an Apple M2 Pro laptop, the entries load scenario had a p99 of 183.8 ms against a local database grown to 5 GB, and 52.4 ms against a fresh one (both results are in `perf/results/`).
+The scripts, the Rust stack tests and the Playwright configs all follow `COLOPHON_TEST_DATABASE`: set it to a database name and both database URLs in `deploy/local.env` point at that database on the same PostgreSQL, instead of `colophon`. `scripts/check.sh` uses a fresh `colophon_check` on every run, `scripts/demo.sh` keeps `colophon_demo`, `scripts/first-run.sh` keeps `colophon_first_run`, and a checkout whose migrations are ahead of the others should use one too, so it never migrates the database other checkouts share. A database that every run adds to grows until saves slow down: on 2026-10-27, on an Apple M2 Pro laptop, the entries load scenario had a p99 of 183.8 ms against a local database grown to 5 GB, and 52.4 ms against a fresh one (both results are in `perf/results/`).
 
 ## What the checks prove
 

@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-A content type says what an entry of one collection may hold: its fields, their types and limits, and which field is the title. Definitions are versioned, parsed rather than trusted, and stored in one canonical form. The four routes and the six original field types are on `main` since step 1.5 <Status done="1.5" />. Step 3.6, on its branch, adds the `slug` field type and lets a change that narrows a definition through when no stored entry is in the way, naming the entries when some are (D-054, D-055, migration 0016). Handler: `crates/colophon-api/src/content_types.rs`; rules: `crates/colophon-domain/src/schema.rs`. The ideas are in [Content types and URL names](/concepts/content-types/).
+A content type says what an entry of one collection may hold: its fields, their types and limits, and which field is the title. Definitions are versioned, parsed rather than trusted, and stored in one canonical form. The four routes and the six original field types came with step 1.5 (D-040). Step 3.6 added the `slug` field type and lets a change that narrows a definition through when no stored entry is in the way, naming the entries when some are (D-054, D-055, migration 0016); the Studio's content-type builder (Settings, then the type) makes every change through these routes. Handler: `crates/colophon-api/src/content_types.rs`; rules: `crates/colophon-domain/src/schema.rs`. The ideas are in [Content types and URL names](/concepts/content-types/).
 
 ## The definition
 
@@ -51,7 +51,7 @@ A field object holds only the common keys and its type's options; anything else 
 | `boolean` | none | `true` or `false`. | `wrong_type` |
 | `enum` | `values`: 1 to 100 distinct options, each 1 to 100 characters, no control characters, no spaces at either end | One of `values`. | `not_an_option` |
 | `datetime` | none | A UTC time written `YYYY-MM-DDTHH:MM:SSZ`, a real calendar date. | `invalid_datetime` |
-| `slug` <Status building="3.6" /> | `source` (optional) | An entry's URL name: 1 to 120 characters, lowercase ASCII letters and digits in groups joined by single hyphens, like `my-first-post`. | `invalid_slug` |
+| `slug` | `source` (optional) | An entry's URL name: 1 to 120 characters, lowercase ASCII letters and digits in groups joined by single hyphens, like `my-first-post`. | `invalid_slug` |
 
 Option errors: `max_chars` out of range is `out_of_range`; `min` or `max` that isn't a number is `wrong_type`, and one that isn't a value the field could hold, or a `max` below `min`, is `out_of_range`; `values` missing is `missing_field`, and empty, too many, duplicated or badly written options are `invalid_values`.
 
@@ -59,7 +59,7 @@ Content is checked against its type on every save: unknown keys are `unknown_fie
 
 ## Slug fields
 
-A `slug` field holds an entry's URL name (the editors' word; [URL names](/editors/url-names/)) <Status building="3.6" />.
+A `slug` field holds an entry's URL name (the editors' word; [URL names](/editors/url-names/)).
 
 - A content type has at most one; a second is `duplicate_slug`, pointing at its `type`.
 - `source`, if given, names one of the type's single-line text fields: the Studio suggests the URL name from it as you type. It is only a hint; the server never derives, lowercases or fixes a slug, it refuses one that breaks the rule (`invalid_source` for a bad `source`).
@@ -89,11 +89,13 @@ Each change stores a new version; nothing is edited in place. A version as the A
 
 A new definition replaces the current one only if every stored entry stays valid. Each change falls in one of three groups (`ContentType::successor`):
 
-| Change | Since 3.6 | On `main` |
-|---|---|---|
-| A new name or labels; a new optional field; wider limits (`max_chars` up, single-line to multi-line, whole number to decimal, `min` or `max` relaxed or removed); more enum options; another `source` for the slug | always allowed | always allowed |
-| Removing a field, making one required, adding a required field, narrowing a limit, removing enum options, changing a field's type | allowed if **every current draft and every published revision** fits the new definition; otherwise `422` `needs_migration`, naming the entries in the way <Status building="3.6" /> | always `422` `needs_migration` |
-| Changing `title_field`; turning a field into or out of a slug field | always `422` `needs_migration`: the stored titles and slugs would disagree with content | `title_field` refused the same way |
+| Change | Outcome |
+|---|---|
+| A new name or labels; a new optional field; wider limits (`max_chars` up, single-line to multi-line, whole number to decimal, `min` or `max` relaxed or removed); more enum options; another `source` for the slug | always allowed |
+| Removing a field, making one required, adding a required field, narrowing a limit, removing enum options, changing a field's type | allowed if **every current draft and every published revision** fits the new definition; otherwise `422` `needs_migration`, naming the entries in the way |
+| Changing `title_field`; turning a field into or out of a slug field | always `422` `needs_migration`: the stored titles and slugs would disagree with content |
+
+Before step 3.6 (D-040 alone), every change in the second group was refused whatever was stored.
 
 When a change needs checking, the server takes an exclusive lock on the collection before reading anything; entry saves, creates and publishes take the same lock shared, so no write can slip in between the check and the commit. It then validates every draft and every open publication of the collection, 200 at a time, off the request threads. More than 10,000 of them is refused without looking, with `too_many_to_check`. A migration tool for those cases doesn't exist yet.
 
@@ -136,7 +138,7 @@ The refusal names the first 20 drafts or publications in the way, what is wrong 
 | `entries[].problem` | The refusal that revision's content would get: `reason`, `pointer` into the content, `message`. |
 | `total` | How many drafts and publications are in the way in all. |
 
-A refusal of the third group, or one on `main`, has `reason` `needs_migration` and a `pointer`, with no `entries` or `total`.
+A refusal of the third group has `reason` `needs_migration` and a `pointer`, with no `entries` or `total`.
 
 ## Routes
 
@@ -158,7 +160,7 @@ Every project starts with `articles`, as above.
 
 Creates a content type, at version 1.
 
-- **Who:** `schema.change` (owners, developers); since R.2, on `*` or on the new slug <Status building="R.2" />.
+- **Who:** `schema.change` (owners, developers), on `*` or on the new slug.
 - **Headers:** `Idempotency-Key` (required).
 - **Body:**
 
@@ -199,7 +201,7 @@ The current version of one content type.
 
 Stores a new definition as the next version, if [the change is allowed](#changing-a-content-type).
 
-- **Who:** `schema.change` (owners, developers); since R.2, on `*` or on this collection <Status building="R.2" />.
+- **Who:** `schema.change` (owners, developers), on `*` or on this collection.
 - **Headers:** `If-Match: "v<version>"`, the version you edited, and `Idempotency-Key` (both required).
 - **Body:** the new definition itself, not wrapped:
 
@@ -224,8 +226,8 @@ Stores a new definition as the next version, if [the change is allowed](#changin
 | `409` | `conflict` | `stale_version` | It changed since your version; the `ETag` header names the current one. Nothing was written. |
 | `409` | `conflict` | `idempotency_key_reused` | The key was used for a different request. |
 | `422` | `validation_failed` | a definition code | The new definition breaks a rule. |
-| `422` | `validation_failed` | `needs_migration` | The change would make stored content invalid, or needs a migration whatever is stored. With `entries` and `total` when entries are in the way <Status building="3.6" />. |
-| `422` | `validation_failed` | `too_many_to_check` | More than 10,000 drafts and publications to check <Status building="3.6" />. |
+| `422` | `validation_failed` | `needs_migration` | The change would make stored content invalid, or needs a migration whatever is stored. With `entries` and `total` when entries are in the way. |
+| `422` | `validation_failed` | `too_many_to_check` | More than 10,000 drafts and publications to check. |
 | `428` | `precondition_required` | | No `If-Match`, or no `Idempotency-Key`. |
 
 ## Proof
@@ -236,7 +238,6 @@ Stores a new definition as the next version, if [the change is allowed](#changin
 
 - Migrations, with a plan, a dry run, approval and per-entry outcomes, for the changes refused today. <Status planned="M" />
 - More field types: references, components, bounded lists, block lists, email, URL, date, time, JSON, Markdown and colour; defaults and validation by pattern. <Status planned="M" />
-- Field-level permissions, so a role may change only some fields. <Status planned="R.3" />
 - URL names per locale. <Status planned="E" />
 
 See the [roadmap](/resources/roadmap/).
