@@ -421,6 +421,37 @@ Internal job terminology stays behind a technical detail drawer for developers.
 6. **P5:** developer area for tokens; the optional AI panel.
 7. **P6:** polish and the usability test.
 
+## Gaps against the API (audit, 2026-10-28)
+
+Every route in `crates/colophon-api/src/lib.rs` and every row of `docs/COMPARISON.md`'s parity backlog, checked
+against what the Studio shows or does. Sizes: S (a day or less, Studio only), M (a few days, or needs a backend route
+first), L (a milestone).
+
+Backend capabilities with no Studio screen or action:
+
+| Capability | What's missing | Size |
+|---|---|---|
+| An entry's public address (`/content/v1/{project}/{environment}/{collection}/{entry}`) | Only collection addresses are shown (Releases, Settings); a published entry doesn't say where readers get it | S |
+| `created_by` on an entry list | My work uses it; a collection's list can't be narrowed to one's own entries | S |
+| `GET /version` (version, commit, build date, API versions) | Shown nowhere, so a problem report can't say which server it was | S |
+| Delivery reads (`/content/v1/...`) | Addresses only; no view of what readers get for an entry or release (the JSON, at a generation) | M |
+| `GET …/jobs?generation=` | Not used; the receipt already carries each destination's state, attempts and last error | none |
+| `GET …/permissions` | Not used; the Studio reads the same grants from the project | none |
+| `POST /api/v1/rich-text/validate` | Not used; the Studio validates with the same package before saving | none |
+
+Asked about, and complete for what the API offers: scheduled publishing (a local time with the two instants when
+clocks change, cancel, upcoming on Releases and My work; changing a time is cancel and schedule again, as in the API);
+receipts and probes (labels, each destination's part, every probe look, locations); website connections (webhook, CDN
+purge, probe with a location; on and off); API tokens (read-only, full access, custom grants, expiry, last used,
+revoke); the activity log (by kind and person, older pages; the API has no date range); single types; the reference
+picker in groups, list items and page sections; history (compare any revision, restore as a new one); bulk publish
+and unpublish from a list, and duplicate.
+
+Needs a backend route first (each M unless said): deleting entries, content types and components; renaming or
+removing a project; changing or removing a website connection (only on and off today); rotating a token; seeing and
+ending one's sessions; defaults and conditions inside structures; geopoint fields. Later milestones (L): media
+library (P4), localization, comments and tasks, presence, visual preview (E), query filters and webhooks by event (D).
+
 ## Open decisions
 
 - The v0.1 rich-text block set.
