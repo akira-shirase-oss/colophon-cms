@@ -251,11 +251,18 @@ fn printed_only_to_the_terminal(code: &str, outputs: &[(String, String)], seen: 
             "a response carried the setup code"
         );
     }
+    // One banner, from the start that issued it (the banner names the code twice: on its own
+    // line and in the link that fills it in).
     let printed: usize = outputs
         .iter()
-        .map(|(_, stderr)| stderr.matches(code).count())
+        .map(|(_, stderr)| stderr.matches(&format!("Setup code: {code}")).count())
         .sum();
     assert_eq!(printed, 1, "printed once, by the start that issued it");
+    let linked: usize = outputs
+        .iter()
+        .map(|(_, stderr)| stderr.matches(&format!("#setup={code}")).count())
+        .sum();
+    assert_eq!(linked, 1, "with one link that fills it in");
 }
 
 /// The owner of `project` may publish, and may approve their own publish request (D-044), so the
