@@ -1,8 +1,9 @@
 // Shared components (step M.4, D-073) in the Studio, against the real server: made in Settings,
 // given fields on their own page, inserted into a content type from its builder (shown there
 // read-only, with the way to its page), and filled in an entry like any group; a change saved for
-// every content type that uses it, each with its new version said; a change one of their entries
-// can't take refused, naming that content type and its entries; and a role that may change only
+// every content type that uses it, each with its new version said; a change one of them can't take
+// refused, naming that content type from the server's answer (`details.content_type`) and listing
+// its entries; and a role that may change only
 // one content type reads components but can't change them, which the server refuses too.
 
 import { expect, type Page, test } from '@playwright/test';
@@ -109,15 +110,24 @@ test('a change reaches every content type that uses it; one their entries can’
 	await expect(page.getByTestId('component-users')).toContainText('Used by Pages, Posts.');
 	await add(page, 'Add a field to SEO', 'Description', 'Text');
 	await page.getByTestId('field-description').getByLabel('Required').check();
+	// The server's answer names the type: no entry is read to find it.
+	const reads: string[] = [];
+	page.on('request', (request) => {
+		if (request.method() === 'GET' && request.url().includes('/entries/')) reads.push(request.url());
+	});
+	const answer = page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().endsWith('/components/seo'));
 	await page.getByRole('button', { name: 'Save component' }).click();
-	// Pages has no entries in the way; Posts does, so nothing changes, and Posts is named.
+	expect((await (await answer).json()).error.details).toMatchObject({ reason: 'needs_migration', content_type: 'posts' });
+	// Pages has no entries in the way; Posts does, so nothing changes, and Posts is named and linked.
 	const refusal = page.getByTestId('component-refusal');
-	await expect(refusal).toContainText('Posts has entries that don’t fit this change yet.');
+	await expect(refusal.getByTestId('refusal-words')).toHaveText('Posts has entries that don’t fit this change yet. Change them (they are listed below), or keep the component as it is.');
+	await expect(refusal.getByRole('link', { name: 'Posts', exact: true })).toHaveAttribute('href', /settings\/types\/posts$/);
 	await expect(refusal.getByRole('link', { name: 'An old post' })).toHaveAttribute('href', /\/posts\//);
 	await expect(refusal.getByTestId('blocker-problem')).toHaveText('It has no Description, which it would need.');
 	expect(await violations(page)).toEqual([]);
 	expect(await internalTerms(page)).toEqual([]);
 	expect((await api(page, 'GET', `${env(project)}/content-types/pages`)).body?.['data'].version).toBe(1);
+	expect(reads).toEqual([]);
 
 	// Optional, it goes through: both types get a new version, said with links.
 	await page.getByTestId('field-description').getByLabel('Required').uncheck();
@@ -132,6 +142,48 @@ test('a change reaches every content type that uses it; one their entries can’
 		expect(type.definition.fields[1].fields.map((field: { id: string }) => field.id), slug).toEqual(['title', 'description']);
 	}
 	await shot(page, 'component-saved-m4');
+});
+
+test('a change one content type can’t take at all is refused, naming that type from the server’s answer', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	await seo(page, project);
+	// Pages uses it at the top; Posts two groups down, where it can't hold a group of its own.
+	const nested = {
+		name: 'Posts',
+		title_field: 'title',
+		fields: [
+			TITLE,
+			{
+				id: 'meta',
+				label: 'Meta',
+				type: 'object',
+				required: false,
+				fields: [{ id: 'more', label: 'More', type: 'object', required: false, fields: [{ id: 'seo', label: 'SEO', type: 'component', component: 'seo', required: false }] }]
+			}
+		]
+	};
+	for (const [slug, definition] of [
+		['pages', typeUsing('Pages')],
+		['posts', nested]
+	] as const) {
+		const made = await api(page, 'POST', `${env(project)}/content-types`, { slug, definition }, { 'Idempotency-Key': key() });
+		expect(made.status, JSON.stringify(made.body)).toBe(201);
+	}
+
+	await page.goto(`/studio/projects/${project}/settings/components/seo`);
+	await expect(page.getByTestId('component-users')).toContainText('Used by Pages, Posts.');
+	await add(page, 'Add a field to SEO', 'Links', 'Group of fields');
+	await add(page, 'Add a field to Links', 'Label', 'Text');
+	await page.getByRole('button', { name: 'Save component' }).click();
+	// No entries are in the way, and two types use it: only the server's answer can say which refused.
+	const refusal = page.getByTestId('component-refusal');
+	await expect(refusal.getByTestId('refusal-words')).toHaveText('Posts can’t take this change.');
+	await expect(refusal.getByRole('link', { name: 'Posts', exact: true })).toHaveAttribute('href', /settings\/types\/posts$/);
+	await expect(refusal.getByRole('list', { name: 'Entries in the way' })).toHaveCount(0);
+	expect(await violations(page)).toEqual([]);
+	for (const slug of ['pages', 'posts']) expect((await api(page, 'GET', `${env(project)}/content-types/${slug}`)).body?.['data'].version, slug).toBe(1);
+	expect((await api(page, 'GET', `${env(project)}/components/seo`)).body?.['data'].version).toBe(1);
 });
 
 test('a role that may change only one content type reads components but can’t change them', async ({ page, browser }) => {

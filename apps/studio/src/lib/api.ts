@@ -347,6 +347,9 @@ export interface Details {
 	candidates?: string[];
 	/** For a 403 `missing_permission`: the permission the role lacks, such as `content.publish`. */
 	permission?: string;
+	/** For a refused component change (D-073): the content type that couldn't take it; `reason`
+	 *  and `entries` are that type's. */
+	content_type?: string;
 }
 
 /** The session's CSRF token, which every cookie-authenticated write echoes. */

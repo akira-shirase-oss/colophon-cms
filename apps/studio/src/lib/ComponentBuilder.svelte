@@ -3,8 +3,8 @@
   structure deep, so nothing unique, no defaults, no conditions, no URL name and no component
   inside). A change reaches every content type that uses it: the server gives each a new version
   in the same transaction, checked against its entries, or refuses the whole change. A refusal
-  names the content type in the way and lists its entries with links. Its page keys it on the
-  version, so a save starts a fresh copy of the new one.
+  names the content type in the way (`details.content_type`) and lists its entries with links.
+  Its page keys it on the version, so a save starts a fresh copy of the new one.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -12,7 +12,7 @@
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
-	import { ApiError, type Component, type ComponentDefinition, type ContentType, type Details, type FieldDefinition, getEntry, newKey, updateComponent } from './api.ts';
+	import { ApiError, type Component, type ComponentDefinition, type Details, type FieldDefinition, newKey, updateComponent } from './api.ts';
 	import { plainError } from './errors.ts';
 	import { savedPaths, structureProblems, usedBy } from './fieldDefs.ts';
 	import FieldsEditor from './FieldsEditor.svelte';
@@ -37,7 +37,11 @@
 	let key = newKey();
 	let lastSent = '';
 	let busy = $state(false);
-	let refusal = $state<{ message: string; details: Details | null; stale: boolean; type: ContentType | null } | null>(null);
+	/** A content type a refused change names. */
+	type InTheWay = { slug: string; name: string; fields: FieldDefinition[] };
+	/** A refusal: its words, after the content type's name when it names one (linked), and the
+	 *  server's own words beneath when the Studio has none of its own. */
+	let refusal = $state<{ message: string; server: string; details: Details | null; stale: boolean; type: InTheWay | null } | null>(null);
 
 	const changed = $derived(JSON.stringify(draft) !== JSON.stringify(saved));
 	const problems = $derived(structureProblems(draft.fields));
@@ -54,22 +58,12 @@
 		}
 	}
 
-	/** The content type whose entries are in the way. The refusal names it only in its message, so
-	 *  it is found from the types that use the component: the one that holds the first entry. */
-	async function typeInTheWay(details: Details | null): Promise<ContentType | null> {
-		const candidates = (types.data ?? []).filter((type) => users.some((user) => user.slug === type.slug));
-		if (candidates.length === 1) return candidates[0] ?? null;
-		const first = details?.entries?.[0]?.entry;
-		if (first === undefined) return null;
-		for (const type of candidates) {
-			try {
-				await getEntry(project, type.slug, first);
-				return type;
-			} catch {
-				// Not this one.
-			}
-		}
-		return null;
+	/** The content type a refused change names (`details.content_type`), with its fields for the
+	 *  entries' problems; its name from the content types already read. */
+	function typeNamed(slug: string | undefined): InTheWay | null {
+		if (slug === undefined) return null;
+		const type = types.data?.find((item) => item.slug === slug);
+		return { slug, name: type?.definition.name ?? slug, fields: type?.definition.fields ?? [] };
 	}
 
 	async function save() {
@@ -92,17 +86,20 @@
 			onsaved(result);
 		} catch (failure) {
 			if (failure instanceof ApiError && failure.failure !== 'retry') {
-				if (failure.reason === 'needs_migration') {
-					const type = await typeInTheWay(failure.details);
-					const message = `${type?.definition.name ?? 'A content type that uses it'} has entries that don’t fit this change yet. Change them (they are listed below), or keep the component as it is.`;
-					refusal = { message, details: failure.details, stale: false, type };
+				const type = typeNamed(failure.details?.content_type);
+				if (type !== null && failure.reason === 'needs_migration') {
+					const message = 'has entries that don’t fit this change yet. Change them (they are listed below), or keep the component as it is.';
+					refusal = { message, server: '', details: failure.details, stale: false, type };
+				} else if (type !== null) {
+					// Its own refusal (too deep, say): the server's words, in this developer area.
+					refusal = { message: 'can’t take this change.', server: failure.message, details: failure.details, stale: false, type };
 				} else {
 					// Words the Studio has, or the server's own in this developer area.
 					const words = failure.reason === 'invalid_component' || failure.reason === 'unknown_component' ? plainError(failure) : failure.message;
-					refusal = { message: words, details: failure.details, stale: failure.failure === 'conflict', type: null };
+					refusal = { message: words, server: '', details: failure.details, stale: failure.failure === 'conflict', type: null };
 				}
 			} else {
-				refusal = { message: plainError(failure), details: null, stale: false, type: null };
+				refusal = { message: plainError(failure), server: '', details: null, stale: false, type: null };
 			}
 		} finally {
 			busy = false;
@@ -126,8 +123,8 @@
 	}
 
 	/** A stored entry's problem with the change, in words, or the server's where the Studio has none. */
-	function problemWords(problem: { reason: string; pointer: string; message: string }, type: ContentType): string {
-		const label = labelAt(type.definition.fields, problem.pointer);
+	function problemWords(problem: { reason: string; pointer: string; message: string }, type: InTheWay): string {
+		const label = labelAt(type.fields, problem.pointer);
 		if (label !== null && problem.reason === 'missing_field') return `It has no ${label}, which it would need.`;
 		if (label !== null && problem.reason === 'not_applicable') return `It has a ${label}, which wouldn't apply to it.`;
 		return problem.message;
@@ -159,7 +156,10 @@
 
 	{#if refusal}
 		<div role="alert" class="rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm" data-testid="component-refusal">
-			<p class="font-medium">{refusal.message}</p>
+			<p class="font-medium" data-testid="refusal-words">
+				{#if refusal.type}<a class="underline" href={resolve('/projects/[project]/settings/types/[type]', { project, type: refusal.type.slug })}>{refusal.type.name}</a>{' '}{/if}{refusal.message}
+			</p>
+			{#if refusal.server}<p class="mt-1 text-muted-foreground">{refusal.server}</p>{/if}
 			{#if refusal.stale}
 				<Button class="mt-2" variant="outline" size="sm" onclick={reload}>Load the current version</Button>
 			{/if}
