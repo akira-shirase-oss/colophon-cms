@@ -312,6 +312,5 @@ The code is hashed as soon as the body is read; only hashes reach PostgreSQL, th
 
 ## Not built yet
 
-- API tokens for scripts and agents, with the same permissions as roles, read-only or full access. <Status planned="R.4" />
 - Asking for a fresh sign-in before sensitive changes such as role changes. <Status planned="not scheduled" />
 - More than one administrator, through a grant flow. <Status planned="not scheduled" />

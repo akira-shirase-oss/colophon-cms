@@ -278,5 +278,5 @@ Joins the project with the invitation's role, bound to whoever is signed in.
 
 ## Not built yet
 
-- An audit log of role and membership changes. <Status planned="R.4" />
+- An audit log of role, membership, invitation and token changes: built on a branch ([the audit log](/reference/api/tokens/#the-audit-log)). <Status building="R.4" />
 - More than one administrator, through a grant flow. <Status planned="not scheduled" />

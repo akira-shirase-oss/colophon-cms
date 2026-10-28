@@ -34,7 +34,7 @@ Renaming a code is a breaking change. They are defined in `ErrorCode` in `crates
 | `bad_request` | 400 | A malformed request that no more specific code describes: a malformed `If-Match` or `Idempotency-Key`, a `limit` outside 1 to 100, a cursor from another list, a title search over 100 characters, a query parameter or path segment that doesn't parse (`?generation=ten`, `/releases/latest`), or a body that couldn't be read. |
 | `malformed_json` | 400 | The body isn't valid JSON, or doesn't have the expected shape: a required field missing, a value of the wrong type, or an unknown field in a body with a fixed shape. The message quotes the parser. |
 | `sign_in_failed` | 400 | Sign-in failed, was cancelled, or its attempt expired or was already used. Details are logged, never shown. |
-| `unauthorized` | 401 | Not signed in, the session or token ended (12 hours after sign-in, 2 hours unused, revoked), or a bearer token isn't valid. |
+| `unauthorized` | 401 | Not signed in, the session or token ended (12 hours after sign-in, 2 hours unused, revoked), a project API token was revoked or expired, or a bearer token isn't valid. |
 | `forbidden` | 403 | Signed in, but not allowed: a role without the permission, a browser write without a trusted `Origin` or a matching CSRF token, a bearer token approving a device, or someone who isn't an administrator creating a project. `details.reason` says which ([Refusals](#refusals)). |
 | `not_found` | 404 | No such resource, or one you may not see; the two look the same. Also an id that isn't a UUID, and an unknown, expired or used invitation, device code or device secret. |
 | `gone` | 410 | Delivery only: it was published, and has been taken down. |
@@ -80,6 +80,7 @@ Every `403` has `details.reason`, a stable code to act on instead of the message
 | `origin_not_allowed` | any cookie write | The `Origin` header isn't a trusted origin. |
 | `csrf_token_invalid` | any cookie write | The `X-CSRF-Token` header is missing or doesn't match the session's. |
 | `titles_not_readable` | `GET {P}/collections/{collection}/entries?q=` | Your role can't read titles in this collection, not even on your own entries, so it can't search them. |
+| `api_token_not_allowed` | every route but its project's routes under `{P}` and the rich-text validator; and `POST {P}/changesets/{changeset}/schedule` | The caller is a [project API token](/reference/api/tokens/), which works only with its project's content and never schedules. <Status building="R.4" /> |
 
 ## Conflicts
 
@@ -178,14 +179,29 @@ From `POST` and `PUT` on `/api/v1/projects/{project}/roles` ([Roles](/reference/
 | `invalid_role_name` | `/name` | Blank, over 100 characters, or with control characters. |
 | `invalid_role_description` | `/description` | Over 500 characters, or with control characters. |
 | `too_many_permissions` | `/permissions` | More than 500. |
-| `unknown_action` | `/permissions` | An action that isn't one of the eleven; the message names the permission's position. |
+| `unknown_action` | `/permissions` | An action that isn't one of the twelve (eleven before R.4 added `audit.read`); the message names the permission's position. |
 | `invalid_subject` | `/permissions` | A subject that is neither `*` nor a collection slug. |
-| `project_wide_action` | `/permissions` | `members.manage`, `roles.manage`, `destinations.manage` or `tokens.manage` on one collection. |
+| `project_wide_action` | `/permissions` | `members.manage`, `roles.manage`, `destinations.manage`, `tokens.manage` or `audit.read` on one collection. |
 | `fields_not_applicable` | `/permissions` | `fields` on an action other than `content.read`, `content.create` or `content.update`. |
 | `invalid_fields` | `/permissions` | `fields` is empty, has more than 100 ids, or names something that isn't a field id. (Also a definition with too few or too many fields, below.) |
 | `unknown_condition` | `/permissions` | A `condition` that isn't `own`. |
 | `condition_not_applicable` | `/permissions` | `own` on an action other than `content.read`, `content.update` or `content.delete`. |
 | `too_many_roles` | `/key` | The project has 100 roles already. |
+
+### API tokens
+
+From `POST /api/v1/projects/{project}/tokens` ([API tokens](/reference/api/tokens/#post-apiv1projectsprojecttokens)); its permissions can also be refused with any of the role codes above. <Status building="R.4" />
+
+| `details.reason` | `pointer` | When |
+|---|---|---|
+| `invalid_token_name` | `/name` | Blank, over 100 characters, or with control characters. |
+| `invalid_token_description` | `/description` | Over 500 characters, or with control characters. |
+| `unknown_token_kind` | `/kind` | Not `read-only`, `full-access` or `custom`. |
+| `invalid_expiry` | `/expires_in_days` | Outside 1 to 366. |
+| `permissions_required` | `/permissions` | A `custom` token without permissions. |
+| `permissions_not_applicable` | `/permissions` | Permissions on a `read-only` or `full-access` token, whose permissions are fixed. |
+| `not_for_tokens` | `/permissions` | `members.manage`, `roles.manage`, `tokens.manage` or `audit.read`: those stay with people. |
+| `too_many_tokens` | (empty) | The project has 100 active tokens already. |
 
 ### Content and content types
 

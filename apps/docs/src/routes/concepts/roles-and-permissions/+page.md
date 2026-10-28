@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-Who may do what is decided in one place, checked on every request, and backed by the database so a bug in a handler can't leak another project's data. Four built-in roles, invitations and the last-owner rule came first (step 1.7). Milestone R turned roles into data: step R.1 stores the four roles as rows with unchanged powers, step R.2 lets owners define roles of their own, and step R.3 narrows a permission to some fields or to a member's own entries. API tokens and an audit log are step R.4, next.
+Who may do what is decided in one place, checked on every request, and backed by the database so a bug in a handler can't leak another project's data. Four built-in roles, invitations and the last-owner rule came first (step 1.7). Milestone R turned roles into data: step R.1 stores the four roles as rows with unchanged powers, step R.2 lets owners define roles of their own, and step R.3 narrows a permission to some fields or to a member's own entries. Step R.4, built on a branch and not merged, adds project API tokens and an append-only audit log.
 
 ## Projects are isolated by the database <Status done="1.1" />
 
@@ -10,7 +10,7 @@ Every table that belongs to a project carries its id, and PostgreSQL's row-level
 
 ## Actions and the built-in roles <Status done="R.1" />
 
-A permission names an **action** and a **subject**: `*` (every collection, and the project itself) or one collection. Seven actions are about content and may name one collection; four are about the whole project and only ever apply to `*`. This is `colophon_domain::policy`, and the built-in roles' permissions are `Policy::builtin`:
+A permission names an **action** and a **subject**: `*` (every collection, and the project itself) or one collection. Seven actions are about content and may name one collection; five are about the whole project and only ever apply to `*`. This is `colophon_domain::policy`, and the built-in roles' permissions are `Policy::builtin`:
 
 | Action | What it allows | Owner | Developer | Editor | Publisher |
 |---|---|---|---|---|---|
@@ -24,9 +24,10 @@ A permission names an **action** and a **subject**: `*` (every collection, and t
 | `members.manage` | invite people, change their roles, remove them | yes | no | no | no |
 | `roles.manage` | create, change and delete roles | yes | no | no | no |
 | `destinations.manage` | manage website connections (webhooks, CDNs, probes) | yes | yes | no | no |
-| `tokens.manage` | create and revoke API tokens (none exist yet, R.4) | yes | no | no | no |
+| `tokens.manage` | create and revoke API tokens (R.4, on a branch) | yes | no | no | no |
+| `audit.read` | read the audit log (R.4, on a branch) | yes | no | no | no |
 
-The first seven rows (content and `schema.change`) may name one collection. These are exactly the powers of step 1.7's fixed table (D-042), plus `roles.manage`, `tokens.manage` and `content.delete` for owners, who hold every permission (D-058). Migration 0017 seeded owners without `content.delete`, so no role could ever have been given it; migration 0022 adds it to every owner role, new and existing. No route deletes entries yet.
+The first seven rows (content and `schema.change`) may name one collection. These are exactly the powers of step 1.7's fixed table (D-042), plus `roles.manage`, `tokens.manage` and `content.delete` for owners, who hold every permission (D-058), and, with R.4, `audit.read` (migration 0023). Migration 0017 seeded owners without `content.delete`, so no role could ever have been given it; migration 0022 adds it to every owner role, new and existing. No route deletes entries yet.
 
 Any member lists the members and the roles, and may leave. Anyone can see what a role allows before it is given to them.
 
@@ -128,7 +129,7 @@ On the maintainer's laptop (Apple M2 Pro, 12 cores, 32 GB), on commit `db542c4` 
 
 ## Not built yet
 
-- **API tokens** (read-only, full access, or a custom permission set) on hashed, expiring credentials, and an **append-only audit log** of role, membership and token changes. <Status planned="R.4" />
+- A Studio page for API tokens and the audit log; today they are reached through the API ([API tokens and the audit log](/reference/api/tokens/)). The role editor doesn't offer `audit.read` yet. <Status planned="not scheduled" />
 - Random roles checked against the evaluator in the simulator, a property test for random roles, and a load scenario that uses field lists and `own`. <Status planned="R" />
 - A route that deletes entries, which `content.delete` would then govern. <Status planned="not scheduled" />
 - Asking for a fresh sign-in before sensitive changes such as role changes. <Status planned="not scheduled" />

@@ -25,10 +25,12 @@ A permission is an action and what it applies to, optionally narrowed to some fi
 | `members.manage` | Inviting people, changing their roles, removing them. | no |
 | `roles.manage` | Creating, changing and deleting roles. | no |
 | `destinations.manage` | Seeing and changing website connections. | no |
-| `tokens.manage` | Creating and revoking API tokens. No route offers it yet. <Status planned="R.4" /> | no |
+| `tokens.manage` | Seeing, creating and revoking [API tokens](/reference/api/tokens/). <Status building="R.4" /> | no |
+| `audit.read` | Reading the [audit log](/reference/api/tokens/#the-audit-log). <Status building="R.4" /> | no |
 
 - `subject` is `*` (every collection, and the project itself) or one collection's slug. A slug that no content type has yet is allowed, so a role can be ready before its collection is.
-- The last four actions belong to the whole project, so their `subject` must be `*`.
+- The last five actions belong to the whole project, so their `subject` must be `*`.
+- An API token holds permissions the same way, but never `members.manage`, `roles.manage`, `tokens.manage` or `audit.read` ([API tokens](/reference/api/tokens/#what-a-token-may-do)). Any caller, a person or a token, can read its own permissions at [`GET {P}/permissions`](/reference/api/tokens/#get-ppermissions).
 - **Deny by default.** A request is allowed only if a permission names its action on `*` or on that very collection. A publish request that spans several collections needs the action in every one of them. A narrowed permission counts only where an entry's fields or creator are asked about (below); it never grants the action collection-wide.
 - **Nobody hands out more than they hold.** A role's powers cover another's when every permission of the other is allowed by the first. Creating, changing or deleting a role, giving someone a role or taking it away, and inviting to a role all need the caller's role, as it is at that moment, to cover the roles involved. So no chain of grants ends with more power than it started with (`nobody_hands_out_more_than_they_hold` in `crates/colophon-server/tests/permissions.rs`).
 A changed role holds from its holders' next request; a request already running acts on the permissions it read when it began.
@@ -45,20 +47,20 @@ Since step R.3, two optional members narrow a permission:
 - **Decided per entry.** For an entry, every permission that applies (its action, its subject `*` or the entry's collection, its condition met) adds its fields, and one without `fields` allows them all. So "titles of any article" beside "every field of my own articles" lets its holder change every field of their own articles and the titles of the rest. What [entries](/reference/api/entries/#fields-and-own-entries) do with it: leave out fields a role can't read, refuse changes to fields it can't change (`field_not_permitted`), and answer `404` for an entry it can't read at all.
 - **One permission per action, subject and condition.** Permissions that share all three are merged, with the union of their fields (or every field, if one has no list); a role may hold the same action twice, once for every entry and once for its own. Migration 0021 holds the same rule in the database.
 - **Covering is exact.** Nobody hands out a field or an entry they can't reach themselves: giving `content.update` on `title`, or on one's own entries, needs that much or more.
-- **The other actions can't be narrowed.** `content.review`, `content.publish`, `schema.change` and the four project-wide actions take neither member.
+- **The other actions can't be narrowed.** `content.review`, `content.publish`, `schema.change` and the five project-wide actions take neither member.
 
 ## Built-in roles
 
 Seeded in every project with exactly D-042's powers (migration 0017; `the_built_in_roles_keep_d_042_s_powers` in `policy.rs`). All apply to `*`.
 
-| Key | Name | `content.read`, `.create`, `.update` | `content.review`, `.publish` | `schema.change`, `destinations.manage` | `members.manage`, `roles.manage`, `tokens.manage` |
+| Key | Name | `content.read`, `.create`, `.update` | `content.review`, `.publish` | `schema.change`, `destinations.manage` | `members.manage`, `roles.manage`, `tokens.manage`, `audit.read` |
 |---|---|---|---|---|---|
 | `owner` | Owner | yes | yes | yes | yes |
 | `developer` | Developer | yes | no | yes | no |
 | `editor` | Editor | yes | no | no | no |
 | `publisher` | Publisher | yes | yes | no | no |
 
-Owners also hold `content.delete` (migration 0022), so that it can be given at all, since nobody hands out what they don't hold; no route deletes entries yet. The owner role is **fixed**: it always holds every permission, and can't be changed or deleted (`409`); migration 0018's triggers refuse it even for a direct database write. The other three are ordinary roles marked `built_in`: they can be changed, and deleted when nobody holds them.
+Owners also hold `audit.read` (migration 0023, on the R.4 branch) and `content.delete` (migration 0022), so that it can be given at all, since nobody hands out what they don't hold; no route deletes entries yet. The owner role is **fixed**: it always holds every permission, and can't be changed or deleted (`409`); migration 0018's triggers refuse it even for a direct database write. The other three are ordinary roles marked `built_in`: they can be changed, and deleted when nobody holds them.
 
 ## The role object
 
@@ -250,5 +252,4 @@ A role that members hold, or that pending invitations offer, can't be deleted: g
 
 ## Not built yet
 
-- API tokens with the same permissions, and an audit log of role, membership and token changes. <Status planned="R.4" />
 - `media.*` actions with the media library, and `locales.*` with localization. <Status planned="P4, E" />

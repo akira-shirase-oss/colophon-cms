@@ -42,6 +42,16 @@ Every route `colophon-server` answers, from its router (`crates/colophon-api/src
 | [`PUT /api/v1/projects/{project}/roles/{role}`](/reference/api/roles/#put-apiv1projectsprojectrolesrole) | `roles.manage` (owners) |
 | [`DELETE /api/v1/projects/{project}/roles/{role}`](/reference/api/roles/#delete-apiv1projectsprojectrolesrole) | `roles.manage` (owners) |
 
+## API tokens, the audit log and permissions
+
+| Method and path | Who may call it |
+|---|---|
+| [`GET /api/v1/projects/{project}/tokens`](/reference/api/tokens/#get-apiv1projectsprojecttokens) | `tokens.manage` (owners); never an API token |
+| [`POST /api/v1/projects/{project}/tokens`](/reference/api/tokens/#post-apiv1projectsprojecttokens) | `tokens.manage` (owners), with every permission the token gets; never an API token |
+| [`DELETE /api/v1/projects/{project}/tokens/{token}`](/reference/api/tokens/#delete-apiv1projectsprojecttokenstoken) | `tokens.manage` (owners); never an API token |
+| [`GET /api/v1/projects/{project}/audit`](/reference/api/tokens/#get-apiv1projectsprojectaudit) | `audit.read` (owners); never an API token |
+| [`GET {P}/permissions`](/reference/api/tokens/#get-ppermissions) | any member, and the project's API tokens |
+
 ## Content types
 
 | Method and path | Who may call it |

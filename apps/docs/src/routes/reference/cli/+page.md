@@ -279,7 +279,7 @@ The merged command contract ([module 08](/design/modules/08-cli/), D-008) lists 
 | `--jsonl` streams, `content import`, `content get --generation`, `release history`, `export`, scoped machine credentials | <Status planned="P5" /> |
 | `init`, `migrate plan`, `migrate apply` | <Status planned="P6" /> |
 | `schema validate`, `schema diff`, `dev` | <Status planned="not scheduled" /> |
-| API tokens for scripts, with the same permissions as a role | <Status planned="R.4" /> |
+| Using a project API token from the command line; scripts can send one to the API directly ([API tokens](/reference/api/tokens/)) | <Status planned="not scheduled" /> |
 | Prebuilt binaries, `npx @colophon-cms/cli`, `cargo install colophon-cli`, a Homebrew tap and an install script; `--version` with the commit and build date, and a plain-words answer when the CLI is too old or too new for the server (D-062) | <Status planned="V" /> |
 
 ## Design

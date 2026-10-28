@@ -10,7 +10,7 @@ One process answers everything on one port (`COLOPHON_LISTEN_ADDR`). Its public 
 
 | Prefix | What |
 |---|---|
-| `/api/v1` | The management API: projects, members, roles, content types, entries, publish requests, releases, website connections. |
+| `/api/v1` | The management API: projects, members, roles, API tokens, the audit log, content types, entries, publish requests, releases, website connections. |
 | `/auth`, `/me` | Sign-in, sessions and device sign-in ([Sign-in and sessions](/reference/api/auth/)). |
 | `/livez`, `/readyz` | Health ([Health checks](/operations/health-checks/)). |
 | `/content/v1` | Public, read-only delivery ([Delivery API](/reference/delivery-api/)). |
@@ -41,6 +41,7 @@ A project you aren't a member of answers `404`, exactly as one that doesn't exis
 |---|---|---|
 | A browser (the Studio) | `GET /auth/login`, OpenID Connect through the configured provider | The `colophon_session` cookie. Every write also needs an exact `Origin` and an `X-CSRF-Token` header. |
 | The command line, scripts | Device sign-in: `POST /auth/device`, approved by a signed-in person in the Studio | `Authorization: Bearer` and the 43-character token. No CSRF token, no `Origin`. |
+| Scripts, builds and agents, as themselves <Status building="R.4" /> | A project [API token](/reference/api/tokens/), made by an owner | `Authorization: Bearer colophon_api_…`. Only on its project's routes under `{P}` and the rich-text validator. |
 
 **Cookies.** Sign-in sets two: `colophon_session` (`HttpOnly; Secure; SameSite=Lax; Path=/`), which holds a random token whose SHA-256 is all the database keeps, and `colophon_csrf` (`Secure; SameSite=Strict; Path=/`, readable by the page). Both last as long as the session: 12 hours after sign-in, ending sooner after 2 hours unused. Revoking a session takes effect on the very next request. Its last use is written at most once a minute.
 
@@ -61,7 +62,7 @@ Idempotency-Key: 4d1f6a0e-studio-save-0003
 
 **Bearer tokens.** The command line gets a personal token by [device sign-in](/reference/api/auth/#post-authdevice); it lasts 30 days and `colophon logout` revokes it (`POST /auth/logout`). A request with an `Authorization` header is judged by that header alone: an invalid or expired token is `401`, never a fall back to a cookie. A token can't approve another device sign-in, so a token can't mint more tokens.
 
-There are no API tokens for scripts and agents yet; a token is always a person's. <Status planned="R.4" />
+A **project API token** is different: it belongs to one project, holds its own permissions, and acts as its own identity ([API tokens](/reference/api/tokens/)). <Status building="R.4" />
 
 **Who may do what** is decided per project by the caller's role, a list of permissions such as `content.update` on one collection or on all of them, which may be narrowed to some fields or to the caller's own entries ([Roles](/reference/api/roles/)). Each route below names the permission it needs and the built-in roles that hold it; [Roles](/reference/api/roles/#built-in-roles) has the full table. A caller without the permission gets `403` `forbidden`, with `details.reason` `missing_permission` and the permission in `details.permission`, but only inside a project they can see: outside it, `404`. Every `403` and `409` names its reason in a stable code ([Errors](/reference/api/errors/#refusals)). <Status building="api/dashboard-fields" />
 
@@ -118,7 +119,7 @@ Every response has an `x-request-id` header. Send your own (1 to 64 characters o
 
 ## Pagination
 
-Two lists page with a cursor: [an entry list](/reference/api/entries/#get-pcollectionscollectionentries) and a [delivery list](/reference/delivery-api/#get-contentv1projectenvironmentcollection).
+Three lists page with a cursor: [an entry list](/reference/api/entries/#get-pcollectionscollectionentries), a [delivery list](/reference/delivery-api/#get-contentv1projectenvironmentcollection) and [the audit log](/reference/api/tokens/#get-apiv1projectsprojectaudit) (50 by default).
 
 - `limit`: 1 to 100, default 20. Outside that is `400` `bad_request`.
 - `cursor`: the `next_cursor` of the previous page, opaque. `next_cursor` is `null` on the last page.
@@ -132,6 +133,7 @@ Every other list answers on one page, with `next_cursor` always `null`, and is c
 | Members | owners first, then by name | 1,000 |
 | Pending invitations | newest first | 1,000 |
 | Roles | built-in first, then as created | 100 (a project's maximum) |
+| API tokens | newest first | 200 (100 active at most) |
 | Content types | by slug | all |
 | A version history | newest first | 100 |
 | Changesets | newest first | 100 |

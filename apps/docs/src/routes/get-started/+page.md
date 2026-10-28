@@ -47,7 +47,7 @@ On your own machine, against the local stack:
 
 Still to come, among others:
 
-- API tokens and an audit log <Status planned="R.4" />;
+- API tokens and an audit log, built on a branch <Status building="R.4" />;
 - the site going live, and the first public demo <Status planned="P3" />;
 - relations, reusable groups of fields and lists <Status planned="M" />;
 - media and images, preview links, the release slider and rollback <Status planned="P4" />;

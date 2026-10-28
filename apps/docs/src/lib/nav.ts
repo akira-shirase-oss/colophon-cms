@@ -115,6 +115,7 @@ export const SECTIONS: Section[] = [
 			md('/reference/api/auth/', 'Sign-in and sessions', 'Health, OpenID Connect sign-in, sessions, device sign-in for the CLI, and /me.', done('1.6')),
 			md('/reference/api/projects/', 'Projects, members and invitations', 'Creating projects, listing and changing members, and single-use invitation links.', done('1.8')),
 			md('/reference/api/roles/', 'Roles', 'Listing the roles in a project, and creating, changing and deleting the ones owners define, down to fields and own entries.', done('R.3')),
+			md('/reference/api/tokens/', 'API tokens and the audit log', 'Project API tokens for scripts and agents, the append-only audit log of who changed access, and what a caller may do here.', building('R.4')),
 			md('/reference/api/content-types/', 'Content types', 'Content type definitions, their field types, versions and the changes allowed against stored content.', done('3.6')),
 			md('/reference/api/entries/', 'Entries and versions', 'Creating, listing, searching and saving entries, their version history, and rich-text validation.', done('3.5')),
 			md('/reference/api/publish-requests/', 'Publish requests and reviews', 'Changesets: creating, submitting, refreshing, reviewing and publishing them.', done('2.2')),

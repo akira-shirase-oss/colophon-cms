@@ -52,7 +52,7 @@ Underneath, nothing is skipped. It is the same [publish request](/concepts/publi
 
 ## Developer settings, out of the way <Status done="3.7" />
 
-Content types, website connections and roles live under Settings, and each part is offered only to roles with its permission (`schema.change`, `destinations.manage`, `roles.manage`), checked against the caller's permissions rather than role names ([Roles and permissions](/concepts/roles-and-permissions/)). The server still decides every request. API tokens arrive with R.4. <Status planned="R.4" />
+Content types, website connections and roles live under Settings, and each part is offered only to roles with its permission (`schema.change`, `destinations.manage`, `roles.manage`), checked against the caller's permissions rather than role names ([Roles and permissions](/concepts/roles-and-permissions/)). The server still decides every request. API tokens have no Studio page yet; owners make them through the API ([API tokens](/reference/api/tokens/)). <Status building="R.4" />
 
 ## States and errors in words
 
