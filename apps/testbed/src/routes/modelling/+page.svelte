@@ -13,6 +13,7 @@
 	let signedIn = $state<boolean | null>(null);
 	let projectId = $state('');
 	let author = $state('');
+	let authorStored = $state('');
 	let pageId = $state('');
 	let stored = $state('');
 	let referencedBy = $state('');
@@ -20,7 +21,14 @@
 
 	const env = $derived(`/api/v1/projects/${projectId}/environments/production`);
 
-	const PEOPLE = { name: 'People', title_field: 'name', fields: [{ id: 'name', label: 'Name', type: 'text', required: true, unique: true }] };
+	const PEOPLE = {
+		name: 'People',
+		title_field: 'name',
+		fields: [
+			{ id: 'name', label: 'Name', type: 'text', required: true, unique: true },
+			{ id: 'role', label: 'Role', type: 'enum', values: ['member', 'editor'], required: true, default: 'member' }
+		]
+	};
 	const PAGES = {
 		name: 'Pages',
 		title_field: 'title',
@@ -85,7 +93,9 @@
 			}
 		}
 		const person = await call('POST', `${env}/collections/people/entries`, { headers: headers(), body: JSON.stringify({ name: 'Ada' }) });
-		author = person.status === 201 ? (person.body as { data: { id: string } }).data.id : '';
+		const made = person.status === 201 ? (person.body as { data: { id: string; content: unknown } }).data : null;
+		author = made?.id ?? '';
+		authorStored = made ? JSON.stringify(made.content) : '';
 		message = author ? 'set up' : describe(person);
 	}
 
@@ -150,8 +160,8 @@
 
 <h1>Content modelling</h1>
 <p class="lede">
-	Structures, references, patterns and unique values through the real API (steps M.1 to M.4, D-064 to D-066, D-069, D-070): a page
-	with an object, a list of lowercase tags and blocks whose quote names a person, whose name no one else may have. A reference to
+	Structures, references, patterns and unique values through the real API (steps M.1 to M.4, D-064 to D-066, D-069 to D-071): a page
+	with an object, a list of lowercase tags and blocks whose quote names a person, whose name no one else may have and whose role, left out, defaults to member. A reference to
 	nobody, a tag in capitals and a second Ada are refused where they are; a page can't be published before the person it names; the
 	person's read lists what references them.
 </p>
@@ -182,6 +192,7 @@
 				<button type="button" onclick={() => publish([pageId, author])} disabled={!pageId}>Publish the page and Ada</button>
 				<button type="button" onclick={readAuthor} disabled={!pageId}>Read Ada</button>
 			</p>
+			{#if authorStored}<p>Ada, as stored: <code data-testid="ada">{authorStored}</code></p>{/if}
 			{#if stored}<p>Stored: <code data-testid="stored">{stored}</code></p>{/if}
 			{#if referencedBy}<p>Referenced by: <span data-testid="referenced-by">{referencedBy}</span></p>{/if}
 		</section>

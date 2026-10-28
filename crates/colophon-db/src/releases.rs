@@ -288,9 +288,13 @@ async fn broken_reference(
            JOIN revision_references r
              ON r.project_id = i.project_id AND r.environment_id = i.environment_id
             AND r.entry_id = i.entry_id
-           JOIN publications p
-             ON p.project_id = r.project_id AND p.environment_id = r.environment_id
-            AND p.revision_id = r.revision_id AND p.valid_to IS NULL
+           -- One lookup by revision per reference (migration 0028), as in entries::referrers.
+           CROSS JOIN LATERAL (
+               SELECT p.entry_id FROM publications p
+               WHERE p.project_id = r.project_id AND p.environment_id = r.environment_id
+                 AND p.revision_id = r.revision_id AND p.valid_to IS NULL
+               LIMIT 1
+           ) p
            WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
              AND i.kind = 'unpublish'
            LIMIT 1"#,

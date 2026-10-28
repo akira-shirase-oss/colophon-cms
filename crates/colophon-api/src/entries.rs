@@ -600,8 +600,11 @@ pub(crate) async fn create(
         .await
         .map_err(ApiError::from_db)?;
     let (content_type, version) = content_type(&mut tx, &path.collection).await?;
+    // A new entry gets the defaults of the fields it leaves out (D-071). They are the type's,
+    // not the caller's, so a role's field list applies to what it sent.
+    let (value, defaulted) = content_type.with_defaults(&value);
     let (content, hash) = validate(&value, &content_type)?;
-    visibility::only_permitted_fields(content.canonical_json(), &create)?;
+    visibility::only_permitted_fields(content.canonical_json(), &create, &defaulted)?;
     let request = request_hash(&[CREATE, &path.collection, content.canonical_json()]);
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);

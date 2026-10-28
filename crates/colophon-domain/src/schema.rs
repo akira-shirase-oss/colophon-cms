@@ -23,6 +23,8 @@
 //! the Studio can reproduce (a URL as WHATWG `href`, JSON with its keys sorted), and the new
 //! options are written only when set, so older definitions keep their bytes and their hashes.
 
+use std::borrow::Cow;
+
 use serde_json::{Map, Value};
 
 use crate::rich_text::{self, json::write_string, pointer::Pointer};
@@ -211,6 +213,25 @@ impl FieldKind {
         )
     }
 
+    /// Whether a field of this kind may have a `default` (D-071): a plain value an editor could
+    /// type. Rich text, JSON, slugs, references and structures have none.
+    pub const fn may_have_default(&self) -> bool {
+        matches!(
+            self,
+            Self::Text { .. }
+                | Self::Markdown { .. }
+                | Self::Number { .. }
+                | Self::Boolean
+                | Self::Enum { .. }
+                | Self::Date
+                | Self::Time
+                | Self::DateTime
+                | Self::Email
+                | Self::Url
+                | Self::Color
+        )
+    }
+
     /// The name in definitions.
     pub const fn name(&self) -> &'static str {
         match self {
@@ -263,6 +284,9 @@ pub struct Field {
     /// Whether no two entries may hold the same value: top-level scalar fields only (step M.4,
     /// D-070). The database enforces it; see [`ContentType::unique_fields`].
     pub unique: bool,
+    /// The value a new entry gets when it leaves the field out, in canonical JSON (step M.4,
+    /// D-071): top-level scalar fields only, checked against the field's own rules.
+    pub default: Option<String>,
     /// What it holds.
     pub kind: FieldKind,
 }
@@ -659,6 +683,11 @@ fn write_fields(out: &mut String, fields: &[Field]) {
             out.push_str(r#","unique":true"#);
         }
         write_options(out, &field.kind);
+        // Only when set, like `description`: already canonical, checked when parsed.
+        if let Some(default) = &field.default {
+            out.push_str(r#","default":"#);
+            out.push_str(default);
+        }
         out.push('}');
     }
 }
@@ -1360,6 +1389,7 @@ impl ContentType {
                     description: String::new(),
                     required: true,
                     unique: false,
+                    default: None,
                     kind: FieldKind::Text {
                         min_chars: 0,
                         max_chars: 200,
@@ -1373,6 +1403,7 @@ impl ContentType {
                     description: String::new(),
                     required: true,
                     unique: false,
+                    default: None,
                     kind: FieldKind::RichText,
                 },
             ],
@@ -1637,7 +1668,15 @@ impl ContentType {
         let required = bool_or(object, "required", false, pointer)?;
         let unique = bool_or(object, "unique", false, pointer)?;
         let description = description(object, pointer)?;
-        let common = ["id", "label", "description", "type", "required", "unique"];
+        let common = [
+            "id",
+            "label",
+            "description",
+            "type",
+            "required",
+            "unique",
+            "default",
+        ];
         let kind = Self::kind(object, &common, pointer, depth)?;
         if unique && (depth > 0 || !kind.may_be_unique()) {
             return Err(refuse(
@@ -1646,14 +1685,55 @@ impl ContentType {
                 "only a top-level single-line text, email, URL, number, date, time or date-time field can be unique",
             ));
         }
+        let default = match object.get("default") {
+            None => None,
+            Some(value) => Some(Self::default_value(
+                &kind,
+                &label,
+                (unique, depth),
+                value,
+                &at(pointer, "default"),
+            )?),
+        };
         Ok(Field {
             id,
             label,
             description,
             required,
             unique,
+            default,
             kind,
         })
+    }
+
+    /// A field's `default` in canonical JSON: a value the field itself accepts, on a top-level
+    /// field that isn't unique (every entry would share it) and holds a plain value (D-071).
+    fn default_value(
+        kind: &FieldKind,
+        label: &str,
+        (unique, depth): (bool, usize),
+        value: &Value,
+        pointer: &Pointer,
+    ) -> Result<String, Refusal> {
+        if depth > 0 || unique || !kind.may_have_default() {
+            return Err(refuse(
+                "invalid_default",
+                pointer,
+                "only a top-level field that isn't unique and holds text, Markdown, a number, true or false, a choice, a date, a time, a date-time, an email, a URL or a colour can have a default",
+            ));
+        }
+        let mut out = String::new();
+        Self::value(kind, label, value, pointer, &mut out, &mut Vec::new()).map_err(|refusal| {
+            refuse(
+                "invalid_default",
+                pointer,
+                format!(
+                    "the default isn't a value this field accepts: {}",
+                    refusal.message
+                ),
+            )
+        })?;
+        Ok(out)
     }
 
     /// What a field holds: its `type` and that type's options, refusing any other key.
@@ -1765,6 +1845,36 @@ impl ContentType {
     /// The fields, in order.
     pub fn fields(&self) -> &[Field] {
         &self.fields
+    }
+
+    /// `value` with each top-level field it leaves out set to that field's default (D-071), and
+    /// the ids of the fields filled; `value` itself when there is nothing to fill or it isn't an
+    /// object (validation refuses that). Only a new entry gets defaults: a save sends the
+    /// whole document, so a field left out of it was removed.
+    pub fn with_defaults<'a>(&self, value: &'a Value) -> (Cow<'a, Value>, Vec<&str>) {
+        let Some(object) = value.as_object() else {
+            return (Cow::Borrowed(value), Vec::new());
+        };
+        let missing: Vec<(&str, Value)> = self
+            .fields
+            .iter()
+            .filter(|field| !object.contains_key(&field.id))
+            .filter_map(|field| {
+                // Canonical JSON written by this crate, so it parses.
+                let default = serde_json::from_str(field.default.as_deref()?).ok()?;
+                Some((field.id.as_str(), default))
+            })
+            .collect();
+        if missing.is_empty() {
+            return (Cow::Borrowed(value), Vec::new());
+        }
+        let mut filled = object.clone();
+        let mut ids = Vec::with_capacity(missing.len());
+        for (id, default) in missing {
+            filled.insert(id.to_owned(), default);
+            ids.push(id);
+        }
+        (Cow::Owned(Value::Object(filled)), ids)
     }
 
     /// The ids of the fields no two entries may share a value of (D-070), in order.
@@ -3635,6 +3745,127 @@ mod tests {
             unique
                 .validate(&json!({"name": "Ada", "key": "ada@example.com"}))
                 .is_ok()
+        );
+    }
+
+    fn with_default(field: &Value) -> Result<ContentType, (&'static str, String)> {
+        ContentType::parse(&json!({
+            "name": "Tasks", "title_field": "title",
+            "fields": [{"id": "title", "label": "Title", "type": "text", "required": true}, field]
+        }))
+        .map_err(|refused| (refused.code, refused.pointer))
+    }
+
+    #[test]
+    fn a_default_is_a_value_its_field_accepts_written_in_canonical_form() {
+        let site = with_default(&json!({"id": "site", "label": "Site", "type": "url", "required": true, "default": "HTTPS://Example.com"})).expect("valid");
+        assert!(site.canonical_json().ends_with(r#"{"id":"site","label":"Site","type":"url","required":true,"default":"https://example.com/"}]}"#), "{}", site.canonical_json());
+        for (field, written) in [
+            (
+                json!({"id": "x", "label": "X", "type": "boolean", "default": false}),
+                r#""default":false"#,
+            ),
+            (
+                json!({"id": "x", "label": "X", "type": "number", "integer": true, "default": 3}),
+                r#""default":3"#,
+            ),
+            (
+                json!({"id": "x", "label": "X", "type": "enum", "values": ["todo", "done"], "default": "todo"}),
+                r#""default":"todo""#,
+            ),
+            (
+                json!({"id": "x", "label": "X", "type": "color", "default": "#00ff00"}),
+                r##""default":"#00ff00""##,
+            ),
+            (
+                json!({"id": "x", "label": "X", "type": "markdown", "default": "# Notes"}),
+                r##""default":"# Notes""##,
+            ),
+        ] {
+            let parsed =
+                with_default(&field).unwrap_or_else(|refused| panic!("{field}: {refused:?}"));
+            assert!(parsed.canonical_json().contains(written), "{field}");
+        }
+        let plain =
+            with_default(&json!({"id": "x", "label": "X", "type": "boolean"})).expect("valid");
+        assert!(
+            !plain.canonical_json().contains("default"),
+            "older hashes stay"
+        );
+        for (field, pointer) in [
+            (
+                json!({"id": "x", "label": "X", "type": "enum", "values": ["todo"], "default": "later"}),
+                "/fields/1/default",
+            ),
+            (
+                json!({"id": "x", "label": "X", "type": "text", "max_chars": 3, "default": "too long"}),
+                "/fields/1/default",
+            ),
+            (
+                json!({"id": "x", "label": "X", "type": "text", "pattern": "[a-z]+", "default": "ABC"}),
+                "/fields/1/default",
+            ),
+            (
+                json!({"id": "x", "label": "X", "type": "boolean", "default": null}),
+                "/fields/1/default",
+            ),
+            (
+                json!({"id": "x", "label": "X", "type": "email", "unique": true, "default": "a@example.com"}),
+                "/fields/1/default",
+            ),
+            (
+                json!({"id": "x", "label": "X", "type": "json", "default": {}}),
+                "/fields/1/default",
+            ),
+            (
+                json!({"id": "x", "label": "X", "type": "slug", "default": "home"}),
+                "/fields/1/default",
+            ),
+            (
+                json!({"id": "x", "label": "X", "type": "object", "fields": [
+                    {"id": "y", "label": "Y", "type": "text", "default": "nested"}
+                ]}),
+                "/fields/1/fields/0/default",
+            ),
+        ] {
+            assert_eq!(
+                with_default(&field).map(|_| ()),
+                Err(("invalid_default", pointer.to_owned())),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn defaults_fill_only_what_a_new_entry_leaves_out() {
+        let tasks = with_default(&json!({"id": "status", "label": "Status", "type": "enum", "values": ["todo", "done"], "required": true, "default": "todo"})).expect("valid");
+        let sent = json!({"title": "Write docs"});
+        let (filled, ids) = tasks.with_defaults(&sent);
+        assert_eq!(ids, ["status"]);
+        assert_eq!(*filled, json!({"title": "Write docs", "status": "todo"}));
+        assert!(
+            tasks.validate(&filled).is_ok(),
+            "a required field with a default can be left out of a new entry"
+        );
+        assert_eq!(
+            tasks.validate(&sent).map(|_| ()).map_err(|e| e.code),
+            Err("missing_field"),
+            "but not out of a save"
+        );
+        let chosen = json!({"title": "Ship", "status": "done"});
+        let (kept, none) = tasks.with_defaults(&chosen);
+        assert!(
+            matches!(kept, Cow::Borrowed(_)) && none.is_empty(),
+            "a value sent is never replaced"
+        );
+        let list = json!([1]);
+        let (not_object, nothing) = tasks.with_defaults(&list);
+        assert!(matches!(not_object, Cow::Borrowed(_)) && nothing.is_empty());
+        let other = with_default(&json!({"id": "status", "label": "Status", "type": "enum", "values": ["todo", "done"], "required": true, "default": "done"})).expect("valid");
+        assert_eq!(
+            tasks.successor(&other),
+            Successor::Compatible,
+            "a default never touches stored content"
         );
     }
 }

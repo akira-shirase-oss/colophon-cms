@@ -1,13 +1,14 @@
-// Load scenario for content modelling (steps M.1 to M.4, D-064 to D-066, D-069, D-070): pages
-// built from structures, with references, under unique titles. setup() signs in, defines
-// `people` and `pages` (a unique title, so every save replaces its page's claim; a hero
-// object, a list of tags each matched against a pattern, a list of questions, and blocks whose quotes name a person), makes 20 people
-// and gives each VU a page of its own. Each VU reads its page (50%; the ETag must be its last
-// accepted save), saves new structures naming two random people (20%; each save checks its
-// references in the database and keeps them), tries a quote naming nobody and must get 422
-// reference_not_found at /sections/1/by (10%), reads a person, which lists what references
-// them (10%), or lists pages (10%). Requests are named by route, so k6 keeps one series per
-// route. scripts/load.sh gives this endpoint RATE 500 and P99_MS 250.
+// Load scenario for content modelling (steps M.1 to M.4, D-064 to D-066, D-069 to D-071): pages
+// built from structures, with references. setup() signs in, defines `people` (a unique name and
+// a role whose default is `member`) and `pages` (a unique title, so every save replaces its
+// page's claim; a hero object, tags each matched against a pattern, a list of questions, and
+// blocks whose quotes name a person), makes 20 people and gives each VU a page of its own. Each
+// VU reads its page (50%; the ETag must be its last accepted save), saves new structures naming
+// two random people (20%; each save checks its references in the database and keeps them), tries
+// a quote naming nobody and must get 422 reference_not_found at /sections/1/by (10%), reads a
+// person, which lists what references them (10%), lists pages (5%), or creates a person with a
+// name of its own and no role, which must come back `member` (5%). Requests are named by route,
+// so k6 keeps one series per route. scripts/load.sh gives this endpoint RATE 500 and P99_MS 250.
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
@@ -37,7 +38,7 @@ if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.
 const PAGES = SCENARIO === 'steady' ? VUS * 2 : VUS;
 
 const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`] };
-for (const endpoint of ['read', 'save', 'broken', 'person', 'list']) {
+for (const endpoint of ['read', 'save', 'broken', 'person', 'list', 'create']) {
   thresholds[`http_req_duration{endpoint:${endpoint}}`] = ['p(99)<60000'];
 }
 if (SCENARIO === 'steady') {
@@ -54,7 +55,10 @@ export const options = {
 const PEOPLE_TYPE = {
   name: 'People',
   title_field: 'name',
-  fields: [{ id: 'name', label: 'Name', type: 'text', required: true }],
+  fields: [
+    { id: 'name', label: 'Name', type: 'text', required: true, unique: true },
+    { id: 'role', label: 'Role', type: 'enum', values: ['member', 'editor'], required: true, default: 'member' },
+  ],
 };
 
 const PAGES_TYPE = {
@@ -178,9 +182,19 @@ export default function (data) {
       'person 200': (r) => r.status === 200,
       'says what references them': (r) => Array.isArray(r.json('data.referenced_by')),
     });
-  } else if (roll < 5) {
+  } else if (roll < 5 && Math.floor(__ITER / 10) % 2 === 0) {
     const res = http.get(`${data.base}?limit=20`, Object.assign({ tags: { endpoint: 'list', name: 'pages?limit' } }, read));
     check(res, { 'list 200': (r) => r.status === 200 });
+  } else if (roll < 5) {
+    const headers = writing();
+    delete headers['If-Match'];
+    const res = http.post(data.peopleBase, JSON.stringify({ name: `VU ${__VU} at ${__ITER}` }), {
+      headers, redirects: 0, tags: { endpoint: 'create', name: 'people' },
+    });
+    check(res, {
+      'create 201': (r) => r.status === 201,
+      'the default fills what it left out': (r) => r.json('data.content.role') === 'member',
+    });
   } else {
     const res = http.get(url, Object.assign({ tags: { endpoint: 'read', name: 'pages/{entry}' } }, read));
     check(res, {

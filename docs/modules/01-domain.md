@@ -102,6 +102,10 @@ invariant. Production adapters and the simulator both run this code unchanged.
   date-time field (`FieldKind::may_be_unique`; anywhere else `invalid_unique`), written only when true;
   `ContentType::unique_fields` lists them. Uniqueness is across entries, so it isn't a rule on one document:
   `successor` treats adding or dropping it as `Compatible`, and the database checks stored values (module 02).
+- Built in step M.4 (D-071): a top-level field that isn't unique and holds a plain value (`FieldKind::may_have_default`)
+  may have a `default`, checked by the field's own rules and kept in canonical JSON (`Field::default`), written only
+  when set (`invalid_default` otherwise). `ContentType::with_defaults` fills the fields a new entry leaves out and
+  says which; the API calls it on creation only. A changed default is `Compatible`.
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the
