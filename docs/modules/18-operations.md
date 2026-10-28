@@ -84,6 +84,14 @@ on clean infrastructure and an independent install, so operations are a module w
   The balancer retries a request no server answered (refused, or closed without a response) on another, holding the
   body to do so; writes carry `Idempotency-Key`, so a write a dying server did commit is replayed, not repeated.
   The sum of every process's database connections stays under PostgreSQL's `max_connections` with room to spare.
+- Rate limits (D-076): `COLOPHON_RATE_LIMIT_PER_ADDRESS` (default `300/600`: requests a second and burst),
+  `COLOPHON_RATE_LIMIT_PER_CREDENTIAL` (`150/300`) and `COLOPHON_RATE_LIMIT_DELIVERY` (`1000/2000`), each `off` to
+  disable; `COLOPHON_TRUSTED_PROXIES`, comma-separated addresses or networks (a load balancer, a CDN's ranges), whose
+  `X-Forwarded-For` names the client. Behind a proxy that isn't listed, every client looks like the proxy and shares
+  one count. Counts live in Valkey (`colophon:rl:*` keys that expire on their own); with Valkey down each server
+  counts alone, so a cluster of N admits up to N times the rate until it is back. `scripts/load.sh` and
+  `scripts/cluster.sh` raise the limits so far that they never refuse (one machine sends everything), and still
+  pay for every check.
 - `colophon doctor [--json]` reports what `/readyz` reports, with the CLI exit codes (0 ready, 5 otherwise).
   - A cache failure can be *degraded* rather than unready when the bounded fallback is available.
   - A database failure makes writes unavailable.

@@ -323,6 +323,13 @@ pub enum ApiError {
         /// Seconds until there is room again.
         retry_after: u32,
     },
+    /// Over a rate limit for this client address or credential (D-076); the response's
+    /// `Retry-After` says how many seconds to wait. 429.
+    #[error("too many requests; try again in {retry_after} second(s)")]
+    TooManyRequests {
+        /// Seconds until a request would be admitted.
+        retry_after: u32,
+    },
     /// A slug (`slug_taken`, D-054) or a unique field's value (`value_taken`, D-070) is another
     /// entry's, as a draft or published. The entries name that entry when a precheck found it; a
     /// write that lost a race to it can't. 409.
@@ -525,7 +532,9 @@ impl ApiError {
             | Self::IdempotencyKeyReused
             | Self::AlreadySetUp
             | Self::Taken(_) => StatusCode::CONFLICT,
-            Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
+            Self::RateLimited { .. } | Self::TooManyRequests { .. } => {
+                StatusCode::TOO_MANY_REQUESTS
+            }
             Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -559,7 +568,7 @@ impl ApiError {
             | Self::IdempotencyKeyReused
             | Self::AlreadySetUp
             | Self::Taken(_) => ErrorCode::Conflict,
-            Self::RateLimited { .. } => ErrorCode::RateLimited,
+            Self::RateLimited { .. } | Self::TooManyRequests { .. } => ErrorCode::RateLimited,
             Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
@@ -591,6 +600,7 @@ impl ApiError {
                 ..ErrorDetails::new(reason, "")
             }),
             Self::Conflict { reason, .. } => Some(ErrorDetails::new(reason, "")),
+            Self::TooManyRequests { .. } => Some(ErrorDetails::new("rate_limited", "")),
             Self::InvalidField {
                 reason, pointer, ..
             } => Some(ErrorDetails::new(reason, *pointer)),
@@ -685,7 +695,7 @@ impl IntoResponse for ApiError {
                     .headers_mut()
                     .insert(crate::delivery::GENERATION, HeaderValue::from(current));
             }
-            Self::RateLimited { retry_after } => {
+            Self::RateLimited { retry_after } | Self::TooManyRequests { retry_after } => {
                 response
                     .headers_mut()
                     .insert(header::RETRY_AFTER, HeaderValue::from(retry_after));

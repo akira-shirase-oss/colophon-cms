@@ -4,6 +4,7 @@
 //!
 //! Design: `docs/modules/04-api.md`.
 
+pub mod admission;
 mod audit;
 mod auth;
 mod body;
@@ -31,6 +32,7 @@ mod shape;
 pub mod state;
 pub mod studio;
 mod tokens;
+mod valkey;
 pub mod version;
 mod visibility;
 
@@ -56,6 +58,7 @@ pub fn app(state: AppState, limits: HttpLimits) -> Router {
 /// The routes without the middleware stack, for tests that add their own routes before
 /// applying it.
 pub fn routes(state: AppState) -> Router {
+    let admission = axum::middleware::from_fn_with_state(state.clone(), admission::admit);
     Router::new()
         .route("/livez", get(health::livez))
         .route("/readyz", get(health::readyz))
@@ -145,6 +148,8 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/v1/rich-text/validate", post(rich_text::validate))
         .merge(publishing())
         .fallback(fallback)
+        // Rate limits (D-076): inside the error envelope, before any handler does work.
+        .layer(admission)
         .with_state(state)
 }
 

@@ -62,6 +62,12 @@ launch() {
     export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$balancer_port" \
       COLOPHON_LOG="${COLOPHON_LOG:-warn}" COLOPHON_LOG_FORMAT=json \
       COLOPHON_DRAIN_DELAY_MS="$drain_ms" COLOPHON_DB_MAX_CONNECTIONS="$connections"
+    # The balancer reaches the servers from loopback, and says who the client is (D-076). Load
+    # runs come from one machine, so limits default to never refusing; set them to test limits.
+    export COLOPHON_TRUSTED_PROXIES="${COLOPHON_TRUSTED_PROXIES:-127.0.0.1}" \
+      COLOPHON_RATE_LIMIT_PER_ADDRESS="${COLOPHON_RATE_LIMIT_PER_ADDRESS:-1000000/1000000}" \
+      COLOPHON_RATE_LIMIT_PER_CREDENTIAL="${COLOPHON_RATE_LIMIT_PER_CREDENTIAL:-1000000/1000000}" \
+      COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000000/1000000}"
     exec target/release/colophon-server --role "$role"
   ) >>"$dir/$kind-$index.log" 2>&1 &
   echo $! >"$dir/$kind-$index.pid"

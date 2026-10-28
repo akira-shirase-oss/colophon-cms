@@ -15,24 +15,19 @@ use std::{
     collections::HashMap,
     future::Future,
     sync::{Arc, Mutex, PoisonError},
-    time::{Duration, Instant},
 };
 
-use redis::aio::MultiplexedConnection;
 use tokio::sync::OnceCell;
+
+use crate::valkey::{DEADLINE, Valkey};
 
 /// How long a cached answer lives, before jitter (module 06: 300 seconds with jitter).
 const TTL_SECS: u64 = 300;
 /// Up to this much is added to each entry's lifetime, so entries made together don't expire
 /// together.
 const JITTER_SECS: u64 = 60;
-/// A cache call that takes longer than this is abandoned: Postgres answers instead.
-const DEADLINE: Duration = Duration::from_millis(100);
 /// Larger answers are served but not cached, so a few huge pages can't evict everything else.
 const MAX_CACHED_BYTES: usize = 1 << 20;
-/// After the cache fails, requests go straight to Postgres for this long before anyone tries to
-/// reconnect: a dead cache costs one attempt a second, not one per request.
-const BACKOFF: Duration = Duration::from_secs(1);
 
 /// Where an answer came from, for the `Colophon-Cache` response header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,27 +105,17 @@ enum Source {
 
 type Flight = Arc<OnceCell<Result<(Filled, Source), Refused>>>;
 
-/// The connection to the cache, or when to try again after it failed.
-#[derive(Default)]
-struct Link {
-    connection: Option<MultiplexedConnection>,
-    retry_at: Option<Instant>,
-}
-
 /// The delivery cache: Valkey when configured, plus single-flight for misses.
 pub struct DeliveryCache {
-    client: Option<redis::Client>,
-    /// Held only to clone or replace the connection, never across an await.
-    link: Mutex<Link>,
-    /// Held while connecting. Others don't wait for it: they read from Postgres instead.
-    connecting: tokio::sync::Mutex<()>,
+    /// Valkey, when configured; a call that fails or is slow falls back to Postgres.
+    valkey: Valkey,
     flights: Mutex<HashMap<String, Flight>>,
 }
 
 impl std::fmt::Debug for DeliveryCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DeliveryCache")
-            .field("enabled", &self.client.is_some())
+            .field("enabled", &self.valkey.enabled())
             .finish_non_exhaustive()
     }
 }
@@ -144,79 +129,23 @@ impl DeliveryCache {
     /// No cache: every answer comes from Postgres (still with single-flight).
     pub fn disabled() -> Self {
         Self {
-            client: None,
-            link: Mutex::new(Link::default()),
-            connecting: tokio::sync::Mutex::new(()),
+            valkey: Valkey::disabled(),
             flights: Mutex::new(HashMap::new()),
         }
     }
 
     /// A cache at `url`. Connects lazily, and again after any failure.
     pub fn new(url: &str) -> Result<Self, InvalidCacheUrl> {
-        let client = redis::Client::open(url).map_err(|_| InvalidCacheUrl)?;
         Ok(Self {
-            client: Some(client),
+            valkey: Valkey::new(url).ok_or(InvalidCacheUrl)?,
             ..Self::disabled()
         })
-    }
-
-    fn link(&self) -> std::sync::MutexGuard<'_, Link> {
-        self.link.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// The live connection, if there is one; or `Err(true)` if it's time to try connecting.
-    fn current(&self) -> Result<MultiplexedConnection, bool> {
-        let link = self.link();
-        match &link.connection {
-            Some(connection) => Ok(connection.clone()),
-            None => Err(link.retry_at.is_none_or(|at| Instant::now() >= at)),
-        }
-    }
-
-    async fn connection(&self) -> Option<MultiplexedConnection> {
-        let client = self.client.as_ref()?;
-        match self.current() {
-            Ok(connection) => return Some(connection),
-            Err(false) => return None,
-            Err(true) => {}
-        }
-        // Another request is connecting: don't queue behind it.
-        let Ok(_connecting) = self.connecting.try_lock() else {
-            return None;
-        };
-        if let Ok(connection) = self.current() {
-            return Some(connection);
-        }
-        let config = redis::AsyncConnectionConfig::new()
-            .set_connection_timeout(Some(DEADLINE))
-            .set_response_timeout(Some(DEADLINE));
-        let connected = tokio::time::timeout(
-            DEADLINE,
-            client.get_multiplexed_async_connection_with_config(&config),
-        )
-        .await;
-        let mut link = self.link();
-        if let Ok(Ok(connection)) = connected {
-            link.connection = Some(connection.clone());
-            link.retry_at = None;
-            Some(connection)
-        } else {
-            link.retry_at = Some(Instant::now() + BACKOFF);
-            None
-        }
-    }
-
-    /// The cache failed or was too slow: drop the connection and leave it alone for a while.
-    fn fail(&self) {
-        let mut link = self.link();
-        link.connection = None;
-        link.retry_at = Some(Instant::now() + BACKOFF);
     }
 
     /// The cached answer for `key`, if the cache has one and answers in time; and whether the
     /// cache answered at all.
     async fn get(&self, key: &str) -> (Option<Cached>, bool) {
-        let Some(mut connection) = self.connection().await else {
+        let Some(mut connection) = self.valkey.connection().await else {
             return (None, false);
         };
         let reply = tokio::time::timeout(
@@ -229,7 +158,7 @@ impl DeliveryCache {
         if let Ok(Ok(stored)) = reply {
             (stored.as_deref().and_then(Cached::decode), true)
         } else {
-            self.fail();
+            self.valkey.fail();
             (None, false)
         }
     }
@@ -240,7 +169,7 @@ impl DeliveryCache {
         if value.body.len() > MAX_CACHED_BYTES {
             return;
         }
-        let Some(mut connection) = self.connection().await else {
+        let Some(mut connection) = self.valkey.connection().await else {
             return;
         };
         let lifetime = TTL_SECS + jitter % (JITTER_SECS + 1);
@@ -255,7 +184,7 @@ impl DeliveryCache {
         )
         .await;
         if !matches!(stored, Ok(Ok(()))) {
-            self.fail();
+            self.valkey.fail();
         }
     }
 
@@ -319,7 +248,10 @@ impl DeliveryCache {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    };
 
     use super::*;
 
@@ -431,7 +363,7 @@ mod tests {
             started.elapsed()
         );
         assert_eq!(
-            cache.current().err(),
+            cache.valkey.current().err(),
             Some(false),
             "no new attempt within the backoff"
         );

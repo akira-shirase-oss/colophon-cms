@@ -190,10 +190,17 @@ pub async fn run(
         allow_private_destinations: config.listen_addr.ip().is_loopback(),
         cache: delivery_cache(&config)?,
     };
+    let admission = colophon_api::admission::Admission::new(
+        config.admission.clone(),
+        config.cache_url.as_ref().map(config::Secret::expose),
+    )
+    .map_err(|error| anyhow::anyhow!(error))
+    .context("configuring rate limits")?;
     let state = colophon_api::AppState {
         readiness: readiness.clone(),
         services: Some(std::sync::Arc::new(services)),
         build,
+        admission: Some(std::sync::Arc::new(admission)),
     };
     let mut routes = colophon_api::routes(state);
     if let Some(dir) = &config.studio_dir {

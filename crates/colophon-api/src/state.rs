@@ -6,7 +6,7 @@ use axum::extract::FromRef;
 use colophon_auth::OidcClient;
 use colophon_db::PgPool;
 
-use crate::{BuildInfo, DeliveryCache, Readiness};
+use crate::{BuildInfo, DeliveryCache, Readiness, admission::SharedAdmission};
 
 /// Session lifetimes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +53,8 @@ pub struct AppState {
     pub services: Option<Arc<Services>>,
     /// What this build is, for `/version`: the server binary stamps it (`colophon-version`).
     pub build: BuildInfo,
+    /// Rate limits (D-076); `None` admits everything (tests of the HTTP contract alone).
+    pub admission: Option<SharedAdmission>,
 }
 
 impl AppState {
@@ -63,6 +65,7 @@ impl AppState {
             readiness,
             services: None,
             build: BuildInfo::unstamped(env!("CARGO_PKG_VERSION")),
+            admission: None,
         }
     }
 }
