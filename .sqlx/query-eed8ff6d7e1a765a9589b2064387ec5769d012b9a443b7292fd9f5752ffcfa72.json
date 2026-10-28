@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT colophon_installation_set_up() AS \"set_up!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "set_up!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "eed8ff6d7e1a765a9589b2064387ec5769d012b9a443b7292fd9f5752ffcfa72"
+}

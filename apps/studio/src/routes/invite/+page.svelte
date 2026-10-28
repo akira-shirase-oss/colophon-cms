@@ -11,7 +11,7 @@
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
-	import { acceptInvitation, ApiError, lookupInvitation, me, ROLE_SUMMARY, signInUrl } from '#lib/api.ts';
+	import { acceptInvitation, ApiError, lookupInvitation, me, signInUrl, signUpUrl } from '#lib/api.ts';
 
 	const KEPT = 'colophon-invitation';
 
@@ -67,7 +67,6 @@
 		}
 	}
 
-	const article = (word: string) => (/^[aeiou]/.test(word) ? 'an' : 'a');
 
 	function decline() {
 		keep('');
@@ -84,12 +83,15 @@
 {:else if who.isPending}
 	<p class="text-sm text-muted-foreground">Loading…</p>
 {:else if who.data === null}
-	<p data-testid="signed-out">Sign in first; this page will show the invitation afterwards.</p>
-	<Button href={signInUrl(resolve('/invite'))} data-sveltekit-reload>Sign in</Button>
+	<p data-testid="signed-out">Sign in first, or create an account if you don't have one; this page shows the invitation afterwards.</p>
+	<div class="flex flex-wrap gap-2">
+		<Button href={signInUrl(resolve('/invite'))} data-sveltekit-reload>Sign in</Button>
+		<Button variant="outline" href={signUpUrl(resolve('/invite'))} data-sveltekit-reload data-testid="create-account">Create an account</Button>
+	</div>
 {:else if outcome === 'joined' && offer.data}
 	<p data-testid="invite-outcome" role="status">
-		You're now {article(offer.data.role)}
-		{offer.data.role} of <a class="underline underline-offset-2" href={resolve("/projects/[project]", { project: offer.data.project_id })}>{offer.data.project_name}</a>.
+		You joined <a class="underline underline-offset-2" href={resolve("/projects/[project]", { project: offer.data.project_id })}>{offer.data.project_name}</a>
+		as {offer.data.role_name}.
 	</p>
 {:else if outcome === 'declined'}
 	<p data-testid="invite-outcome" role="status">Not joined. The invitation stays unused until it expires.</p>
@@ -105,7 +107,7 @@
 	<section class="space-y-3" data-testid="invite-ask">
 		<p>
 			{offer.data.invited_by ?? 'Someone'} invited you to join <strong>{offer.data.project_name}</strong> as
-			<strong>{offer.data.role}</strong>, which lets you change {ROLE_SUMMARY[offer.data.role]}.
+			<strong>{offer.data.role_name}</strong>{offer.data.role_description ? `: ${offer.data.role_description}` : '.'}
 		</p>
 		<p class="text-sm text-muted-foreground">
 			You're signed in as {who.data?.display_name ?? who.data?.id}. The invitation works once, until

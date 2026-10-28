@@ -34,11 +34,11 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	expect(new URL(guest.url()).hash).toBe('');
 	await guest.getByRole('link', { name: 'Sign in' }).click();
 	await keycloak(guest, 'dev-editor');
-	await expect(guest.getByTestId('invite-ask')).toContainText('Dev Owner invited you to join Studio test as editor');
+	await expect(guest.getByTestId('invite-ask')).toContainText('Dev Owner invited you to join Studio test as Editor: Writes and edits content.');
 	expect(new URL(guest.url()).hash).toBe('');
 	expect(await violations(guest)).toEqual([]);
 	await guest.getByRole('button', { name: 'Join', exact: true }).click();
-	await expect(guest.getByTestId('invite-outcome')).toContainText("You're now an editor of Studio test");
+	await expect(guest.getByTestId('invite-outcome')).toContainText('You joined Studio test as Editor.');
 
 	// As an editor: the members are visible, but there's nothing to manage.
 	await guest.getByRole('link', { name: 'Studio test' }).click();

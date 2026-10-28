@@ -45,6 +45,7 @@ async fn ready(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid, Uuid) {
             content: r#"{"title":"Hello"}"#,
             content_hash: &[3; 32],
             title: "Hello",
+            slug: None,
             schema_version: 1,
         },
     )

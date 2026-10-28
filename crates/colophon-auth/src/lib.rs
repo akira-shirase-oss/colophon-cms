@@ -5,4 +5,4 @@
 pub mod oidc;
 pub mod tokens;
 
-pub use oidc::{ClientSecret, OidcClient, OidcConfig, OidcError, VerifiedIdentity};
+pub use oidc::{ClientSecret, OidcClient, OidcConfig, OidcError, Start, VerifiedIdentity};

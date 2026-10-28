@@ -21,6 +21,7 @@ colophon-db.workspace = true
 colophon-worker.workspace = true
 redis.workspace = true
 thiserror.workspace = true
+time.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
@@ -28,6 +29,8 @@ tracing-subscriber.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+# Local times for the scheduled-publishing tests (tests/schedules.rs).
+jiff.workspace = true
 # The crash loop checks publication history with the domain's own rule (tests/crash_loop.rs).
 colophon-domain.workspace = true
 # Cookies only for the Keycloak side of the sign-in test; Colophon's cookies are checked by hand.

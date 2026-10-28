@@ -30,6 +30,18 @@ describe('a build', () => {
 		expect((await readFile(join(built.dir, 'generation.txt'), 'utf8')).trim()).toBe('7');
 	});
 
+	test('serves an article at its slug, and refuses two articles at one address', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'site-'));
+		const slugged = api(new Map([[2, [item('a2', 'Second', 1, 'second-post'), item('a1', 'First')]]]));
+		const built = await build({ ...settings, root, fetch: slugged.fetch });
+		expect(built.pages).toContain('/articles/second-post/index.html');
+		expect(built.pages).toContain('/articles/a1/index.html');
+		expect(await readFile(join(built.dir, 'index.html'), 'utf8')).toContain('href="/articles/second-post/"');
+
+		const clash = api(new Map([[3, [item('a2', 'Second', 1, 'a1'), item('a1', 'First')]]]));
+		await expect(build({ ...settings, root, fetch: clash.fetch })).rejects.toBeInstanceOf(BuildFailed);
+	});
+
 	test('pins every read to the release asked for', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'site-'));
 		const colophon = api(new Map([[3, [item('a', 'Then')]], [9, [item('b', 'Now')]]]));

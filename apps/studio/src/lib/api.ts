@@ -9,7 +9,50 @@ export interface Project {
 	id: string;
 	slug: string;
 	name: string;
+	/** The caller's role, by key. */
 	role: Role;
+	/** That role's name, for people. */
+	role_name: string;
+	/** What that role allows; only when one project is read (D-058). */
+	permissions?: Grant[];
+	/** Whether whoever sends a publish request may approve it themselves (D-044), so one click
+	 *  can publish (D-059); only when one project is read. */
+	self_review?: boolean;
+}
+
+/** Something a member may try to do (D-058). */
+export type Action =
+	| 'content.read'
+	| 'content.create'
+	| 'content.update'
+	| 'content.delete'
+	| 'content.review'
+	| 'content.publish'
+	| 'schema.change'
+	| 'members.manage'
+	| 'roles.manage'
+	| 'destinations.manage'
+	| 'tokens.manage';
+
+/** One permission: an action, on `*` or one collection. */
+export interface Grant {
+	action: Action;
+	subject: string;
+	/** Only these fields (step R.3). */
+	fields?: string[];
+	/** `own`: only entries the member created (step R.3). */
+	condition?: 'own';
+}
+
+/**
+ * Whether the caller's role allows `action`, in `collection` when it's about one; `undefined`
+ * asks for it everywhere. The same rule as the server's `Policy::allows`, so the Studio only
+ * offers what will work; the server still decides every request.
+ */
+export function may(project: Pick<Project, 'permissions'> | undefined, action: Action, collection?: string): boolean {
+	return (project?.permissions ?? []).some(
+		(grant) => grant.action === action && (grant.subject === '*' || (collection !== undefined && grant.subject === collection))
+	);
 }
 
 export interface Me {
@@ -20,6 +63,9 @@ export interface Me {
 	display_name: string | null;
 	/** Whether they may create projects (D-043). */
 	administrator: boolean;
+	/** The installation as a whole: until it has an administrator, the setup code the server
+	 *  printed when it started makes the first one (D-061). */
+	installation: { has_administrator: boolean };
 	projects: Project[];
 }
 
@@ -31,7 +77,14 @@ export type FieldDefinition = { id: string; label: string; required: boolean } &
 	| { type: 'boolean' }
 	| { type: 'enum'; values: string[] }
 	| { type: 'datetime' }
+	/** The entry's URL name, unique in its collection (D-054); `source` is the text field the
+	 *  Studio suggests it from. */
+	| { type: 'slug'; source?: string }
 );
+
+/** The field types a content type can use, in the order the builder offers them. */
+export const FIELD_TYPES = ['text', 'rich_text', 'number', 'boolean', 'enum', 'datetime', 'slug'] as const;
+export type FieldType = (typeof FIELD_TYPES)[number];
 
 /** A content type's definition (D-040). */
 export interface Definition {
@@ -65,9 +118,16 @@ export interface Draft {
 	id: string;
 	collection: string;
 	created_at: string;
+	/** Who created it: the member whose own entry it is. */
+	created_by: string;
 	updated_at: string;
 	revision: Revision;
+	/** Only the fields the person's role may read (D-058, step R.3). */
 	content: Content;
+	/** Fields left out because the role can't read them. */
+	hidden_fields?: string[];
+	/** Fields the role can read but not change. */
+	locked_fields?: string[];
 }
 
 export interface Summary {
@@ -120,10 +180,33 @@ export class ApiError extends Error {
 		readonly status: number | null = null,
 		readonly reason: string | null = null,
 		/** For a conflict: the current revision's ETag. */
-		readonly current: string | null = null
+		readonly current: string | null = null,
+		/** What the server said about where and why, including entries in the way. */
+		readonly details: Details | null = null
 	) {
 		super(message);
 	}
+}
+
+/** A stored entry in the way of a request (D-054, D-055). */
+export interface EntryInTheWay {
+	entry: string;
+	title: string;
+	state: 'draft' | 'published';
+	/** For a content type change: the refusal the entry's content would get. */
+	problem?: { reason: string; pointer: string; message: string };
+}
+
+/** An error's `details`: a reason, a JSON Pointer into the request body, and for refusals that
+ *  depend on stored content, the entries in the way (at most 20) and how many there are. */
+export interface Details {
+	reason?: string;
+	pointer?: string;
+	entries?: EntryInTheWay[];
+	total?: number;
+	/** For a local time the clocks show twice or skip: the two instants to choose from, earlier
+	 *  first (D-060). */
+	candidates?: string[];
 }
 
 /** The session's CSRF token, which every cookie-authenticated write echoes. */
@@ -137,12 +220,18 @@ export function signInUrl(returnTo: string): string {
 	return `/auth/login?return_to=${encodeURIComponent(returnTo)}`;
 }
 
+/** Where "Create an account" goes: the identity provider's own sign-up form, then back here
+ *  signed in. An account grants nothing by itself (D-043). */
+export function signUpUrl(returnTo: string): string {
+	return `/auth/login?start=create&return_to=${encodeURIComponent(returnTo)}`;
+}
+
 /** Every request gives up after this long and counts as "no answer": a save is then retried with
  *  the same key, so nothing waits forever (invariant ST4). */
 export const REQUEST_TIMEOUT_MS = 15_000;
 
 interface Envelope {
-	error?: { code?: string; message?: string; details?: { reason?: string } };
+	error?: { code?: string; message?: string; details?: Details };
 }
 
 async function send(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
@@ -166,18 +255,19 @@ async function send(method: string, path: string, body?: unknown, headers: Recor
 	if (response.ok) return response;
 	const envelope = ((await response.json().catch(() => ({}))) as Envelope).error;
 	const message = envelope?.message ?? `HTTP ${response.status}`;
-	const reason = envelope?.details?.reason ?? null;
+	const details = envelope?.details ?? null;
+	const reason = details?.reason ?? null;
 	switch (true) {
 		case response.status === 401:
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
 			throw new ApiError('not-found', message, 404);
-		case response.status === 409 && reason === 'stale_revision':
-			throw new ApiError('conflict', message, 409, reason, response.headers.get('etag'));
+		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version' || reason === 'stale_role'):
+			throw new ApiError('conflict', message, 409, reason, response.headers.get('etag'), details);
 		case response.status >= 500 || response.status === 429:
 			throw new ApiError('retry', message, response.status, reason);
 		default:
-			throw new ApiError('refused', message, response.status, reason);
+			throw new ApiError('refused', message, response.status, reason, null, details);
 	}
 }
 
@@ -211,6 +301,13 @@ export async function getProject(project: string): Promise<Project> {
 	return ((await (await send('GET', `/api/v1/projects/${project}`)).json()) as { data: Project }).data;
 }
 
+/** Makes the caller the installation's first administrator with the setup code its server printed
+ *  (D-061). Refused with reason `setup_code_invalid`, `already_set_up`, or status 429 (too many
+ *  attempts; the message says how long to wait). The code goes in the body, never a URL. */
+export async function claimSetup(code: string): Promise<void> {
+	await send('POST', '/api/v1/setup', { code });
+}
+
 /** Administrators only (D-043); the creator becomes the project's owner. */
 export async function createProject(slug: string, name: string): Promise<Project> {
 	return ((await (await send('POST', '/api/v1/projects', { slug, name })).json()) as { data: Project }).data;
@@ -222,6 +319,37 @@ export async function listContentTypes(project: string): Promise<ContentType[]> 
 
 export async function getContentType(project: string, collection: string): Promise<ContentType> {
 	return ((await (await send('GET', `${base(project)}/content-types/${collection}`)).json()) as { data: ContentType }).data;
+}
+
+/** A content type with the ETag (`"v<version>"`) the next change names in `If-Match`. */
+export interface LoadedType {
+	type: ContentType;
+	etag: string;
+}
+
+async function loadedType(response: Response): Promise<LoadedType> {
+	const { data } = (await response.json()) as { data: ContentType };
+	return { type: data, etag: response.headers.get('etag') ?? `"v${data.version}"` };
+}
+
+/** Owners and developers only. `slug` names the collection in URLs and can't change. */
+export async function createContentType(project: string, slug: string, definition: Definition, key: string): Promise<LoadedType> {
+	return loadedType(await send('POST', `${base(project)}/content-types`, { slug, definition }, { 'Idempotency-Key': key }));
+}
+
+/** A new version of the content type, on top of the version `etag` names. Refused with
+ *  `needs_migration` if stored drafts or publications wouldn't fit it; the error's `details`
+ *  name them (D-055). */
+export async function updateContentType(
+	project: string,
+	slug: string,
+	definition: Definition,
+	etag: string,
+	key: string
+): Promise<LoadedType> {
+	return loadedType(
+		await send('PUT', `${base(project)}/content-types/${slug}`, definition, { 'If-Match': etag, 'Idempotency-Key': key })
+	);
 }
 
 export async function listEntries(project: string, collection: string): Promise<Summary[]> {
@@ -289,18 +417,52 @@ export async function approveDevice(code: string): Promise<void> {
 	await send('POST', '/auth/device/approve', { user_code: code });
 }
 
-/** What a member may do in a project (D-042): owners everything, developers all but members,
- *  editors and publishers content. */
-export type Role = 'owner' | 'developer' | 'editor' | 'publisher';
-export const ROLES: readonly Role[] = ['owner', 'developer', 'editor', 'publisher'];
+/** A role, by its key: one of the four every project starts with, or one its owners defined
+ *  (D-042, D-058). */
+export type Role = string;
 
-/** What each role may do, in a few words, for the members and invitation pages. */
-export const ROLE_SUMMARY: Record<Role, string> = {
-	owner: 'everything, including who belongs',
-	developer: 'content and content types',
-	editor: 'content',
-	publisher: 'content (publishing comes later)'
-};
+/** A project's role, as Settings shows and edits it. */
+export interface RoleDefinition {
+	key: string;
+	name: string;
+	description: string;
+	built_in: boolean;
+	/** The owner role: every permission, never changed or deleted. */
+	fixed: boolean;
+	version: number;
+	permissions: Grant[];
+	members: number;
+	invitations: number;
+	updated_at: string;
+}
+
+/** What creating or changing a role sends. */
+export interface RoleInput {
+	name: string;
+	description: string;
+	permissions: Grant[];
+}
+
+const roles = (project: string) => `/api/v1/projects/${project}/roles`;
+
+export async function listRoles(project: string): Promise<RoleDefinition[]> {
+	return ((await (await send('GET', roles(project))).json()) as { data: RoleDefinition[] }).data;
+}
+
+export async function createRole(project: string, key: string, role: RoleInput): Promise<RoleDefinition> {
+	return ((await (await send('POST', roles(project), { key, ...role })).json()) as { data: RoleDefinition }).data;
+}
+
+/** Refused with a conflict when someone changed the role since `version`. */
+export async function updateRole(project: string, key: string, version: number, role: RoleInput): Promise<RoleDefinition> {
+	const response = await send('PUT', `${roles(project)}/${key}`, role, { 'If-Match': `"v${version}"` });
+	return ((await response.json()) as { data: RoleDefinition }).data;
+}
+
+/** Refused while members hold the role or pending invitations offer it. */
+export async function deleteRole(project: string, key: string, version: number): Promise<void> {
+	await send('DELETE', `${roles(project)}/${key}`, undefined, { 'If-Match': `"v${version}"` });
+}
 
 export interface Member {
 	identity_id: string;
@@ -324,6 +486,8 @@ export interface Offer {
 	project_id: string;
 	project_name: string;
 	role: Role;
+	role_name: string;
+	role_description: string;
 	invited_by: string | null;
 	expires_at: string;
 }
@@ -335,12 +499,13 @@ export async function listMembers(project: string): Promise<Member[]> {
 	return ((await (await send('GET', members(project))).json()) as { data: Member[] }).data;
 }
 
-/** Owners only; refused when it would leave the project without an owner. */
+/** Needs `members.manage` and every power of both roles; refused when it would leave the project
+ *  without an owner. */
 export async function changeRole(project: string, identity: string, role: Role): Promise<void> {
 	await send('PUT', `${members(project)}/${identity}`, { role });
 }
 
-/** An owner removing someone, or anyone removing themselves (leaving). */
+/** Someone who manages members removing someone, or anyone removing themselves (leaving). */
 export async function removeMember(project: string, identity: string): Promise<void> {
 	await send('DELETE', `${members(project)}/${identity}`);
 }
@@ -555,6 +720,56 @@ export async function publishChangeset(
 	const path = `${changesets(project)}/${id}/publish`;
 	const response = await send('POST', path, { base_generation: baseGeneration }, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key });
 	return ((await response.json()) as { data: { generation: number; entries_changed: number; entries_unpublished: number } }).data;
+}
+
+/** A scheduled publish (D-060): what its author chose, the instant that resolves to, and how it
+ *  went. */
+export interface Schedule {
+	id: string;
+	changeset_id: string;
+	title: string;
+	changeset_hash: string;
+	/** As chosen: `2026-11-03T09:00:00`, in `time_zone`. */
+	local_time: string;
+	time_zone: string;
+	choice?: 'earlier' | 'later';
+	run_at: string;
+	state: 'scheduled' | 'published' | 'blocked' | 'cancelled';
+	reason?: string;
+	generation?: number;
+	started_at?: string;
+	finished_at?: string;
+	/** It started more than a minute late, and says so. */
+	delayed: boolean;
+	scheduled_by: string;
+	scheduled_by_name?: string;
+	created_at: string;
+}
+
+export interface ScheduleRequest {
+	local_time: string;
+	time_zone: string;
+	choice?: 'earlier' | 'later';
+}
+
+const schedules = (project: string) => `${base(project)}/schedules`;
+
+/** Schedules an approved changeset at the version on screen; refused with `candidates` when the
+ *  local time needs a choice. */
+export async function scheduleChangeset(project: string, id: string, hash: string, request: ScheduleRequest): Promise<Schedule> {
+	const response = await send('POST', `${changesets(project)}/${id}/schedule`, request, { 'If-Match': `"${hash}"` });
+	return ((await response.json()) as { data: Schedule }).data;
+}
+
+/** The environment's schedules, pending first; or one changeset's. */
+export async function listSchedules(project: string, changeset?: string): Promise<Schedule[]> {
+	const query = changeset === undefined ? '' : `?changeset=${encodeURIComponent(changeset)}`;
+	return ((await (await send('GET', `${schedules(project)}${query}`)).json()) as { data: Schedule[] }).data;
+}
+
+/** Cancels a pending schedule; one that already ran stays as it went. */
+export async function cancelSchedule(project: string, id: string): Promise<Schedule> {
+	return ((await (await send('DELETE', `${schedules(project)}/${id}`)).json()) as { data: Schedule }).data;
 }
 
 /** Where a project's releases are announced (D-046). */

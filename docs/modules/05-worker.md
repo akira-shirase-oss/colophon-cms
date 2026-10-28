@@ -123,6 +123,12 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
 - Superseded history is kept for inspection.
 
 ### Scheduled releases (spec §06, §14)
+- Built (D-060): `colophon_worker::schedules::Scheduler` runs beside the delivery loop in the worker and all roles,
+  on the worker's pool, every `COLOPHON_WORKER_POLL_MS`. It asks `colophon_db::schedules::due(now)` for at most 20
+  due schedules, oldest first, and runs each with `schedules::run`: opened as the person who scheduled it, the
+  schedule locked `FOR UPDATE SKIP LOCKED` (another worker's run is left alone), `publish::publish` on the latest
+  generation, and the schedule marked published in the same transaction; or blocked, as a worker, with the reason.
+  Tests pass the clock in (spec §34: advance a fake clock), and two workers racing publish once.
 - A due-time scanner picks up schedules stored with their UTC instant (time-zone and daylight-saving logic lives in
   [domain](01-domain.md)).
 - At execution, authority, approval, revision hashes and dependencies are revalidated. Edited content blocks the release.

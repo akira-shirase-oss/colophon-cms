@@ -27,11 +27,12 @@ use axum::{
 use colophon_db::{
     changesets::{self, Head, Pin},
     idempotency::{self, Claim},
-    releases::{self, Committed},
+    publish::{self, Base, Refusal},
+    releases,
     scope::ProjectTransaction,
 };
 use colophon_domain::{
-    changeset::{self, Decision, Facts, Kind, Status},
+    changeset::{self, Decision, Kind, Status},
     policy::Action,
 };
 use serde::{Deserialize, Serialize};
@@ -220,37 +221,9 @@ pub(crate) struct SummaryView {
     updated_at: String,
 }
 
-fn unix(at: OffsetDateTime) -> i64 {
-    at.unix_timestamp()
-}
-
 /// The domain's decision for `head`, from its reviews on its current hash (newest first).
 fn decide(head: &Head, edited: usize, reviews: &[colophon_db::changesets::Review]) -> Status {
-    let hash = hex(&head.hash);
-    let reviews: Vec<changeset::Review> = reviews
-        .iter()
-        .filter(|review| review.changeset_hash == head.hash)
-        .filter_map(|review| {
-            Some(changeset::Review {
-                reviewer: review.reviewer_id.to_string(),
-                decision: Decision::parse(&review.decision)?,
-                hash: hash.clone(),
-                seq: i64::from(review.seq),
-                at: unix(review.created_at),
-            })
-        })
-        .collect();
-    let submitter = head.submitted_by.map(|id| id.to_string());
-    changeset::status(&Facts {
-        hash: &hash,
-        submitted_by: submitter.as_deref(),
-        stale_items: edited,
-        reviews: &reviews,
-        now: unix(OffsetDateTime::now_utc()),
-        // Projects can't require a different reviewer yet; the rule is in place for when they can.
-        require_different_reviewer: false,
-        published: head.published,
-    })
+    publish::status(head, edited, reviews, OffsetDateTime::now_utc())
 }
 
 /// Names the approver or requester by display name where the database knows it.
@@ -338,7 +311,7 @@ fn body(view: &ChangesetView) -> Result<String, ApiError> {
 }
 
 /// The hash in `If-Match`, as `sha256:<hex>`.
-fn if_match(headers: &HeaderMap) -> Result<String, ApiError> {
+pub(crate) fn if_match(headers: &HeaderMap) -> Result<String, ApiError> {
     let value = headers.get(header::IF_MATCH).ok_or(ApiError::PreconditionRequired(
         "this needs an If-Match header with the changeset's ETag, so you act on what you looked at",
     ))?;
@@ -374,12 +347,47 @@ async fn locked(tx: &mut ProjectTransaction, id: &str, expected: &str) -> Result
     Ok(head)
 }
 
-fn may_write(tx: &ProjectTransaction) -> Result<(), ApiError> {
-    require(
-        &tx.role,
-        Action::WriteContent,
-        "you can't change content in this project",
-    )
+/// Refuses unless the caller's role allows `action` in every one of `collections` (D-058).
+fn require_in<'a>(
+    tx: &ProjectTransaction,
+    action: Action,
+    collections: impl IntoIterator<Item = &'a str>,
+    why: &'static str,
+) -> Result<(), ApiError> {
+    collections
+        .into_iter()
+        .try_for_each(|collection| require(&tx.policy, action, Some(collection), why))
+}
+
+/// Refuses unless the caller may change content in every collection `changeset` touches.
+async fn may_write(tx: &mut ProjectTransaction, changeset: Uuid) -> Result<(), ApiError> {
+    let entries: Vec<Uuid> = changesets::items(tx, changeset)
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .map(|item| item.pin.entry_id)
+        .collect();
+    may_change_entries(tx, &entries).await
+}
+
+/// Refuses unless the caller's role may change every one of `entries`: anyone's, or their own
+/// where that is what it allows (D-058, step R.3). Pinning an entry asks for it to be published.
+async fn may_change_entries(tx: &mut ProjectTransaction, entries: &[Uuid]) -> Result<(), ApiError> {
+    let creators = colophon_db::entries::creators(tx, entries)
+        .await
+        .map_err(ApiError::from_db)?;
+    let allowed = creators.iter().all(|(_, collection, created_by)| {
+        crate::visibility::Access::of(&tx.policy, tx.identity, collection, *created_by)
+            .update
+            .is_some()
+    });
+    if allowed {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden(
+            "your role can't change content in this changeset",
+        ))
+    }
 }
 
 /// `GET {P}/changesets`.
@@ -415,16 +423,8 @@ pub(crate) async fn list(
     }))
 }
 
-/// `POST {P}/changesets`.
-pub(crate) async fn create(
-    State(state): State<AppState>,
-    caller: SignedIn,
-    Path(path): Path<ListPath>,
-    headers: HeaderMap,
-    body_json: Result<Json<NewChangeset>, JsonRejection>,
-) -> Result<Response, ApiError> {
-    let key = idempotency_key(&headers)?;
-    let Json(new) = body_json?;
+/// A new changeset's title, entries to publish and entries to unpublish, checked for shape.
+fn checked(new: &NewChangeset) -> Result<(&str, Vec<Uuid>, Vec<Uuid>), ApiError> {
     let title = new.title.trim();
     if !(1..=200).contains(&title.chars().count()) || title.chars().any(char::is_control) {
         return Err(ApiError::InvalidField {
@@ -457,8 +457,21 @@ pub(crate) async fn create(
             ),
         });
     }
+    Ok((title, entries, unpublish))
+}
+
+/// `POST {P}/changesets`.
+pub(crate) async fn create(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<ListPath>,
+    headers: HeaderMap,
+    body_json: Result<Json<NewChangeset>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let key = idempotency_key(&headers)?;
+    let Json(new) = body_json?;
+    let (title, entries, unpublish) = checked(&new)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_write(&tx)?;
     let sorted = |list: &[Uuid]| {
         let mut ids: Vec<String> = list.iter().map(Uuid::to_string).collect();
         ids.sort();
@@ -506,6 +519,8 @@ pub(crate) async fn create(
         });
     }
     pins.extend(taken_down);
+    let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
+    may_change_entries(&mut tx, &pinned).await?;
     let id = Uuid::now_v7();
     changesets::create(&mut tx, id, title, &pins, &hash_of(&pins))
         .await
@@ -549,8 +564,8 @@ pub(crate) async fn submit(
 ) -> Result<Response, ApiError> {
     let expected = if_match(&headers)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_write(&tx)?;
     let head = locked(&mut tx, &path.changeset, &expected).await?;
+    may_write(&mut tx, head.id).await?;
     changesets::submit(&mut tx, head.id)
         .await
         .map_err(ApiError::from_db)?;
@@ -566,8 +581,8 @@ pub(crate) async fn refresh(
 ) -> Result<Response, ApiError> {
     let expected = if_match(&headers)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_write(&tx)?;
     let head = locked(&mut tx, &path.changeset, &expected).await?;
+    may_write(&mut tx, head.id).await?;
     let items = changesets::items(&mut tx, head.id)
         .await
         .map_err(ApiError::from_db)?;
@@ -626,12 +641,16 @@ pub(crate) async fn review(
         });
     }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    require(
-        &tx.role,
-        Action::Review,
-        "only a project's owners and publishers can review changesets",
-    )?;
     let head = locked(&mut tx, &path.changeset, &expected).await?;
+    let collections = changesets::collections(&mut tx, head.id)
+        .await
+        .map_err(ApiError::from_db)?;
+    require_in(
+        &tx,
+        Action::ContentReview,
+        collections.iter().map(String::as_str),
+        "your role can't review changes to this content",
+    )?;
     if head.submitted_by.is_none() {
         return Err(ApiError::Conflict(
             "this changeset hasn't been submitted for review yet",
@@ -672,7 +691,7 @@ pub(crate) struct PublishedView {
 }
 
 /// Refuses to publish anything but an approved changeset, saying what it needs instead.
-fn publishable(status: &Status) -> Result<(), ApiError> {
+pub(crate) fn publishable(status: &Status) -> Result<(), ApiError> {
     match status {
         Status::Approved { .. } => Ok(()),
         Status::Published { .. } => Err(ApiError::Conflict(
@@ -686,6 +705,38 @@ fn publishable(status: &Status) -> Result<(), ApiError> {
         )),
         Status::Open | Status::AwaitingReview | Status::ChangesRequested { .. } => Err(
             ApiError::Conflict("only an approved changeset can be published"),
+        ),
+    }
+}
+
+/// The bytes of a `sha256:<hex>` `ETag`; anything else is no hash at all, which matches nothing.
+pub(crate) fn hash_bytes(etag: &str) -> Vec<u8> {
+    etag.strip_prefix("sha256:")
+        .and_then(|hex| {
+            (0..hex.len())
+                .step_by(2)
+                .map(|at| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok())
+                .collect::<Option<Vec<u8>>>()
+        })
+        .unwrap_or_default()
+}
+
+/// What the API answers when publishing refused (D-045).
+fn refused(refusal: Refusal) -> ApiError {
+    match refusal {
+        Refusal::NotFound => ApiError::NotFound,
+        Refusal::HashMoved { current } => ApiError::StaleChangeset {
+            current: content_hash(&current),
+        },
+        Refusal::NotPermitted => ApiError::Forbidden("your role can't publish this content"),
+        Refusal::NotPublishable(status) => publishable(&status).err().unwrap_or_else(|| {
+            ApiError::internal(std::io::Error::other("a publishable changeset was refused"))
+        }),
+        Refusal::GenerationMoved { current } => ApiError::GenerationMoved { current },
+        Refusal::SlugTaken => ApiError::slug_taken(
+            "",
+            "an entry in this changeset has a slug that another entry still publishes; publish that entry's new slug first, or in the same changeset",
+            None,
         ),
     }
 }
@@ -710,11 +761,6 @@ pub(crate) async fn publish(
         });
     }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    require(
-        &tx.role,
-        Action::Publish,
-        "only a project's owners and publishers can publish",
-    )?;
     let request = request_hash(&[
         PUBLISH,
         &path.changeset,
@@ -732,51 +778,31 @@ pub(crate) async fn publish(
             return Ok(json(status, response, None, true));
         }
     }
-    let head = locked(&mut tx, &path.changeset, &expected).await?;
-    let items = changesets::items(&mut tx, head.id)
-        .await
-        .map_err(ApiError::from_db)?;
-    let reviews = changesets::reviews(&mut tx, head.id, Some(&head.hash))
-        .await
-        .map_err(ApiError::from_db)?;
-    let edited = items.iter().filter(|item| item.moved()).count();
-    publishable(&decide(&head, edited, &reviews))?;
-    // Approved means the newest decision on this hash is an approval: the one it publishes under.
-    let approval = reviews
-        .first()
-        .ok_or_else(|| ApiError::internal(std::io::Error::other("approved without a review")))?;
-    let committed = releases::commit(
+    let id = Uuid::try_parse(&path.changeset).map_err(|_| ApiError::NotFound)?;
+    let published = publish::publish(
         &mut tx,
-        new.base_generation,
-        head.id,
-        &head.hash,
-        approval.id,
+        id,
+        Some(&hash_bytes(&expected)),
+        Base::Seen(new.base_generation),
+        OffsetDateTime::now_utc(),
         std::time::Duration::from_secs(colophon_domain::job::LIFETIME_SECS.unsigned_abs()),
     )
     .await
-    .map_err(ApiError::from_db)?;
-    let (generation, epoch, changed, unpublished) = match committed {
-        Committed::Done {
-            generation,
-            epoch,
-            changed,
-            unpublished,
-        } => (generation, epoch, changed, unpublished),
-        Committed::Moved { current } => return Err(ApiError::GenerationMoved { current }),
-        // Checked above under the changeset's lock; the transaction is dropped, not committed.
-        Committed::Unmatched => {
-            return Err(ApiError::internal(std::io::Error::other(
-                "an entry to unpublish no longer publishes its pinned revision",
-            )));
-        }
-    };
-    tracing::info!(project = %tx.project, generation, changeset = %head.id, "release committed");
+    .map_err(ApiError::from_db)?
+    .map_err(refused)?;
+    let (generation, epoch, changed, unpublished) = (
+        published.generation,
+        published.epoch,
+        published.changed,
+        published.unpublished,
+    );
+    tracing::info!(project = %tx.project, generation, changeset = %id, "release committed");
     let text = serde_json::to_string(&Data {
         data: PublishedView {
             generation,
             epoch,
-            changeset_id: head.id,
-            changeset_hash: content_hash(&head.hash),
+            changeset_id: id,
+            changeset_hash: content_hash(&published.hash),
             entries_changed: changed,
             entries_unpublished: unpublished,
         },

@@ -70,30 +70,36 @@ v0.1 is done when every box below is checked with stored evidence (commit, comma
 
 ## Scope
 
-### Core (v0.1, milestones P0–P6)
+### Core (v0.1, milestones P0–P6 and R, M, E, D, S, V)
 
-All modules in [modules/README.md](modules/README.md) except the parked list: content model and revisions,
+**Every feature Strapi and Sanity offer** (D-057; the list and its status are in [COMPARISON.md](COMPARISON.md)),
+with **roles and permissions** down to fields and an entry's creator (D-058), built at the bar above: no feature counts
+until its failure behaviour is tested and its evidence stored. And all modules in [modules/README.md](modules/README.md)
+except the parked list: content model and revisions,
 localization in the data model, editorial review, releases and rollback, public delivery with caching and evidence,
 media (images), preview links, scheduled publishing, the CLI, the TypeScript SDK, automation (scoped tokens, bulk jobs,
-MCP), the Studio, the reference blog, the docs site, verification, operations and open-source hygiene.
+MCP), the Studio, the reference blog, the docs site, verification, operations and open-source hygiene; and, since D-062, several servers behind a load balancer with stress runs and Rust
+benchmarks (milestone S), and the CLI, SDK and MCP server versioned together and installable from npm, Cargo and
+Homebrew (milestone V).
 
-### Later (after v0.1, only when the core is proven)
+### Later (after v0.1)
 
-- Full localization UI and translation workflow.
-- A schema designer for non-technical users (beyond safe field additions).
-- Import adapters for Strapi, Sanity and Payload exports (native JSONL import is in v0.1).
 - A business-site template with lead forms and notifications.
+- Import adapters for Payload exports (Strapi and Sanity imports are in milestone D).
 - The optional AI writing assistant, if it was not finished in P5.
+
+The localization UI, the schema designer and Strapi/Sanity import moved into the core with D-057.
 
 ### Parked (see [modules/parked.md](modules/parked.md))
 
 Commerce, payments, inventory, shipping, tax, refunds, subscriptions and entitlements; hosting adapters for
 GitHub/Vercel; custom domains; membership and knowledge-base templates.
 
-### Non-goals (from spec §01)
+### Non-goals (from spec §01, as amended by D-057)
 
-Arbitrary untrusted native plugins, CRDT live co-editing, GraphQL, active-active multi-region database writes,
-multi-seller marketplaces, usage-based billing, autonomous production repair, and hostile-tenant open registration.
+Arbitrary untrusted native plugins (milestone D offers safe extension points instead), active-active multi-region
+database writes, multi-seller marketplaces, usage-based billing, autonomous production repair, and hostile-tenant open
+registration. GraphQL and real-time collaboration were non-goals; they are in scope since D-057 (milestones D and E).
 
 ## Quality bars
 

@@ -56,6 +56,8 @@ pub enum ErrorCode {
     UnsupportedMediaType,
     /// The server could not produce a response before the request deadline.
     DeadlineExceeded,
+    /// Too many attempts lately; `Retry-After` says how many seconds to wait.
+    RateLimited,
     /// The server is temporarily unable to handle the request.
     Unavailable,
     /// A bug or an unexpected failure. Details are logged, never returned.
@@ -81,6 +83,7 @@ impl ErrorCode {
             Self::PayloadTooLarge => "payload_too_large",
             Self::UnsupportedMediaType => "unsupported_media_type",
             Self::DeadlineExceeded => "deadline_exceeded",
+            Self::RateLimited => "rate_limited",
             Self::Unavailable => "unavailable",
             Self::Internal => "internal",
         }
@@ -100,6 +103,7 @@ impl ErrorCode {
             StatusCode::UNSUPPORTED_MEDIA_TYPE => Self::UnsupportedMediaType,
             StatusCode::REQUEST_TIMEOUT | StatusCode::GATEWAY_TIMEOUT => Self::DeadlineExceeded,
             StatusCode::SERVICE_UNAVAILABLE => Self::Unavailable,
+            StatusCode::TOO_MANY_REQUESTS => Self::RateLimited,
             status if status.is_client_error() => Self::BadRequest,
             _ => Self::Internal,
         }
@@ -119,6 +123,73 @@ pub struct ErrorDetails {
     pub reason: &'static str,
     /// RFC 6901 JSON Pointer into the request body; empty means the whole body.
     pub pointer: String,
+    /// Stored entries in the way: the entry that has a slug (`slug_taken`), or the first of
+    /// those a content type change would make invalid (`needs_migration`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub entries: Vec<EntryInTheWay>,
+    /// How many entries are in the way in all, when `entries` may list only some.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    /// The instants a request must choose between (`ambiguous_local_time`,
+    /// `skipped_local_time`), earlier first, as RFC 3339.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<String>,
+}
+
+impl ErrorDetails {
+    fn new(reason: &'static str, pointer: impl Into<String>) -> Self {
+        Self {
+            reason,
+            pointer: pointer.into(),
+            entries: Vec::new(),
+            total: None,
+            candidates: Vec::new(),
+        }
+    }
+}
+
+/// The most entries a `needs_migration` refusal lists.
+pub const MAX_ENTRIES_IN_THE_WAY: usize = 20;
+
+/// A stored entry that stands in the way of a request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EntryInTheWay {
+    /// The entry.
+    pub entry: Uuid,
+    /// Its title, in the revision in the way.
+    pub title: String,
+    /// `draft` or `published`: which of its revisions is in the way.
+    pub state: &'static str,
+    /// For a content type change: why that revision's content wouldn't fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub problem: Option<Problem>,
+}
+
+/// A refusal that depends on stored entries (D-054, D-055): what is wrong, where, and the entries
+/// in the way. Boxed in [`ApiError`], so every `Result` in the API stays small.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InTheWay {
+    /// The refusal's code: `slug_taken`, `needs_migration`.
+    pub reason: &'static str,
+    /// JSON Pointer into the request body; empty if the body has none.
+    pub pointer: String,
+    /// What is wrong, for people.
+    pub message: String,
+    /// The first [`MAX_ENTRIES_IN_THE_WAY`] entries in the way.
+    pub entries: Vec<EntryInTheWay>,
+    /// How many there are, when the server counted them.
+    pub total: Option<u64>,
+}
+
+/// Why stored content doesn't fit a content type: the refusal it would get.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Problem {
+    /// The refusal's code, such as `missing_field`.
+    pub reason: &'static str,
+    /// JSON Pointer into the entry's content.
+    pub pointer: String,
+    /// What is wrong, for people.
+    pub message: String,
 }
 
 /// The part of an error a client may see. Stored in the response extensions so the edge
@@ -210,9 +281,53 @@ pub enum ApiError {
         /// The environment's generation now.
         current: i64,
     },
+    /// A role change named a version that is no longer current. The response's `ETag` names the
+    /// current one (D-058).
+    #[error("the role has changed since that version; load it again and check what changed")]
+    StaleRole {
+        /// Its version now.
+        current: i32,
+    },
+    /// A role that members hold, or that pending invitations offer, can't be deleted (D-058).
+    #[error(
+        "{members} member(s) hold this role and {invitations} pending invitation(s) offer it: give them another role, or revoke the invitations, first"
+    )]
+    RoleInUse {
+        /// Members who hold it.
+        members: i64,
+        /// Pending invitations that offer it.
+        invitations: i64,
+    },
     /// An `Idempotency-Key` was used before for a different request.
     #[error("this Idempotency-Key was already used for a different request")]
     IdempotencyKeyReused,
+    /// The installation has an administrator already: setup codes no longer do anything (D-061).
+    #[error("this installation already has an administrator; ask them to invite you to a project")]
+    AlreadySetUp,
+    /// Too many attempts lately; the response's `Retry-After` says how many seconds to wait.
+    #[error("too many attempts; try again in {} minute(s)", .retry_after.div_ceil(60))]
+    RateLimited {
+        /// Seconds until there is room again.
+        retry_after: u32,
+    },
+    /// A slug is another entry's, as its draft's slug or its published one (D-054). The entries
+    /// name that entry when a precheck found it; a write that lost a race to it can't. 409.
+    #[error("{}", .0.message)]
+    SlugTaken(Box<InTheWay>),
+    /// A content type change would make stored drafts or publications invalid (D-055). 422.
+    #[error("{}", .0.message)]
+    NeedsMigration(Box<InTheWay>),
+    /// A local time the clocks show twice or skip in its time zone: the request must say which of
+    /// the two instants it means (D-060). 422.
+    #[error("{message}")]
+    NeedsChoice {
+        /// `ambiguous_local_time` or `skipped_local_time`.
+        reason: &'static str,
+        /// What is wrong, for people.
+        message: String,
+        /// The two instants, earlier first, as RFC 3339.
+        candidates: [String; 2],
+    },
     /// A field of the request body was refused.
     #[error("{message}")]
     InvalidField {
@@ -259,13 +374,34 @@ impl ApiError {
         Self::Internal(cause.into())
     }
 
-    /// A database error: an exhausted pool is [`Self::Busy`]; anything else is internal.
-    /// Callers that expect a particular error, such as a conflict, match it first.
+    /// A database error: an exhausted pool is [`Self::Busy`], a taken slug
+    /// [`Self::SlugTaken`]; anything else is internal. Callers that expect a particular error,
+    /// such as a conflict, match it first.
     pub fn from_db(error: DbError) -> Self {
         match error {
             DbError::Busy => Self::Busy,
+            DbError::SlugTaken => Self::slug_taken(
+                "",
+                "another entry in this collection has the same slug, as a draft or published",
+                None,
+            ),
             other => Self::internal(other),
         }
+    }
+
+    /// 409 `slug_taken`, naming `holder` when it is known.
+    pub fn slug_taken(
+        pointer: impl Into<String>,
+        message: impl Into<String>,
+        holder: Option<EntryInTheWay>,
+    ) -> Self {
+        Self::SlugTaken(Box::new(InTheWay {
+            reason: "slug_taken",
+            pointer: pointer.into(),
+            message: message.into(),
+            entries: holder.into_iter().collect(),
+            total: None,
+        }))
     }
 
     /// HTTP status for this error. Total over the variants, so every new variant must choose.
@@ -278,9 +414,11 @@ impl ApiError {
             }
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-            Self::InvalidRichText(_) | Self::Invalid(_) | Self::InvalidField { .. } => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
+            Self::InvalidRichText(_)
+            | Self::Invalid(_)
+            | Self::InvalidField { .. }
+            | Self::NeedsChoice { .. }
+            | Self::NeedsMigration(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::InvalidHeader(_) => StatusCode::BAD_REQUEST,
             Self::PreconditionRequired(_) => StatusCode::PRECONDITION_REQUIRED,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -290,7 +428,12 @@ impl ApiError {
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
             | Self::GenerationMoved { .. }
-            | Self::IdempotencyKeyReused => StatusCode::CONFLICT,
+            | Self::StaleRole { .. }
+            | Self::RoleInUse { .. }
+            | Self::IdempotencyKeyReused
+            | Self::AlreadySetUp
+            | Self::SlugTaken(_) => StatusCode::CONFLICT,
+            Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -304,9 +447,11 @@ impl ApiError {
             Self::UnsupportedMediaType => ErrorCode::UnsupportedMediaType,
             Self::PayloadTooLarge => ErrorCode::PayloadTooLarge,
             Self::BadRequest | Self::InvalidHeader(_) => ErrorCode::BadRequest,
-            Self::InvalidRichText(_) | Self::Invalid(_) | Self::InvalidField { .. } => {
-                ErrorCode::ValidationFailed
-            }
+            Self::InvalidRichText(_)
+            | Self::Invalid(_)
+            | Self::InvalidField { .. }
+            | Self::NeedsChoice { .. }
+            | Self::NeedsMigration(_) => ErrorCode::ValidationFailed,
             Self::PreconditionRequired(_) => ErrorCode::PreconditionRequired,
             Self::Unauthorized => ErrorCode::Unauthorized,
             Self::Forbidden(_) => ErrorCode::Forbidden,
@@ -317,7 +462,12 @@ impl ApiError {
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
             | Self::GenerationMoved { .. }
-            | Self::IdempotencyKeyReused => ErrorCode::Conflict,
+            | Self::StaleRole { .. }
+            | Self::RoleInUse { .. }
+            | Self::IdempotencyKeyReused
+            | Self::AlreadySetUp
+            | Self::SlugTaken(_) => ErrorCode::Conflict,
+            Self::RateLimited { .. } => ErrorCode::RateLimited,
             Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
@@ -327,39 +477,34 @@ impl ApiError {
     /// What the client sees.
     pub fn public(&self) -> PublicError {
         let details = match self {
-            Self::InvalidRichText(rejection) => Some(ErrorDetails {
-                reason: rejection.code.as_str(),
-                pointer: rejection.pointer.clone(),
-            }),
-            Self::Invalid(refusal) => Some(ErrorDetails {
-                reason: refusal.code,
-                pointer: refusal.pointer.clone(),
-            }),
-            Self::StaleRevision { .. } => Some(ErrorDetails {
-                reason: "stale_revision",
-                pointer: String::new(),
-            }),
-            Self::StaleVersion { .. } => Some(ErrorDetails {
-                reason: "stale_version",
-                pointer: String::new(),
-            }),
-            Self::StaleChangeset { .. } => Some(ErrorDetails {
-                reason: "stale_changeset",
-                pointer: String::new(),
-            }),
-            Self::GenerationMoved { .. } => Some(ErrorDetails {
-                reason: "generation_moved",
-                pointer: String::new(),
-            }),
-            Self::IdempotencyKeyReused => Some(ErrorDetails {
-                reason: "idempotency_key_reused",
-                pointer: String::new(),
-            }),
+            Self::InvalidRichText(rejection) => Some(ErrorDetails::new(
+                rejection.code.as_str(),
+                rejection.pointer.clone(),
+            )),
+            Self::Invalid(refusal) => {
+                Some(ErrorDetails::new(refusal.code, refusal.pointer.clone()))
+            }
+            Self::StaleRevision { .. } => Some(ErrorDetails::new("stale_revision", "")),
+            Self::StaleVersion { .. } => Some(ErrorDetails::new("stale_version", "")),
+            Self::StaleChangeset { .. } => Some(ErrorDetails::new("stale_changeset", "")),
+            Self::GenerationMoved { .. } => Some(ErrorDetails::new("generation_moved", "")),
+            Self::StaleRole { .. } => Some(ErrorDetails::new("stale_role", "")),
+            Self::RoleInUse { .. } => Some(ErrorDetails::new("role_in_use", "")),
+            Self::IdempotencyKeyReused => Some(ErrorDetails::new("idempotency_key_reused", "")),
+            Self::AlreadySetUp => Some(ErrorDetails::new("already_set_up", "")),
             Self::InvalidField {
                 reason, pointer, ..
+            } => Some(ErrorDetails::new(reason, *pointer)),
+            Self::NeedsChoice {
+                reason, candidates, ..
             } => Some(ErrorDetails {
-                reason,
-                pointer: (*pointer).to_owned(),
+                candidates: candidates.to_vec(),
+                ..ErrorDetails::new(reason, "/local_time")
+            }),
+            Self::SlugTaken(way) | Self::NeedsMigration(way) => Some(ErrorDetails {
+                entries: way.entries.clone(),
+                total: way.total,
+                ..ErrorDetails::new(way.reason, way.pointer.clone())
             }),
             _ => None,
         };
@@ -425,7 +570,7 @@ impl IntoResponse for ApiError {
                     response.headers_mut().insert(header::ETAG, etag);
                 }
             }
-            Self::StaleVersion { current } => {
+            Self::StaleVersion { current } | Self::StaleRole { current } => {
                 if let Ok(etag) = HeaderValue::from_str(&format!("\"v{current}\"")) {
                     response.headers_mut().insert(header::ETAG, etag);
                 }
@@ -439,6 +584,11 @@ impl IntoResponse for ApiError {
                 response
                     .headers_mut()
                     .insert(crate::delivery::GENERATION, HeaderValue::from(current));
+            }
+            Self::RateLimited { retry_after } => {
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from(retry_after));
             }
             _ => {}
         }
@@ -544,6 +694,7 @@ mod tests {
             (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large"),
             (StatusCode::GATEWAY_TIMEOUT, "deadline_exceeded"),
             (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+            (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             (StatusCode::IM_A_TEAPOT, "bad_request"),
             (StatusCode::BAD_GATEWAY, "internal"),
         ];

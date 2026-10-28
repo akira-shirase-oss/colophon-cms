@@ -1,0 +1,131 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.key, r.name, r.description, r.built_in, r.version, r.updated_at,\n                  (SELECT count(*) FROM memberships m\n                   WHERE m.project_id = r.project_id AND m.role = r.key) AS \"members!\",\n                  (SELECT count(*) FROM invitations n\n                   WHERE n.project_id = r.project_id AND n.role = r.key\n                     AND n.accepted_at IS NULL AND n.revoked_at IS NULL\n                     AND n.expires_at > now()) AS \"invitations!\",\n                  coalesce(p.actions, '{}') AS \"actions!\",\n                  coalesce(p.subjects, '{}') AS \"subjects!\",\n                  coalesce(p.fields, '{}') AS \"fields!: Vec<Option<String>>\",\n                  coalesce(p.conditions, '{}') AS \"conditions!: Vec<Option<String>>\"\n           FROM roles r\n           LEFT JOIN LATERAL (\n               SELECT array_agg(action ORDER BY action, subject) AS actions,\n                      array_agg(subject ORDER BY action, subject) AS subjects,\n                      array_agg(array_to_string(fields, ',') ORDER BY action, subject) AS fields,\n                      array_agg(condition ORDER BY action, subject) AS conditions\n               FROM role_permissions\n               WHERE project_id = r.project_id AND role_key = r.key\n           ) p ON true\n           WHERE r.project_id = $1 AND ($2::text IS NULL OR r.key = $2)\n           ORDER BY array_position(ARRAY['owner', 'developer', 'editor', 'publisher'], r.key),\n                    r.created_at, r.key\n           LIMIT 100",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "built_in",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "built_in"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "members!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "invitations!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "actions!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "subjects!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "fields!: Vec<Option<String>>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "conditions!: Vec<Option<String>>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "a73f2f3b6377681e375330c7fac8f0c62789d59f2715aabbc2cc335d103c987b"
+}

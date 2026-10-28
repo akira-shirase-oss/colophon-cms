@@ -9,6 +9,8 @@ import { renderToHtml } from '@colophon/content-renderer';
 export interface Article {
 	id: string;
 	title: string;
+	/** Its URL name, when its content type has a slug field and it sets one (D-054). */
+	slug?: string;
 	/** The canonical content: the article type's fields. */
 	content: { title?: unknown; body?: unknown };
 	/** The release it was published in. */
@@ -55,8 +57,9 @@ ${main}
 `;
 }
 
+/** `/articles/{slug}/`, or `/articles/{id}/` for an article without a slug. */
 export function articlePath(article: Article): string {
-	return `/articles/${encodeURIComponent(article.id)}/`;
+	return `/articles/${encodeURIComponent(article.slug ?? article.id)}/`;
 }
 
 export function home(release: Release, articles: Article[]): string {

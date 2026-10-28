@@ -11,6 +11,8 @@ publish.workspace = true
 # tower, sqlx, reqwest, ...). scripts/check-architecture.sh fails CI if one appears, even
 # transitively. See docs/modules/01-domain.md.
 [dependencies]
+# Time zones for scheduled publishing, with the tz database bundled: no I/O (D-060).
+jiff.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 url.workspace = true

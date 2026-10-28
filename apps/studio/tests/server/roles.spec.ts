@@ -19,5 +19,5 @@ test('a page reads your role from the project, not from your list of projects', 
 	await page.goto(`/studio/projects/${project}/members`);
 	await expect(page.getByLabel('Role of Dev Owner')).toHaveValue('owner');
 	await page.goto(`/studio/projects/${project}/settings`);
-	await expect(page.getByLabel('Destination name')).toBeVisible();
+	await expect(page.getByLabel('Connection name')).toBeVisible();
 });

@@ -85,6 +85,9 @@ pub(crate) struct PublishedView {
     revision_id: Uuid,
     collection: String,
     title: String,
+    /// Left out when the entry has none, so answers cached before slugs existed read the same.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    slug: Option<String>,
     content: Box<RawValue>,
     content_hash: String,
     /// The release it was published in.
@@ -98,6 +101,7 @@ impl PublishedView {
             revision_id: row.revision_id,
             collection: row.collection,
             title: row.title,
+            slug: row.slug,
             content: RawValue::from_string(row.content).map_err(ApiError::internal)?,
             content_hash: crate::entries::content_hash(&row.content_hash),
             published_in: row.valid_from,

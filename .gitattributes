@@ -1,0 +1,3 @@
+# Every load run appends one line here; branches that both ran keep both lines (a merge never
+# has to choose). Each line stands alone, so order between branches does not matter.
+perf/results/history.jsonl merge=union

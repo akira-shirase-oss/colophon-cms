@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (SELECT count(*) FROM memberships\n                   WHERE project_id = $1 AND role = $2) AS \"members!\",\n                  (SELECT count(*) FROM invitations\n                   WHERE project_id = $1 AND role = $2\n                     AND accepted_at IS NULL AND revoked_at IS NULL\n                     AND expires_at > now()) AS \"invitations!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "members!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "invitations!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "59275f12f158135168eb0ee47ac9a6c933567d89d6defd6d349a8f3250526da3"
+}

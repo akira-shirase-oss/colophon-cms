@@ -22,17 +22,21 @@
 	});
 	const pinned = createQuery(() => revisionQuery(item.revision_id));
 	const live = createQuery(() => revisionQuery(item.kind === 'unpublish' ? null : item.published_revision_id));
-	const ready = $derived(type.data !== undefined && pinned.data !== undefined && (item.published_revision_id === null || item.kind === 'unpublish' || live.data !== undefined));
+	// Every query's data is read together, never behind a short-circuit: svelte-query only updates
+	// what has been read, so a query first read after its answer arrived kept showing nothing, and
+	// "Loading the comparison…" stayed on screen for good (seen on a published request, step 3.7).
+	const loaded = $derived({ type: type.data, pinned: pinned.data, live: live.data });
+	const needsLive = $derived(item.published_revision_id !== null && item.kind !== 'unpublish');
 </script>
 
 {#if type.isError || pinned.isError || live.isError}
 	<p class="text-sm text-destructive">Couldn't load this comparison: {(type.error ?? pinned.error ?? live.error)?.message}</p>
-{:else if !ready || type.data === undefined || pinned.data === undefined}
+{:else if loaded.type === undefined || loaded.pinned === undefined || (needsLive && loaded.live === undefined)}
 	<p class="text-sm text-muted-foreground">Loading the comparison…</p>
 {:else if item.kind === 'unpublish'}
 	<p class="mb-3 text-sm text-attention-ink">Readers will get “gone” (HTTP 410) for this entry instead of:</p>
-	<DiffView changes={compare(type.data.definition, pinned.data.content, null)} before="live" after="nothing" />
+	<DiffView changes={compare(loaded.type.definition, loaded.pinned.content, null)} before="live" after="nothing" />
 {:else}
 	{#if item.published_revision_id === null}<p class="mb-3 text-sm text-muted-foreground">New for readers: everything below is added.</p>{/if}
-	<DiffView changes={compare(type.data.definition, live.data?.content ?? null, pinned.data.content)} />
+	<DiffView changes={compare(loaded.type.definition, loaded.live?.content ?? null, loaded.pinned.content)} />
 {/if}

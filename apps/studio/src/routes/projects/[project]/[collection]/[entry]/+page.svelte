@@ -37,8 +37,6 @@
 		{#snippet eyebrow()}{type.data.definition.name}{/snippet}
 		{#snippet meta()}
 			<span>Saved {ago(draft.data.draft.updated_at)}</span>
-			<span aria-hidden="true">·</span>
-			<span class="font-mono text-xs">{entry.slice(-12)}</span>
 		{/snippet}
 	</PageHeader>
 	{#key entry}

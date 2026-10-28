@@ -15,6 +15,7 @@ use colophon_db::{
     projects,
     scope::{self, MemberTransaction},
 };
+use colophon_domain::policy::{Policy, Role};
 use common::TestDb;
 use sqlx::types::time::OffsetDateTime;
 use uuid::Uuid;
@@ -227,7 +228,7 @@ async fn the_last_owner_can_be_neither_demoted_nor_removed() {
         members::change_role(&mut tx, bob, "editor")
             .await
             .expect("change"),
-        Change::NotOwner,
+        Change::NotPermitted,
         "having stepped down, Alice manages no one"
     );
     tx.commit().await.expect("commit");
@@ -324,9 +325,9 @@ async fn an_owner_demoted_mid_request_can_no_longer_manage_members() {
             .await
             .expect("change");
         let removed = members::remove(&mut bobs, carol).await.expect("remove");
-        let role = members::current_role(&mut bobs).await.expect("role");
+        let policy = members::current_policy(&mut bobs).await.expect("policy");
         drop(bobs);
-        (promoted, removed, role)
+        (promoted, removed, policy)
     });
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert!(
@@ -334,11 +335,15 @@ async fn an_owner_demoted_mid_request_can_no_longer_manage_members() {
         "Bob's change waits for Alice's to commit"
     );
     alices.commit().await.expect("commit");
-    let (promoted, removed, role) = waiting.await.expect("task");
+    let (promoted, removed, policy) = waiting.await.expect("task");
     assert_eq!(
-        (promoted, removed, role.as_deref()),
-        (Change::NotOwner, Change::NotOwner, Some("editor")),
-        "a stale owner role grants nothing"
+        (promoted, removed, policy),
+        (
+            Change::NotPermitted,
+            Change::NotPermitted,
+            Some(Policy::builtin(Role::Editor))
+        ),
+        "a stale owner role grants nothing, and the fresh policy is the editor's"
     );
     let mut tx = as_member(&pool, alice, project).await;
     let carols: Vec<String> = members::list(&mut tx)

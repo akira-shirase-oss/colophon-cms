@@ -81,6 +81,32 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 - Choose an enabled template, the site name, a language and brand settings.
 - The editor's starting screen offers *Create article*, *Upload media* and *Ask AI* (the last only if automation is
   enabled). It never shows database or cache settings.
+- As built in step 3.7 (D-059, D-061), from sign-up to a first release:
+  - **The front door** (`/studio/`): signed out, *Sign in* and *Create an account* (the identity provider's own
+    sign-up form, `/auth/login?start=create`). On an installation with no administrator, a signed-in person sees
+    *Finish setting up Colophon*: a field for the setup code the server printed to its terminal, and, in Technical
+    details, `colophon admin bootstrap --subject <their subject>`. An administrator with no project gets *Create your
+    first project*; anyone else, *You're not in a project yet*, with the name to give and the role to ask for. The
+    invitation page offers an account too, so an invited person can sign up from the link.
+  - **Starting points** (`lib/starters.ts`, `NewProject.svelte`): a small blog (Articles get a required URL name
+    from the title), a documentation site (a Pages type: title, URL name, body) or blank. Applied right after the
+    project is made, as its owner, through the content-type API; if that part fails, the project exists and a toast
+    says how to finish it in Settings.
+  - **The first-run checklist** on the overview (`FirstRun.svelte`): write the first article (or page), publish it
+    (or ask for review, when the role can't approve and publish), connect the website, invite a teammate, see the
+    first receipt. Each item is derived from real state (entries, publish requests, releases, website connections,
+    members and invitations) except two things the server can't know: whether this person hid the list and whether
+    they have opened a receipt, both kept in this browser (`lib/firstRun.ts`). Items a role can't do are left out.
+  - **One-click publishing** in the editor (`PublishEntry.svelte`): *Publish* makes a publish request for the saved
+    version, sends it for review, approves it as a recorded self-review and publishes it on the release the page has
+    seen, when the project allows approving your own requests (`self_review` on the project, D-044) and the role may
+    approve and publish in that collection; otherwise *Ask for review* stops after sending it. Every step is the
+    ordinary API call; if another release went live first (D-045) it stops, says so, and links to the request.
+  - **Plain words** (`lib/words.ts`, D-059 rule 1): publish request, version, URL name, website connections (site
+    rebuild, CDN clear, site check), releases by number. Ids, hashes and API addresses moved into *Technical
+    details* drawers (`shell/TechnicalDetails.svelte`). Routes and test ids keep their internal names.
+  - **Teaching empty states** (`shell/EmptyState.svelte` with an action): articles, publish requests, releases,
+    members (only you), website connections, pending invitations, the overview's recent edits.
 
 ### Screens
 
@@ -89,10 +115,10 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 | Content list | Search, draft/published filters, clear ownership, revision status, bounded bulk actions |
 | Editor | Title and schema fields, Tiptap rich text with approved blocks, media picker, accessible errors, autosave state, preview. Since step 1.5 every field is drawn from the entry's content type (D-040) |
 | Review | Exactly which revisions and assets will be published, validation failures, required approvals |
-| Publishing | One of five labels (below), plus the delivery-receipt timeline |
+| Publishing | One of five labels (below), plus the delivery-receipt timeline. Since D-060, an approved changeset's page has a Schedule panel (`SchedulePanel.svelte`): a date, a time and a time zone (the person's own first); a time the clocks show twice or skip shows both moments, with their zone abbreviations, and schedules the one picked; a pending schedule shows when it publishes (there and here), who set it, and can be cancelled; past ones say published on time, published late, not published and why, or cancelled. Releases lists scheduled ones, then recent outcomes, and reads the new release when one publishes |
 | History | Who changed what, human or agent attribution, revision comparison, restore as a new revision |
 | Time travel | A release slider: view the site or an entry as it was at generation N; roll back as a new release |
-| Developer area | Schemas (read-only or safe additions), destinations, machine credentials |
+| Developer area | Schemas, destinations, machine credentials. Since step 3.6 (D-054, D-055) the content-type builder at Settings → Content types (`/studio/projects/{project}/settings/types/{type}`, `TypeBuilder.svelte`): rename the type and its fields, add fields of every type, change limits and requiredness, remove fields; the server decides what is safe, and a refusal lists the entries in the way with links. Field ids and types and the title field are fixed once saved. Slug fields get a "From title" suggestion in the editor (`slugify`, matching the server's rule) |
 | AI panel (optional, P5) | Suggest, improve or draft; shows sources, unsupported claims and the diff; accept or reject |
 
 ### Publishing labels (spec §05)
@@ -168,6 +194,16 @@ Internal job terminology stays behind a technical detail drawer for developers.
   on reopening and replayed, with no conflict and no second copy (the case the simulator found, D-039).
 - Since step 1.6: `/studio/device` approves a terminal's sign-in (D-041); its test allows a device and uses the token it
   produces.
+- Since step 3.7 (D-059, D-061): `tests/server/journey.spec.ts` runs the whole first-run journey on a new
+  installation (its own database, migrated and never bootstrapped, and its own server on port 58402, whose setup
+  code it reads from the server's standard error): a new person signs up, enters a wrong code then the right one,
+  creates a project from the blog starting point, writes an article (its URL name made from the title), publishes it
+  in one click, opens its receipt, invites a teammate; the teammate signs up, sees how to join, joins from the link
+  as an editor and asks for review; the owner approves and publishes it; the hidden checklist stays hidden. axe finds
+  nothing on any of its screens in light or dark, and each is photographed when `STUDIO_SHOTS_DIR` is set.
+  `tests/server/words.spec.ts` fails on an internal term in visible text, `aria-label`, `title` or placeholder on
+  every everyday screen and empty state, checks that the Technical details drawer has them, and checks the check
+  sees them in Settings. `scripts/first-run.sh` starts such an installation by hand on port 58400.
 - Since step 1.7 (D-042): `/studio/projects/{project}/members` lists members, and lets owners change roles, remove
   people, and create and revoke invitation links (each shown once). `/studio/invite` reads the token from the link's
   fragment, keeps it across sign-in, shows the project, role and inviter, and joins only on Join. Its test runs the

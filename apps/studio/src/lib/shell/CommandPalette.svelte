@@ -53,7 +53,7 @@
 
 	const PAGES = $derived([
 		{ label: 'Overview', icon: LayoutDashboardIcon, href: resolve('/projects/[project]', { project }) },
-		{ label: 'Changesets', icon: LayersIcon, href: resolve('/projects/[project]/changesets', { project }) },
+		{ label: 'Publish requests', icon: LayersIcon, href: resolve('/projects/[project]/changesets', { project }) },
 		{ label: 'Releases', icon: PackageCheckIcon, href: resolve('/projects/[project]/releases', { project }) },
 		{ label: 'Members', icon: UsersIcon, href: resolve('/projects/[project]/members', { project }) },
 		{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }

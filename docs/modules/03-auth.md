@@ -75,6 +75,27 @@ operation, and the cross-project and identity test families from spec §27 pass.
   - `/me` shows the subject (what to bootstrap with) and whether you're an administrator; `colophon whoami` prints
     both;
   - more administrators need a grant flow, planned with project administration.
+- Since step 3.7 (D-061, amending D-043), a fresh installation can also be set up from the Studio:
+  - while nobody is an administrator, a server that serves the API issues a **setup code** at start-up
+    (`colophon-server`'s `setup_code` module): 100 random bits as `XXXXX-XXXXX-XXXXX-XXXXX` in Crockford's
+    base-32 (`colophon_auth::tokens::setup_code`), valid for an hour, stored as its SHA-256 hash only, and printed
+    once to standard error, never to the structured log. The log says only that a code was printed;
+  - `POST /api/v1/setup` with `{"code"}` from a signed-in caller (CSRF and `Origin` checked for cookies, like every
+    write): the code is hashed on arrival (case, spaces, dashes and the look-alikes O, I and L don't matter), the
+    attempt is counted in Postgres (five a person, twenty in all, per fifteen minutes; 429 `rate_limited` with
+    `Retry-After`), the hash is compared with every live one in constant time, and the matching code is claimed in
+    one transaction that writes the `installation` row and the administrator, exactly as the bootstrap does.
+    Wrong, used and expired codes get one answer (422 `setup_code_invalid`); once anyone is an administrator,
+    409 `already_set_up`, and later starts issue nothing;
+  - the application role reaches the codes only through migration 0020's functions; it still can't read or write
+    `installation` or `administrators`. Running `colophon admin bootstrap` before the first start means no code is
+    ever issued;
+  - the Studio's home page shows a signed-in person on such an installation where to find the code, a field for
+    it, and the bootstrap command with their own subject.
+- Sign-up belongs to the identity provider: `GET /auth/login?start=create` asks it for its sign-up form
+  (`prompt=create`, when its discovery document lists it; its sign-in page otherwise). The development realm allows
+  self-registration since step 3.7. A new account grants nothing: it has no projects until someone invites it, and
+  creates none unless it is an administrator.
 - A development-only identity exists for local work and refuses to run on a publicly bound install: the Keycloak
   realm in `deploy/keycloak` has a public client secret, and the server refuses to start with it on a non-loopback
   listen address (D-031).
@@ -111,8 +132,57 @@ Built in step 1.7 (D-042), for people:
 | Editor | yes | yes | no | no |
 | Publisher | yes | yes | no | no |
 
-- Any member lists the members (`GET /api/v1/projects/{project}/members`) and may leave; owners change roles (`PUT`)
-  and remove people (`DELETE …/members/{identity}`).
+- Any member lists the members (`GET /api/v1/projects/{project}/members`) and may leave; people whose role has
+  `members.manage` (owners, by default) change roles (`PUT`) and remove people (`DELETE …/members/{identity}`).
+- Since step R.2 (D-058), owners define roles of their own. `/api/v1/projects/{project}/roles` (a project's roles, not an environment's) lists and reads them (any member: anyone can
+  see what a role means before it's given to them), creates them (`POST`), changes them (`PUT` with `If-Match:
+  "v<version>"`; a stale version is 409 `stale_role` with the current `ETag`) and deletes them (`DELETE` with
+  `If-Match`). Writes need `roles.manage`, checked against the caller's role as it is now. Migration 0018 adds a
+  version to each role.
+- **Nobody hands out more than they hold** (`Policy::covers`): creating, changing or deleting a role needs every
+  power of the role before and after; giving someone a role, or removing them, needs `members.manage` and every
+  power of both their old role and the new one, re-checked under the owner lock; inviting needs every power of the
+  role offered. So a role that manages members but can't change content types can't demote a developer, promote
+  itself to owner, or remove an owner.
+- **The owner role is fixed**: the API answers 409, and migration 0018's triggers refuse any update or delete of it
+  or its permissions, even by a direct write as the application's login.
+- **A role in use can't be deleted** (409 `role_in_use`, naming how many members and pending invitations): members
+  keep 0017's foreign key; invitations don't, because accepted, revoked and expired ones are history, so inviting
+  holds a shared advisory lock on the role instead (in memory, not on the role's row, which hundreds of invitations
+  a second would contend for) and deleting takes it exclusively and counts pending invitations.
+- Since step R.3, **a permission can be narrowed**: `"fields": [...]` on `content.read`, `content.create` and
+  `content.update`, and `"condition": "own"` (entries the member created) on `content.read`, `content.update` and
+  `content.delete`; anything else is 422 (`fields_not_applicable`, `invalid_fields`, `condition_not_applicable`,
+  `unknown_condition`), and migration 0021's checks refuse it in the database too. A role holds one permission per
+  action, subject and condition (the domain merges field lists), so "titles of any article" and "every field of their
+  own articles" sit side by side.
+- `Policy::fields(action, collection, own)` decides per entry: every permission that applies adds its fields, one
+  without a list allows all. `Policy::allows` now means every field of every entry, so a narrow permission never
+  grants collection-wide power, and `covers` is exact for fields and `own`.
+- Entries enforce it (`colophon_api::visibility`): a read leaves out what the role can't read (`hidden_fields`) and
+  marks what it can read but not change (`locked_fields`); an entry it can't read at all is 404; a list holds only
+  the caller's own entries when that is all the role may read, with titles blank where the title field is hidden;
+  revisions and history the same. Creating may only set fields the role may create. Saving puts back every field
+  the saver can't read exactly as stored, refuses one sent with a different value, and refuses any change to a
+  field the role can't change (422 `field_not_permitted`, pointing at the field), measured against the immutable
+  revision the editor started from. A publish request may pin an entry only if the role may change it.
+- The Studio's editor leaves hidden fields out and never sends them, shows locked ones disabled, and says which; a
+  role's page lists limited permissions in words and keeps them when the grid is saved.
+- Creating a role queues on the project's owner role row (`FOR NO KEY UPDATE`), so the count can't race past 100
+  roles a project; changing or deleting one locks only that role.
+- A member change locks the owners, the caller and the target in one statement, in identity order, so changes to
+  one project's members queue and can't deadlock. An owner skips reading role permissions (the owner role holds every
+  one, and 0018 keeps it so); anyone else's change reads the roles involved in one more query. Measured on the
+  reference laptop with `perf/k6/members.js` at 1,000 requests a second (100 role changes and 100 invitations a
+  second on one project): uncontended, a role change takes 4.2 ms against 4.0 ms before R.2; under that load,
+  medians of 9 to 23 ms for role changes and 8 to 15 ms for invitations, against 27 to 47 and 7 to 30 before. A first
+  version that read each role separately under the lock took 0.8 ms more per change, and the queue it fed grew
+  medians to 190 and 440 ms. A changed role holds from its holders' next request; a request already running acts on the permissions
+  it read, as content writes act on the role read when their transaction began.
+- `GET /api/v1/projects/{project}` returns the caller's role name and permissions, and the Studio decides what to
+  offer with `may(action, collection)`, the same rule as `Policy::allows`, instead of comparing role names. Settings
+  shows every role and edits one as a grid in plain words (See, Create, Edit, Approve, Publish, Change fields; for
+  "Everything" and each content type) plus the whole project's powers.
 - A project never loses its last owner: `colophon_db::members` locks the owners `FOR UPDATE` before changing one, and
   the deferred trigger `memberships_keep_an_owner` (migration 0005) refuses any commit that would leave none. The API
   answers 409.
@@ -153,8 +223,23 @@ Built in step 1.7 (D-042), for people:
 - `authorize(principal, action, resource) -> Decision`, deny by default.
 - Its first form, built in step 1.7: `colophon_domain::policy::allows(role, action)` over `Read`, `WriteContent`,
   `ChangeContentTypes` and `ManageMembers`; step 2.1 adds `Review` and step 2.2 `Publish`, both for owners and
-  publishers (D-044, D-045); step 2.3 `ManageDestinations`, for owners and developers (D-046). Every handler asks it (`members::require` in the API); an unknown stored
-  role denies everything. Principals other than people and resource-level checks arrive with machine credentials.
+  publishers (D-044, D-045); step 2.3 `ManageDestinations`, for owners and developers (D-046).
+- Since step R.1 (D-058), roles are data. `roles` and `role_permissions` (migration 0017) hold each project's roles;
+  a permission is an action (`content.read`, `content.create`, `content.update`, `content.delete`, `content.review`,
+  `content.publish`, `schema.change`, `members.manage`, `roles.manage`, `destinations.manage`, `tokens.manage`), a
+  subject (`*` or one collection's slug), and a field list and `own` condition stored for step R.3.
+  `colophon_seed_roles` gives every project the four built-in roles with D-042's powers, and owners now also hold
+  `roles.manage` and `tokens.manage`, which no route uses yet.
+- `scope::begin_as_member` reads the caller's membership and their role's permissions in one statement (a lateral
+  aggregate, one pass over `role_permissions`), so every `MemberTransaction` and `ProjectTransaction` carries a
+  `Policy`. A stored action or condition the code doesn't know is `DbError::Corrupt`, never a skipped permission.
+- `Policy::allows(action, collection)` is the one evaluator, with no I/O: deny unless a permission for that action
+  names `*` or that collection. Every handler asks it through `members::require`: entries check `content.read`,
+  `content.create` or `content.update` for their own collection; a changeset checks `content.update`, and its review
+  `content.review`, for every collection it pins; publishing checks `content.publish` for each, after locking them;
+  content types check `schema.change` for theirs. A collection-wide check passes `None` and holds only for `*`.
+  Project-wide actions (members, roles, destinations, tokens) can't be granted for one collection.
+- Principals other than people and resource-level checks arrive with machine credentials (R.4, P5).
 - It checks object ownership, project, environment, action and field policy on **every** read and mutation.
 - Publish, export, schema change and secret administration need explicit permission.
 - Hidden resources answer like missing ones (consistent 404), so IDs can't be probed.
@@ -177,7 +262,7 @@ Built in step 1.7 (D-042), for people:
 | A4 | Revocation is checked before each later operation by the revoked principal. |
 | A5 | Agents are draft-only unless a scoped, revocable, opt-in permission says otherwise; nobody approves their own permission escalation. |
 | A6 | Hidden and missing resources are indistinguishable to unauthorized callers. |
-| A7 | Bootstrap runs once and is then disabled; the development identity never runs on a public bind. |
+| A7 | Bootstrap runs once and is then disabled, whether by the command or a setup code (D-061); the development identity never runs on a public bind. |
 | A8 | Tokens and session secrets are stored hashed, compared in constant time, and never logged. |
 
 ## Interfaces
@@ -215,6 +300,23 @@ Built in step 1.7 (D-042), for people:
   paths (spec §13).
 - **Invitations:** expired, reused, or accepted by a different identity.
 - **Bootstrap:** fails once it is complete; the development identity refuses a public bind.
+- **Since step 3.7 (D-061):**
+  - `crates/colophon-db/tests/setup.rs`: only a hash is stored and the application login can neither read the
+    codes nor write `installation`, `administrators` or the attempts; a code makes one administrator once and then
+    nobody else; an expired code is dead; lifetimes outside a minute to a day are refused; at most ten codes are
+    live; after a bootstrap nothing is issued, attempted or claimed; five attempts a person and twenty in all, with
+    refused attempts unrecorded and room again after fifteen minutes; two codes claimed at the same moment make one
+    administrator;
+  - `crates/colophon-server/tests/setup.rs`, against the real binary on a database nobody bootstrapped: the code
+    printed to standard error makes the first administrator, typed in lower case with spaces; wrong and malformed
+    codes get 422, the used code 409 for anyone else, and a second start prints nothing; signed out is 401 and a
+    cookie without CSRF 403; an expired code 422; the sixth attempt 429 with `Retry-After`, even with the right code,
+    while someone else within their limit succeeds; the code appears exactly once in all the process's output
+    (its banner) and in no response or structured log line, at `debug`;
+  - `crates/colophon-server/tests/sign_in.rs`: an account made through `/auth/login?start=create` on Keycloak's
+    sign-up form signs in with no projects, isn't an administrator, and can't create a project;
+  - unit tests: codes are four groups of Crockford characters and read back however they are typed; only an exact
+    hash matches, comparing every live code; the banner names the code once, the Studio and the expiry in UTC.
 - **Since step 1.8 (D-043):**
   - `crates/colophon-db/tests/administrators.rs`: a bootstrap before the person's first sign-in, which then finds
     the same identity; again for the same person changes nothing, for anyone else it's refused; the installation row
@@ -240,7 +342,21 @@ Built in step 1.7 (D-042), for people:
   - `apps/testbed/tests/session.spec.ts`: two browsers; a project created by one is invisible to the other;
   - `perf/k6/session.js`: every request authenticated by cookie, at least 1,000,000 requests per full run.
 - **Since step 1.7 (D-042):**
-  - `crates/colophon-domain`: the policy table, every role against every action;
+  - `crates/colophon-domain`: the policy table, every role against every action (since R.1, in every collection and
+    collection-wide, plus collection-scoped permissions and name round trips);
+  - `crates/colophon-db/tests/roles.rs` (R.1): a new project's seeded roles equal `Policy::builtin`, the creator's
+    transaction carries the owner's policy, and a membership naming an unknown role is refused; (R.2) a role is
+    created, changed only at its version, holds from its holder's next transaction, and is deleted only once unused;
+    the owner role refuses a direct write; a revoked invitation doesn't hold a role; a member manager can't demote a
+    developer, promote himself, or remove an owner, but can give his own role;
+  - `crates/colophon-server/tests/permissions.rs` (R.2), against the real binary: a role the owner defines decides
+    what its holder may do from their next request; `stale_role`, `role_in_use`, the fixed owner role; unknown
+    actions, project-wide actions on a collection, field lists and conditions refused; escalation refused over HTTP;
+  - `apps/studio/tests/server/permissions.spec.ts` and `apps/testbed/tests/roles.spec.ts` (R.2): make a role, tick
+    what it may do, lose a stale save in a second tab, invite someone who holds exactly it, a held role that can't be
+    deleted, the fixed owner role, axe on every Studio page;
+  - `perf/k6/roles.js` (R.2): a custom role's member listing articles, their permissions, role lists and versioned
+    edits;
   - `crates/colophon-db/tests/members.rs`: an invitation joins once and shows its project only to its holder;
     revoked and expired invitations are dead; the last owner can be neither demoted nor removed; two owners demoting
     each other at the same moment leave one owner; an owner demoted while their request runs can neither promote nor
@@ -259,9 +375,11 @@ Built in step 1.7 (D-042), for people:
 
 1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin and cross-project denial for projects (step 1.1, done); roles,
    invitations and the policy function (step 1.7, done); the owner bootstrap (step 1.8, done).
-2. **P2:** approval permissions and self-review recording.
-3. **P4:** preview capabilities.
-4. **P5:** machine credentials, device-authorization login, quotas, kill switch.
+2. **R:** roles as data (R.1, done), custom roles and the Studio's role editor (R.2, done), field-level permissions and `own`
+   conditions (R.3, done), API tokens and the audit log (R.4); docs/ROADMAP.md, D-058.
+3. **P2:** approval permissions and self-review recording.
+4. **P4:** preview capabilities.
+5. **P5:** machine credentials, device-authorization login, quotas, kill switch.
 
 ## Open decisions
 

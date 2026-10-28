@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (SELECT count(*) FROM entries\n                   WHERE project_id = $1 AND environment_id = $2 AND collection = $3)\n                + (SELECT count(*) FROM publications p\n                   JOIN entries e ON e.project_id = p.project_id AND e.environment_id = p.environment_id\n                                 AND e.id = p.entry_id\n                   WHERE p.project_id = $1 AND p.environment_id = $2 AND p.collection = $3\n                     AND p.valid_to IS NULL AND p.revision_id <> e.draft_revision_id) AS \"count!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "046103e85963c830e037520d4a8a7ed1e60aa1e52d643115489918c7772d134f"
+}

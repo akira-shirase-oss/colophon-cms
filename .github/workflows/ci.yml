@@ -138,7 +138,7 @@ jobs:
             -c "ALTER SYSTEM SET log_lock_waits = on" \
             -c "ALTER SYSTEM SET deadlock_timeout = '50ms'" \
             -c "SELECT pg_reload_conf()"
-      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, who may create projects, changesets, public delivery, publishing with the worker, drafts, content types, the Studio)
+      - name: Load smoke runs (health, rich-text validation, signed-in and bearer requests, members, custom roles, schedules, who may create projects, changesets, public delivery, publishing with the worker, drafts, content types, the Studio)
         # Endpoints that never touch the database run back to back (throughput): their p99 has
         # threefold headroom even on the slowest runner seen, and health's requests a second say
         # how fast this runner is. Database-backed endpoints run at a fixed rate (steady), about
@@ -148,7 +148,12 @@ jobs:
         # showed it: changesets did 1,916 requests a second (p99 79 ms) on an EPYC 9V45 and 783
         # (p99 276 ms) on an EPYC 7763, where health did 44,243 and 18,613; plain 2.3 code failed the
         # same way. A fixed rate still fails on a slower query (p99) or lost capacity (k6 drops
-        # iterations it can't start on time; more than 0.01% fails the run).
+        # iterations it can't start on time; more than 0.01% fails the run). Roles and schedules
+        # follow the same rule since R.3: at 1,000 a second the roles smoke dropped 433 to 947
+        # iterations on every EPYC 7763 and passed on every 9V45, while e/schedules and R.3 builds
+        # did the same back to back on one laptop (1,532 to 1,733 a second). Back to back, the
+        # laptop does 1,461 changesets, 1,722 roles and 1,856 schedules requests a second; a 7763
+        # did 783 changesets, so about 920 roles and 990 schedules: half is 450 and 500.
         run: |
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           export PATH="$RUNNER_TEMP/bin:$PATH" KEEP=0 DURATION=20s
@@ -157,6 +162,8 @@ jobs:
           RATE=1000 P99_MS=200 scripts/load.sh session steady
           RATE=1000 P99_MS=200 scripts/load.sh cli steady
           RATE=1000 P99_MS=200 scripts/load.sh members steady
+          RATE=450 P99_MS=200 scripts/load.sh roles steady
+          RATE=500 P99_MS=200 scripts/load.sh schedules steady
           RATE=1000 P99_MS=200 scripts/load.sh projects steady
           RATE=400 P99_MS=200 scripts/load.sh changesets steady
           RATE=1500 P99_MS=200 scripts/load.sh delivery steady

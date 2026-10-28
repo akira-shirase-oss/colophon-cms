@@ -21,10 +21,14 @@ pub mod middleware;
 mod projects;
 mod receipts;
 mod rich_text;
+mod roles;
+mod schedules;
 pub mod session;
+mod setup;
 mod shape;
 pub mod state;
 pub mod studio;
+mod visibility;
 
 use axum::{
     Router,
@@ -57,6 +61,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/auth/device/token", post(device::token))
         .route("/auth/device/{code}", get(device::show))
         .route("/me", get(auth::me))
+        .route("/api/v1/setup", post(setup::claim))
         .route(
             "/api/v1/projects",
             get(projects::list).post(projects::create),
@@ -74,6 +79,14 @@ pub fn routes(state: AppState) -> Router {
         .route(
             "/api/v1/projects/{project}/invitations/{invitation}",
             axum::routing::delete(members::revoke),
+        )
+        .route(
+            "/api/v1/projects/{project}/roles",
+            get(roles::list).post(roles::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/roles/{role}",
+            get(roles::get).put(roles::update).delete(roles::delete),
         )
         .route("/api/v1/invitations/lookup", post(members::lookup))
         .route("/api/v1/invitations/accept", post(members::accept))
@@ -129,6 +142,18 @@ fn publishing() -> Router<AppState> {
         .route(
             "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/reviews",
             post(changesets::review),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/schedule",
+            post(schedules::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/schedules",
+            get(schedules::list),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/schedules/{schedule}",
+            axum::routing::delete(schedules::cancel),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/publish",

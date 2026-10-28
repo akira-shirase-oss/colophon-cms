@@ -118,7 +118,7 @@ pub(crate) async fn list(
     Path(path): Path<ListPath>,
 ) -> Result<Json<Page<DestinationView>>, ApiError> {
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    require(&tx.role, Action::ManageDestinations, WHO)?;
+    require(&tx.policy, Action::DestinationsManage, None, WHO)?;
     let rows = destinations::list(&mut tx)
         .await
         .map_err(ApiError::from_db)?;
@@ -191,7 +191,7 @@ pub(crate) async fn create(
         message,
     })?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    require(&tx.role, Action::ManageDestinations, WHO)?;
+    require(&tx.policy, Action::DestinationsManage, None, WHO)?;
     let row = destinations::create(&mut tx, &new.kind, name, url, location)
         .await
         .map_err(ApiError::from_db)?;
@@ -214,7 +214,7 @@ pub(crate) async fn set_enabled(
     let Json(change) = body?;
     let id = Uuid::try_parse(&path.destination).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    require(&tx.role, Action::ManageDestinations, WHO)?;
+    require(&tx.policy, Action::DestinationsManage, None, WHO)?;
     if destinations::set_enabled(&mut tx, id, change.enabled)
         .await
         .map_err(ApiError::from_db)?

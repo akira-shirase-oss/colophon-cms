@@ -12,6 +12,8 @@
 //! slugs in [`RESERVED_SLUGS`] name Studio pages beside a project's collections, so no content
 //! type may take them (D-042).
 
+use std::sync::Arc;
+
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
@@ -23,13 +25,18 @@ use colophon_db::{
     idempotency::{self, Claim},
     scope::ProjectTransaction,
 };
-use colophon_domain::{project::Slug, schema::ContentType};
+use colophon_domain::{
+    project::Slug,
+    schema::{ContentType, Refusal, Successor},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
+use uuid::Uuid;
 
 use crate::{
     ApiError, AppState,
     entries::{content_hash, idempotency_key, json, open, request_hash, rfc3339, sha256},
+    error::{EntryInTheWay, InTheWay, MAX_ENTRIES_IN_THE_WAY, Problem},
     session::SignedIn,
     shape::{Data, Page},
 };
@@ -110,11 +117,12 @@ fn if_match(headers: &HeaderMap) -> Result<i32, ApiError> {
         ))
 }
 
-fn may_change(tx: &ProjectTransaction) -> Result<(), ApiError> {
+fn may_change(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError> {
     crate::members::require(
-        &tx.role,
-        colophon_domain::policy::Action::ChangeContentTypes,
-        "only a project's owners and developers can change its content types",
+        &tx.policy,
+        colophon_domain::policy::Action::SchemaChange,
+        Some(collection),
+        "your role can't change this content type",
     )
 }
 
@@ -166,6 +174,99 @@ async fn finish(
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(respond(status, body, number, false))
+}
+
+/// Revisions validated per blocking task while checking a change.
+const CHECK_PAGE: i64 = 200;
+
+/// Checks that `next` accepts every draft and published revision of `collection`, under the
+/// change lock. Refuses with the first [`MAX_ENTRIES_IN_THE_WAY`] that don't fit and how many
+/// don't, or, past [`content_types::MAX_CHECKED`], without looking (D-055).
+async fn check_stored(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    next: Arc<ContentType>,
+    refusal: Refusal,
+) -> Result<(), ApiError> {
+    let count = content_types::stored_count(tx, collection)
+        .await
+        .map_err(ApiError::from_db)?;
+    if count > content_types::MAX_CHECKED {
+        return Err(ApiError::Invalid(Refusal {
+            code: "too_many_to_check",
+            message: format!(
+                "{}: checking it against {count} drafts and publications needs a migration (the limit is {})",
+                refusal.message,
+                content_types::MAX_CHECKED
+            ),
+            ..refusal
+        }));
+    }
+    let mut entries = Vec::new();
+    let mut total = 0_u64;
+    for published in [false, true] {
+        let mut after = Uuid::nil();
+        loop {
+            let page = content_types::stored_page(tx, collection, published, after, CHECK_PAGE)
+                .await
+                .map_err(ApiError::from_db)?;
+            let Some(last) = page.last() else { break };
+            after = last.entry_id;
+            let more = i64::try_from(page.len()).is_ok_and(|len| len == CHECK_PAGE);
+            // Validation is CPU work: up to a page of documents, off the async workers.
+            let next = Arc::clone(&next);
+            let misfits = tokio::task::spawn_blocking(move || {
+                page.into_iter()
+                    .filter_map(|stored| {
+                        let problem = next.accepts(&stored.content).err()?;
+                        Some((stored, problem))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .map_err(ApiError::internal)?;
+            for (stored, problem) in misfits {
+                total += 1;
+                if entries.len() < MAX_ENTRIES_IN_THE_WAY {
+                    entries.push(EntryInTheWay {
+                        entry: stored.entry_id,
+                        title: stored.title,
+                        state: if stored.published {
+                            "published"
+                        } else {
+                            "draft"
+                        },
+                        problem: Some(Problem {
+                            reason: problem.code,
+                            pointer: problem.pointer,
+                            message: problem.message,
+                        }),
+                    });
+                }
+            }
+            if !more {
+                break;
+            }
+        }
+    }
+    if total == 0 {
+        return Ok(());
+    }
+    let noun = if total == 1 {
+        "entry is"
+    } else {
+        "entries are"
+    };
+    Err(ApiError::NeedsMigration(Box::new(InTheWay {
+        reason: refusal.code,
+        message: format!(
+            "{}: {total} {noun} in the way; change them first, or keep the old definition",
+            refusal.message
+        ),
+        pointer: refusal.pointer,
+        entries,
+        total: Some(total),
+    })))
 }
 
 /// `GET {P}/content-types`.
@@ -234,14 +335,14 @@ pub(crate) async fn create(
         });
     }
     let definition = ContentType::parse(&body.definition).map_err(|refusal| {
-        ApiError::Invalid(colophon_domain::schema::Refusal {
+        ApiError::Invalid(Refusal {
             pointer: format!("/definition{}", refusal.pointer),
             ..refusal
         })
     })?;
     let canonical = definition.canonical_json();
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_change(&tx)?;
+    may_change(&tx, slug.as_str())?;
     let request = request_hash(&[CREATE, slug.as_str(), &canonical]);
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);
@@ -276,11 +377,16 @@ pub(crate) async fn update(
     let next = ContentType::parse(&value).map_err(ApiError::Invalid)?;
     let canonical = next.canonical_json();
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_change(&tx)?;
+    may_change(&tx, &path.slug)?;
     let request = request_hash(&[UPDATE, &path.slug, &expected.to_string(), &canonical]);
     if let Some(replay) = claim(&mut tx, UPDATE, key, &request).await? {
         return Ok(replay);
     }
+    // Before reading anything: writes in the collection wait from here until this commits, and
+    // this waits for the ones already under way (D-055).
+    content_types::lock_for_change(&mut tx, &path.slug)
+        .await
+        .map_err(ApiError::from_db)?;
     let current = content_types::current(&mut tx, &path.slug)
         .await
         .map_err(ApiError::from_db)?
@@ -292,7 +398,13 @@ pub(crate) async fn update(
     }
     let stored: Value = serde_json::from_str(&current.definition).map_err(ApiError::internal)?;
     let previous = ContentType::parse(&stored).map_err(ApiError::internal)?;
-    previous.check_successor(&next).map_err(ApiError::Invalid)?;
+    match previous.successor(&next) {
+        Successor::Compatible => {}
+        Successor::CheckContent(refusal) => {
+            check_stored(&mut tx, &path.slug, Arc::new(next), refusal).await?;
+        }
+        Successor::Refused(refusal) => return Err(ApiError::Invalid(refusal)),
+    }
     match content_types::update(
         &mut tx,
         &path.slug,

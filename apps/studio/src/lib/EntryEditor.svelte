@@ -13,7 +13,6 @@
 	import CloudAlertIcon from '@lucide/svelte/icons/cloud-alert';
 	import CloudCheckIcon from '@lucide/svelte/icons/cloud-check';
 	import LoaderIcon from '@lucide/svelte/icons/loader-circle';
-	import { resolve } from '$app/paths';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import {
@@ -29,9 +28,12 @@
 	} from './api.ts';
 	import { compare } from './diff.ts';
 	import DiffView from './DiffView.svelte';
-	import { ago } from './queries.ts';
+	import PublishEntry from './PublishEntry.svelte';
+	import { ago, projectQuery, releasesQuery } from './queries.ts';
 	import RichTextToolbar from './RichTextToolbar.svelte';
 	import StatusBadge from './shell/StatusBadge.svelte';
+	import TechnicalDetails from './shell/TechnicalDetails.svelte';
+	import { releaseName } from './words.ts';
 	import { EMPTY_DOCUMENT, type FormValue, formValue, storedValue } from './content.ts';
 	import { kept } from './drafts.ts';
 	import FieldInputs from './FieldInputs.svelte';
@@ -60,8 +62,15 @@
 	// The component is keyed on the entry, so the props it starts with are the ones it keeps.
 	// svelte-ignore state_referenced_locally
 	const definition = type.definition;
-	const plain = definition.fields.filter((field) => field.type !== 'rich_text');
-	const rich = definition.fields.filter((field) => field.type === 'rich_text');
+	// What the person's role hides or locks (D-058, step R.3): hidden fields are never shown or
+	// sent, so a save can't erase them; locked ones are shown, disabled.
+	// svelte-ignore state_referenced_locally
+	const hidden = new Set(initial.draft.hidden_fields ?? []);
+	// svelte-ignore state_referenced_locally
+	const locked = initial.draft.locked_fields ?? [];
+	const visible = definition.fields.filter((field) => !hidden.has(field.id));
+	const plain = visible.filter((field) => field.type !== 'rich_text');
+	const rich = visible.filter((field) => field.type === 'rich_text');
 	// svelte-ignore state_referenced_locally
 	let latest = $state.raw<Draft>(initial.draft);
 	// svelte-ignore state_referenced_locally
@@ -71,6 +80,10 @@
 		void queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
 		void queryClient.invalidateQueries({ queryKey: ['history', project, collection, entry] });
 	});
+	// What the role may do here, and the newest release this page has seen: publishing goes on top
+	// of that one (D-045).
+	const mine = createQuery(() => projectQuery(project));
+	const releases = createQuery(() => releasesQuery(project));
 	const revisions = createQuery(() => ({
 		queryKey: ['history', project, collection, entry],
 		queryFn: () => listRevisions(project, collection, entry)
@@ -83,7 +96,7 @@
 
 	function current(): Content {
 		const content: Content = {};
-		for (const field of definition.fields) {
+		for (const field of visible) {
 			const editor = editors[field.id];
 			const value = field.type === 'rich_text' ? editor && toStored(editor.getJSON()) : storedValue(field, form[field.id]);
 			if (value !== undefined) content[field.id] = value;
@@ -104,6 +117,7 @@
 					editorProps: {
 						attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': field.label, class: 'prose-colophon min-h-64' }
 					},
+					editable: !locked.includes(field.id),
 					onUpdate: changed
 				});
 			} catch (error) {
@@ -274,7 +288,13 @@
 		</div>
 
 		<div role="tabpanel" id="panel-content" aria-labelledby="tab-content" hidden={tab !== 'content'}>
-			<FieldInputs fields={plain} bind:form titleField={definition.title_field} onchange={changed} />
+			{#if hidden.size > 0 || locked.length > 0}
+				<p class="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="role-limits">
+					{#if hidden.size > 0}Your role doesn’t show {[...hidden].join(', ')}; saving keeps {hidden.size === 1 ? 'it' : 'them'} as {hidden.size === 1 ? 'it is' : 'they are'}.{/if}
+					{#if locked.length > 0}Your role can read but not change {locked.join(', ')}.{/if}
+				</p>
+			{/if}
+			<FieldInputs fields={plain} bind:form titleField={definition.title_field} onchange={changed} {locked} />
 			{#each rich as field (field.id)}
 				<div class="py-5">
 					<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
@@ -295,12 +315,10 @@
 							<div class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-3 py-2.5 hover:bg-muted/50">
 								<span class="min-w-0 flex-1">
 									<span class="block truncate text-sm font-medium">{revision.title}</span>
-									<span class="text-xs text-muted-foreground" title={new Date(revision.created_at).toLocaleString()}
-										>{ago(revision.created_at)} · <span class="font-mono">{revision.content_hash.slice(7, 15)}</span></span
-									>
+									<span class="text-xs text-muted-foreground" title={new Date(revision.created_at).toLocaleString()}>Saved {ago(revision.created_at)}</span>
 								</span>
 								{#if index === 0}<Badge variant="secondary">Current draft</Badge>{/if}
-								{#if published?.revision_id === revision.id}<Badge variant="live">Live in No. {published.generation}</Badge>{/if}
+								{#if published?.revision_id === revision.id}<Badge variant="live">Live in {releaseName(published.generation)}</Badge>{/if}
 								{#if index > 0}
 									<Button variant="ghost" size="xs" onclick={() => (comparing = comparing === revision.id ? null : revision.id)}>
 										{comparing === revision.id ? 'Hide' : 'Compare with draft'}
@@ -310,7 +328,7 @@
 							{#if comparing === revision.id}
 								<div class="unfold mx-3 mb-3 rounded-lg border border-border bg-card p-4">
 									{#if compared.data}
-										<DiffView changes={compare(definition, compared.data.content, current())} before="this revision" after="the draft" />
+										<DiffView changes={compare(definition, compared.data.content, current())} before="this version" after="the draft" />
 									{:else if compared.isError}
 										<p class="text-sm text-destructive">{compared.error.message}</p>
 									{:else}
@@ -356,11 +374,7 @@
 				</div>
 				<div class="flex items-center justify-between gap-2">
 					<dt class="text-muted-foreground">Live in</dt>
-					<dd class="tabular">{published ? `No. ${published.generation}` : '—'}</dd>
-				</div>
-				<div class="flex items-center justify-between gap-2">
-					<dt class="text-muted-foreground">Revision</dt>
-					<dd class="font-mono text-xs" title={latest.revision.content_hash}>{latest.revision.content_hash.slice(7, 15)}</dd>
+					<dd class="tabular">{published ? releaseName(published.generation) : '—'}</dd>
 				</div>
 				<div class="flex items-center justify-between gap-2">
 					<dt class="text-muted-foreground">Saved</dt>
@@ -371,10 +385,25 @@
 					<dd>{new Date(latest.created_at).toLocaleDateString()}</dd>
 				</div>
 			</dl>
-			<p class="mt-4 border-t border-dotted border-border pt-4 text-xs text-muted-foreground">
-				Readers get it only through a reviewed changeset.
-				<a class="underline underline-offset-2 hover:text-foreground" href={resolve('/projects/[project]/changesets', { project })}>Changesets</a>
-			</p>
+			<div class="mt-4 border-t border-dotted border-border pt-4">
+				<PublishEntry
+					{project}
+					{collection}
+					{entry}
+					title={latest.revision.title}
+					mine={mine.data}
+					{standing}
+					saved={saver.status === 'saved'}
+					generation={published?.generation ?? null}
+					seenGeneration={releases.data?.generation}
+				/>
+			</div>
+			<TechnicalDetails class="mt-4 border-t border-dotted border-border pt-3">
+				<p>Entry <span class="font-mono break-all">{entry}</span> in collection <span class="font-mono">{collection}</span></p>
+				<p>Revision <span class="font-mono break-all">{latest.revision.id}</span></p>
+				<p>Content hash <span class="font-mono break-all">{latest.revision.content_hash}</span></p>
+				<p>Readers get an entry only through a changeset that is published as a release.</p>
+			</TechnicalDetails>
 		</div>
 	</aside>
 </div>

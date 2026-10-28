@@ -45,6 +45,7 @@ impl Content {
             content: &self.text,
             content_hash: &self.hash,
             title: &self.title,
+            slug: None,
             schema_version: 1,
         }
     }
@@ -109,18 +110,18 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
         .map(|revision| (revision.id, revision.base_revision_id))
         .collect();
     assert_eq!(history, [(second.id, Some(first)), (first, None)]);
-    let listed = entries::list(&mut tx, ARTICLES, None, 20, None)
+    let listed = entries::list(&mut tx, ARTICLES, None, 20, None, None)
         .await
         .expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].revision.title, "Second");
     // Search reads the entry's copy of its draft's title (migration 0015), which moved with it.
-    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"))
+    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"), None)
         .await
         .expect("search");
     assert_eq!(found.len(), 1);
     assert!(
-        entries::list(&mut tx, ARTICLES, None, 20, Some("First"))
+        entries::list(&mut tx, ARTICLES, None, 20, Some("First"), None)
             .await
             .expect("search")
             .is_empty(),

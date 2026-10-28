@@ -38,6 +38,7 @@ async fn article(tx: &mut ProjectTransaction, title: &str) -> (Uuid, Uuid) {
             content: &content,
             content_hash: &hash,
             title,
+            slug: None,
             schema_version: 1,
         },
     )

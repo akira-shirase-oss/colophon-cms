@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Badge } from '@colophon/ui/ui/badge';
 	import type { ChangesetState } from '#lib/api.ts';
-	import { STATE_LABEL } from '#lib/changesets.ts';
+	import { REQUEST_STATE } from '#lib/words.ts';
 
 	let { state }: { state: ChangesetState } = $props();
 
@@ -16,4 +16,4 @@
 	} as const;
 </script>
 
-<Badge variant={VARIANT[state]} data-state={state}>{STATE_LABEL[state]}</Badge>
+<Badge variant={VARIANT[state]} data-state={state}>{REQUEST_STATE[state]}</Badge>

@@ -82,7 +82,11 @@ export async function build(options: BuildOptions): Promise<Built> {
 		['/generation.txt', `${generation}\n`]
 	]);
 	for (const item of items) {
-		files.set(`${articlePath(item)}index.html`, article(release, item));
+		const path = `${articlePath(item)}index.html`;
+		// Slugs are unique among published entries, but a slug may spell another entry's id: two
+		// articles at one address would hide one of them, so the build fails and nothing goes live.
+		if (files.has(path)) throw new BuildFailed(`two articles would be served at ${path}`);
+		files.set(path, article(release, item));
 	}
 	for (const [path, text] of files) {
 		const target = join(dir, path);

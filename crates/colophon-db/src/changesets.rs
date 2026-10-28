@@ -286,6 +286,25 @@ pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>,
     }))
 }
 
+/// The collections the changeset's items belong to, in order: what a publish locks with
+/// `content_types::lock_for_write` before it reads the items (D-055).
+pub async fn collections(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<String>, DbError> {
+    sqlx::query_scalar!(
+        "SELECT DISTINCT e.collection
+         FROM changeset_items i
+         JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
+                       AND e.id = i.entry_id
+         WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
+         ORDER BY e.collection",
+        tx.project,
+        tx.environment,
+        id
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
 /// The changeset's items, each with the revision its pin must still match, ordered by entry id.
 /// Each item's revision and entry are looked up on their own, so stale statistics can't turn the
 /// join into scans of every revision (see `entries::list`).

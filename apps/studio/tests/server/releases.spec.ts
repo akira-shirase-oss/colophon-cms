@@ -87,15 +87,15 @@ test('an article is taken down through a reviewed changeset, and delivery says i
 	}, `/content/v1/${project}/production/articles`);
 
 	await page.goto(`/studio/projects/${project}/changesets`);
-	await page.getByRole('button', { name: 'New changeset' }).click();
+	await page.getByRole('button', { name: 'New publish request' }).click();
 	await page.getByLabel('Title', { exact: true }).fill('Take it down');
 	await page.getByRole('checkbox', { name: 'Unpublish Short-lived' }).check();
 	await expect(page.getByRole('checkbox', { name: 'Short-lived', exact: true })).toBeDisabled();
 	expect(await violations(page)).toEqual([]);
-	await page.getByRole('button', { name: 'Create changeset' }).click();
+	await page.getByRole('button', { name: 'Create publish request' }).click();
 	await expect(page.getByTestId('changeset-items')).toContainText('Short-lived');
 	await expect(page.getByTestId('unpublish')).toBeVisible();
-	await page.getByRole('button', { name: 'Submit for review' }).click();
+	await page.getByRole('button', { name: 'Ask for review' }).click();
 	await page.getByRole('button', { name: 'Approve this version' }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'approved');
 	await page.getByRole('button', { name: 'Publish', exact: true }).click();

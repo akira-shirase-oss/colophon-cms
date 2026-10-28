@@ -4,7 +4,6 @@
   sidebar's foot always says what readers have now: the live release and its label.
 -->
 <script lang="ts">
-	import ArrowUpRightIcon from '@lucide/svelte/icons/arrow-up-right';
 	import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import LayersIcon from '@lucide/svelte/icons/layers';
@@ -20,13 +19,13 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 	import * as Sidebar from '@colophon/ui/ui/sidebar';
-	import { deliveryUrl } from '#lib/api.ts';
-	import { changesetsQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
+	import { ago, changesetsQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
 	import AppearanceMenu from '#lib/shell/AppearanceMenu.svelte';
 	import CollectionCount from '#lib/shell/CollectionCount.svelte';
 	import CommandPalette from '#lib/shell/CommandPalette.svelte';
 	import Mark from '#lib/shell/Mark.svelte';
 	import ReleaseLabel from '#lib/shell/ReleaseLabel.svelte';
+	import { releaseName } from '#lib/words.ts';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
@@ -43,12 +42,14 @@
 	let searching = $state(false);
 
 	const SECTION: Record<string, string> = {
-		'/projects/[project]/changesets': 'Changesets',
-		'/projects/[project]/changesets/[changeset]': 'Changesets',
+		'/projects/[project]/changesets': 'Publish requests',
+		'/projects/[project]/changesets/[changeset]': 'Publish requests',
 		'/projects/[project]/releases': 'Releases',
 		'/projects/[project]/releases/[generation]': 'Releases',
 		'/projects/[project]/members': 'Members',
-		'/projects/[project]/settings': 'Settings'
+		'/projects/[project]/settings': 'Settings',
+		'/projects/[project]/settings/types/[type]': 'Settings',
+		'/projects/[project]/settings/roles/[role]': 'Settings'
 	};
 	const collectionName = $derived(
 		types.data?.find((type) => type.slug === page.params.collection)?.definition.name ?? page.params.collection ?? ''
@@ -65,10 +66,19 @@
 		} else if (SECTION[route]) {
 			const section = SECTION[route];
 			const detail = route.endsWith(']') && !route.endsWith('[project]');
-			const href = section === 'Changesets' ? resolve('/projects/[project]/changesets', { project }) : resolve('/projects/[project]/releases', { project });
+			const href =
+				section === 'Publish requests'
+					? resolve('/projects/[project]/changesets', { project })
+					: section === 'Settings'
+						? resolve('/projects/[project]/settings', { project })
+						: resolve('/projects/[project]/releases', { project });
 			trail.push({ label: section, href: detail ? href : undefined });
 			if (route.endsWith('[generation]')) trail.push({ label: `Release ${page.params.generation}` });
-			if (route.endsWith('[changeset]')) trail.push({ label: 'Changeset' });
+			if (route.endsWith('[changeset]')) trail.push({ label: 'Publish request' });
+			if (route.endsWith('[role]')) trail.push({ label: `Role ${page.params.role ?? ''}` });
+			if (route.endsWith('[type]')) {
+				trail.push({ label: types.data?.find((type) => type.slug === page.params.type)?.definition.name ?? page.params.type ?? '' });
+			}
 		} else {
 			trail.push({ label: 'Overview' });
 		}
@@ -163,13 +173,13 @@
 				<Sidebar.GroupLabel>Publishing</Sidebar.GroupLabel>
 				<Sidebar.Menu>
 					<Sidebar.MenuItem>
-						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/changesets')} tooltipContent="Changesets">
+						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/changesets')} tooltipContent="Publish requests">
 							{#snippet child({ props })}
-								<a href={resolve('/projects/[project]/changesets', { project })} data-testid="changesets-link" {...props}><LayersIcon /><span>Changesets</span></a>
+								<a href={resolve('/projects/[project]/changesets', { project })} data-testid="changesets-link" {...props}><LayersIcon /><span>Publish requests</span></a>
 							{/snippet}
 						</Sidebar.MenuButton>
 						{#if awaiting > 0}
-							<Sidebar.MenuBadge class="tabular bg-pending-soft text-pending-ink" title="{awaiting} awaiting review">{awaiting}</Sidebar.MenuBadge>
+							<Sidebar.MenuBadge class="tabular bg-pending-soft text-pending-ink" title="{awaiting} waiting for review">{awaiting}</Sidebar.MenuBadge>
 						{/if}
 					</Sidebar.MenuItem>
 					<Sidebar.MenuItem>
@@ -179,7 +189,7 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 						{#if releases.data && releases.data.generation > 0}
-							<Sidebar.MenuBadge class="tabular">No.&nbsp;{releases.data.generation}</Sidebar.MenuBadge>
+							<Sidebar.MenuBadge class="tabular" title="Release {releases.data.generation} is live">No.&nbsp;{releases.data.generation}</Sidebar.MenuBadge>
 						{/if}
 					</Sidebar.MenuItem>
 				</Sidebar.Menu>
@@ -212,17 +222,15 @@
 					<p class="text-xs text-muted-foreground">Checking what's live…</p>
 				{:else if live === undefined}
 					<p class="text-sm font-medium">Nothing live yet</p>
-					<p class="mt-0.5 text-xs text-muted-foreground">Publish a changeset to make release No. 1.</p>
+					<p class="mt-0.5 text-xs text-muted-foreground">Publish an entry to make release 1.</p>
 				{:else}
 					<div class="flex items-baseline justify-between gap-2">
 						<span class="text-xs text-muted-foreground">Live now</span>
-						<a class="text-sm font-semibold tabular hover:underline" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) })}>No. {live.generation}</a>
+						<a class="text-sm font-semibold tabular hover:underline" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) })}>{releaseName(live.generation)}</a>
 					</div>
+					<p class="text-xs text-muted-foreground" title={new Date(live.published_at).toLocaleString()}>since {ago(live.published_at)}</p>
 					<div class="mt-2"><ReleaseLabel release={live} testid="live-label" /></div>
 				{/if}
-				<a class="mt-3 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" href={deliveryUrl(project, 'articles')} data-sveltekit-reload target="_blank" rel="noopener">
-					Public API<ArrowUpRightIcon class="size-3" aria-hidden="true" />
-				</a>
 			</div>
 		</Sidebar.Footer>
 		<Sidebar.Rail />
