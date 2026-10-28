@@ -2,16 +2,20 @@
   Joining a project with an invitation link (D-042). The token is in the link's fragment, which
   browsers never send to a server. The page keeps it in this tab's session storage, so it
   survives signing in without ever appearing in a URL the server sees, takes it out of the
-  address bar, shows what joining means, and joins only on "Join".
+  address bar, shows what joining means, and joins only on "Join". Joined, it goes straight to that
+  project's Your work, with a note saying so (D-082); opened again without a link by someone signed
+  in, it says there's nothing to join and offers their projects.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { replaceState } from '$app/navigation';
+	import { goto, replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { toast } from 'svelte-sonner';
 	import { Button } from '@colophon/ui/ui/button';
 	import { acceptInvitation, ApiError, lookupInvitation, me, signInUrl, signUpUrl } from '#lib/api.ts';
+	import { rememberProject } from '#lib/lastProject.ts';
 
 	const KEPT = 'colophon-invitation';
 
@@ -48,7 +52,7 @@
 		retry: false
 	}));
 
-	let outcome = $state<'joined' | 'declined' | null>(null);
+	let outcome = $state<'declined' | null>(null);
 	let error = $state('');
 	let busy = $state(false);
 
@@ -56,10 +60,14 @@
 		busy = true;
 		error = '';
 		try {
-			await acceptInvitation(token);
+			const joined = await acceptInvitation(token);
 			keep('');
-			outcome = 'joined';
+			// Straight to the work in the project just joined: the home page shows the project last
+			// opened here, so this one is remembered first.
+			if (who.data) rememberProject(who.data.id, joined.project_id);
 			await queryClient.invalidateQueries({ queryKey: ['me'] });
+			toast.success(`You joined ${offer.data?.project_name ?? 'the project'} as ${offer.data?.role_name ?? 'a member'}`);
+			await goto(resolve('/'));
 		} catch (failure) {
 			error = failure instanceof ApiError ? failure.message : String(failure);
 		} finally {
@@ -78,21 +86,19 @@
 
 <div class="mx-auto max-w-lg space-y-4 rounded-2xl border border-border bg-card p-8 shadow-xs">
 <h1 class="text-2xl font-semibold tracking-tight">Join a project</h1>
-{#if token === ''}
-	<p role="alert" data-testid="invite-outcome">This link has no invitation in it. Ask the person who invited you for a new link.</p>
-{:else if who.isPending}
+{#if who.isPending}
 	<p class="text-sm text-muted-foreground">Loading…</p>
+{:else if token === '' && who.data}
+	<p data-testid="invite-outcome" role="status">Nothing to join here. Invitations open from the link someone sends you; you're already signed in.</p>
+	<div><Button href={resolve('/')} data-testid="open-projects">Open your projects</Button></div>
+{:else if token === ''}
+	<p role="alert" data-testid="invite-outcome">This link has no invitation in it. Ask the person who invited you for a new link.</p>
 {:else if who.data === null}
 	<p data-testid="signed-out">Sign in first, or create an account if you don't have one; this page shows the invitation afterwards.</p>
 	<div class="flex flex-wrap gap-2">
 		<Button href={signInUrl(resolve('/invite'))} data-sveltekit-reload>Sign in</Button>
 		<Button variant="outline" href={signUpUrl(resolve('/invite'))} data-sveltekit-reload data-testid="create-account">Create an account</Button>
 	</div>
-{:else if outcome === 'joined' && offer.data}
-	<p data-testid="invite-outcome" role="status">
-		You joined <a class="underline underline-offset-2" href={resolve("/projects/[project]", { project: offer.data.project_id })}>{offer.data.project_name}</a>
-		as {offer.data.role_name}.
-	</p>
 {:else if outcome === 'declined'}
 	<p data-testid="invite-outcome" role="status">Not joined. The invitation stays unused until it expires.</p>
 {:else if offer.isPending}

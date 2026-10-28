@@ -271,11 +271,14 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await expect(teammate.getByTestId('invite-ask')).toContainText('Field notes');
 		await screen(teammate, 'invitation');
 		await teammate.getByRole('button', { name: 'Join', exact: true }).click();
-		await expect(teammate.getByTestId('invite-outcome')).toContainText('You joined Field notes as Editor.');
+		// Straight to their work there, with a note that says so (D-082).
+		await expect(teammate.getByText('You joined Field notes as Editor', { exact: true })).toBeVisible();
+		await expect(teammate.getByTestId('work-project')).toHaveText('Field notes');
+		await screen(teammate, 'joined');
 	});
 
 	await test.step('an editor asks for review instead of publishing', async () => {
-		await teammate.getByRole('link', { name: 'Field notes' }).click();
+		await teammate.getByRole('link', { name: 'Open the project' }).click();
 		await expect(teammate.getByTestId('project-name')).toHaveText('Field notes');
 		await teammate.goto(`${new URL(teammate.url()).pathname}/articles?new=1`);
 		await teammate.getByLabel('Title', { exact: true }).fill('A second voice');

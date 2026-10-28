@@ -64,7 +64,7 @@ test('an owner makes a role, chooses what it may do, and someone invited with it
 	await keycloak(guest, 'dev-editor');
 	await expect(guest.getByTestId('invite-ask')).toContainText('as Copy desk: Edits articles before they go out.');
 	await guest.getByRole('button', { name: 'Join', exact: true }).click();
-	await expect(guest.getByTestId('invite-outcome')).toContainText('You joined Studio test as Copy desk.');
+	await expect(guest.getByText('You joined Studio test as Copy desk', { exact: true })).toBeVisible();
 
 	// They can read what their role means, but not change it, nor manage people.
 	await guest.goto(`/studio/projects/${project}/settings/roles/copy-desk`);
