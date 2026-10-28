@@ -311,6 +311,49 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   site check's URL is one page, and a site's paths are its own), so it waits on a route that says where each content
   type's entries live. Tests: `tests/server/entry-page.spec.ts`; `address.spec.ts` and `readers.spec.ts` open the
   drawer first.
+- **Where Strapi was easier, fixed** (D-082, 2026-10-28; [research/strapi-vs-colophon-hands-on.md](../research/strapi-vs-colophon-hands-on.md)).
+  Both products were used for the same seven first-day tasks; each change removes a place where Strapi was easier.
+  - **First run from the setup link**: the server prints `<studio>#setup=<code>`. Opened signed out, the front door
+    says "This Colophon is new. Create the first account; you'll become its administrator with the setup code the
+    server printed", with *Create an account* first and primary. The code leaves the address bar and waits in this
+    tab's session storage (`lib/setupLink.ts`), because the identity provider's redirect drops the fragment; *Finish
+    setting up Colophon* fills it in ("Code filled in from your link"). It is forgotten once used, once the link's own
+    code is refused, or once anyone is an administrator. Without the link nothing signed out says whether anyone
+    runs the installation, so a plain `/studio/` keeps the general welcome (a route for that is pending). Test:
+    `journey.spec.ts`.
+  - **The title field is named**: *New content type* asks "What is each one called?" (Title by default). The answer
+    is the title field's label and makes its code name (Title keeps `title`, Name makes `name`); the builder's badge
+    is *Shown in lists*. The list's column, its search ("Search names") and empty result, the link picker and *What
+    readers get* use the label (`titleLabel` in `lib/content.ts`, `plural` in `lib/words.ts`). Test: `builder.spec.ts`.
+  - **Roles from inviting**: Members' Role select ends with *Make a new role…*: Settings → Roles opens *New role*
+    (`?new=1&for=invite`), the role's page says it came from an invitation, and saving (or *Back to the
+    invitation*) returns to Members with the role chosen and "Who is it for?" kept (`lib/inviteDraft.ts`).
+    *Manage roles* sits beside the select. Test: `members.spec.ts`.
+  - **The grid's words**: *Change its fields* ("Add, rename or remove this type's fields (developers)"), and a line
+    under See ("read drafts"), Approve ("OK someone's publish request") and Publish ("put it live"). Limited
+    permissions list the chosen type's fields by label, their code names under Technical details; the activity log,
+    custom tokens and the editor's note on hidden or locked fields name fields by label too (`fieldLabels` in
+    `lib/permissions.ts`). Test: `permissions.spec.ts`.
+  - **After joining**: *Join* remembers the project and goes to its *Your work*, with a toast "You joined <project>
+    as <role>". Signed in, `/studio/invite` without an invitation says "Nothing to join here" with *Open your
+    projects*. Test: `members.spec.ts`.
+  - **One-entry types open as an editor**: with no entry yet, opening a single type makes it, named after the type,
+    and opens its editor: no dialog, tabs or search. Required fields that need an answer bring the dialog with that
+    name filled in; if someone else made it meanwhile (409 `single_exists`), theirs opens. The builder says *Open
+    it*. Test: `single.spec.ts`.
+  - **Fields in the builder's order**: the editor draws runs of plain fields and each rich-text field, full width,
+    in the definition's order. Test: `entry-page.spec.ts`.
+  - **Get started fits your content**: the checklist leads with *Decide what you'll write (Content types)* for roles
+    that change content types, done once a type beside Articles exists, Articles has changed or anything is
+    written; "Write your first …" (and Your work, and the overview) take the first collection made, never a one-entry
+    type (`mainCollection` in `lib/firstRun.ts`, by each type's current `created_at`). *Start blank* still has
+    Articles: the server makes it in every project. Test: `firstrun.spec.ts`.
+  - **Small words**: a published entry shows *Copy public link* above Technical details; the drawer says "Readers get
+    an entry only once a release with it is published."; the receipt says *Published in Colophon* and the CDN
+    connection kind is a *Cache clear* ("clearing accepted"). Tests: `address.spec.ts`, `deliveries.spec.ts`.
+  - **Not done, waiting on the server**: list columns for short fields (number, choice, yes/no, date) need the entry
+    list to carry those fields' values; the signed-out front door needs an unauthenticated route that says whether
+    the installation has an administrator.
 - D-076 in the Studio: **rate limits**. The one fetch layer (`send` in `lib/api.ts`) reads a 429 `rate_limited` and
   its `Retry-After` (`retryAfterMs`: seconds or a date, a second if neither, at most a minute). A read waits that long
   and goes once more, then fails with the wait (TanStack Query doesn't retry it again); a write isn't resent there, so
@@ -332,7 +375,8 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   enabled). It never shows database or cache settings.
 - As built in step 3.7 (D-059, D-061), from sign-up to a first release:
   - **The front door** (`/studio/`): signed out, *Sign in* and *Create an account* (the identity provider's own
-    sign-up form, `/auth/login?start=create`). On an installation with no administrator, a signed-in person sees
+    sign-up form, `/auth/login?start=create`); opened from the setup link, *Create an account* first, and the code
+    filled in after signing in (D-082). On an installation with no administrator, a signed-in person sees
     *Finish setting up Colophon*: a field for the setup code the server printed to its terminal, and, in Technical
     details, `colophon admin bootstrap --subject <their subject>`. An administrator with no project gets *Create your
     first project*; anyone else, *You're not in a project yet*, with the name to give and the role to ask for. The
@@ -341,7 +385,8 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     from the title), a documentation site (a Pages type: title, URL name, body) or blank. Applied right after the
     project is made, as its owner, through the content-type API; if that part fails, the project exists and a toast
     says how to finish it in Settings.
-  - **The first-run checklist** on the overview (`FirstRun.svelte`): write the first article (or page), publish it
+  - **The first-run checklist** on the overview (`FirstRun.svelte`): since D-082, decide what you'll write (Content
+    types) first; write the first article (or page), publish it
     (or ask for review, when the role can't approve and publish), connect the website, invite a teammate, see the
     first receipt. Each item is derived from real state (entries, publish requests, releases, website connections,
     members and invitations) except two things the server can't know: whether this person hid the list and whether
@@ -372,7 +417,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 
 ### Publishing labels (spec §05)
 - **Saved**
-- **Published in CMS**
+- **Published in CMS** (said *Published in Colophon* in the Studio, D-082)
 - **Website update pending**
 - **Verified at configured locations** (with the actual location count)
 - **Needs attention** (with a safe next action)
