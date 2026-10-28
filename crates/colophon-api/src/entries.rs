@@ -26,7 +26,10 @@ use colophon_db::{
     idempotency::{self, Claim},
     scope::{self, ProjectTransaction},
 };
-use colophon_domain::schema::{Content, ContentType, FieldKind};
+use colophon_domain::{
+    policy::Action,
+    schema::{Content, ContentType, FieldKind},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -348,6 +351,16 @@ async fn slug_free(
     ))
 }
 
+/// Refuses unless the caller's role may read entries of `collection` (D-058).
+fn may_read(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError> {
+    crate::members::require(
+        &tx.policy,
+        Action::ContentRead,
+        Some(collection),
+        "your role can't read entries here",
+    )
+}
+
 /// Validates content against its content type: the canonical content and its hash.
 fn validate(value: &Value, content_type: &ContentType) -> Result<(Content, [u8; 32]), ApiError> {
     let content = content_type.validate(value).map_err(ApiError::Invalid)?;
@@ -389,9 +402,10 @@ pub(crate) async fn create(
     let Json(value) = body?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     crate::members::require(
-        &tx.role,
-        colophon_domain::policy::Action::WriteContent,
-        "your role can't write content in this project",
+        &tx.policy,
+        Action::ContentCreate,
+        Some(&path.collection),
+        "your role can't create entries here",
     )?;
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
@@ -431,9 +445,10 @@ pub(crate) async fn save(
     let Json(value) = body?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     crate::members::require(
-        &tx.role,
-        colophon_domain::policy::Action::WriteContent,
-        "your role can't write content in this project",
+        &tx.policy,
+        Action::ContentUpdate,
+        Some(&path.collection),
+        "your role can't change entries here",
     )?;
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
@@ -485,6 +500,7 @@ pub(crate) async fn get(
 ) -> Result<Response, ApiError> {
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_read(&tx, &path.collection)?;
     let draft = entries::get(&mut tx, &path.collection, entry)
         .await
         .map_err(ApiError::from_db)?
@@ -530,6 +546,7 @@ pub(crate) async fn list(
         return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
     }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_read(&tx, &path.collection)?;
     // An unknown collection is 404, not an empty list.
     content_type(&mut tx, &path.collection).await?;
     let project = tx.project;
@@ -587,6 +604,7 @@ pub(crate) async fn revision(
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let revision = Uuid::try_parse(&path.revision).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_read(&tx, &path.collection)?;
     let found = entries::revision(&mut tx, &path.collection, entry, revision)
         .await
         .map_err(ApiError::from_db)?
@@ -612,6 +630,7 @@ pub(crate) async fn history(
 ) -> Result<Response, ApiError> {
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_read(&tx, &path.collection)?;
     let revisions = entries::history(&mut tx, &path.collection, entry, entries::MAX_PAGE)
         .await
         .map_err(ApiError::from_db)?;

@@ -117,11 +117,12 @@ fn if_match(headers: &HeaderMap) -> Result<i32, ApiError> {
         ))
 }
 
-fn may_change(tx: &ProjectTransaction) -> Result<(), ApiError> {
+fn may_change(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError> {
     crate::members::require(
-        &tx.role,
-        colophon_domain::policy::Action::ChangeContentTypes,
-        "only a project's owners and developers can change its content types",
+        &tx.policy,
+        colophon_domain::policy::Action::SchemaChange,
+        Some(collection),
+        "your role can't change this content type",
     )
 }
 
@@ -341,7 +342,7 @@ pub(crate) async fn create(
     })?;
     let canonical = definition.canonical_json();
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_change(&tx)?;
+    may_change(&tx, slug.as_str())?;
     let request = request_hash(&[CREATE, slug.as_str(), &canonical]);
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);
@@ -376,7 +377,7 @@ pub(crate) async fn update(
     let next = ContentType::parse(&value).map_err(ApiError::Invalid)?;
     let canonical = next.canonical_json();
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    may_change(&tx)?;
+    may_change(&tx, &path.slug)?;
     let request = request_hash(&[UPDATE, &path.slug, &expected.to_string(), &canonical]);
     if let Some(replay) = claim(&mut tx, UPDATE, key, &request).await? {
         return Ok(replay);

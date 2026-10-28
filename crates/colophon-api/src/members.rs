@@ -23,7 +23,7 @@ use colophon_db::{
     members::{self, Accepted, Change, Invitation, Member},
     scope::{self, MemberTransaction},
 };
-use colophon_domain::policy::{self, Action, Role};
+use colophon_domain::policy::{Action, Policy, Role};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -38,14 +38,15 @@ use crate::{
 /// How long an invitation works.
 const INVITATION_LIFETIME: Duration = Duration::from_hours(72);
 
-/// A project member's role, as stored. An unknown one is a bug, and denies everything.
-pub(crate) fn role_of(stored: &str) -> Option<Role> {
-    Role::parse(stored)
-}
-
-/// Refuses unless `role` may do `action` (deny by default).
-pub(crate) fn require(role: &str, action: Action, why: &'static str) -> Result<(), ApiError> {
-    if role_of(role).is_some_and(|role| policy::allows(role, action)) {
+/// Refuses unless `policy` allows `action`, in `collection` when the action is about one (D-058;
+/// deny by default). `None` asks for the action everywhere.
+pub(crate) fn require(
+    policy: &Policy,
+    action: Action,
+    collection: Option<&str>,
+    why: &'static str,
+) -> Result<(), ApiError> {
+    if policy.allows(action, collection) {
         Ok(())
     } else {
         Err(ApiError::Forbidden(why))
@@ -68,8 +69,8 @@ async fn open(
 /// The caller's role as of now, for a change that must not act on a role read a moment ago (a
 /// demotion committing at the same time). Role changes and removals get the same guarantee from
 /// the owner lock inside `colophon_db::members`.
-async fn fresh_role(tx: &mut MemberTransaction) -> Result<String, ApiError> {
-    Ok(members::current_role(tx)
+async fn fresh_policy(tx: &mut MemberTransaction) -> Result<Policy, ApiError> {
+    Ok(members::current_policy(tx)
         .await
         .map_err(ApiError::from_db)?
         .unwrap_or_default())
@@ -184,11 +185,7 @@ pub(crate) async fn list(
     Path(path): Path<ProjectPath>,
 ) -> Result<Json<Page<MemberView>>, ApiError> {
     let mut tx = open(&state, caller, &path.project).await?;
-    require(
-        &tx.role,
-        Action::Read,
-        "you can't see this project's members",
-    )?;
+    // Any member may see who else is in the project (D-042): being in the transaction is the check.
     let rows = members::list(&mut tx).await.map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     let data = rows
@@ -213,8 +210,9 @@ pub(crate) async fn change(
     let identity = Uuid::try_parse(&path.identity).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project).await?;
     require(
-        &tx.role,
-        Action::ManageMembers,
+        &tx.policy,
+        Action::MembersManage,
+        None,
         "only a project's owners can change roles",
     )?;
     let outcome = members::change_role(&mut tx, identity, role.as_str())
@@ -237,8 +235,9 @@ pub(crate) async fn remove(
     let mut tx = open(&state, caller, &path.project).await?;
     if identity != caller.identity {
         require(
-            &tx.role,
-            Action::ManageMembers,
+            &tx.policy,
+            Action::MembersManage,
+            None,
             "only a project's owners can remove members",
         )?;
     }
@@ -259,8 +258,9 @@ pub(crate) async fn invitations(
 ) -> Result<Json<Page<InvitationView>>, ApiError> {
     let mut tx = open(&state, caller, &path.project).await?;
     require(
-        &tx.role,
-        Action::ManageMembers,
+        &tx.policy,
+        Action::MembersManage,
+        None,
         "only a project's owners can see its invitations",
     )?;
     let rows = members::invitations(&mut tx)
@@ -297,8 +297,9 @@ pub(crate) async fn invite(
     }
     let mut tx = open(&state, caller, &path.project).await?;
     require(
-        &fresh_role(&mut tx).await?,
-        Action::ManageMembers,
+        &fresh_policy(&mut tx).await?,
+        Action::MembersManage,
+        None,
         "only a project's owners can invite people",
     )?;
     let token = tokens::random_token()
@@ -338,8 +339,9 @@ pub(crate) async fn revoke(
     let id = Uuid::try_parse(&path.invitation).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project).await?;
     require(
-        &fresh_role(&mut tx).await?,
-        Action::ManageMembers,
+        &fresh_policy(&mut tx).await?,
+        Action::MembersManage,
+        None,
         "only a project's owners can revoke invitations",
     )?;
     if members::revoke(&mut tx, id)
