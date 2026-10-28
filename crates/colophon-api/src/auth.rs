@@ -190,7 +190,18 @@ pub(crate) async fn callback(
     Ok(response)
 }
 
-/// `POST /auth/logout`: ends the session (CSRF-checked, like every write).
+/// What signing out answers in a browser.
+#[derive(Serialize)]
+struct SignedOut {
+    /// Where the browser goes to end its session at the identity provider too, so the next
+    /// person at this computer must sign in again; `null` when the provider can't say (it has
+    /// no such page, or can't be reached: Colophon's own session has ended either way).
+    provider_sign_out: Option<String>,
+}
+
+/// `POST /auth/logout`: ends this session (or revokes the CLI's token) at once, whatever the
+/// identity provider does. A browser is told where to end its session at the provider as well
+/// (RP-Initiated Logout), coming back to the Studio's front door.
 pub(crate) async fn logout(
     State(state): State<AppState>,
     caller: SignedIn,
@@ -206,7 +217,20 @@ pub(crate) async fn logout(
     identity::revoke_session(&services.pool, caller.session)
         .await
         .map_err(ApiError::from_db)?;
-    let mut response = StatusCode::NO_CONTENT.into_response();
+    let provider_sign_out = match (services.oidc.as_ref(), services.trusted_origins.first()) {
+        (Some(oidc), Some(origin)) => match oidc.logout_url(&format!("{origin}/studio/")).await {
+            Ok(url) => url.map(String::from),
+            Err(error) => {
+                tracing::warn!(%error, "identity provider unavailable; signed out here only");
+                None
+            }
+        },
+        _ => None,
+    };
+    let mut response = Json(Data {
+        data: SignedOut { provider_sign_out },
+    })
+    .into_response();
     let headers = response.headers_mut();
     headers.append(header::SET_COOKIE, clear(SESSION_COOKIE, "/"));
     headers.append(
