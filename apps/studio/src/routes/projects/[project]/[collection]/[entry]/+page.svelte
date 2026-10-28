@@ -21,11 +21,16 @@
 	}));
 	// What readers get now: the entry's own answer says (B1), however old it is. Keyed under the
 	// collection's entries, so saving and publishing, which refresh those, refresh this too.
+	// Its read also says which entries link to it (D-065).
 	const state = createQuery(() => ({
 		queryKey: ['entries', project, collection, 'state', entry],
-		queryFn: async () => (await getEntry(project, collection, entry)).draft.published ?? null
+		queryFn: async () => {
+			const { draft } = await getEntry(project, collection, entry);
+			return { published: draft.published ?? null, referencedBy: draft.referenced_by ?? [] };
+		}
 	}));
-	const published = $derived(state.data !== undefined ? state.data : (draft.data?.draft.published ?? null));
+	const published = $derived(state.data !== undefined ? state.data.published : (draft.data?.draft.published ?? null));
+	const referencedBy = $derived(state.data?.referencedBy ?? draft.data?.draft.referenced_by ?? []);
 </script>
 
 <svelte:head><title>{draft.data?.draft.revision.title ?? 'Editing'} · Colophon Studio</title></svelte:head>
@@ -44,6 +49,6 @@
 		{/snippet}
 	</PageHeader>
 	{#key entry}
-		<EntryEditor {project} {collection} {entry} type={type.data} initial={draft.data} {published} />
+		<EntryEditor {project} {collection} {entry} type={type.data} initial={draft.data} {published} {referencedBy} />
 	{/key}
 {/if}

@@ -13,8 +13,9 @@
 	import { createQueries, createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
-	import { ApiError, entryState, type FieldDefinition, getEntry, searchEntries } from './api.ts';
+	import { ApiError, entryState, type FieldDefinition, searchEntries } from './api.ts';
 	import { typesQuery } from './queries.ts';
+	import { linkedQuery } from './references.ts';
 	import StatusBadge from './shell/StatusBadge.svelte';
 	import { shownTitle } from './words.ts';
 
@@ -49,20 +50,7 @@
 	const target = $derived(types.data?.find((type) => type.slug === field.to)?.definition.name ?? field.to);
 
 	// Each chosen entry's title, read on its own: a refused read is an entry the role can't see.
-	const titles = createQueries(() => ({
-		queries: chosen.map((id) => ({
-			queryKey: ['linked', project, field.to, id],
-			queryFn: async () => {
-				try {
-					return { title: (await getEntry(project, field.to, id)).draft.revision.title, seen: true };
-				} catch (failure) {
-					if (failure instanceof ApiError && (failure.failure === 'not-found' || failure.status === 403)) return { title: '', seen: false };
-					throw failure;
-				}
-			},
-			staleTime: 30_000
-		}))
-	}));
+	const titles = createQueries(() => ({ queries: chosen.map((id) => linkedQuery(project, field.to, id)) }));
 	const named = $derived(chosen.map((id, index) => ({ id, read: titles[index]?.data, failed: titles[index]?.isError === true })));
 	const label = (read: { title: string; seen: boolean } | undefined, failed: boolean) =>
 		failed ? 'Couldn’t load its title' : read === undefined ? 'Loading…' : read.seen ? shownTitle(read.title) : 'An entry you can’t see';

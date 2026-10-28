@@ -25,6 +25,21 @@ async function titled(project: string, collection: string, id: string): Promise<
 	}
 }
 
+/** One linked entry's title, read on its own and shared by the picker and "Linked from": a refused
+ *  read is an entry the role can't see (`seen: false`), never shown by its id. */
+export const linkedQuery = (project: string, collection: string, id: string) => ({
+	queryKey: ['linked', project, collection, id],
+	queryFn: async (): Promise<{ title: string; seen: boolean }> => {
+		try {
+			return { title: (await getEntry(project, collection, id)).draft.revision.title, seen: true };
+		} catch (failure) {
+			if (failure instanceof ApiError && (failure.failure === 'not-found' || failure.status === 403)) return { title: '', seen: false };
+			throw failure;
+		}
+	},
+	staleTime: 30_000
+});
+
 const list = (names: string[]) => (names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
 
 /** Entries a request's items link to that aren't published and aren't in it: what blocks it. */

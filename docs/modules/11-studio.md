@@ -181,6 +181,11 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     it takes down. One-click publishing and the publish request page say, for example, "“Notes on the engine” links to
     “Ada Lovelace”, which isn't published yet. Publish “Ada Lovelace” first, or in the same publish request.", and
     the request page offers *Make a publish request that includes* them. Test: `tests/server/references.spec.ts`.
+  - **Linked from** (624f6bd): an entry's editor lists the entries that link to it (its read's `referenced_by`),
+    each named by reading it, with the field and whether readers see the link. The server lists only collections the
+    role reads in full, so a role that reads only its own entries isn't told which link here. When readers see a
+    link, *Unpublish* explains that it will be refused and names the linking entries before it is tried (*Keep it* or
+    *Try anyway*). Test: `tests/server/references.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

@@ -2,7 +2,8 @@
 // in the builder; an author chosen by searching titles, kept after a reload; a list of three,
 // reordered; a linked entry the role can't read shown as "An entry you can't see"; an id the server
 // refuses marked on its chip. Publishing a story whose author isn't published, or taking down an
-// author a published story names, is refused, and the Studio names them and says what to do.
+// author a published story names, is refused, and the Studio names them and says what to do. An
+// entry's editor lists what links to it, and warns before a take-down the server will refuse.
 
 import { expect, type Page, test } from '@playwright/test';
 import { api, env, internalTerms, key, member, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
@@ -214,10 +215,59 @@ test('taking down an author a published story names is refused by name', async (
 
 	await page.goto(`/studio/projects/${project}/people/${ada}`);
 	await page.getByTestId('unpublish-button').click();
+	// It warns first (the story links here and readers have it); trying anyway is refused, by name.
+	await expect(page.getByRole('alertdialog')).toContainText('“Notes on the engine” links to it, and readers have it.');
+	await page.getByRole('button', { name: 'Try anyway' }).click();
 	const outcome = page.getByTestId('publish-outcome');
 	await expect(outcome).toContainText(
 		'Not published: “Ada Lovelace” is still linked from “Notes on the engine”, which readers have. Change or take down “Notes on the engine” first, or in the same publish request.'
 	);
 	expect(await internalTerms(page)).toEqual([]);
 	expect(await readers(page, project, 'people')).toContain('Ada Lovelace');
+});
+
+test('an entry lists what links to it, and warns before a take-down that would be refused', async ({ page, browser }) => {
+	const { project, story, ada } = await newsroom(page);
+	expect((await api(page, 'PUT', `${env(project)}/collections/stories/entries/${story}`, { title: 'Notes on the engine', author: ada }, await ifMatch(page, project, story))).status).toBe(200);
+	await page.goto(`/studio/projects/${project}/people/${ada}`);
+	const linked = page.getByTestId('linked-from-entry');
+	await expect(linked).toHaveCount(1);
+	await expect(linked).toContainText('Notes on the engine');
+	await expect(linked).toContainText('Stories, in Author');
+	await expect(linked).toContainText('In a draft');
+
+	// Once both are published, readers see the link: the take-down warns before it's tried.
+	await publishThroughApi(page, project, 'Story and author', [story, ada]);
+	await page.reload();
+	await expect(linked).toContainText('Readers see this link');
+	await expect(page.getByTestId('unpublish-warning')).toContainText("can't be taken down until that changes");
+	expect(await violations(page)).toEqual([]);
+	expect(await internalTerms(page)).toEqual([]);
+	await page.getByTestId('unpublish-button').click();
+	await expect(page.getByRole('alertdialog')).toContainText('Colophon won\'t take this down until that changes');
+	expect(await violations(page)).toEqual([]);
+	await page.getByRole('button', { name: 'Keep it' }).click();
+	await expect(page.getByTestId('publish-outcome')).toHaveCount(0);
+	await linked.getByRole('link', { name: 'Notes on the engine' }).click();
+	await expect(page.getByLabel('Title', { exact: true })).toHaveValue('Notes on the engine');
+
+	// Someone who reads only their own stories isn't told which stories link here: the server
+	// lists none, and the panel stays away rather than hinting.
+	const permissions = [
+		{ action: 'content.read', subject: 'people' },
+		{ action: 'content.read', subject: 'stories', condition: 'own' }
+	];
+	expect((await api(page, 'POST', `/api/v1/projects/${project}/roles`, { key: 'own-stories', name: 'Own stories', permissions })).status).toBe(201);
+	const other = await member(page, browser, project, 'own-stories');
+	await other.goto(`/studio/projects/${project}/people/${ada}`);
+	await expect(other.getByTestId('save-status')).toBeVisible();
+	await expect(other.getByTestId('linked-from')).toHaveCount(0);
+	expect(await internalTerms(other)).toEqual([]);
+
+	// On a phone, the list fits.
+	await other.setViewportSize({ width: 390, height: 844 });
+	await other.waitForLoadState('networkidle');
+	expect(await other.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), 'the editor scrolls sideways on a phone').toBeLessThanOrEqual(0);
+	expect(await violations(other)).toEqual([]);
+	await other.context().close();
 });

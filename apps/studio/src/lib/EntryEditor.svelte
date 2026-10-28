@@ -7,7 +7,9 @@
 	import { onMount } from 'svelte';
 	import { asset } from '$app/paths';
 	import type { Editor } from '@tiptap/core';
-	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { resolve } from '$app/paths';
+	import LinkIcon from '@lucide/svelte/icons/link';
 	import { openEditor, type RichTextValue, toStored } from '@colophon/editor';
 	import RichText from '@colophon/content-renderer/RichText.svelte';
 	import CloudAlertIcon from '@lucide/svelte/icons/cloud-alert';
@@ -23,15 +25,18 @@
 		getRevision,
 		listRevisions,
 		type Loaded,
+		type Referrer,
 		signInUrl,
 		type Summary
 	} from './api.ts';
+	import { linkedQuery } from './references.ts';
+	import { shownTitle } from './words.ts';
 	import { compare } from './diff.ts';
 	import { prettyJson } from './json.ts';
 	import { plainError } from './errors.ts';
 	import DiffView from './DiffView.svelte';
 	import PublishEntry from './PublishEntry.svelte';
-	import { ago, meQuery, projectQuery, releasesQuery } from './queries.ts';
+	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from './queries.ts';
 	import RichTextToolbar from './RichTextToolbar.svelte';
 	import StatusBadge from './shell/StatusBadge.svelte';
 	import TechnicalDetails from './shell/TechnicalDetails.svelte';
@@ -47,7 +52,8 @@
 		entry,
 		type,
 		initial,
-		published = null
+		published = null,
+		referencedBy = []
 	}: {
 		project: string;
 		collection: string;
@@ -56,7 +62,28 @@
 		initial: Loaded;
 		/** What readers get now, from the collection's list; null when not published. */
 		published?: Summary['published'];
+		/** Entries that link to this one, as its read says (D-065). */
+		referencedBy?: Referrer[];
 	} = $props();
+
+	// "Linked from": each linking entry named by reading it; one the role can't read is said so.
+	const allTypes = createQuery(() => typesQuery(project));
+	const linking = createQueries(() => ({ queries: referencedBy.map((link) => linkedQuery(project, link.collection, link.entry_id)) }));
+	const linkedFrom = $derived(
+		referencedBy.map((link, index) => {
+			const definition = allTypes.data?.find((item) => item.slug === link.collection)?.definition;
+			return {
+				link,
+				read: linking[index]?.data,
+				collectionName: definition?.name ?? link.collection,
+				fieldLabel: definition?.fields.find((field) => field.id === link.field)?.label ?? link.field
+			};
+		})
+	);
+	/** Published entries that link here: taking this down is refused until they change. */
+	const linkedLive = $derived(
+		linkedFrom.filter((item) => item.link.published).map((item) => (item.read?.seen ? `“${shownTitle(item.read.title)}”` : 'an entry you can’t see'))
+	);
 
 	const queryClient = useQueryClient();
 	// Until media uploads arrive (P4), every image previews as the same placeholder.
@@ -368,6 +395,40 @@
 			{/each}
 		</div>
 
+		{#if linkedFrom.length > 0}
+			<section class="mt-8" aria-labelledby="linked-from-heading" data-testid="linked-from">
+				<h2 id="linked-from-heading" class="mb-1 text-sm font-semibold">Linked from</h2>
+				<p class="mb-3 text-xs text-muted-foreground">Entries whose fields link to this one.</p>
+				<ul class="overflow-hidden rounded-xl border border-border bg-card">
+					{#each linkedFrom as item (`${item.link.entry_id}-${item.link.field}`)}
+						<li class="rule-dotted flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm last:border-b-0" data-testid="linked-from-entry">
+							<LinkIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+							<span class="min-w-0 flex-1">
+								{#if item.read === undefined}
+									<span class="text-muted-foreground">Loading…</span>
+								{:else if item.read.seen}
+									<a
+										class="font-medium hover:underline"
+										data-user-content
+										href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.link.collection, entry: item.link.entry_id })}
+										>{shownTitle(item.read.title)}</a
+									>
+								{:else}
+									<span class="text-muted-foreground">An entry you can’t see</span>
+								{/if}
+								<span class="block text-xs text-muted-foreground" data-user-content>{item.collectionName}, in {item.fieldLabel}</span>
+							</span>
+							{#if item.link.published}
+								<Badge variant="live">Readers see this link</Badge>
+							{:else}
+								<Badge variant="draft">In a draft</Badge>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
+
 		<div role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== 'history'}>
 			{#if revisions.data}
 				<ol data-testid="history" class="relative space-y-1 border-l border-dotted border-border pl-6">
@@ -481,6 +542,7 @@
 					generation={published?.generation ?? null}
 					seenGeneration={releases.data?.generation}
 					own={who.data != null && latest.created_by === who.data.id}
+					{linkedLive}
 				/>
 			</div>
 			<TechnicalDetails class="mt-4 hidden border-t border-dotted border-border pt-3 xl:block">

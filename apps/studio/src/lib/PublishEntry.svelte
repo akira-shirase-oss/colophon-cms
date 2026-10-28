@@ -10,6 +10,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { useQueryClient } from '@tanstack/svelte-query';
+	import * as AlertDialog from '@colophon/ui/ui/alert-dialog';
 	import { Button } from '@colophon/ui/ui/button';
 	import { type EntryState, mayOn, type Project } from './api.ts';
 	import { newKeys, type Outcome, publishesInOneClick, publishInOneClick } from './publishing.ts';
@@ -25,7 +26,8 @@
 		saved,
 		generation,
 		seenGeneration,
-		own = true
+		own = true,
+		linkedLive = []
 	}: {
 		project: string;
 		collection: string;
@@ -42,7 +44,13 @@
 		seenGeneration: number | undefined;
 		/** Whether the caller created this entry, for permissions limited to one's own entries. */
 		own?: boolean;
+		/** Published entries that link to this one, named: taking it down will be refused (D-065). */
+		linkedLive?: string[];
 	} = $props();
+
+	// Before an unpublish the server will refuse, say why and let the person decide (stale data can
+	// be wrong, so trying stays possible).
+	let warning = $state(false);
 
 	const queryClient = useQueryClient();
 	const oneClick = $derived(publishesInOneClick(mine, [collection]));
@@ -103,7 +111,13 @@
 			{/if}
 			{#if (standing !== 'draft' || outcome?.kind === 'published') && outcome?.kind !== 'unpublished' && outcome?.kind !== 'requested'}
 				<!-- Taking it down is the same path in reverse, and undone by publishing again (D-059, rule 6). -->
-				<Button class="flex-1" variant="outline" onclick={() => go(true)} disabled={step !== ''} data-testid="unpublish-button">
+				<Button
+					class="flex-1"
+					variant="outline"
+					onclick={() => (linkedLive.length > 0 ? (warning = true) : go(true))}
+					disabled={step !== ''}
+					data-testid="unpublish-button"
+				>
 					{oneClick ? 'Unpublish' : 'Ask to unpublish'}
 				</Button>
 			{/if}
@@ -119,6 +133,12 @@
 				{/if}
 			</p>
 		{/if}
+	{/if}
+
+	{#if linkedLive.length > 0 && standing !== 'draft' && outcome?.kind !== 'unpublished'}
+		<p class="hidden text-xs text-muted-foreground xl:block" data-testid="unpublish-warning">
+			Readers have {linkedLive.length === 1 ? 'an entry that links' : 'entries that link'} here, so it can't be taken down until {linkedLive.length === 1 ? 'that changes' : 'they change'}.
+		</p>
 	{/if}
 
 	{#if outcome?.kind === 'unpublished'}
@@ -151,3 +171,21 @@
 		</p>
 	{/if}
 </div>
+
+<AlertDialog.Root bind:open={warning}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>Readers still have links to this</AlertDialog.Title>
+			<AlertDialog.Description>
+				{linkedLive.join(', ')}
+				{linkedLive.length === 1 ? 'links' : 'link'} to it, and readers have {linkedLive.length === 1 ? 'it' : 'them'}. Colophon won't take this down
+				until {linkedLive.length === 1 ? 'that changes' : 'they change'}: change or take down {linkedLive.length === 1 ? 'that entry' : 'those entries'} first, or in
+				the same publish request.
+			</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel>Keep it</AlertDialog.Cancel>
+			<AlertDialog.Action variant="outline" onclick={() => go(true)}>Try anyway</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>
