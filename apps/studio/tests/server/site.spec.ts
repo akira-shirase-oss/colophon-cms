@@ -43,12 +43,14 @@ test('an article published in the Studio is live on the site, verified, and acce
 		}).toPass({ timeout: 20_000 });
 
 		// The site hears about releases, and a probe checks the live home page.
-		await page.goto(`/studio/projects/${project}/settings`);
+		await page.goto(`/studio/projects/${project}/settings/connections`);
+		await page.getByRole('button', { name: 'Add a connection' }).click();
 		await page.getByLabel('Connection name').fill('Site build');
 		await page.getByLabel('Webhook URL (https)').fill(`${SITE}/hook`);
 		await page.getByRole('button', { name: 'Add website connection' }).click();
 		await expect(page.getByTestId('destinations')).toContainText('Site build');
-		await page.getByLabel('Kind').selectOption('probe');
+		await page.getByRole('button', { name: 'Add a connection' }).click();
+		await page.getByRole('radio', { name: /Site check/ }).check();
 		await page.getByLabel('Connection name').fill('Live site');
 		await page.getByLabel('URL to check (https)').fill(`${SITE}/`);
 		await page.getByRole('button', { name: 'Add website connection' }).click();

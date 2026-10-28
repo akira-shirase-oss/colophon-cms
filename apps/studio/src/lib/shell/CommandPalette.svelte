@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
+	import GlobeIcon from '@lucide/svelte/icons/globe';
 	import HistoryIcon from '@lucide/svelte/icons/history';
 	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 	import LayersIcon from '@lucide/svelte/icons/layers';
@@ -12,6 +13,7 @@
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
 	import ShapesIcon from '@lucide/svelte/icons/shapes';
+	import ShieldCheckIcon from '@lucide/svelte/icons/shield-check';
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -27,6 +29,7 @@
 		types,
 		settings = false,
 		builds = false,
+		connections = false,
 		tokens = false,
 		activity = false,
 		open = $bindable(false)
@@ -37,6 +40,8 @@
 		settings?: boolean;
 		/** Whether the role sees the content-type builder. */
 		builds?: boolean;
+		/** Whether the role manages website connections. */
+		connections?: boolean;
 		tokens?: boolean;
 		activity?: boolean;
 		open?: boolean;
@@ -86,6 +91,8 @@
 		{ label: 'Members', icon: UsersIcon, href: resolve('/projects/[project]/members', { project }) },
 		...(builds ? [{ label: 'Content types', icon: ShapesIcon, href: resolve('/projects/[project]/settings/types', { project }) }] : []),
 		...(settings ? [{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }] : []),
+		...(settings ? [{ label: 'Roles', icon: ShieldCheckIcon, href: resolve('/projects/[project]/settings/roles', { project }) }] : []),
+		...(connections ? [{ label: 'Website connections', icon: GlobeIcon, href: resolve('/projects/[project]/settings/connections', { project }) }] : []),
 		...(tokens ? [{ label: 'API tokens', icon: KeyRoundIcon, href: resolve('/projects/[project]/settings/tokens', { project }) }] : []),
 		...(activity ? [{ label: 'Activity', icon: HistoryIcon, href: resolve('/projects/[project]/settings/activity', { project }) }] : [])
 	]);

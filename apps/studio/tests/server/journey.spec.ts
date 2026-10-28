@@ -39,7 +39,7 @@ function environment(): Record<string, string> {
 		PATH: process.env['PATH'] ?? '',
 		COLOPHON_LISTEN_ADDR: `127.0.0.1:${PORT}`,
 		COLOPHON_PUBLIC_URL: ORIGIN,
-		COLOPHON_STUDIO_DIR: `${repo}apps/studio/build`,
+		COLOPHON_STUDIO_DIR: `${repo}apps/studio/${process.env['STUDIO_BUILD_DIR'] ?? 'build'}`,
 		COLOPHON_LOG_FORMAT: 'json'
 	};
 }
@@ -271,7 +271,9 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 			['releases', `${base}/releases`],
 			['receipt', `${base}/releases/1`],
 			['members', `${base}/members`],
-			['settings', `${base}/settings`]
+			['settings', `${base}/settings`],
+			['settings-roles', `${base}/settings/roles`],
+			['settings-connections', `${base}/settings/connections`]
 		];
 		for (const [name, path] of routes) {
 			await phone.goto(path);
@@ -288,7 +290,7 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 				await expect(phone.getByRole('button', { name: 'Approve this version' })).toBeInViewport();
 			}
 			// Settings is the developer area, where the internal names stay (D-059, rule 5).
-			await screen(phone, `phone-${name}`, { words: name !== 'settings' });
+			await screen(phone, `phone-${name}`, { words: !name.startsWith('settings') });
 		}
 		await phone.context().close();
 	});

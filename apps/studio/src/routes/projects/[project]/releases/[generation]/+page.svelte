@@ -68,7 +68,7 @@
 		{#if shown.label === 'published' && shown.deliveries.length === 0}
 			<p class="text-sm text-muted-foreground" data-testid="receipt-explainer">
 				Published in Colophon: your website can read it now. Nothing checks your website yet; add a site check in
-				<a class="underline underline-offset-2" href={resolve('/projects/[project]/settings', { project }) + '#website-connections'}>Settings → Website connections</a> to confirm
+				<a class="underline underline-offset-2" href={resolve('/projects/[project]/settings/connections', { project })}>Settings → Website connections</a> to confirm
 				what readers see.
 			</p>
 		{:else if shown.label === 'verified'}
@@ -98,7 +98,7 @@
 			</ol>
 			<div class="mt-4">
 				{#if fixes}
-					<Button variant="outline" href={resolve('/projects/[project]/settings', { project }) + '#website-connections'} data-testid="fix-connections">Open {WEBSITE_CONNECTIONS}</Button>
+					<Button variant="outline" href={resolve('/projects/[project]/settings/connections', { project })} data-testid="fix-connections">Open {WEBSITE_CONNECTIONS}</Button>
 				{:else}
 					<p class="text-sm text-attention-ink">Ask someone who manages {WEBSITE_CONNECTIONS} (an owner or developer) to check them.</p>
 				{/if}

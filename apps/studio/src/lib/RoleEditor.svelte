@@ -123,7 +123,7 @@
 			await deleteRole(project, role.key, role.version);
 			toast.success(`Deleted ${role.name}`);
 			await queryClient.invalidateQueries({ queryKey: ['roles', project] });
-			await goto(resolve('/projects/[project]/settings', { project }));
+			await goto(resolve('/projects/[project]/settings/roles', { project }));
 		} catch (failure) {
 			stale = failure instanceof ApiError && failure.failure === 'conflict' && failure.reason === 'stale_role';
 			error = failure instanceof ApiError ? failure.message : String(failure);

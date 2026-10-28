@@ -1,17 +1,16 @@
 <!--
   One role (D-058): what it may do, who holds it, and, for people whose role manages roles, the
   editor. Every member can read it, so anyone can see what a role means before it's given to them.
+  It sits in Settings' frame, under Roles (D-081).
 -->
 <script lang="ts">
-	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
-	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createQuery } from '@tanstack/svelte-query';
-	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { may } from '#lib/api.ts';
 	import { projectQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
 	import RoleEditor from '#lib/RoleEditor.svelte';
+	import SettingsFrame from '#lib/SettingsFrame.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 
@@ -29,38 +28,35 @@
 
 <svelte:head><title>{role?.name ?? 'Role'} · Colophon Studio</title></svelte:head>
 
-<PageHeader title={role?.name ?? 'Role'}>
-	{#snippet eyebrow()}
-		<Button variant="ghost" size="xs" href={resolve('/projects/[project]/settings', { project })}>
-			<ArrowLeftIcon data-icon="inline-start" />Settings
-		</Button>
-	{/snippet}
-	{#snippet meta()}
-		{#if role}
-			<span>{role.members} {role.members === 1 ? 'person holds' : 'people hold'} it</span>
-			<span>Short name <code class="font-mono">{role.key}</code></span>
-			<span>Version {role.version}</span>
-		{/if}
-	{/snippet}
-</PageHeader>
+<SettingsFrame {project} current="roles">
+	<PageHeader title={role?.name ?? 'Role'}>
+		{#snippet meta()}
+			{#if role}
+				<span>{role.members} {role.members === 1 ? 'person holds' : 'people hold'} it</span>
+				<span>Short name <code class="font-mono">{role.key}</code></span>
+				<span>Version {role.version}</span>
+			{/if}
+		{/snippet}
+	</PageHeader>
 
-{#if roles.isError}
-	<Problem error={roles.error} />
-{:else if types.isError}
-	<Problem error={types.error} />
-{:else if loaded && types.data}
-	{#if role}
-		{#key `${role.key}@${role.version}`}
-			<RoleEditor {project} {role} types={types.data} {editable} />
-		{/key}
+	{#if roles.isError}
+		<Problem error={roles.error} />
+	{:else if types.isError}
+		<Problem error={types.error} />
+	{:else if loaded && types.data}
+		{#if role}
+			{#key `${role.key}@${role.version}`}
+				<RoleEditor {project} {role} types={types.data} {editable} />
+			{/key}
+		{:else}
+			<p class="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="role-missing">
+				This project has no role called <code class="font-mono">{key}</code>. It may have been deleted.
+			</p>
+		{/if}
 	{:else}
-		<p class="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="role-missing">
-			This project has no role called <code class="font-mono">{key}</code>. It may have been deleted.
-		</p>
+		<div class="grid max-w-4xl gap-3" aria-busy="true">
+			<Skeleton class="h-10 w-80" />
+			<Skeleton class="h-48 w-full" />
+		</div>
 	{/if}
-{:else}
-	<div class="grid max-w-4xl gap-3" aria-busy="true">
-		<Skeleton class="h-10 w-80" />
-		<Skeleton class="h-48 w-full" />
-	</div>
-{/if}
+</SettingsFrame>

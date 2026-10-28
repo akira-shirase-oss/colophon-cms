@@ -10,10 +10,12 @@ test('an owner makes a role, chooses what it may do, and someone invited with it
 	await signIn(page);
 	const project = await newProject(page);
 	await page.goto(`/studio/projects/${project}/settings`);
+	await page.getByTestId('roles-link').click();
 	await expect(page.getByTestId('roles')).toContainText('Owner');
 	await expect(page.getByTestId('roles')).toContainText('Publisher');
 
-	// Make it; its short name follows the name until it's edited.
+	// Make it, in its dialog; its short name follows the name until it's edited.
+	await page.getByRole('button', { name: 'New role' }).click();
 	await page.locator('#role-name').fill('Copy desk');
 	await expect(page.getByLabel('Short name')).toHaveValue('copy-desk');
 	await page.getByRole('button', { name: 'Create and choose what it may do' }).click();
@@ -95,7 +97,7 @@ test('an owner makes a role, chooses what it may do, and someone invited with it
 	await page.goto(`/studio/projects/${project}/settings/roles/copy-desk`);
 	await page.getByRole('button', { name: 'Delete role…' }).click();
 	await page.getByRole('button', { name: 'Delete Copy desk' }).click();
-	await expect(page).toHaveURL(new RegExp(`/studio/projects/${project}/settings$`));
+	await expect(page).toHaveURL(new RegExp(`/studio/projects/${project}/settings/roles$`));
 	await expect(page.getByTestId('roles')).not.toContainText('Copy desk');
 });
 

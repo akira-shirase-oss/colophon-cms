@@ -32,7 +32,7 @@ function environment(): Record<string, string> {
 		PATH: process.env['PATH'] ?? '',
 		COLOPHON_LISTEN_ADDR: `127.0.0.1:${PORT}`,
 		COLOPHON_PUBLIC_URL: ORIGIN,
-		COLOPHON_STUDIO_DIR: `${repo}apps/studio/build`,
+		COLOPHON_STUDIO_DIR: `${repo}apps/studio/${process.env['STUDIO_BUILD_DIR'] ?? 'build'}`,
 		COLOPHON_LOG_FORMAT: 'json',
 		COLOPHON_RATE_LIMIT_PER_ADDRESS: 'off',
 		COLOPHON_RATE_LIMIT_PER_CREDENTIAL: '1/40'

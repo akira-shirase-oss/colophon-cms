@@ -73,7 +73,7 @@ test('every everyday screen speaks plainly; the Technical details drawer keeps t
 
 	// Settings is the developer area, where the internal names stay next to the plain ones; the
 	// check sees them there, so it would see them anywhere.
-	await page.goto(`${base}/settings`);
+	await page.goto(`${base}/settings/connections`);
 	await expect(page.getByRole('heading', { name: 'Website connections' })).toBeVisible();
 	expect((await internalTerms(page)).join('\n')).toMatch(/webhook/i);
 });

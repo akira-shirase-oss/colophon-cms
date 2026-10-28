@@ -20,9 +20,9 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 	import * as Sidebar from '@colophon/ui/ui/sidebar';
-	import { may, mayAny, SETTINGS_ACTIONS } from '#lib/api.ts';
+	import { getEntry, may, mayAny, SETTINGS_ACTIONS } from '#lib/api.ts';
 	import { rememberProject } from '#lib/lastProject.ts';
-	import { ago, changesetsQuery, entriesQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
+	import { ago, changesetsQuery, entriesQuery, meQuery, projectQuery, releasesQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
 	import AccountMenu from '#lib/shell/AccountMenu.svelte';
 	import AppearanceMenu from '#lib/shell/AppearanceMenu.svelte';
 	import CollectionCount from '#lib/shell/CollectionCount.svelte';
@@ -72,25 +72,46 @@
 		'/projects/[project]/settings/types': 'Content types',
 		'/projects/[project]/settings/types/[type]': 'Content types',
 		'/projects/[project]/settings/components/[component]': 'Content types',
+		'/projects/[project]/settings/roles': 'Settings',
 		'/projects/[project]/settings/roles/[role]': 'Settings',
+		'/projects/[project]/settings/connections': 'Settings',
 		'/projects/[project]/settings/tokens': 'Settings',
 		'/projects/[project]/settings/activity': 'Settings'
+	};
+	/** Settings' own pages (D-081), named after Settings in the trail. */
+	const SETTINGS_PAGE: Record<string, string> = {
+		'/projects/[project]/settings/roles': 'Roles',
+		'/projects/[project]/settings/roles/[role]': 'Roles',
+		'/projects/[project]/settings/connections': 'Website connections',
+		'/projects/[project]/settings/tokens': 'API tokens',
+		'/projects/[project]/settings/activity': 'Activity'
 	};
 	const collectionName = $derived(
 		types.data?.find((type) => type.slug === page.params.collection)?.definition.name ?? page.params.collection ?? ''
 	);
+	// The entry's title for its crumb: the editor's own read (the same query, so no second request),
+	// kept current as it saves.
+	const onEntry = $derived(route.endsWith('[entry]'));
+	const entryRead = createQuery(() => ({
+		queryKey: ['draft', project, page.params.collection ?? '', page.params.entry ?? ''],
+		queryFn: () => getEntry(project, page.params.collection ?? '', page.params.entry ?? ''),
+		enabled: onEntry,
+		staleTime: Infinity,
+		refetchOnWindowFocus: false
+	}));
+	const roles = createQuery(() => ({ ...rolesQuery(project), enabled: route.endsWith('[role]') }));
 	const crumbs = $derived.by(() => {
-		const trail: { label: string; href?: string }[] = [];
+		const trail: { label: string; href?: string; user?: boolean }[] = [];
 		if (route.includes('[collection]')) {
 			trail.push({ label: 'Content' });
 			trail.push({
 				label: collectionName,
-				href: route.endsWith('[entry]') ? resolve('/projects/[project]/[collection]', { project, collection: page.params.collection ?? '' }) : undefined
+				href: onEntry ? resolve('/projects/[project]/[collection]', { project, collection: page.params.collection ?? '' }) : undefined
 			});
-			if (route.endsWith('[entry]')) trail.push({ label: 'Entry' });
+			if (onEntry) trail.push({ label: entryRead.data ? entryRead.data.draft.revision.title || 'Untitled' : 'Entry', user: true });
 		} else if (SECTION[route]) {
 			const section = SECTION[route];
-			const detail = (route.endsWith(']') && !route.endsWith('[project]')) || route.endsWith('/tokens') || route.endsWith('/activity');
+			const detail = route !== '/projects/[project]/settings' && (route.endsWith(']') && !route.endsWith('[project]') || SETTINGS_PAGE[route] !== undefined);
 			const href =
 				section === 'Publish requests'
 					? resolve('/projects/[project]/changesets', { project })
@@ -102,9 +123,13 @@
 			trail.push({ label: section, href: detail ? href : undefined });
 			if (route.endsWith('[generation]')) trail.push({ label: `Release ${page.params.generation}` });
 			if (route.endsWith('[changeset]')) trail.push({ label: 'Publish request' });
-			if (route.endsWith('[role]')) trail.push({ label: `Role ${page.params.role ?? ''}` });
-			if (route.endsWith('/tokens')) trail.push({ label: 'API tokens' });
-			if (route.endsWith('/activity')) trail.push({ label: 'Activity' });
+			const settingsPage = SETTINGS_PAGE[route];
+			if (settingsPage !== undefined) {
+				trail.push({ label: settingsPage, href: route.endsWith('[role]') ? resolve('/projects/[project]/settings/roles', { project }) : undefined });
+			}
+			if (route.endsWith('[role]')) {
+				trail.push({ label: roles.data?.find((role) => role.key === page.params.role)?.name ?? 'Role', user: true });
+			}
 			if (route.endsWith('[type]')) {
 				trail.push({ label: types.data?.find((type) => type.slug === page.params.type)?.definition.name ?? page.params.type ?? '' });
 			}
@@ -294,12 +319,13 @@
 						<Breadcrumb.Link href={resolve('/projects/[project]', { project })}>{mine.data?.name ?? 'Project'}</Breadcrumb.Link>
 					</Breadcrumb.Item>
 					{#each crumbs as crumb, index (index)}
-						<Breadcrumb.Separator class="hidden md:inline-flex" />
-						<Breadcrumb.Item>
+						<!-- On a phone, only the last two: where this is, and what it's in. -->
+						<Breadcrumb.Separator class={index > 0 && index > crumbs.length - 2 ? '' : 'hidden md:inline-flex'} />
+						<Breadcrumb.Item class={index >= crumbs.length - 2 ? 'min-w-0' : 'hidden md:inline-flex'}>
 							{#if crumb.href}
 								<Breadcrumb.Link href={crumb.href}>{crumb.label}</Breadcrumb.Link>
 							{:else}
-								<Breadcrumb.Page>{crumb.label}</Breadcrumb.Page>
+								<Breadcrumb.Page class="block max-w-[10rem] truncate sm:max-w-xs" data-user-content={crumb.user ? '' : undefined}>{crumb.label}</Breadcrumb.Page>
 							{/if}
 						</Breadcrumb.Item>
 					{/each}
@@ -326,6 +352,7 @@
 	types={readable}
 	{settings}
 	{builds}
+	connections={may(mine.data, 'destinations.manage')}
 	tokens={may(mine.data, 'tokens.manage')}
 	activity={may(mine.data, 'audit.read')}
 	bind:open={searching}

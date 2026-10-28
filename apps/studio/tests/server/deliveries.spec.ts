@@ -34,7 +34,8 @@ test('a destination added in Settings gets each release, once', async ({ page })
 	try {
 		await signIn(page);
 		const project = await newProject(page);
-		await page.goto(`/studio/projects/${project}/settings`);
+		await page.goto(`/studio/projects/${project}/settings/connections`);
+		await page.getByRole('button', { name: 'Add a connection' }).click();
 		await page.getByLabel('Connection name').fill('Site rebuild');
 		await page.getByLabel('Webhook URL (https)').fill(hook.url);
 		await page.getByRole('button', { name: 'Add website connection' }).click();
@@ -96,8 +97,9 @@ test('a CDN added in Settings is asked to purge what each release changed', asyn
 	try {
 		await signIn(page);
 		const project = await newProject(page);
-		await page.goto(`/studio/projects/${project}/settings`);
-		await page.getByLabel('Kind').selectOption('cdn');
+		await page.goto(`/studio/projects/${project}/settings/connections`);
+		await page.getByRole('button', { name: 'Add a connection' }).click();
+		await page.getByRole('radio', { name: /CDN clear/ }).check();
 		await page.getByLabel('Connection name').fill('Edge cache');
 		await page.getByLabel('Purge URL (https)').fill(cdn.url);
 		await page.getByRole('button', { name: 'Add website connection' }).click();
@@ -150,8 +152,9 @@ test('a probe added in Settings verifies a release, and its receipt shows what i
 	try {
 		await signIn(page);
 		const project = await newProject(page);
-		await page.goto(`/studio/projects/${project}/settings`);
-		await page.getByLabel('Kind').selectOption('probe');
+		await page.goto(`/studio/projects/${project}/settings/connections`);
+		await page.getByRole('button', { name: 'Add a connection' }).click();
+		await page.getByRole('radio', { name: /Site check/ }).check();
 		await page.getByLabel('Connection name').fill('Home page');
 		await page.getByLabel('URL to check (https)').fill(checked.url);
 		await page.getByRole('button', { name: 'Add website connection' }).click();
@@ -209,7 +212,8 @@ test('a website connection that refuses makes the release “Needs attention”,
 	try {
 		await signIn(page);
 		const project = await newProject(page);
-		await page.goto(`/studio/projects/${project}/settings`);
+		await page.goto(`/studio/projects/${project}/settings/connections`);
+		await page.getByRole('button', { name: 'Add a connection' }).click();
 		await page.getByLabel('Connection name').fill('Site rebuild');
 		await page.getByLabel('Webhook URL (https)').fill(hook.url);
 		await page.getByRole('button', { name: 'Add website connection' }).click();
@@ -233,7 +237,7 @@ test('a website connection that refuses makes the release “Needs attention”,
 		expect(await violations(page)).toEqual([]);
 		expect(await internalTerms(page)).toEqual([]);
 		await attention.getByTestId('fix-connections').click();
-		await expect(page).toHaveURL(/\/settings#website-connections$/);
+		await expect(page).toHaveURL(/\/settings\/connections$/);
 		await expect(page.getByTestId('destinations')).toContainText('Site rebuild');
 	} finally {
 		hook.close();

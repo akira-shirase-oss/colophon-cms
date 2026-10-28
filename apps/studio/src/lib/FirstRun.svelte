@@ -117,7 +117,7 @@
 				title: 'Connect your website',
 				detail: 'So each release rebuilds your site, clears its CDN, or is checked on the live site.',
 				done: counts.connections > 0,
-				href: resolve('/projects/[project]/settings', { project }) + '#website-connections',
+				href: resolve('/projects/[project]/settings/connections', { project }),
 				action: 'Connect'
 			});
 		}

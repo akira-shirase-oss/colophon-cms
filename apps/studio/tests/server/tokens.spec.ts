@@ -33,6 +33,7 @@ test('an owner makes a token, sees its secret once, uses it, and revoking it sto
 	expect(await violations(page)).toEqual([]);
 	expect(await internalTerms(page)).toEqual([]);
 
+	await page.getByTestId('tokens-empty').getByRole('button', { name: 'New token' }).click();
 	await page.getByLabel('Name', { exact: true }).fill('Site build');
 	await page.getByLabel('Works for').selectOption('30');
 	await page.getByRole('button', { name: 'Make the token' }).click();
@@ -84,6 +85,7 @@ test('a custom token is chosen in the grid, without the powers only people hold,
 	await signIn(page);
 	const project = await newProject(page);
 	await page.goto(`/studio/projects/${project}/settings/tokens`);
+	await page.getByRole('button', { name: 'New token' }).click();
 	await page.getByLabel('Name', { exact: true }).fill('Importer');
 	await page.getByRole('radio', { name: /Custom/ }).check();
 	const grid = page.getByTestId('token-grid');

@@ -73,7 +73,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   the playground's formatting toolbar, shows save status and live state beside the fields, and compares any revision
   with the draft. A changeset shows, for every item, what changes for readers: a word-level comparison from the live
   revision to the pinned one (new entries are all additions; unpublishing shows what goes). Destinations moved to
-  `…/settings`.
+  `…/settings` (since D-081, `…/settings/connections`).
 - Finishing the Studio (branch `studio/dashboard`, 2026-10-27), slice by slice:
   - **Sign out from any screen** (`shell/AccountMenu.svelte`, in the project shell's header and the plain frame's):
     who is signed in, *Your work and projects*, *About Colophon* (which version this is, below), and *Sign out*, which calls `POST /auth/logout` and only then
@@ -139,7 +139,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     tokens and the activity log's sentences. Test: `tests/server/permissions.spec.ts`.
   - **Settings → API tokens** (`…/settings/tokens`, for roles that manage tokens; others are told why it's empty):
     each token with its state (*Active*, *Ended*, *Revoked*), what it may do, last use and end date in words; making
-    one as *Read only*, *Full access* or *Custom* (the role editor's grid without the four powers only people hold)
+    one (*New token*, a dialog since D-081) as *Read only*, *Full access* or *Custom* (the role editor's grid without the four powers only people hold)
     for 7 days to a year; its secret shown once with *Copy* and "You won't see it again"; *Revoke* asks first.
     Refusals use B3's reasons (`cannot_grant`, `not_for_tokens`, `too_many_tokens`…). Test: `tests/server/tokens.spec.ts`
     (the token reads with `Authorization: Bearer`, is refused a write, shows its last use, and answers 401 once
@@ -278,6 +278,24 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   settings*) and at its setting, on the tab that holds it; the entries in the way are listed above the fields.
   Components (`ComponentBuilder.svelte`) work the same way. Settings keeps one link to it. Tests:
   `tests/server/builder.spec.ts`, and the earlier builder specs, rewritten for these screens.
+- **Settings, laid out like the builder** (D-081, 2026-10-28). An audit after D-079 found Settings was one long page
+  with *Make a role* and *Add a website connection* always open (the second offered twice, by the empty state and the
+  form) and the project id and public API address first. Now a left panel (`SettingsFrame.svelte`, the builder's
+  look) holds one page each, grouped as Project (*General*, *Roles*, *Website connections*) and Access (*API tokens*,
+  *Activity*); on a phone it is a row of links above the page. *General* (`…/settings`) shows the name and URL name
+  and the link to Content types ("1 content type · 0 components"; the dot once lost its space), with the project id
+  and the public API address, each with *Copy*, in a closed *Technical details*. *Roles* (`…/settings/roles`) lists
+  the roles; *New role*, for roles that manage them, opens a dialog for the name and the short name made from it, then
+  the role's page (`…/settings/roles/{role}`, in the same frame, named by the role's name in the trail; deleting a
+  role returns here). *Website connections* (`…/settings/connections`) lists them with their on/off switch; *Add a
+  connection* opens a dialog with the kind as three cards (site rebuild, CDN clear, site check, each in a line), the
+  name and the address. *New token* opens the token form in a dialog; the secret is still shown once, on the page.
+  The empty state carries a list's one button and the header carries it once there is something in the list, so it
+  is never offered twice. A page is in the panel only for roles that can use it (Roles for anyone in Settings);
+  opened by address, it says why it's empty. The old `…/settings#website-connections` (the first-run checklist and a
+  receipt's *Open website connections* used it) opens the connections page; both now link there, and search (⌘K)
+  offers *Roles* and *Website connections*. Tests: `tests/server/settings.spec.ts`; deliveries, site, permissions,
+  roles, tokens, activity, words and the journey's phone pass drive the new pages.
 - D-076 in the Studio: **rate limits**. The one fetch layer (`send` in `lib/api.ts`) reads a 429 `rate_limited` and
   its `Retry-After` (`retryAfterMs`: seconds or a date, a second if neither, at most a minute). A read waits that long
   and goes once more, then fails with the wait (TanStack Query doesn't retry it again); a write isn't resent there, so
@@ -334,7 +352,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 | Publishing | One of five labels (below), plus the delivery-receipt timeline. Since D-060, an approved changeset's page has a Schedule panel (`SchedulePanel.svelte`): a date, a time and a time zone (the person's own first); a time the clocks show twice or skip shows both moments, with their zone abbreviations, and schedules the one picked; a pending schedule shows when it publishes (there and here), who set it, and can be cancelled; past ones say published on time, published late, not published and why, or cancelled. Releases lists scheduled ones, then recent outcomes, and reads the new release when one publishes |
 | History | Who changed what, human or agent attribution, revision comparison, restore as a new revision |
 | Time travel | A release slider: view the site or an entry as it was at generation N; roll back as a new release |
-| Developer area | Schemas, destinations, machine credentials. Since step 3.6 (D-054, D-055) the content-type builder (`TypeBuilder.svelte`): rename the type and its fields, add fields of every type, change limits and requiredness, remove fields; the server decides what is safe, and a refusal lists the entries in the way with links. Field ids and types and the title field are fixed once saved. Slug fields get a "From title" suggestion in the editor (`slugify`, matching the server's rule). Since D-079 the builder is its own item of the main navigation, *Content types* (`/studio/projects/{project}/settings/types`), for roles that may change content types; see "The content-type builder" above |
+| Developer area | Schemas, destinations, machine credentials. Since step 3.6 (D-054, D-055) the content-type builder (`TypeBuilder.svelte`): rename the type and its fields, add fields of every type, change limits and requiredness, remove fields; the server decides what is safe, and a refusal lists the entries in the way with links. Field ids and types and the title field are fixed once saved. Slug fields get a "From title" suggestion in the editor (`slugify`, matching the server's rule). Since D-079 the builder is its own item of the main navigation, *Content types* (`/studio/projects/{project}/settings/types`), for roles that may change content types; see "The content-type builder" above. Since D-081 the rest of Settings is a left panel of pages (General, Roles, Website connections, API tokens, Activity); see "Settings, laid out like the builder" above |
 | AI panel (optional, P5) | Suggest, improve or draft; shows sources, unsupported claims and the diff; accept or reject |
 
 ### Publishing labels (spec §05)

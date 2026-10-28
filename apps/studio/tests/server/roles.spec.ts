@@ -18,6 +18,10 @@ test('a page reads your role from the project, not from your list of projects', 
 
 	await page.goto(`/studio/projects/${project}/members`);
 	await expect(page.getByLabel('Role of Dev Owner')).toHaveValue('owner');
-	await page.goto(`/studio/projects/${project}/settings`);
+	await page.goto(`/studio/projects/${project}/settings/connections`);
+	await page.getByRole('button', { name: 'Add a connection' }).click();
 	await expect(page.getByLabel('Connection name')).toBeVisible();
+	await page.keyboard.press('Escape');
+	await page.goto(`/studio/projects/${project}/settings/roles`);
+	await expect(page.getByRole('button', { name: 'New role' })).toBeVisible();
 });
