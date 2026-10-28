@@ -9,19 +9,19 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { createQuery, keepPreviousData } from '@tanstack/svelte-query';
+	import { createInfiniteQuery, createQuery, keepPreviousData } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import * as InputGroup from '@colophon/ui/ui/input-group';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
-	import { ApiError, createEntry, type EntryState, entryState, getContentType, may, newKey } from '#lib/api.ts';
+	import { ApiError, createEntry, type EntryState, entryState, getContentType, may, newKey, searchEntries } from '#lib/api.ts';
 	import { type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
 	import { plainError } from '#lib/errors.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
 	import { oneOf } from '#lib/firstRun.ts';
-	import { ago, entriesQuery, projectQuery } from '#lib/queries.ts';
+	import { ago, projectQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -41,11 +41,20 @@
 		const timer = setTimeout(() => (q = next.trim()), 200);
 		return () => clearTimeout(timer);
 	});
-	const entries = createQuery(() => ({ ...entriesQuery(project, collection, q), placeholderData: keepPreviousData }));
+	// Pages of 100, newest first, followed with the server's cursor when someone asks for more. Keyed
+	// under the collection's entries, so saving and publishing refresh it.
+	const entries = createInfiniteQuery(() => ({
+		queryKey: ['entries', project, collection, q, 'pages'],
+		queryFn: ({ pageParam }: { pageParam: string | null }) => searchEntries(project, collection, q, pageParam),
+		initialPageParam: null as string | null,
+		getNextPageParam: (last: { next_cursor: string | null }) => last.next_cursor,
+		placeholderData: keepPreviousData
+	}));
+	const loaded = $derived((entries.data?.pages ?? []).flatMap((one) => one.data));
 	let filter = $state<'all' | EntryState>('all');
-	const rows = $derived((entries.data?.data ?? []).filter((entry) => filter === 'all' || entryState(entry) === filter));
+	const rows = $derived(loaded.filter((entry) => filter === 'all' || entryState(entry) === filter));
 	const tally = $derived(
-		(entries.data?.data ?? []).reduce<Record<EntryState, number>>(
+		loaded.reduce<Record<EntryState, number>>(
 			(counts, entry) => {
 				counts[entryState(entry)] += 1;
 				return counts;
@@ -147,7 +156,7 @@
 		<Skeleton class="h-48 w-full rounded-xl" />
 	{:else if entries.isError}
 		<Problem error={entries.error} what={type.data.definition.name} retry={() => entries.refetch()} />
-	{:else if entries.data.data.length === 0 && q === ''}
+	{:else if loaded.length === 0 && q === ''}
 		<EmptyState icon={FileTextIcon} title="No {type.data.definition.name.toLowerCase()} yet" testid="entries-empty">
 			Write the first {oneOf(type.data.definition.name)}. Nobody outside the project sees it until it is published.
 			{#snippet action()}
@@ -191,8 +200,14 @@
 				</Table.Body>
 			</Table.Root>
 		</div>
-		{#if entries.data.next_cursor !== null}
-			<p class="mt-3 text-sm text-muted-foreground">Showing the newest 100. Search to find older entries.</p>
+		{#if entries.hasNextPage || entries.isFetchingNextPage || entries.isFetchNextPageError}
+			<div class="mt-3 flex flex-wrap items-center gap-3">
+				<p class="text-sm text-muted-foreground" data-testid="entries-shown">Showing the newest {loaded.length.toLocaleString()}.</p>
+				<Button variant="outline" size="sm" onclick={() => entries.fetchNextPage()} disabled={entries.isFetchingNextPage} data-testid="load-more">
+					{entries.isFetchingNextPage ? 'Loading more…' : 'Load more'}
+				</Button>
+				{#if entries.isFetchNextPageError}<p role="alert" class="text-sm text-destructive">Couldn't load more. Try again.</p>{/if}
+			</div>
 		{/if}
 	{/if}
 

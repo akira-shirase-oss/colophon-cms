@@ -105,6 +105,11 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     approve them) and their own still in progress (`created_by`/`submitted_by`), upcoming and blocked schedules with
     why, and the last three releases with their labels; then, with several projects, every project. A list row whose
     title the role can't read (or that has none) says "No title to show". Test: `tests/server/mywork.spec.ts`.
+  - **The editor, finished for P3**: *Unpublish* in one click beside *Publish* (a request whose one item takes the live
+    version down, sent, approved and published like publishing; *Ask to unpublish* when the role can't approve), undone
+    by publishing again; *Restore this version* in History (its fields become the draft and are saved as a new
+    version on top, so nothing is lost; locked fields keep their values); and *Load more* on a collection, following
+    the server's cursor 100 at a time. Test: `tests/server/entry-actions.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

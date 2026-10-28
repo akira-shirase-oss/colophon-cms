@@ -59,7 +59,8 @@
 
 	type Outcome =
 		| { kind: 'published'; generation: number }
-		| { kind: 'requested'; request: string }
+		| { kind: 'unpublished'; generation: number }
+		| { kind: 'requested'; request: string; unpublish: boolean }
 		| { kind: 'stopped'; message: string; request: string | null };
 	let step = $state('');
 	let outcome = $state<Outcome | null>(null);
@@ -75,32 +76,37 @@
 		]);
 	}
 
-	async function go() {
+	/** Publishes the saved version, or with `unpublish`, takes the live one down: the same path,
+	 *  a request whose one item unpublishes (D-049). Publishing it again puts it back. */
+	async function go(unpublish = false) {
 		outcome = null;
 		let request: string | null = null;
 		try {
-			step = `Making a ${PUBLISH_REQUEST}…`;
-			let made = await createChangeset(project, title || 'Untitled', [entry], [], requestKey);
+			step = unpublish ? 'Taking it down…' : `Making a ${PUBLISH_REQUEST}…`;
+			const named = title || 'Untitled';
+			let made = unpublish
+				? await createChangeset(project, `Unpublish: ${named}`, [], [entry], requestKey)
+				: await createChangeset(project, named, [entry], [], requestKey);
 			request = made.id;
 			if (made.status.state === 'open') {
 				step = 'Sending it for review…';
 				made = await changesetAction(project, made.id, made.hash, 'submit');
 			}
 			if (!oneClick) {
-				outcome = { kind: 'requested', request: made.id };
+				outcome = { kind: 'requested', request: made.id, unpublish };
 				return;
 			}
 			if (made.status.state === 'awaiting_review') {
 				step = 'Approving it…';
 				made = await changesetAction(project, made.id, made.hash, 'reviews', {
 					decision: 'approve',
-					comment: 'Approved and published from the editor in one step.'
+					comment: unpublish ? 'Approved and unpublished from the editor in one step.' : 'Approved and published from the editor in one step.'
 				});
 			}
 			step = 'Publishing…';
 			const base = seenGeneration ?? (await listReleases(project)).generation;
 			const published = await publishChangeset(project, made.id, made.hash, base, publishKey);
-			outcome = { kind: 'published', generation: published.generation };
+			outcome = { kind: unpublish ? 'unpublished' : 'published', generation: published.generation };
 		} catch (failure) {
 			const reason = failure instanceof ApiError ? failure.reason : null;
 			const message =
@@ -108,7 +114,7 @@
 					? 'Another release went live while you were publishing. Your request is approved and waiting: look at what is live now, then publish it from the request.'
 					: reason === 'stale_changeset'
 						? 'The entry changed while it was being published. Open the request to update it to the latest version.'
-						: plainError(failure, oneClick ? 'publish this' : 'ask for review here');
+						: plainError(failure, oneClick ? (unpublish ? 'unpublish this' : 'publish this') : 'ask for review here');
 			outcome = { kind: 'stopped', message, request };
 		} finally {
 			step = '';
@@ -132,7 +138,7 @@
 	{:else if outcome?.kind === 'published' || outcome?.kind === 'requested'}
 		<!-- Said below; pressing again would only make a second request. -->
 	{:else if oneClick || asks}
-		<Button class="w-full" onclick={go} disabled={!saved || step !== ''} data-testid="publish-button">
+		<Button class="w-full" onclick={() => go()} disabled={!saved || step !== ''} data-testid="publish-button">
 			{step !== '' ? step : oneClick ? (standing === 'changed' ? 'Publish changes' : 'Publish') : 'Ask for review'}
 		</Button>
 		<p class="text-xs text-muted-foreground">
@@ -148,7 +154,20 @@
 		<p class="text-xs text-muted-foreground">Your role can't publish or ask for review here.</p>
 	{/if}
 
-	{#if outcome?.kind === 'published'}
+	{#if (standing !== 'draft' || outcome?.kind === 'published') && outcome?.kind !== 'unpublished' && outcome?.kind !== 'requested' && (oneClick || asks)}
+		<!-- Taking it down is the same path in reverse, and undone by publishing again (D-059, rule 6). -->
+		<Button class="w-full" variant="outline" onclick={() => go(true)} disabled={step !== ''} data-testid="unpublish-button">
+			{oneClick ? 'Unpublish' : 'Ask to unpublish'}
+		</Button>
+	{/if}
+
+	{#if outcome?.kind === 'unpublished'}
+		<p role="status" class="rounded-lg bg-pending-soft px-3 py-2 text-sm text-pending-ink" data-testid="publish-outcome">
+			Taken down in <a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(outcome.generation) })}
+				>{releaseName(outcome.generation)}</a
+			>. Readers no longer get it; publish it again to put it back.
+		</p>
+	{:else if outcome?.kind === 'published'}
 		<p role="status" class="rounded-lg bg-live-soft px-3 py-2 text-sm text-live-ink" data-testid="publish-outcome">
 			Live as <a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(outcome.generation) })}
 				>{releaseName(outcome.generation)}</a
@@ -156,7 +175,7 @@
 		</p>
 	{:else if outcome?.kind === 'requested'}
 		<p role="status" class="rounded-lg bg-pending-soft px-3 py-2 text-sm text-pending-ink" data-testid="publish-outcome">
-			Sent for review.
+			{outcome.unpublish ? 'Asked to take it down.' : 'Sent for review.'}
 			<a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: outcome.request })}
 				>See the {PUBLISH_REQUEST}</a
 			>

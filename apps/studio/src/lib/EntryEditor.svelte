@@ -27,6 +27,7 @@
 		type Summary
 	} from './api.ts';
 	import { compare } from './diff.ts';
+	import { plainError } from './errors.ts';
 	import DiffView from './DiffView.svelte';
 	import PublishEntry from './PublishEntry.svelte';
 	import { ago, projectQuery, releasesQuery } from './queries.ts';
@@ -164,6 +165,41 @@
 		published === null ? 'draft' : published.revision_id === latest.revision.id && saver.status === 'saved' ? 'live' : 'changed'
 	);
 	let tab = $state<'content' | 'history'>('content');
+
+	// Restoring a version (spec's History screen): its fields become the draft and are saved as a new
+	// version on top of the current one, so nothing in the history is lost and the restore itself can
+	// be undone by restoring again. Fields the role may not change keep their current values; hidden
+	// ones are never sent, so the server keeps them.
+	const restores = $derived(locked.length < visible.length);
+	let restoring = $state<string | null>(null);
+	let restoreNote = $state<{ kind: 'done' | 'failed'; text: string } | null>(null);
+	async function restore(revision: { id: string; created_at: string }) {
+		restoring = revision.id;
+		restoreNote = null;
+		try {
+			const old = await queryClient.fetchQuery({
+				queryKey: ['revision', project, collection, entry, revision.id],
+				queryFn: () => getRevision(project, collection, entry, revision.id),
+				staleTime: Infinity
+			});
+			const now = current();
+			const next: Content = {};
+			for (const field of visible) {
+				const value = locked.includes(field.id) ? now[field.id] : old.content[field.id];
+				if (value !== undefined) next[field.id] = value;
+			}
+			show(next);
+			saver.edit(current());
+			saver.saveNow();
+			comparing = null;
+			tab = 'content';
+			restoreNote = { kind: 'done', text: `Restored the version saved ${ago(revision.created_at)}, as a new version. The newer ones stay in the history.` };
+		} catch (failure) {
+			restoreNote = { kind: 'failed', text: `Not restored. ${plainError(failure, 'change this entry')}` };
+		} finally {
+			restoring = null;
+		}
+	}
 	// The revision being compared with this draft, and what it held.
 	let comparing = $state<string | null>(null);
 	const compared = createQuery(() => ({
@@ -287,6 +323,16 @@
 			{/each}
 		</div>
 
+		{#if restoreNote}
+			<p
+				role={restoreNote.kind === 'failed' ? 'alert' : 'status'}
+				class="mb-4 rounded-lg px-4 py-3 text-sm {restoreNote.kind === 'failed' ? 'bg-attention-soft text-attention-ink' : 'bg-live-soft text-live-ink'}"
+				data-testid="restore-note"
+			>
+				{restoreNote.text}
+			</p>
+		{/if}
+
 		<div role="tabpanel" id="panel-content" aria-labelledby="tab-content" hidden={tab !== 'content'}>
 			{#if hidden.size > 0 || locked.length > 0}
 				<p class="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="role-limits">
@@ -323,6 +369,17 @@
 									<Button variant="ghost" size="xs" onclick={() => (comparing = comparing === revision.id ? null : revision.id)}>
 										{comparing === revision.id ? 'Hide' : 'Compare with draft'}
 									</Button>
+									{#if restores}
+										<Button
+											variant="outline"
+											size="xs"
+											disabled={restoring !== null || saver.status !== 'saved'}
+											title={saver.status !== 'saved' ? 'Wait until your changes are saved' : undefined}
+											onclick={() => restore(revision)}
+										>
+											{restoring === revision.id ? 'Restoring…' : 'Restore this version'}
+										</Button>
+									{/if}
 								{/if}
 							</div>
 							{#if comparing === revision.id}
