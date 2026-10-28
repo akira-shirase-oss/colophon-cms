@@ -32,7 +32,12 @@ export type Action =
 	| 'members.manage'
 	| 'roles.manage'
 	| 'destinations.manage'
-	| 'tokens.manage';
+	| 'tokens.manage'
+	| 'audit.read';
+
+/** Actions only people hold: no API token may (step R.4), so a leaked token can't change who has
+ *  access or read the record of it. */
+export const PEOPLE_ONLY: Action[] = ['members.manage', 'roles.manage', 'tokens.manage', 'audit.read'];
 
 /** One permission: an action, on `*` or one collection. */
 export interface Grant {

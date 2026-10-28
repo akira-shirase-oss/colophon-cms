@@ -128,6 +128,10 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     manage them. Releases says failures the same way and shows schedule and delivery load errors. A published
     request's "release N" opens that release's receipt. A retry button per delivery waits for the API's retry (B5).
     Test: `tests/server/deliveries.spec.ts` (a webhook answering 404).
+- Step R.4 in the Studio (API tokens and the audit log; the API is in [api](04-api.md)):
+  - **The role editor** names the new `audit.read` as *See the activity log*, and *Manage API tokens* says what it
+    means. Its grid is now `PermissionGrid.svelte`, with the words in `lib/permissions.ts`, shared with custom API
+    tokens and the activity log's sentences. Test: `tests/server/permissions.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

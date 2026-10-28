@@ -66,7 +66,8 @@ const DOES: Record<Action, string> = {
 	'members.manage': 'manage members',
 	'roles.manage': 'change roles',
 	'destinations.manage': `manage ${WEBSITE_CONNECTIONS}`,
-	'tokens.manage': 'manage tokens'
+	'tokens.manage': 'manage API tokens',
+	'audit.read': 'see the activity log'
 };
 
 /** The server's message as a sentence, if it has no internal words; else `fallback`. */
