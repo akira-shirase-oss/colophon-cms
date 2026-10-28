@@ -247,6 +247,10 @@ colophon export --env production --out export-directory
 4. **P5:** scoped machine credentials, `--jsonl`, `content import`, `export`, `content get --generation`,
    `release history`.
 5. **P6:** `init`, `migrate plan|apply`, `admin`.
+6. **V (D-062):** `--version` with commit and build date, the server version check, and the install paths: npm,
+   the install script, Homebrew and `cargo install --git` (built; publishing waits on the maintainer, module
+   [19](19-oss.md)). Still to come: `cargo install colophon-cli` from crates.io, and `doctor` reporting the server's
+   version.
 
 ## Open decisions
 

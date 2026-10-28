@@ -108,7 +108,7 @@ evidence".
   formula `colophon.rb` (rendered from the archives' checksums), writes one `SHA256SUMS` (22 files: two archives and
   two SBOMs per target, the script and the formula) and checks it. Then it serves the release directory over HTTP
   on `127.0.0.1`, runs `install.sh` against it and checks the installed `colophon --version` reports this release
-  and commit, and runs the formula's test.
+  and commit, and checks the formula (`scripts/test-homebrew-formula.sh`, `ruby -c`).
 - **release** (tag runs only): `actions/attest-build-provenance` signs SLSA build provenance for every file in
   `SHA256SUMS`, then `gh release create --draft` attaches them all (marked pre-release for a pre-release version).
   The maintainer checks the draft and publishes it by hand ("artifacts are verified before announcement"). Users
@@ -122,8 +122,9 @@ evidence".
   `--access public`, under the dist-tag `next` for a pre-release (`latest` otherwise); a package version already on
   npm is skipped, so a rerun after a partial failure finishes the job. Nothing is ever published from a laptop.
 - Every third-party action is pinned to a full commit SHA, as in `ci.yml`. Known gaps: the Studio's static files are
-  not in the server archive yet (the container images, still to build, will carry them); the musl server uses musl's
-  allocator, which is slower than glibc's under load, and its throughput has not been measured.
+  not in the server archive yet (the container images, still to build, will carry them); the Linux server is a musl
+  build, whose allocator is often reported slower than glibc's for threaded servers, and its throughput has not been
+  measured.
 
 ### Releases (spec §35)
 - Semantic versioning.
@@ -205,7 +206,13 @@ Roughly one working day in five is reserved for maintenance once users depend on
 ## Build order
 
 1. **P0:** licence decision path, README, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, CI security basics.
-2. **P6:** GOVERNANCE, CODEOWNERS, release workflow, SBOM, signing, support matrix.
+2. **V (D-062):** one version, the release workflow with checksums, SBOMs and signed provenance, and the install
+   paths (written; the workflow has not run in CI yet). Before the first tag the maintainer creates the npm
+   organization `colophon-cms` and the `npm` environment (required reviewers, `NPM_TOKEN`), adds `LICENSE` (O-014)
+   and `CHANGELOG.md`, runs the workflow once by hand as a dry run, then pushes `v0.1.0-alpha.1`, checks and publishes
+   the draft release, and approves the npm job. The Homebrew tap `akira-shirase-oss/homebrew-colophon` is theirs to
+   create too.
+3. **P6:** GOVERNANCE, CODEOWNERS, support matrix, container images, upgrade and rollback guide.
 
 ## Open decisions
 
