@@ -4,7 +4,7 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import EntryEditor from '#lib/EntryEditor.svelte';
 	import { getContentType, getEntry } from '#lib/api.ts';
-	import { ago, entriesQuery } from '#lib/queries.ts';
+	import { ago } from '#lib/queries.ts';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 
@@ -19,9 +19,13 @@
 		staleTime: Infinity,
 		refetchOnWindowFocus: false
 	}));
-	// What readers get now comes with the collection's list (the newest 100).
-	const list = createQuery(() => entriesQuery(project, collection));
-	const published = $derived(list.data?.data.find((summary) => summary.id === entry)?.published ?? null);
+	// What readers get now: the entry's own answer says (B1), however old it is. Keyed under the
+	// collection's entries, so saving and publishing, which refresh those, refresh this too.
+	const state = createQuery(() => ({
+		queryKey: ['entries', project, collection, 'state', entry],
+		queryFn: async () => (await getEntry(project, collection, entry)).draft.published ?? null
+	}));
+	const published = $derived(state.data !== undefined ? state.data : (draft.data?.draft.published ?? null));
 </script>
 
 <svelte:head><title>{draft.data?.draft.revision.title ?? 'Editing'} · Colophon Studio</title></svelte:head>

@@ -138,10 +138,15 @@ export interface Draft {
 	hidden_fields?: string[];
 	/** Fields the role can read but not change. */
 	locked_fields?: string[];
+	/** What readers get now, on a read: the live revision and its release, or null when not
+	 *  published. Create and save answers leave it out. */
+	published?: { revision_id: string; generation: number } | null;
 }
 
 export interface Summary {
 	id: string;
+	/** Who created it. */
+	created_by: string;
 	updated_at: string;
 	revision: Revision;
 	/** What readers get now, if published, and the release it went out in. */
@@ -217,6 +222,8 @@ export interface Details {
 	/** For a local time the clocks show twice or skip: the two instants to choose from, earlier
 	 *  first (D-060). */
 	candidates?: string[];
+	/** For a 403 `missing_permission`: the permission the role lacks, such as `content.publish`. */
+	permission?: string;
 }
 
 /** The session's CSRF token, which every cookie-authenticated write echoes. */
@@ -617,6 +624,9 @@ export interface ChangesetSummary {
 	title: string;
 	hash: string;
 	status: ChangesetStatus;
+	/** Who made it, and who sent it for review. */
+	created_by: string;
+	submitted_by: string | null;
 	items: number;
 	/** How many of its items unpublish. */
 	unpublish: number;

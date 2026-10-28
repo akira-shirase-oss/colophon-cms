@@ -88,8 +88,8 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     can't see this"), offers *Try again* when that can help, and keeps the server's words in Technical details.
     Test: `tests/server/honest.spec.ts`.
   - **Plain-words errors**: `lib/errors.ts` turns a failure into a title, what happened and what to do, by status and
-    `details.reason`; the few 409s that have no reason yet are matched by the server's phrase until B3 gives every
-    refusal a stable reason. Used by the publish request page, one-click publishing, scheduling, Members and new
+    `details.reason`, which the server gives every 403 and 409 (a missing permission also names it), never by the
+    server's wording. Used by the publish request page, one-click publishing, scheduling, Members and new
     entries. Tests in `tests/server/words.spec.ts`: a review refused because an entry was edited meanwhile (409) and a
     request refused because the role was narrowed meanwhile (403) both read without internal terms.
   - **Controls follow permissions**: *Ask for review* and *Update to the latest versions* need edit rights in every
@@ -97,6 +97,8 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     or someone who may publish it; Settings (sidebar and search) shows only to a role that can change something there
     (`SETTINGS_ACTIONS`: content types, website connections, roles, tokens), so Editors don't see it. Built-in Editors
     may read, create and update everywhere, so they still send and update requests. Test: `tests/server/controls.spec.ts`.
+  - The editor reads an entry's live state from the entry itself (`published` on a read), not from the collection's
+    newest 100, so an older entry no longer shows as Draft.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 
