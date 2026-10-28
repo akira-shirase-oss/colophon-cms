@@ -61,6 +61,10 @@ Every route `colophon-server` answers, from its router (`crates/colophon-api/src
 | [`POST {P}/content-types`](/reference/api/content-types/#post-pcontent-types) | `schema.change` (owners, developers) |
 | [`GET {P}/content-types/{slug}`](/reference/api/content-types/#get-pcontent-typesslug) | any member |
 | [`PUT {P}/content-types/{slug}`](/reference/api/content-types/#put-pcontent-typesslug) | `schema.change` (owners, developers) |
+| [`GET {P}/components`](/reference/api/components/#get-pcomponents) | any member |
+| [`POST {P}/components`](/reference/api/components/#post-pcomponents) | `schema.change` (owners, developers) |
+| [`GET {P}/components/{slug}`](/reference/api/components/#get-pcomponentsslug) | any member |
+| [`PUT {P}/components/{slug}`](/reference/api/components/#put-pcomponentsslug) | `schema.change` (owners, developers) |
 
 ## Entries and versions
 

@@ -117,6 +117,7 @@ export const SECTIONS: Section[] = [
 			md('/reference/api/roles/', 'Roles', 'Listing the roles in a project, and creating, changing and deleting the ones owners define, down to fields and own entries.', done('R.3')),
 			md('/reference/api/tokens/', 'API tokens and the audit log', 'Project API tokens for scripts and agents, the append-only audit log of who changed access, and what a caller may do here.', building('R.4')),
 			md('/reference/api/content-types/', 'Content types', 'Content type definitions, their field types, versions and the changes allowed against stored content.', done('3.6')),
+			md('/reference/api/components/', 'Components', 'Shared groups of fields that content types use, and changes that reach every type using one, or none.', building('M.4')),
 			md('/reference/api/entries/', 'Entries and versions', 'Creating, listing, searching and saving entries, their version history, and rich-text validation.', done('3.5')),
 			md('/reference/api/publish-requests/', 'Publish requests and reviews', 'Changesets: creating, submitting, refreshing, reviewing and publishing them.', done('2.2')),
 			md('/reference/api/releases/', 'Releases and receipts', 'The release list, the latest generation, and each release’s receipt with every observation.', done('3.3')),

@@ -251,6 +251,11 @@ From creating or saving an entry (the pointer is into the content) and from crea
 | `invalid_blocks` | definition | A page builder offering no kinds of block, or more than 20. <Status building="M.3" /> |
 | `duplicate_block` | definition | Two kinds of block with one name. <Status building="M.3" /> |
 | `invalid_pattern` | definition | A `pattern` that isn't 1 to 500 characters, doesn't compile in Rust `regex` syntax (look-around and back-references don't), or compiles too large; the pointer ends in `/pattern`. <Status building="M.4" /> |
+| `invalid_default` | definition | A `default` on a field that can't have one (only a top-level field that isn't unique and holds text, Markdown, a number, true or false, a choice, a date, a time, a date-time, an email, a URL or a colour), or one its own field would refuse. <Status building="M.4" /> |
+| `invalid_condition` | definition | A `when` that isn't on a top-level field, names a field that isn't a top-level yes-or-no or choice field that always applies, or lists a value that field can't hold. <Status building="M.4" /> |
+| `invalid_component` | definition | A `component` that isn't a slug, or a component that uses another component. <Status building="M.4" /> |
+| `unknown_component` | definition | A `component` that names no component in this environment. <Status building="M.4" /> |
+| `unexpanded_component` | definition | A stored definition holding a component field the server didn't replace with the component's fields; a bug, never a client's mistake. <Status building="M.4" /> |
 | `invalid_unique` | definition | `unique` on a field that can't be unique: anything but a top-level single-line text, email, URL, number, date, time or date-time field. <Status building="M.4" /> |
 
 A rich-text field's value can also be refused with any [rich-text code](#rich-text), its pointer starting at the field.
