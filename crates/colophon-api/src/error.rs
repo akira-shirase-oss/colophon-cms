@@ -126,6 +126,10 @@ pub struct ErrorDetails {
     /// How many entries are in the way in all, when `entries` may list only some.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<u64>,
+    /// The instants a request must choose between (`ambiguous_local_time`,
+    /// `skipped_local_time`), earlier first, as RFC 3339.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<String>,
 }
 
 impl ErrorDetails {
@@ -135,6 +139,7 @@ impl ErrorDetails {
             pointer: pointer.into(),
             entries: Vec::new(),
             total: None,
+            candidates: Vec::new(),
         }
     }
 }
@@ -299,6 +304,17 @@ pub enum ApiError {
     /// A content type change would make stored drafts or publications invalid (D-055). 422.
     #[error("{}", .0.message)]
     NeedsMigration(Box<InTheWay>),
+    /// A local time the clocks show twice or skip in its time zone: the request must say which of
+    /// the two instants it means (D-060). 422.
+    #[error("{message}")]
+    NeedsChoice {
+        /// `ambiguous_local_time` or `skipped_local_time`.
+        reason: &'static str,
+        /// What is wrong, for people.
+        message: String,
+        /// The two instants, earlier first, as RFC 3339.
+        candidates: [String; 2],
+    },
     /// A field of the request body was refused.
     #[error("{message}")]
     InvalidField {
@@ -388,6 +404,7 @@ impl ApiError {
             Self::InvalidRichText(_)
             | Self::Invalid(_)
             | Self::InvalidField { .. }
+            | Self::NeedsChoice { .. }
             | Self::NeedsMigration(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::InvalidHeader(_) => StatusCode::BAD_REQUEST,
             Self::PreconditionRequired(_) => StatusCode::PRECONDITION_REQUIRED,
@@ -418,6 +435,7 @@ impl ApiError {
             Self::InvalidRichText(_)
             | Self::Invalid(_)
             | Self::InvalidField { .. }
+            | Self::NeedsChoice { .. }
             | Self::NeedsMigration(_) => ErrorCode::ValidationFailed,
             Self::PreconditionRequired(_) => ErrorCode::PreconditionRequired,
             Self::Unauthorized => ErrorCode::Unauthorized,
@@ -459,6 +477,12 @@ impl ApiError {
             Self::InvalidField {
                 reason, pointer, ..
             } => Some(ErrorDetails::new(reason, *pointer)),
+            Self::NeedsChoice {
+                reason, candidates, ..
+            } => Some(ErrorDetails {
+                candidates: candidates.to_vec(),
+                ..ErrorDetails::new(reason, "/local_time")
+            }),
             Self::SlugTaken(way) | Self::NeedsMigration(way) => Some(ErrorDetails {
                 entries: way.entries.clone(),
                 total: way.total,

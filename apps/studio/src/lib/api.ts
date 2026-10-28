@@ -187,6 +187,9 @@ export interface Details {
 	pointer?: string;
 	entries?: EntryInTheWay[];
 	total?: number;
+	/** For a local time the clocks show twice or skip: the two instants to choose from, earlier
+	 *  first (D-060). */
+	candidates?: string[];
 }
 
 /** The session's CSRF token, which every cookie-authenticated write echoes. */
@@ -687,6 +690,56 @@ export async function publishChangeset(
 	const path = `${changesets(project)}/${id}/publish`;
 	const response = await send('POST', path, { base_generation: baseGeneration }, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key });
 	return ((await response.json()) as { data: { generation: number; entries_changed: number; entries_unpublished: number } }).data;
+}
+
+/** A scheduled publish (D-060): what its author chose, the instant that resolves to, and how it
+ *  went. */
+export interface Schedule {
+	id: string;
+	changeset_id: string;
+	title: string;
+	changeset_hash: string;
+	/** As chosen: `2026-11-03T09:00:00`, in `time_zone`. */
+	local_time: string;
+	time_zone: string;
+	choice?: 'earlier' | 'later';
+	run_at: string;
+	state: 'scheduled' | 'published' | 'blocked' | 'cancelled';
+	reason?: string;
+	generation?: number;
+	started_at?: string;
+	finished_at?: string;
+	/** It started more than a minute late, and says so. */
+	delayed: boolean;
+	scheduled_by: string;
+	scheduled_by_name?: string;
+	created_at: string;
+}
+
+export interface ScheduleRequest {
+	local_time: string;
+	time_zone: string;
+	choice?: 'earlier' | 'later';
+}
+
+const schedules = (project: string) => `${base(project)}/schedules`;
+
+/** Schedules an approved changeset at the version on screen; refused with `candidates` when the
+ *  local time needs a choice. */
+export async function scheduleChangeset(project: string, id: string, hash: string, request: ScheduleRequest): Promise<Schedule> {
+	const response = await send('POST', `${changesets(project)}/${id}/schedule`, request, { 'If-Match': `"${hash}"` });
+	return ((await response.json()) as { data: Schedule }).data;
+}
+
+/** The environment's schedules, pending first; or one changeset's. */
+export async function listSchedules(project: string, changeset?: string): Promise<Schedule[]> {
+	const query = changeset === undefined ? '' : `?changeset=${encodeURIComponent(changeset)}`;
+	return ((await (await send('GET', `${schedules(project)}${query}`)).json()) as { data: Schedule[] }).data;
+}
+
+/** Cancels a pending schedule; one that already ran stays as it went. */
+export async function cancelSchedule(project: string, id: string): Promise<Schedule> {
+	return ((await (await send('DELETE', `${schedules(project)}/${id}`)).json()) as { data: Schedule }).data;
 }
 
 /** Where a project's releases are announced (D-046). */

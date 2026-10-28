@@ -16,6 +16,7 @@
 		{ href: resolve('/device'), label: 'Device sign-in' },
 		{ href: resolve('/members'), label: 'Members' },
 		{ href: resolve('/roles'), label: 'Roles' },
+		{ href: resolve('/schedules'), label: 'Schedules' },
 		{ href: resolve('/changesets'), label: 'Changesets' },
 		{ href: resolve('/releases'), label: 'Releases' },
 		{ href: resolve('/deliveries'), label: 'Deliveries' },

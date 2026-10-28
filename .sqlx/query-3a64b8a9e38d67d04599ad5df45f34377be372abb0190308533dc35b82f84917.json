@@ -1,0 +1,54 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT changeset_id, changeset_hash, run_at FROM schedules\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND state = 'scheduled'\n         FOR UPDATE SKIP LOCKED",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "changeset_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "changeset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "changeset_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "changeset_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "run_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "run_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3a64b8a9e38d67d04599ad5df45f34377be372abb0190308533dc35b82f84917"
+}

@@ -17,8 +17,10 @@ pub mod identity;
 pub mod jobs;
 pub mod members;
 pub mod projects;
+pub mod publish;
 pub mod releases;
 pub mod roles;
+pub mod schedules;
 pub mod scope;
 
 use std::{str::FromStr, time::Duration};

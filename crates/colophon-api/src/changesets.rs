@@ -25,15 +25,14 @@ use axum::{
     response::Response,
 };
 use colophon_db::{
-    DbError,
     changesets::{self, Head, Pin},
-    content_types,
     idempotency::{self, Claim},
-    releases::{self, Committed},
+    publish::{self, Base, Refusal},
+    releases,
     scope::ProjectTransaction,
 };
 use colophon_domain::{
-    changeset::{self, Decision, Facts, Kind, Status},
+    changeset::{self, Decision, Kind, Status},
     policy::Action,
 };
 use serde::{Deserialize, Serialize};
@@ -222,37 +221,9 @@ pub(crate) struct SummaryView {
     updated_at: String,
 }
 
-fn unix(at: OffsetDateTime) -> i64 {
-    at.unix_timestamp()
-}
-
 /// The domain's decision for `head`, from its reviews on its current hash (newest first).
 fn decide(head: &Head, edited: usize, reviews: &[colophon_db::changesets::Review]) -> Status {
-    let hash = hex(&head.hash);
-    let reviews: Vec<changeset::Review> = reviews
-        .iter()
-        .filter(|review| review.changeset_hash == head.hash)
-        .filter_map(|review| {
-            Some(changeset::Review {
-                reviewer: review.reviewer_id.to_string(),
-                decision: Decision::parse(&review.decision)?,
-                hash: hash.clone(),
-                seq: i64::from(review.seq),
-                at: unix(review.created_at),
-            })
-        })
-        .collect();
-    let submitter = head.submitted_by.map(|id| id.to_string());
-    changeset::status(&Facts {
-        hash: &hash,
-        submitted_by: submitter.as_deref(),
-        stale_items: edited,
-        reviews: &reviews,
-        now: unix(OffsetDateTime::now_utc()),
-        // Projects can't require a different reviewer yet; the rule is in place for when they can.
-        require_different_reviewer: false,
-        published: head.published,
-    })
+    publish::status(head, edited, reviews, OffsetDateTime::now_utc())
 }
 
 /// Names the approver or requester by display name where the database knows it.
@@ -340,7 +311,7 @@ fn body(view: &ChangesetView) -> Result<String, ApiError> {
 }
 
 /// The hash in `If-Match`, as `sha256:<hex>`.
-fn if_match(headers: &HeaderMap) -> Result<String, ApiError> {
+pub(crate) fn if_match(headers: &HeaderMap) -> Result<String, ApiError> {
     let value = headers.get(header::IF_MATCH).ok_or(ApiError::PreconditionRequired(
         "this needs an If-Match header with the changeset's ETag, so you act on what you looked at",
     ))?;
@@ -706,7 +677,7 @@ pub(crate) struct PublishedView {
 }
 
 /// Refuses to publish anything but an approved changeset, saying what it needs instead.
-fn publishable(status: &Status) -> Result<(), ApiError> {
+pub(crate) fn publishable(status: &Status) -> Result<(), ApiError> {
     match status {
         Status::Approved { .. } => Ok(()),
         Status::Published { .. } => Err(ApiError::Conflict(
@@ -724,22 +695,36 @@ fn publishable(status: &Status) -> Result<(), ApiError> {
     }
 }
 
-/// Takes the content-type lock of every collection in `changeset`, shared and in order, before its
-/// items are read: no content type there changes between reading them and committing, so what goes
-/// live is what was a draft when any change checked the collection (D-055).
-async fn lock_collections(
-    tx: &mut ProjectTransaction,
-    changeset: Uuid,
-) -> Result<Vec<String>, ApiError> {
-    let collections = changesets::collections(tx, changeset)
-        .await
-        .map_err(ApiError::from_db)?;
-    for collection in &collections {
-        content_types::lock_for_write(tx, collection)
-            .await
-            .map_err(ApiError::from_db)?;
+/// The bytes of a `sha256:<hex>` `ETag`; anything else is no hash at all, which matches nothing.
+pub(crate) fn hash_bytes(etag: &str) -> Vec<u8> {
+    etag.strip_prefix("sha256:")
+        .and_then(|hex| {
+            (0..hex.len())
+                .step_by(2)
+                .map(|at| u8::from_str_radix(hex.get(at..at + 2)?, 16).ok())
+                .collect::<Option<Vec<u8>>>()
+        })
+        .unwrap_or_default()
+}
+
+/// What the API answers when publishing refused (D-045).
+fn refused(refusal: Refusal) -> ApiError {
+    match refusal {
+        Refusal::NotFound => ApiError::NotFound,
+        Refusal::HashMoved { current } => ApiError::StaleChangeset {
+            current: content_hash(&current),
+        },
+        Refusal::NotPermitted => ApiError::Forbidden("your role can't publish this content"),
+        Refusal::NotPublishable(status) => publishable(&status).err().unwrap_or_else(|| {
+            ApiError::internal(std::io::Error::other("a publishable changeset was refused"))
+        }),
+        Refusal::GenerationMoved { current } => ApiError::GenerationMoved { current },
+        Refusal::SlugTaken => ApiError::slug_taken(
+            "",
+            "an entry in this changeset has a slug that another entry still publishes; publish that entry's new slug first, or in the same changeset",
+            None,
+        ),
     }
-    Ok(collections)
 }
 
 /// `POST {P}/changesets/{changeset}/publish`: commits the approved changeset as the release after
@@ -779,65 +764,31 @@ pub(crate) async fn publish(
             return Ok(json(status, response, None, true));
         }
     }
-    let head = locked(&mut tx, &path.changeset, &expected).await?;
-    let collections = lock_collections(&mut tx, head.id).await?;
-    require_in(
-        &tx,
-        Action::ContentPublish,
-        collections.iter().map(String::as_str),
-        "your role can't publish this content",
-    )?;
-    let items = changesets::items(&mut tx, head.id)
-        .await
-        .map_err(ApiError::from_db)?;
-    let reviews = changesets::reviews(&mut tx, head.id, Some(&head.hash))
-        .await
-        .map_err(ApiError::from_db)?;
-    let edited = items.iter().filter(|item| item.moved()).count();
-    publishable(&decide(&head, edited, &reviews))?;
-    // Approved means the newest decision on this hash is an approval: the one it publishes under.
-    let approval = reviews
-        .first()
-        .ok_or_else(|| ApiError::internal(std::io::Error::other("approved without a review")))?;
-    let committed = releases::commit(
+    let id = Uuid::try_parse(&path.changeset).map_err(|_| ApiError::NotFound)?;
+    let published = publish::publish(
         &mut tx,
-        new.base_generation,
-        head.id,
-        &head.hash,
-        approval.id,
+        id,
+        Some(&hash_bytes(&expected)),
+        Base::Seen(new.base_generation),
+        OffsetDateTime::now_utc(),
         std::time::Duration::from_secs(colophon_domain::job::LIFETIME_SECS.unsigned_abs()),
     )
     .await
-    .map_err(|error| match error {
-        DbError::SlugTaken => ApiError::slug_taken(
-            "",
-            "an entry in this changeset has a slug that another entry still publishes; publish that entry's new slug first, or in the same changeset",
-            None,
-        ),
-        other => ApiError::from_db(other),
-    })?;
-    let (generation, epoch, changed, unpublished) = match committed {
-        Committed::Done {
-            generation,
-            epoch,
-            changed,
-            unpublished,
-        } => (generation, epoch, changed, unpublished),
-        Committed::Moved { current } => return Err(ApiError::GenerationMoved { current }),
-        // Checked above under the changeset's lock; the transaction is dropped, not committed.
-        Committed::Unmatched => {
-            return Err(ApiError::internal(std::io::Error::other(
-                "an entry to unpublish no longer publishes its pinned revision",
-            )));
-        }
-    };
-    tracing::info!(project = %tx.project, generation, changeset = %head.id, "release committed");
+    .map_err(ApiError::from_db)?
+    .map_err(refused)?;
+    let (generation, epoch, changed, unpublished) = (
+        published.generation,
+        published.epoch,
+        published.changed,
+        published.unpublished,
+    );
+    tracing::info!(project = %tx.project, generation, changeset = %id, "release committed");
     let text = serde_json::to_string(&Data {
         data: PublishedView {
             generation,
             epoch,
-            changeset_id: head.id,
-            changeset_hash: content_hash(&head.hash),
+            changeset_id: id,
+            changeset_hash: content_hash(&published.hash),
             entries_changed: changed,
             entries_unpublished: unpublished,
         },

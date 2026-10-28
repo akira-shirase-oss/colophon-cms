@@ -1,0 +1,210 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id, s.changeset_id, c.title, s.changeset_hash, s.local_time, s.time_zone,\n                  s.choice, s.run_at, s.state, s.reason, s.generation, s.started_at, s.finished_at,\n                  s.scheduled_by, i.display_name AS scheduled_by_name, s.created_at\n           FROM schedules s\n           JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id\n                            AND c.id = s.changeset_id\n           JOIN identities i ON i.id = s.scheduled_by\n           WHERE s.project_id = $1 AND s.environment_id = $2 AND s.id = $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "changeset_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "changeset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "changesets",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "changeset_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "changeset_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "local_time",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "local_time"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "time_zone",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "time_zone"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "choice",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "choice"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "run_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "run_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "generation",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "generation"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "started_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "finished_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "finished_at"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "scheduled_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "scheduled_by"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "scheduled_by_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "identities",
+            "name": "display_name"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "5cf8b44f5652253fcda60f23478bb654cc54f1fb47d4b61528147ea3d5547572"
+}

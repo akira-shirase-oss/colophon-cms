@@ -1,0 +1,132 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "(SELECT s.id AS \"id!\", s.changeset_id AS \"changeset_id!\", c.title AS \"title!\",\n                   s.changeset_hash AS \"changeset_hash!\", s.local_time AS \"local_time!\",\n                   s.time_zone AS \"time_zone!\", s.choice, s.run_at AS \"run_at!\", s.state AS \"state!\",\n                   s.reason, s.generation, s.started_at, s.finished_at,\n                   s.scheduled_by AS \"scheduled_by!\", i.display_name AS scheduled_by_name,\n                   s.created_at AS \"created_at!\"\n            FROM schedules s\n            JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id\n                             AND c.id = s.changeset_id\n            JOIN identities i ON i.id = s.scheduled_by\n            WHERE s.project_id = $1 AND s.environment_id = $2 AND s.state = 'scheduled'\n              AND ($3::uuid IS NULL OR s.changeset_id = $3)\n            ORDER BY s.run_at, s.id\n            LIMIT $4)\n           UNION ALL\n           (SELECT s.id, s.changeset_id, c.title, s.changeset_hash, s.local_time, s.time_zone,\n                   s.choice, s.run_at, s.state, s.reason, s.generation, s.started_at,\n                   s.finished_at, s.scheduled_by, i.display_name, s.created_at\n            FROM schedules s\n            JOIN changesets c ON c.project_id = s.project_id AND c.environment_id = s.environment_id\n                             AND c.id = s.changeset_id\n            JOIN identities i ON i.id = s.scheduled_by\n            WHERE s.project_id = $1 AND s.environment_id = $2 AND s.state <> 'scheduled'\n              AND ($3::uuid IS NULL OR s.changeset_id = $3)\n            ORDER BY s.finished_at DESC, s.id\n            LIMIT $5)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "changeset_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "title!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "changeset_hash!",
+        "type_info": "Bytea",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "local_time!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "time_zone!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "choice",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "run_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "state!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "reason",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 10,
+        "name": "generation",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "started_at",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 12,
+        "name": "finished_at",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 13,
+        "name": "scheduled_by!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 14,
+        "name": "scheduled_by_name",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "b246768a985e071e12a28bb102451cbd07f874d66768f6db9c80747137c43aea"
+}
