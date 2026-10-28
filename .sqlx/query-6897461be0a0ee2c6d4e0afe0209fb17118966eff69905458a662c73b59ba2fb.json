@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO role_permissions (project_id, role_key, action, subject)\n         SELECT $1, $2, action, subject FROM unnest($3::text[], $4::text[]) AS t (action, subject)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6897461be0a0ee2c6d4e0afe0209fb17118966eff69905458a662c73b59ba2fb"
+}

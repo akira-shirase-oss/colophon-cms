@@ -1,7 +1,7 @@
 <!--
   One content type in the builder (D-054, D-055): its fields, what can change, and, when the
-  server refuses a change, the entries in the way. Owners and developers edit; everyone else
-  reads.
+  server refuses a change, the entries in the way. People whose role changes content types edit;
+  everyone else reads.
 -->
 <script lang="ts">
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
@@ -10,7 +10,7 @@
 	import { createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
-	import { getContentType } from '#lib/api.ts';
+	import { getContentType, may } from '#lib/api.ts';
 	import { projectQuery } from '#lib/queries.ts';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -19,7 +19,7 @@
 	const project = $derived(page.params.project ?? '');
 	const slug = $derived(page.params.type ?? '');
 	const mine = createQuery(() => projectQuery(project));
-	const editable = $derived(mine.data?.role === 'owner' || mine.data?.role === 'developer');
+	const editable = $derived(may(mine.data, 'schema.change', slug));
 	const type = createQuery(() => ({ queryKey: ['type', project, slug], queryFn: () => getContentType(project, slug) }));
 </script>
 
@@ -35,7 +35,7 @@
 		{#if type.data}
 			<span>Version {type.data.version}</span>
 			<span>In addresses as <code class="font-mono">{type.data.slug}</code></span>
-			{#if !editable}<span>Only owners and developers can change it.</span>{/if}
+			{#if !editable}<span>Your role can't change it.</span>{/if}
 		{/if}
 	{/snippet}
 </PageHeader>

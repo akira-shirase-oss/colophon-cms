@@ -163,7 +163,7 @@ recorded crash loop).
 roles; every route has a denial test; field and condition tests for create, update, read and publish; a token can do
 exactly what its permission set allows; a load scenario with custom roles shows the evaluator costs no regression.
 
-**Steps:** R.1 roles as data, behaviour unchanged (done) · R.2 custom roles and the Studio's role editor · R.3 field-level
+**Steps:** R.1 roles as data, behaviour unchanged (done) · R.2 custom roles and the Studio's role editor (done) · R.3 field-level
 permissions and `own` conditions · R.4 API tokens and the audit log.
 
 ## M: Content modelling parity

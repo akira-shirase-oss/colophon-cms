@@ -46,7 +46,6 @@
 		}
 	}
 
-	const ROLE_WORD = { owner: 'Owner', developer: 'Developer', editor: 'Editor', publisher: 'Publisher' } as const;
 </script>
 
 <svelte:head><title>Projects · Colophon Studio</title></svelte:head>
@@ -87,7 +86,7 @@
 							<span class="text-xs text-muted-foreground">{project.slug}</span>
 						</span>
 						<span class="mt-auto flex items-center justify-between text-sm text-muted-foreground">
-							{ROLE_WORD[project.role]}
+							{project.role_name}
 							<ArrowRightIcon class="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
 						</span>
 					</a>

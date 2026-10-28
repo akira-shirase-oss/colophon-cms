@@ -1,7 +1,8 @@
 <!--
-  A project's settings: what it is and where its content can be read, and, for owners and
-  developers, the destinations every release is announced to (D-046, D-050, D-051): webhooks that
-  rebuild sites, CDNs to purge, and probes that check what readers actually get.
+  A project's settings: what it is and where its content can be read, its content types, its
+  roles (D-058), and, for people whose role manages them, the destinations every release is
+  announced to (D-046, D-050, D-051): webhooks that rebuild sites, CDNs to purge, and probes that
+  check what readers actually get. Each section asks the role for its own permission.
 -->
 <script lang="ts">
 	import CopyIcon from '@lucide/svelte/icons/copy';
@@ -17,13 +18,15 @@
 		ApiError,
 		createContentType,
 		createDestination,
+		createRole,
 		deliveryUrl,
 		type Destination,
+		may,
 		newKey,
 		setDestinationEnabled
 	} from '#lib/api.ts';
 	import { slugify } from '#lib/content.ts';
-	import { destinationsQuery, projectQuery, typesQuery } from '#lib/queries.ts';
+	import { destinationsQuery, projectQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
 	import FormRow from '#lib/shell/FormRow.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -32,9 +35,42 @@
 	const queryClient = useQueryClient();
 	// The role comes from the project itself: me().projects lists at most 1,000 projects.
 	const mine = createQuery(() => projectQuery(project));
-	const manages = $derived(mine.data?.role === 'owner' || mine.data?.role === 'developer');
-	const destinations = createQuery(() => ({ ...destinationsQuery(project), enabled: manages }));
+	const changesTypes = $derived(may(mine.data, 'schema.change'));
+	const managesDestinations = $derived(may(mine.data, 'destinations.manage'));
+	const managesRoles = $derived(may(mine.data, 'roles.manage'));
+	const destinations = createQuery(() => ({ ...destinationsQuery(project), enabled: managesDestinations }));
 	const types = createQuery(() => typesQuery(project));
+	const roles = createQuery(() => rolesQuery(project));
+
+	// A new role: a name, and the key memberships use, suggested from it. It starts with no
+	// permissions; the role's page sets them.
+	let roleName = $state('');
+	let roleKey = $state('');
+	let roleKeyTouched = $state(false);
+	let roleError = $state('');
+	let roleBusy = $state(false);
+	const suggestedKey = $derived(
+		slugify(roleName)
+			.replace(/^[^a-z]+/, '')
+			.slice(0, 63)
+	);
+	const effectiveKey = $derived(roleKeyTouched ? roleKey : suggestedKey);
+
+	async function addRole(event: SubmitEvent) {
+		event.preventDefault();
+		roleBusy = true;
+		roleError = '';
+		try {
+			const created = await createRole(project, effectiveKey, { name: roleName.trim(), description: '', permissions: [] });
+			await queryClient.invalidateQueries({ queryKey: ['roles', project] });
+			toast.success(`Created ${created.name}`);
+			await goto(resolve('/projects/[project]/settings/roles/[role]', { project, role: created.key }));
+		} catch (failure) {
+			roleError = failure instanceof ApiError ? failure.message : String(failure);
+		} finally {
+			roleBusy = false;
+		}
+	}
 
 	// A new content type: a name, the URL name its entries live under, and a title field to start.
 	let typeName = $state('');
@@ -171,13 +207,13 @@
 									{item.definition.fields.length} field{item.definition.fields.length === 1 ? '' : 's'} · version {item.version}
 								</span>
 							</span>
-							<span class="text-sm text-muted-foreground">{manages ? 'Edit' : 'View'}</span>
+							<span class="text-sm text-muted-foreground">{may(mine.data, 'schema.change', item.slug) ? 'Edit' : 'View'}</span>
 						</a>
 					</li>
 				{/each}
 			</ul>
 		{/if}
-		{#if manages}
+		{#if changesTypes}
 			<form onsubmit={addType} aria-label="New content type">
 				<h3 class="mb-4 text-sm font-semibold">Add a content type</h3>
 				<FormRow label="Name" hint="For example Pages, Authors or Recipes." for="type-name">
@@ -204,15 +240,68 @@
 		{/if}
 	</section>
 
+	<section class="mt-12 max-w-4xl" aria-labelledby="roles-title">
+		<h2 id="roles-title" class="mb-1 text-base font-semibold">Roles</h2>
+		<p class="mb-4 text-sm text-muted-foreground">
+			What each person in the project may do. Owners can always do everything; other roles can be changed, and you can make your own.
+		</p>
+		{#if roles.isError}
+			<Problem error={roles.error} />
+		{:else if roles.data}
+			<ul class="mb-6 overflow-hidden rounded-xl border border-border bg-card" data-testid="roles">
+				{#each roles.data as item (item.key)}
+					<li class="rule-dotted last:border-b-0">
+						<a class="flex items-center gap-4 px-4 py-3 hover:bg-accent" href={resolve('/projects/[project]/settings/roles/[role]', { project, role: item.key })}>
+							<span class="min-w-0 flex-1">
+								<span class="flex items-center gap-2">
+									<strong class="font-medium">{item.name}</strong>
+									{#if item.built_in}<Badge variant="secondary">Built in</Badge>{/if}
+								</span>
+								{#if item.description}<span class="block truncate text-xs text-muted-foreground">{item.description}</span>{/if}
+							</span>
+							<span class="text-sm whitespace-nowrap text-muted-foreground">{item.members} {item.members === 1 ? 'person' : 'people'}</span>
+							<span class="text-sm text-muted-foreground">{managesRoles && !item.fixed ? 'Edit' : 'View'}</span>
+						</a>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		{#if managesRoles}
+			<form onsubmit={addRole} aria-label="New role">
+				<h3 class="mb-4 text-sm font-semibold">Make a role</h3>
+				<FormRow label="Name" hint="For example Copy desk, Translator or Guest writer." for="role-name">
+					<Input id="role-name" class="max-w-md" bind:value={roleName} required maxlength={100} />
+				</FormRow>
+				<FormRow label="Short name" hint="Lowercase letters, digits and hyphens; used by the API. It can't change later." for="role-key">
+					<Input
+						id="role-key"
+						class="max-w-md font-mono"
+						value={effectiveKey}
+						oninput={(event) => {
+							roleKeyTouched = true;
+							roleKey = event.currentTarget.value;
+						}}
+						required
+						maxlength={63}
+					/>
+				</FormRow>
+				{#if roleError}<p role="alert" class="mb-4 text-sm text-destructive">{roleError}</p>{/if}
+				<div class="flex justify-end">
+					<Button type="submit" disabled={roleBusy || roleName.trim() === '' || effectiveKey === ''}>Create and choose what it may do</Button>
+				</div>
+			</form>
+		{/if}
+	</section>
+
 	<section class="mt-12 max-w-4xl" aria-label="Destinations">
 		<h2 class="mb-1 text-base font-semibold">Destinations</h2>
 		<p class="mb-4 text-sm text-muted-foreground">
 			Every release is announced to each enabled webhook, once, with a key it can use to drop repeats. Each enabled CDN is asked to purge what
 			the release changed, and each probe checks that the website really shows it.
 		</p>
-		{#if !manages}
+		{#if !managesDestinations}
 			<p class="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="destinations-hidden">
-				Only owners and developers see destinations: their addresses may carry secrets.
+				Your role doesn't manage destinations, so they stay hidden: their addresses may carry secrets.
 			</p>
 		{:else}
 			{#if destinations.data}

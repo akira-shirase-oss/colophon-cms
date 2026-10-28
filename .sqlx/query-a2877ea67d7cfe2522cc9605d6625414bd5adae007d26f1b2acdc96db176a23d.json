@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.key, r.key = m.role AS \"held!\",\n                  coalesce(p.actions, '{}') AS \"actions!\",\n                  coalesce(p.subjects, '{}') AS \"subjects!\",\n                  coalesce(p.fields, '{}') AS \"fields!: Vec<Option<String>>\",\n                  coalesce(p.conditions, '{}') AS \"conditions!: Vec<Option<String>>\"\n           FROM memberships m\n           JOIN roles r ON r.project_id = m.project_id AND (r.key = m.role OR r.key = $3)\n           LEFT JOIN LATERAL (\n               SELECT array_agg(action ORDER BY action, subject) AS actions,\n                      array_agg(subject ORDER BY action, subject) AS subjects,\n                      array_agg(array_to_string(fields, ',') ORDER BY action, subject) AS fields,\n                      array_agg(condition ORDER BY action, subject) AS conditions\n               FROM role_permissions\n               WHERE project_id = r.project_id AND role_key = r.key\n           ) p ON true\n           WHERE m.project_id = $1 AND m.identity_id = $2\n           FOR SHARE OF m",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "roles",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "held!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "actions!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "subjects!",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "fields!: Vec<Option<String>>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "conditions!: Vec<Option<String>>",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "a2877ea67d7cfe2522cc9605d6625414bd5adae007d26f1b2acdc96db176a23d"
+}

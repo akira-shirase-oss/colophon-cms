@@ -7,6 +7,7 @@ import {
 	listContentTypes,
 	listDestinations,
 	listReleases,
+	listRoles,
 	me,
 	searchEntries
 } from './api.ts';
@@ -16,6 +17,7 @@ export const typesQuery = (project: string) => ({ queryKey: ['types', project], 
 export const meQuery = () => ({ queryKey: ['me'], queryFn: me });
 export const changesetsQuery = (project: string) => ({ queryKey: ['changesets', project], queryFn: () => listChangesets(project) });
 export const releasesQuery = (project: string) => ({ queryKey: ['releases', project], queryFn: () => listReleases(project) });
+export const rolesQuery = (project: string) => ({ queryKey: ['roles', project], queryFn: () => listRoles(project) });
 export const destinationsQuery = (project: string) => ({ queryKey: ['destinations', project], queryFn: () => listDestinations(project) });
 /** One collection's newest entries, or those whose title matches `q`. */
 export const entriesQuery = (project: string, collection: string, q = '') => ({

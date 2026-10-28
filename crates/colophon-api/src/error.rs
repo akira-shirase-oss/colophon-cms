@@ -272,6 +272,23 @@ pub enum ApiError {
         /// The environment's generation now.
         current: i64,
     },
+    /// A role change named a version that is no longer current. The response's `ETag` names the
+    /// current one (D-058).
+    #[error("the role has changed since that version; load it again and check what changed")]
+    StaleRole {
+        /// Its version now.
+        current: i32,
+    },
+    /// A role that members hold, or that pending invitations offer, can't be deleted (D-058).
+    #[error(
+        "{members} member(s) hold this role and {invitations} pending invitation(s) offer it: give them another role, or revoke the invitations, first"
+    )]
+    RoleInUse {
+        /// Members who hold it.
+        members: i64,
+        /// Pending invitations that offer it.
+        invitations: i64,
+    },
     /// An `Idempotency-Key` was used before for a different request.
     #[error("this Idempotency-Key was already used for a different request")]
     IdempotencyKeyReused,
@@ -381,6 +398,8 @@ impl ApiError {
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
             | Self::GenerationMoved { .. }
+            | Self::StaleRole { .. }
+            | Self::RoleInUse { .. }
             | Self::IdempotencyKeyReused
             | Self::SlugTaken(_) => StatusCode::CONFLICT,
             Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
@@ -410,6 +429,8 @@ impl ApiError {
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
             | Self::GenerationMoved { .. }
+            | Self::StaleRole { .. }
+            | Self::RoleInUse { .. }
             | Self::IdempotencyKeyReused
             | Self::SlugTaken(_) => ErrorCode::Conflict,
             Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
@@ -432,6 +453,8 @@ impl ApiError {
             Self::StaleVersion { .. } => Some(ErrorDetails::new("stale_version", "")),
             Self::StaleChangeset { .. } => Some(ErrorDetails::new("stale_changeset", "")),
             Self::GenerationMoved { .. } => Some(ErrorDetails::new("generation_moved", "")),
+            Self::StaleRole { .. } => Some(ErrorDetails::new("stale_role", "")),
+            Self::RoleInUse { .. } => Some(ErrorDetails::new("role_in_use", "")),
             Self::IdempotencyKeyReused => Some(ErrorDetails::new("idempotency_key_reused", "")),
             Self::InvalidField {
                 reason, pointer, ..
@@ -505,7 +528,7 @@ impl IntoResponse for ApiError {
                     response.headers_mut().insert(header::ETAG, etag);
                 }
             }
-            Self::StaleVersion { current } => {
+            Self::StaleVersion { current } | Self::StaleRole { current } => {
                 if let Ok(etag) = HeaderValue::from_str(&format!("\"v{current}\"")) {
                     response.headers_mut().insert(header::ETAG, etag);
                 }

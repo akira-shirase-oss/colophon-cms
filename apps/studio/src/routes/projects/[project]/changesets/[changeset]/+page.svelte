@@ -15,7 +15,7 @@
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Textarea } from '@colophon/ui/ui/textarea';
-	import { ApiError, type Changeset, changesetAction, getChangeset, newKey, publishChangeset } from '#lib/api.ts';
+	import { ApiError, type Changeset, changesetAction, getChangeset, may, newKey, publishChangeset } from '#lib/api.ts';
 	import ItemDiff from '#lib/ItemDiff.svelte';
 	import { ago, projectQuery, releasesQuery } from '#lib/queries.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
@@ -26,10 +26,12 @@
 	const id = $derived(page.params.changeset ?? '');
 	const queryClient = useQueryClient();
 	const set = createQuery(() => ({ queryKey: ['changeset', project, id], queryFn: () => getChangeset(project, id) }));
-	// The role comes from the project itself: me().projects lists at most 1,000 projects.
+	// The role comes from the project itself: me().projects lists at most 1,000 projects. Reviewing
+	// and publishing need the permission in every collection the changeset touches (D-058).
 	const mine = createQuery(() => projectQuery(project));
-	const role = $derived(mine.data?.role);
-	const reviewer = $derived(role === 'owner' || role === 'publisher');
+	const collections = $derived([...new Set((set.data?.items ?? []).map((item) => item.collection))]);
+	const reviewer = $derived(collections.every((collection) => may(mine.data, 'content.review', collection)));
+	const publisher = $derived(collections.every((collection) => may(mine.data, 'content.publish', collection)));
 	// Publishing names the release it follows: the latest one this page has seen.
 	const releases = createQuery(() => releasesQuery(project));
 	// One key per publish attempt: pressing Publish again after a lost answer is safe.
@@ -141,7 +143,7 @@
 				<Button onclick={() => act(shown, 'refresh')} disabled={busy}>Refresh to the current versions</Button>
 			{:else if shown.status.state === 'open'}
 				<Button onclick={() => act(shown, 'submit')} disabled={busy}>Submit for review</Button>
-			{:else if shown.status.state === 'approved' && reviewer}
+			{:else if shown.status.state === 'approved' && publisher}
 				<Button onclick={() => publish(shown)} disabled={busy || releases.data === undefined}>Publish</Button>
 			{/if}
 		{/snippet}
