@@ -10,6 +10,7 @@
 	import MailIcon from '@lucide/svelte/icons/mail';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
@@ -64,6 +65,11 @@
 	<Problem error={who.error} />
 {:else if who.data === null}
 	<div class="mx-auto max-w-md py-16 text-center">
+		{#if page.url.searchParams.get('signed-out') === '1'}
+			<p role="status" class="mb-8 rounded-xl border border-border bg-card px-4 py-3 text-sm text-pretty" data-testid="signed-out-note">
+				You're signed out of Colophon. On a shared computer, close the browser too: the sign-in page may still remember you.
+			</p>
+		{/if}
 		<h1 class="text-3xl font-semibold tracking-tight">Welcome to Colophon</h1>
 		<p class="mt-3 text-muted-foreground" data-testid="signed-out">Write, review and publish your website's content, and see what reached your readers.</p>
 		<div class="mt-8 flex flex-wrap justify-center gap-3">

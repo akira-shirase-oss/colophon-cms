@@ -74,6 +74,12 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   with the draft. A changeset shows, for every item, what changes for readers: a word-level comparison from the live
   revision to the pinned one (new entries are all additions; unpublishing shows what goes). Destinations moved to
   `…/settings`.
+- Finishing the Studio (branch `studio/dashboard`, 2026-10-27), slice by slice:
+  - **Sign out from any screen** (`shell/AccountMenu.svelte`, in the project shell's header and the plain frame's):
+    who is signed in, *Your work and projects*, and *Sign out*, which calls `POST /auth/logout` and only then
+    reloads at the front door with a note that says so. If the server can't be reached it says you're still signed
+    in. The identity provider's own session is not ended (no RP-initiated logout yet), so the note tells people on
+    a shared computer to close the browser. Test: `tests/server/signout.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 
@@ -219,7 +225,7 @@ Internal job terminology stays behind a technical detail drawer for developers.
 1. **P0:** the Tiptap spike (custom blocks, paste, image placeholder, undo/redo, serialization). Built in step 0.4:
    `packages/editor` and `apps/studio`; documents open only if they survive the editor byte for byte (D-022).
 2. **P1:** content list, editor, autosave, conflict screen (step 1.3, done: D-037, D-038); entries of any content
-   type (step 1.5, done). Sign-out and a content-type designer (today definitions are written as JSON through the API
+   type (step 1.5, done). Sign-out (done, see above) and a content-type designer (today definitions are written as JSON through the API
    and the testbed) come next; the formatting toolbar and search arrived in step 3.5.
 3. **P2:** review and publish.
 4. **P3:** publishing labels and the receipt timeline. Step 3.3 (D-051): each release on the Releases page shows its

@@ -293,6 +293,17 @@ export async function me(): Promise<Me | null> {
 	}
 }
 
+/** Ends this browser's session (`POST /auth/logout`, CSRF-checked). Already signed out counts as
+ *  done: the outcome the person asked for holds either way. */
+export async function signOut(): Promise<void> {
+	try {
+		await send('POST', '/auth/logout');
+	} catch (error) {
+		if (error instanceof ApiError && error.failure === 'signed-out') return;
+		throw error;
+	}
+}
+
 /**
  * One project the signed-in person belongs to, with their role in it. Pages read the role from
  * here, not from `me().projects`, which lists at most 1,000 projects.

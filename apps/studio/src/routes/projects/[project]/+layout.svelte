@@ -20,6 +20,7 @@
 	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 	import * as Sidebar from '@colophon/ui/ui/sidebar';
 	import { ago, changesetsQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
+	import AccountMenu from '#lib/shell/AccountMenu.svelte';
 	import AppearanceMenu from '#lib/shell/AppearanceMenu.svelte';
 	import CollectionCount from '#lib/shell/CollectionCount.svelte';
 	import CommandPalette from '#lib/shell/CommandPalette.svelte';
@@ -262,6 +263,7 @@
 					<SearchIcon />Search entries…<kbd class="ml-auto font-sans text-[0.6875rem]">⌘K</kbd>
 				</Button>
 				<AppearanceMenu />
+				<AccountMenu />
 			</div>
 		</header>
 		{#key page.url.pathname}
