@@ -2,6 +2,8 @@
   The entry editor (steps 1.3, 1.5 and 3.5): every field of the entry's content type as a row,
   rich text with its toolbar, autosave with a status anyone can read, and, when someone else
   saved first, a choice instead of an overwrite. History compares any revision with this draft.
+  Beside the fields (D-081): one status line, the save state, Publish, and, closed until asked,
+  Technical details with where readers get it and what they get.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
@@ -321,6 +323,13 @@
 		}
 	});
 
+	/** "Save now" is offered only when there is something to save: changes waiting (still shown,
+	 *  disabled, while they're on their way, so it doesn't blink during an autosave), or a save that
+	 *  failed and may go if tried again. Saved, a conflict and held content don't offer it. */
+	const offersSave = $derived(
+		saver.status === 'unsaved' || saver.status === 'saving' || saver.status === 'retrying' || saver.status === 'refused' || saver.status === 'signed-out'
+	);
+
 	onMount(() => {
 		const local = kept(project, entry);
 		show(local === null ? initial.draft.content : saver.restore(local, initial.draft));
@@ -509,29 +518,6 @@
 			</section>
 		{/if}
 
-		{#if published !== null}
-			<!-- Where readers get it (the public read, no sign-in): the published version, not the draft. -->
-			{@const address = `${window.location.origin}${deliveryUrl(project, collection)}/${entry}`}
-			<section class="mt-8" aria-labelledby="public-address-heading" data-testid="public-address">
-				<h2 id="public-address-heading" class="mb-1 text-sm font-semibold">Where readers get it</h2>
-				<p class="mb-3 text-xs text-muted-foreground">
-					Anyone can read the published version at this address, without signing in{standing === 'changed'
-						? `: the one live in ${releaseName(published.generation)}, not your newer changes`
-						: ''}.
-				</p>
-				<div class="flex min-w-0 items-center gap-1 rounded-xl border border-border bg-card px-4 py-2.5 text-sm">
-					<a class="min-w-0 flex-1 truncate font-mono text-xs underline underline-offset-2" href={address} target="_blank" rel="noreferrer"
-						>{address}<ArrowUpRightIcon class="ml-0.5 inline size-3" aria-hidden="true" /></a
-					>
-					<Button variant="ghost" size="icon-xs" aria-label="Copy the public address" onclick={() => copyAddress(address)}><CopyIcon /></Button>
-				</div>
-				<Button class="mt-3" variant="outline" size="sm" onclick={() => (readerView = true)} data-testid="see-what-readers-get"
-					><EyeIcon data-icon="inline-start" />See what readers get</Button
-				>
-				<ReaderView bind:open={readerView} {project} {collection} {entry} changed={standing === 'changed'} />
-			</section>
-		{/if}
-
 		<div role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== 'history'}>
 			{#if revisions.data}
 				<ol data-testid="history" class="relative space-y-1 border-l border-dotted border-border pl-6">
@@ -581,59 +567,74 @@
 	</div>
 
 	<!--
-	  Saving and publishing: a card beside the fields on wide screens; below xl, a bar that stays at
-	  the bottom of the screen while the fields scroll, so Publish never sits under a long body
-	  (D-059, rule 7). The details and Technical details are on the wide card only.
+	  Saving and publishing (D-081): a card beside the fields on wide screens; below xl, a bar that
+	  stays at the bottom of the screen while the fields scroll, with the entry's status and Publish
+	  on one row, so Publish never sits under a long body (D-059, rule 7). The details (when it was
+	  made, and Technical details) close the card on wide screens and follow the fields on a phone:
+	  below xl the card's box is left out (`contents`), so the bar sticks within the whole page.
 	-->
-	<aside
-		class="sticky bottom-0 z-20 -mx-5 border-t border-border bg-background/95 px-5 py-3 backdrop-blur sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10 xl:top-20 xl:bottom-auto xl:mx-0 xl:self-start xl:border-t-0 xl:bg-transparent xl:p-0 xl:backdrop-blur-none"
-		aria-label="Saving and publishing"
-		data-testid="entry-actions"
-	>
-		<div class="grid gap-x-6 gap-y-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,18rem)] sm:items-center xl:block xl:rounded-xl xl:border xl:border-border xl:bg-card xl:p-4 xl:shadow-xs">
-			<div class="min-w-0">
-			<p class="flex items-start gap-2 text-sm font-medium" role="status" data-testid="save-status" data-status={saver.status}>
-				{#if saver.status === 'saved'}
-					<CloudCheckIcon class="pop mt-0.5 size-4 shrink-0 text-live" aria-hidden="true" />
-				{:else if saver.status === 'saving'}
-					<LoaderIcon class="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
-				{:else if saver.status === 'unsaved'}
-					<span class="breathe mt-1.5 size-2 shrink-0 rounded-full bg-pending" aria-hidden="true"></span>
-				{:else}
-					<CloudAlertIcon class="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
+	<div class="min-w-0 max-xl:contents xl:sticky xl:top-20 xl:self-start xl:rounded-xl xl:border xl:border-border xl:bg-card xl:p-4 xl:shadow-xs" data-testid="entry-panel">
+		<aside
+			class="sticky bottom-0 z-20 -mx-5 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-t border-border bg-background/95 px-5 py-3 backdrop-blur sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10 xl:static xl:z-auto xl:m-0 xl:block xl:border-t-0 xl:bg-transparent xl:p-0 xl:backdrop-blur-none"
+			aria-label="Saving and publishing"
+			data-testid="entry-actions"
+		>
+			<div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 xl:block xl:space-y-2.5">
+				<!-- One line for where it stands with readers: a word with a mark, then, on wide screens, the sentence. -->
+				<p class="text-sm xl:leading-6" data-testid="entry-status">
+					<span class="inline-flex align-middle xl:mr-1.5 xl:align-[0.0625rem]"><StatusBadge state={standing} generation={published?.generation ?? null} /></span>
+					<span class="hidden xl:inline" data-testid="publish-state">
+						{#if published === null}
+							Readers can’t see it: it isn’t published.
+						{:else}
+							{@const release = resolve('/projects/[project]/releases/[generation]', { project, generation: String(published.generation) })}
+							{#if standing === 'live'}
+								Readers see this version, in <a class="underline underline-offset-2" href={release}>{releaseName(published.generation)}</a>.
+							{:else}
+								Readers see the version in <a class="underline underline-offset-2" href={release}>{releaseName(published.generation)}</a>, not your newer changes.
+							{/if}
+						{/if}
+					</span>
+				</p>
+				<div class="flex min-w-0 items-start justify-between gap-2">
+					<p class="flex min-w-0 items-start gap-2 text-sm font-medium" role="status" data-testid="save-status" data-status={saver.status}>
+						{#if saver.status === 'saved'}
+							<CloudCheckIcon class="pop mt-0.5 size-4 shrink-0 text-live" aria-hidden="true" />
+						{:else if saver.status === 'saving'}
+							<LoaderIcon class="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+						{:else if saver.status === 'unsaved'}
+							<span class="breathe mt-1.5 size-2 shrink-0 rounded-full bg-pending" aria-hidden="true"></span>
+						{:else}
+							<CloudAlertIcon class="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
+						{/if}
+						<span class:text-destructive={saver.status === 'conflict' || saver.status === 'refused' || saver.status === 'signed-out' || saver.status === 'held'}
+							>{label}{#if saver.status === 'saved'}<span class="ml-1 hidden font-normal text-muted-foreground xl:inline" title={new Date(latest.updated_at).toLocaleString()}
+									>{ago(latest.updated_at)}</span
+								>{/if}</span
+						>
+					</p>
+					<!-- Only when there is something to save: changes waiting, or a save that failed. -->
+					{#if offersSave}
+						<Button
+							class="hidden shrink-0 xl:inline-flex"
+							variant="outline"
+							size="xs"
+							onclick={() => saver.saveNow()}
+							disabled={saver.status === 'saving'}
+							title="Save now (⌘S)"
+							aria-keyshortcuts="Meta+S Control+S"
+							data-testid="save-now">Save now</Button
+						>
+					{/if}
+				</div>
+				{#if saver.message && saver.status !== 'refused' && saver.status !== 'conflict' && saver.status !== 'held'}
+					<p class="basis-full text-xs text-muted-foreground" data-testid="save-message">{saver.message}</p>
 				{/if}
-				<span class:text-destructive={saver.status === 'conflict' || saver.status === 'refused' || saver.status === 'signed-out' || saver.status === 'held'}>{label}</span>
-			</p>
-			{#if saver.message && saver.status !== 'refused' && saver.status !== 'conflict' && saver.status !== 'held'}
-				<p class="mt-2 text-xs text-muted-foreground" data-testid="save-message">{saver.message}</p>
-			{/if}
-			{#if saver.status === 'signed-out'}
-				<p class="mt-2 text-xs"><a class="underline" href={signInUrl(window.location.pathname)} data-sveltekit-reload>Sign in again</a> to save them.</p>
-			{/if}
+				{#if saver.status === 'signed-out'}
+					<p class="basis-full text-xs"><a class="underline" href={signInUrl(window.location.pathname)} data-sveltekit-reload>Sign in again</a> to save them.</p>
+				{/if}
 			</div>
-			<Button class="mt-3 hidden w-full xl:flex" variant="outline" size="sm" onclick={() => saver.saveNow()} disabled={saver.status === 'saved' || saver.status === 'conflict' || saver.status === 'held'}>
-				Save now <kbd class="ml-auto font-sans text-[0.6875rem] text-muted-foreground">⌘S</kbd>
-			</Button>
-
-			<dl class="mt-4 hidden space-y-2.5 border-t border-dotted border-border pt-4 text-sm xl:block">
-				<div class="flex items-center justify-between gap-2">
-					<dt class="text-muted-foreground">Status</dt>
-					<dd><StatusBadge state={standing} generation={published?.generation ?? null} /></dd>
-				</div>
-				<div class="flex items-center justify-between gap-2">
-					<dt class="text-muted-foreground">Live in</dt>
-					<dd class="tabular">{published ? releaseName(published.generation) : '—'}</dd>
-				</div>
-				<div class="flex items-center justify-between gap-2">
-					<dt class="text-muted-foreground">Saved</dt>
-					<dd title={new Date(latest.updated_at).toLocaleString()}>{ago(latest.updated_at)}</dd>
-				</div>
-				<div class="flex items-center justify-between gap-2">
-					<dt class="text-muted-foreground">Created</dt>
-					<dd>{new Date(latest.created_at).toLocaleDateString()}</dd>
-				</div>
-			</dl>
-			<div class="xl:mt-4 xl:border-t xl:border-dotted xl:border-border xl:pt-4">
+			<div class="max-xl:contents xl:mt-4 xl:border-t xl:border-dotted xl:border-border xl:pt-4">
 				<PublishEntry
 					{project}
 					{collection}
@@ -642,18 +643,45 @@
 					mine={mine.data}
 					{standing}
 					saved={saver.status === 'saved'}
-					generation={published?.generation ?? null}
 					seenGeneration={releases.data?.generation}
 					own={who.data != null && latest.created_by === who.data.id}
 					{linkedLive}
 				/>
 			</div>
-			<TechnicalDetails class="mt-4 hidden border-t border-dotted border-border pt-3 xl:block">
+		</aside>
+
+		<div class="min-w-0 text-xs text-muted-foreground xl:mt-4 xl:border-t xl:border-dotted xl:border-border xl:pt-3" data-testid="entry-details">
+			<p title={new Date(latest.created_at).toLocaleString()}>Created {new Date(latest.created_at).toLocaleDateString()}</p>
+			<TechnicalDetails class="mt-3">
+				{#if published !== null}
+					<!-- Where readers get it (the public read, no sign-in): the published version, not the draft. -->
+					{@const address = `${window.location.origin}${deliveryUrl(project, collection)}/${entry}`}
+					<section class="space-y-1.5 border-b border-dashed border-border pb-2.5" aria-labelledby="public-address-heading" data-testid="public-address">
+						<h2 id="public-address-heading" class="font-medium text-foreground">Where readers get it</h2>
+						<p>
+							Anyone can read the published version at this address, without signing in{standing === 'changed'
+								? `: the one live in ${releaseName(published.generation)}, not your newer changes`
+								: ''}.
+						</p>
+						<div class="flex min-w-0 items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1.5">
+							<a class="min-w-0 flex-1 truncate font-mono underline underline-offset-2" href={address} target="_blank" rel="noreferrer"
+								>{address}<ArrowUpRightIcon class="ml-0.5 inline size-3" aria-hidden="true" /></a
+							>
+							<Button variant="ghost" size="icon-xs" aria-label="Copy the public address" onclick={() => copyAddress(address)}><CopyIcon /></Button>
+						</div>
+						<Button variant="outline" size="xs" onclick={() => (readerView = true)} data-testid="see-what-readers-get"
+							><EyeIcon data-icon="inline-start" />See what readers get</Button
+						>
+					</section>
+				{/if}
 				<p>Entry <span class="font-mono break-all">{entry}</span> in collection <span class="font-mono">{collection}</span></p>
 				<p>Revision <span class="font-mono break-all">{latest.revision.id}</span></p>
 				<p>Content hash <span class="font-mono break-all">{latest.revision.content_hash}</span></p>
 				<p>Readers get an entry only through a changeset that is published as a release.</p>
 			</TechnicalDetails>
 		</div>
-	</aside>
+	</div>
+	{#if published !== null}
+		<ReaderView bind:open={readerView} {project} {collection} {entry} changed={standing === 'changed'} />
+	{/if}
 </div>

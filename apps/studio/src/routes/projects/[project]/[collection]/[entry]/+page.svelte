@@ -4,7 +4,6 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import EntryEditor from '#lib/EntryEditor.svelte';
 	import { getContentType, getEntry } from '#lib/api.ts';
-	import { ago } from '#lib/queries.ts';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 
@@ -42,11 +41,9 @@
 {:else if draft.isError || type.isError}
 	<Problem error={(draft.error ?? type.error) as Error} />
 {:else}
+	<!-- When it was saved is said once, beside the fields, where it stays current (D-081). -->
 	<PageHeader title={draft.data.draft.revision.title || 'Untitled'}>
 		{#snippet eyebrow()}{type.data.definition.name}{/snippet}
-		{#snippet meta()}
-			<span>Saved {ago(draft.data.draft.updated_at)}</span>
-		{/snippet}
 	</PageHeader>
 	{#key entry}
 		<EntryEditor {project} {collection} {entry} type={type.data} initial={draft.data} {published} {referencedBy} />

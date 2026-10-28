@@ -5,7 +5,9 @@
   as a self-review, and publishes it on the release this page has seen (D-045). Every step is the
   ordinary API call with its ordinary checks. If one is refused, it stops and says where things
   stand, with a link to the request; it never retries past a rule (another release first, a
-  changed entry).
+  changed entry). Where the entry stands is said once, by the editor's status line (D-081); this
+  says only what pressing does, and what happened. Below xl its parts join the editor's bottom bar
+  (`contents`): the buttons beside the status, a message on a row of its own.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -24,7 +26,6 @@
 		mine,
 		standing,
 		saved,
-		generation,
 		seenGeneration,
 		own = true,
 		linkedLive = []
@@ -38,8 +39,6 @@
 		standing: EntryState;
 		/** Whether the editor's content is saved: only a saved version can be published. */
 		saved: boolean;
-		/** The release this entry is live in, if it is. */
-		generation: number | null;
 		/** The newest release this page has seen: publishing goes on top of it, never past one unseen. */
 		seenGeneration: number | undefined;
 		/** Whether the caller created this entry, for permissions limited to one's own entries. */
@@ -87,23 +86,16 @@
 	}
 </script>
 
-<div class="space-y-2" data-testid="publish-entry">
+<div class="space-y-2 max-xl:contents" data-testid="publish-entry">
 	{#if mine === undefined}
 		<p class="text-xs text-muted-foreground">Checking what your role may do…</p>
-	{:else if standing === 'live' && saved && outcome === null}
-		<p class="text-sm" data-testid="publish-state">
-			Readers see this version{#if generation !== null}, in
-				<a class="underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(generation) })}
-					>{releaseName(generation)}</a
-				>{/if}.
-		</p>
 	{:else if !(oneClick || asks)}
 		<p class="text-xs text-muted-foreground">Your role can't publish or ask for review here.</p>
 	{/if}
 
 	{#if mine !== undefined && (oneClick || asks)}
 		<!-- Side by side in the phone's bar, stacked in the desktop card. -->
-		<div class="flex gap-2 xl:grid">
+		<div class="flex shrink-0 gap-2 xl:grid">
 			{#if !(standing === 'live' && saved && outcome === null) && outcome?.kind !== 'published' && outcome?.kind !== 'requested'}
 				<Button class="flex-1" onclick={() => go()} disabled={!saved || step !== ''} data-testid="publish-button">
 					{step !== '' ? step : oneClick ? (standing === 'changed' ? 'Publish changes' : 'Publish') : 'Ask for review'}
@@ -123,7 +115,8 @@
 			{/if}
 		</div>
 		{#if !(standing === 'live' && saved && outcome === null) && outcome === null}
-			<p class="text-xs text-muted-foreground {saved ? 'hidden xl:block' : ''}">
+			<!-- In the phone's bar the save status already says why it waits. -->
+			<p class="hidden text-xs text-muted-foreground xl:block">
 				{#if !saved}
 					Saving first…
 				{:else if oneClick}
@@ -142,26 +135,26 @@
 	{/if}
 
 	{#if outcome?.kind === 'unpublished'}
-		<p role="status" class="rounded-lg bg-pending-soft px-3 py-2 text-sm text-pending-ink" data-testid="publish-outcome">
+		<p role="status" class="rounded-lg bg-pending-soft px-3 py-2 max-xl:basis-full text-sm text-pending-ink" data-testid="publish-outcome">
 			Taken down in <a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(outcome.generation) })}
 				>{releaseName(outcome.generation)}</a
 			>. Readers no longer get it; publish it again to put it back.
 		</p>
 	{:else if outcome?.kind === 'published'}
-		<p role="status" class="rounded-lg bg-live-soft px-3 py-2 text-sm text-live-ink" data-testid="publish-outcome">
+		<p role="status" class="rounded-lg bg-live-soft px-3 py-2 max-xl:basis-full text-sm text-live-ink" data-testid="publish-outcome">
 			Live as <a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(outcome.generation) })}
 				>{releaseName(outcome.generation)}</a
 			>. Its receipt shows what reached your website.
 		</p>
 	{:else if outcome?.kind === 'requested'}
-		<p role="status" class="rounded-lg bg-pending-soft px-3 py-2 text-sm text-pending-ink" data-testid="publish-outcome">
+		<p role="status" class="rounded-lg bg-pending-soft px-3 py-2 max-xl:basis-full text-sm text-pending-ink" data-testid="publish-outcome">
 			{outcome.unpublish ? 'Asked to take it down.' : 'Sent for review.'}
 			<a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: outcome.request })}
 				>See the {PUBLISH_REQUEST}</a
 			>
 		</p>
 	{:else if outcome?.kind === 'stopped'}
-		<p role="alert" class="rounded-lg bg-attention-soft px-3 py-2 text-sm text-attention-ink" data-testid="publish-outcome">
+		<p role="alert" class="rounded-lg bg-attention-soft px-3 py-2 max-xl:basis-full text-sm text-attention-ink" data-testid="publish-outcome">
 			Not published: {outcome.message}
 			{#if outcome.request}
 				<a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: outcome.request })}

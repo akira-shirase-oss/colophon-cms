@@ -121,8 +121,9 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     title and takes the next free URL name, and opens the copy. One-click publishing lives in `lib/publishing.ts`,
     shared with the editor. Test: `tests/server/bulk.spec.ts`.
   - **Phone-friendly review** (closes ROADMAP 3.7's open item): below `xl` the editor's save status and Publish /
-    Unpublish are a bar that stays at the bottom of the screen while the fields scroll (the details and Technical
-    details stay on the wide card); below `lg` a publish request's Review panel comes first, so Approve is on the first
+    Unpublish are a bar that stays at the bottom of the screen while the fields scroll (since D-081 one row: the
+    entry's status word and save state on the left, Publish or Unpublish on the right; the details and Technical
+    details follow the fields); below `lg` a publish request's Review panel comes first, so Approve is on the first
     screen. `tests/server/journey.spec.ts` now opens every project screen at 390x844 (home, overview, a collection,
     the editor, publish requests, a request waiting for review, releases, a receipt, members, settings): no sideways
     scroll, axe in light and dark, plain words outside Settings, Publish and Approve in view without scrolling.
@@ -296,6 +297,20 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   receipt's *Open website connections* used it) opens the connections page; both now link there, and search (⌘K)
   offers *Roles* and *Website connections*. Tests: `tests/server/settings.spec.ts`; deliveries, site, permissions,
   roles, tokens, activity, words and the journey's phone pass drive the new pages.
+- **The entry page, tidied the same way** (D-081, 2026-10-28). The trail names the entry by its title (the editor's
+  own read, so no second request, and it follows a saved new title), not "Entry"; on a phone it shows the last two
+  crumbs, cut short if long. The side panel says where the entry stands in one line, a word with its mark and a
+  sentence: *Readers see this version, in Release N.*, *Readers see the version in Release N, not your newer
+  changes.* or *Readers can't see it: it isn't published.* (it used to say it twice: a *Live in* row and *Readers see
+  this version*). Under it, the save state with when it was saved (the page header no longer repeats it), and *Save
+  now* only while there are unsaved changes (shown, disabled, while they're on their way) or a save failed. Then
+  Publish or Unpublish, then when it was made and a closed *Technical details* holding *Where readers get it* (the
+  public address, to open or copy), *See what readers get*, and the ids. Below `xl` the panel's box is left out
+  (`display: contents`), so its bar sticks within the whole page: status and Publish on one row at the bottom, the
+  details after the fields. *Open on your site* isn't built: the API has no address for an entry on the website (a
+  site check's URL is one page, and a site's paths are its own), so it waits on a route that says where each content
+  type's entries live. Tests: `tests/server/entry-page.spec.ts`; `address.spec.ts` and `readers.spec.ts` open the
+  drawer first.
 - D-076 in the Studio: **rate limits**. The one fetch layer (`send` in `lib/api.ts`) reads a 429 `rate_limited` and
   its `Retry-After` (`retryAfterMs`: seconds or a date, a second if neither, at most a minute). A read waits that long
   and goes once more, then fails with the wait (TanStack Query doesn't retry it again); a write isn't resent there, so
@@ -373,7 +388,8 @@ Internal job terminology stays behind a technical detail drawer for developers.
 - **Saved** appears only after the server acknowledges.
 - No indefinitely spinning buttons. Every wait has a timeout and a plain explanation with a next action.
 - As built (step 1.3, D-038): `src/lib/saver.svelte.ts` keeps edits in this browser first, saves a second after typing
-  stops (one save at a time; ⌘S or **Save now** at once), reuses the `Idempotency-Key` while the base and content are
+  stops (one save at a time; ⌘S or **Save now** at once; since D-081 the button shows only while there are unsaved
+  changes or a save failed), reuses the `Idempotency-Key` while the base and content are
   unchanged, and times every request out after 15 s. A 409 opens the conflict screen (both versions, rendered by the
   content renderer): **Keep my version** or **Use their version**. Kept edits come back after a reload and expire
   after 30 days. Two deliberate differences from the bullets above: no consent prompt for the local copy, and leaving
@@ -475,7 +491,7 @@ Backend capabilities with no Studio screen or action:
 
 | Capability | What's missing | Size |
 |---|---|---|
-| An entry's public address (`/content/v1/{project}/{environment}/{collection}/{entry}`) | **Done** (2026-10-28): a published entry's page says *Where readers get it*, to open or copy; with newer changes it says readers get the version live in that release; a never-published draft shows none (`tests/server/address.spec.ts`) | S |
+| An entry's public address (`/content/v1/{project}/{environment}/{collection}/{entry}`) | **Done** (2026-10-28): a published entry's page says *Where readers get it* (in its Technical details since D-081), to open or copy; with newer changes it says readers get the version live in that release; a never-published draft shows none (`tests/server/address.spec.ts`) | S |
 | `created_by` on an entry list | **Done** (2026-10-28): *Only mine* beside a collection's filters asks the server for the entries one started (`created_by`, so it holds beyond the first page and with a search); offered only where the role lists other people's entries too (`tests/server/mine.spec.ts`) | S |
 | `GET /version` (version, commit, build date, API versions) | **Done** (2026-10-28): *About Colophon* in the account menu (every screen, every role) shows the version and the day it was built, keeps the commit and API versions in Technical details, and *Copy details* copies them with the address, page and browser for a problem report (`tests/server/about.spec.ts`) | S |
 | Delivery reads (`/content/v1/...`) | **Done for an entry** (2026-10-28): *See what readers get* on a published entry opens the public read of it at the latest release: its title, the release its version went live in, whether newer changes are left out, and the answer exactly as a website receives it, to copy; taken down meanwhile, it says so (`tests/server/readers.spec.ts`). Still missing: a whole release's view, and reads pinned to an older release (`?generation=`) | M |

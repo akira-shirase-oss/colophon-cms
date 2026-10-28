@@ -1,7 +1,7 @@
 // An entry's public address (gap audit, 2026-10-28): once published, the entry's page says where
 // readers get it, the delivery read anyone can make without signing in, with a way to open and
-// copy it; while there are newer changes it says readers get the version live in a release, not
-// them; a draft that was never published shows no address.
+// copy it, in Technical details (D-081); while there are newer changes it says readers get the
+// version live in a release, not them; a draft that was never published shows no address.
 
 import { expect, test } from '@playwright/test';
 import { internalTerms, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
@@ -20,6 +20,9 @@ test('a published entry says where readers get it, and the address answers witho
 	await page.reload();
 	const address = `${baseURL}/content/v1/${project}/production/articles/${entry}`;
 	const shown = page.getByTestId('public-address');
+	// It's for developers, so it waits in Technical details (D-081).
+	await expect(shown).toBeHidden();
+	await page.getByTestId('entry-details').getByTestId('technical-details').locator('summary').click();
 	await expect(shown.getByRole('link')).toHaveAttribute('href', address);
 	await expect(shown).toContainText('Anyone can read the published version at this address, without signing in.');
 	expect(await internalTerms(page)).toEqual([]);
@@ -42,6 +45,7 @@ test('a published entry says where readers get it, and the address answers witho
 	// On a phone, the address fits without scrolling sideways.
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.waitForLoadState('networkidle');
+	await expect(shown.getByRole('link')).toBeVisible();
 	expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), 'the editor scrolls sideways on a phone').toBeLessThanOrEqual(0);
 	expect(await violations(page)).toEqual([]);
 });
