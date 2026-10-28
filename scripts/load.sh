@@ -26,7 +26,8 @@
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090),
-# SERVER_LOG=<path> (keep the server's log there), CLUSTER=1 (run against the servers and
+# SERVER_LOG=<path> (keep the server's log there); for stress, START_RATE, STEP_SECONDS and
+# MAX_STEPS (below); CLUSTER=1 (run against the servers and
 # workers scripts/cluster.sh started, through its balancer, instead of one server of its own;
 # the result records how many, and is compared only with runs of the same shape: D-075).
 #
@@ -46,8 +47,8 @@ cd "$(dirname "$0")/.."
 
 endpoint="${1:-}"
 scenario="${2:-}"
-if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|studio|site throughput|steady [--baseline]" >&2
+if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
+  echo "usage: scripts/load.sh health|rich-text|session|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -63,7 +64,7 @@ done
 port="${LOAD_PORT:-58090}"
 # The open model needs its virtual users allocated up front: creating them mid-run makes k6
 # miss its own schedule (a steady run on 2026-10-25 dropped 271 of 1.2 M iterations at 64).
-if [[ "$scenario" == "steady" ]]; then default_vus=256; else default_vus=64; fi
+if [[ "$scenario" == "steady" || "$scenario" == "stress" ]]; then default_vus=256; else default_vus=64; fi
 VUS="${VUS:-$default_vus}"
 case "$endpoint" in
   session | projects | setup | delivery | site) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
@@ -198,6 +199,96 @@ db_transactions() {
 }
 sleep 1.5 # let Postgres publish its statistics
 tx_before=$(db_transactions)
+
+# Stress (milestone S, D-077): the steady scenario at rising rates on one server (or the
+# cluster), until a step breaks its own thresholds. Each step runs STEP_SECONDS (default 20) at
+# a rate 25% above the last, from START_RATE (default a quarter of the endpoint's RATE), at most
+# MAX_STEPS (default 15). The knee is the highest rate that held; the failure mode is how the
+# first step that didn't hold broke: errors, falling behind (k6 couldn't start iterations on
+# time because answers were too slow), or latency over P99_MS. A step that breaks is run once
+# more, and only breaking twice ends the climb. A measurement, not a pass/fail gate: it exits 0
+# unless the server is unhealthy afterwards.
+if [[ "$scenario" == "stress" ]]; then
+  step_seconds="${STEP_SECONDS:-20}"
+  rate="${START_RATE:-$(( RATE / 4 ))}"
+  (( rate >= 10 )) || rate=10
+  max_steps="${MAX_STEPS:-15}"
+  steps='[]'
+  knee=0
+  failure="none within $max_steps steps"
+  echo "stressing $endpoint from $rate/s, ${step_seconds} s a step, p99 gate $P99_MS ms"
+  # One step at the current rate: appends it to $steps, sets $entry and $step_status.
+  run_step() {
+    local attempt=$1 load_average
+    load_average=$(uptime | sed 's/.*averages*: //' | awk '{print $1}' | tr -d ,)
+    step_status=0
+    "$k6" run --quiet --no-color --summary-export "$work/step.json" \
+      -e BASE_URL="$base_url" -e PUBLIC_URL="$public_url" -e SCENARIO=steady \
+      -e VUS="$VUS" -e RATE="$rate" -e DURATION="${step_seconds}s" \
+      -e P99_MS="$P99_MS" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
+      "perf/k6/$endpoint.js" >"$work/step.log" 2>&1 || step_status=$?
+    entry=$(jq -c --argjson rate "$rate" --argjson attempt "$attempt" --argjson status "$step_status" --arg load "$load_average" '{
+      rate: $rate, attempt: $attempt, rps: (.metrics.http_reqs.rate | floor),
+      p99_ms: (.metrics.http_req_duration."p(99)" * 1000 | round / 1000),
+      failed: (.metrics.http_req_failed.passes // 0), checks_failed: (.metrics.checks.fails // 0),
+      dropped: (.metrics.dropped_iterations.count // 0), held: ($status == 0), load_average: ($load | tonumber? // null)
+    }' "$work/step.json")
+    steps=$(jq -c --argjson entry "$entry" '. + [$entry]' <<<"$steps")
+    echo "  $(jq -r '"\(.rate)/s: \(.rps) requests/s, p99 \(.p99_ms) ms, \(.failed) failed, \(.dropped) dropped: " + (if .held then "held" else "broke" end)' <<<"$entry")"
+  }
+  for _ in $(seq 1 "$max_steps"); do
+    run_step 1
+    # One broken window can be a passing stall (a checkpoint, another process): a step breaks
+    # only if it breaks twice in a row (a first run on 2026-10-28 "broke" at 303/s on one
+    # p99 spike, and held to 731/s when run again).
+    if (( step_status != 0 )); then
+      echo "  once more, to tell a stall from a limit"
+      run_step 2
+    fi
+    if (( step_status != 0 )); then
+      failure=$(jq -r --argjson gate "$P99_MS" '
+        if .failed > 0 or .checks_failed > 0 then "errors"
+        elif .dropped > 0 then "fell behind"
+        elif .p99_ms > $gate then "latency"
+        else "thresholds" end' <<<"$entry")
+      break
+    fi
+    knee=$rate
+    rate=$(( rate * 5 / 4 ))
+  done
+  healthy=true
+  target/release/colophon doctor --server "$base_url" >/dev/null || healthy=false
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    cpu=$(sysctl -n machdep.cpu.brand_string)
+    cores=$(sysctl -n hw.ncpu)
+  else
+    cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//')
+    cores=$(nproc)
+  fi
+  machine=$(printf '%s-%sc' "$cpu" "$cores" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/-$//')
+  shape=""
+  [[ "$cluster" == "1" ]] && shape="-cluster$(echo "$topology" | jq -r '"\(.servers)s\(.workers)w"')"
+  stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  record=$(jq -cn --arg endpoint "$endpoint" --arg stamp "$stamp" --arg commit "$(git rev-parse --short HEAD)" \
+    --argjson dirty "$([[ -n "$(git status --porcelain -- crates Cargo.lock perf/k6)" ]] && echo true || echo false)" \
+    --arg machine "$machine" --arg cpu "$cpu" --argjson cores "$cores" --argjson topology "$topology" \
+    --argjson gate "$P99_MS" --argjson step_seconds "$step_seconds" --argjson steps "$steps" \
+    --argjson knee "$knee" --arg failure "$failure" --argjson healthy "$healthy" \
+    '{scenario: "stress", endpoint: $endpoint, date: $stamp, commit: $commit, dirty: $dirty,
+      machine: {id: $machine, cpu: $cpu, cores: $cores}, topology: $topology,
+      p99_gate_ms: $gate, step_seconds: $step_seconds, knee_rate: $knee, failure_mode: $failure,
+      healthy_after: $healthy, steps: $steps}')
+  echo "$record" | jq '{endpoint, knee_rate, failure_mode, healthy_after, topology}'
+  if [[ "${KEEP:-1}" == "1" ]]; then
+    mkdir -p perf/results
+    file="perf/results/${stamp//:/}-$endpoint-stress-$machine$shape.json"
+    echo "$record" | jq . >"$file"
+    echo "$record" >>perf/results/history.jsonl
+    echo "saved $file"
+  fi
+  [[ "$healthy" == true ]]
+  exit
+fi
 
 echo "running k6: $endpoint $scenario"
 k6_status=0

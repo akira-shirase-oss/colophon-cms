@@ -1,0 +1,103 @@
+{
+  "kind": "micro-benchmark comparison",
+  "note": "Policy::new sorted before merging (commit d0b0af7, then uncommitted) against a8d3302. Micro-benchmarks on one laptop, not capacity",
+  "date": "2026-10-28T12:17:16Z",
+  "base": "a8d3302",
+  "head": "d0b0af7",
+  "command": "FILTER=^policy/ BENCH_OUT=target/bench-policy scripts/bench.sh compare HEAD",
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "criterion": "0.8.2",
+  "params": {
+    "rounds": 3,
+    "warm_up_s": 1,
+    "measurement_s": 3,
+    "threshold_pct": 15,
+    "min_delta_ns": 25,
+    "filter": "^policy/"
+  },
+  "load_average_1m": {
+    "start": 8.88,
+    "end": 5.37
+  },
+  "benchmarks": [
+    {
+      "id": "policy/allows_custom_500",
+      "base": [
+        611.2087726931477,
+        578.8033436492198,
+        575.4559967348373
+      ],
+      "head": [
+        569.1627775612151,
+        572.3238295318126,
+        567.1326656497538
+      ],
+      "base_ns": 578.8033436492198,
+      "head_ns": 569.1627775612151,
+      "change_pct": -1.4463887998926839,
+      "least_slowdown_pct": -6.879154392150955,
+      "verdict": "unchanged"
+    },
+    {
+      "id": "policy/fields_custom_500",
+      "base": [
+        1974.906717966248,
+        1959.4585715647036,
+        1919.5334380447127
+      ],
+      "head": [
+        1932.8231099257885,
+        2012.6640728843597,
+        1943.731403064302
+      ],
+      "base_ns": 1959.4585715647036,
+      "head_ns": 1943.731403064302,
+      "change_pct": 1.2606170093206526,
+      "least_slowdown_pct": -2.1309162431629725,
+      "verdict": "unchanged"
+    },
+    {
+      "id": "policy/new_builtin_owner",
+      "base": [
+        113.01097169549118,
+        106.28466269675691,
+        109.27381442926335
+      ],
+      "head": [
+        116.41908377224453,
+        109.79816937160983,
+        113.13295922702923
+      ],
+      "base_ns": 109.27381442926335,
+      "head_ns": 113.13295922702923,
+      "change_pct": 3.3057513527397386,
+      "least_slowdown_pct": 3.015735574716172,
+      "verdict": "unchanged"
+    },
+    {
+      "id": "policy/new_custom_500",
+      "base": [
+        96077.65166666667,
+        95734.78132298966,
+        96643.80303030304
+      ],
+      "head": [
+        14271.631496566306,
+        15303.536492598683,
+        14377.394339470284
+      ],
+      "base_ns": 96077.65166666667,
+      "head_ns": 14377.394339470284,
+      "change_pct": -85.1233148027482,
+      "least_slowdown_pct": -85.14573238521635,
+      "verdict": "improvement"
+    }
+  ]
+}

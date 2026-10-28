@@ -15,6 +15,9 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 # The crash tests (tests/faults.rs) build only with the fault points compiled in.
 cargo clippy -p colophon-server --features fault-injection --all-targets --locked -- -D warnings
 cargo test --workspace --locked
+# The micro-benchmarks, each run once and unoptimized: they still build and their inputs still
+# hold. Timing them is scripts/bench.sh's job (D-074), not this script's.
+cargo test -p colophon-bench --benches --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 scripts/check-architecture.sh
 scripts/check-architecture.sh colophon-sim

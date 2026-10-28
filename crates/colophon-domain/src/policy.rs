@@ -415,14 +415,21 @@ pub struct Policy {
 }
 
 impl Policy {
-    /// A policy of exactly these permissions.
     /// A policy of exactly these permissions. Permissions for one action, subject and condition
     /// merge into one, with the union of their fields (or every field, if any allows all): a role
     /// holds at most one such permission, as the database stores it (migration 0021).
-    pub fn new(permissions: Vec<Permission>) -> Self {
+    ///
+    /// Every signed-in request builds its role's policy, and a role may hold [`MAX_PERMISSIONS`],
+    /// so the permissions are sorted once to bring the ones that merge next to each other, rather
+    /// than each being looked for among those merged so far, which was quadratic (D-074).
+    pub fn new(mut permissions: Vec<Permission>) -> Self {
+        // Stable, so permissions that merge do so in the order they were given.
+        permissions.sort_by(|a, b| {
+            (a.action, &a.subject, a.condition).cmp(&(b.action, &b.subject, b.condition))
+        });
         let mut merged: Vec<Permission> = Vec::with_capacity(permissions.len());
         for permission in permissions {
-            match merged.iter_mut().find(|held| {
+            match merged.last_mut().filter(|held| {
                 held.action == permission.action
                     && held.subject == permission.subject
                     && held.condition == permission.condition
@@ -1014,6 +1021,18 @@ mod tests {
         ]);
         assert_eq!(widened.permissions().len(), 1);
         assert!(widened.allows(Action::ContentRead, Some("articles")));
+        // However far apart they are given.
+        let apart = Policy::new(vec![
+            narrowed(Action::ContentRead, "articles", Some(&["title"]), false),
+            narrowed(Action::ContentUpdate, "articles", None, false),
+            narrowed(Action::ContentRead, "pages", None, false),
+            narrowed(Action::ContentRead, "articles", Some(&["body"]), false),
+        ]);
+        assert_eq!(apart.permissions().len(), 3);
+        assert_eq!(
+            apart.fields(Action::ContentRead, "articles", false),
+            Some(only(&["body", "title"]))
+        );
     }
 
     #[test]

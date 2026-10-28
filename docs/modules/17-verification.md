@@ -7,7 +7,7 @@
 |---|---|
 | Milestones | All (each milestone's proof gate lives here) |
 | Proposed owner | Shared: the maintainer owns the requirement matrix; Claude builds the harnesses |
-| Depends on | every module; `proptest`, `insta`, the local stack's PostgreSQL, `cargo-nextest`, Vitest, Playwright, k6 |
+| Depends on | every module; `proptest`, `insta`, the local stack's PostgreSQL, `cargo-nextest`, Vitest, Playwright, k6, Criterion (micro-benchmarks, D-074) |
 | Used by | CI, release decisions, the README and docs (published evidence) |
 | Spec | §26–§31, §36 |
 
@@ -104,6 +104,7 @@ crashed clients, and `crates/colophon-db/tests/differential.rs` checks its model
 | L14 | Large media/decoder workload | Worker limits hold; content editing stays responsive |
 | L15 | Commerce concurrency and provider faults | **Parked** with commerce (D-006) |
 | L16 | A server killed (SIGKILL) or drained (SIGTERM) under writes behind the balancer (milestone S, D-075) | Every acknowledged write stored exactly once; a drain costs no request, even a first try; idempotent retries succeed. `scripts/failover.sh kill\|drain` against `scripts/cluster.sh`, results in `perf/results/` |
+| L17 | Stress: each scenario's steady mode at rates rising 25% a step until it breaks (milestone S, D-077) | The knee (highest rate that held), the failure mode (`errors`, `fell behind`, `latency`), every step with the machine's load average; `scripts/load.sh <endpoint> stress`, on one server or `CLUSTER=1` |
 
 ### Workflow cases that apply (spec §31)
 
@@ -200,6 +201,103 @@ Scanner reports never replace code review and adversarial permission testing.
   - raw results and traces;
   - thresholds, exceptions and conclusions.
 
+### Micro-benchmarks (milestone S, D-074)
+
+`crates/colophon-bench` times, with Criterion, the CPU work a request does between its waits: one function, one
+input, one machine. It answers "did this change make that work slower?", never "what does a server sustain?"; only
+the load runs above answer that, and laptop numbers stay laptop numbers (D-018).
+
+- **What is timed** (`benches/hot_paths.rs`; each benchmark names the request that runs it, picked from the code):
+
+  | Group | Benchmarks | Input |
+  |---|---|---|
+  | `rich_text` | `validate_blog_post` | the blog-post fixture, 2 KB of canonical rich text |
+  | `entry` | `validate_article`, `validate_page`, `parse_body_page`, `sha256_page` | an article; the page `perf/k6/modelling.js` saves (an object, lists, a pattern, blocks, references) |
+  | `content_type` | `load_articles`, `load_page`, `load_big`, `canonical_json_big`, `expand_components_page` | the stored definition every entry request parses: articles, the page type, a 100-field type with 8 patterns |
+  | `policy` | `new_builtin_owner`, `new_custom_500`, `fields_custom_500`, `allows_custom_500` | the role every signed-in request rebuilds: the owner, and a custom role of 500 permissions |
+  | `changeset` | `canonical_100` | the hash input of a 100-item changeset |
+  | `delivery` | `cache_key_and_tags` | the key and tags of a `/content/v1` entry read |
+  | `auth` | `session_token_hash`, `csrf_check` | 43-character session and CSRF tokens |
+  | `near_limit` | `rich_text_validate`, `validate_article`, `parse_body`, `sha256` | a 238 KiB body (the limit is 256 KiB) |
+
+- **Inputs** are built in code or read from `fixtures/`, with no network and no database. The crate's tests keep them
+  valid, and `check.sh` and CI's rust job run each benchmark once, unoptimized (`cargo test -p colophon-bench
+  --benches`), so they keep building. `colophon-api`'s helpers are crate-private; its per-request SHA-256 is the same
+  aws-lc-rs call as `colophon_auth::tokens::hash`, which `entry/sha256_page` and `near_limit/sha256` time.
+- **Why a crate of their own:** inside `colophon-domain` the benchmarks would be built with its dev-dependencies, whose
+  serde_json keeps object keys in insertion order (`preserve_order`, an IndexMap); the server's keeps a BTreeMap, and
+  every validation walks those maps.
+- **Running:** `scripts/bench.sh` runs them all in the bench profile (the release defaults, which the server ships
+  with) and writes the medians, with their 95% intervals, to `perf/results/<date>-bench-<machine>.json`, with the
+  commit, machine, compiler and the load average before and after. `cargo bench -p colophon-bench -- policy/` runs
+  one group.
+- **The regression check:** `scripts/bench.sh compare <base>` builds this checkout, and `<base>` in a temporary
+  worktree with a target directory of its own (in a shared one, Cargo gave the base's release builds of the workspace
+  crates the same names as this checkout's, and later builds here took them as fresh), then runs both on this machine
+  in three rounds (1 s of warm-up and 3 s of measurement per benchmark), alternating which build goes first. A benchmark regresses only when this checkout is
+  slower than the base **in every round** by more than **15%** and more than **25 ns**; the report gives each
+  benchmark's median of the rounds and the change. CI's `benchmarks` job runs it on pull requests only, against the
+  pull request's base, and puts the report in the job summary and an artifact.
+- **Why compare on one machine, in one job:** GitHub's runners differ about 2.4x by CPU model alone (the health
+  smoke did 44,243 requests a second on an EPYC 9V45 and 18,613 on a 7763; `ci.yml`), so a stored number from another
+  job compares machines, not code. Within one job both builds share the CPU, the kernel and the neighbours.
+  Alternating the order spreads drift over both; requiring every round to be slower makes one disturbed round
+  harmless; the nanosecond floor keeps code-layout luck on a 40 ns benchmark from failing a pull request. Pushes to main run nothing: there is no second build there to compare with.
+- **What it can't see:** a slowdown under 15%, one that shows in only some rounds, and anything outside these
+  functions (I/O, locks, the database). A benchmark whose input changes must be renamed, or base and head time
+  different work.
+- **The threshold, measured:** an A/A run built one commit twice and timed it against itself on the maintainer's
+  M2 Pro while other work kept the load average near 9
+  (`perf/results/2026-10-28T120430Z-bench-compare-aa-apple-m2-pro-12c.json`). Single rounds disagreed by up to
+  +57.7% (`near_limit/sha256`) and −46.7% (`policy/new_custom_500`); 7 of the 66 round pairs differed by more than
+  15% (median 1.8%, 90th percentile 15.2%), so a one-round check at 15% would have failed about one benchmark in ten
+  with nothing changed. Over three rounds no benchmark was slower in all of them, and every median of rounds stayed
+  within ±5.1%. 15% is three times that, and well below the slowdowns worth stopping a pull request for, like the
+  6.7x one below. A full comparison's rounds took 10.5 minutes there. GitHub's runners haven't run it yet (nothing
+  has been pushed from this branch): if the first pull requests show false alarms, raise `THRESHOLD_PCT` or `ROUNDS`
+  openly (V2), and make the job a required check only after about ten pull requests have passed it without one.
+
+#### First results (2026-10-28)
+
+`perf/results/2026-10-28T123240Z-bench-apple-m2-pro-12c.json`: commit `d0b0af7`, Apple M2 Pro, Rust 1.99.1,
+Criterion's medians after 3 s of warm-up and 5 s of measurement, load average 10 to 14 from other work on the machine.
+Micro-benchmarks on a laptop: they rank costs and catch slowdowns, they are not what a server sustains.
+
+| Benchmark | Median | |
+|---|---:|---|
+| `entry/validate_article` | 7.15 µs | a 2 KB article; `rich_text/validate_blog_post` alone is 6.82 µs |
+| `entry/validate_page` | 5.35 µs | the modelling page |
+| `entry/parse_body_page` | 1.82 µs | its request body into a `Value` |
+| `content_type/load_articles` | 1.96 µs | |
+| `content_type/load_page` | 22.0 µs | four times the page's own validation |
+| `content_type/load_big` | 303 µs | 100 fields, 8 patterns |
+| `policy/new_custom_500` | 15.8 µs | 96 to 102 µs before `d0b0af7` |
+| `policy/fields_custom_500` | 2.02 µs | |
+| `changeset/canonical_100` | 8.53 µs | |
+| `delivery/cache_key_and_tags` | 1.16 µs | |
+| `auth/session_token_hash` | 40.1 ns | |
+| `near_limit/parse_body` | 1.42 ms | a 238 KiB body into a `Value` |
+| `near_limit/validate_article` | 932 µs | |
+| `near_limit/sha256` | 99.3 µs | |
+
+What they showed:
+
+1. **Every entry request parses its content type again, patterns included.** `entries::content_type` reads the
+   stored definition as text and parses it into a `Value`, then a `ContentType`, on every read and save. For the
+   modelling page that is 22 µs, four times its validation; for the 100-field type, 303 µs. A profile of
+   `ContentType::parse` on that type (macOS `sample`) put 49% of it in `regex::RegexBuilder::build`: each text
+   pattern (D-069) is compiled again per request, then dropped. Fixed by D-078: a bounded cache of parsed types in
+   `colophon-api`, keyed by the SHA-256 of the definition text read. A hit is `content_type/cached_*`: 0.12 µs for
+   articles, 0.59 µs for the page and 6.5 µs for the 100-field type, against 1.89, 20.4 and 281 µs parsing, mostly
+   the hash itself (`perf/results/2026-10-28T135828Z-bench-apple-m2-pro-12c.json`, same machine, load average 12 to
+   8).
+2. **Rebuilding a role was quadratic in its permissions.** `Policy::new` looked for each permission among those
+   merged so far, and every signed-in request rebuilds its role. Fixed in `d0b0af7` (sort, then merge neighbours):
+   96.1 µs to 14.4 µs for 500 permissions, same machine, three rounds
+   (`perf/results/2026-10-28T121716Z-bench-compare-policy-apple-m2-pro-12c.json`).
+3. **The largest bodies cost most to parse, not to validate.** A 238 KiB rich-text body takes 1.42 ms to become a
+   `Value` (a map for every object in it) and 932 µs to validate. The 1 MiB body limit bounds both; no change.
+
 ### Stop conditions (spec §30)
 Any of the following blocks a release regardless of performance:
 - unexplained data loss;
@@ -212,7 +310,7 @@ Any of the following blocks a release regardless of performance:
 
 | Tier | Runs |
 |---|---|
-| Every pull request | Format, lint (`-D warnings`), type checks, unit and property tests, API/schema compatibility, relevant integration and browser tests, simulator seed budget, `cargo deny`, secret scan |
+| Every pull request | Format, lint (`-D warnings`), type checks, unit and property tests, API/schema compatibility, relevant integration and browser tests, simulator seed budget, `cargo deny`, secret scan, micro-benchmarks against the base on one runner (D-074) |
 | Main branch | Broader fault suites, crash loop, performance smoke, larger simulator sweep |
 | Release | Full load matrix, 24-hour soak, restore and upgrade drill, dependency and licence inventory, SBOM, signed artifacts, verified docs |
 
@@ -254,7 +352,9 @@ without an artifact.
 3. **P3:** F06–F08, L01–L04.
 4. **P4:** L14, X07, X13 (preview).
 5. **P5:** F11, L08, X12.
-6. **P6:** F09–F14, L05–L13, the 24-hour soak, the release tier, the complete matrix.
+6. **S:** micro-benchmarks and their pull-request check (built, D-074); stress runs; a profile of each
+   milestone's heaviest scenario.
+7. **P6:** F09–F14, L05–L13, the 24-hour soak, the release tier, the complete matrix.
 
 ## Open decisions
 

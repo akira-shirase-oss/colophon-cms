@@ -73,6 +73,10 @@ create → conflict → review → publish scenario produce equivalent durable r
   client address is the peer, or behind a trusted proxy (`COLOPHON_TRUSTED_PROXIES`) the nearest untrusted
   `X-Forwarded-For` hop.
 - `AppState` is cheap to clone (`Arc`s); there is no global mutable state.
+- Entry handlers read their collection's definition from Postgres on every request and parse it through
+  `ContentTypeCache` (`type_cache.rs`, D-078): parsed types keyed by the SHA-256 of the text just read, at most 1,024
+  of them and 32 MiB of definition text, least recently used first. A new version is new text, so nothing is
+  invalidated.
 - A fallback route returns the error envelope.
 
 ### Route families (spec §10, minus parked areas)
@@ -195,6 +199,9 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 - Cursor fuzzing: tampered cursors, cursors from another project or query shape.
 - A middleware-order test: request ID present on panic, timeout and body-limit responses.
 - A pool that can't hand out a connection gives 503 with `Retry-After` and the envelope (`tests/busy.rs`).
+- The parsed-type cache (`type_cache.rs` unit tests, D-078): the same text is parsed once and a hit equals a fresh
+  parse; different text is a different type; least recently used first; the byte bound, and a definition over it
+  never kept; a text that doesn't parse is an internal error and isn't kept.
 - Entries end to end against the real binary (`crates/colophon-server/tests/entries.rs`), and the crash tests F01 and
   F02 (`faults.rs`, D-036).
 - Members and invitations end to end with two people (`crates/colophon-server/tests/members.rs`, D-042); every

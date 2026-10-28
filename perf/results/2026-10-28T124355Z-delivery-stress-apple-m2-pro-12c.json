@@ -1,0 +1,101 @@
+{
+  "scenario": "stress",
+  "endpoint": "delivery",
+  "date": "2026-10-28T12:43:55Z",
+  "commit": "26d9060",
+  "dirty": false,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "p99_gate_ms": 100,
+  "step_seconds": 20,
+  "knee_rate": 1220,
+  "failure_mode": "fell behind",
+  "healthy_after": true,
+  "steps": [
+    {
+      "rate": 500,
+      "attempt": 1,
+      "rps": 494,
+      "p99_ms": 7.215,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 17.74
+    },
+    {
+      "rate": 625,
+      "attempt": 1,
+      "rps": 615,
+      "p99_ms": 7.904,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 15.92
+    },
+    {
+      "rate": 781,
+      "attempt": 1,
+      "rps": 764,
+      "p99_ms": 5.786,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 12.05
+    },
+    {
+      "rate": 976,
+      "attempt": 1,
+      "rps": 962,
+      "p99_ms": 5.647,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 9.96
+    },
+    {
+      "rate": 1220,
+      "attempt": 1,
+      "rps": 1198,
+      "p99_ms": 7.721,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 8.77
+    },
+    {
+      "rate": 1525,
+      "attempt": 1,
+      "rps": 1460,
+      "p99_ms": 684.552,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 907,
+      "held": false,
+      "load_average": 6.93
+    },
+    {
+      "rate": 1525,
+      "attempt": 2,
+      "rps": 1336,
+      "p99_ms": 319.173,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 411,
+      "held": false,
+      "load_average": 11.52
+    }
+  ]
+}
