@@ -74,7 +74,16 @@ on clean infrastructure and an independent install, so operations are a module w
   state; the handler only reads it, so `/readyz` costs no database work however often it is called (a 5-million-request
   load run saw 13 database transactions, all from the probes). Statuses: `starting`, `ready`, `degraded` (200),
   `not_ready`, `draining` (503). A supervisor marks a dependency down if its probe ever stops, so readiness can't
-  freeze at "up".
+  freeze at "up". The database probe uses one connection of its own, never the request pool (D-075): under load
+  that pool is busy, and a probe waiting for it called a healthy database down on every server at once, which left
+  the balancer nothing to send to (found by `scripts/failover.sh`). Each process therefore holds one more database
+  connection than its pool.
+- Several servers behind a load balancer (milestone S, D-075; `scripts/cluster.sh`, `deploy/cluster/`): the balancer
+  checks `/readyz` every 500 ms and drops a server after two failures, so a server asked to stop leaves the rotation
+  within about a second of saying `draining`; `COLOPHON_DRAIN_DELAY_MS` (default 5 s) must stay longer than that.
+  The balancer retries a request no server answered (refused, or closed without a response) on another, holding the
+  body to do so; writes carry `Idempotency-Key`, so a write a dying server did commit is replayed, not repeated.
+  The sum of every process's database connections stays under PostgreSQL's `max_connections` with room to spare.
 - `colophon doctor [--json]` reports what `/readyz` reports, with the CLI exit codes (0 ready, 5 otherwise).
   - A cache failure can be *degraded* rather than unready when the bounded fallback is available.
   - A database failure makes writes unavailable.

@@ -47,6 +47,18 @@ safe to rerun.
 If a port clashes with something else on your machine, move it: `COLOPHON_PG_PORT`, `COLOPHON_VALKEY_PORT`,
 `COLOPHON_S3_PORT`, `COLOPHON_S3_ADMIN_PORT`, `COLOPHON_KEYCLOAK_PORT`. The bind address is deliberately not a setting.
 
+## Several servers behind a balancer
+
+`scripts/cluster.sh up [servers] [workers]` (milestone S, [D-075](../docs/DECISIONS.md)) starts API servers (default
+3, ports 58511 up) and workers (default 2, ports 58521 up) from the release build, on 127.0.0.1 like everything
+here, and HAProxy (`cluster/compose.yaml`, an image pinned by digest) at `http://localhost:58405`, a sign-in redirect
+URI the realm already registers. Every server's public URL is the balancer's: sessions, sign-in attempts,
+idempotency keys and caches live in PostgreSQL and Valkey, so any server answers any request. The script refuses to
+start more processes than PostgreSQL has connections for, keeping a fifth spare. `status`, `kill N` (SIGKILL),
+`stop N` (SIGTERM, a drain) and `start N` act on server N; `down` stops everything. State and logs are in
+`target/cluster/`. `CLUSTER=1 scripts/load.sh <endpoint> <scenario>` runs any load scenario through the balancer,
+and `scripts/failover.sh kill|drain` is the failover proof.
+
 ## What the checks prove
 
 Docker's healthchecks only show that each container answered its own probe. `scripts/stack.sh check` uses each service

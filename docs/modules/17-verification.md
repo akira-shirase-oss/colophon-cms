@@ -103,6 +103,7 @@ crashed clients, and `crates/colophon-db/tests/differential.rs` checks its model
 | L13 | CDN purge 429/5xx and delayed site rebuild | Backoff and pending/uncertain delivery; no claim of global success |
 | L14 | Large media/decoder workload | Worker limits hold; content editing stays responsive |
 | L15 | Commerce concurrency and provider faults | **Parked** with commerce (D-006) |
+| L16 | A server killed (SIGKILL) or drained (SIGTERM) under writes behind the balancer (milestone S, D-075) | Every acknowledged write stored exactly once; a drain costs no request, even a first try; idempotent retries succeed. `scripts/failover.sh kill\|drain` against `scripts/cluster.sh`, results in `perf/results/` |
 
 ### Workflow cases that apply (spec §31)
 
