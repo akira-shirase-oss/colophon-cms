@@ -1,0 +1,160 @@
+{
+  "kind": "micro-benchmarks",
+  "note": "Criterion timings of single functions on one machine (crates/colophon-bench): evidence about the code, not a capacity claim",
+  "date": "2026-10-28T12:32:40Z",
+  "commit": "d0b0af7",
+  "dirty": false,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "criterion": "0.8.2",
+  "profile": "bench (the release defaults)",
+  "params": {
+    "warm_up_s": 3,
+    "measurement_s": 5,
+    "filter": ""
+  },
+  "load_average_1m": {
+    "start": 13.67,
+    "end": 10.19
+  },
+  "benchmarks": [
+    {
+      "id": "auth/csrf_check",
+      "median_ns": 38.54867986272479,
+      "low_ns": 38.146854887901306,
+      "high_ns": 38.80798098192007
+    },
+    {
+      "id": "auth/session_token_hash",
+      "median_ns": 40.14465498104194,
+      "low_ns": 39.873382483379594,
+      "high_ns": 40.490373784848664
+    },
+    {
+      "id": "changeset/canonical_100",
+      "median_ns": 8526.362149476157,
+      "low_ns": 8326.155309734513,
+      "high_ns": 8708.471792035398
+    },
+    {
+      "id": "content_type/canonical_json_big",
+      "median_ns": 17830.463350340135,
+      "low_ns": 17736.936172071568,
+      "high_ns": 17907.565049592064
+    },
+    {
+      "id": "content_type/expand_components_page",
+      "median_ns": 6512.413066235249,
+      "low_ns": 6492.470676588751,
+      "high_ns": 6543.961462027639
+    },
+    {
+      "id": "content_type/load_articles",
+      "median_ns": 1961.4830779739386,
+      "low_ns": 1947.2859801488835,
+      "high_ns": 1973.883041958042
+    },
+    {
+      "id": "content_type/load_big",
+      "median_ns": 303302.3757598784,
+      "low_ns": 301559.7935087719,
+      "high_ns": 305063.1484375
+    },
+    {
+      "id": "content_type/load_page",
+      "median_ns": 21995.901767621945,
+      "low_ns": 20493.475763009847,
+      "high_ns": 31156.04967948718
+    },
+    {
+      "id": "delivery/cache_key_and_tags",
+      "median_ns": 1161.5084557782461,
+      "low_ns": 1155.5066818367895,
+      "high_ns": 1167.940662877491
+    },
+    {
+      "id": "entry/parse_body_page",
+      "median_ns": 1822.6986603901864,
+      "low_ns": 1802.7911368413268,
+      "high_ns": 1861.677159348588
+    },
+    {
+      "id": "entry/sha256_page",
+      "median_ns": 172.30769370391135,
+      "low_ns": 171.63180796403338,
+      "high_ns": 173.432283048094
+    },
+    {
+      "id": "entry/validate_article",
+      "median_ns": 7152.497810229208,
+      "low_ns": 7110.1078006101225,
+      "high_ns": 7224.777698964392
+    },
+    {
+      "id": "entry/validate_page",
+      "median_ns": 5352.094064789377,
+      "low_ns": 5285.568734235267,
+      "high_ns": 5406.091520894071
+    },
+    {
+      "id": "near_limit/parse_body",
+      "median_ns": 1416603.8642857145,
+      "low_ns": 1409894.642857143,
+      "high_ns": 1460211.3142857142
+    },
+    {
+      "id": "near_limit/rich_text_validate",
+      "median_ns": 949973.2688679246,
+      "low_ns": 943528.5,
+      "high_ns": 954808.1698113207
+    },
+    {
+      "id": "near_limit/sha256",
+      "median_ns": 99315.69019019019,
+      "low_ns": 98948.57357357358,
+      "high_ns": 99804.61711711712
+    },
+    {
+      "id": "near_limit/validate_article",
+      "median_ns": 931609.5238095238,
+      "low_ns": 912219.4380952381,
+      "high_ns": 951733.1333333333
+    },
+    {
+      "id": "policy/allows_custom_500",
+      "median_ns": 609.6366117355207,
+      "low_ns": 605.2507492024822,
+      "high_ns": 613.0406076751386
+    },
+    {
+      "id": "policy/fields_custom_500",
+      "median_ns": 2015.5151508510485,
+      "low_ns": 2000.258302137423,
+      "high_ns": 2027.3330517535646
+    },
+    {
+      "id": "policy/new_builtin_owner",
+      "median_ns": 121.41550822662194,
+      "low_ns": 119.94059321673262,
+      "high_ns": 122.77892489547986
+    },
+    {
+      "id": "policy/new_custom_500",
+      "median_ns": 15760.502429927667,
+      "low_ns": 15671.354464285714,
+      "high_ns": 15879.111842105263
+    },
+    {
+      "id": "rich_text/validate_blog_post",
+      "median_ns": 6815.385716801174,
+      "low_ns": 6764.329928315412,
+      "high_ns": 6848.349687089305
+    }
+  ]
+}

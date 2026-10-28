@@ -150,7 +150,7 @@ fn policy(c: &mut Criterion) {
         );
     });
     let custom = custom_role();
-    // The same for a custom role at the 500-permission limit (R.2): merging is quadratic.
+    // The same for a custom role at the 500-permission limit (R.2): 96 µs before d0b0af7.
     group.bench_function("new_custom_500", |b| {
         b.iter_batched(
             || custom.clone(),
