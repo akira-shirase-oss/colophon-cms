@@ -44,6 +44,7 @@
 	const managesDestinations = $derived(may(mine.data, 'destinations.manage'));
 	const managesRoles = $derived(may(mine.data, 'roles.manage'));
 	const managesTokens = $derived(may(mine.data, 'tokens.manage'));
+	const readsActivity = $derived(may(mine.data, 'audit.read'));
 	const destinations = createQuery(() => ({ ...destinationsQuery(project), enabled: managesDestinations }));
 	const types = createQuery(() => typesQuery(project));
 	const roles = createQuery(() => rolesQuery(project));
@@ -305,10 +306,10 @@
 		{/if}
 	</section>
 
-	{#if managesTokens}
+	{#if managesTokens || readsActivity}
 		<section class="mt-12 max-w-4xl" aria-labelledby="access-title">
 			<h2 id="access-title" class="mb-1 text-base font-semibold">Access</h2>
-			<p class="mb-4 text-sm text-muted-foreground">Keys that let scripts and sites use this project's content.</p>
+			<p class="mb-4 text-sm text-muted-foreground">Keys for scripts and sites, and the record of who changed people's access.</p>
 			<ul class="overflow-hidden rounded-xl border border-border bg-card" data-testid="access-links">
 				{#if managesTokens}
 					<li class="rule-dotted last:border-b-0">
@@ -316,6 +317,17 @@
 							<span class="min-w-0 flex-1">
 								<strong class="font-medium">API tokens</strong>
 								<span class="block text-xs text-muted-foreground">Let a script or your site's build use this project's content, each with its own powers and end date.</span>
+							</span>
+							<span class="text-sm text-muted-foreground">Open</span>
+						</a>
+					</li>
+				{/if}
+				{#if readsActivity}
+					<li class="rule-dotted last:border-b-0">
+						<a class="flex items-center gap-4 px-4 py-3 hover:bg-accent" href={resolve('/projects/[project]/settings/activity', { project })} data-testid="activity-link">
+							<span class="min-w-0 flex-1">
+								<strong class="font-medium">Activity</strong>
+								<span class="block text-xs text-muted-foreground">Who changed roles, members, invitations and API tokens, and when.</span>
 							</span>
 							<span class="text-sm text-muted-foreground">Open</span>
 						</a>

@@ -62,7 +62,8 @@
 		'/projects/[project]/settings': 'Settings',
 		'/projects/[project]/settings/types/[type]': 'Settings',
 		'/projects/[project]/settings/roles/[role]': 'Settings',
-		'/projects/[project]/settings/tokens': 'Settings'
+		'/projects/[project]/settings/tokens': 'Settings',
+		'/projects/[project]/settings/activity': 'Settings'
 	};
 	const collectionName = $derived(
 		types.data?.find((type) => type.slug === page.params.collection)?.definition.name ?? page.params.collection ?? ''
@@ -78,7 +79,7 @@
 			if (route.endsWith('[entry]')) trail.push({ label: 'Entry' });
 		} else if (SECTION[route]) {
 			const section = SECTION[route];
-			const detail = (route.endsWith(']') && !route.endsWith('[project]')) || route.endsWith('/tokens');
+			const detail = (route.endsWith(']') && !route.endsWith('[project]')) || route.endsWith('/tokens') || route.endsWith('/activity');
 			const href =
 				section === 'Publish requests'
 					? resolve('/projects/[project]/changesets', { project })
@@ -90,6 +91,7 @@
 			if (route.endsWith('[changeset]')) trail.push({ label: 'Publish request' });
 			if (route.endsWith('[role]')) trail.push({ label: `Role ${page.params.role ?? ''}` });
 			if (route.endsWith('/tokens')) trail.push({ label: 'API tokens' });
+			if (route.endsWith('/activity')) trail.push({ label: 'Activity' });
 			if (route.endsWith('[type]')) {
 				trail.push({ label: types.data?.find((type) => type.slug === page.params.type)?.definition.name ?? page.params.type ?? '' });
 			}
@@ -294,5 +296,6 @@
 	types={readable}
 	{settings}
 	tokens={may(mine.data, 'tokens.manage')}
+	activity={may(mine.data, 'audit.read')}
 	bind:open={searching}
 />

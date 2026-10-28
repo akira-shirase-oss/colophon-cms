@@ -139,6 +139,12 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     Refusals use B3's reasons (`cannot_grant`, `not_for_tokens`, `too_many_tokens`…). Test: `tests/server/tokens.spec.ts`
     (the token reads with `Authorization: Bearer`, is refused a write, shows its last use, and answers 401 once
     revoked; a custom token creates entries and is refused people's routes; phone width).
+  - **Settings → Activity** (`…/settings/activity`, the audit log, for roles with `audit.read`): each change as a
+    sentence (`lib/activity.ts`: "Dev Owner changed Dev Editor's role from Editor to Desk"), newest first and grouped by
+    day; filters for the kind of change and the person; *Show older* pages back 25 at a time. People are named from
+    the members list and the events' own actors, so someone who left is usually still named. Settings now shows to
+    roles with `audit.read` too. Test: `tests/server/activity.spec.ts` (seven changes in order, both filters, paging,
+    phone width; an Editor sees neither page, in the sidebar, in search or by address, and the Studio doesn't ask).
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
+	import HistoryIcon from '@lucide/svelte/icons/history';
 	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
@@ -25,13 +26,15 @@
 		types,
 		settings = false,
 		tokens = false,
+		activity = false,
 		open = $bindable(false)
 	}: {
 		project: string;
 		types: ContentType[];
-		/** Whether the role sees Settings and API tokens. */
+		/** Whether the role sees Settings, API tokens and the activity log. */
 		settings?: boolean;
 		tokens?: boolean;
+		activity?: boolean;
 		open?: boolean;
 	} = $props();
 
@@ -78,7 +81,8 @@
 		{ label: 'Releases', icon: PackageCheckIcon, href: resolve('/projects/[project]/releases', { project }) },
 		{ label: 'Members', icon: UsersIcon, href: resolve('/projects/[project]/members', { project }) },
 		...(settings ? [{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }] : []),
-		...(tokens ? [{ label: 'API tokens', icon: KeyRoundIcon, href: resolve('/projects/[project]/settings/tokens', { project }) }] : [])
+		...(tokens ? [{ label: 'API tokens', icon: KeyRoundIcon, href: resolve('/projects/[project]/settings/tokens', { project }) }] : []),
+		...(activity ? [{ label: 'Activity', icon: HistoryIcon, href: resolve('/projects/[project]/settings/activity', { project }) }] : [])
 	]);
 	const needle = $derived(typed.trim().toLowerCase());
 	const pages = $derived(PAGES.filter((item) => item.label.toLowerCase().includes(needle)));

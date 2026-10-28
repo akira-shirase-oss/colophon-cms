@@ -68,7 +68,7 @@ export function mayAny(project: Pick<Project, 'permissions'> | undefined, action
 
 /** What Settings holds (D-059, rule 5): content types, website connections, roles and tokens. A
  *  role with none of these doesn't see Settings at all. */
-export const SETTINGS_ACTIONS: Action[] = ['schema.change', 'destinations.manage', 'roles.manage', 'tokens.manage'];
+export const SETTINGS_ACTIONS: Action[] = ['schema.change', 'destinations.manage', 'roles.manage', 'tokens.manage', 'audit.read'];
 
 export interface Me {
 	id: string;
@@ -914,4 +914,27 @@ export async function createToken(project: string, token: NewToken): Promise<Api
 /** Revokes it at once; revoking again changes nothing. */
 export async function revokeToken(project: string, id: string): Promise<ApiToken> {
 	return ((await (await send('DELETE', `${tokens(project)}/${id}`)).json()) as { data: ApiToken }).data;
+}
+
+/** One change in a project's audit log (step R.4). */
+export interface AuditEvent {
+	id: string;
+	at: string;
+	actor: { id: string; name: string | null; kind: 'person' | 'token' };
+	action: string;
+	/** A role's key, a member's identity id, an invitation's or a token's id. */
+	subject: string;
+	detail: Record<string, unknown>;
+}
+
+/** Newest first; `action` and `actor` filter exactly. Needs `audit.read`. */
+export async function listAudit(
+	project: string,
+	options: { cursor?: string | null; action?: string; actor?: string; limit?: number } = {}
+): Promise<Page<AuditEvent>> {
+	const query = new URLSearchParams({ limit: String(options.limit ?? 50) });
+	if (options.cursor) query.set('cursor', options.cursor);
+	if (options.action) query.set('action', options.action);
+	if (options.actor) query.set('actor', options.actor);
+	return (await (await send('GET', `/api/v1/projects/${project}/audit?${query}`)).json()) as Page<AuditEvent>;
 }
