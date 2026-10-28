@@ -69,7 +69,8 @@ keep.
   one for the support window below.
 - **Pre-releases.** `0.1.0-alpha.N` until P6's v0.1 gate, then `-beta.N` and `-rc.N` as needed, then `0.1.0`. The
   version is `0.1.0-alpha.1` since milestone V.
-- **Raising it:** change `[workspace.package] version` in one commit, then tag that commit `v<version>`.
+- **Raising it:** change `[workspace.package] version` and `packages/cli-npm/package.json` (its `version` and its
+  five `optionalDependencies`) in one commit (a test fails when they differ), then tag that commit `v<version>`.
 - **What every binary reports.** `--version` prints `<version> (commit <sha>, built <YYYY-MM-DD>)`, and the server
   serves the same at `GET /version` with the API versions it serves ([api](04-api.md)). A build script stamps it
   through `crates/colophon-version`. The commit comes from `COLOPHON_COMMIT` if set (a packager building a source
@@ -109,6 +110,14 @@ evidence".
   `SHA256SUMS`, then `gh release create --draft` attaches them all (marked pre-release for a pre-release version).
   The maintainer checks the draft and publishes it by hand ("artifacts are verified before announcement"). Users
   verify with `sha256sum -c SHA256SUMS` and `gh attestation verify <file> --repo akira-shirase-oss/colophon-cms`.
+- **npm-pack** (both modes): runs `packages/cli-npm`'s tests, assembles the six npm packages from the archives
+  (each checked against `SHA256SUMS`), packs them, installs the launcher and the Linux x64 package from those
+  tarballs into an empty project and checks that `npx colophon --version` reports this release and commit.
+- **npm-publish** (tag runs only, after **release**): runs in the `npm` environment, so it waits for a maintainer's
+  approval, and first refuses to go on if that environment has no required reviewers. With `NPM_TOKEN` from the
+  environment's secrets it publishes the five platform packages and then the launcher, each with `--provenance` and
+  `--access public`, under the dist-tag `next` for a pre-release (`latest` otherwise); a package version already on
+  npm is skipped, so a rerun after a partial failure finishes the job. Nothing is ever published from a laptop.
 - Every third-party action is pinned to a full commit SHA, as in `ci.yml`. Known gaps: the Studio's static files are
   not in the server archive yet (the container images, still to build, will carry them); the musl server uses musl's
   allocator, which is slower than glibc's under load, and its throughput has not been measured.
@@ -173,7 +182,12 @@ Roughly one working day in five is reserved for maintenance once users depend on
   packed by `scripts/release-package.sh` (checksums verified, root-owned entries) and the `.zip` path with stand-in
   binaries; `cargo-cyclonedx` 0.5.9 on this workspace for `x86_64-unknown-linux-musl` (one SBOM per member; the
   CLI's lists 217 components, with no macOS or Windows crates); ShellCheck 0.11.0 on `scripts/*.sh` and
-  actionlint 1.7.12 on the workflows, both clean. The workflow itself has not run on GitHub.
+  actionlint 1.7.12 on the workflows, both clean. The npm packages: `npm test` in `packages/cli-npm` (19 tests);
+  assembled from a release directory holding this Mac's real `aarch64-apple-darwin` archive and stand-ins for the
+  other four, packed with `npm pack`, then installed into an empty project, where `npx --no-install colophon
+  --version` ran the real binary (`colophon 0.1.0-alpha.1 (commit f733870…, built 2026-10-28)`); `npx` with the
+  launcher alone exited 6 with the "isn't installed" message. npm 11.16 skipped the four optional packages it
+  couldn't find on the registry. `npm publish` was never run. The workflow itself has not run on GitHub.
 - CI checks:
   - `cargo deny` (advisories, licences, bans, sources);
   - secret scanning;

@@ -111,6 +111,27 @@ colophon export --env production --out export-directory
 - `logout` skips the check on purpose: signing out must work even against a server this colophon can't otherwise use.
 - `doctor` doesn't check versions yet (it reads `/readyz` only).
 
+### Install (D-062, milestone V)
+- **npm**, `npx @colophon-cms/cli login` or `npm install --global @colophon-cms/cli`. Not published yet: it waits
+  on the maintainer (the npm organization, `NPM_TOKEN`, a tag; module [19](19-oss.md)). The `@colophon` scope and the
+  `colophon` package belong to someone else (checked with `npm view` and the registry on 2026-10-28; the
+  `colophon-cms` organization did not exist yet), so everything is under `@colophon-cms`.
+  - `packages/cli-npm/` is `@colophon-cms/cli`: a launcher, `bin/colophon.js`, with no binary of its own. Each
+    platform's binary is its own package with `os` and `cpu` fields (`@colophon-cms/cli-darwin-arm64`,
+    `-darwin-x64`, `-linux-arm64`, `-linux-x64`, `-win32-x64`), all optional dependencies at the same version, so npm
+    installs only the matching one, the way esbuild and Biome ship theirs. The Linux binaries are static (musl), so
+    one package per architecture serves glibc and musl distributions alike.
+  - `lib/platform.js` picks the package for `process.platform`-`process.arch` and checks its version matches the
+    launcher's. The launcher runs the binary with the same arguments and standard streams, passes its exit code
+    through (a signal too), and forwards `SIGINT`, `SIGTERM` and `SIGHUP`. When it finds no binary it exits 6 and says
+    why: an unsupported platform (with the `cargo install` command), a platform package not installed (with
+    `--omit=optional` named and the `npm install` that fixes it), a version mismatch, or a package without its
+    binary. `COLOPHON_BINARY` runs a binary you built yourself.
+  - `packages/cli-npm/scripts/assemble.mjs --version V --archives DIR --out DIR` builds the six packages from a
+    release's `colophon-cli-*` archives, each checked against `SHA256SUMS` first, and refuses a version that isn't
+    the launcher's. The package is not an npm workspace member (`!packages/cli-npm` in the root `package.json`), so
+    its unpublished optional dependencies never touch the workspace lockfile.
+
 ### Output (spec §09, §11)
 - Default output is for humans.
 - `--json` writes exactly one versioned JSON result to stdout.
@@ -174,6 +195,14 @@ colophon export --env production --out export-directory
   binary against canned servers (a later line, an earlier line, no `/version`, a dropped API version, a reply that
   isn't a report, a fitting server that is then used, `whoami` and `content list` checking without sending the token,
   an unreachable server); `tests/exit_codes.rs` checks that `--version` prints the version, commit and date.
+- Install (milestone V): `packages/cli-npm/test/` (`npm test` there; CI's `distribution` job). `launcher.test.js`
+  calls `findBinary` for every platform and failure, then runs `bin/colophon.js` in a throwaway `node_modules` tree
+  with `process.platform` and `process.arch` replaced by a preloaded module: each of the five platforms runs its own
+  stand-in binary; arguments, exit codes 2 to 6 and a signal pass through; a missing package, an unsupported
+  platform and a version mismatch exit 6 with their message. `assemble.test.mjs` checks the launcher's version
+  against `Cargo.toml`, `npm pack --dry-run` of the launcher, assembly from archives made by
+  `scripts/release-package.sh` (`os`, `cpu`, version, executable binary, and each package's `npm pack --dry-run`
+  file list), and refusal of a tampered archive, a missing target and a wrong version.
 - `insta` snapshots of every `--json` result shape.
 - An exit-code matrix test for every error class.
 - Contract tests against a running server.

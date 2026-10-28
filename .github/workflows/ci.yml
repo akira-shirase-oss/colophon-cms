@@ -71,6 +71,24 @@ jobs:
           path: apps/studio/test-results/
           retention-days: 7
 
+  # How the CLI reaches people without Rust (D-062, milestone V): the npm launcher picks the right
+  # platform package and passes exit codes through, the packages assemble from release archives
+  # checked against SHA256SUMS, and `npm pack` ships exactly the expected files.
+  distribution:
+    name: distribution (npm launcher and packages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Launcher and assembler tests (packages/cli-npm)
+        working-directory: packages/cli-npm
+        run: npm test
+
   # The testing rule (D-018) from a clean clone: the real stack, the real binary, real outages,
   # the testbed in a browser, and a load smoke run.
   integration:

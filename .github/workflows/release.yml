@@ -252,6 +252,59 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  npm-pack:
+    name: npm packages (assembled from the archives, packed, installed and run)
+    needs: [plan, assemble]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ needs.plan.outputs.version }}
+          path: dist
+      - name: The launcher's and the assembler's tests
+        working-directory: packages/cli-npm
+        run: npm test
+      - name: Assemble the packages from the archives (each checked against SHA256SUMS) and pack them
+        run: |
+          set -euo pipefail
+          node packages/cli-npm/scripts/assemble.mjs --version "$VERSION" --archives dist --out npm
+          mkdir -p npm-dist
+          for dir in npm/*/; do
+            (cd "$dir" && npm pack --pack-destination "$GITHUB_WORKSPACE/npm-dist")
+          done
+          ls -l npm-dist
+      - name: Install the packed launcher and the Linux x64 package, then run colophon through npx
+        run: |
+          set -euo pipefail
+          try=$(mktemp -d)
+          cd "$try"
+          echo '{"name": "try", "private": true}' >package.json
+          # The other platforms' packages aren't on npm yet; npm skips optional ones it can't find.
+          npm install --no-audit --no-fund \
+            "$GITHUB_WORKSPACE/npm-dist/colophon-cms-cli-linux-x64-$VERSION.tgz" \
+            "$GITHUB_WORKSPACE/npm-dist/colophon-cms-cli-$VERSION.tgz"
+          line=$(npx --no-install colophon --version)
+          echo "$line"
+          if [[ "$line" != "colophon $VERSION (commit $GITHUB_SHA, built "* ]]; then
+            echo "::error::npx colophon --version printed '$line'"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-${{ needs.plan.outputs.version }}
+          path: npm-dist/
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: draft the GitHub release, with signed provenance
     needs: [plan, assemble]
@@ -294,3 +347,64 @@ jobs:
           flags=(--draft --verify-tag --title "Colophon $VERSION" --notes-file notes.md)
           if [[ "$PRERELEASE" == true ]]; then flags+=(--prerelease); fi
           gh release create "v$VERSION" "${flags[@]}" dist/*
+
+  npm-publish:
+    name: publish to npm (after a maintainer approves)
+    needs: [plan, release, npm-pack]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The approval: give the `npm` environment required reviewers and keep NPM_TOKEN in its secrets
+    # (Settings > Environments). The first step refuses to go on if it has no reviewers.
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm --provenance signs where and how each package was built
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+    steps:
+      - name: The npm environment requires a reviewer's approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          reviewers=$(gh api "repos/$GH_REPO/environments/npm" --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length')
+          if [[ "$reviewers" -lt 1 ]]; then
+            echo "::error::the npm environment has no required reviewers, so nothing was approved; add them in Settings > Environments > npm"
+            exit 1
+          fi
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-${{ needs.plan.outputs.version }}
+          path: npm-dist
+      - name: Publish the platform packages, then the launcher that depends on them
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$NODE_AUTH_TOKEN" ]]; then
+            echo "::error::NPM_TOKEN is not set in the npm environment's secrets"
+            exit 1
+          fi
+          # A pre-release must not become what `npm install @colophon-cms/cli` gets.
+          tag=latest
+          if [[ "$PRERELEASE" == true ]]; then tag=next; fi
+          publish() {
+            local name=$1 file=$2
+            # A rerun after a partial failure skips what is already there; npm never overwrites.
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already on npm"
+              return
+            fi
+            npm publish "npm-dist/$file" --access public --provenance --tag "$tag"
+          }
+          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
+            publish "@colophon-cms/cli-$platform" "colophon-cms-cli-$platform-$VERSION.tgz"
+          done
+          publish "@colophon-cms/cli" "colophon-cms-cli-$VERSION.tgz"
