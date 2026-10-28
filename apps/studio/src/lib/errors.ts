@@ -45,8 +45,17 @@ const BY_REASON: Record<string, string> = {
 	already_set_up: 'Colophon is already set up. Reload the page.',
 	idempotency_key_reused: 'That was sent twice with different contents. Reload the page and try again.',
 	setup_code_invalid: "That code isn't right, or it was used or has expired.",
+	// 422s for API tokens.
+	not_for_tokens: 'An API token can’t manage people, roles, tokens or the activity log.',
+	invalid_expiry: 'A token lasts between 1 and 366 days.',
+	permissions_required: 'Choose at least one thing a custom token may do.',
+	permissions_not_applicable: 'Only a custom token has its own list of what it may do.',
+	too_many_tokens: 'A project has at most 100 active tokens. Revoke one you no longer use first.',
+	invalid_token_name: 'A token’s name is 1 to 100 characters.',
+	invalid_token_description: 'A token’s description is at most 500 characters.',
 	// 403s that aren't about what the role may do.
-	cannot_grant: "Your role can't give or take away that role: it has powers your role doesn't.",
+	cannot_grant: "That would give powers your own role doesn't have.",
+	api_token_not_allowed: 'An API token can’t do this; a person has to.',
 	administrators_only: 'Only the people who run this Colophon can do this.',
 	not_set_up: 'Colophon isn’t set up yet. Its administrator finishes that first.',
 	browser_session_required: 'This needs you signed in here, in the browser. Reload the page and sign in.',

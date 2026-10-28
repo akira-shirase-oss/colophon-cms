@@ -132,6 +132,13 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   - **The role editor** names the new `audit.read` as *See the activity log*, and *Manage API tokens* says what it
     means. Its grid is now `PermissionGrid.svelte`, with the words in `lib/permissions.ts`, shared with custom API
     tokens and the activity log's sentences. Test: `tests/server/permissions.spec.ts`.
+  - **Settings → API tokens** (`…/settings/tokens`, for roles that manage tokens; others are told why it's empty):
+    each token with its state (*Active*, *Ended*, *Revoked*), what it may do, last use and end date in words; making
+    one as *Read only*, *Full access* or *Custom* (the role editor's grid without the four powers only people hold)
+    for 7 days to a year; its secret shown once with *Copy* and "You won't see it again"; *Revoke* asks first.
+    Refusals use B3's reasons (`cannot_grant`, `not_for_tokens`, `too_many_tokens`…). Test: `tests/server/tokens.spec.ts`
+    (the token reads with `Authorization: Bearer`, is refused a write, shows its last use, and answers 401 once
+    revoked; a custom token creates entries and is refused people's routes; phone width).
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

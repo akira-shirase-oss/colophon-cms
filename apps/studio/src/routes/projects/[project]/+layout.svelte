@@ -61,7 +61,8 @@
 		'/projects/[project]/members': 'Members',
 		'/projects/[project]/settings': 'Settings',
 		'/projects/[project]/settings/types/[type]': 'Settings',
-		'/projects/[project]/settings/roles/[role]': 'Settings'
+		'/projects/[project]/settings/roles/[role]': 'Settings',
+		'/projects/[project]/settings/tokens': 'Settings'
 	};
 	const collectionName = $derived(
 		types.data?.find((type) => type.slug === page.params.collection)?.definition.name ?? page.params.collection ?? ''
@@ -77,7 +78,7 @@
 			if (route.endsWith('[entry]')) trail.push({ label: 'Entry' });
 		} else if (SECTION[route]) {
 			const section = SECTION[route];
-			const detail = route.endsWith(']') && !route.endsWith('[project]');
+			const detail = (route.endsWith(']') && !route.endsWith('[project]')) || route.endsWith('/tokens');
 			const href =
 				section === 'Publish requests'
 					? resolve('/projects/[project]/changesets', { project })
@@ -88,6 +89,7 @@
 			if (route.endsWith('[generation]')) trail.push({ label: `Release ${page.params.generation}` });
 			if (route.endsWith('[changeset]')) trail.push({ label: 'Publish request' });
 			if (route.endsWith('[role]')) trail.push({ label: `Role ${page.params.role ?? ''}` });
+			if (route.endsWith('/tokens')) trail.push({ label: 'API tokens' });
 			if (route.endsWith('[type]')) {
 				trail.push({ label: types.data?.find((type) => type.slug === page.params.type)?.definition.name ?? page.params.type ?? '' });
 			}
@@ -287,4 +289,10 @@
 	</Sidebar.Inset>
 </Sidebar.Provider>
 
-<CommandPalette {project} types={readable} {settings} bind:open={searching} />
+<CommandPalette
+	{project}
+	types={readable}
+	{settings}
+	tokens={may(mine.data, 'tokens.manage')}
+	bind:open={searching}
+/>

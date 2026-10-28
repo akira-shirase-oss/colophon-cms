@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
+	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 	import MoonIcon from '@lucide/svelte/icons/moon';
@@ -23,8 +24,16 @@
 		project,
 		types,
 		settings = false,
+		tokens = false,
 		open = $bindable(false)
-	}: { project: string; types: ContentType[]; /** Whether the role sees Settings. */ settings?: boolean; open?: boolean } = $props();
+	}: {
+		project: string;
+		types: ContentType[];
+		/** Whether the role sees Settings and API tokens. */
+		settings?: boolean;
+		tokens?: boolean;
+		open?: boolean;
+	} = $props();
 
 	let typed = $state('');
 	let q = $state('');
@@ -68,7 +77,8 @@
 		{ label: 'Publish requests', icon: LayersIcon, href: resolve('/projects/[project]/changesets', { project }) },
 		{ label: 'Releases', icon: PackageCheckIcon, href: resolve('/projects/[project]/releases', { project }) },
 		{ label: 'Members', icon: UsersIcon, href: resolve('/projects/[project]/members', { project }) },
-		...(settings ? [{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }] : [])
+		...(settings ? [{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }] : []),
+		...(tokens ? [{ label: 'API tokens', icon: KeyRoundIcon, href: resolve('/projects/[project]/settings/tokens', { project }) }] : [])
 	]);
 	const needle = $derived(typed.trim().toLowerCase());
 	const pages = $derived(PAGES.filter((item) => item.label.toLowerCase().includes(needle)));

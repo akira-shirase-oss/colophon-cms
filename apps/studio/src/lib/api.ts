@@ -869,3 +869,49 @@ export function deliveryUrl(project: string, collection: string): string {
 export function newKey(): string {
 	return crypto.randomUUID().replaceAll('-', '');
 }
+
+/** A project's API token (step R.4): a key a script or a site uses instead of someone's session. */
+export interface ApiToken {
+	id: string;
+	/** The identity its requests act as, so what it writes is attributed to it. */
+	identity_id: string;
+	name: string;
+	description: string;
+	kind: 'read-only' | 'full-access' | 'custom';
+	permissions: Grant[];
+	state: 'active' | 'expired' | 'revoked';
+	created_by: { id: string; name: string | null };
+	created_at: string;
+	expires_at: string;
+	last_used_at: string | null;
+	revoked_at: string | null;
+	/** Only in the answer that made it: the server keeps a hash. */
+	secret?: string;
+}
+
+export interface NewToken {
+	name: string;
+	description?: string;
+	kind: ApiToken['kind'];
+	/** Custom tokens only. */
+	permissions?: Grant[];
+	/** 1 to 366. */
+	expires_in_days: number;
+}
+
+const tokens = (project: string) => `/api/v1/projects/${project}/tokens`;
+
+export async function listTokens(project: string): Promise<ApiToken[]> {
+	return ((await (await send('GET', tokens(project))).json()) as { data: ApiToken[] }).data;
+}
+
+/** Refused with 403 `cannot_grant` for powers the caller's role lacks, 422 `not_for_tokens` for a
+ *  people-only action, `invalid_expiry`, `permissions_required` or `too_many_tokens`. */
+export async function createToken(project: string, token: NewToken): Promise<ApiToken> {
+	return ((await (await send('POST', tokens(project), token)).json()) as { data: ApiToken }).data;
+}
+
+/** Revokes it at once; revoking again changes nothing. */
+export async function revokeToken(project: string, id: string): Promise<ApiToken> {
+	return ((await (await send('DELETE', `${tokens(project)}/${id}`)).json()) as { data: ApiToken }).data;
+}
