@@ -428,6 +428,10 @@ impl ApiError {
                 "another entry in this collection has the same slug, as a draft or published",
                 None,
             ),
+            DbError::SingleExists => Self::conflict(
+                "single_exists",
+                "this collection is a single type and already has its entry; edit that one",
+            ),
             // 422, at the very place in the content (D-065).
             DbError::MissingReference {
                 field,

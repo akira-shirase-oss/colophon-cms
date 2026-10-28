@@ -1,3 +1,8 @@
+# Every text file is checked out with LF line endings, on Windows too: the release workflow builds
+# there, and CRLF would break the shell scripts and change the embedded migrations' checksums
+# (sqlx records them), so a Windows binary would refuse a database a Linux one migrated.
+* text=auto eol=lf
+
 # Every load run appends one line here; branches that both ran keep both lines (a merge never
 # has to choose). Each line stands alone, so order between branches does not matter.
 perf/results/history.jsonl merge=union

@@ -77,6 +77,7 @@ create → conflict → review → publish scenario produce equivalent durable r
 | `/auth/*`, `/me` | OIDC login, callback and logout; session inspection and revocation; exact callback origins, CSRF. Built in step 1.1: `GET /auth/login`, `GET /auth/callback`, `POST /auth/logout`, and `GET /me` (the identity and its projects; since step 1.8 also its `subject` and whether it is an `administrator`, D-043). Since step 3.7 (D-061): `GET /auth/login?start=create` opens the provider's sign-up form when its discovery document lists `prompt=create`; `/me` adds `installation.has_administrator`; and `POST /api/v1/setup` (`{"code"}`, signed in, CSRF-checked) makes the caller the first administrator with the setup code the server printed, answering 422 `setup_code_invalid` (wrong, used or expired, alike), 409 `already_set_up`, or 429 `rate_limited` with `Retry-After` . `POST /auth/logout` answers `200 {"data": {"provider_sign_out"}}` for a browser (the identity provider's end-session address, or `null`) and still `204` for the CLI's token |
 | `/api/v1/projects`, `/members`, `/invitations` | Project lifecycle and membership; owner-scoped. Built in step 1.1: list, create (with a `production` environment and the creator as owner; a taken slug is 409; administrators only since step 1.8, D-043) and get, where a project you aren't a member of is 404. Built in step 1.7 (D-042): `/members` (list; owners change roles and remove; anyone may leave) and `/invitations` (owners create, list and revoke), plus `POST /api/v1/invitations/lookup` and `/accept` with the token in the body; the last owner is 409 |
 | `/api/v1/projects/{project}/tokens`, `/audit` | Built in step R.4 (D-063). `tokens`: list, create (`{"name", "description"?, "kind": "read-only"|"full-access"|"custom", "permissions"? (custom only), "expires_in_days": 1–366}`; 201 with `secret`, shown only there) and `DELETE …/tokens/{token}` (revokes; answers the token); `tokens.manage`, checked fresh; `cannot_grant`, `not_for_tokens`, `invalid_expiry`, `permissions_required`, `permissions_not_applicable`, `too_many_tokens`. `audit`: `?limit=&cursor=&action=&actor=`, newest first, `audit.read`. `Authorization: Bearer colophon_api_…` works only under its project's `/environments/` routes and `/api/v1/rich-text/validate`; another project is 404, other routes and `…/schedule` are 403 `api_token_not_allowed`, a revoked or expired token 401 |
+| `{P}/permissions` | The caller's own permissions here, for a person or an API token: `{"kind", "role", "permissions"}`, as roles show them (D-068). Opened like any content route, so a revoked token is 401 and another project 404 |
 | `{P}/schemas`, `/migrations` | Discover, validate, plan, apply, inspect; apply needs an approved current plan and migration permission. Built in step 1.5 as `{P}/content-types` (D-040): list, create, get with `ETag: "v<n>"`, and update with `If-Match`, accepted only for changes that keep stored entries valid (`needs_migration` otherwise); owners and developers only. Since step 3.6 (D-055) a narrowing change is checked against every draft and published revision: refused with 422 `needs_migration`, `details.entries` (the first 20 in the way, each with its title, `draft` or `published`, and the refusal its content would get) and `details.total`; more than 10,000 to check is `too_many_to_check`. A `slug` field (D-054): a save or create whose slug another entry has, as a draft or published, is 409 `slug_taken` naming it in `details.entries`; a release that would publish a slug another entry still publishes is 409 `slug_taken`. Published entries carry `slug` in `/content/v1` when they have one. Migrations later |
 | `{P}/collections/{collection}/entries` | List and create; get, update and archive by ID; updates need the expected revision. Built in step 1.2 for the `articles` collection (D-034): list (cursor), create, get with `ETag`, save with `If-Match`, and `…/{entry}/revisions`; archive later. A read says whether the entry is live: `published` is `{revision_id, generation}`, or `null` when it isn't published (create and save answers leave it out, since they don't look it up). List summaries carry `created_by`, as reads do, and `?created_by=` keeps one creator's entries within what the role may list (someone else's, for a role that reads only its own, is an empty page). A read also lists `referenced_by` (D-065): the entries whose draft or published revision names this one, by field, at most 100, only in collections the role reads |
 | `{P}/entries/{id}/revisions`, `/comments` | History, compare, restore as a new draft, revision-bound comments |
@@ -125,6 +126,14 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 | 503 | Dependency or capacity unavailable, with `Retry-After` |
 
 ### Contracts and discovery
+- **`GET /version`** (D-062, built in milestone V): `{"version", "commit", "build_date", "api": ["v1"]}`, the
+  release this server is, the git commit and day it was built from (`unknown` when the build couldn't tell), and
+  the API versions it serves, oldest first (`colophon_api::API_VERSIONS`). It is unauthenticated and `no-store`, like
+  the health endpoints, because a client checks it before signing in; it names versions only, never hosts or
+  configuration. Its shape never changes: fields may be added, none removed or renamed, so a client of any version can
+  read it. The server binary stamps the build (`crates/colophon-version`, module [19](19-oss.md), "Versions") and
+  hands it to the router in `AppState::build`. The CLI reads it to say plainly when it is too old or too new for the
+  server ([cli](08-cli.md), "Versions"); a server from before it answers the 404 envelope, which the CLI recognises.
 - An OpenAPI document is exported from the code (D-027, `utoipa`). The TypeScript client ([sdk](13-sdk.md)) is generated from it
   and tested against the server in CI.
 - Schema discovery returns only the collections and fields the caller may access.
@@ -154,7 +163,7 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 ## Interfaces
 
-- HTTP: `/api/v1/*`, `/auth/*`, `/me`, `/livez`, `/readyz`.
+- HTTP: `/api/v1/*`, `/auth/*`, `/me`, `/livez`, `/readyz`, `/version`.
 - The OpenAPI document (a build artifact).
 - `router(state) -> Router`, used by colophon-server.
 
@@ -170,7 +179,8 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 ## Tests and evidence
 
-- In-process `oneshot` tests for every route and every error class.
+- In-process `oneshot` tests for every route and every error class; `/version`'s shape and its unstamped
+  fallback are in `tests/http.rs`.
 - Contract tests of the OpenAPI document against the server.
 - The parity gate: Studio-API, CLI and SDK run the same scenario and produce equivalent records.
 - Cursor fuzzing: tampered cursors, cursors from another project or query shape.

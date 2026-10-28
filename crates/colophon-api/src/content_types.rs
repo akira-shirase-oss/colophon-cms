@@ -21,7 +21,7 @@ use axum::{
     response::Response,
 };
 use colophon_db::{
-    content_types::{self, Updated, Version},
+    content_types::{self, MadeSingle, Updated, Version},
     idempotency::{self, Claim},
     scope::ProjectTransaction,
 };
@@ -50,8 +50,8 @@ const UPDATE: &str = "content_type.update";
 /// The path of the collection routes.
 #[derive(Deserialize)]
 pub(crate) struct TypesPath {
-    project: String,
-    environment: String,
+    pub(crate) project: String,
+    pub(crate) environment: String,
 }
 
 /// The path of the single-type routes.
@@ -399,12 +399,25 @@ pub(crate) async fn update(
     }
     let stored: Value = serde_json::from_str(&current.definition).map_err(ApiError::internal)?;
     let previous = ContentType::parse(&stored).map_err(ApiError::internal)?;
+    let single = next.single();
     match previous.successor(&next) {
         Successor::Compatible => {}
         Successor::CheckContent(refusal) => {
             check_stored(&mut tx, &path.slug, Arc::new(next), refusal).await?;
         }
         Successor::Refused(refusal) => return Err(ApiError::Invalid(refusal)),
+    }
+    // A single type holds at most one entry (D-067): its entries carry the flag the index checks.
+    if previous.single() != single
+        && let MadeSingle::TooMany(count) = content_types::set_single(&mut tx, &path.slug, single)
+            .await
+            .map_err(ApiError::from_db)?
+    {
+        return Err(ApiError::Invalid(Refusal {
+            code: "too_many_entries",
+            pointer: "/single".to_owned(),
+            message: format!("a single type holds one entry, and this collection has {count}"),
+        }));
     }
     match content_types::update(
         &mut tx,

@@ -158,7 +158,9 @@ crates/
   colophon-db/       PostgreSQL adapter: a bounded, lazy pool and the readiness probe
   colophon-api/      the HTTP surface: error envelope, request IDs, middleware, /livez, /readyz
   colophon-cli/      the `colophon` binary (`colophon doctor`)
+  colophon-mcp/      the `colophon-mcp` binary: an MCP server on stdio for agents, over the same HTTP API (D-068)
   colophon-server/   the `colophon-server` binary: config, probes, graceful shutdown (--role api|worker|all)
+  colophon-version/  the version, commit and build date every binary reports (--version, GET /version)
 apps/
   studio/            the Studio: today, the editor spike
   testbed/           a separate SvelteKit frontend that tests Colophon through its real HTTP API
@@ -166,6 +168,8 @@ packages/
   editor/            Tiptap configured to exactly the rich-text format, and the canonical conversion
   content-renderer/  stored documents to safe HTML, one implementation for the Studio and the public site
   ui/                Material 3 tokens from one seed, and components on Bits UI primitives
+  cli-npm/           @colophon-cms/cli: the npm launcher for the prebuilt `colophon` binaries
+packaging/           the Homebrew formula template (scripts/homebrew-formula.sh fills it in per release)
 fixtures/            the shared rich-text contract: 12 valid documents with their reviewed HTML, 34 that must be refused
 perf/                k6 scenarios, every load result, and per-machine baselines
 deploy/              compose.yaml: the local stack (PostgreSQL, Valkey, Garage, Keycloak); local.env
@@ -259,4 +263,4 @@ including the mistakes, is written up in the [build log](https://404human.dev/co
 ## License
 
 Apache-2.0 is proposed for the core, CLI and SDK. The `LICENSE` file will be added once the maintainer confirms it,
-before any release.
+before any release; the release workflow refuses a tag without it.

@@ -7,7 +7,7 @@ use std::time::Duration;
 use reqwest::{Method, StatusCode};
 use serde_json::Value;
 
-use crate::Exit;
+use crate::{Exit, compat};
 
 /// Every request gives up after this long.
 pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -115,6 +115,56 @@ impl Client {
             exit_for(status),
             format!("{message}{detail} [HTTP {}]", status.as_u16()),
         ))
+    }
+}
+
+impl Client {
+    /// Asks the server what it is (`GET /version`, unauthenticated) and stops with a plain
+    /// explanation when this colophon doesn't fit it (`compat`). An incompatible server is a
+    /// usage error (exit 2): retrying can't help, another colophon or server version can.
+    pub(crate) async fn check_server(&self) -> Result<(), Failure> {
+        let server = self.base.as_str().trim_end_matches('/');
+        let url = self.base.join("/version").map_err(|error| {
+            Failure::new(Exit::Usage, format!("{server:?} has no /version: {error}"))
+        })?;
+        let response = self.http.get(url).send().await.map_err(|error| {
+            Failure::new(
+                Exit::Unavailable,
+                if error.is_timeout() {
+                    format!("no answer from {server} within {REQUEST_TIMEOUT:?}")
+                } else {
+                    format!("could not reach {server}: {error}")
+                },
+            )
+        })?;
+        let status = response.status();
+        let body: Value = response.json().await.unwrap_or(Value::Null);
+        if status == StatusCode::NOT_FOUND && body["error"]["code"] == "route_not_found" {
+            // A Colophon server from before version reports: its error envelope, no route.
+            return Err(Failure::new(Exit::Usage, compat::no_version_report(server)));
+        }
+        if !status.is_success() {
+            return Err(Failure::new(
+                exit_for(status),
+                format!(
+                    "could not check the server's version: {} [HTTP {}]",
+                    body["error"]["message"]
+                        .as_str()
+                        .unwrap_or("request failed"),
+                    status.as_u16()
+                ),
+            ));
+        }
+        let report = compat::Report::read(&body).ok_or_else(|| {
+            Failure::new(
+                Exit::Internal,
+                format!(
+                    "{server} answered /version with something that isn't a Colophon version \
+                     report; is it a Colophon server?"
+                ),
+            )
+        })?;
+        compat::check(server, &report).map_err(|message| Failure::new(Exit::Usage, message))
     }
 }
 

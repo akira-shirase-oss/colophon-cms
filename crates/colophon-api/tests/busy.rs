@@ -48,6 +48,7 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
             allow_private_destinations: true,
             cache: colophon_api::DeliveryCache::disabled(),
         })),
+        build: colophon_api::BuildInfo::unstamped("0.0.0-test"),
     };
     let app = middleware::apply(
         colophon_api::routes(state),

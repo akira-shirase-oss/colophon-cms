@@ -155,6 +155,51 @@ pub async fn update(
     }
 }
 
+/// What making a content type single, or not, found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MadeSingle {
+    /// Its entries carry the new flag.
+    Done,
+    /// It can't be single: it has this many entries.
+    TooMany(i64),
+}
+
+/// Sets `collection`'s entries' single flag to `single` (D-067). Making it single needs at most
+/// one entry. The caller holds [`lock_for_change`], so no entry is made meanwhile.
+pub async fn set_single(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    single: bool,
+) -> Result<MadeSingle, DbError> {
+    if single {
+        let count = sqlx::query_scalar!(
+            r#"SELECT count(*) AS "count!" FROM entries
+               WHERE project_id = $1 AND environment_id = $2 AND collection = $3"#,
+            tx.project,
+            tx.environment,
+            collection
+        )
+        .fetch_one(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query)?;
+        if count > 1 {
+            return Ok(MadeSingle::TooMany(count));
+        }
+    }
+    sqlx::query!(
+        "UPDATE entries SET single = $4
+         WHERE project_id = $1 AND environment_id = $2 AND collection = $3 AND single <> $4",
+        tx.project,
+        tx.environment,
+        collection,
+        single
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(MadeSingle::Done)
+}
+
 /// Holds `collection`'s content type still until the transaction ends. Entry writes and
 /// publishes take this lock shared, before they read the content type or what they publish;
 /// a change to the type takes it exclusively ([`lock_for_change`]). So a write is validated

@@ -119,7 +119,7 @@ that builds them.
 | References / relations (one, many, two-way) | ✓ | ✓ | one and many built in M.2 (D-065), never dangling, with "referenced by" on every read; the Studio's picker next |
 | Components / objects, repeatable lists | ✓ | ✓ | built in M.3 (D-066), inline; shared components in M.4 |
 | Dynamic zones / block arrays (page builder) | ✓ | ✓ | built in M.3 (D-066) |
-| Single types / singletons | ✓ | ✓ | M |
+| Single types / singletons | ✓ | ✓ | built in M.4 (D-067), one entry enforced by the database |
 | Email, URL, date, time, JSON, Markdown, colour, geopoint fields | ✓ | ✓ | built in M.1 (D-064) but geopoint; the Studio's editor for them is next |
 | Validation: pattern, unique, length, value; conditional fields; defaults | ✓ | ✓ | M |
 | Field descriptions, groups and tabs, custom previews | ✓ | ✓ | descriptions in M.1 (D-064); groups, tabs and previews in M |

@@ -10,6 +10,7 @@
 
 mod admin;
 mod client;
+mod compat;
 mod content;
 mod credentials;
 mod doctor;
@@ -38,7 +39,12 @@ impl From<Exit> for ExitCode {
 
 /// Write, review and publish content from the terminal.
 #[derive(Debug, Parser)]
-#[command(name = "colophon", version, about, arg_required_else_help = true)]
+#[command(
+    name = "colophon",
+    version = colophon_version::long_version!(),
+    about,
+    arg_required_else_help = true
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

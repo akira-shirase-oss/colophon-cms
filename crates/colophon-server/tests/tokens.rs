@@ -140,6 +140,26 @@ async fn a_token_does_exactly_what_its_permissions_allow_and_stops_when_revoked(
         }),
     )
     .await;
+    // It can ask what it may do, as can the owner.
+    let own = format!("/api/v1/projects/{project}/environments/production/permissions");
+    let mine = as_token(&writer, Method::GET, &own, None).await;
+    assert_eq!(mine.status, StatusCode::OK, "{}", mine.body);
+    assert_eq!(
+        (
+            &mine.body["data"]["kind"],
+            &mine.body["data"]["role"],
+            mine.body["data"]["permissions"].as_array().map(Vec::len)
+        ),
+        (&json!("token"), &Value::Null, Some(2))
+    );
+    let owner_view = send(&owner, Method::GET, &own, None, &[]).await;
+    assert_eq!(
+        (
+            &owner_view.body["data"]["kind"],
+            &owner_view.body["data"]["role"]
+        ),
+        (&json!("person"), &json!("owner"))
+    );
     let written = as_token(
         &writer,
         Method::POST,

@@ -245,6 +245,8 @@ pub struct Field {
 pub struct ContentType {
     name: String,
     title_field: String,
+    /// At most one entry, like a site's settings or its home page (step M.4, D-067).
+    single: bool,
     fields: Vec<Field>,
 }
 
@@ -1234,6 +1236,7 @@ impl ContentType {
         Self {
             name: "Articles".to_owned(),
             title_field: "title".to_owned(),
+            single: false,
             fields: vec![
                 Field {
                     id: "title".to_owned(),
@@ -1263,7 +1266,7 @@ impl ContentType {
         let object = value
             .as_object()
             .ok_or_else(|| refuse("not_an_object", &root, "a definition is a JSON object"))?;
-        only(object, &["name", "title_field", "fields"], &root)?;
+        only(object, &["name", "title_field", "single", "fields"], &root)?;
         let name = object
             .get("name")
             .and_then(Value::as_str)
@@ -1320,6 +1323,7 @@ impl ContentType {
         Ok(Self {
             name,
             title_field,
+            single: bool_or(object, "single", false, &root)?,
             fields,
         })
     }
@@ -1615,6 +1619,11 @@ impl ContentType {
         })
     }
 
+    /// Whether the collection holds at most one entry (D-067).
+    pub const fn single(&self) -> bool {
+        self.single
+    }
+
     /// The name.
     pub fn name(&self) -> &str {
         &self.name
@@ -1637,6 +1646,10 @@ impl ContentType {
         write_string(&mut out, &self.name);
         out.push_str(r#","title_field":"#);
         write_string(&mut out, &self.title_field);
+        // Only when set, so every definition from before step M.4 keeps its bytes and hash.
+        if self.single {
+            out.push_str(r#","single":true"#);
+        }
         out.push_str(r#","fields":["#);
         write_fields(&mut out, &self.fields);
         out.push_str("]}");
@@ -3273,6 +3286,47 @@ mod tests {
         assert!(
             matches!(base.successor(&quotes_by_staff), Successor::Refused(_)),
             "a nested reference pointed elsewhere"
+        );
+    }
+
+    #[test]
+    fn a_single_type_says_so_only_when_it_is_one() {
+        let definition = |single: Option<Value>| {
+            let mut definition = json!({
+                "name": "Settings", "title_field": "name",
+                "fields": [{"id": "name", "label": "Site name", "type": "text", "required": true}]
+            });
+            if let Some(single) = single {
+                definition["single"] = single;
+            }
+            ContentType::parse(&definition)
+        };
+        let single = definition(Some(json!(true))).expect("valid");
+        assert!(single.single());
+        assert!(
+            single
+                .canonical_json()
+                .starts_with(r#"{"name":"Settings","title_field":"name","single":true,"fields":["#)
+        );
+        let again =
+            ContentType::parse(&serde_json::from_str(&single.canonical_json()).expect("JSON"))
+                .expect("valid");
+        assert_eq!(again.canonical_json(), single.canonical_json());
+        // Not single: written exactly as before step M.4, so its hash doesn't move.
+        for plain in [definition(None), definition(Some(json!(false)))] {
+            let plain = plain.expect("valid");
+            assert!(!plain.single());
+            assert!(
+                plain
+                    .canonical_json()
+                    .starts_with(r#"{"name":"Settings","title_field":"name","fields":["#)
+            );
+        }
+        assert_eq!(
+            definition(Some(json!("yes")))
+                .map(|_| ())
+                .map_err(|refused| refused.pointer),
+            Err("/single".to_owned())
         );
     }
 }

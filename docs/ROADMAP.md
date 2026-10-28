@@ -276,6 +276,31 @@ the server it talks to.
 Homebrew formula and the install script each install the same version on a clean machine in CI; an old CLI against a
 new server (and the reverse) gets the plain-words answer, tested.
 
+**Status (2026-10-28, branch `v/versions-distribution`).** What ran is listed in modules 08 and 19, "Tests and
+evidence".
+
+- Built and tested: the version is `0.1.0-alpha.1`, one for every crate and the npm packages (module 19,
+  "Versions"); `colophon --version` and `colophon-server --version` print version, commit and build date
+  (`crates/colophon-version`); `GET /version` reports the release and `api: ["v1"]` (module 04); the CLI checks it
+  before every command that talks to a server and says in plain words whether it is too old or too new (module 08,
+  "Versions"), which covers the gate's last item for the CLI with canned servers in both directions.
+  `@colophon-cms/cli` and its five platform packages, assembled from release archives (module 08, "Install"); the
+  install script; the Homebrew formula template; `cargo install --locked --git` (run here from a local clone).
+- Written, not yet run in CI: `.github/workflows/release.yml` (five targets, `SHA256SUMS`, CycloneDX SBOMs, signed
+  build provenance, a draft release, npm publishing behind an approval; a manual run is a dry run that publishes
+  nothing) and `ci.yml`'s `distribution` job. Its first dry run is the first real test of the cross-builds (musl
+  with aws-lc, Windows, macOS x64 from arm64).
+- Waits on the maintainer: create the npm organization `colophon-cms`; create the `npm` environment with required
+  reviewers and `NPM_TOKEN` (an npm token that can publish to `@colophon-cms`) in its secrets; confirm the licence
+  (O-014) and add `LICENSE`; add `CHANGELOG.md` with a `## 0.1.0-alpha.1` section; run the workflow by hand once as a
+  dry run; then push the tag `v0.1.0-alpha.1`, check the draft release and publish it, and approve the npm job. For
+  Homebrew, create the tap `akira-shirase-oss/homebrew-colophon` and commit each release's `colophon.rb` as
+  `Formula/colophon.rb`.
+- Not built yet: crates.io publishing (`cargo install colophon-cli`, after O-014 and publishing the crates it
+  depends on); the SDK and the MCP server and their checks (they don't exist yet); container images for the server
+  and worker; the server archive without the Studio's files; CI installs of the published packages, the formula and
+  `cargo install` on clean machines, which need a published release.
+
 ## P5: Safe automation (≈ spec M4)
 
 **Goal:** scripts and agents can do permitted work at bounded scale and never execute an unauthorized action.
@@ -288,6 +313,13 @@ new server (and the reverse) gets the plain-words answer, tested.
 
 **Proof gate:** zero unauthorized actions across the evaluation set; X12 (an agent interrupted halfway through a bulk
 edit resumes without duplicates or overwrites); L08 (a noisy agent is throttled; editors keep their latency).
+
+**Steps:** the MCP adapter over local stdio (built: D-068, closing O-013 with a thin JSON-RPC layer;
+`crates/colophon-mcp`, MCP 2025-11-25, eight typed tools over `/api/v1` with a project API token: read content, write
+drafts from the revision read, make a publish request and ask for its review; nothing approves or publishes; tool
+discovery follows the token's permissions; unit tests and a stack test over stdio) · not built: remote MCP with its
+authorization, service-account quotas and budgets, bulk manifests and jobs (X12), the CLI's full JSON contract and a
+`colophon mcp` subcommand, the evaluation suite, L08. The proof gate is not met.
 
 ## P6: Operate it (≈ spec M5)
 

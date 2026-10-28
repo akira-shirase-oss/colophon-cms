@@ -1,0 +1,16 @@
+[package]
+name = "colophon-version"
+description = "What a Colophon build is: its release version, git commit and build date, stamped at compile time by the binaries' build scripts."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# For build scripts only (`[build-dependencies]`): reads git and the environment to stamp a
+# build. Without it the crate is two macros and a struct, and does no I/O.
+stamp = []
+
+[lints]
+workspace = true
