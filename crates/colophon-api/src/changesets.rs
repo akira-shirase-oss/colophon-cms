@@ -25,7 +25,9 @@ use axum::{
     response::Response,
 };
 use colophon_db::{
+    DbError,
     changesets::{self, Head, Pin},
+    content_types,
     idempotency::{self, Claim},
     releases::{self, Committed},
     scope::ProjectTransaction,
@@ -690,6 +692,21 @@ fn publishable(status: &Status) -> Result<(), ApiError> {
     }
 }
 
+/// Takes the content-type lock of every collection in `changeset`, shared and in order, before its
+/// items are read: no content type there changes between reading them and committing, so what goes
+/// live is what was a draft when any change checked the collection (D-055).
+async fn lock_collections(tx: &mut ProjectTransaction, changeset: Uuid) -> Result<(), ApiError> {
+    for collection in changesets::collections(tx, changeset)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        content_types::lock_for_write(tx, &collection)
+            .await
+            .map_err(ApiError::from_db)?;
+    }
+    Ok(())
+}
+
 /// `POST {P}/changesets/{changeset}/publish`: commits the approved changeset as the release after
 /// `base_generation`, if the environment is still there.
 pub(crate) async fn publish(
@@ -733,6 +750,7 @@ pub(crate) async fn publish(
         }
     }
     let head = locked(&mut tx, &path.changeset, &expected).await?;
+    lock_collections(&mut tx, head.id).await?;
     let items = changesets::items(&mut tx, head.id)
         .await
         .map_err(ApiError::from_db)?;
@@ -754,7 +772,14 @@ pub(crate) async fn publish(
         std::time::Duration::from_secs(colophon_domain::job::LIFETIME_SECS.unsigned_abs()),
     )
     .await
-    .map_err(ApiError::from_db)?;
+    .map_err(|error| match error {
+        DbError::SlugTaken => ApiError::slug_taken(
+            "",
+            "an entry in this changeset has a slug that another entry still publishes; publish that entry's new slug first, or in the same changeset",
+            None,
+        ),
+        other => ApiError::from_db(other),
+    })?;
     let (generation, epoch, changed, unpublished) = match committed {
         Committed::Done {
             generation,

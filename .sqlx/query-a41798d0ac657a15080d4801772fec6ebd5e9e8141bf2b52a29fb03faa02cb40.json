@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT e.collection\n         FROM changeset_items i\n         JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id\n                       AND e.id = i.entry_id\n         WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3\n         ORDER BY e.collection",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "collection",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "collection"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a41798d0ac657a15080d4801772fec6ebd5e9e8141bf2b52a29fb03faa02cb40"
+}

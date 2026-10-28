@@ -9,8 +9,14 @@
 //! same value, so the Studio can reproduce it.
 //!
 //! A definition can change only in ways that keep every stored entry valid
-//! ([`ContentType::check_successor`]): new optional fields, wider limits, more enum options, new
-//! labels. Anything else needs a migration, which doesn't exist yet.
+//! ([`ContentType::successor`]). New optional fields, wider limits, more enum options and new
+//! labels are always safe. Removing a field, making one required or narrowing a limit is safe
+//! only if no current draft or published revision is in the way, which only the stored content
+//! can tell ([`ContentType::accepts`], D-055). Changing the title field, or turning a field into
+//! or out of a slug, needs a migration, which doesn't exist yet.
+//!
+//! A slug field (D-054) holds an entry's URL name, unique in its collection: the database
+//! enforces that, among drafts and among published entries. A content type has at most one.
 
 use serde_json::{Map, Value};
 
@@ -29,6 +35,8 @@ pub const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 pub const MAX_DECIMAL: f64 = 1e9;
 /// Most decimal places a decimal number may have.
 pub const DECIMAL_PLACES: i32 = 6;
+/// Most characters in a slug.
+pub const MAX_SLUG_CHARS: usize = 120;
 /// The longest unknown key repeated back in an error.
 const MAX_REPORTED_KEY_CHARS: usize = 64;
 
@@ -84,6 +92,12 @@ pub enum FieldKind {
     },
     /// A moment in UTC, written `YYYY-MM-DDTHH:MM:SSZ`.
     DateTime,
+    /// The entry's URL name ([`is_slug`]), unique in its collection.
+    Slug {
+        /// The single-line text field the Studio suggests the slug from. Only a hint: the
+        /// server never derives a slug.
+        source: Option<String>,
+    },
 }
 
 impl FieldKind {
@@ -96,8 +110,22 @@ impl FieldKind {
             Self::Boolean => "boolean",
             Self::Enum { .. } => "enum",
             Self::DateTime => "datetime",
+            Self::Slug { .. } => "slug",
         }
     }
+}
+
+/// What it takes to replace a definition with a new one ([`ContentType::successor`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Successor {
+    /// The new definition accepts everything the old one does: nothing stored needs checking.
+    Compatible,
+    /// The new definition is narrower. It may replace the old one only if it
+    /// [accepts](ContentType::accepts) every current draft and published revision; this says
+    /// why the check is needed.
+    CheckContent(Refusal),
+    /// Not without a migration, whatever is stored.
+    Refused(Refusal),
 }
 
 /// One field of a content type.
@@ -126,6 +154,7 @@ pub struct ContentType {
 pub struct Content {
     canonical: String,
     title: String,
+    slug: Option<String>,
 }
 
 impl Content {
@@ -138,6 +167,25 @@ impl Content {
     pub fn title(&self) -> &str {
         &self.title
     }
+
+    /// The value of the content type's slug field, if it has one and the content sets it.
+    pub fn slug(&self) -> Option<&str> {
+        self.slug.as_deref()
+    }
+}
+
+/// Whether `text` is a slug: 1 to [`MAX_SLUG_CHARS`] lowercase ASCII letters and digits, in
+/// groups joined by single hyphens, like `my-first-post`. Refused rather than normalized, like
+/// all text: the Studio suggests a slug, and what is stored is what was sent.
+pub fn is_slug(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    (1..=MAX_SLUG_CHARS).contains(&bytes.len())
+        && bytes.split(|byte| *byte == b'-').all(|group| {
+            !group.is_empty()
+                && group
+                    .iter()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
 }
 
 fn plain_text(text: &str, max: usize) -> bool {
@@ -392,7 +440,8 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         ) => new_max >= old_max && (*new_multiline || !old_multiline),
         (FieldKind::RichText, FieldKind::RichText)
         | (FieldKind::Boolean, FieldKind::Boolean)
-        | (FieldKind::DateTime, FieldKind::DateTime) => true,
+        | (FieldKind::DateTime, FieldKind::DateTime)
+        | (FieldKind::Slug { .. }, FieldKind::Slug { .. }) => true,
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -453,6 +502,53 @@ fn enum_values(object: &Map<String, Value>, pointer: &Pointer) -> Result<Vec<Str
         values.push(text.to_owned());
     }
     Ok(values)
+}
+
+/// The slug rules of a definition (D-054): at most one slug field, and a `source` that names one of
+/// the definition's single-line text fields.
+fn check_slug_fields(fields: &[Field]) -> Result<(), Refusal> {
+    let pointer_to = |index: usize, key: &str| {
+        let mut pointer = at(&Pointer::new(), "fields");
+        pointer.push_index(index);
+        at(&pointer, key)
+    };
+    let mut slugs = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| matches!(field.kind, FieldKind::Slug { .. }));
+    if let (Some(_), Some((second, _))) = (slugs.next(), slugs.next()) {
+        return Err(refuse(
+            "duplicate_slug",
+            &pointer_to(second, "type"),
+            "a content type has at most one slug field",
+        ));
+    }
+    for (index, field) in fields.iter().enumerate() {
+        let FieldKind::Slug {
+            source: Some(source),
+        } = &field.kind
+        else {
+            continue;
+        };
+        let single_line = fields.iter().any(|other| {
+            other.id == *source
+                && matches!(
+                    other.kind,
+                    FieldKind::Text {
+                        multiline: false,
+                        ..
+                    }
+                )
+        });
+        if !single_line {
+            return Err(refuse(
+                "invalid_source",
+                &pointer_to(index, "source"),
+                "`source` must name a single-line text field of this content type",
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl ContentType {
@@ -532,6 +628,7 @@ impl ContentType {
             }
             fields.push(field);
         }
+        check_slug_fields(&fields)?;
         let title_field = object
             .get("title_field")
             .and_then(Value::as_str)
@@ -633,11 +730,31 @@ impl ContentType {
                 only(object, &common, pointer)?;
                 FieldKind::DateTime
             }
+            Some("slug") => {
+                only(object, &[&common[..], &["source"]].concat(), pointer)?;
+                let source = match object.get("source") {
+                    None => None,
+                    Some(value) => Some(
+                        value
+                            .as_str()
+                            .filter(|source| is_field_id(source))
+                            .ok_or_else(|| {
+                                refuse(
+                                    "invalid_source",
+                                    &at(pointer, "source"),
+                                    "`source` is the id of a field",
+                                )
+                            })?
+                            .to_owned(),
+                    ),
+                };
+                FieldKind::Slug { source }
+            }
             _ => {
                 return Err(refuse(
                     "invalid_type",
                     &at(pointer, "type"),
-                    "`type` is one of text, rich_text, number, boolean, enum, datetime",
+                    "`type` is one of text, rich_text, number, boolean, enum, datetime, slug",
                 ));
             }
         };
@@ -723,6 +840,12 @@ impl ContentType {
                     }
                     out.push(']');
                 }
+                FieldKind::Slug { source } => {
+                    if let Some(source) = source {
+                        out.push_str(r#","source":"#);
+                        write_string(&mut out, source);
+                    }
+                }
                 FieldKind::RichText | FieldKind::Boolean | FieldKind::DateTime => {}
             }
             out.push('}');
@@ -742,6 +865,7 @@ impl ContentType {
         only(object, &ids, &root)?;
         let mut out = String::with_capacity(256);
         let mut title = String::new();
+        let mut slug = None;
         out.push('{');
         let mut first = true;
         for field in &self.fields {
@@ -766,12 +890,30 @@ impl ContentType {
             if field.id == self.title_field {
                 value.as_str().unwrap_or_default().clone_into(&mut title);
             }
+            if matches!(field.kind, FieldKind::Slug { .. }) {
+                slug = value.as_str().map(str::to_owned);
+            }
         }
         out.push('}');
         Ok(Content {
             canonical: out,
             title,
+            slug,
         })
+    }
+
+    /// Whether this definition accepts `stored`, the canonical content of a revision validated
+    /// against an earlier version: the check behind [`Successor::CheckContent`]. Stored content
+    /// is never rewritten; it only has to stay valid.
+    pub fn accepts(&self, stored: &str) -> Result<(), Refusal> {
+        let value: Value = serde_json::from_str(stored).map_err(|_| {
+            refuse(
+                "unreadable",
+                &Pointer::new(),
+                "the stored content is not JSON",
+            )
+        })?;
+        self.validate(&value).map(|_| ())
     }
 
     fn value(
@@ -856,21 +998,63 @@ impl ContentType {
                     })?;
                 write_string(out, text);
             }
+            FieldKind::Slug { .. } => {
+                let text = value
+                    .as_str()
+                    .filter(|text| is_slug(text))
+                    .ok_or_else(|| {
+                        refuse(
+                            "invalid_slug",
+                            pointer,
+                            format!(
+                                "{label} is 1 to {MAX_SLUG_CHARS} lowercase letters and digits, in groups joined by single hyphens, like my-first-post"
+                            ),
+                        )
+                    })?;
+                write_string(out, text);
+            }
         }
         Ok(())
     }
 
-    /// Checks that `next` can replace this definition without a migration: every stored entry
-    /// stays valid. Allowed: a new name or labels, new optional fields, wider limits, more enum
-    /// options, an integer field becoming a decimal one, a single-line text becoming multi-line.
-    pub fn check_successor(&self, next: &Self) -> Result<(), Refusal> {
+    /// What it takes for `next` to replace this definition.
+    ///
+    /// [`Successor::Compatible`]: a new name or labels, new optional fields, wider limits, more
+    /// enum options, an integer field becoming a decimal one, a single-line text becoming
+    /// multi-line.
+    ///
+    /// [`Successor::CheckContent`]: anything else that only stored content can rule out, such as
+    /// removing a field, making one required, narrowing a limit or changing a field's type. The
+    /// refusal is the first such change, phrased for when stored content is in the way.
+    ///
+    /// [`Successor::Refused`]: a different title field (every revision's title is stored for
+    /// lists), or a field turned into or out of a slug (every draft's and publication's slug is
+    /// stored for uniqueness). Both need a migration.
+    pub fn successor(&self, next: &Self) -> Successor {
         let root = Pointer::new();
         if next.title_field != self.title_field {
-            return Err(refuse(
+            return Successor::Refused(refuse(
                 "needs_migration",
                 &at(&root, "title_field"),
                 "changing the title field needs a migration",
             ));
+        }
+        let slug = |field: &Field| matches!(field.kind, FieldKind::Slug { .. });
+        for (index, new) in next.fields.iter().enumerate() {
+            if let Some(old) = self.fields.iter().find(|old| old.id == new.id)
+                && slug(old) != slug(new)
+            {
+                let mut pointer = at(&root, "fields");
+                pointer.push_index(index);
+                return Successor::Refused(refuse(
+                    "needs_migration",
+                    &pointer,
+                    format!(
+                        "turning `{}` into or out of a slug field needs a migration",
+                        new.id
+                    ),
+                ));
+            }
         }
         for old in &self.fields {
             let Some((index, new)) = next
@@ -879,21 +1063,20 @@ impl ContentType {
                 .enumerate()
                 .find(|(_, field)| field.id == old.id)
             else {
-                return Err(refuse(
+                return Successor::CheckContent(refuse(
                     "needs_migration",
                     &at(&root, "fields"),
-                    format!("removing `{}` needs a migration", old.id),
+                    format!("removing `{}` would make stored content invalid", old.id),
                 ));
             };
             let mut pointer = at(&root, "fields");
             pointer.push_index(index);
-            let wider = widens(&old.kind, &new.kind);
-            if !wider || (new.required && !old.required) {
-                return Err(refuse(
+            if !widens(&old.kind, &new.kind) || (new.required && !old.required) {
+                return Successor::CheckContent(refuse(
                     "needs_migration",
                     &pointer,
                     format!(
-                        "this change to `{}` could make stored content invalid; it needs a migration",
+                        "this change to `{}` would make stored content invalid",
                         old.id
                     ),
                 ));
@@ -903,17 +1086,17 @@ impl ContentType {
             if new.required && !self.fields.iter().any(|old| old.id == new.id) {
                 let mut pointer = at(&root, "fields");
                 pointer.push_index(index);
-                return Err(refuse(
+                return Successor::CheckContent(refuse(
                     "needs_migration",
                     &pointer,
                     format!(
-                        "a new field (`{}`) must be optional: existing entries don't have it",
+                        "a new required field (`{}`) would make stored content invalid",
                         new.id
                     ),
                 ));
             }
         }
-        Ok(())
+        Successor::Compatible
     }
 }
 
@@ -1187,15 +1370,24 @@ mod tests {
             .expect("a list")
             .push(json!({"id": "subtitle", "label": "Subtitle", "type": "text"}));
         let wider = ContentType::parse(&definition).expect("valid");
-        assert_eq!(base.check_successor(&wider), Ok(()));
+        assert_eq!(base.successor(&wider), Successor::Compatible);
 
         let change = |edit: &dyn Fn(&mut Value)| {
             let mut definition: Value = serde_json::from_str(&base.canonical_json()).expect("JSON");
             edit(&mut definition);
-            base.check_successor(&ContentType::parse(&definition).expect("valid"))
-                .map_err(|refusal| refusal.code)
+            match base.successor(&ContentType::parse(&definition).expect("valid")) {
+                Successor::Compatible => "compatible",
+                Successor::CheckContent(refusal) => {
+                    assert_eq!(refusal.code, "needs_migration");
+                    "check content"
+                }
+                Successor::Refused(refusal) => {
+                    assert_eq!(refusal.code, "needs_migration");
+                    "refused"
+                }
+            }
         };
-        let risky: [&dyn Fn(&mut Value); 6] = [
+        let narrower: [&dyn Fn(&mut Value); 7] = [
             &|d| d["fields"][0]["max_chars"] = json!(100),
             &|d| d["fields"][1]["required"] = json!(true),
             &|d| d["fields"][6]["values"] = json!(["News"]),
@@ -1209,9 +1401,178 @@ mod tests {
                     .expect("a list")
                     .push(json!({"id": "x", "label": "X", "type": "boolean", "required": true}));
             },
+            &|d| d["fields"][5] = json!({"id": "featured", "label": "Featured", "type": "text"}),
         ];
-        for edit in risky {
-            assert_eq!(change(edit), Err("needs_migration"));
+        for edit in narrower {
+            assert_eq!(change(edit), "check content");
+        }
+        let refused: [&dyn Fn(&mut Value); 2] = [
+            &|d| {
+                d["fields"][1] =
+                    json!({"id": "summary", "label": "Summary", "type": "text", "required": true});
+                d["title_field"] = json!("summary");
+            },
+            &|d| d["fields"][6] = json!({"id": "section", "label": "Section", "type": "slug"}),
+        ];
+        for edit in refused {
+            assert_eq!(change(edit), "refused");
+        }
+    }
+
+    #[test]
+    fn a_narrower_definition_accepts_exactly_the_content_that_still_fits() {
+        let base = post_type();
+        let mut definition: Value = serde_json::from_str(&base.canonical_json()).expect("JSON");
+        // Drops `rating`, and makes `summary` required and `section` news-only.
+        definition["fields"]
+            .as_array_mut()
+            .expect("a list")
+            .remove(4);
+        definition["fields"][1]["required"] = json!(true);
+        definition["fields"][5]["values"] = json!(["News"]);
+        let next = ContentType::parse(&definition).expect("valid");
+        assert!(matches!(base.successor(&next), Successor::CheckContent(_)));
+
+        let stored = |content: Value| {
+            base.validate(&content)
+                .expect("valid under the old definition")
+                .canonical_json()
+                .to_owned()
+        };
+        let fits =
+            stored(json!({"headline": "Hi", "summary": "S", "body": body(), "section": "News"}));
+        assert_eq!(next.accepts(&fits), Ok(()));
+        let cases = [
+            (
+                json!({"headline": "Hi", "summary": "S", "body": body(), "rating": 3}),
+                "unknown_field",
+                "/rating",
+            ),
+            (
+                json!({"headline": "Hi", "body": body()}),
+                "missing_field",
+                "/summary",
+            ),
+            (
+                json!({"headline": "Hi", "summary": "S", "body": body(), "section": "Guides"}),
+                "not_an_option",
+                "/section",
+            ),
+        ];
+        for (content, code, pointer) in cases {
+            let refusal = next
+                .accepts(&stored(content.clone()))
+                .expect_err("in the way");
+            assert_eq!(
+                (refusal.code, refusal.pointer.as_str()),
+                (code, pointer),
+                "{content}"
+            );
+        }
+        assert_eq!(
+            next.accepts("{").map_err(|refusal| refusal.code),
+            Err("unreadable")
+        );
+    }
+
+    #[test]
+    fn slugs_are_url_names_and_content_reports_its_slug() {
+        let longest = "a".repeat(MAX_SLUG_CHARS);
+        let too_long = "a".repeat(MAX_SLUG_CHARS + 1);
+        for good in [
+            "a",
+            "my-first-post",
+            "2026-10-27",
+            "x1-y2-z3",
+            longest.as_str(),
+        ] {
+            assert!(is_slug(good), "{good}");
+        }
+        for bad in [
+            "",
+            "-a",
+            "a-",
+            "a--b",
+            "My-Post",
+            "café",
+            "a_b",
+            "a b",
+            "a/b",
+            too_long.as_str(),
+        ] {
+            assert!(!is_slug(bad), "{bad}");
+        }
+
+        let ty = ContentType::parse(&json!({"name": "Pages", "title_field": "title", "fields": [
+            {"id": "title", "label": "Title", "type": "text", "required": true},
+            {"id": "slug", "label": "URL name", "type": "slug", "required": true, "source": "title"}
+        ]}))
+        .expect("valid");
+        assert!(ty.canonical_json().ends_with(
+            r#"{"id":"slug","label":"URL name","type":"slug","required":true,"source":"title"}]}"#
+        ));
+        let content = ty
+            .validate(&json!({"slug": "hello-world", "title": "Hello, world"}))
+            .expect("valid");
+        assert_eq!(
+            content.canonical_json(),
+            r#"{"title":"Hello, world","slug":"hello-world"}"#
+        );
+        assert_eq!(content.slug(), Some("hello-world"));
+        let refusal = ty
+            .validate(&json!({"title": "T", "slug": "Hello World"}))
+            .expect_err("not a slug");
+        assert_eq!(
+            (refusal.code, refusal.pointer.as_str()),
+            ("invalid_slug", "/slug")
+        );
+        let without = ContentType::articles()
+            .validate(&json!({"title": "T", "body": body()}))
+            .expect("valid");
+        assert_eq!(without.slug(), None);
+    }
+
+    #[test]
+    fn a_slug_field_names_a_real_source_and_comes_once() {
+        let parse = |fields: Value| {
+            ContentType::parse(&json!({"name": "T", "title_field": "t", "fields": fields}))
+                .map(|_| ())
+                .map_err(|refusal| (refusal.code, refusal.pointer))
+        };
+        let title = json!({"id": "t", "label": "T", "type": "text", "required": true});
+        assert_eq!(
+            parse(json!([title, {"id": "s", "label": "S", "type": "slug"}])),
+            Ok(())
+        );
+        let cases = [
+            (
+                json!([title, {"id": "s", "label": "S", "type": "slug"}, {"id": "u", "label": "U", "type": "slug"}]),
+                ("duplicate_slug", "/fields/2/type"),
+            ),
+            (
+                json!([title, {"id": "s", "label": "S", "type": "slug", "source": "missing"}]),
+                ("invalid_source", "/fields/1/source"),
+            ),
+            (
+                json!([title, {"id": "m", "label": "M", "type": "text", "multiline": true},
+                       {"id": "s", "label": "S", "type": "slug", "source": "m"}]),
+                ("invalid_source", "/fields/2/source"),
+            ),
+            (
+                json!([title, {"id": "s", "label": "S", "type": "slug", "source": 3}]),
+                ("invalid_source", "/fields/1/source"),
+            ),
+            (
+                json!([title, {"id": "s", "label": "S", "type": "slug", "max_chars": 10}]),
+                ("unknown_field", "/fields/1/max_chars"),
+            ),
+        ];
+        for (fields, expected) in cases {
+            assert_eq!(
+                parse(fields.clone()),
+                Err((expected.0, expected.1.to_owned())),
+                "{fields}"
+            );
         }
     }
 

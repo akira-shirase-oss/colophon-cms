@@ -3,8 +3,32 @@
 //! validated by the domain (`colophon_domain::schema`) before they reach this module.
 
 use sqlx::types::time::OffsetDateTime;
+use uuid::Uuid;
 
 use crate::{DbError, scope::ProjectTransaction};
+
+/// The most drafts and publications one content type change checks (D-055). A collection with
+/// more needs a migration, which doesn't exist yet.
+pub const MAX_CHECKED: i64 = 10_000;
+
+/// The first key of the advisory locks in [`lock_for_write`] and [`lock_for_change`]. PostgreSQL
+/// keeps two-key advisory locks apart from one-key ones, such as the lock sqlx takes to migrate.
+const LOCK_CLASS: i32 = 0x4354;
+
+/// A draft or published revision a content type change has to keep valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stored {
+    /// The entry.
+    pub entry_id: Uuid,
+    /// The revision.
+    pub revision_id: Uuid,
+    /// Its title.
+    pub title: String,
+    /// Its canonical content.
+    pub content: String,
+    /// Whether it is what readers get, rather than the draft.
+    pub published: bool,
+}
 
 /// The built-in articles definition every environment starts with: exactly
 /// `colophon_domain::schema::ContentType::articles().canonical_json()`, which a test checks, as
@@ -128,6 +152,121 @@ pub async fn update(
             current: expected + 1,
         }),
         Err(other) => Err(other),
+    }
+}
+
+/// Holds `collection`'s content type still until the transaction ends. Entry writes and
+/// publishes take this lock shared, before they read the content type or what they publish;
+/// a change to the type takes it exclusively ([`lock_for_change`]). So a write is validated
+/// against the version that is current when it commits, and a change sees every draft and
+/// publication there will be until the next change (D-055). Waiting counts against the
+/// statement timeout, like any query.
+pub async fn lock_for_write(tx: &mut ProjectTransaction, collection: &str) -> Result<(), DbError> {
+    lock(
+        tx,
+        collection,
+        "SELECT 1 FROM pg_advisory_xact_lock_shared($1, hashtext($2::text || '/' || $3::text || '/' || $4))",
+    )
+    .await
+}
+
+/// The exclusive side of [`lock_for_write`], for a content type change.
+pub async fn lock_for_change(tx: &mut ProjectTransaction, collection: &str) -> Result<(), DbError> {
+    lock(
+        tx,
+        collection,
+        "SELECT 1 FROM pg_advisory_xact_lock($1, hashtext($2::text || '/' || $3::text || '/' || $4))",
+    )
+    .await
+}
+
+/// Runs one of the two lock statements above. `hashtext` names the collection in 32 bits: a
+/// collision only makes two collections wait for each other's changes; it never lets a change and
+/// a write overlap.
+async fn lock(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    statement: &'static str,
+) -> Result<(), DbError> {
+    sqlx::query(statement)
+        .bind(LOCK_CLASS)
+        .bind(tx.project)
+        .bind(tx.environment)
+        .bind(collection)
+        .execute(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query)?;
+    Ok(())
+}
+
+/// How many revisions a change to `collection` has to check: every entry's draft, and every
+/// published revision that isn't also its entry's draft.
+pub async fn stored_count(tx: &mut ProjectTransaction, collection: &str) -> Result<i64, DbError> {
+    sqlx::query_scalar!(
+        r#"SELECT (SELECT count(*) FROM entries
+                   WHERE project_id = $1 AND environment_id = $2 AND collection = $3)
+                + (SELECT count(*) FROM publications p
+                   JOIN entries e ON e.project_id = p.project_id AND e.environment_id = p.environment_id
+                                 AND e.id = p.entry_id
+                   WHERE p.project_id = $1 AND p.environment_id = $2 AND p.collection = $3
+                     AND p.valid_to IS NULL AND p.revision_id <> e.draft_revision_id) AS "count!""#,
+        tx.project,
+        tx.environment,
+        collection
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// Up to `limit` of the revisions [`stored_count`] counts, in entry order after `after`: the
+/// drafts, or the published revisions that aren't drafts.
+pub async fn stored_page(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    published: bool,
+    after: Uuid,
+    limit: i64,
+) -> Result<Vec<Stored>, DbError> {
+    if published {
+        sqlx::query_as!(
+            Stored,
+            r#"SELECT p.entry_id, p.revision_id, p.title, p.content, true AS "published!"
+               FROM publications p
+               JOIN entries e ON e.project_id = p.project_id AND e.environment_id = p.environment_id
+                             AND e.id = p.entry_id
+               WHERE p.project_id = $1 AND p.environment_id = $2 AND p.collection = $3
+                 AND p.valid_to IS NULL AND p.revision_id <> e.draft_revision_id AND p.entry_id > $4
+               ORDER BY p.entry_id
+               LIMIT $5"#,
+            tx.project,
+            tx.environment,
+            collection,
+            after,
+            limit
+        )
+        .fetch_all(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query)
+    } else {
+        sqlx::query_as!(
+            Stored,
+            r#"SELECT e.id AS entry_id, r.id AS revision_id, r.title, r.content, false AS "published!"
+               FROM entries e
+               JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id
+                               AND r.id = e.draft_revision_id
+               WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3 AND e.id > $4
+               ORDER BY e.id
+               LIMIT $5"#,
+            tx.project,
+            tx.environment,
+            collection,
+            after,
+            limit
+        )
+        .fetch_all(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query)
     }
 }
 

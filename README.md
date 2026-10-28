@@ -127,7 +127,7 @@ Each milestone is named after what it proves, and is done only when its proof ga
 | P5 | Safe automation | Zero unauthorized agent actions; interrupted bulk jobs resume | Planned |
 | P6 | Operate it | Full fault and load matrix, 24-hour soak, restore drill; **v0.1** | Planned |
 
-Estimated at about 4–6 months to v0.1. Details: [ROADMAP.md](docs/ROADMAP.md).
+Estimated at about 9–12 months to v0.1, since the goal became every feature Strapi and Sanity offer (D-057). Details: [ROADMAP.md](docs/ROADMAP.md).
 
 **Deliberately not in v0.1:** commerce, payments, subscriptions, shipping and tax, hosting integrations and custom
 domains ([parked](docs/modules/parked.md)). **Never:** untrusted native plugins, CRDT live co-editing, GraphQL,

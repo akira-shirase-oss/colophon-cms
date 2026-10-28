@@ -224,6 +224,7 @@ async fn a_revision_names_its_entry_s_collection_and_a_version_that_exists() {
             content: r#"{"title":"One"}"#,
             content_hash: &[4; 32],
             title: "One",
+            slug: None,
             schema_version: 1,
         },
     )

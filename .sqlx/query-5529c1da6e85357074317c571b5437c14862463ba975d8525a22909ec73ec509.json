@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT entry_id, revision_id, collection, title, content, content_hash, valid_from\n             FROM publications\n             WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n               AND environment_id = $1 AND collection = $2\n               AND valid_from <= $3 AND (valid_to IS NULL OR valid_to > $3) AND revoked_in IS NULL\n               AND ($4::uuid IS NULL OR entry_id < $4)\n             ORDER BY entry_id DESC\n             LIMIT $5",
+  "query": "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from\n             FROM publications\n             WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n               AND environment_id = $1 AND collection = $2 AND entry_id = $3\n               AND valid_from <= $4 AND (valid_to IS NULL OR valid_to > $4) AND revoked_in IS NULL",
   "describe": {
     "columns": [
       {
@@ -49,6 +49,17 @@
       },
       {
         "ordinal": 4,
+        "name": "slug",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "publications",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
         "name": "content",
         "type_info": "Text",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "content_hash",
         "type_info": "Bytea",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "valid_from",
         "type_info": "Int8",
         "origin": {
@@ -85,7 +96,6 @@
       "Left": [
         "Uuid",
         "Text",
-        "Int8",
         "Uuid",
         "Int8"
       ]
@@ -95,10 +105,11 @@
       false,
       false,
       false,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "0ae0e6e656297bf50f9e743246897c40bf9d1b5c0efbb6b2651edb0c6fbaab77"
+  "hash": "5529c1da6e85357074317c571b5437c14862463ba975d8525a22909ec73ec509"
 }

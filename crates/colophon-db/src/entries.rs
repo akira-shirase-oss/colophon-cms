@@ -21,8 +21,21 @@ pub struct NewRevision<'a> {
     pub content_hash: &'a [u8; 32],
     /// The title, copied out of the content for lists.
     pub title: &'a str,
+    /// The slug, copied out of the content: unique among the collection's drafts (D-054).
+    pub slug: Option<&'a str>,
     /// The content type version the content was validated against.
     pub schema_version: i32,
+}
+
+/// The entry that has a slug, as a draft or as what readers get ([`slug_holder`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlugHolder {
+    /// The entry.
+    pub entry_id: Uuid,
+    /// Its title, in the revision that has the slug.
+    pub title: String,
+    /// Whether that revision is the published one rather than the draft.
+    pub published: bool,
 }
 
 /// A revision's metadata.
@@ -97,14 +110,15 @@ pub async fn create(
     revision: NewRevision<'_>,
 ) -> Result<Draft, DbError> {
     let entry = sqlx::query!(
-        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_title, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING created_at, updated_at",
         tx.project,
         tx.environment,
         entry_id,
         collection,
         revision.id,
+        revision.slug,
         revision.title,
         tx.identity
     )
@@ -160,7 +174,7 @@ pub async fn save(
     let created_at =
         insert_revision(tx, entry_id, &current.collection, Some(expected), revision).await?;
     let moved = sqlx::query_scalar!(
-        "UPDATE entries SET draft_revision_id = $4, draft_title = $6, updated_at = now()
+        "UPDATE entries SET draft_revision_id = $4, draft_slug = $6, draft_title = $7, updated_at = now()
          WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND draft_revision_id = $5
          RETURNING updated_at",
         tx.project,
@@ -168,11 +182,12 @@ pub async fn save(
         entry_id,
         revision.id,
         expected,
+        revision.slug,
         revision.title
     )
     .fetch_optional(&mut *tx.transaction)
     .await
-    .map_err(DbError::from_query)?;
+    .map_err(DbError::from_write)?;
     let Some(updated_at) = moved else {
         // Unreachable while the row lock is held; if it ever happens, the caller rolls back.
         return Ok(Saved::Stale {
@@ -206,8 +221,8 @@ async fn insert_revision(
     sqlx::query_scalar!(
         "INSERT INTO revisions
            (project_id, environment_id, entry_id, id, base_revision_id, content, content_hash, title,
-            author_id, collection, schema_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            author_id, collection, schema_version, slug)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING created_at",
         tx.project,
         tx.environment,
@@ -219,11 +234,47 @@ async fn insert_revision(
         revision.title,
         tx.identity,
         collection,
-        revision.schema_version
+        revision.schema_version,
+        revision.slug
     )
     .fetch_one(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)
+}
+
+/// Another entry of `collection` with `slug`, as its draft's slug or its published one: what a
+/// write of that slug would run into. Only for the refusal's wording, and racy like any precheck:
+/// the indexes of migration 0016 are the rule (D-054). `except` is the entry being saved, which
+/// may keep its own slugs.
+pub async fn slug_holder(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    slug: &str,
+    except: Option<Uuid>,
+) -> Result<Option<SlugHolder>, DbError> {
+    sqlx::query_as!(
+        SlugHolder,
+        r#"SELECT e.id AS "entry_id!", r.title AS "title!", false AS "published!"
+           FROM entries e
+           JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id
+                           AND r.id = e.draft_revision_id
+           WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
+             AND e.draft_slug = $4 AND e.id IS DISTINCT FROM $5
+           UNION ALL
+           SELECT p.entry_id, p.title, true
+           FROM publications p
+           WHERE p.project_id = $1 AND p.environment_id = $2 AND p.collection = $3
+             AND p.slug = $4 AND p.valid_to IS NULL AND p.entry_id IS DISTINCT FROM $5
+           LIMIT 1"#,
+        tx.project,
+        tx.environment,
+        collection,
+        slug,
+        except
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
 }
 
 /// The entry with its current draft, if it exists in this environment and collection.

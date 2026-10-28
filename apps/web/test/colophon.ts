@@ -6,8 +6,8 @@ export function doc(text: string): unknown {
 	return { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] } };
 }
 
-export function item(id: string, title: string, publishedIn = 1): Article {
-	return { id, title, content: { title, body: doc(`Body of ${title}`) }, published_in: publishedIn };
+export function item(id: string, title: string, publishedIn = 1, slug?: string): Article {
+	return { id, title, ...(slug === undefined ? {} : { slug }), content: { title, body: doc(`Body of ${title}`) }, published_in: publishedIn };
 }
 
 /** A fetch that serves `releases` (release → articles, newest first) in pages of `pageSize`,

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE entries SET draft_revision_id = $4, draft_title = $6, updated_at = now()\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND draft_revision_id = $5\n         RETURNING updated_at",
+  "query": "UPDATE entries SET draft_revision_id = $4, draft_slug = $6, draft_title = $7, updated_at = now()\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND draft_revision_id = $5\n         RETURNING updated_at",
   "describe": {
     "columns": [
       {
@@ -22,6 +22,7 @@
         "Uuid",
         "Uuid",
         "Uuid",
+        "Text",
         "Text"
       ]
     },
@@ -29,5 +30,5 @@
       false
     ]
   },
-  "hash": "700ea47dbe43079b4d8b7f42b1baef2759b46f725eabb30cea6b48d85286ec1e"
+  "hash": "80d66a9f4851a42988d5f549136fcfec20f8241db20925454bd2961d19488ee2"
 }

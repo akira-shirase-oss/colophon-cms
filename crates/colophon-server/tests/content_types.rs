@@ -1,7 +1,8 @@
 //! Content types end to end: the real binary, a real sign-in. Define a type, create entries
-//! that fit it and see those that don't refused with a pointer, change the type safely, see an
-//! unsafe change refused, and see that only owners and developers may change types. Needs the
-//! stack and migrations.
+//! that fit it and see those that don't refused with a pointer, change the type safely, see a
+//! change refused with the entries in its way and accepted once they're fixed (D-055), give each
+//! entry its own slug and find it in the public API (D-054), and see that only owners and
+//! developers may change types. Needs the stack and migrations.
 #![cfg(unix)]
 #![expect(
     clippy::expect_used,
@@ -239,10 +240,211 @@ async fn a_content_type_changes_only_in_ways_that_keep_its_entries_valid() {
     .await
     .expect("request");
     assert_eq!(unsafe_change.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let details = &unsafe_change.body["error"]["details"];
+    assert_eq!(details["reason"], "needs_migration");
+    // The refusal names the entry in the way and why (D-055).
+    assert_eq!(details["total"], 1, "{details}");
+    assert_eq!(details["entries"][0]["title"], "Hello");
+    assert_eq!(details["entries"][0]["state"], "draft");
+    assert_eq!(details["entries"][0]["problem"]["reason"], "unknown_field");
+    assert_eq!(details["entries"][0]["problem"]["pointer"], "/minutes");
+}
+
+fn notes() -> Value {
+    json!({
+        "name": "Notes",
+        "title_field": "title",
+        "fields": [
+            {"id": "title", "label": "Title", "type": "text", "required": true},
+            {"id": "tag", "label": "Tag", "type": "text"},
+            {"id": "done", "label": "Done", "type": "boolean"}
+        ]
+    })
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_narrowing_change_goes_through_when_nothing_stored_is_in_the_way() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let created = call(
+        &owner,
+        Method::POST,
+        &types(&project),
+        Some(&json!({"slug": "notes", "definition": notes()})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let mut ids = Vec::new();
+    for body in [json!({"title": "One", "tag": "x"}), json!({"title": "Two"})] {
+        let note = call(
+            &owner,
+            Method::POST,
+            &entries(&project, "notes"),
+            Some(&body),
+            &[("idempotency-key", &key())],
+        )
+        .await
+        .expect("request");
+        assert_eq!(note.status, StatusCode::CREATED, "{}", note.body);
+        ids.push((
+            note.body["data"]["id"].as_str().expect("an id").to_owned(),
+            note.etag().expect("an ETag"),
+        ));
+    }
+    let path = format!("{}/notes", types(&project));
+    let put = |definition: Value, version: &'static str| {
+        let owner = &owner;
+        let path = path.clone();
+        async move {
+            call(
+                owner,
+                Method::PUT,
+                &path,
+                Some(&definition),
+                &[("if-match", version), ("idempotency-key", &key())],
+            )
+            .await
+            .expect("request")
+        }
+    };
+
+    // Nobody uses `done`: removing it is fine.
+    let mut without_done = notes();
+    without_done["fields"]
+        .as_array_mut()
+        .expect("a list")
+        .remove(2);
+    let removed = put(without_done.clone(), "\"v1\"").await;
+    assert_eq!(removed.status, StatusCode::OK, "{}", removed.body);
+
+    // `Two` has no tag: requiring one is refused, naming it.
+    let mut required = without_done.clone();
+    required["fields"][1]["required"] = json!(true);
+    let refused = put(required.clone(), "\"v2\"").await;
     assert_eq!(
-        unsafe_change.body["error"]["details"]["reason"],
-        "needs_migration"
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.body
     );
+    let details = &refused.body["error"]["details"];
+    assert_eq!(
+        (
+            &details["reason"],
+            &details["total"],
+            &details["entries"][0]["title"]
+        ),
+        (&json!("needs_migration"), &json!(1), &json!("Two"))
+    );
+    assert_eq!(details["entries"][0]["problem"]["reason"], "missing_field");
+
+    // Once `Two` has a tag, the same change goes through.
+    let (two, etag) = &ids[1];
+    let saved = call(
+        &owner,
+        Method::PUT,
+        &format!("{}/{two}", entries(&project, "notes")),
+        Some(&json!({"title": "Two", "tag": "y"})),
+        &[("if-match", etag), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    let accepted = put(required, "\"v2\"").await;
+    assert_eq!(accepted.status, StatusCode::OK, "{}", accepted.body);
+    assert_eq!(accepted.etag().as_deref(), Some("\"v3\""));
+
+    // A field turned into a slug is refused whatever is stored.
+    let mut into_slug = without_done;
+    into_slug["fields"][1] = json!({"id": "tag", "label": "Tag", "type": "slug", "required": true});
+    let into = put(into_slug, "\"v3\"").await;
+    assert_eq!(into.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        into.body["error"]["details"]["total"],
+        Value::Null,
+        "{}",
+        into.body
+    );
+}
+
+fn pages() -> Value {
+    json!({
+        "name": "Pages",
+        "title_field": "title",
+        "fields": [
+            {"id": "title", "label": "Title", "type": "text", "required": true},
+            {"id": "slug", "label": "URL name", "type": "slug", "source": "title"}
+        ]
+    })
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_slug_belongs_to_one_entry_and_reaches_the_public_api() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let created = call(
+        &owner,
+        Method::POST,
+        &types(&project),
+        Some(&json!({"slug": "pages", "definition": pages()})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let make = |body: Value| {
+        let owner = &owner;
+        let path = entries(&project, "pages");
+        async move {
+            call(
+                owner,
+                Method::POST,
+                &path,
+                Some(&body),
+                &[("idempotency-key", &key())],
+            )
+            .await
+            .expect("request")
+        }
+    };
+    let about = make(json!({"title": "About", "slug": "about"})).await;
+    assert_eq!(about.status, StatusCode::CREATED, "{}", about.body);
+    let about_id = about.body["data"]["id"].as_str().expect("an id").to_owned();
+
+    let taken = make(json!({"title": "About us", "slug": "about"})).await;
+    assert_eq!(taken.status, StatusCode::CONFLICT, "{}", taken.body);
+    let details = &taken.body["error"]["details"];
+    assert_eq!(
+        (&details["reason"], &details["pointer"]),
+        (&json!("slug_taken"), &json!("/slug"))
+    );
+    assert_eq!(details["entries"][0]["entry"], about_id.as_str());
+    assert_eq!(details["entries"][0]["state"], "draft");
+
+    let not_a_slug = make(json!({"title": "About us", "slug": "About Us"})).await;
+    assert_eq!(not_a_slug.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        not_a_slug.body["error"]["details"]["reason"],
+        "invalid_slug"
+    );
+
+    // Published, the slug is in the public API.
+    common::release(
+        &owner,
+        &project,
+        &json!({"title": "About", "entries": [about_id]}),
+    )
+    .await;
+    let (status, body) =
+        common::get(None, &format!("/content/v1/{project}/production/pages")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"][0]["slug"], "about");
 }
 
 #[tokio::test]

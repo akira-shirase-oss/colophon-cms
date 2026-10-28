@@ -26,14 +26,16 @@ use colophon_db::{
     idempotency::{self, Claim},
     scope::{self, ProjectTransaction},
 };
-use colophon_domain::schema::{Content, ContentType};
+use colophon_domain::schema::{Content, ContentType, FieldKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::Uuid;
 
 use crate::{
-    ApiError, AppState, fault,
+    ApiError, AppState,
+    error::EntryInTheWay,
+    fault,
     session::{SignedIn, services},
     shape::{Data, Page},
 };
@@ -305,6 +307,47 @@ async fn claim(
     }
 }
 
+/// Refuses content whose slug another entry of the collection has, as a draft or published,
+/// naming that entry. Only the wording: the unique indexes are the rule, and a write that loses a
+/// race to them is refused without a name ([`ApiError::from_db`]).
+async fn slug_free(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    content_type: &ContentType,
+    content: &Content,
+    entry: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let Some(slug) = content.slug() else {
+        return Ok(());
+    };
+    let Some(holder) = entries::slug_holder(tx, collection, slug, entry)
+        .await
+        .map_err(ApiError::from_db)?
+    else {
+        return Ok(());
+    };
+    let field = content_type
+        .fields()
+        .iter()
+        .find(|field| matches!(field.kind, FieldKind::Slug { .. }))
+        .map_or("", |field| field.id.as_str());
+    let state = if holder.published {
+        "published"
+    } else {
+        "draft"
+    };
+    Err(ApiError::slug_taken(
+        format!("/{field}"),
+        format!("\"{slug}\" is already the slug of another entry ({state})"),
+        Some(EntryInTheWay {
+            entry: holder.entry_id,
+            title: holder.title,
+            state,
+            problem: None,
+        }),
+    ))
+}
+
 /// Validates content against its content type: the canonical content and its hash.
 fn validate(value: &Value, content_type: &ContentType) -> Result<(Content, [u8; 32]), ApiError> {
     let content = content_type.validate(value).map_err(ApiError::Invalid)?;
@@ -350,17 +393,22 @@ pub(crate) async fn create(
         colophon_domain::policy::Action::WriteContent,
         "your role can't write content in this project",
     )?;
+    content_types::lock_for_write(&mut tx, &path.collection)
+        .await
+        .map_err(ApiError::from_db)?;
     let (content_type, version) = content_type(&mut tx, &path.collection).await?;
     let (content, hash) = validate(&value, &content_type)?;
     let request = request_hash(&[CREATE, &path.collection, content.canonical_json()]);
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);
     }
+    slug_free(&mut tx, &path.collection, &content_type, &content, None).await?;
     let revision = NewRevision {
         id: Uuid::now_v7(),
         content: content.canonical_json(),
         content_hash: &hash,
         title: content.title(),
+        slug: content.slug(),
         schema_version: version,
     };
     let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision)
@@ -387,6 +435,9 @@ pub(crate) async fn save(
         colophon_domain::policy::Action::WriteContent,
         "your role can't write content in this project",
     )?;
+    content_types::lock_for_write(&mut tx, &path.collection)
+        .await
+        .map_err(ApiError::from_db)?;
     let (content_type, version) = content_type(&mut tx, &path.collection).await?;
     let (content, hash) = validate(&value, &content_type)?;
     let request = request_hash(&[
@@ -399,11 +450,20 @@ pub(crate) async fn save(
     if let Some(replay) = claim(&mut tx, SAVE, key, &request).await? {
         return Ok(replay);
     }
+    slug_free(
+        &mut tx,
+        &path.collection,
+        &content_type,
+        &content,
+        Some(entry),
+    )
+    .await?;
     let revision = NewRevision {
         id: Uuid::now_v7(),
         content: content.canonical_json(),
         content_hash: &hash,
         title: content.title(),
+        slug: content.slug(),
         schema_version: version,
     };
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.

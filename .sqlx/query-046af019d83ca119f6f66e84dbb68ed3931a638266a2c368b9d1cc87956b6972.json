@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO revisions\n           (project_id, environment_id, entry_id, id, base_revision_id, content, content_hash, title,\n            author_id, collection, schema_version)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)\n         RETURNING created_at",
+  "query": "INSERT INTO revisions\n           (project_id, environment_id, entry_id, id, base_revision_id, content, content_hash, title,\n            author_id, collection, schema_version, slug)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)\n         RETURNING created_at",
   "describe": {
     "columns": [
       {
@@ -27,12 +27,13 @@
         "Text",
         "Uuid",
         "Text",
-        "Int4"
+        "Int4",
+        "Text"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "48f37985ae701d8c67db62fe7905d3402951e852d20fef3ae9e7823267fe244b"
+  "hash": "046af019d83ca119f6f66e84dbb68ed3931a638266a2c368b9d1cc87956b6972"
 }

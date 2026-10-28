@@ -1,9 +1,12 @@
-// Load scenario for content types (step 1.5): entries of a seven-field type, so every save runs
-// the full schema validation (decimal and whole numbers, a choice, a flag, a UTC time, text and
-// rich text) and every read can fetch the type's definition. setup() signs in, defines the type,
-// and gives each VU its own entry. Each VU reads its entry (60%), reads the content type (10%),
-// lists the collection (10%) or saves new values with If-Match and a fresh key (20%); every
-// read of its entry must return the ETag of its last accepted save.
+// Load scenario for content types (step 1.5, slugs since step 3.6): entries of an eight-field
+// type, so every save runs the full schema validation (decimal and whole numbers, a choice, a
+// flag, a UTC time, text, rich text and a slug), takes the collection's content-type lock and
+// checks its slug (D-054, D-055). setup() signs in, defines the type, gives each VU its own entry,
+// and makes one more entry that holds the slug `taken` for good. Each VU reads its entry (50%),
+// reads the content type (10%), lists the collection (10%), saves new values with a new slug of
+// its own (20%), or tries to take `taken` and must get 409 slug_taken (10%); every read of its
+// entry must return the ETag of its last accepted save. Requests are named by route, so k6 keeps
+// one series per route.
 // Same settings as health.js; scripts/load.sh gives this endpoint RATE 500 and P99_MS 250.
 
 import http from 'k6/http';
@@ -55,12 +58,15 @@ const PRODUCTS = {
     { id: 'on_sale', label: 'On sale', type: 'boolean' },
     { id: 'launch', label: 'Launch', type: 'datetime' },
     { id: 'description', label: 'Description', type: 'rich_text' },
+    { id: 'sku', label: 'URL name', type: 'slug', source: 'name' },
   ],
 };
 
-function product(name, n) {
+// A slug in the VU's own space, so VUs never take each other's.
+function product(name, n, slug = `vu-${__VU}-${n % 50}`) {
   return JSON.stringify({
     name,
+    sku: slug,
     price: (n % 100000) / 100,
     stock: n % 5000,
     category: ['Books', 'Tools', 'Games'][n % 3],
@@ -94,9 +100,11 @@ export function setup() {
   if (type.status !== 201) fail(`content type: HTTP ${type.status} ${type.body}`);
   const base = `${env}/collections/products/entries`;
 
+  const holder = http.post(base, product('Holder', 0, 'taken'), { headers: Object.assign({ 'Idempotency-Key': `k6-holder-${slug}` }, write) });
+  if (holder.status !== 201) fail(`holder: HTTP ${holder.status} ${holder.body}`);
   const entries = [];
   for (let i = 0; i < ENTRIES; i++) {
-    const created = http.post(base, product(`Product ${i}`, i), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-${slug}-${i}` }, write) });
+    const created = http.post(base, product(`Product ${i}`, i, `setup-${i}`), { headers: Object.assign({ 'Idempotency-Key': `k6-setup-${slug}-${i}` }, write) });
     if (created.status !== 201) fail(`entry ${i}: HTTP ${created.status} ${created.body}`);
     entries.push({ id: created.json('data.id'), etag: created.headers['Etag'] });
   }
@@ -117,23 +125,35 @@ export default function (data) {
       Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json',
       'If-Match': etag, 'Idempotency-Key': key(),
     };
-    const res = http.put(url, product(`Product by VU ${__VU}`, __ITER + __VU), { headers, redirects: 0, tags: { endpoint: 'save' } });
+    const res = http.put(url, product(`Product by VU ${__VU}`, __ITER + __VU), { headers, redirects: 0, tags: { endpoint: 'save', name: 'products/{entry}' } });
     const saved = check(res, {
       'save 200': (r) => r.status === 200,
       'save gives a new ETag': (r) => typeof r.headers['Etag'] === 'string' && r.headers['Etag'] !== etag,
     });
     if (saved) etag = res.headers['Etag'];
   } else if (roll < 3) {
-    const res = http.get(data.type, Object.assign({ tags: { endpoint: 'type' } }, read));
+    const headers = {
+      Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json',
+      'If-Match': etag, 'Idempotency-Key': key(),
+    };
+    const res = http.put(url, product(`Product by VU ${__VU}`, __ITER, 'taken'), {
+      headers, redirects: 0, tags: { endpoint: 'taken', name: 'products/{entry}' }, responseCallback: http.expectedStatuses(409),
+    });
+    check(res, {
+      'taking a held slug is 409': (r) => r.status === 409,
+      'the refusal says slug_taken': (r) => r.json('error.details.reason') === 'slug_taken',
+    });
+  } else if (roll < 4) {
+    const res = http.get(data.type, Object.assign({ tags: { endpoint: 'type', name: 'content-types/products' } }, read));
     check(res, {
       'type 200': (r) => r.status === 200,
       'type is version 1': (r) => r.headers['Etag'] === '"v1"',
     });
-  } else if (roll < 4) {
-    const res = http.get(`${data.base}?limit=20`, Object.assign({ tags: { endpoint: 'list' } }, read));
+  } else if (roll < 5) {
+    const res = http.get(`${data.base}?limit=20`, Object.assign({ tags: { endpoint: 'list', name: 'products?limit' } }, read));
     check(res, { 'list 200': (r) => r.status === 200 });
   } else {
-    const res = http.get(url, Object.assign({ tags: { endpoint: 'read' } }, read));
+    const res = http.get(url, Object.assign({ tags: { endpoint: 'read', name: 'products/{entry}' } }, read));
     check(res, {
       'read 200': (r) => r.status === 200,
       'read returns the last accepted save': (r) => r.headers['Etag'] === etag,

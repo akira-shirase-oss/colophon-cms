@@ -72,6 +72,7 @@ async fn release(db: &TestDb, alice: Uuid, project: Uuid, base: i64) {
             content: r#"{"title":"Hi"}"#,
             content_hash: &[1; 32],
             title: "Hi",
+            slug: None,
             schema_version: 1,
         },
     )

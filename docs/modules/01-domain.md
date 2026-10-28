@@ -67,6 +67,12 @@ invariant. Production adapters and the simulator both run this code unchanged.
   JSON Pointer for every refusal, writes the definition canonically for hashing, and `check_successor` allows only
   changes that keep stored entries valid. `ContentType::articles()` replaced `entry::Article` with byte-identical
   output.
+- Built in step 3.6 (D-054, D-055): a seventh type, `slug` (at most one per content type, with an optional `source`
+  text field the Studio suggests it from; 1 to 120 lowercase ASCII letters and digits in groups joined by single
+  hyphens, refused rather than normalized); `Content::slug()`. `check_successor` became `successor`, which answers
+  `Compatible` (widening: nothing to check), `CheckContent` (narrowing: allowed only if the new definition `accepts`
+  every current draft and published revision) or `Refused` (a new title field, or a field turned into or out of a
+  slug).
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the
@@ -94,7 +100,9 @@ invariant. Production adapters and the simulator both run this code unchanged.
   rule in step 1.4.
 
 ### Slugs and locales
-- Slug normalization, plus the uniqueness claim model: project + environment + collection + locale.
+- Slugs are unique per project + environment + collection (+ locale, once locales exist), among drafts and among
+  open publications; the database enforces both (D-054, migration 0016). The server refuses a slug that isn't one;
+  the Studio normalizes as the editor types.
 - One logical entry groups its locale variants. Each variant has its own slug, draft and publication history.
 - Locale fallback is an explicit project policy, none by default. A fallback resolves only to published revisions and
   labels the resolved locale.

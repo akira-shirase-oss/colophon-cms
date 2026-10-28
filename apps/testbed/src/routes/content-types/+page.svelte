@@ -30,7 +30,19 @@
 	function describe(reply: Reply): string {
 		const error = envelopeOf(reply.body);
 		const details = detailsOf(reply.body);
-		return `${reply.status} ${error?.code ?? ''}${details ? ` (${details.reason}${details.pointer ? ` at ${details.pointer}` : ''})` : ''}`;
+		return `${reply.status} ${error?.code ?? ''}${details ? ` (${details.reason}${details.pointer ? ` at ${details.pointer}` : ''})` : ''}${inTheWay(reply.body)}`;
+	}
+
+	/** The entries a refusal names (D-054, D-055): `; in the way: Kettle (draft, unknown_field)`. */
+	function inTheWay(body: unknown): string {
+		const entries = (body as { error?: { details?: { entries?: unknown } } } | null)?.error?.details?.entries;
+		if (!Array.isArray(entries) || entries.length === 0) return '';
+		const named = entries.map((entry: { title?: string; state?: string; problem?: { reason?: string } }) =>
+			[entry.state, entry.problem?.reason].filter(Boolean).length > 0
+				? `${entry.title} (${[entry.state, entry.problem?.reason].filter(Boolean).join(', ')})`
+				: `${entry.title}`
+		);
+		return `; in the way: ${named.join(', ')}`;
 	}
 
 	function headers(extra: Record<string, string>): Record<string, string> {

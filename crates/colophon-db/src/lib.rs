@@ -81,6 +81,10 @@ pub enum DbError {
     /// A unique value (such as a slug) is already taken.
     #[error("already exists")]
     Conflict,
+    /// An entry's slug is another entry's draft or published slug in the same collection
+    /// (migration 0016, D-054).
+    #[error("the slug is taken")]
+    SlugTaken,
     /// Applying migrations failed.
     #[error("applying migrations failed")]
     Migrate(#[source] sqlx::migrate::MigrateError),
@@ -98,10 +102,16 @@ impl DbError {
         }
     }
 
-    /// A write's error: unique violations become `Conflict`, the rest as [`Self::from_query`].
+    /// A write's error: a violation of the slug indexes becomes `SlugTaken`, other unique
+    /// violations `Conflict`, the rest as [`Self::from_query`].
     pub(crate) fn from_write(error: sqlx::Error) -> Self {
         match &error {
-            sqlx::Error::Database(database) if database.is_unique_violation() => Self::Conflict,
+            sqlx::Error::Database(database) if database.is_unique_violation() => {
+                match database.constraint() {
+                    Some("entries_draft_slug" | "publications_live_slug") => Self::SlugTaken,
+                    _ => Self::Conflict,
+                }
+            }
             _ => Self::from_query(error),
         }
     }

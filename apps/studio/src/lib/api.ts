@@ -31,7 +31,14 @@ export type FieldDefinition = { id: string; label: string; required: boolean } &
 	| { type: 'boolean' }
 	| { type: 'enum'; values: string[] }
 	| { type: 'datetime' }
+	/** The entry's URL name, unique in its collection (D-054); `source` is the text field the
+	 *  Studio suggests it from. */
+	| { type: 'slug'; source?: string }
 );
+
+/** The field types a content type can use, in the order the builder offers them. */
+export const FIELD_TYPES = ['text', 'rich_text', 'number', 'boolean', 'enum', 'datetime', 'slug'] as const;
+export type FieldType = (typeof FIELD_TYPES)[number];
 
 /** A content type's definition (D-040). */
 export interface Definition {
@@ -120,10 +127,30 @@ export class ApiError extends Error {
 		readonly status: number | null = null,
 		readonly reason: string | null = null,
 		/** For a conflict: the current revision's ETag. */
-		readonly current: string | null = null
+		readonly current: string | null = null,
+		/** What the server said about where and why, including entries in the way. */
+		readonly details: Details | null = null
 	) {
 		super(message);
 	}
+}
+
+/** A stored entry in the way of a request (D-054, D-055). */
+export interface EntryInTheWay {
+	entry: string;
+	title: string;
+	state: 'draft' | 'published';
+	/** For a content type change: the refusal the entry's content would get. */
+	problem?: { reason: string; pointer: string; message: string };
+}
+
+/** An error's `details`: a reason, a JSON Pointer into the request body, and for refusals that
+ *  depend on stored content, the entries in the way (at most 20) and how many there are. */
+export interface Details {
+	reason?: string;
+	pointer?: string;
+	entries?: EntryInTheWay[];
+	total?: number;
 }
 
 /** The session's CSRF token, which every cookie-authenticated write echoes. */
@@ -142,7 +169,7 @@ export function signInUrl(returnTo: string): string {
 export const REQUEST_TIMEOUT_MS = 15_000;
 
 interface Envelope {
-	error?: { code?: string; message?: string; details?: { reason?: string } };
+	error?: { code?: string; message?: string; details?: Details };
 }
 
 async function send(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
@@ -166,18 +193,19 @@ async function send(method: string, path: string, body?: unknown, headers: Recor
 	if (response.ok) return response;
 	const envelope = ((await response.json().catch(() => ({}))) as Envelope).error;
 	const message = envelope?.message ?? `HTTP ${response.status}`;
-	const reason = envelope?.details?.reason ?? null;
+	const details = envelope?.details ?? null;
+	const reason = details?.reason ?? null;
 	switch (true) {
 		case response.status === 401:
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
 			throw new ApiError('not-found', message, 404);
-		case response.status === 409 && reason === 'stale_revision':
-			throw new ApiError('conflict', message, 409, reason, response.headers.get('etag'));
+		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version'):
+			throw new ApiError('conflict', message, 409, reason, response.headers.get('etag'), details);
 		case response.status >= 500 || response.status === 429:
 			throw new ApiError('retry', message, response.status, reason);
 		default:
-			throw new ApiError('refused', message, response.status, reason);
+			throw new ApiError('refused', message, response.status, reason, null, details);
 	}
 }
 
@@ -222,6 +250,37 @@ export async function listContentTypes(project: string): Promise<ContentType[]> 
 
 export async function getContentType(project: string, collection: string): Promise<ContentType> {
 	return ((await (await send('GET', `${base(project)}/content-types/${collection}`)).json()) as { data: ContentType }).data;
+}
+
+/** A content type with the ETag (`"v<version>"`) the next change names in `If-Match`. */
+export interface LoadedType {
+	type: ContentType;
+	etag: string;
+}
+
+async function loadedType(response: Response): Promise<LoadedType> {
+	const { data } = (await response.json()) as { data: ContentType };
+	return { type: data, etag: response.headers.get('etag') ?? `"v${data.version}"` };
+}
+
+/** Owners and developers only. `slug` names the collection in URLs and can't change. */
+export async function createContentType(project: string, slug: string, definition: Definition, key: string): Promise<LoadedType> {
+	return loadedType(await send('POST', `${base(project)}/content-types`, { slug, definition }, { 'Idempotency-Key': key }));
+}
+
+/** A new version of the content type, on top of the version `etag` names. Refused with
+ *  `needs_migration` if stored drafts or publications wouldn't fit it; the error's `details`
+ *  name them (D-055). */
+export async function updateContentType(
+	project: string,
+	slug: string,
+	definition: Definition,
+	etag: string,
+	key: string
+): Promise<LoadedType> {
+	return loadedType(
+		await send('PUT', `${base(project)}/content-types/${slug}`, definition, { 'If-Match': etag, 'Idempotency-Key': key })
+	);
 }
 
 export async function listEntries(project: string, collection: string): Promise<Summary[]> {
