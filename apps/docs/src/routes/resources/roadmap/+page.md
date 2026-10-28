@@ -12,7 +12,9 @@ The labels mean what they mean on the website:
 - **Building**: a step in progress on its own branch, not merged; for a milestone, one that has started and whose proof gate isn't met yet.
 - **Planned**: in the roadmap, nothing built.
 
-Steps 3.6 and 3.7, R.1 to R.3 and scheduled publishing were merged on 27 October 2026. Next are R.4 (API tokens and the audit log) and 3.8 (the site goes live, and the first public demo).
+A milestone labelled *on a branch* has steps built and tested on a branch, none of them merged yet.
+
+Steps 3.6 and 3.7, R.1 to R.3 and scheduled publishing were merged on 27 October 2026. Since then, on a branch and not merged: R.4 (API tokens and the audit log), milestone M's steps M.1 to M.4 (more field types, references, objects, lists and blocks, single types, patterns and unique fields), milestone V's versions and packaging, and P5's first slice, the MCP server. Each has its tests; R.4 and M also have testbed pages and load scenarios, whose million-request runs are still to be made. Nothing is published to npm, Cargo or Homebrew. Next is 3.8 (the site goes live, and the first public demo).
 
 ## Milestones at a glance
 
@@ -23,13 +25,13 @@ Steps 3.6 and 3.7, R.1 to R.3 and scheduled publishing were merged on 27 October
 | P2 | Publish exactly once | F03, F05; concurrent releases; the simulator covers the outbox; first crash loop | 3–4 weeks | Done |
 | P3 | Prove it reached the site | F06–F08, L01–L04, the mixed-release checker; first public demo | 3–4 weeks | Building |
 | R | Roles and permissions | Every action, role, field and condition decided by one evaluator, with no bypass | 2–3 weeks | Building |
-| M | Content modelling parity | Relations, components, lists, blocks and single types round-trip and stay valid | 4–6 weeks | Planned |
+| M | Content modelling parity | Relations, components, lists, blocks and single types round-trip and stay valid | 4–6 weeks | Building, on a branch |
 | P4 | Time travel and media | Rollback, pinned reads, revocation, upload fault tests, the media library | 3–4 weeks | Planned |
 | E | Editorial parity | Localization, scheduling, review stages, comments, tasks and live collaboration without a lost edit | 5–7 weeks | Building |
 | D | Developer parity | Query API, GraphQL, SDK, API tokens, import from Strapi and Sanity, extension points | 4–5 weeks | Planned |
 | S | Scale and performance | Several servers and workers behind a load balancer survive kills and drains; every scenario has a stored stress result; Rust benchmarks gate CI | 2–3 weeks | Planned |
-| V | Versions and distribution | One version across server, CLI, SDK and MCP; the CLI installs from npm, Cargo, Homebrew and a script on a clean machine | 1–2 weeks | Planned |
-| P5 | Safe automation | Zero unauthorized actions in the evaluation set; an interrupted bulk job resumes | 3–4 weeks | Planned |
+| V | Versions and distribution | One version across server, CLI, SDK and MCP; the CLI installs from npm, Cargo, Homebrew and a script on a clean machine | 1–2 weeks | Building, on a branch |
+| P5 | Safe automation | Zero unauthorized actions in the evaluation set; an interrupted bulk job resumes | 3–4 weeks | Building, on a branch |
 | P6 | Operate it | F09–F14, L05–L13, a 24-hour soak, a restore drill; **v0.1** | 3–4 weeks | Planned |
 
 ## P0 · Foundation
@@ -96,13 +98,19 @@ Release notes so far: [P3](/releases/p3/).
 - **R.1** Roles and permissions as data, behaviour unchanged. [Changelog](/changelog/#step-r-1) <Status done="R.1" />
 - **R.2** Roles you define, and the Studio's role editor; nobody hands out more than they hold. [Changelog](/changelog/#step-r-2) <Status done="R.2" />
 - **R.3** Permissions narrowed to some fields and to a member's own entries. [Changelog](/changelog/#step-r-3) <Status done="R.3" />
-- **R.4** API tokens and the audit log. Next. <Status planned="R" />
+- **R.4** API tokens and the audit log: read-only, full-access and custom tokens that act as their own identity, can never manage access or read the log, and stop the moment they are revoked; every change to access recorded in an append-only log (D-063, migration 0023). Built on a branch with its tests, testbed page and load scenario; its million-request runs haven't been made, so it isn't done. [API tokens and the audit log](/reference/api/tokens/) <Status building="R.4" />
 
 ## M · Content modelling parity
 
-**Proof gate:** every field type round-trips byte for byte; references never dangle, enforced by the database; a migration that fails halfway resumes without duplicates; the simulator covers schema changes racing saves. <Status planned="M" />
+**Proof gate:** every field type round-trips byte for byte; references never dangle, enforced by the database; a migration that fails halfway resumes without duplicates; the simulator covers schema changes racing saves. Not met. <Status building="M, on a branch" />
 
-What it plans: references, nested groups of fields, lists and block lists, single types, more field types (email, URL, date, time, JSON, Markdown, colour), descriptions, defaults and conditional fields, and migrations with a plan, a dry run and an approval for the changes D-055 refuses. Its steps aren't numbered yet.
+The steps built so far have their tests, a testbed page (`/modelling`) and a load scenario (`perf/k6/modelling.js`) run as a smoke; its million-request runs are still to be made. The Studio's builder doesn't offer the new types yet. Everything is in the [content modelling reference](/reference/content-modelling/).
+
+- **M.1** Seven more field types (email, URL, date, time, JSON, Markdown, colour), a description on any field and a minimum length on text (D-064). <Status building="M.1" />
+- **M.2** References between entries that never dangle, checked by the database on every save and by every release, with "referenced by" (D-065, migration 0024). <Status building="M.2" />
+- **M.3** Objects, lists and page-builder blocks, references inside them (D-066, migration 0025). <Status building="M.3" />
+- **M.4** Single types (D-067, migration 0026), patterns (D-069) and unique fields (D-070, migration 0027) are built; shared components, defaults and conditional fields are not. <Status building="M.4" />
+- **M.5** Migrations with a plan, a dry run and per-entry outcomes for the changes D-055 refuses; the simulator racing schema changes and saves. <Status planned="M.5" />
 
 ## P4 · Time travel and media
 
@@ -131,15 +139,22 @@ What it plans: a local multi-instance stack (HAProxy in front of three servers a
 
 ## V · Versions and distribution
 
-**Proof gate:** a release dry run builds every artifact; `npx @colophon-cms/cli --version`, `cargo install`, the Homebrew formula and the install script each install the same version on a clean machine in CI; an old command line against a new server, and the reverse, gets a plain-words answer (D-062). <Status planned="V" />
+**Proof gate:** a release dry run builds every artifact; `npx @colophon-cms/cli --version`, `cargo install`, the Homebrew formula and the install script each install the same version on a clean machine in CI; an old command line against a new server, and the reverse, gets a plain-words answer (D-062). Not met. <Status building="V, on a branch" />
 
-What it plans: one version for the server, the worker, the command line, the SDK and the MCP server, with `/api/v1` as the contract; the server reporting its version and the API versions it serves; binaries for macOS, Linux and Windows with checksums and signed provenance; the command line on npm as `@colophon-cms/cli` (the `@colophon` scope belongs to someone else), through `cargo install`, a Homebrew tap and an install script; container images for the server and worker. Its steps aren't numbered yet.
+- Built and tested on a branch: one version, `0.1.0-alpha.1`, for every crate and package; `colophon --version` with the commit and build date; [`GET /version`](/reference/api/auth/#get-version); the command line saying in plain words when it is too old or too new for the server; the `@colophon-cms/cli` npm launcher and its platform packages, assembled from release archives; an install script; a Homebrew formula template; and `cargo install --git`, run from a local clone. <Status building="V" />
+- Written, not yet run: the release workflow (five targets, checksums, SBOMs, signed provenance, a draft release, npm publishing behind an approval) and CI's distribution job. Their first dry run is the first real test of the cross-builds. <Status building="V" />
+- Nothing has been published to npm, Cargo or Homebrew. Publishing waits on the maintainer: an npm organization, a publishing token, a confirmed licence and a release tag.
+- Not built: crates.io publishing, the SDK, container images, and installs of published packages on clean machines in CI. <Status planned="V" />
+
+What it plans in all: one version for the server, the worker, the command line, the SDK and the MCP server, with `/api/v1` as the contract; the server reporting its version and the API versions it serves; binaries for macOS, Linux and Windows with checksums and signed provenance; the command line on npm as `@colophon-cms/cli` (the `@colophon` scope belongs to someone else), through `cargo install`, a Homebrew tap and an install script; container images for the server and worker. Its steps aren't numbered yet.
 
 ## P5 · Safe automation
 
-**Proof gate:** zero unauthorized actions across the evaluation set; X12 (an agent interrupted halfway through a bulk edit resumes without duplicates or overwrites); L08 (a noisy agent is throttled while editors keep their latency). <Status planned="P5" />
+**Proof gate:** zero unauthorized actions across the evaluation set; X12 (an agent interrupted halfway through a bulk edit resumes without duplicates or overwrites); L08 (a noisy agent is throttled while editors keep their latency). Not met. <Status building="P5, on a branch" />
 
-What it plans: machine credentials and a kill switch, typed tools and bulk manifests with per-item outcomes, budgets reserved in PostgreSQL, the MCP adapter, the CLI's full JSON contract, import and export. Its steps aren't numbered yet.
+- The MCP server over local stdio: eight tools over `/api/v1` with a project API token, to read content, write drafts, make a publish request and ask for its review; nothing approves or publishes, and tool discovery follows the token's permissions (D-068). Built on a branch with unit tests and a stack test. [The MCP server](/reference/mcp/) <Status building="D-068" />
+
+What it plans in all: machine credentials and a kill switch, typed tools and bulk manifests with per-item outcomes, budgets reserved in PostgreSQL, the MCP adapter, the CLI's full JSON contract, import and export. Its steps aren't numbered yet.
 
 ## P6 · Operate it
 

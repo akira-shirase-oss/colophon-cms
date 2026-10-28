@@ -23,6 +23,6 @@ Colophon has one management API that everything uses, and one public API for web
 ## Not built yet
 
 - A generated OpenAPI document, so every API change shows in review (D-027), and the TypeScript SDK with generated types, with a helper for reads pinned to one release (module 13). <Status planned="D" />
-- One version across the server, the CLI, the SDK and the MCP server, the server reporting the API versions it serves, and the CLI installable from npm (`@colophon-cms/cli`), Cargo and Homebrew without building Rust (D-062). <Status planned="V" />
+- The command line installable from npm (`@colophon-cms/cli`), Cargo and Homebrew without building Rust, and the SDK and the MCP server published from the same release (D-062). The version, `GET /version` and the command line's compatibility check are built on a branch; nothing is published yet. <Status planned="V" />
 - Uploads and media, preview links, rollback. <Status planned="P4" />
 - Budgets for agents, bulk jobs, remote MCP, and the CLI's full JSON contract with import and export. <Status planned="P5" />

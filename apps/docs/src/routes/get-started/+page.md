@@ -49,12 +49,13 @@ Still to come, among others:
 
 - API tokens and an audit log, built on a branch <Status building="R.4" />;
 - the site going live, and the first public demo <Status planned="P3" />;
-- relations, reusable groups of fields and lists <Status planned="M" />;
+- relations, groups of fields, lists, page builders, single types, patterns and unique fields, built on a branch <Status building="M.1–M.4" />, and migrations with a plan <Status planned="M" />;
 - media and images, preview links, the release slider and rollback <Status planned="P4" />;
 - localization, review stages, comments and live collaboration <Status planned="E" />;
 - a query API, GraphQL, the SDK and import from Strapi and Sanity <Status planned="D" />;
 - several servers behind a load balancer, a stress run for every load scenario, and Rust benchmarks <Status planned="S" />;
-- one version across the server, the command line, the SDK and the MCP server, installable from npm, Cargo and Homebrew <Status planned="V" />;
+- one version across the server and the command line, built on a branch <Status building="V" />, and packages on npm, Cargo and Homebrew, none published yet <Status planned="V" />;
+- an MCP server for AI agents that reads, drafts and asks for review, built on a branch <Status building="D-068" />;
 - scoped credentials for scripts and agents <Status planned="P5" />;
 - backups, restore and the v0.1 release <Status planned="P6" />.
 
