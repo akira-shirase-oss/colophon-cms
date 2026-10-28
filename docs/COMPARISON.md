@@ -23,19 +23,19 @@ plan tiers are the vendors' own claims and change often. Where a cell says *not 
 
 ## Changing a schema that already has content
 
-This is where the products differ most, and where Colophon's builder (step 3.6) has to be visibly better.
+This is where the products differ most, and where Colophon's builder (step 3.6, done) set out to be visibly better.
 
 | | Strapi 5 | Sanity | Colophon |
 |---|---|---|---|
 | Where the schema lives | JSON files in the project, written by the Content-Type Builder | JavaScript/TypeScript in the Studio's code | Versioned definitions in PostgreSQL, changed through the API (D-040) |
-| Who can change it, where | The builder is "available in Development environment only"; changes reach production as a code deploy | Developers, by deploying Studio code | Owners and developers, at runtime, through the same API as everything else (invariant 5) |
+| Who can change it, where | The builder is "available in Development environment only"; changes reach production as a code deploy | Developers, by deploying Studio code | Any role with `schema.change` (owners and developers by default), at runtime, in the Studio's builder or through the same API as everything else (invariant 5) |
 | Does the store enforce it | Yes, through database columns | No. "Changing the schema … will not automatically change or delete existing content" | Yes. Every revision records the definition version it was validated against |
-| Renaming a field | Since 5.57.0 the column is renamed and data kept; renaming *and* changing its type recreates the field empty | Old data stays under the old name until a migration script moves it | Refused with `needs_migration` today; migrations with plans and approvals come later |
+| Renaming a field | Since 5.57.0 the column is renamed and data kept; renaming *and* changing its type recreates the field empty | Old data stays under the old name until a migration script moves it | A field's label changes freely; its id is fixed once saved (3.6), and moving data to a new id needs a migration with a plan and an approval, which comes later (M) |
 | Removing a type | Entries vanish from the admin; data stays in the database | Documents stay in the dataset | Not possible yet |
 
 **The gap Colophon fills:** neither tool tells the editor *before* a change which stored entries it would break.
-Strapi can recreate a field empty; Sanity leaves stale fields for a script to find. Colophon already refuses any
-change that would invalidate a stored revision. Step 3.6 makes that refusal useful: the builder names the entries
+Strapi can recreate a field empty; Sanity leaves stale fields for a script to find. Colophon refuses any
+change that would invalidate a stored revision, and since step 3.6 the refusal is useful: the builder names the entries
 and revisions that block the change, so an owner can fix them or keep the old shape.
 
 ## Editing, history and review
@@ -94,7 +94,7 @@ self-hosted demo in `references/convex-demo`. What Convex does, what Colophon ta
 | **Optimistic concurrency, retried automatically.** Mutations record reads and writes; a conflict aborts and reruns safely because mutations have no side effects | Kept for machine work (whole-transaction retries, spec §08). **Not** for a person's edit: retrying a save over someone else's change would silently overwrite it, so a stale save stays a visible 409 (D2) | — |
 | **Side effects live outside transactions.** Mutations are sandboxed; `fetch` only in actions | Already invariant 2: the outbox and the worker | done (P2) |
 | **Deterministic functions.** Required for precise subscriptions and safe retries | Already how the simulator works (D-039) | done (P1) |
-| **Scheduler and cron as durable rows** | Scheduled publishing on the leased job table | E |
+| **Scheduler and cron as durable rows** | Scheduled publishing as rows of `schedules`, which the worker takes `FOR UPDATE SKIP LOCKED` when due (D-060); recurring schedules aren't planned | done (D-060) |
 | **Indexes declared in the schema; queries use them** | The query API filters and sorts only on fields a content type declares as indexed, so no query scans a table; pages stay bounded | D |
 | **End-to-end types from the schema** | The TypeScript SDK generates types from content-type definitions | D |
 | **Random ids spread writes across shards** | Not for PostgreSQL: Colophon keeps UUIDv7 ids so B-tree inserts stay local. The lesson cuts the other way for idempotency keys, whose random text keys scatter index inserts: on a 5 GB local database (2.4 M records) saves ran at 1,149/s with p99 184 ms, against 1,785/s and 52 ms on a fresh one. Next: a time-ordered key column, or tables partitioned by day so retention drops a partition | R (before load scenarios grow) |
