@@ -186,6 +186,13 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     role reads in full, so a role that reads only its own entries isn't told which link here. When readers see a
     link, *Unpublish* explains that it will be refused and names the linking entries before it is tried (*Keep it* or
     *Try anyway*). Test: `tests/server/references.spec.ts`.
+- Step M.3 in the Studio (D-066; structures are in [domain](01-domain.md)):
+  - **The builder** offers *Group of fields* (object), *List* (what each item is: any field kind but a list, page
+    sections or a URL name, or a group of fields; a maximum) and *Page sections* (blocks: kinds of section, each with
+    its own fields; a maximum). Field lists are edited by `FieldsEditor.svelte`, recursively (rules and words in
+    `lib/fieldDefs.ts`). Structures are offered only while they may still nest (three deep at most) and the builder
+    says so where it stops; an empty group, a kind of section without fields and page sections without kinds are
+    said before saving, and Save waits. Test: `tests/server/structures.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

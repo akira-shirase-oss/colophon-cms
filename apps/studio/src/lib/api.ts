@@ -133,7 +133,33 @@ export type FieldDefinition = {
 	 *  distinct ones. The database keeps them from dangling. */
 	| { type: 'reference'; to: string; many: false }
 	| { type: 'reference'; to: string; many: true; max: number }
+	/** Step M.3 (D-066): structures, at most three deep, written in definition order. Nested
+	 *  fields: a group of fields (Strapi's component). */
+	| { type: 'object'; fields: FieldDefinition[] }
+	/** Up to `max` values of one kind, never a list or page sections. */
+	| { type: 'list'; of: ItemKind; max: number }
+	/** A page builder: up to `max` sections, each one of its kinds, marked by `_block`. */
+	| { type: 'blocks'; blocks: BlockKind[]; max: number }
 );
+
+/** What each item of a list is: a field's kind and options, without its id, label or flags. */
+export type ItemKind = FieldDefinition extends infer Field
+	? Field extends { type: 'list' | 'blocks' | 'slug' }
+		? never
+		: Field extends FieldDefinition
+			? Omit<Field, 'id' | 'label' | 'required' | 'description'>
+			: never
+	: never;
+
+/** One kind of page section: a name (what items' `_block` says), a label and its fields. */
+export interface BlockKind {
+	name: string;
+	label: string;
+	fields: FieldDefinition[];
+}
+
+/** How deep structures nest (D-066): a group, a list and page sections each add one level. */
+export const MAX_DEPTH = 3;
 
 /** The field types a content type can use, in the order the builder offers them. */
 export const FIELD_TYPES = [
@@ -151,6 +177,9 @@ export const FIELD_TYPES = [
 	'color',
 	'json',
 	'reference',
+	'object',
+	'list',
+	'blocks',
 	'slug'
 ] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
