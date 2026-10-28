@@ -87,6 +87,10 @@ invariant. Production adapters and the simulator both run this code unchanged.
   hold entry ids as canonical lowercase UUIDs, distinct in a list. `Content::references` reports each with its field,
   collection, place and whether the field is a list; whether an id names an entry is the database's to check.
   Pointing a field at another collection is `Refused`.
+- Built in step M.3 (D-066): `object` (nested `fields`), `list` (`of` one kind, never a list or blocks; up to 100) and
+  `blocks` (a page builder: up to 20 named kinds of block with their own fields; items carry `_block`, written first).
+  Structures nest at most three deep; slugs stay top-level. Validation, the canonical form and the change rules recurse;
+  a reference anywhere keeps its path, and retargeting one at any depth is `Refused`. Reusable shared components are M.4.
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the

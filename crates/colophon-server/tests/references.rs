@@ -270,3 +270,99 @@ async fn readers_never_get_a_reference_to_an_entry_they_cannot_get() {
     .await;
     assert_eq!(down.status, StatusCode::CREATED, "{}", down.body);
 }
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_reference_inside_a_page_builder_block_is_kept_and_checked_the_same() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    content_type(
+        &owner,
+        &project,
+        "people",
+        &json!({"name": "People", "title_field": "name", "fields": [
+            {"id": "name", "label": "Name", "type": "text", "required": true}
+        ]}),
+    )
+    .await;
+    content_type(
+        &owner,
+        &project,
+        "pages",
+        &json!({"name": "Pages", "title_field": "title", "fields": [
+            {"id": "title", "label": "Title", "type": "text", "required": true},
+            {"id": "sections", "label": "Sections", "type": "blocks", "blocks": [
+                {"name": "text_block", "label": "Text", "fields": [
+                    {"id": "body", "label": "Body", "type": "markdown", "required": true}
+                ]},
+                {"name": "quote", "label": "Quote", "fields": [
+                    {"id": "text", "label": "Quote", "type": "text", "required": true},
+                    {"id": "by", "label": "By", "type": "reference", "to": "people"}
+                ]}
+            ]}
+        ]}),
+    )
+    .await;
+    let ada = id(&entry(&owner, &project, "people", &json!({"name": "Ada"})).await);
+    let section = |by: &str| {
+        json!({"title": "Home", "sections": [
+            {"_block": "text_block", "body": "Hello"},
+            {"_block": "quote", "text": "Ship it", "by": by}
+        ]})
+    };
+
+    // The reference is checked where it is, deep in the page.
+    let lost = entry(
+        &owner,
+        &project,
+        "pages",
+        &section("01a18f43-a955-755e-ab9c-1ded4406683c"),
+    )
+    .await;
+    assert_eq!(
+        (
+            &lost.body["error"]["details"]["reason"],
+            &lost.body["error"]["details"]["pointer"]
+        ),
+        (&json!("reference_not_found"), &json!("/sections/1/by")),
+        "{}",
+        lost.body
+    );
+    let page = id(&entry(&owner, &project, "pages", &section(&ada)).await);
+
+    // Ada's page names the page and the place in it.
+    let read = call(
+        &owner,
+        Method::GET,
+        &format!("{}/collections/people/entries/{ada}", base(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        read.body["data"]["referenced_by"],
+        json!([{"entry_id": page, "collection": "pages", "field": "sections/1/by", "in_draft": true, "published": false}])
+    );
+
+    // And readers can't get the page without Ada.
+    let alone = try_release(
+        &owner,
+        &project,
+        &json!({"title": "Page", "entries": [page]}),
+    )
+    .await;
+    assert_eq!(
+        alone.body["error"]["details"]["reason"], "references_unpublished",
+        "{}",
+        alone.body
+    );
+    let both = try_release(
+        &owner,
+        &project,
+        &json!({"title": "Both", "entries": [page, ada]}),
+    )
+    .await;
+    assert_eq!(both.status, StatusCode::CREATED, "{}", both.body);
+}

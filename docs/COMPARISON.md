@@ -117,8 +117,8 @@ that builds them.
 | Text, rich text, number, boolean, enum, date-time | ✓ | ✓ | done (D-040) |
 | Slug / UID, unique per collection | ✓ | ✓ | done (3.6, D-054) |
 | References / relations (one, many, two-way) | ✓ | ✓ | one and many built in M.2 (D-065), never dangling, with "referenced by" on every read; the Studio's picker next |
-| Components / objects, repeatable lists | ✓ | ✓ | M |
-| Dynamic zones / block arrays (page builder) | ✓ | ✓ | M |
+| Components / objects, repeatable lists | ✓ | ✓ | built in M.3 (D-066), inline; shared components in M.4 |
+| Dynamic zones / block arrays (page builder) | ✓ | ✓ | built in M.3 (D-066) |
 | Single types / singletons | ✓ | ✓ | M |
 | Email, URL, date, time, JSON, Markdown, colour, geopoint fields | ✓ | ✓ | built in M.1 (D-064) but geopoint; the Studio's editor for them is next |
 | Validation: pattern, unique, length, value; conditional fields; defaults | ✓ | ✓ | M |

@@ -39,6 +39,12 @@ pub const MAX_JSON_BYTES: usize = 64 * 1024;
 pub const MAX_JSON_DEPTH: usize = 32;
 /// Most entries one reference field may name (step M.2).
 pub const MAX_REFERENCES: u16 = 100;
+/// Deepest structures nest: an object in a list in a block, say (step M.3).
+pub const MAX_DEPTH: usize = 3;
+/// Most items in a list or a page builder's blocks (step M.3).
+pub const MAX_ITEMS: u16 = 100;
+/// Most kinds of block one page builder offers (step M.3).
+pub const MAX_BLOCK_KINDS: usize = 20;
 
 /// Most fields in a content type.
 pub const MAX_FIELDS: usize = 100;
@@ -147,6 +153,37 @@ pub enum FieldKind {
         /// The most a list holds (1 to [`MAX_REFERENCES`]; 1 for one).
         max: u16,
     },
+    /// Fields nested in one value (step M.3, D-066): Strapi's component, Sanity's object.
+    Object {
+        /// Its fields.
+        fields: Vec<Field>,
+    },
+    /// A list of values of one kind (step M.3): tags, a repeatable component.
+    List {
+        /// What each item is (never a list or blocks itself).
+        of: Box<FieldKind>,
+        /// The most items (1 to [`MAX_ITEMS`]).
+        max: u16,
+    },
+    /// A page builder (step M.3): a list whose items are each one of `blocks`, named by their
+    /// `_block`. Strapi's dynamic zone, Sanity's array of object types.
+    Blocks {
+        /// The kinds of block an item may be.
+        blocks: Vec<Block>,
+        /// The most items (1 to [`MAX_ITEMS`]).
+        max: u16,
+    },
+}
+
+/// One kind of block a page builder offers (step M.3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Block {
+    /// Its name, as items' `_block` says it: a field id.
+    pub name: String,
+    /// What editors see.
+    pub label: String,
+    /// Its fields.
+    pub fields: Vec<Field>,
 }
 
 impl FieldKind {
@@ -168,6 +205,9 @@ impl FieldKind {
             Self::Markdown { .. } => "markdown",
             Self::Color => "color",
             Self::Reference { .. } => "reference",
+            Self::Object { .. } => "object",
+            Self::List { .. } => "list",
+            Self::Blocks { .. } => "blocks",
         }
     }
 }
@@ -439,6 +479,110 @@ fn description(object: &Map<String, Value>, pointer: &Pointer) -> Result<String,
     }
 }
 
+/// Writes a field kind's options, each as `,"key":value`, in a fixed order.
+fn write_options(out: &mut String, kind: &FieldKind) {
+    match kind {
+        FieldKind::Text {
+            min_chars,
+            max_chars,
+            multiline,
+        } => {
+            if *min_chars > 0 {
+                out.push_str(r#","min_chars":"#);
+                out.push_str(&min_chars.to_string());
+            }
+            out.push_str(r#","max_chars":"#);
+            out.push_str(&max_chars.to_string());
+            out.push_str(if *multiline {
+                r#","multiline":true"#
+            } else {
+                r#","multiline":false"#
+            });
+        }
+        FieldKind::Number { integer, min, max } => {
+            out.push_str(if *integer {
+                r#","integer":true"#
+            } else {
+                r#","integer":false"#
+            });
+            for (key, value) in [(r#","min":"#, min), (r#","max":"#, max)] {
+                if let Some(value) = value {
+                    out.push_str(key);
+                    write_number(out, *value, *integer);
+                }
+            }
+        }
+        FieldKind::Enum { values } => {
+            out.push_str(r#","values":["#);
+            for (index, value) in values.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_string(out, value);
+            }
+            out.push(']');
+        }
+        FieldKind::Slug { source } => {
+            if let Some(source) = source {
+                out.push_str(r#","source":"#);
+                write_string(out, source);
+            }
+        }
+        FieldKind::Markdown { max_chars } => {
+            out.push_str(r#","max_chars":"#);
+            out.push_str(&max_chars.to_string());
+        }
+        FieldKind::Reference { to, many, max } => {
+            out.push_str(r#","to":"#);
+            write_string(out, to);
+            if *many {
+                out.push_str(r#","many":true,"max":"#);
+                out.push_str(&max.to_string());
+            } else {
+                out.push_str(r#","many":false"#);
+            }
+        }
+        FieldKind::Object { fields } => {
+            out.push_str(r#","fields":["#);
+            write_fields(out, fields);
+            out.push(']');
+        }
+        FieldKind::List { of, max } => {
+            out.push_str(r#","of":{"type":"#);
+            write_string(out, of.name());
+            write_options(out, of);
+            out.push_str(r#"},"max":"#);
+            out.push_str(&max.to_string());
+        }
+        FieldKind::Blocks { blocks, max } => {
+            out.push_str(r#","blocks":["#);
+            for (index, block) in blocks.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(r#"{"name":"#);
+                write_string(out, &block.name);
+                out.push_str(r#","label":"#);
+                write_string(out, &block.label);
+                out.push_str(r#","fields":["#);
+                write_fields(out, &block.fields);
+                out.push_str("]}");
+            }
+            out.push_str(r#"],"max":"#);
+            out.push_str(&max.to_string());
+        }
+        FieldKind::RichText
+        | FieldKind::Boolean
+        | FieldKind::DateTime
+        | FieldKind::Email
+        | FieldKind::Url
+        | FieldKind::Date
+        | FieldKind::Time
+        | FieldKind::Json
+        | FieldKind::Color => {}
+    }
+}
+
 /// Writes field definitions canonically, in their order: `[...]`'s contents.
 fn write_fields(out: &mut String, fields: &[Field]) {
     for (index, field) in fields.iter().enumerate() {
@@ -461,77 +605,7 @@ fn write_fields(out: &mut String, fields: &[Field]) {
         } else {
             r#","required":false"#
         });
-        match &field.kind {
-            FieldKind::Text {
-                min_chars,
-                max_chars,
-                multiline,
-            } => {
-                if *min_chars > 0 {
-                    out.push_str(r#","min_chars":"#);
-                    out.push_str(&min_chars.to_string());
-                }
-                out.push_str(r#","max_chars":"#);
-                out.push_str(&max_chars.to_string());
-                out.push_str(if *multiline {
-                    r#","multiline":true"#
-                } else {
-                    r#","multiline":false"#
-                });
-            }
-            FieldKind::Number { integer, min, max } => {
-                out.push_str(if *integer {
-                    r#","integer":true"#
-                } else {
-                    r#","integer":false"#
-                });
-                for (key, value) in [(r#","min":"#, min), (r#","max":"#, max)] {
-                    if let Some(value) = value {
-                        out.push_str(key);
-                        write_number(out, *value, *integer);
-                    }
-                }
-            }
-            FieldKind::Enum { values } => {
-                out.push_str(r#","values":["#);
-                for (index, value) in values.iter().enumerate() {
-                    if index > 0 {
-                        out.push(',');
-                    }
-                    write_string(out, value);
-                }
-                out.push(']');
-            }
-            FieldKind::Slug { source } => {
-                if let Some(source) = source {
-                    out.push_str(r#","source":"#);
-                    write_string(out, source);
-                }
-            }
-            FieldKind::Markdown { max_chars } => {
-                out.push_str(r#","max_chars":"#);
-                out.push_str(&max_chars.to_string());
-            }
-            FieldKind::Reference { to, many, max } => {
-                out.push_str(r#","to":"#);
-                write_string(out, to);
-                if *many {
-                    out.push_str(r#","many":true,"max":"#);
-                    out.push_str(&max.to_string());
-                } else {
-                    out.push_str(r#","many":false"#);
-                }
-            }
-            FieldKind::RichText
-            | FieldKind::Boolean
-            | FieldKind::DateTime
-            | FieldKind::Email
-            | FieldKind::Url
-            | FieldKind::Date
-            | FieldKind::Time
-            | FieldKind::Json
-            | FieldKind::Color => {}
-        }
+        write_options(out, &field.kind);
         out.push('}');
     }
 }
@@ -553,6 +627,24 @@ fn slug_source(object: &Map<String, Value>, pointer: &Pointer) -> Result<Option<
                 })?
                 .to_owned(),
         )),
+    }
+}
+
+/// A list's or page builder's `max`: 1 to [`MAX_ITEMS`], default [`MAX_ITEMS`].
+fn items_max(object: &Map<String, Value>, pointer: &Pointer) -> Result<u16, Refusal> {
+    match object.get("max") {
+        None => Ok(MAX_ITEMS),
+        Some(value) => value
+            .as_u64()
+            .and_then(|max| u16::try_from(max).ok())
+            .filter(|max| (1..=MAX_ITEMS).contains(max))
+            .ok_or_else(|| {
+                refuse(
+                    "out_of_range",
+                    &at(pointer, "max"),
+                    format!("`max` is a whole number from 1 to {MAX_ITEMS}"),
+                )
+            }),
     }
 }
 
@@ -891,6 +983,66 @@ fn check_text(
     }
 }
 
+/// Notes the entries a valid reference value names, with its path (the pointer without its
+/// leading slash) for the database (D-065).
+fn collect(
+    to: &str,
+    many: bool,
+    value: &Value,
+    pointer: &Pointer,
+    references: &mut Vec<ContentReference>,
+) {
+    let field = pointer.as_str().trim_start_matches('/');
+    let ids = value
+        .as_array()
+        .map_or_else(|| vec![value], |list| list.iter().collect());
+    for (position, id) in ids.into_iter().enumerate() {
+        references.push(ContentReference {
+            field: field.to_owned(),
+            collection: to.to_owned(),
+            position: u16::try_from(position).unwrap_or(u16::MAX),
+            many,
+            entry: id.as_str().unwrap_or_default().to_owned(),
+        });
+    }
+}
+
+/// Whether every object `old` fields accept, `new` fields accept too: each old field kept and
+/// widened (and not newly required), and no new required field.
+fn fields_widen(old: &[Field], new: &[Field]) -> bool {
+    old.iter().all(|before| {
+        new.iter()
+            .find(|after| after.id == before.id)
+            .is_some_and(|after| {
+                widens(&before.kind, &after.kind) && (before.required || !after.required)
+            })
+    }) && new
+        .iter()
+        .all(|after| !after.required || old.iter().any(|before| before.id == after.id))
+}
+
+/// Every reference field in `fields` at any depth, as (path, target collection): a list's
+/// items are `*`, a block's fields sit under its name.
+fn targets(fields: &[Field], prefix: &str, out: &mut Vec<(String, String)>) {
+    for field in fields {
+        target(&field.kind, &format!("{prefix}{}", field.id), out);
+    }
+}
+
+fn target(kind: &FieldKind, path: &str, out: &mut Vec<(String, String)>) {
+    match kind {
+        FieldKind::Reference { to, .. } => out.push((path.to_owned(), to.clone())),
+        FieldKind::Object { fields } => targets(fields, &format!("{path}/"), out),
+        FieldKind::List { of, .. } => target(of, &format!("{path}/*"), out),
+        FieldKind::Blocks { blocks, .. } => {
+            for block in blocks {
+                targets(&block.fields, &format!("{path}/{}/", block.name), out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Whether every value `old` accepts is also accepted by `new`.
 fn widens(old: &FieldKind, new: &FieldKind) -> bool {
     match (old, new) {
@@ -936,6 +1088,36 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
                 max: new_max,
             },
         ) => old_to == new_to && old_many == new_many && new_max >= old_max,
+        (FieldKind::Object { fields: old }, FieldKind::Object { fields: new }) => {
+            fields_widen(old, new)
+        }
+        (
+            FieldKind::List {
+                of: old_of,
+                max: old_max,
+            },
+            FieldKind::List {
+                of: new_of,
+                max: new_max,
+            },
+        ) => new_max >= old_max && widens(old_of, new_of),
+        (
+            FieldKind::Blocks {
+                blocks: old,
+                max: old_max,
+            },
+            FieldKind::Blocks {
+                blocks: new,
+                max: new_max,
+            },
+        ) => {
+            new_max >= old_max
+                && old.iter().all(|before| {
+                    new.iter().any(|after| {
+                        after.name == before.name && fields_widen(&before.fields, &after.fields)
+                    })
+                })
+        }
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -1142,6 +1324,138 @@ impl ContentType {
         })
     }
 
+    /// Refuses a structure deeper than [`MAX_DEPTH`].
+    fn deeper(pointer: &Pointer, depth: usize) -> Result<usize, Refusal> {
+        if depth >= MAX_DEPTH {
+            return Err(refuse(
+                "too_deep",
+                pointer,
+                format!("structures nest at most {MAX_DEPTH} deep"),
+            ));
+        }
+        Ok(depth + 1)
+    }
+
+    /// An object's `fields`, one level deeper than `depth`.
+    fn nested(
+        object: &Map<String, Value>,
+        pointer: &Pointer,
+        depth: usize,
+    ) -> Result<Vec<Field>, Refusal> {
+        let deeper = Self::deeper(pointer, depth)?;
+        let list = object
+            .get("fields")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                refuse(
+                    "missing_field",
+                    &at(pointer, "fields"),
+                    "`fields` is a list of fields",
+                )
+            })?;
+        Self::fields_at(list, &at(pointer, "fields"), deeper)
+    }
+
+    /// A list's `of` (an item's kind, never a list or blocks) and `max`.
+    fn list_kind(
+        object: &Map<String, Value>,
+        pointer: &Pointer,
+        depth: usize,
+    ) -> Result<FieldKind, Refusal> {
+        let deeper = Self::deeper(pointer, depth)?;
+        let at_of = at(pointer, "of");
+        let of = object.get("of").and_then(Value::as_object).ok_or_else(|| {
+            refuse(
+                "missing_field",
+                &at_of,
+                "`of` defines each item, like {\"type\": \"text\"}",
+            )
+        })?;
+        let kind = Self::kind(of, &["type"], &at_of, deeper)?;
+        if matches!(kind, FieldKind::List { .. } | FieldKind::Blocks { .. }) {
+            return Err(refuse(
+                "invalid_type",
+                &at(&at_of, "type"),
+                "a list's items can't be lists or blocks themselves: put those in an object",
+            ));
+        }
+        Ok(FieldKind::List {
+            of: Box::new(kind),
+            max: items_max(object, pointer)?,
+        })
+    }
+
+    /// A page builder's `blocks` (1 to [`MAX_BLOCK_KINDS`], distinct names) and `max`.
+    fn blocks_kind(
+        object: &Map<String, Value>,
+        pointer: &Pointer,
+        depth: usize,
+    ) -> Result<FieldKind, Refusal> {
+        let deeper = Self::deeper(pointer, depth)?;
+        let at_blocks = at(pointer, "blocks");
+        let list = object
+            .get("blocks")
+            .and_then(Value::as_array)
+            .filter(|list| (1..=MAX_BLOCK_KINDS).contains(&list.len()))
+            .ok_or_else(|| {
+                refuse(
+                    "invalid_blocks",
+                    &at_blocks,
+                    format!("`blocks` lists 1 to {MAX_BLOCK_KINDS} kinds of block"),
+                )
+            })?;
+        let mut blocks: Vec<Block> = Vec::with_capacity(list.len());
+        for (index, item) in list.iter().enumerate() {
+            let mut at_block = at_blocks.clone();
+            at_block.push_index(index);
+            let block = item
+                .as_object()
+                .ok_or_else(|| refuse("not_an_object", &at_block, "a block is a JSON object"))?;
+            only(block, &["name", "label", "fields"], &at_block)?;
+            let name = block
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| is_field_id(name))
+                .ok_or_else(|| {
+                    refuse(
+                        "invalid_id",
+                        &at(&at_block, "name"),
+                        "a block's name is 1 to 64 lowercase letters, digits and underscores, starting with a letter",
+                    )
+                })?
+                .to_owned();
+            if blocks.iter().any(|seen| seen.name == name) {
+                return Err(refuse(
+                    "duplicate_block",
+                    &at(&at_block, "name"),
+                    format!("`{name}` names two kinds of block"),
+                ));
+            }
+            let label = block
+                .get("label")
+                .and_then(Value::as_str)
+                .filter(|label| plain_text(label, 100))
+                .ok_or_else(|| {
+                    refuse(
+                        "invalid_label",
+                        &at(&at_block, "label"),
+                        "a label is 1 to 100 characters, without control characters or spaces at either end",
+                    )
+                })?
+                .to_owned();
+            let fields = Self::nested(block, &at_block, deeper - 1)?;
+            blocks.push(Block {
+                name,
+                label,
+                fields,
+            });
+        }
+        Ok(FieldKind::Blocks {
+            blocks,
+            max: items_max(object, pointer)?,
+        })
+    }
+
     /// A list of 1 to [`MAX_FIELDS`] field definitions with distinct ids, at `pointer`,
     /// `depth` structures deep (0: the content type's own fields).
     fn fields_at(list: &[Value], pointer: &Pointer, depth: usize) -> Result<Vec<Field>, Refusal> {
@@ -1217,7 +1531,6 @@ impl ContentType {
         pointer: &Pointer,
         depth: usize,
     ) -> Result<FieldKind, Refusal> {
-        let _ = depth;
         Ok(match object.get("type").and_then(Value::as_str) {
             Some("text") => {
                 only(
@@ -1253,6 +1566,13 @@ impl ContentType {
                 only(object, common, pointer)?;
                 FieldKind::DateTime
             }
+            Some("slug") if depth > 0 => {
+                return Err(refuse(
+                    "invalid_type",
+                    &at(pointer, "type"),
+                    "a slug field belongs to the content type itself, not inside a structure",
+                ));
+            }
             Some("slug") => {
                 only(object, &[common, &["source"]].concat(), pointer)?;
                 FieldKind::Slug {
@@ -1271,11 +1591,25 @@ impl ContentType {
                 only(object, &[common, &["to", "many", "max"]].concat(), pointer)?;
                 reference_kind(object, pointer)?
             }
+            Some("object") => {
+                only(object, &[common, &["fields"]].concat(), pointer)?;
+                FieldKind::Object {
+                    fields: Self::nested(object, pointer, depth)?,
+                }
+            }
+            Some("list") => {
+                only(object, &[common, &["of", "max"]].concat(), pointer)?;
+                Self::list_kind(object, pointer, depth)?
+            }
+            Some("blocks") => {
+                only(object, &[common, &["blocks", "max"]].concat(), pointer)?;
+                Self::blocks_kind(object, pointer, depth)?
+            }
             _ => {
                 return Err(refuse(
                     "invalid_type",
                     &at(pointer, "type"),
-                    "`type` is one of text, rich_text, number, boolean, enum, datetime, slug, email, url, date, time, json, markdown, color, reference",
+                    "`type` is one of text, rich_text, number, boolean, enum, datetime, slug, email, url, date, time, json, markdown, color, reference, object, list, blocks",
                 ));
             }
         })
@@ -1380,6 +1714,91 @@ impl ContentType {
             Self::value(&field.kind, &field.label, value, &at_field, out, references)?;
         }
         out.push('}');
+        Ok(())
+    }
+
+    /// A list's or page builder's items: 1 to `max`, each checked and written by `item`.
+    fn items(
+        label: &str,
+        value: &Value,
+        max: u16,
+        pointer: &Pointer,
+        out: &mut String,
+        mut item: impl FnMut(&Value, &Pointer, &mut String) -> Result<(), Refusal>,
+    ) -> Result<(), Refusal> {
+        let list = value
+            .as_array()
+            .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is a list")))?;
+        if list.is_empty() {
+            return Err(refuse(
+                "invalid_list",
+                pointer,
+                format!("{label} is empty; leave it out instead"),
+            ));
+        }
+        if list.len() > usize::from(max) {
+            return Err(refuse(
+                "too_many",
+                pointer,
+                format!("{label} holds at most {max} items"),
+            ));
+        }
+        out.push('[');
+        for (index, value) in list.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let mut at_item = pointer.clone();
+            at_item.push_index(index);
+            item(value, &at_item, out)?;
+        }
+        out.push(']');
+        Ok(())
+    }
+
+    /// One page-builder item: `{"_block": name, ...that block's fields}`, written with
+    /// `_block` first, then the block's fields in their order.
+    fn block(
+        blocks: &[Block],
+        label: &str,
+        value: &Value,
+        pointer: &Pointer,
+        out: &mut String,
+        references: &mut Vec<ContentReference>,
+    ) -> Result<(), Refusal> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| refuse("not_an_object", pointer, "a block is a JSON object"))?;
+        let block = object
+            .get("_block")
+            .and_then(Value::as_str)
+            .and_then(|name| blocks.iter().find(|block| block.name == name))
+            .ok_or_else(|| {
+                refuse(
+                    "unknown_block",
+                    &at(pointer, "_block"),
+                    format!("{label}: `_block` names one of its kinds of block"),
+                )
+            })?;
+        let mut rest = object.clone();
+        rest.remove("_block");
+        let mut fields = String::new();
+        Self::fields_value(
+            &block.fields,
+            &Value::Object(rest),
+            pointer,
+            &mut fields,
+            references,
+        )?;
+        out.push_str(r#"{"_block":"#);
+        write_string(out, &block.name);
+        // `fields` is `{...}`: join its members after `_block`.
+        if fields.len() > 2 {
+            out.push(',');
+            out.push_str(&fields[1..]);
+        } else {
+            out.push('}');
+        }
         Ok(())
     }
 
@@ -1625,22 +2044,22 @@ impl ContentType {
             | FieldKind::Time
             | FieldKind::Color => Self::formatted(kind, label, value, pointer, out)?,
             FieldKind::Json => Self::json(label, value, pointer, out)?,
+            FieldKind::Object { fields } => {
+                Self::fields_value(fields, value, pointer, out, references)?;
+            }
+            FieldKind::List { of, max } => {
+                Self::items(label, value, *max, pointer, out, |item, at_item, out| {
+                    Self::value(of, label, item, at_item, out, references)
+                })?;
+            }
+            FieldKind::Blocks { blocks, max } => {
+                Self::items(label, value, *max, pointer, out, |item, at_item, out| {
+                    Self::block(blocks, label, item, at_item, out, references)
+                })?;
+            }
             FieldKind::Reference { to, many, max } => {
                 Self::reference(label, value, (*many, *max), pointer, out)?;
-                // Its path for the database: the pointer without its leading slash.
-                let field = pointer.as_str().trim_start_matches('/').to_owned();
-                let ids = value
-                    .as_array()
-                    .map_or_else(|| vec![value], |list| list.iter().collect());
-                for (position, id) in ids.into_iter().enumerate() {
-                    references.push(ContentReference {
-                        field: field.clone(),
-                        collection: to.clone(),
-                        position: u16::try_from(position).unwrap_or(u16::MAX),
-                        many: *many,
-                        entry: id.as_str().unwrap_or_default().to_owned(),
-                    });
-                }
+                collect(to, *many, value, pointer, references);
             }
             FieldKind::RichText => {
                 let document = rich_text::validate(value).map_err(|rejection| Refusal {
@@ -1727,26 +2146,26 @@ impl ContentType {
             ));
         }
         let slug = |field: &Field| matches!(field.kind, FieldKind::Slug { .. });
-        let target = |field: &Field| match &field.kind {
-            FieldKind::Reference { to, .. } => Some(to.clone()),
-            _ => None,
-        };
-        for (index, new) in next.fields.iter().enumerate() {
-            if let Some(old) = self.fields.iter().find(|old| old.id == new.id)
-                && target(old).is_some()
-                && target(old) != target(new)
+        // A reference pointing elsewhere, at any depth, needs a migration: what it stores names
+        // entries of its old collection.
+        let (mut before, mut after) = (Vec::new(), Vec::new());
+        targets(&self.fields, "", &mut before);
+        targets(&next.fields, "", &mut after);
+        for (path, to) in &before {
+            if after
+                .iter()
+                .any(|(other, target)| other == path && target != to)
             {
-                let mut pointer = at(&root, "fields");
-                pointer.push_index(index);
                 return Successor::Refused(refuse(
                     "needs_migration",
-                    &pointer,
+                    &at(&root, "fields"),
                     format!(
-                        "pointing `{}` at other entries needs a migration: what it stores names entries of its collection",
-                        new.id
+                        "pointing `{path}` at other entries needs a migration: what it stores names entries of its collection"
                     ),
                 ));
             }
+        }
+        for (index, new) in next.fields.iter().enumerate() {
             if let Some(old) = self.fields.iter().find(|old| old.id == new.id)
                 && slug(old) != slug(new)
             {
@@ -2644,6 +3063,216 @@ mod tests {
         assert!(
             matches!(single.successor(&tags(3)), Successor::CheckContent(_)),
             "one becomes a list only if nothing is stored"
+        );
+    }
+
+    fn page_definition(quote_to: &str) -> Value {
+        json!({
+            "name": "Pages",
+            "title_field": "title",
+            "fields": [
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "hero", "label": "Hero", "type": "object", "fields": [
+                    {"id": "heading", "label": "Heading", "type": "text", "required": true},
+                    {"id": "image_alt", "label": "Image text", "type": "text"}
+                ]},
+                {"id": "tags", "label": "Tags", "type": "list", "of": {"type": "text", "max_chars": 30}, "max": 3},
+                {"id": "faq", "label": "Questions", "type": "list", "of": {"type": "object", "fields": [
+                    {"id": "q", "label": "Question", "type": "text", "required": true},
+                    {"id": "a", "label": "Answer", "type": "markdown"}
+                ]}},
+                {"id": "sections", "label": "Sections", "type": "blocks", "max": 10, "blocks": [
+                    {"name": "text_block", "label": "Text", "fields": [
+                        {"id": "body", "label": "Body", "type": "markdown", "required": true}
+                    ]},
+                    {"name": "quote", "label": "Quote", "fields": [
+                        {"id": "text", "label": "Quote", "type": "text", "required": true},
+                        {"id": "by", "label": "By", "type": "reference", "to": quote_to}
+                    ]}
+                ]}
+            ]
+        })
+    }
+
+    fn page_type() -> ContentType {
+        ContentType::parse(&page_definition("people")).expect("a valid definition")
+    }
+
+    #[test]
+    fn structures_nest_and_write_one_canonical_form() {
+        let content = page_type()
+            .validate(&json!({
+                "title": "Home",
+                "sections": [
+                    {"body": "# Hi", "_block": "text_block"},
+                    {"by": A, "_block": "quote", "text": "Ship it"}
+                ],
+                "faq": [{"a": "Yes.", "q": "Free?"}],
+                "tags": ["news", "launch"],
+                "hero": {"image_alt": "A field", "heading": "Welcome"}
+            }))
+            .expect("valid");
+        assert_eq!(
+            content.canonical_json(),
+            format!(
+                r##"{{"title":"Home","hero":{{"heading":"Welcome","image_alt":"A field"}},"tags":["news","launch"],"faq":[{{"q":"Free?","a":"Yes."}}],"sections":[{{"_block":"text_block","body":"# Hi"}},{{"_block":"quote","text":"Ship it","by":"{A}"}}]}}"##
+            )
+        );
+        let references: Vec<(&str, u16, bool)> = content
+            .references()
+            .iter()
+            .map(|r| (r.field.as_str(), r.position, r.many))
+            .collect();
+        assert_eq!(
+            references,
+            [("sections/1/by", 0, false)],
+            "a nested reference keeps its path"
+        );
+        let again =
+            ContentType::parse(&serde_json::from_str(&page_type().canonical_json()).expect("JSON"))
+                .expect("valid");
+        assert_eq!(again.canonical_json(), page_type().canonical_json());
+        assert!(page_type().canonical_json().contains(r#"{"id":"tags","label":"Tags","type":"list","required":false,"of":{"type":"text","max_chars":30,"multiline":false},"max":3}"#));
+    }
+
+    #[test]
+    fn nested_values_that_do_not_fit_are_refused_where_they_are() {
+        for (content, code, pointer) in [
+            (
+                json!({"hero": {"image_alt": "x"}}),
+                "missing_field",
+                "/hero/heading",
+            ),
+            (
+                json!({"hero": {"heading": "x", "extra": 1}}),
+                "unknown_field",
+                "/hero/extra",
+            ),
+            (json!({"tags": ["a", "b", "c", "d"]}), "too_many", "/tags"),
+            (json!({"tags": []}), "invalid_list", "/tags"),
+            (json!({"tags": ["ok", 7]}), "wrong_type", "/tags/1"),
+            (
+                json!({"faq": [{"a": "no question"}]}),
+                "missing_field",
+                "/faq/0/q",
+            ),
+            (
+                json!({"sections": [{"_block": "video"}]}),
+                "unknown_block",
+                "/sections/0/_block",
+            ),
+            (
+                json!({"sections": [{"body": "no block"}]}),
+                "unknown_block",
+                "/sections/0/_block",
+            ),
+            (
+                json!({"sections": [{"_block": "quote", "text": "x", "by": "nope"}]}),
+                "invalid_reference",
+                "/sections/0/by",
+            ),
+            (
+                json!({"sections": [{"_block": "text_block", "body": "x", "text": "stray"}]}),
+                "unknown_field",
+                "/sections/0/text",
+            ),
+        ] {
+            let mut full = json!({"title": "Home"});
+            for (key, value) in content.as_object().expect("object") {
+                full[key] = value.clone();
+            }
+            let refused = page_type().validate(&full).expect_err("refused");
+            assert_eq!(
+                (refused.code, refused.pointer.as_str()),
+                (code, pointer),
+                "{full}"
+            );
+        }
+    }
+
+    #[test]
+    fn structures_are_bounded_and_slugs_stay_on_top() {
+        let field = |field: Value| {
+            ContentType::parse(&json!({
+                "name": "T", "title_field": "t",
+                "fields": [{"id": "t", "label": "T", "type": "text", "required": true}, field]
+            }))
+            .map(|_| ())
+            .map_err(|refused| (refused.code, refused.pointer))
+        };
+        let object =
+            |inner: Value| json!({"id": "o", "label": "O", "type": "object", "fields": [inner]});
+        let leaf = json!({"id": "x", "label": "X", "type": "text"});
+        let three = object(object(object(leaf.clone())));
+        assert_eq!(field(three.clone()), Ok(()), "three deep is allowed");
+        assert_eq!(field(object(three)).map_err(|e| e.0), Err("too_deep"));
+        assert_eq!(
+            field(
+                json!({"id": "l", "label": "L", "type": "list", "of": {"type": "list", "of": {"type": "text"}}})
+            ),
+            Err(("invalid_type", "/fields/1/of/type".to_owned()))
+        );
+        assert_eq!(
+            field(object(json!({"id": "s", "label": "S", "type": "slug"}))),
+            Err(("invalid_type", "/fields/1/fields/0/type".to_owned()))
+        );
+        assert_eq!(
+            field(
+                json!({"id": "b", "label": "B", "type": "blocks", "blocks": [
+                    {"name": "a", "label": "A", "fields": [leaf.clone()]},
+                    {"name": "a", "label": "Again", "fields": [leaf.clone()]}
+                ]})
+            ),
+            Err(("duplicate_block", "/fields/1/blocks/1/name".to_owned()))
+        );
+        assert_eq!(
+            field(
+                json!({"id": "l", "label": "L", "type": "list", "of": {"type": "text"}, "max": 101})
+            ),
+            Err(("out_of_range", "/fields/1/max".to_owned()))
+        );
+    }
+
+    #[test]
+    fn changes_inside_structures_follow_the_same_rules() {
+        let page = |change: &dyn Fn(&mut Value)| {
+            let mut definition = page_definition("people");
+            change(&mut definition);
+            ContentType::parse(&definition).expect("valid")
+        };
+        let base = page_type();
+        let optional_in_hero = page(&|d| {
+            d["fields"][1]["fields"]
+                .as_array_mut()
+                .expect("fields")
+                .push(json!({"id": "subtitle", "label": "Subtitle", "type": "text"}));
+        });
+        assert_eq!(base.successor(&optional_in_hero), Successor::Compatible);
+        let required_alt = page(&|d| d["fields"][1]["fields"][1]["required"] = json!(true));
+        assert!(matches!(
+            base.successor(&required_alt),
+            Successor::CheckContent(_)
+        ));
+        let new_block = page(&|d| {
+            d["fields"][4]["blocks"]
+                .as_array_mut()
+                .expect("blocks")
+                .push(json!({"name": "video", "label": "Video", "fields": [{"id": "url", "label": "URL", "type": "url"}]}));
+        });
+        assert_eq!(base.successor(&new_block), Successor::Compatible);
+        assert!(
+            matches!(new_block.successor(&base), Successor::CheckContent(_)),
+            "a kind of block removed"
+        );
+        let fewer_tags = page(&|d| d["fields"][2]["max"] = json!(2));
+        assert!(matches!(
+            base.successor(&fewer_tags),
+            Successor::CheckContent(_)
+        ));
+        let quotes_by_staff = ContentType::parse(&page_definition("staff")).expect("valid");
+        assert!(
+            matches!(base.successor(&quotes_by_staff), Successor::Refused(_)),
+            "a nested reference pointed elsewhere"
         );
     }
 }
