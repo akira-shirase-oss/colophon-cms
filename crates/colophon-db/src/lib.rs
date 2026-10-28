@@ -91,6 +91,10 @@ pub enum DbError {
     /// (migration 0016, D-054).
     #[error("the slug is taken")]
     SlugTaken,
+    /// A value of a unique field is another entry's, as a draft or published, in the same
+    /// collection (migration 0027, D-070).
+    #[error("a unique value is taken")]
+    ValueTaken,
     /// The collection is a single type and already has its entry (migration 0026, D-067).
     #[error("this single type already has its entry")]
     SingleExists,
@@ -122,14 +126,15 @@ impl DbError {
         }
     }
 
-    /// A write's error: a violation of the slug indexes becomes `SlugTaken`, other unique
-    /// violations `Conflict`, the rest as [`Self::from_query`].
+    /// A write's error: a violation of the slug indexes becomes `SlugTaken`, of the unique
+    /// claims `ValueTaken`, other unique violations `Conflict`, the rest as [`Self::from_query`].
     pub(crate) fn from_write(error: sqlx::Error) -> Self {
         match &error {
             sqlx::Error::Database(database) if database.is_unique_violation() => {
                 match database.constraint() {
                     Some("entries_draft_slug" | "publications_live_slug") => Self::SlugTaken,
                     Some("entries_single") => Self::SingleExists,
+                    Some("unique_claims_value") => Self::ValueTaken,
                     _ => Self::Conflict,
                 }
             }

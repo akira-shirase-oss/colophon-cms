@@ -432,6 +432,7 @@ async fn slug_free(
     else {
         return Ok(());
     };
+    let named = may_name(tx, collection, content_type, holder.created_by);
     let field = content_type
         .fields()
         .iter()
@@ -445,13 +446,69 @@ async fn slug_free(
     Err(ApiError::slug_taken(
         format!("/{field}"),
         format!("\"{slug}\" is already the slug of another entry ({state})"),
-        Some(EntryInTheWay {
+        named.then_some(EntryInTheWay {
             entry: holder.entry_id,
             title: holder.title,
             state,
             problem: None,
         }),
     ))
+}
+
+/// Refuses content holding a value of a unique field that another entry of the collection
+/// holds, as a draft or published (D-070), naming that entry when the caller may read its title.
+/// Only the wording: `unique_claims_value` is the rule, and a write that loses a race to it is
+/// refused without a name ([`ApiError::from_db`]).
+async fn unique_free(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    content_type: &ContentType,
+    unique: &[String],
+    content: &Content,
+    entry: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let Some(holder) =
+        entries::unique_holder(tx, collection, unique, content.canonical_json(), entry)
+            .await
+            .map_err(ApiError::from_db)?
+    else {
+        return Ok(());
+    };
+    let named = may_name(tx, collection, content_type, holder.created_by);
+    let label = content_type
+        .fields()
+        .iter()
+        .find(|field| field.id == holder.field)
+        .map_or(holder.field.as_str(), |field| field.label.as_str());
+    let state = if holder.published {
+        "published"
+    } else {
+        "draft"
+    };
+    Err(ApiError::value_taken(
+        format!("/{}", holder.field),
+        format!("another entry already has this {label} ({state}), and it must be unique"),
+        named.then_some(EntryInTheWay {
+            entry: holder.entry_id,
+            title: holder.title,
+            state,
+            problem: None,
+        }),
+    ))
+}
+
+/// Whether a refusal may name an entry in the way, created by `created_by`: only when the
+/// caller's role reads its title (step R.3), so a refusal never shows a title the role can't
+/// read. The refusal itself still says the slug or value is taken, as any unique rule must.
+fn may_name(
+    tx: &ProjectTransaction,
+    collection: &str,
+    content_type: &ContentType,
+    created_by: Uuid,
+) -> bool {
+    tx.policy
+        .fields(Action::ContentRead, collection, created_by == tx.identity)
+        .is_some_and(|fields| fields.includes(content_type.title_field()))
 }
 
 /// Refuses unless the caller's role may read entries of `collection` (D-058).
@@ -550,6 +607,16 @@ pub(crate) async fn create(
         return Ok(replay);
     }
     slug_free(&mut tx, &path.collection, &content_type, &content, None).await?;
+    let unique = content_type.unique_fields();
+    unique_free(
+        &mut tx,
+        &path.collection,
+        &content_type,
+        &unique,
+        &content,
+        None,
+    )
+    .await?;
     let revision = NewRevision {
         id: Uuid::now_v7(),
         content: content.canonical_json(),
@@ -558,6 +625,7 @@ pub(crate) async fn create(
         slug: content.slug(),
         schema_version: version,
         references: content.references(),
+        unique: &unique,
     };
     let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision)
         .await
@@ -640,6 +708,16 @@ pub(crate) async fn save(
         Some(entry),
     )
     .await?;
+    let unique = content_type.unique_fields();
+    unique_free(
+        &mut tx,
+        &path.collection,
+        &content_type,
+        &unique,
+        &content,
+        Some(entry),
+    )
+    .await?;
     let revision = NewRevision {
         id: Uuid::now_v7(),
         content: content.canonical_json(),
@@ -648,6 +726,7 @@ pub(crate) async fn save(
         slug: content.slug(),
         schema_version: version,
         references: content.references(),
+        unique: &unique,
     };
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.
     match entries::save(&mut tx, entry, expected, revision)

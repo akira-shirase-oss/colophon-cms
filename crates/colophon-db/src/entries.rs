@@ -28,6 +28,9 @@ pub struct NewRevision<'a> {
     pub schema_version: i32,
     /// The entries its reference fields name (D-065).
     pub references: &'a [ContentReference],
+    /// The ids of its content type's unique fields (D-070): the entry claims the values the
+    /// content sets in them. The caller's shared lock on the content type keeps them current.
+    pub unique: &'a [String],
 }
 
 /// The entry that has a slug, as a draft or as what readers get ([`slug_holder`]).
@@ -39,6 +42,24 @@ pub struct SlugHolder {
     pub title: String,
     /// Whether that revision is the published one rather than the draft.
     pub published: bool,
+    /// Who created the entry: whether a refusal may name it depends on it (step R.3).
+    pub created_by: Uuid,
+}
+
+/// The entry that holds a value of a unique field, as a draft or as what readers get
+/// ([`unique_holder`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UniqueHolder {
+    /// The field.
+    pub field: String,
+    /// The entry.
+    pub entry_id: Uuid,
+    /// Its title, in the revision that holds the value.
+    pub title: String,
+    /// Whether that revision is the published one rather than the draft.
+    pub published: bool,
+    /// Who created the entry: whether a refusal may name it depends on it (step R.3).
+    pub created_by: Uuid,
 }
 
 /// A revision's metadata.
@@ -139,6 +160,7 @@ pub async fn create(
     .await
     .map_err(DbError::from_write)?;
     let created_at = insert_revision(tx, entry_id, collection, None, revision).await?;
+    claim_draft(tx, entry_id, collection, revision).await?;
     Ok(Draft {
         entry_id,
         collection: collection.to_owned(),
@@ -208,6 +230,7 @@ pub async fn save(
             current: current.draft_revision_id,
         });
     };
+    claim_draft(tx, entry_id, &current.collection, revision).await?;
     Ok(Saved::Saved(Box::new(Draft {
         entry_id,
         collection: current.collection,
@@ -257,6 +280,47 @@ async fn insert_revision(
     .map_err(DbError::from_write)?;
     insert_references(tx, revision.id, revision.references).await?;
     Ok(created_at)
+}
+
+/// Makes the entry's draft claims the values `revision` sets in its unique fields (migration
+/// 0027, D-070), replacing the old draft's. A value another entry's draft holds fails
+/// `unique_claims_value`: `ValueTaken`, and the caller rolls back. Claims exist only for the
+/// fields the current version marks unique, so a type without any has none to replace.
+async fn claim_draft(
+    tx: &mut ProjectTransaction,
+    entry_id: Uuid,
+    collection: &str,
+    revision: NewRevision<'_>,
+) -> Result<(), DbError> {
+    if revision.unique.is_empty() {
+        return Ok(());
+    }
+    sqlx::query!(
+        "DELETE FROM unique_claims
+         WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3 AND NOT published",
+        tx.project,
+        tx.environment,
+        entry_id
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    sqlx::query!(
+        "INSERT INTO unique_claims
+           (project_id, environment_id, collection, field, published, value_hash, entry_id)
+         SELECT $1, $2, $3, field, false, value_hash, $4
+         FROM colophon_unique_values($5, $6)",
+        tx.project,
+        tx.environment,
+        collection,
+        entry_id,
+        revision.unique,
+        revision.content
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
 }
 
 /// Keeps a new revision's references (migration 0024, D-065). A precheck names the first one
@@ -342,15 +406,18 @@ pub async fn slug_holder(
 ) -> Result<Option<SlugHolder>, DbError> {
     sqlx::query_as!(
         SlugHolder,
-        r#"SELECT e.id AS "entry_id!", r.title AS "title!", false AS "published!"
+        r#"SELECT e.id AS "entry_id!", r.title AS "title!", false AS "published!",
+                  e.created_by AS "created_by!"
            FROM entries e
            JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id
                            AND r.id = e.draft_revision_id
            WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
              AND e.draft_slug = $4 AND e.id IS DISTINCT FROM $5
            UNION ALL
-           SELECT p.entry_id, p.title, true
+           SELECT p.entry_id, p.title, true, e.created_by
            FROM publications p
+           JOIN entries e ON e.project_id = p.project_id AND e.environment_id = p.environment_id
+                         AND e.id = p.entry_id
            WHERE p.project_id = $1 AND p.environment_id = $2 AND p.collection = $3
              AND p.slug = $4 AND p.valid_to IS NULL AND p.entry_id IS DISTINCT FROM $5
            LIMIT 1"#,
@@ -358,6 +425,52 @@ pub async fn slug_holder(
         tx.environment,
         collection,
         slug,
+        except
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// Another entry of `collection` holding a value `content` sets in one of `fields`, as its
+/// draft or published: what a write of `content` would run into, the first field first. Only
+/// for the refusal's wording, and racy like any precheck: `unique_claims_value` is the rule
+/// (D-070). `except` is the entry being saved, which may keep its own values.
+pub async fn unique_holder(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    fields: &[String],
+    content: &str,
+    except: Option<Uuid>,
+) -> Result<Option<UniqueHolder>, DbError> {
+    if fields.is_empty() {
+        return Ok(None);
+    }
+    sqlx::query_as!(
+        UniqueHolder,
+        r#"SELECT v.field AS "field!", c.entry_id AS "entry_id!", c.published AS "published!",
+                  coalesce(CASE WHEN c.published
+                               THEN (SELECT p.title FROM publications p
+                                     WHERE p.project_id = c.project_id
+                                       AND p.environment_id = c.environment_id
+                                       AND p.entry_id = c.entry_id AND p.valid_to IS NULL)
+                               ELSE e.draft_title END, '') AS "title!",
+                  e.created_by AS "created_by!"
+           FROM colophon_unique_values($4, $5) v
+           JOIN unique_claims c
+             ON c.project_id = $1 AND c.environment_id = $2 AND c.collection = $3
+            AND c.field = v.field AND c.value_hash = v.value_hash
+            AND c.entry_id IS DISTINCT FROM $6
+           JOIN entries e
+             ON e.project_id = c.project_id AND e.environment_id = c.environment_id
+            AND e.id = c.entry_id
+           ORDER BY array_position($4, v.field), c.published
+           LIMIT 1"#,
+        tx.project,
+        tx.environment,
+        collection,
+        fields,
+        content,
         except
     )
     .fetch_optional(&mut *tx.transaction)

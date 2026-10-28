@@ -369,58 +369,6 @@ async fn a_narrowing_change_goes_through_when_nothing_stored_is_in_the_way() {
         "{}",
         into.body
     );
-
-    // A pattern both stored tags match goes through; a different one is checked again (D-069).
-    let patterned = |pattern: &str| {
-        let mut definition = notes();
-        let fields = definition["fields"].as_array_mut().expect("a list");
-        fields.remove(2);
-        fields[1]["required"] = json!(true);
-        fields[1]["pattern"] = json!(pattern);
-        definition
-    };
-    let lowercase = put(patterned("[a-z]+"), "\"v3\"").await;
-    assert_eq!(lowercase.status, StatusCode::OK, "{}", lowercase.body);
-    let digits = put(patterned("[0-9]+"), "\"v4\"").await;
-    assert_eq!(
-        digits.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        digits.body
-    );
-    let details = &digits.body["error"]["details"];
-    assert_eq!(
-        (&details["reason"], &details["total"]),
-        (&json!("needs_migration"), &json!(2))
-    );
-    assert_eq!(
-        details["entries"][0]["problem"]["reason"],
-        "pattern_mismatch"
-    );
-
-    // New content is held to the pattern in force.
-    let loud = call(
-        &owner,
-        Method::POST,
-        &entries(&project, "notes"),
-        Some(&json!({"title": "Three", "tag": "LOUD"})),
-        &[("idempotency-key", &key())],
-    )
-    .await
-    .expect("request");
-    assert_eq!(
-        loud.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        loud.body
-    );
-    assert_eq!(
-        (
-            &loud.body["error"]["details"]["reason"],
-            &loud.body["error"]["details"]["pointer"]
-        ),
-        (&json!("pattern_mismatch"), &json!("/tag"))
-    );
 }
 
 fn pages() -> Value {
@@ -567,5 +515,103 @@ async fn only_owners_and_developers_change_content_types_and_strangers_see_nothi
         entry.status,
         StatusCode::CREATED,
         "editors may still write entries"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_pattern_is_checked_against_stored_content_and_holds_new_content_to_it() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let created = call(
+        &owner,
+        Method::POST,
+        &types(&project),
+        Some(&json!({"slug": "notes", "definition": notes()})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    for body in [
+        json!({"title": "One", "tag": "x"}),
+        json!({"title": "Two", "tag": "y"}),
+    ] {
+        let note = call(
+            &owner,
+            Method::POST,
+            &entries(&project, "notes"),
+            Some(&body),
+            &[("idempotency-key", &key())],
+        )
+        .await
+        .expect("request");
+        assert_eq!(note.status, StatusCode::CREATED, "{}", note.body);
+    }
+    let path = format!("{}/notes", types(&project));
+    let put = |definition: Value, version: &'static str| {
+        let owner = &owner;
+        let path = path.clone();
+        async move {
+            call(
+                owner,
+                Method::PUT,
+                &path,
+                Some(&definition),
+                &[("if-match", version), ("idempotency-key", &key())],
+            )
+            .await
+            .expect("request")
+        }
+    };
+
+    // A pattern both stored tags match goes through; a different one is checked again (D-069).
+    let patterned = |pattern: &str| {
+        let mut definition = notes();
+        definition["fields"][1]["pattern"] = json!(pattern);
+        definition
+    };
+    let lowercase = put(patterned("[a-z]+"), "\"v1\"").await;
+    assert_eq!(lowercase.status, StatusCode::OK, "{}", lowercase.body);
+    let digits = put(patterned("[0-9]+"), "\"v2\"").await;
+    assert_eq!(
+        digits.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        digits.body
+    );
+    let details = &digits.body["error"]["details"];
+    assert_eq!(
+        (&details["reason"], &details["total"]),
+        (&json!("needs_migration"), &json!(2))
+    );
+    assert_eq!(
+        details["entries"][0]["problem"]["reason"],
+        "pattern_mismatch"
+    );
+
+    // New content is held to the pattern in force.
+    let loud = call(
+        &owner,
+        Method::POST,
+        &entries(&project, "notes"),
+        Some(&json!({"title": "Three", "tag": "LOUD"})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        loud.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        loud.body
+    );
+    assert_eq!(
+        (
+            &loud.body["error"]["details"]["reason"],
+            &loud.body["error"]["details"]["pointer"]
+        ),
+        (&json!("pattern_mismatch"), &json!("/tag"))
     );
 }

@@ -761,6 +761,11 @@ fn refused(refusal: Refusal) -> ApiError {
             "an entry in this changeset has a slug that another entry still publishes; publish that entry's new slug first, or in the same changeset",
             None,
         ),
+        Refusal::ValueTaken => ApiError::value_taken(
+            "",
+            "an entry in this changeset has a value that must be unique and that another entry still publishes; publish that entry's new value first, or in the same changeset",
+            None,
+        ),
         // Readers never get a reference to an entry they can't get (D-065).
         Refusal::BrokenReference(BrokenReference::NamesUnpublished { .. }) => ApiError::conflict(
             "references_unpublished",

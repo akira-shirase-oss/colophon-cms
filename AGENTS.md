@@ -48,7 +48,7 @@ lists and `own` conditions; migrations 0021, 0022) are done. Scheduled publishin
 0019, the worker's scheduler, `perf/k6/schedules.js`; D-060). R.4 is built, its full load runs pending: project API
 tokens that act as their own identity, kept away from access control, with an exact kill switch, and an append-only
 audit log (migration 0023, `colophon_db::{tokens, audit}`, `scope::begin_as_token`, `perf/k6/tokens.js`; D-063). Milestone M has begun: field types (M.1, D-064), references that never dangle (M.2, migrations 0024; D-065)
-and objects, lists and page-builder blocks (M.3, migration 0025; D-066) are built, their full load runs pending; single types (M.4, migration 0026; D-067) and text patterns (M.4, D-069) too. Milestone V (D-062)
+and objects, lists and page-builder blocks (M.3, migration 0025; D-066) are built, their full load runs pending; single types (M.4, migration 0026; D-067), text patterns (M.4, D-069) and unique fields (M.4, migration 0027; D-070) too. Milestone V (D-062)
 is built: one version (`0.1.0-alpha.1`, `colophon --version`, `GET /version`, the CLI's compatibility check), a
 release workflow written but not yet run on GitHub, the `@colophon-cms/cli` npm launcher, an install script and a
 Homebrew formula template; publishing waits on the maintainer (npm organization, `NPM_TOKEN`, a licence, a tag; see

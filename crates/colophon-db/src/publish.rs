@@ -63,6 +63,9 @@ pub enum Refusal {
     /// An entry's slug is another entry's published slug (D-054). The transaction is aborted:
     /// the caller rolls it back.
     SlugTaken,
+    /// A value of an entry's unique field is one another entry still publishes (D-070). The
+    /// transaction is aborted: the caller rolls it back.
+    ValueTaken,
     /// It would leave readers a reference to an entry they can't get (D-065). The caller rolls
     /// the transaction back.
     BrokenReference(releases::BrokenReference),
@@ -200,6 +203,7 @@ pub async fn publish(
                 ));
             }
             Err(DbError::SlugTaken) => return Ok(Err(Refusal::SlugTaken)),
+            Err(DbError::ValueTaken) => return Ok(Err(Refusal::ValueTaken)),
             Ok(Committed::Broken(broken)) => return Ok(Err(Refusal::BrokenReference(broken))),
             Err(error) => return Err(error),
         }

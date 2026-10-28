@@ -337,6 +337,21 @@ async fn a_purge_skipped_for_a_newer_release_is_covered_by_it() {
     cdn.refuse(Some(503));
     let unpublish = json!({"title": "Take it down", "unpublish": [down]});
     assert_eq!(release(&owner, &id, &unpublish).await, 2);
+    // Release 3 only once release 2's purge has been refused. Otherwise the worker can claim it
+    // just before release 3 commits and the CDN answer it just after `refuse(None)`: it would
+    // succeed instead of being superseded, and the test would fail by timing alone.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !cdn
+        .purges()
+        .iter()
+        .any(|(tags, accepted)| !accepted && names(tags, &id, &down))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "release 2's purge was never tried"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let later = create_article(&owner, &id, "Later").await;
     assert_eq!(
         release(&owner, &id, &json!({"title": "Three", "entries": [later]})).await,

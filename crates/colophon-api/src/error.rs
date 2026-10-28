@@ -123,8 +123,9 @@ pub struct ErrorDetails {
     pub reason: &'static str,
     /// RFC 6901 JSON Pointer into the request body; empty means the whole body.
     pub pointer: String,
-    /// Stored entries in the way: the entry that has a slug (`slug_taken`), or the first of
-    /// those a content type change would make invalid (`needs_migration`).
+    /// Stored entries in the way: the entry that has a slug or value (`slug_taken`,
+    /// `value_taken`), or the first of those a content type change would make invalid
+    /// (`needs_migration`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub entries: Vec<EntryInTheWay>,
     /// How many entries are in the way in all, when `entries` may list only some.
@@ -174,7 +175,7 @@ pub struct EntryInTheWay {
 /// in the way. Boxed in [`ApiError`], so every `Result` in the API stays small.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InTheWay {
-    /// The refusal's code: `slug_taken`, `needs_migration`.
+    /// The refusal's code: `slug_taken`, `value_taken`, `needs_migration`.
     pub reason: &'static str,
     /// JSON Pointer into the request body; empty if the body has none.
     pub pointer: String,
@@ -315,10 +316,11 @@ pub enum ApiError {
         /// Seconds until there is room again.
         retry_after: u32,
     },
-    /// A slug is another entry's, as its draft's slug or its published one (D-054). The entries
-    /// name that entry when a precheck found it; a write that lost a race to it can't. 409.
+    /// A slug (`slug_taken`, D-054) or a unique field's value (`value_taken`, D-070) is another
+    /// entry's, as a draft or published. The entries name that entry when a precheck found it; a
+    /// write that lost a race to it can't. 409.
     #[error("{}", .0.message)]
-    SlugTaken(Box<InTheWay>),
+    Taken(Box<InTheWay>),
     /// A content type change would make stored drafts or publications invalid (D-055). 422.
     #[error("{}", .0.message)]
     NeedsMigration(Box<InTheWay>),
@@ -417,8 +419,8 @@ impl ApiError {
         Self::Internal(cause.into())
     }
 
-    /// A database error: an exhausted pool is [`Self::Busy`], a taken slug
-    /// [`Self::SlugTaken`]; anything else is internal. Callers that expect a particular error,
+    /// A database error: an exhausted pool is [`Self::Busy`], a taken slug or unique value
+    /// [`Self::Taken`]; anything else is internal. Callers that expect a particular error,
     /// such as a conflict, match it first.
     pub fn from_db(error: DbError) -> Self {
         match error {
@@ -426,6 +428,11 @@ impl ApiError {
             DbError::SlugTaken => Self::slug_taken(
                 "",
                 "another entry in this collection has the same slug, as a draft or published",
+                None,
+            ),
+            DbError::ValueTaken => Self::value_taken(
+                "",
+                "another entry in this collection has the same value in a field that must be unique, as a draft or published",
                 None,
             ),
             DbError::SingleExists => Self::conflict(
@@ -456,8 +463,23 @@ impl ApiError {
         message: impl Into<String>,
         holder: Option<EntryInTheWay>,
     ) -> Self {
-        Self::SlugTaken(Box::new(InTheWay {
+        Self::Taken(Box::new(InTheWay {
             reason: "slug_taken",
+            pointer: pointer.into(),
+            message: message.into(),
+            entries: holder.into_iter().collect(),
+            total: None,
+        }))
+    }
+
+    /// 409 `value_taken`, naming `holder` when it is known (D-070).
+    pub fn value_taken(
+        pointer: impl Into<String>,
+        message: impl Into<String>,
+        holder: Option<EntryInTheWay>,
+    ) -> Self {
+        Self::Taken(Box::new(InTheWay {
+            reason: "value_taken",
             pointer: pointer.into(),
             message: message.into(),
             entries: holder.into_iter().collect(),
@@ -493,7 +515,7 @@ impl ApiError {
             | Self::RoleInUse { .. }
             | Self::IdempotencyKeyReused
             | Self::AlreadySetUp
-            | Self::SlugTaken(_) => StatusCode::CONFLICT,
+            | Self::Taken(_) => StatusCode::CONFLICT,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -527,7 +549,7 @@ impl ApiError {
             | Self::RoleInUse { .. }
             | Self::IdempotencyKeyReused
             | Self::AlreadySetUp
-            | Self::SlugTaken(_) => ErrorCode::Conflict,
+            | Self::Taken(_) => ErrorCode::Conflict,
             Self::RateLimited { .. } => ErrorCode::RateLimited,
             Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
@@ -569,7 +591,7 @@ impl ApiError {
                 candidates: candidates.to_vec(),
                 ..ErrorDetails::new(reason, "/local_time")
             }),
-            Self::SlugTaken(way) | Self::NeedsMigration(way) => Some(ErrorDetails {
+            Self::Taken(way) | Self::NeedsMigration(way) => Some(ErrorDetails {
                 entries: way.entries.clone(),
                 total: way.total,
                 ..ErrorDetails::new(way.reason, way.pointer.clone())

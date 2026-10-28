@@ -48,6 +48,7 @@ async fn ready(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid, Uuid) {
             slug: None,
             schema_version: 1,
             references: &[],
+            unique: &[],
         },
     )
     .await
