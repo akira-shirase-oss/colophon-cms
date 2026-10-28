@@ -204,8 +204,12 @@ tx_before=$(db_transactions)
 # cluster), until a step breaks its own thresholds. Each step runs STEP_SECONDS (default 20) at
 # a rate 25% above the last, from START_RATE (default a quarter of the endpoint's RATE), at most
 # MAX_STEPS (default 15). The knee is the highest rate that held; the failure mode is how the
-# first step that didn't hold broke: errors, falling behind (k6 couldn't start iterations on
-# time because answers were too slow), or latency over P99_MS. A step that breaks is run once
+# first step that didn't hold broke: shed load (every failed request the servers logged was 503
+# `unavailable` at WARN, which only a request that waited out the pool's acquire timeout logs,
+# D-033: overload handled as designed), errors (anything else), falling behind (k6 couldn't
+# start iterations on time because answers were too slow), or latency over P99_MS. Each step
+# keeps the WARN and ERROR lines it added to the servers' logs: failed requests by code (or a
+# middleware failure's status), other lines by message, so an error is never only a number. A step that breaks is run once
 # more, and only breaking twice ends the climb. A measurement, not a pass/fail gate: it exits 0
 # unless the server is unhealthy afterwards.
 if [[ "$scenario" == "stress" ]]; then
@@ -217,24 +221,49 @@ if [[ "$scenario" == "stress" ]]; then
   knee=0
   failure="none within $max_steps steps"
   echo "stressing $endpoint from $rate/s, ${step_seconds} s a step, p99 gate $P99_MS ms"
+  # Where each server's log ends now, so a step counts only the lines it adds.
+  log_sizes() {
+    if [[ "$cluster" == "1" ]]; then
+      cluster_log_sizes
+    else
+      printf '%s %s\n' "$work/server.log" "$(wc -c <"$work/server.log" | tr -d ' ')"
+    fi
+  }
+  # The WARN and ERROR lines added since log_sizes wrote $work/step-log-sizes: failed requests
+  # by code (`unavailable`, `internal`, ...) or a middleware failure's status, the rest (such as
+  # sqlx's slow-acquire warnings) by message.
+  logged_failures() {
+    while read -r file size; do
+      tail -c +"$(( size + 1 ))" "$file"
+    done <"$work/step-log-sizes" | jq -Rsc '
+      def counts: group_by(.) | map({key: .[0], value: length}) | from_entries;
+      [split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")]
+      | {requests: (map(select(.code or .status) | (.code // .status)) | counts),
+         other: (map(select((.code or .status) | not) | (.message // "unknown")) | counts)}'
+  }
   # One step at the current rate: appends it to $steps, sets $entry and $step_status.
   run_step() {
-    local attempt=$1 load_average
+    local attempt=$1 load_average logged
     load_average=$(uptime | sed 's/.*averages*: //' | awk '{print $1}' | tr -d ,)
+    log_sizes >"$work/step-log-sizes"
     step_status=0
     "$k6" run --quiet --no-color --summary-export "$work/step.json" \
       -e BASE_URL="$base_url" -e PUBLIC_URL="$public_url" -e SCENARIO=steady \
       -e VUS="$VUS" -e RATE="$rate" -e DURATION="${step_seconds}s" \
       -e P99_MS="$P99_MS" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
       "perf/k6/$endpoint.js" >"$work/step.log" 2>&1 || step_status=$?
-    entry=$(jq -c --argjson rate "$rate" --argjson attempt "$attempt" --argjson status "$step_status" --arg load "$load_average" '{
+    logged=$(logged_failures)
+    entry=$(jq -c --argjson rate "$rate" --argjson attempt "$attempt" --argjson status "$step_status" --arg load "$load_average" \
+      --argjson logged "$logged" '{
       rate: $rate, attempt: $attempt, rps: (.metrics.http_reqs.rate | floor),
       p99_ms: (.metrics.http_req_duration."p(99)" * 1000 | round / 1000),
       failed: (.metrics.http_req_failed.passes // 0), checks_failed: (.metrics.checks.fails // 0),
-      dropped: (.metrics.dropped_iterations.count // 0), held: ($status == 0), load_average: ($load | tonumber? // null)
+      dropped: (.metrics.dropped_iterations.count // 0), held: ($status == 0), load_average: ($load | tonumber? // null),
+      server_logged: $logged
     }' "$work/step.json")
     steps=$(jq -c --argjson entry "$entry" '. + [$entry]' <<<"$steps")
-    echo "  $(jq -r '"\(.rate)/s: \(.rps) requests/s, p99 \(.p99_ms) ms, \(.failed) failed, \(.dropped) dropped: " + (if .held then "held" else "broke" end)' <<<"$entry")"
+    echo "  $(jq -r '"\(.rate)/s: \(.rps) requests/s, p99 \(.p99_ms) ms, \(.failed) failed, \(.dropped) dropped: " + (if .held then "held" else "broke" end)
+      + (if .server_logged.requests == {} then "" else " (failed requests the servers logged: \(.server_logged.requests | to_entries | map("\(.value) \(.key)") | join(", ")))" end)' <<<"$entry")"
   }
   for _ in $(seq 1 "$max_steps"); do
     run_step 1
@@ -247,7 +276,8 @@ if [[ "$scenario" == "stress" ]]; then
     fi
     if (( step_status != 0 )); then
       failure=$(jq -r --argjson gate "$P99_MS" '
-        if .failed > 0 or .checks_failed > 0 then "errors"
+        if .failed > 0 and (.server_logged.requests | keys) == ["unavailable"] and .server_logged.requests.unavailable >= .failed then "shed load"
+        elif .failed > 0 or .checks_failed > 0 then "errors"
         elif .dropped > 0 then "fell behind"
         elif .p99_ms > $gate then "latency"
         else "thresholds" end' <<<"$entry")
