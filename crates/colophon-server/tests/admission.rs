@@ -56,7 +56,9 @@ async fn projects(
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn a_credential_over_its_limit_waits_as_it_is_told_and_health_never_counts() {
     let _server = Server::start_with(&[
-        ("COLOPHON_RATE_LIMIT_PER_CREDENTIAL", "4/4"),
+        // One a second with a burst of four: six requests can't earn back a refusal however slow
+        // the runner (at four a second, one that took 250 ms admitted the sixth).
+        ("COLOPHON_RATE_LIMIT_PER_CREDENTIAL", "1/4"),
         ("COLOPHON_RATE_LIMIT_PER_ADDRESS", "off"),
         ("COLOPHON_TRUSTED_PROXIES", "127.0.0.1"),
     ])
@@ -185,7 +187,8 @@ impl Drop for Stopped {
 async fn without_valkey_each_server_still_limits_on_its_own() {
     let _valkey = Stopped::new("valkey");
     let _server = Server::start_with(&[
-        ("COLOPHON_RATE_LIMIT_PER_ADDRESS", "4/4"),
+        // One a second with a burst of four, for the same reason as above.
+        ("COLOPHON_RATE_LIMIT_PER_ADDRESS", "1/4"),
         ("COLOPHON_RATE_LIMIT_PER_CREDENTIAL", "off"),
         ("COLOPHON_TRUSTED_PROXIES", "127.0.0.1"),
     ])
