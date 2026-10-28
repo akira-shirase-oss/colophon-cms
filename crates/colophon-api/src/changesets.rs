@@ -25,6 +25,7 @@ use axum::{
     response::Response,
 };
 use colophon_db::{
+    DbError,
     changesets::{self, Head, Pin},
     idempotency::{self, Claim},
     publish::{self, Base, Refusal},
@@ -139,8 +140,12 @@ pub(crate) struct ItemView {
     /// The revision readers get now, if published: what this item changes from.
     published_revision_id: Option<Uuid>,
     /// Who created the entry, so a client can tell which items a role limited to its own
-    /// entries may change.
-    created_by: Uuid,
+    /// entries may change; `null` once it is deleted.
+    created_by: Option<Uuid>,
+    /// Present (`true`) when the entry has been deleted since (D-079): only a published
+    /// changeset can still list it, as what it published.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    entry_deleted: bool,
 }
 
 #[derive(Serialize)]
@@ -276,6 +281,7 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
         items: items
             .into_iter()
             .map(|item| ItemView {
+                entry_deleted: item.created_by.is_none(),
                 created_by: item.created_by,
                 edited: item.moved(),
                 kind: item.pin.kind,
@@ -472,6 +478,15 @@ fn checked(new: &NewChangeset) -> Result<(&str, Vec<Uuid>, Vec<Uuid>), ApiError>
     Ok((title, entries, unpublish))
 }
 
+/// 422 `unknown_entry`: an entry to publish isn't one in this environment (or is deleted).
+fn unknown_entry() -> ApiError {
+    ApiError::InvalidField {
+        reason: "unknown_entry",
+        pointer: "/entries",
+        message: "every entry is an entry id in this environment".to_owned(),
+    }
+}
+
 /// `POST {P}/changesets`.
 pub(crate) async fn create(
     State(state): State<AppState>,
@@ -514,11 +529,7 @@ pub(crate) async fn create(
         .await
         .map_err(ApiError::from_db)?;
     if pins.len() != entries.len() {
-        return Err(ApiError::InvalidField {
-            reason: "unknown_entry",
-            pointer: "/entries",
-            message: "every entry is an entry id in this environment".to_owned(),
-        });
+        return Err(unknown_entry());
     }
     let taken_down = changesets::published_pins(&mut tx, &unpublish)
         .await
@@ -536,7 +547,11 @@ pub(crate) async fn create(
     let id = Uuid::now_v7();
     changesets::create(&mut tx, id, title, &pins, &hash_of(&pins))
         .await
-        .map_err(ApiError::from_db)?;
+        .map_err(|error| match error {
+            // Deleted after the pins were read (D-079): as if it had never been there.
+            DbError::EntryDeleted { .. } => unknown_entry(),
+            other => ApiError::from_db(other),
+        })?;
     let head = changesets::get(&mut tx, id)
         .await
         .map_err(ApiError::from_db)?
@@ -774,6 +789,11 @@ fn refused(refusal: Refusal) -> ApiError {
         Refusal::BrokenReference(BrokenReference::StillNamed { .. }) => ApiError::conflict(
             "still_referenced",
             "an entry this changeset takes down is named by a published entry; change or take down that entry first, or in the same changeset",
+        ),
+        // Only a pin made while the entry was being deleted can get here (D-079).
+        Refusal::EntryDeleted { .. } => ApiError::conflict(
+            "entry_deleted",
+            "an entry in this changeset has been deleted; make a new changeset without it",
         ),
     }
 }

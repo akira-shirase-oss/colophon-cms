@@ -110,6 +110,14 @@ pub enum DbError {
         /// Whether the field holds a list.
         many: bool,
     },
+    /// A changeset pin or a publication names an entry that is deleted (migration 0030, D-079):
+    /// a deletion committed while it waited for the entry. Nothing was written; the transaction is
+    /// aborted and the caller rolls it back.
+    #[error("an entry is deleted")]
+    EntryDeleted {
+        /// The entry, as the database reported it.
+        entry: Option<uuid::Uuid>,
+    },
     /// Applying migrations failed.
     #[error("applying migrations failed")]
     Migrate(#[source] sqlx::migrate::MigrateError),
@@ -128,7 +136,8 @@ impl DbError {
     }
 
     /// A write's error: a violation of the slug indexes becomes `SlugTaken`, of the unique
-    /// claims `ValueTaken`, other unique violations `Conflict`, the rest as [`Self::from_query`].
+    /// claims `ValueTaken`, other unique violations `Conflict`, a pin or publication of a deleted
+    /// entry `EntryDeleted`, the rest as [`Self::from_query`].
     pub(crate) fn from_write(error: sqlx::Error) -> Self {
         match &error {
             sqlx::Error::Database(database) if database.is_unique_violation() => {
@@ -139,9 +148,29 @@ impl DbError {
                     _ => Self::Conflict,
                 }
             }
-            _ => Self::from_query(error),
+            _ => match deleted_entry(&error) {
+                Some(("changeset_items" | "publications", entry)) => Self::EntryDeleted { entry },
+                _ => Self::from_query(error),
+            },
         }
     }
+}
+
+/// The table and the entry of a violation of migration 0030's `<table>_entry_live` rule: a new
+/// reference, changeset pin or publication named an entry that is deleted (or never existed).
+pub(crate) fn deleted_entry(error: &sqlx::Error) -> Option<(&str, Option<uuid::Uuid>)> {
+    let sqlx::Error::Database(database) = error else {
+        return None;
+    };
+    if !database.is_foreign_key_violation() {
+        return None;
+    }
+    let table = database.constraint()?.strip_suffix("_entry_live")?;
+    let entry = database
+        .try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+        .and_then(|postgres| postgres.detail())
+        .and_then(|detail| uuid::Uuid::try_parse(detail).ok());
+    Some((table, entry))
 }
 
 /// Builds the pool without connecting. Connections open on first use, so the server starts

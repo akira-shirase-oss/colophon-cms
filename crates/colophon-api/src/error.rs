@@ -453,6 +453,12 @@ impl ApiError {
                 "single_exists",
                 "this collection is a single type and already has its entry; edit that one",
             ),
+            // A pin or publication of an entry deleted meanwhile (D-079); callers that can say
+            // more match it first.
+            DbError::EntryDeleted { .. } => Self::conflict(
+                "entry_deleted",
+                "an entry this needs has just been deleted; look again and leave it out",
+            ),
             // 422, at the very place in the content (D-065).
             DbError::MissingReference {
                 field,

@@ -249,6 +249,133 @@ pub async fn save(
     })))
 }
 
+/// What a deletion did (D-079). Every refusal writes nothing; the caller rolls back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Deleted {
+    /// The entry is a tombstone now.
+    Deleted {
+        /// The draft it had: the revision the caller confirmed.
+        revision: Uuid,
+        /// When.
+        at: OffsetDateTime,
+    },
+    /// No such live entry in this environment and collection.
+    NotFound,
+    /// The draft is no longer the expected revision.
+    Stale {
+        /// The revision it points at now.
+        current: Uuid,
+    },
+    /// Readers get it: it must be unpublished first.
+    Published,
+    /// Another live entry's draft, or a publication, still names it: these, at most
+    /// [`MAX_REFERRERS`] (possibly none, if they changed since the deletion looked).
+    Referenced(Vec<Referrer>),
+    /// Changesets that haven't been published pin it: these, at most [`MAX_PENDING`].
+    InChangeset(Vec<Pending>),
+}
+
+/// A changeset that hasn't been published yet and pins an entry ([`Deleted::InChangeset`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pending {
+    /// The changeset.
+    pub id: Uuid,
+    /// Its title.
+    pub title: String,
+    /// Whether a schedule will publish it.
+    pub scheduled: bool,
+}
+
+/// The most changesets a refused deletion names.
+pub const MAX_PENDING: i64 = 20;
+
+/// Deletes `entry` of `collection` as the transaction's identity, if its draft is still
+/// `expected` and nothing depends on it (migration 0030, D-079): it becomes a tombstone that the
+/// application's role no longer sees, its slug, unique values and single-type place come free,
+/// and the audit log records it. Revisions, history and releases stay as they were. The caller has
+/// checked that its role may delete this entry.
+///
+/// Holds the collection's content-type lock shared first, as saves do (D-055), so a content type
+/// change that claims unique values never claims one for an entry being deleted. The checks and
+/// the tombstone are one call to `colophon_delete_entry`, under a row lock on the entry; the names
+/// in a refusal are read after it, in the same transaction.
+pub async fn delete(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    entry: Uuid,
+    expected: Uuid,
+) -> Result<Deleted, DbError> {
+    crate::content_types::lock_for_write(tx, collection).await?;
+    let row = sqlx::query!(
+        r#"SELECT outcome AS "outcome!", draft_revision, deleted
+           FROM colophon_delete_entry($1, $2, $3, $4, $5, $6)"#,
+        tx.project,
+        tx.environment,
+        entry,
+        collection,
+        expected,
+        Uuid::now_v7()
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    let corrupt = DbError::Corrupt("colophon_delete_entry answered without its draft");
+    Ok(match row.outcome.as_str() {
+        "deleted" => Deleted::Deleted {
+            revision: row.draft_revision.ok_or(corrupt)?,
+            at: row
+                .deleted
+                .ok_or(DbError::Corrupt("a deletion answered without its time"))?,
+        },
+        "not_found" => Deleted::NotFound,
+        "stale" => Deleted::Stale {
+            current: row.draft_revision.ok_or(corrupt)?,
+        },
+        "published" => Deleted::Published,
+        "referenced" => Deleted::Referenced(
+            referrers(tx, entry)
+                .await?
+                .into_iter()
+                .filter(|referrer| referrer.entry_id != entry)
+                .collect(),
+        ),
+        "in_changeset" => Deleted::InChangeset(pending(tx, entry).await?),
+        _ => {
+            return Err(DbError::Corrupt(
+                "colophon_delete_entry gave an unknown outcome",
+            ));
+        }
+    })
+}
+
+/// The changesets that pin `entry` and haven't been published, newest first, at most
+/// [`MAX_PENDING`].
+async fn pending(tx: &mut ProjectTransaction, entry: Uuid) -> Result<Vec<Pending>, DbError> {
+    sqlx::query_as!(
+        Pending,
+        r#"SELECT c.id, c.title,
+                  EXISTS (SELECT 1 FROM schedules s
+                          WHERE s.project_id = c.project_id AND s.environment_id = c.environment_id
+                            AND s.changeset_id = c.id AND s.state = 'scheduled') AS "scheduled!"
+           FROM changeset_items i
+           JOIN changesets c ON c.project_id = i.project_id AND c.environment_id = i.environment_id
+                            AND c.id = i.changeset_id
+           WHERE i.project_id = $1 AND i.environment_id = $2 AND i.entry_id = $3
+             AND NOT EXISTS (SELECT 1 FROM releases r
+                             WHERE r.project_id = c.project_id AND r.environment_id = c.environment_id
+                               AND r.changeset_id = c.id)
+           ORDER BY c.id DESC
+           LIMIT $4"#,
+        tx.project,
+        tx.environment,
+        entry,
+        MAX_PENDING
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
 async fn insert_revision(
     tx: &mut ProjectTransaction,
     entry_id: Uuid,
@@ -366,7 +493,7 @@ async fn insert_references(
         .map(|r| i16::try_from(r.position).unwrap_or(i16::MAX))
         .collect();
     let collections: Vec<&str> = references.iter().map(|r| r.collection.as_str()).collect();
-    sqlx::query!(
+    let inserted = sqlx::query!(
         "INSERT INTO revision_references
            (project_id, environment_id, revision_id, field, position, collection, entry_id)
          SELECT $1, $2, $3, field, position, collection, entry_id
@@ -381,9 +508,25 @@ async fn insert_references(
         &entries
     )
     .execute(&mut *tx.transaction)
-    .await
-    .map_err(DbError::from_write)?;
-    Ok(())
+    .await;
+    match inserted {
+        Ok(_) => Ok(()),
+        // An entry deleted after the precheck read it (migration 0030's trigger, D-079): refused
+        // like any reference to an entry that isn't there, at the first place that names it.
+        Err(error) => match crate::deleted_entry(&error) {
+            Some(("revision_references", gone)) => references
+                .iter()
+                .zip(&entries)
+                .find(|(_, entry)| gone.is_none_or(|gone| **entry == gone))
+                .map(|(reference, _)| reference)
+                .or_else(|| references.first())
+                .map_or_else(
+                    || Err(DbError::from_write(error)),
+                    |named| Err(missing(named)),
+                ),
+            _ => Err(DbError::from_write(error)),
+        },
+    }
 }
 
 fn missing(reference: &ContentReference) -> DbError {

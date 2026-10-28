@@ -69,6 +69,12 @@ pub enum Refusal {
     /// It would leave readers a reference to an entry they can't get (D-065). The caller rolls
     /// the transaction back.
     BrokenReference(releases::BrokenReference),
+    /// It would publish an entry that has been deleted (D-079): the database refused the
+    /// publication. The transaction is aborted: the caller rolls it back.
+    EntryDeleted {
+        /// The entry, as the database reported it.
+        entry: Option<Uuid>,
+    },
 }
 
 /// Whether a project needs someone other than the submitter to approve (D-044). Projects can't
@@ -204,6 +210,9 @@ pub async fn publish(
             }
             Err(DbError::SlugTaken) => return Ok(Err(Refusal::SlugTaken)),
             Err(DbError::ValueTaken) => return Ok(Err(Refusal::ValueTaken)),
+            Err(DbError::EntryDeleted { entry }) => {
+                return Ok(Err(Refusal::EntryDeleted { entry }));
+            }
             Ok(Committed::Broken(broken)) => return Ok(Err(Refusal::BrokenReference(broken))),
             Err(error) => return Err(error),
         }
