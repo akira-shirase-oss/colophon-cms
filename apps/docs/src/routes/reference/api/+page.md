@@ -13,6 +13,7 @@ One process answers everything on one port (`COLOPHON_LISTEN_ADDR`). Its public 
 | `/api/v1` | The management API: projects, members, roles, API tokens, the audit log, content types, entries, publish requests, releases, website connections. |
 | `/auth`, `/me` | Sign-in, sessions and device sign-in ([Sign-in and sessions](/reference/api/auth/)). |
 | `/livez`, `/readyz` | Health ([Health checks](/operations/health-checks/)). |
+| `/version` | The server's release and the API versions it serves ([`GET /version`](/reference/api/auth/#get-version)). |
 | `/content/v1` | Public, read-only delivery ([Delivery API](/reference/delivery-api/)). |
 | `/studio/` | The Studio's files, when `COLOPHON_STUDIO_DIR` is set. |
 

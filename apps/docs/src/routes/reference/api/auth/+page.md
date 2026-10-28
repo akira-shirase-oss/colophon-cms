@@ -36,6 +36,25 @@ Whether this process can serve now, from the last background probe of each depen
 
 `role` is what this process runs: `api`, `worker` or `all`. Each check is `up`, `down`, `unknown` (not probed yet) or `not_configured`. The `503` body is this report, not the error envelope. The body never names hosts, ports or error messages.
 
+### `GET /version`
+
+Which release this server is, and which API versions it serves. <Status building="V" />
+
+```json
+{ "version": "0.1.0-alpha.1", "commit": "c127feb0bc4aae5d6b4c251746afbebbfb48fae6", "build_date": "2026-10-28", "api": ["v1"] }
+```
+
+| Field | Meaning |
+|---|---|
+| `version` | The release, one version for the server, the worker and the command line. |
+| `commit`, `build_date` | The full git commit and the day the binary was built from; `unknown` when the build couldn't tell. |
+| `api` | The API versions it serves, oldest first. `/api/v1` is the contract. |
+
+- **Who:** anyone. It needs no sign-in, like the health checks, because a client asks before it signs in: the command line reads it to say in plain words that it is too old or too new for this server. It names versions only, never hosts or configuration, and is sent with `Cache-Control: no-store`.
+- **Its shape never changes:** fields may be added, none removed or renamed, so a client of any version can read it. A server from before it answers `404`.
+
+Built in milestone V (D-062), on a branch with R.4 and milestone M; not merged. Nothing is published to npm, Cargo or Homebrew yet.
+
 ## Signing in from a browser
 
 A browser signs in through the identity provider configured with `COLOPHON_OIDC_ISSUER`, `COLOPHON_OIDC_CLIENT_ID` and `COLOPHON_OIDC_CLIENT_SECRET` (Keycloak locally; [Configuration](/operations/configuration/)). Colophon verifies the ID token itself. Sessions are rows in PostgreSQL; the cookie holds a random token, and only its SHA-256 is stored.

@@ -6,6 +6,7 @@ Every route `colophon-server` answers, from its router (`crates/colophon-api/src
 |---|---|
 | [`GET /livez`](/reference/api/auth/#get-livez) | anyone |
 | [`GET /readyz`](/reference/api/auth/#get-readyz) | anyone |
+| [`GET /version`](/reference/api/auth/#get-version) | anyone |
 | [`GET /auth/login`](/reference/api/auth/#get-authlogin) | anyone (a browser) |
 | [`GET /auth/callback`](/reference/api/auth/#get-authcallback) | the browser that started the sign-in |
 | [`POST /auth/logout`](/reference/api/auth/#post-authlogout) | signed in |
