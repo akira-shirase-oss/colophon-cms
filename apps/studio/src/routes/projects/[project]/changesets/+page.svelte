@@ -38,10 +38,11 @@
 	const choices = createQuery(() => ({
 		queryKey: ['changeset-choices', project],
 		queryFn: async () => {
-			const types = await listContentTypes(project);
+			// Only collections the role may read; the server refuses the others' lists.
+			const types = (await listContentTypes(project)).filter((type) => may(mine.data, 'content.read', type.slug));
 			return Promise.all(types.map(async (type) => ({ type, entries: await listEntries(project, type.slug) })));
 		},
-		enabled: creating
+		enabled: creating && mine.data !== undefined
 	}));
 
 	let title = $state('');

@@ -31,8 +31,14 @@
 	const found = createQuery(() => ({
 		queryKey: ['palette', project, q],
 		queryFn: async () => {
-			const pages = await Promise.all(types.map(async (type) => ({ type, page: await searchEntries(project, type.slug, q) })));
-			return pages.flatMap(({ type, page }) => page.data.slice(0, 8).map((entry) => ({ type, entry })));
+			// Each collection answers on its own: one that fails leaves the others' results, and says so.
+			const pages = await Promise.allSettled(types.map(async (type) => ({ type, page: await searchEntries(project, type.slug, q) })));
+			const answered = pages.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+			if (answered.length === 0 && pages.length > 0) throw (pages[0] as PromiseRejectedResult).reason;
+			return {
+				entries: answered.flatMap(({ type, page }) => page.data.slice(0, 8).map((entry) => ({ type, entry }))),
+				missed: types.filter((_, index) => pages[index]?.status === 'rejected')
+			};
 		},
 		enabled: open && q.length > 0 && types.length > 0,
 		staleTime: 2_000
@@ -68,10 +74,15 @@
 <Command.Dialog bind:open title="Search" description="Go to a page or find an entry by its title" shouldFilter={false}>
 	<Command.Input placeholder="Search entries or jump to…" bind:value={typed} />
 	<Command.List>
-		<Command.Empty>{found.isFetching ? 'Searching…' : 'Nothing matches.'}</Command.Empty>
-		{#if found.data && found.data.length > 0}
+		<Command.Empty>{found.isFetching ? 'Searching…' : found.isError ? "Couldn't search just now. Try again in a moment." : 'Nothing matches.'}</Command.Empty>
+		{#if found.data && found.data.missed.length > 0}
+			<p class="px-3 py-2 text-xs text-muted-foreground" role="status" data-testid="search-missed">
+				Couldn't search {found.data.missed.map((type) => type.definition.name).join(', ')} just now.
+			</p>
+		{/if}
+		{#if found.data && found.data.entries.length > 0}
 			<Command.Group heading="Entries">
-				{#each found.data as { type, entry } (entry.id)}
+				{#each found.data.entries as { type, entry } (entry.id)}
 					<Command.Item
 						value={`entry-${entry.id}`}
 						onSelect={() => go(resolve('/projects/[project]/[collection]/[entry]', { project, collection: type.slug, entry: entry.id }))}

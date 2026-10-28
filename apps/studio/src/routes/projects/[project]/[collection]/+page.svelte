@@ -146,7 +146,7 @@
 	{#if entries.isPending}
 		<Skeleton class="h-48 w-full rounded-xl" />
 	{:else if entries.isError}
-		<Problem error={entries.error} />
+		<Problem error={entries.error} what={type.data.definition.name} retry={() => entries.refetch()} />
 	{:else if entries.data.data.length === 0 && q === ''}
 		<EmptyState icon={FileTextIcon} title="No {type.data.definition.name.toLowerCase()} yet" testid="entries-empty">
 			Write the first {oneOf(type.data.definition.name)}. Nobody outside the project sees it until it is published.

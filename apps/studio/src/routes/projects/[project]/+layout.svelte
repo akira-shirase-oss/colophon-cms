@@ -19,6 +19,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 	import * as Sidebar from '@colophon/ui/ui/sidebar';
+	import { may } from '#lib/api.ts';
 	import { ago, changesetsQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
 	import AccountMenu from '#lib/shell/AccountMenu.svelte';
 	import AppearanceMenu from '#lib/shell/AppearanceMenu.svelte';
@@ -40,6 +41,9 @@
 	const releases = createQuery(() => releasesQuery(project));
 	const awaiting = $derived((sets.data ?? []).filter((set) => set.status.state === 'awaiting_review').length);
 	const live = $derived(releases.data?.releases.find((release) => release.generation === releases.data?.generation));
+	// Only collections the role may read are listed and searched: the server refuses the others
+	// (D-058), so offering them would lead only to a refusal.
+	const readable = $derived(mine.data === undefined ? [] : (types.data ?? []).filter((type) => may(mine.data, 'content.read', type.slug)));
 	let searching = $state(false);
 
 	const SECTION: Record<string, string> = {
@@ -155,7 +159,7 @@
 			<Sidebar.Group>
 				<Sidebar.GroupLabel>Content</Sidebar.GroupLabel>
 				<Sidebar.Menu data-testid="nav-collections">
-					{#each types.data ?? [] as type (type.slug)}
+					{#each readable as type (type.slug)}
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton isActive={page.params.collection === type.slug} tooltipContent={type.definition.name}>
 								{#snippet child({ props })}
@@ -274,4 +278,4 @@
 	</Sidebar.Inset>
 </Sidebar.Provider>
 
-<CommandPalette {project} types={types.data ?? []} bind:open={searching} />
+<CommandPalette {project} types={readable} bind:open={searching} />
