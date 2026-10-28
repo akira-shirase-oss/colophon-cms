@@ -37,6 +37,18 @@
 		key: string;
 		body: string;
 	}
+	/** The last deletion, kept so it can be sent again exactly, with the same key. */
+	interface DeleteRequest {
+		path: string;
+		etag: string;
+		key: string;
+		title: string;
+	}
+	/** What a refused deletion names as standing in its way (D-080). */
+	interface InTheWay {
+		referenced_by?: { entry_id: string; collection: string; field: string }[];
+		changesets?: { id: string; title: string; scheduled: boolean }[];
+	}
 
 	let projects = $state<Project[]>([]);
 	let signedIn = $state<boolean | null>(null);
@@ -54,6 +66,8 @@
 	let query = $state('');
 	let found = $state<{ status: number; titles: string[] } | null>(null);
 	let reading = $state<{ status: number; title: string; text: string } | null>(null);
+	let lastDelete = $state<DeleteRequest | null>(null);
+	let inTheWay = $state<string[]>([]);
 
 	const base = $derived(`/api/v1/projects/${projectId}/environments/production/collections/articles/entries`);
 
@@ -179,6 +193,36 @@
 		await send(request);
 	}
 
+	/** `DELETE …/entries/{entry}` with the draft's ETag (D-080). A refusal names what is in the way. */
+	async function sendDelete(request: DeleteRequest) {
+		const reply = await call('DELETE', request.path, {
+			headers: { 'X-CSRF-Token': csrfToken(), 'If-Match': request.etag, 'Idempotency-Key': request.key }
+		});
+		inTheWay = [];
+		if (reply.status === 200) {
+			const replayed = reply.headers.get('idempotent-replayed') === 'true';
+			message = `${replayed ? 'replayed deletion of' : 'deleted'} ${request.title}`;
+			open = null;
+			history = [];
+			reading = null;
+			await loadEntries();
+		} else {
+			message = describe(reply);
+			const details = (reply.body as { error?: { details?: InTheWay } } | null)?.error?.details;
+			inTheWay = [
+				...(details?.referenced_by ?? []).map((referrer) => `linked from ${referrer.collection} ${referrer.entry_id} (${referrer.field})`),
+				...(details?.changesets ?? []).map((changeset) => `in changeset ${changeset.title}${changeset.scheduled ? ' (scheduled)' : ''}`)
+			];
+		}
+	}
+
+	async function remove() {
+		if (open === null) return;
+		const request = { path: `${base}/${open.id}`, etag, key: crypto.randomUUID(), title: open.content.title };
+		lastDelete = request;
+		await sendDelete(request);
+	}
+
 	onMount(loadProjects);
 </script>
 
@@ -186,6 +230,7 @@
 <p class="lede">
 	Articles saved through the real API. Every create and save carries an <code>Idempotency-Key</code>; every save carries
 	<code>If-Match</code> with the revision you loaded, so a save on top of someone else's is refused instead of overwriting it.
+	Deleting does the same, and is refused while the article is published, linked from another entry or in a changeset.
 </p>
 
 {#if signedIn === false}
@@ -210,6 +255,12 @@
 	</section>
 
 	{#if message}<p data-testid="message">{message}</p>{/if}
+	{#if inTheWay.length > 0}
+		<ul data-testid="in-the-way">
+			{#each inTheWay as line, index (index)}<li>{line}</li>{/each}
+		</ul>
+	{/if}
+	<button type="button" disabled={lastDelete === null} onclick={() => lastDelete && sendDelete(lastDelete)}>Retry last delete</button>
 
 	<section>
 		<h2>Articles</h2>
@@ -244,6 +295,7 @@
 				<button type="submit">Save</button>
 				<button type="button" disabled={lastSave === null} onclick={() => lastSave && send(lastSave)}>Retry last save</button>
 				<button type="button" onclick={() => open && openEntry(open.id)}>Reload</button>
+				<button type="button" class="danger" onclick={remove}>Delete</button>
 			</form>
 			<h3>History</h3>
 			<ol data-testid="history">
@@ -298,6 +350,10 @@
 		background: var(--fg);
 		color: var(--bg);
 		cursor: pointer;
+	}
+	button.danger {
+		background: none;
+		color: inherit;
 	}
 	button:disabled {
 		opacity: 0.5;
