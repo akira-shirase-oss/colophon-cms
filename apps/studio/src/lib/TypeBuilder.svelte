@@ -70,7 +70,7 @@
 		} catch (failure) {
 			if (failure instanceof ApiError && failure.failure !== 'retry') {
 				// A refusal the Studio has words for gets them; the developer area keeps the server's otherwise.
-				const words = failure.reason === 'too_many_entries' ? plainError(failure) : failure.message;
+				const words = failure.reason === 'too_many_entries' || failure.reason === 'invalid_pattern' ? plainError(failure) : failure.message;
 				refusal = { message: words, details: failure.details, stale: failure.failure === 'conflict' };
 			} else {
 				toast.error(failure instanceof Error ? failure.message : String(failure));
@@ -110,7 +110,16 @@
 	</label>
 
 	<div>
-		<FieldsEditor fields={draft.fields} depth={0} {editable} saved={savedAt} titleField={draft.title_field} collections={collections.data ?? []} self={type.slug} />
+		<FieldsEditor
+			fields={draft.fields}
+			depth={0}
+			{editable}
+			saved={savedAt}
+			titleField={draft.title_field}
+			collections={collections.data ?? []}
+			self={type.slug}
+			refusal={refusal?.details?.pointer ? { pointer: refusal.details.pointer, message: refusal.message } : null}
+		/>
 	</div>
 
 	{#if refusal}

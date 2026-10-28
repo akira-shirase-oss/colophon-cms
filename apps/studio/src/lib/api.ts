@@ -107,7 +107,9 @@ export type FieldDefinition = {
 	/** Help text shown under the field, at most 500 characters. */
 	description?: string;
 } & (
-	| { type: 'text'; max_chars: number; multiline: boolean; min_chars?: number }
+	/** `pattern` (D-069): the form every value must take, a regular expression matched against the
+	 *  whole value on the server (Rust syntax; the Studio never imitates it). */
+	| { type: 'text'; max_chars: number; multiline: boolean; min_chars?: number; pattern?: string }
 	| { type: 'rich_text' }
 	| { type: 'number'; integer: boolean; min?: number; max?: number }
 	| { type: 'boolean' }

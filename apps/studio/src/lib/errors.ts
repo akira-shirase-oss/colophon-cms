@@ -7,7 +7,7 @@
 // the permission (`details.permission`). The server's wording is never matched.
 
 import { type Action, ApiError } from './api.ts';
-import { INTERNAL_TERMS, PUBLISH_REQUEST, URL_NAME, WEBSITE_CONNECTIONS } from './words.ts';
+import { INTERNAL_TERMS, INVALID_PATTERN, PUBLISH_REQUEST, URL_NAME, WEBSITE_CONNECTIONS } from './words.ts';
 
 /** A failure, said plainly: a short title, what happened and what to do, and the server's words. */
 export interface Said {
@@ -50,6 +50,9 @@ const BY_REASON: Record<string, string> = {
 	reference_not_found: 'A linked entry isn’t there, or isn’t in the collection the field links to. Remove it and choose again.',
 	references_unpublished: `An entry in it links to an entry that isn't published yet. Publish that entry first, or in the same ${PUBLISH_REQUEST}.`,
 	still_referenced: `A published entry still links to an entry this takes down. Change or take down that entry first, or in the same ${PUBLISH_REQUEST}.`,
+	// Allowed forms of text (D-069). A mismatch keeps the server's words, which name the field;
+	// the editor says it under the field with patternMismatch.
+	invalid_pattern: INVALID_PATTERN,
 	// Single types (D-067).
 	single_exists: 'This already has its entry; edit that one.',
 	too_many_entries: 'It has more than one entry already, so it can’t hold just one. Keep it as a list of entries, or make a new content type for the single entry.',

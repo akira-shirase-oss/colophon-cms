@@ -15,6 +15,7 @@
 	import RichTextInput from './RichTextInput.svelte';
 	import StructureInput from './StructureInput.svelte';
 	import type { FieldDefinition } from './api.ts';
+	import { patternMismatch } from './words.ts';
 	import { characters, fieldProblem, type FormValue, isWebAddress, MAX_SLUG_CHARS, slugify, webAddress } from './content.ts';
 
 	let {
@@ -35,8 +36,8 @@
 		stacked?: boolean;
 		/** Fields the person's role can read but not change (D-058, step R.3): shown, disabled. */
 		locked?: string[];
-		/** The server's refusal of the last save, and where (its JSON Pointer). */
-		refused?: { pointer: string | null; message: string } | null;
+		/** The server's refusal of the last save, where (its JSON Pointer) and why. */
+		refused?: { pointer: string | null; message: string; reason?: string | null } | null;
 		/** For link fields, which search and read the entries they point to. */
 		project?: string;
 		/** These fields' place in the content, as a JSON Pointer ('' for the entry's own fields;
@@ -49,6 +50,9 @@
 	function problemOf(field: FieldDefinition): string {
 		// A list of links is refused at one of its places (`/related/1`): that's this field's too.
 		const here = refused?.pointer === at(field) || (field.type === 'reference' && refusedPlace(field) !== null);
+		// Not in its allowed form: the server's answer counts (its regex isn't imitated here), said
+		// with the field's help text, where a type says what the form is.
+		if (here && refused?.reason === 'pattern_mismatch') return patternMismatch(field.label, field.description);
 		return fieldProblem(field, form[field.id]) || (here ? (refused?.message ?? '') : '');
 	}
 	/** For a list of links: the place of the id the server refused. */

@@ -25,7 +25,9 @@
 		titleField = '',
 		collections,
 		self,
-		within = ''
+		within = '',
+		pointer = '/fields',
+		refusal = null
 	}: {
 		/** The fields to edit, in place. */
 		fields: FieldDefinition[];
@@ -43,6 +45,10 @@
 		self: string;
 		/** What these fields belong to, for labels ("Hero", "Quote section"). */
 		within?: string;
+		/** These fields' place in the definition, as a JSON Pointer, so a refusal of one of their
+		 *  options (an allowed form the server can't use) is shown at that option. */
+		pointer?: string;
+		refusal?: { pointer: string; message: string } | null;
 	} = $props();
 
 	const select =
@@ -95,6 +101,12 @@
 		else field.min_chars = Math.trunc(value);
 	}
 
+	/** An allowed form (D-069): written only when there is one. */
+	function setPattern(field: { pattern?: string }, text: string) {
+		if (text === '') delete field.pattern;
+		else field.pattern = text;
+	}
+
 	/** One linked entry, or a list of up to `max`. */
 	function setMany(field: { many: boolean; max?: number }, many: boolean) {
 		field.many = many;
@@ -119,7 +131,7 @@
 	}
 </script>
 
-{#snippet options(def: FieldDefinition | ItemKind, place: string, isNew: boolean, isTitle: boolean, level: number, owner: string)}
+{#snippet options(def: FieldDefinition | ItemKind, place: string, isNew: boolean, isTitle: boolean, level: number, owner: string, at: string)}
 	{#if def.type === 'text'}
 		<div class="flex flex-wrap items-center gap-4 text-sm">
 			<label class="flex items-center gap-2">
@@ -135,6 +147,23 @@
 			<label class="flex items-center gap-2">
 				<input type="checkbox" class="size-4 accent-primary" bind:checked={def.multiline} disabled={!editable || isTitle} />
 				Several lines
+			</label>
+			<label class="grid w-full max-w-md basis-full gap-1">
+				<span>Allowed form (optional)</span>
+				<Input
+					class="h-8 font-mono"
+					placeholder={'[A-Z]{3}-[0-9]{4}'}
+					maxlength={500}
+					autocomplete="off"
+					spellcheck="false"
+					value={def.pattern ?? ''}
+					oninput={(event) => setPattern(def, event.currentTarget.value)}
+					aria-invalid={refusal?.pointer === `${at}/pattern` ? true : undefined}
+					disabled={!editable}
+					data-testid="field-pattern"
+				/>
+				<span class="text-xs text-muted-foreground">A regular expression the whole value must match. Empty allows any text; say the form in the help text.</span>
+				{#if refusal?.pointer === `${at}/pattern`}<span class="text-xs text-destructive" data-testid="pattern-problem">{refusal.message}</span>{/if}
 			</label>
 		</div>
 	{:else if def.type === 'number'}
@@ -220,7 +249,7 @@
 	{:else if def.type === 'object'}
 		<div class="rounded-lg border border-dashed border-border p-3" data-testid="group-{place}">
 			<p class="mb-2 text-xs text-muted-foreground">The fields in {owner}:</p>
-			<FieldsEditor fields={def.fields} depth={level + 1} {editable} {saved} path={place} {collections} {self} within={owner} />
+			<FieldsEditor fields={def.fields} depth={level + 1} {editable} {saved} path={place} {collections} {self} within={owner} pointer="{at}/fields" {refusal} />
 		</div>
 	{:else if def.type === 'list'}
 		{@const itemTypes = ITEM_TYPES.filter((type) => type !== 'object' || canNest(level + 1))}
@@ -239,7 +268,7 @@
 				</label>
 			</div>
 			{#if !canNest(level + 1)}<p class="text-xs text-muted-foreground">Items can't be groups of fields this deep: structures nest at most {MAX_DEPTH} deep.</p>{/if}
-			{@render options(def.of, `${place}/item`, isNew, false, level + 1, `${owner} item`)}
+			{@render options(def.of, `${place}/item`, isNew, false, level + 1, `${owner} item`, `${at}/of`)}
 		</div>
 	{:else if def.type === 'blocks'}
 		<div class="grid gap-3 text-sm" data-testid="blocks-{place}">
@@ -258,7 +287,18 @@
 							<Button variant="ghost" size="icon-xs" aria-label="Remove the {kind.label} section" onclick={() => def.type === 'blocks' && def.blocks.splice(index, 1)}><Trash2Icon /></Button>
 						{/if}
 					</div>
-					<FieldsEditor fields={kind.fields} depth={level + 1} {editable} {saved} path="{place}/{kind.name}" {collections} {self} within="{kind.label} section" />
+					<FieldsEditor
+						fields={kind.fields}
+						depth={level + 1}
+						{editable}
+						{saved}
+						path="{place}/{kind.name}"
+						{collections}
+						{self}
+						within="{kind.label} section"
+						pointer="{at}/blocks/{index}/fields"
+						{refusal}
+					/>
 				</div>
 			{/each}
 			{#if editable}
@@ -295,7 +335,7 @@
 					<Button variant="ghost" size="icon-xs" aria-label="Remove {field.label}" onclick={() => fields.splice(index, 1)}><Trash2Icon /></Button>
 				{/if}
 			</div>
-			{@render options(field, place, isNew, isTitle, depth, field.label)}
+			{@render options(field, place, isNew, isTitle, depth, field.label, `${pointer}/${index}`)}
 			<label class="grid max-w-xl gap-1 text-sm">
 				<span class="text-muted-foreground">Help for editors (optional)</span>
 				<Input

@@ -54,6 +54,17 @@ export function shownTitle(title: string): string {
 	return title.trim() === '' ? 'No title to show' : title;
 }
 
+/** A text field's pattern (D-069): the form its values must take, said as such. */
+export const ALLOWED_FORM = 'allowed form';
+/** The server refused a pattern it can't use (`invalid_pattern`). */
+export const INVALID_PATTERN =
+	'Colophon can’t use this allowed form. Write it as a regular expression, like [A-Z]{3}-[0-9]{4}, without look-around or back-references.';
+/** A value the server found not in its field's allowed form (`pattern_mismatch`), with the field's
+ *  help text, which is where a type says what the form is. */
+export function patternMismatch(label: string, help = ''): string {
+	return `${label} isn't in its ${ALLOWED_FORM}.${help.trim() === '' ? '' : ` ${help.trim()}`}`;
+}
+
 /** "Release 4, live since 3 minutes ago" pieces: a release is named by its number. */
 export function releaseName(generation: number): string {
 	return `Release ${generation}`;

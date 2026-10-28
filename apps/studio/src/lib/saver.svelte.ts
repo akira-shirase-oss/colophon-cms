@@ -58,8 +58,10 @@ export class Saver {
 	 *  and for a list, the place in it (`/related/1`). */
 	field = $state<string | null>(null);
 	place = $state<number | null>(null);
-	/** The whole JSON Pointer of a refused save (`/sections/1/by`), for controls inside structures. */
+	/** The whole JSON Pointer of a refused save (`/sections/1/by`), for controls inside structures,
+	 *  and the refusal's reason (`pattern_mismatch`), for words that fit the control. */
 	pointer = $state<string | null>(null);
+	reason = $state<string | null>(null);
 
 	#saved: Content;
 	#latest: Content;
@@ -151,6 +153,7 @@ export class Saver {
 		this.field = null;
 		this.place = null;
 		this.pointer = null;
+		this.reason = null;
 		if (this.#held) {
 			this.#held = false;
 			this.message = '';
@@ -328,6 +331,7 @@ export class Saver {
 				this.field = pointer?.[1] ?? null;
 				this.place = pointer?.[2] === undefined ? null : Number(pointer[2]);
 				this.pointer = error.details?.pointer ?? null;
+				this.reason = error.reason;
 				this.message =
 					error.reason === 'slug_taken'
 						? `another entry already uses this ${URL_NAME}${error.details?.entries?.[0] ? ` (“${error.details.entries[0].title}”)` : ''}: choose another`

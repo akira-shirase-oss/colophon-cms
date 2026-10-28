@@ -210,6 +210,13 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   redirects there; with none yet, it offers *Create it*. A second entry (409 `single_exists`) is refused as "This
   already has its entry; edit that one." with *Open it*; making a type with several entries single (422
   `too_many_entries`) is said plainly in the builder. Test: `tests/server/single.spec.ts`.
+- D-069 in the Studio: **allowed forms of text**. Every text field in the builder, at any depth, has *Allowed form
+  (optional)*, a regular expression matched against the whole value, left out of the definition when empty and kept
+  when other options change; a form the server can't use (422 `invalid_pattern` at `/fields/n/pattern`, or deeper) is
+  said plainly at that input. The editor never imitates the regex: a value the server refuses (`pattern_mismatch`) is
+  said under the field as "Code isn't in its allowed form." with the field's help text. The words are in
+  `lib/words.ts` (`ALLOWED_FORM`, `INVALID_PATTERN`, `patternMismatch`). Tests: `tests/patterns.spec.ts`,
+  `tests/server/patterns.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

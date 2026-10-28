@@ -388,7 +388,7 @@
 				titleField={definition.title_field}
 				onchange={changed}
 				{locked}
-				refused={saver.status === 'refused' ? { pointer: saver.pointer, message: saver.message } : null}
+				refused={saver.status === 'refused' ? { pointer: saver.pointer, message: saver.message, reason: saver.reason } : null}
 				{project}
 			/>
 			{/key}

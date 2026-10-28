@@ -34,7 +34,7 @@
 		value: FormValue;
 		/** This structure's JSON Pointer. */
 		base: string;
-		refused?: { pointer: string | null; message: string } | null;
+		refused?: { pointer: string | null; message: string; reason?: string | null } | null;
 		disabled?: boolean;
 		labelledBy?: string;
 		onchange?: () => void;
