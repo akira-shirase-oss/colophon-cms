@@ -221,6 +221,12 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 ## Open decisions
 
+- `GET /me` returns every project the caller is a member of, up to 1,000, on every call. An administrator who
+  belongs to hundreds of projects pays for the whole list each time (120 ms median in CI's projects smoke, against
+  2.7 ms for an editor in one project), and the Studio's home shows them as one unsearchable grid. Replace it with
+  a paginated, searchable project list (`GET /api/v1/projects?search=&cursor=`, recent first) and keep `/me` to who
+  the caller is.
+
 - Whether the Studio (session cookie) and the CLI (bearer credential) share every route, or whether some routes are
   cookie-only.
 - Rate-limit defaults per role.
