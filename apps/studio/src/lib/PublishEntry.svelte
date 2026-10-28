@@ -11,18 +11,8 @@
 	import { resolve } from '$app/paths';
 	import { useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
-	import {
-		ApiError,
-		changesetAction,
-		createChangeset,
-		type EntryState,
-		listReleases,
-		may,
-		newKey,
-		type Project,
-		publishChangeset
-	} from './api.ts';
-	import { plainError } from './errors.ts';
+	import { may, type EntryState, type Project } from './api.ts';
+	import { newKeys, type Outcome, publishesInOneClick, publishInOneClick } from './publishing.ts';
 	import { PUBLISH_REQUEST, releaseName } from './words.ts';
 
 	let {
@@ -52,76 +42,37 @@
 	} = $props();
 
 	const queryClient = useQueryClient();
-	const oneClick = $derived(
-		mine?.self_review === true && may(mine, 'content.publish', collection) && may(mine, 'content.review', collection)
-	);
+	const oneClick = $derived(publishesInOneClick(mine, [collection]));
 	const asks = $derived(may(mine, 'content.update', collection));
 
-	type Outcome =
-		| { kind: 'published'; generation: number }
-		| { kind: 'unpublished'; generation: number }
-		| { kind: 'requested'; request: string; unpublish: boolean }
-		| { kind: 'stopped'; message: string; request: string | null };
 	let step = $state('');
 	let outcome = $state<Outcome | null>(null);
-	// One key for the request and one for publishing it: pressing again after a lost answer is safe.
-	let requestKey = newKey();
-	let publishKey = newKey();
-
-	async function refresh() {
-		await Promise.all([
-			queryClient.invalidateQueries({ queryKey: ['entries', project] }),
-			queryClient.invalidateQueries({ queryKey: ['changesets', project] }),
-			queryClient.invalidateQueries({ queryKey: ['releases', project] })
-		]);
-	}
+	// Pressing again after a lost answer is safe: the same keys until the attempt ends.
+	let keys = newKeys();
 
 	/** Publishes the saved version, or with `unpublish`, takes the live one down: the same path,
 	 *  a request whose one item unpublishes (D-049). Publishing it again puts it back. */
 	async function go(unpublish = false) {
 		outcome = null;
-		let request: string | null = null;
-		try {
-			step = unpublish ? 'Taking it down…' : `Making a ${PUBLISH_REQUEST}…`;
-			const named = title || 'Untitled';
-			let made = unpublish
-				? await createChangeset(project, `Unpublish: ${named}`, [], [entry], requestKey)
-				: await createChangeset(project, named, [entry], [], requestKey);
-			request = made.id;
-			if (made.status.state === 'open') {
-				step = 'Sending it for review…';
-				made = await changesetAction(project, made.id, made.hash, 'submit');
-			}
-			if (!oneClick) {
-				outcome = { kind: 'requested', request: made.id, unpublish };
-				return;
-			}
-			if (made.status.state === 'awaiting_review') {
-				step = 'Approving it…';
-				made = await changesetAction(project, made.id, made.hash, 'reviews', {
-					decision: 'approve',
-					comment: unpublish ? 'Approved and unpublished from the editor in one step.' : 'Approved and published from the editor in one step.'
-				});
-			}
-			step = 'Publishing…';
-			const base = seenGeneration ?? (await listReleases(project)).generation;
-			const published = await publishChangeset(project, made.id, made.hash, base, publishKey);
-			outcome = { kind: unpublish ? 'unpublished' : 'published', generation: published.generation };
-		} catch (failure) {
-			const reason = failure instanceof ApiError ? failure.reason : null;
-			const message =
-				reason === 'generation_moved'
-					? 'Another release went live while you were publishing. Your request is approved and waiting: look at what is live now, then publish it from the request.'
-					: reason === 'stale_changeset'
-						? 'The entry changed while it was being published. Open the request to update it to the latest version.'
-						: plainError(failure, oneClick ? (unpublish ? 'unpublish this' : 'publish this') : 'ask for review here');
-			outcome = { kind: 'stopped', message, request };
-		} finally {
-			step = '';
-			requestKey = newKey();
-			publishKey = newKey();
-			await refresh();
-		}
+		const named = title || 'Untitled';
+		outcome = await publishInOneClick({
+			project,
+			title: unpublish ? `Unpublish: ${named}` : named,
+			entries: unpublish ? [] : [entry],
+			unpublish: unpublish ? [entry] : [],
+			oneClick,
+			seenGeneration,
+			keys,
+			step: (words) => (step = words),
+			doing: oneClick ? (unpublish ? 'unpublish this' : 'publish this') : 'ask for review here'
+		});
+		step = '';
+		keys = newKeys();
+		await Promise.all([
+			queryClient.invalidateQueries({ queryKey: ['entries', project] }),
+			queryClient.invalidateQueries({ queryKey: ['changesets', project] }),
+			queryClient.invalidateQueries({ queryKey: ['releases', project] })
+		]);
 	}
 </script>
 

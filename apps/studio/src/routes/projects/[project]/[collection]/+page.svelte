@@ -3,30 +3,33 @@
   filter by where each entry stands for readers, and start a new entry.
 -->
 <script lang="ts">
+	import CopyIcon from '@lucide/svelte/icons/copy';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { createInfiniteQuery, createQuery, keepPreviousData } from '@tanstack/svelte-query';
+	import { createInfiniteQuery, createQuery, keepPreviousData, useQueryClient } from '@tanstack/svelte-query';
+	import { toast } from 'svelte-sonner';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import * as InputGroup from '@colophon/ui/ui/input-group';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
-	import { ApiError, createEntry, type EntryState, entryState, getContentType, may, newKey, searchEntries } from '#lib/api.ts';
+	import { ApiError, type Content, createEntry, type EntryState, entryState, getContentType, getEntry, may, newKey, searchEntries } from '#lib/api.ts';
 	import { type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
 	import { plainError } from '#lib/errors.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
 	import { oneOf } from '#lib/firstRun.ts';
-	import { ago, projectQuery } from '#lib/queries.ts';
+	import { newKeys, type Outcome, publishesInOneClick, publishInOneClick } from '#lib/publishing.ts';
+	import { ago, projectQuery, releasesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
-	import { shownTitle } from '#lib/words.ts';
+	import { PUBLISH_REQUEST, releaseName, shownTitle } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const collection = $derived(page.params.collection ?? '');
@@ -62,6 +65,90 @@
 			{ draft: 0, live: 0, changed: 0 }
 		)
 	);
+
+	// Bulk publishing (bounded: a publish request holds at most 100 entries). Picking rows publishes
+	// their current versions together, in one click when the role may approve and publish its own
+	// requests here, else as one request sent for review. Live entries with nothing new are left out.
+	const queryClient = useQueryClient();
+	const releases = createQuery(() => releasesQuery(project));
+	const oneClick = $derived(publishesInOneClick(mine.data, [collection]));
+	const asks = $derived(may(mine.data, 'content.update', collection));
+	const bulk = $derived(mine.data !== undefined && (oneClick || asks));
+	let picked = $state<string[]>([]);
+	const pickedRows = $derived(loaded.filter((entry) => picked.includes(entry.id)));
+	const publishable = $derived(pickedRows.filter((entry) => entryState(entry) !== 'live'));
+	const allShown = $derived(rows.length > 0 && rows.every((entry) => picked.includes(entry.id)));
+	let bulkStep = $state('');
+	let bulkOutcome = $state<Outcome | null>(null);
+	let bulkKeys = newKeys();
+	const MAX_BULK = 100;
+
+	function toggleAll(on: boolean) {
+		const shown = rows.map((entry) => entry.id);
+		picked = on ? [...new Set([...picked, ...shown])] : picked.filter((id) => !shown.includes(id));
+	}
+
+	async function publishPicked() {
+		const chosen = publishable.slice(0, MAX_BULK);
+		if (chosen.length === 0) return;
+		bulkOutcome = null;
+		const first = shownTitle(chosen[0]?.revision.title ?? '');
+		bulkOutcome = await publishInOneClick({
+			project,
+			title: chosen.length === 1 ? first : `${first} and ${chosen.length - 1} more`,
+			entries: chosen.map((entry) => entry.id),
+			oneClick,
+			seenGeneration: releases.data?.generation,
+			keys: bulkKeys,
+			step: (words) => (bulkStep = words)
+		});
+		bulkStep = '';
+		bulkKeys = newKeys();
+		if (bulkOutcome.kind !== 'stopped') picked = [];
+		await Promise.all([
+			queryClient.invalidateQueries({ queryKey: ['entries', project] }),
+			queryClient.invalidateQueries({ queryKey: ['changesets', project] }),
+			queryClient.invalidateQueries({ queryKey: ['releases', project] })
+		]);
+	}
+
+	// Duplicating an entry: everything the role can read, with "(copy)" after the title and, when
+	// the type has a URL name, the next free one ("-2", "-3"…; the server's uniqueness rule, D-054).
+	// The copy opens in the editor. Fields the role can't read aren't copied.
+	let duplicating = $state<string | null>(null);
+	async function duplicate(id: string) {
+		const definition = type.data?.definition;
+		if (definition === undefined) return;
+		duplicating = id;
+		try {
+			const { draft } = await getEntry(project, collection, id);
+			const content: Content = { ...draft.content };
+			const titleField = definition.fields.find((field) => field.id === definition.title_field);
+			const title = content[definition.title_field];
+			if (typeof title === 'string') {
+				const limit = titleField?.type === 'text' ? titleField.max_chars : 200;
+				content[definition.title_field] = `${title.slice(0, Math.max(0, limit - 7))} (copy)`;
+			}
+			const slug = definition.fields.find((field) => field.type === 'slug' && typeof content[field.id] === 'string' && content[field.id] !== '');
+			const stem = slug === undefined ? '' : String(content[slug.id]).replace(/-\d+$/, '');
+			for (let attempt = 2; ; attempt += 1) {
+				if (slug !== undefined) content[slug.id] = `${stem}-${attempt}`;
+				try {
+					const made = await createEntry(project, collection, content, newKey());
+					toast.success('Duplicated. This is the copy.');
+					await queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
+					await goto(resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: made.draft.id }));
+					return;
+				} catch (failure) {
+					if (!(slug !== undefined && failure instanceof ApiError && failure.reason === 'slug_taken' && attempt < 50)) throw failure;
+				}
+			}
+		} catch (failure) {
+			toast.error(`Not duplicated. ${plainError(failure, 'create entries here')}`);
+		} finally {
+			duplicating = null;
+		}
+	}
 
 	// A new entry asks only for the required fields that have no natural starting value. A URL name
 	// with a source field is made from it (the title, usually), and can be changed in the editor.
@@ -164,20 +251,82 @@
 			{/snippet}
 		</EmptyState>
 	{:else}
+		{#if picked.length > 0}
+			<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border bg-card px-4 py-2.5 shadow-xs" role="region" aria-label="Picked entries" data-testid="bulk-bar">
+				<span class="text-sm font-medium tabular">{picked.length} picked</span>
+				<Button size="sm" onclick={publishPicked} disabled={bulkStep !== '' || publishable.length === 0 || publishable.length > MAX_BULK} data-testid="bulk-publish">
+					{bulkStep !== '' ? bulkStep : oneClick ? `Publish ${publishable.length}` : `Ask for review of ${publishable.length}`}
+				</Button>
+				<Button size="sm" variant="ghost" onclick={() => (picked = [])}>Clear</Button>
+				<span class="text-xs text-muted-foreground">
+					{#if publishable.length > MAX_BULK}
+						At most {MAX_BULK} at a time: pick fewer.
+					{:else if publishable.length === 0}
+						They're live already, with nothing new to publish.
+					{:else if publishable.length < pickedRows.length}
+						{pickedRows.length - publishable.length} live already, with nothing new, left out.
+					{:else if oneClick}
+						Goes live together, as one release.
+					{:else}
+						One {PUBLISH_REQUEST}, for someone who can publish.
+					{/if}
+				</span>
+			</div>
+		{/if}
+		{#if bulkOutcome}
+			<p
+				role={bulkOutcome.kind === 'stopped' ? 'alert' : 'status'}
+				class="mb-3 rounded-lg px-4 py-2.5 text-sm {bulkOutcome.kind === 'stopped' ? 'bg-attention-soft text-attention-ink' : bulkOutcome.kind === 'requested' ? 'bg-pending-soft text-pending-ink' : 'bg-live-soft text-live-ink'}"
+				data-testid="bulk-outcome"
+			>
+				{#if bulkOutcome.kind === 'published' || bulkOutcome.kind === 'unpublished'}
+					Live as <a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(bulkOutcome.generation) })}>{releaseName(bulkOutcome.generation)}</a>.
+				{:else if bulkOutcome.kind === 'requested'}
+					Sent for review. <a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: bulkOutcome.request })}>See the {PUBLISH_REQUEST}</a>
+				{:else}
+					Not published: {bulkOutcome.message}
+					{#if bulkOutcome.request}<a class="font-medium underline underline-offset-2" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: bulkOutcome.request })}>Open the {PUBLISH_REQUEST}</a>{/if}
+				{/if}
+			</p>
+		{/if}
 		<div class="overflow-hidden rounded-xl border border-border bg-card" class:opacity-60={entries.isPlaceholderData}>
 			<Table.Root>
 				<Table.Header>
 					<Table.Row class="hover:bg-transparent">
-						<Table.Head class="pl-4">Title</Table.Head>
+						{#if bulk}
+							<Table.Head class="w-10 pl-4">
+								<input
+									type="checkbox"
+									class="relative z-10 size-4 accent-primary"
+									aria-label="Pick every entry shown"
+									checked={allShown}
+									indeterminate={!allShown && rows.some((entry) => picked.includes(entry.id))}
+									onchange={(event) => toggleAll(event.currentTarget.checked)}
+								/>
+							</Table.Head>
+						{/if}
+						<Table.Head class={bulk ? '' : 'pl-4'}>Title</Table.Head>
 						<Table.Head>Status</Table.Head>
 						<Table.Head class="hidden md:table-cell">Live in</Table.Head>
-						<Table.Head class="pr-4 text-right">Updated</Table.Head>
+						<Table.Head class="text-right {writes ? '' : 'pr-4'}">Updated</Table.Head>
+						{#if writes}<Table.Head class="w-12 pr-4"><span class="sr-only">Actions</span></Table.Head>{/if}
 					</Table.Row>
 				</Table.Header>
 				<Table.Body data-testid="entries" class="stagger">
 					{#each rows as entry, index (entry.id)}
-						<Table.Row class="relative" style="--i: {index}">
-							<Table.Cell class="max-w-0 pl-4 sm:max-w-md">
+						<Table.Row class="relative" style="--i: {index}" data-selected={picked.includes(entry.id) || undefined}>
+							{#if bulk}
+								<Table.Cell class="w-10 pl-4">
+									<input
+										type="checkbox"
+										class="relative z-10 size-4 accent-primary"
+										aria-label="Pick {shownTitle(entry.revision.title)}"
+										value={entry.id}
+										bind:group={picked}
+									/>
+								</Table.Cell>
+							{/if}
+							<Table.Cell class="max-w-0 sm:max-w-md {bulk ? '' : 'pl-4'}">
 								<a
 									class="block truncate font-medium after:absolute after:inset-0 focus-visible:underline focus-visible:outline-none"
 									href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}
@@ -188,11 +337,25 @@
 							<Table.Cell class="hidden text-sm text-muted-foreground tabular md:table-cell">
 								{entry.published ? `No. ${entry.published.generation}` : '—'}
 							</Table.Cell>
-							<Table.Cell class="pr-4 text-right text-sm text-muted-foreground" title={new Date(entry.updated_at).toLocaleString()}>{ago(entry.updated_at)}</Table.Cell>
+							<Table.Cell class="text-right text-sm text-muted-foreground {writes ? '' : 'pr-4'}" title={new Date(entry.updated_at).toLocaleString()}>{ago(entry.updated_at)}</Table.Cell>
+							{#if writes}
+								<Table.Cell class="w-12 pr-4 text-right">
+									<Button
+										class="relative z-10"
+										variant="ghost"
+										size="icon-sm"
+										aria-label="Duplicate {shownTitle(entry.revision.title)}"
+										title="Duplicate"
+										disabled={duplicating !== null}
+										onclick={() => duplicate(entry.id)}
+										data-testid="duplicate"><CopyIcon /></Button
+									>
+								</Table.Cell>
+							{/if}
 						</Table.Row>
 					{:else}
 						<Table.Row class="hover:bg-transparent">
-							<Table.Cell colspan={4} class="py-10 text-center text-muted-foreground">
+							<Table.Cell colspan={4 + (bulk ? 1 : 0) + (writes ? 1 : 0)} class="py-10 text-center text-muted-foreground">
 								{q === '' ? 'No entries in this view.' : `No titles match “${q}”.`}
 							</Table.Cell>
 						</Table.Row>

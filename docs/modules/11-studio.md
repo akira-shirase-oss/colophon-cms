@@ -110,6 +110,11 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     by publishing again; *Restore this version* in History (its fields become the draft and are saved as a new
     version on top, so nothing is lost; locked fields keep their values); and *Load more* on a collection, following
     the server's cursor 100 at a time. Test: `tests/server/entry-actions.spec.ts`.
+  - **Bulk actions on a collection**: pick rows (or every row shown) and *Publish N* together, as one publish request
+    and one release, or *Ask for review of N* when the role can't approve; at most 100 at a time, and live entries with
+    nothing new are left out and said so. *Duplicate* on each row copies what the role can read, adds "(copy)" to the
+    title and takes the next free URL name, and opens the copy. One-click publishing lives in `lib/publishing.ts`,
+    shared with the editor. Test: `tests/server/bulk.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 
