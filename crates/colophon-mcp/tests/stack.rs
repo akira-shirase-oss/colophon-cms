@@ -256,6 +256,11 @@ async fn setup() -> (Server, Person, String) {
 
 /// Makes an API token of `project` through the API; its secret.
 async fn token(owner: &Person, project: &str, body: &Value) -> String {
+    token_with_id(owner, project, body).await.0
+}
+
+/// Makes an API token of `project` through the API; its secret and its id.
+async fn token_with_id(owner: &Person, project: &str, body: &Value) -> (String, String) {
     let (status, made) = call(
         owner,
         Method::POST,
@@ -264,10 +269,8 @@ async fn token(owner: &Person, project: &str, body: &Value) -> String {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{made}");
-    made["data"]["secret"]
-        .as_str()
-        .expect("a secret")
-        .to_owned()
+    let field = |name: &str| made["data"][name].as_str().expect(name).to_owned();
+    (field("secret"), field("id"))
 }
 
 /// The `colophon-mcp` binary, driven over its stdin and stdout like an agent host does.
@@ -691,5 +694,54 @@ async fn no_tool_approves_or_publishes_even_for_a_full_access_token() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(releases["data"], json!([]), "nothing was published");
+    assert_eq!(mcp.close().await, Some(0));
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and colophon-server; see the module docs"]
+async fn a_wrong_project_or_a_revoked_token_is_said_plainly() {
+    let (_server, owner, project) = setup().await;
+    let (secret, id) = token_with_id(
+        &owner,
+        &project,
+        &json!({"name": "revoked", "kind": "full-access", "expires_in_days": 1}),
+    )
+    .await;
+    let mut elsewhere = Mcp::start(&secret, "0190f0c2-7a4e-7cc1-9d1e-2b8a4c6f1a01").await;
+    let listed = elsewhere.request("tools/list", json!({})).await;
+    assert_eq!(listed["error"]["code"], -32001, "{listed}");
+    assert!(
+        listed["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("COLOPHON_PROJECT")),
+        "{listed}"
+    );
+    assert_eq!(elsewhere.close().await, Some(0));
+    let mut mcp = Mcp::start(&secret, &project).await;
+    assert_eq!(mcp.tools().await, ALL_TOOLS);
+    let (status, revoked) = call(
+        &owner,
+        Method::DELETE,
+        &format!("/api/v1/projects/{project}/tokens/{id}"),
+        None,
+    )
+    .await;
+    assert!(status.is_success(), "{status} {revoked}");
+    // The kill switch holds through MCP: the next request is refused, and said so.
+    let listed = mcp.request("tools/list", json!({})).await;
+    assert_eq!(listed["error"]["code"], -32001, "{listed}");
+    assert!(
+        listed["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("HTTP 401")),
+        "{listed}"
+    );
+    let called = mcp
+        .call(
+            "create_draft",
+            json!({"collection": "articles", "content": article("After revocation", "x")}),
+        )
+        .await;
+    assert_eq!(failed(&called)["status"], 401);
     assert_eq!(mcp.close().await, Some(0));
 }

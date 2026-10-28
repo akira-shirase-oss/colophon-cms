@@ -29,7 +29,7 @@ const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long connecting may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Attempts per request, the first included.
-const ATTEMPTS: usize = 3;
+pub const ATTEMPTS: usize = 3;
 /// Waits between attempts.
 const BACKOFF: [Duration; ATTEMPTS - 1] = [Duration::from_millis(250), Duration::from_secs(1)];
 

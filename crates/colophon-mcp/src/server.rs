@@ -351,7 +351,12 @@ impl Session {
 
     /// Runs `work` in its own task once a slot is free; it answers on its own.
     async fn spawn(&mut self, id: RequestId, work: Work) -> Option<String> {
-        if self.running.contains_key(&id) {
+        // A finished task may not be reaped yet; only one still running holds its id.
+        if self
+            .running
+            .get(&id)
+            .is_some_and(|handle| !handle.is_finished())
+        {
             return Some(jsonrpc::error(
                 Some(&id),
                 INVALID_REQUEST,
