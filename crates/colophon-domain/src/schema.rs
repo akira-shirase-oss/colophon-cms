@@ -27,7 +27,10 @@ use std::borrow::Cow;
 
 use serde_json::{Map, Value};
 
-use crate::rich_text::{self, json::write_string, pointer::Pointer};
+use crate::{
+    project::Slug,
+    rich_text::{self, json::write_string, pointer::Pointer},
+};
 
 /// Longest field description.
 pub const MAX_DESCRIPTION_CHARS: usize = 500;
@@ -166,6 +169,9 @@ pub enum FieldKind {
     Object {
         /// Its fields.
         fields: Vec<Field>,
+        /// The shared component they come from, if any (step M.4, D-073): the server copies the
+        /// component's fields in, so the definition still says everything about its content.
+        component: Option<String>,
     },
     /// A list of values of one kind (step M.3): tags, a repeatable component.
     List {
@@ -635,7 +641,11 @@ fn write_options(out: &mut String, kind: &FieldKind) {
                 out.push_str(r#","many":false"#);
             }
         }
-        FieldKind::Object { fields } => {
+        FieldKind::Object { fields, component } => {
+            if let Some(component) = component {
+                out.push_str(r#","component":"#);
+                write_string(out, component);
+            }
             out.push_str(r#","fields":["#);
             write_fields(out, fields);
             out.push(']');
@@ -1211,7 +1221,7 @@ fn targets(fields: &[Field], prefix: &str, out: &mut Vec<(String, String)>) {
 fn target(kind: &FieldKind, path: &str, out: &mut Vec<(String, String)>) {
     match kind {
         FieldKind::Reference { to, .. } => out.push((path.to_owned(), to.clone())),
-        FieldKind::Object { fields } => targets(fields, &format!("{path}/"), out),
+        FieldKind::Object { fields, .. } => targets(fields, &format!("{path}/"), out),
         FieldKind::List { of, .. } => target(of, &format!("{path}/*"), out),
         FieldKind::Blocks { blocks, .. } => {
             for block in blocks {
@@ -1274,7 +1284,7 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
                 max: new_max,
             },
         ) => old_to == new_to && old_many == new_many && new_max >= old_max,
-        (FieldKind::Object { fields: old }, FieldKind::Object { fields: new }) => {
+        (FieldKind::Object { fields: old, .. }, FieldKind::Object { fields: new, .. }) => {
             fields_widen(old, new)
         }
         (
@@ -1680,6 +1690,34 @@ impl ContentType {
         })
     }
 
+    /// An object's `fields`, and the shared component they come from, if it says (D-073).
+    fn object_kind(
+        object: &Map<String, Value>,
+        pointer: &Pointer,
+        depth: usize,
+    ) -> Result<FieldKind, Refusal> {
+        let component = match object.get("component") {
+            None => None,
+            Some(value) => Some(
+                value
+                    .as_str()
+                    .filter(|slug| Slug::parse(slug).is_ok())
+                    .ok_or_else(|| {
+                        refuse(
+                            "invalid_component",
+                            &at(pointer, "component"),
+                            "`component` names a shared component by its slug",
+                        )
+                    })?
+                    .to_owned(),
+            ),
+        };
+        Ok(FieldKind::Object {
+            fields: Self::nested(object, pointer, depth)?,
+            component,
+        })
+    }
+
     /// A page builder's `blocks` (1 to [`MAX_BLOCK_KINDS`], distinct names) and `max`.
     fn blocks_kind(
         object: &Map<String, Value>,
@@ -1951,10 +1989,20 @@ impl ContentType {
                 reference_kind(object, pointer)?
             }
             Some("object") => {
-                only(object, &[common, &["fields"]].concat(), pointer)?;
-                FieldKind::Object {
-                    fields: Self::nested(object, pointer, depth)?,
-                }
+                only(
+                    object,
+                    &[common, &["fields", "component"]].concat(),
+                    pointer,
+                )?;
+                Self::object_kind(object, pointer, depth)?
+            }
+            // The server expands components before a definition is checked (D-073).
+            Some("component") => {
+                return Err(refuse(
+                    "unexpanded_component",
+                    &at(pointer, "type"),
+                    "a component field is replaced by the component's fields before it is checked",
+                ));
             }
             Some("list") => {
                 only(object, &[common, &["of", "max"]].concat(), pointer)?;
@@ -2484,7 +2532,7 @@ impl ContentType {
             | FieldKind::Time
             | FieldKind::Color => Self::formatted(kind, label, value, pointer, out)?,
             FieldKind::Json => Self::json(label, value, pointer, out)?,
-            FieldKind::Object { fields } => {
+            FieldKind::Object { fields, .. } => {
                 Self::fields_value(fields, value, pointer, out, references)?;
             }
             FieldKind::List { of, max } => {
@@ -2665,6 +2713,254 @@ impl ContentType {
         }
         Successor::Compatible
     }
+}
+
+/// A shared component (step M.4, D-073): a named group of fields that many content types use,
+/// like a page's SEO settings. A content type holds a copy of its fields, marked with the
+/// component's slug ([`expand_components`]); changing the component changes every type that uses
+/// it, each checked against its stored content.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Component {
+    name: String,
+    fields: Vec<Field>,
+}
+
+impl Component {
+    /// Parses a component definition: `{"name": ..., "fields": [...]}`. Its fields follow the
+    /// rules of an object's (nothing unique, no defaults, no conditions) and use no component.
+    pub fn parse(value: &Value) -> Result<Self, Refusal> {
+        let root = Pointer::new();
+        let object = value
+            .as_object()
+            .ok_or_else(|| refuse("not_an_object", &root, "a component is a JSON object"))?;
+        only(object, &["name", "fields"], &root)?;
+        let name = object
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| plain_text(name, 100))
+            .ok_or_else(|| {
+                refuse(
+                    "invalid_name",
+                    &at(&root, "name"),
+                    "a name is 1 to 100 characters, without control characters or spaces at either end",
+                )
+            })?
+            .to_owned();
+        let at_fields = at(&root, "fields");
+        let list = object
+            .get("fields")
+            .and_then(Value::as_array)
+            .ok_or_else(|| refuse("missing_field", &at_fields, "`fields` is a list of fields"))?;
+        if let Some(pointer) = first_component(list, &at_fields) {
+            return Err(refuse(
+                "invalid_component",
+                &pointer,
+                "a component can't use another component",
+            ));
+        }
+        let fields = ContentType::fields_at(list, &at_fields, 1)?;
+        Ok(Self { name, fields })
+    }
+
+    /// The name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The definition in canonical form: the bytes stored and hashed.
+    pub fn canonical_json(&self) -> String {
+        let mut out = String::with_capacity(256);
+        out.push_str(r#"{"name":"#);
+        write_string(&mut out, &self.name);
+        out.push_str(r#","fields":["#);
+        write_fields(&mut out, &self.fields);
+        out.push_str("]}");
+        out
+    }
+
+    /// Its fields in canonical form, as [`expand_components`] copies them into a content type.
+    pub fn fields_json(&self) -> Value {
+        let mut out = String::with_capacity(256);
+        out.push('[');
+        write_fields(&mut out, &self.fields);
+        out.push(']');
+        // Canonical JSON written by this crate, so it parses.
+        serde_json::from_str(&out).unwrap_or(Value::Null)
+    }
+}
+
+/// The place of the first field in `fields`, at any depth, that uses a component.
+fn first_component(fields: &[Value], pointer: &Pointer) -> Option<Pointer> {
+    let mut found = None;
+    walk_fields(fields, pointer, &mut |field, at_field| {
+        let uses =
+            field.contains_key("component") || field.get("type") == Some(&Value::from("component"));
+        if found.is_none() && uses {
+            found = Some(at_field.clone());
+        }
+    });
+    found
+}
+
+/// What [`walk_fields`] calls on each field object, with its place.
+type Visit<'a> = dyn FnMut(&Map<String, Value>, &Pointer) + 'a;
+
+/// Calls `visit` on every field object of a definition's `fields` at any depth: an object's
+/// fields, a list's `of`, a page builder's blocks' fields. Before it looks inside one.
+fn walk_fields(fields: &[Value], pointer: &Pointer, visit: &mut Visit<'_>) {
+    for (index, field) in fields.iter().enumerate() {
+        let mut at_field = pointer.clone();
+        at_field.push_index(index);
+        walk_field(field, &at_field, visit);
+    }
+}
+
+fn walk_field(field: &Value, pointer: &Pointer, visit: &mut Visit<'_>) {
+    let Some(object) = field.as_object() else {
+        return;
+    };
+    visit(object, pointer);
+    if let Some(Value::Array(fields)) = object.get("fields") {
+        walk_fields(fields, &at(pointer, "fields"), visit);
+    }
+    if let Some(of) = object.get("of") {
+        walk_field(of, &at(pointer, "of"), visit);
+    }
+    if let Some(Value::Array(blocks)) = object.get("blocks") {
+        for (index, block) in blocks.iter().enumerate() {
+            let mut at_block = at(pointer, "blocks");
+            at_block.push_index(index);
+            if let Some(Value::Array(fields)) = block.get("fields") {
+                walk_fields(fields, &at(&at_block, "fields"), visit);
+            }
+        }
+    }
+}
+
+/// The slugs of the components a definition uses, sorted and without repeats: what the server
+/// locks and reads before it expands them (D-073).
+pub fn components_used(definition: &Value) -> Vec<String> {
+    let mut used = Vec::new();
+    if let Some(Value::Array(fields)) = definition.get("fields") {
+        walk_fields(fields, &at(&Pointer::new(), "fields"), &mut |field, _| {
+            let is_component = field.get("type") == Some(&Value::from("component"))
+                || (field.get("type") == Some(&Value::from("object"))
+                    && field.contains_key("component"));
+            if let Some(slug) = field
+                .get("component")
+                .and_then(Value::as_str)
+                .filter(|_| is_component)
+            {
+                used.push(slug.to_owned());
+            }
+        });
+    }
+    used.sort();
+    used.dedup();
+    used
+}
+
+/// What [`expand_components`] does with a component it isn't given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unlisted {
+    /// Refuse it (`unknown_component`): a definition someone sent.
+    Refuse,
+    /// Keep the fields the definition holds: a stored definition, when one component changes.
+    Keep,
+}
+
+/// `definition` with each component field, `{"type": "component", "component": slug}`, and each
+/// object already marked with a component, holding that component's fields from `components`
+/// (D-073): a definition that is sent never chooses a component's fields, and a stored one is
+/// brought up to date. Other fields are left as they are; parsing checks them.
+pub fn expand_components(
+    definition: &Value,
+    components: &std::collections::BTreeMap<String, Value>,
+    unlisted: Unlisted,
+) -> Result<Value, Refusal> {
+    let mut expanded = definition.clone();
+    if let Some(Value::Array(fields)) = expanded.get_mut("fields") {
+        expand_fields(fields, &at(&Pointer::new(), "fields"), components, unlisted)?;
+    }
+    Ok(expanded)
+}
+
+fn expand_fields(
+    fields: &mut [Value],
+    pointer: &Pointer,
+    components: &std::collections::BTreeMap<String, Value>,
+    unlisted: Unlisted,
+) -> Result<(), Refusal> {
+    for (index, field) in fields.iter_mut().enumerate() {
+        let mut at_field = pointer.clone();
+        at_field.push_index(index);
+        expand_field(field, &at_field, components, unlisted)?;
+    }
+    Ok(())
+}
+
+fn expand_field(
+    field: &mut Value,
+    pointer: &Pointer,
+    components: &std::collections::BTreeMap<String, Value>,
+    unlisted: Unlisted,
+) -> Result<(), Refusal> {
+    let Some(object) = field.as_object_mut() else {
+        return Ok(());
+    };
+    let kind = object
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let is_component =
+        kind == "component" || (kind == "object" && object.contains_key("component"));
+    if is_component {
+        let at_component = at(pointer, "component");
+        let slug = object
+            .get("component")
+            .and_then(Value::as_str)
+            .filter(|slug| Slug::parse(slug).is_ok())
+            .ok_or_else(|| {
+                refuse(
+                    "invalid_component",
+                    &at_component,
+                    "`component` names a shared component by its slug",
+                )
+            })?
+            .to_owned();
+        match (components.get(&slug), unlisted) {
+            (Some(fields), _) => {
+                object.insert("type".to_owned(), Value::from("object"));
+                object.insert("fields".to_owned(), fields.clone());
+            }
+            (None, Unlisted::Keep) if kind == "object" => {}
+            (None, _) => {
+                return Err(refuse(
+                    "unknown_component",
+                    &at_component,
+                    format!("no component is called `{slug}` here"),
+                ));
+            }
+        }
+        // A component uses no other component: nothing inside to expand.
+        return Ok(());
+    }
+    if let Some(Value::Array(fields)) = object.get_mut("fields") {
+        expand_fields(fields, &at(pointer, "fields"), components, unlisted)?;
+    }
+    if let Some(of) = object.get_mut("of") {
+        expand_field(of, &at(pointer, "of"), components, unlisted)?;
+    }
+    if let Some(Value::Array(blocks)) = object.get_mut("blocks") {
+        for (index, block) in blocks.iter_mut().enumerate() {
+            let mut at_block = at(pointer, "blocks");
+            at_block.push_index(index);
+            if let Some(Value::Array(fields)) = block.get_mut("fields") {
+                expand_fields(fields, &at(&at_block, "fields"), components, unlisted)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -4202,6 +4498,103 @@ mod tests {
         assert!(
             matches!(featured.successor(&other), Successor::CheckContent(_)),
             "a different condition"
+        );
+    }
+
+    fn seo() -> Component {
+        Component::parse(&json!({"name": "SEO", "fields": [
+            {"id": "meta_title", "label": "Meta title", "type": "text", "max_chars": 70},
+            {"id": "noindex", "label": "Hide from search", "type": "boolean"}
+        ]}))
+        .expect("valid")
+    }
+
+    #[test]
+    fn a_component_is_a_group_of_object_fields_that_uses_no_other_component() {
+        assert_eq!(
+            seo().canonical_json(),
+            r#"{"name":"SEO","fields":[{"id":"meta_title","label":"Meta title","type":"text","required":false,"max_chars":70,"multiline":false},{"id":"noindex","label":"Hide from search","type":"boolean","required":false}]}"#
+        );
+        assert_eq!(seo().fields_json()[1]["id"], "noindex");
+        for (fields, code, pointer) in [
+            (
+                json!([{"id": "x", "label": "X", "type": "component", "component": "other"}]),
+                "invalid_component",
+                "/fields/0",
+            ),
+            (
+                json!([{"id": "x", "label": "X", "type": "object", "fields": [
+                    {"id": "y", "label": "Y", "type": "object", "component": "other", "fields": [{"id": "z", "label": "Z", "type": "text"}]}
+                ]}]),
+                "invalid_component",
+                "/fields/0/fields/0",
+            ),
+            (
+                json!([{"id": "x", "label": "X", "type": "email", "unique": true}]),
+                "invalid_unique",
+                "/fields/0/unique",
+            ),
+            (json!([]), "invalid_fields", "/fields"),
+        ] {
+            let refused =
+                Component::parse(&json!({"name": "C", "fields": fields})).expect_err("refused");
+            assert_eq!(
+                (refused.code, refused.pointer.as_str()),
+                (code, pointer),
+                "{fields}"
+            );
+        }
+    }
+
+    #[test]
+    fn components_are_expanded_wherever_a_field_can_be() {
+        let definition = json!({"name": "Pages", "title_field": "title", "fields": [
+            {"id": "title", "label": "Title", "type": "text", "required": true},
+            {"id": "seo", "label": "SEO", "type": "component", "component": "seo"},
+            {"id": "faq", "label": "FAQ", "type": "list", "of": {"type": "component", "component": "qa"}},
+            {"id": "sections", "label": "Sections", "type": "blocks", "blocks": [
+                {"name": "card", "label": "Card", "fields": [
+                    {"id": "card_seo", "label": "Card SEO", "type": "object", "component": "seo", "fields": [{"id": "stale", "label": "Stale", "type": "text"}]}
+                ]}
+            ]}
+        ]});
+        assert_eq!(components_used(&definition), ["qa", "seo"]);
+        let qa = Component::parse(&json!({"name": "Q and A", "fields": [{"id": "q", "label": "Question", "type": "text", "required": true}]})).expect("valid");
+        let all: std::collections::BTreeMap<String, Value> = [
+            ("seo".to_owned(), seo().fields_json()),
+            ("qa".to_owned(), qa.fields_json()),
+        ]
+        .into();
+        let expanded = expand_components(&definition, &all, Unlisted::Refuse).expect("known");
+        let pages = ContentType::parse(&expanded).expect("valid once expanded");
+        let canonical = pages.canonical_json();
+        assert!(canonical.contains(r#"{"id":"seo","label":"SEO","type":"object","required":false,"component":"seo","fields":[{"id":"meta_title""#), "{canonical}");
+        assert!(
+            canonical.contains(r#""of":{"type":"object","component":"qa","fields":[{"id":"q""#),
+            "{canonical}"
+        );
+        assert!(
+            !canonical.contains("stale"),
+            "a marked object gets the component's fields, whatever it held"
+        );
+        assert!(pages.validate(&json!({"title": "Home", "seo": {"meta_title": "Home", "noindex": false}, "faq": [{"q": "Why?"}]})).is_ok());
+
+        let only_seo: std::collections::BTreeMap<String, Value> =
+            [("seo".to_owned(), seo().fields_json())].into();
+        let refused =
+            expand_components(&definition, &only_seo, Unlisted::Refuse).expect_err("qa is unknown");
+        assert_eq!(
+            (refused.code, refused.pointer.as_str()),
+            ("unknown_component", "/fields/2/of/component")
+        );
+        // A stored definition: one component changes, and the others keep what they hold.
+        let kept = expand_components(&expanded, &only_seo, Unlisted::Keep).expect("kept");
+        assert_eq!(kept, expanded);
+        let unexpanded =
+            ContentType::parse(&definition).expect_err("components are expanded first");
+        assert_eq!(
+            (unexpanded.code, unexpanded.pointer.as_str()),
+            ("unexpanded_component", "/fields/1/type")
         );
     }
 }

@@ -192,7 +192,7 @@ fails halfway resumes without duplicates; the simulator covers schema changes ra
 checked by the database on save and by every release, with "referenced by" (built: D-065, migration 0024) · M.3
 objects, lists and page-builder blocks, references inside them (built: D-066, migration 0025) · M.4 single types
 (built: D-067, migration 0026), patterns (built: D-069), uniqueness (built: D-070, migration 0027), defaults (built:
-D-071), conditional fields (built: D-072) and shared components · M.5 migrations with a plan, a dry run and per-entry outcomes; the simulator racing
+D-071), conditional fields (built: D-072) and shared components (built: D-073, migration 0029) · M.5 migrations with a plan, a dry run and per-entry outcomes; the simulator racing
 schema changes and saves. What is built has its tests, a testbed page (`/modelling`) and a load scenario
 (`perf/k6/modelling.js`) whose million-request runs wait for a quiet machine; the Studio's builder and editor cover
 M.1 to M.3, single types and patterns (branch `studio/dashboard`).
@@ -298,7 +298,8 @@ evidence".
   Homebrew, create the tap `akira-shirase-oss/homebrew-colophon` and commit each release's `colophon.rb` as
   `Formula/colophon.rb`.
 - Not built yet: crates.io publishing (`cargo install colophon-cli`, after O-014 and publishing the crates it
-  depends on); the SDK and the MCP server and their checks (they don't exist yet); container images for the server
+  depends on); the SDK (it doesn't exist yet); packaging the MCP server (`crates/colophon-mcp`, built in P5, D-068) for npm,
+  Cargo and Homebrew, and its checks; container images for the server
   and worker; the server archive without the Studio's files; CI installs of the published packages, the formula and
   `cargo install` on clean machines, which need a published release.
 

@@ -1,15 +1,15 @@
-// Load scenario for content modelling (steps M.1 to M.4, D-064 to D-066, D-069 to D-072): pages
-// built from structures, with references. setup() signs in, defines `people` (a unique name, a
-// role whose default is `member`, and an editor date only editors may have) and `pages` (a
-// unique title, so every save replaces its page's claim; a hero object, tags each matched against
-// a pattern, a list of questions, and blocks whose quotes name a person), makes 20 people and
-// gives each VU a page of its own. Each VU reads its page (50%; the ETag must be its last accepted
-// save), saves new structures naming two random people (20%; each save checks its references in
-// the database and keeps them), tries a quote naming nobody and must get 422 reference_not_found
-// at /sections/1/by (10%), reads a person, which lists what references them (10%), lists pages
-// (5%), or creates a person with a name of its own and no role, which must come back `member`
-// (5%). Requests are named by route, so k6 keeps one series per route. scripts/load.sh gives this
-// endpoint RATE 500 and P99_MS 250.
+// Load scenario for content modelling (steps M.1 to M.4, D-064 to D-066, D-069 to D-073): pages
+// built from structures, with references. setup() signs in, defines a shared `seo` component,
+// `people` (a unique name, a role whose default is `member`, and an editor date only editors may
+// have) and `pages` (a unique title, so every save replaces its page's claim; the SEO component, a
+// hero object, tags each matched against a pattern, a list of questions, and blocks whose quotes
+// name a person), makes 20 people and gives each VU a page of its own. Each VU reads its page
+// (50%; the ETag must be its last accepted save), saves new structures naming two random people
+// (20%; each save checks its references in the database and keeps them), tries a quote naming
+// nobody and must get 422 reference_not_found at /sections/1/by (10%), reads a person, which lists
+// what references them (10%), lists pages (5%), or creates a person with a name of its own and no
+// role, which must come back `member` (5%). Requests are named by route, so k6 keeps one series
+// per route. scripts/load.sh gives this endpoint RATE 500 and P99_MS 250.
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
@@ -63,10 +63,13 @@ const PEOPLE_TYPE = {
   ],
 };
 
+const SEO_COMPONENT = { name: 'SEO', fields: [{ id: 'meta_title', label: 'Meta title', type: 'text', max_chars: 70 }] };
+
 const PAGES_TYPE = {
   name: 'Pages',
   title_field: 'title',
   fields: [
+    { id: 'seo', label: 'SEO', type: 'component', component: 'seo' },
     { id: 'title', label: 'Title', type: 'text', required: true, unique: true },
     { id: 'hero', label: 'Hero', type: 'object', fields: [
       { id: 'heading', label: 'Heading', type: 'text', required: true },
@@ -91,6 +94,7 @@ const PAGES_TYPE = {
 function page(title, n, first, second) {
   return JSON.stringify({
     title,
+    seo: { meta_title: `Edition ${n}` },
     hero: { heading: `Edition ${n}`, accent: `#${(0x100000 + (n % 0xeffff)).toString(16)}` },
     tags: ['news', `n${n % 100}`],
     faq: [{ q: 'Free?', a: `Yes, edition ${n}.` }, { q: 'Open?', a: 'Yes.' }],
@@ -120,6 +124,10 @@ export function setup() {
   const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug, name: 'k6 modelling' }), { headers: write });
   if (project.status !== 201) fail(`project: HTTP ${project.status} ${project.body}`);
   const env = `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production`;
+  const component = http.post(`${env}/components`, JSON.stringify({ slug: 'seo', definition: SEO_COMPONENT }), {
+    headers: Object.assign({ 'Idempotency-Key': `k6-component-${slug}-seo` }, write),
+  });
+  if (component.status !== 201) fail(`component: HTTP ${component.status} ${component.body}`);
   for (const [type, definition] of [['people', PEOPLE_TYPE], ['pages', PAGES_TYPE]]) {
     const made = http.post(`${env}/content-types`, JSON.stringify({ slug: type, definition }), {
       headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}-${type}` }, write),
