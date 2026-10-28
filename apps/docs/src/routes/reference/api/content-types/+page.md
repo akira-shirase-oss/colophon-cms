@@ -2,7 +2,7 @@
 	import Status from '#lib/components/Status.svelte';
 </script>
 
-A content type says what an entry of one collection may hold: its fields, their types and limits, and which field is the title. Definitions are versioned, parsed rather than trusted, and stored in one canonical form. The four routes and the six original field types came with step 1.5 (D-040). Step 3.6 added the `slug` field type and lets a change that narrows a definition through when no stored entry is in the way, naming the entries when some are (D-054, D-055, migration 0016); the Studio's content-type builder (Settings, then the type) makes every change through these routes. Handler: `crates/colophon-api/src/content_types.rs`; rules: `crates/colophon-domain/src/schema.rs`. The ideas are in [Content types and URL names](/concepts/content-types/).
+A content type says what an entry of one collection may hold: its fields, their types and limits, and which field is the title. Definitions are versioned, parsed rather than trusted, and stored in one canonical form. The four routes and the six original field types came with step 1.5 (D-040). Step 3.6 added the `slug` field type and lets a change that narrows a definition through when no stored entry is in the way, naming the entries when some are (D-054, D-055, migration 0016); the Studio's content-type builder (Settings, then the type) makes every change through these routes. Milestone M, built on a branch and not merged, adds eleven more field types, references, objects, lists and page-builder blocks, single types, patterns and unique fields: they are listed here briefly, and in full in [Content modelling](/reference/content-modelling/). Handler: `crates/colophon-api/src/content_types.rs`; rules: `crates/colophon-domain/src/schema.rs`. The ideas are in [Content types and URL names](/concepts/content-types/).
 
 ## The definition
 
@@ -25,10 +25,11 @@ A content type says what an entry of one collection may hold: its fields, their 
 
 | Key | Rules | Refused with |
 |---|---|---|
-| (the whole) | A JSON object with exactly `name`, `title_field` and `fields`; any other key is refused, never dropped. | `not_an_object`, `unknown_field` |
+| (the whole) | A JSON object with `name`, `title_field`, `fields` and, optionally, `single`; any other key is refused, never dropped. | `not_an_object`, `unknown_field` |
 | `name` | 1 to 100 characters, no control characters, no spaces at either end. | `invalid_name` |
 | `fields` | 1 to 100 fields, ids unique. | `missing_field`, `invalid_fields`, `duplicate_field` |
 | `title_field` | The id of a **required, single-line text** field. Lists show it. | `missing_field`, `invalid_title_field` |
+| `single` | `true` for a [single type](/reference/content-modelling/#single-types), which holds at most one entry; default `false`, and written into the stored definition only when `true`. <Status building="M.4" /> | `wrong_type` |
 
 Every field has:
 
@@ -38,6 +39,8 @@ Every field has:
 | `label` | What editors see: 1 to 100 characters, no control characters, no spaces at either end. | `invalid_label` |
 | `type` | One of the types below. | `invalid_type` |
 | `required` | `true` or `false`, default `false`. Content must have a required field. | `wrong_type` |
+| `description` | Help for editors, up to 500 characters; written only when set. <Status building="M.1" /> | `invalid_description` |
+| `unique` | `true` for a [unique field](/reference/content-modelling/#unique-fields): a top-level single-line text, email, URL, number, date, time or date-time field only; written only when `true`. <Status building="M.4" /> | `invalid_unique`, `wrong_type` |
 
 A field object holds only the common keys and its type's options; anything else is `unknown_field`. Refusals point into the request: `/definition/fields/2/max_chars` when creating, `/fields/2/max_chars` when changing.
 
@@ -52,6 +55,8 @@ A field object holds only the common keys and its type's options; anything else 
 | `enum` | `values`: 1 to 100 distinct options, each 1 to 100 characters, no control characters, no spaces at either end | One of `values`. | `not_an_option` |
 | `datetime` | none | A UTC time written `YYYY-MM-DDTHH:MM:SSZ`, a real calendar date. | `invalid_datetime` |
 | `slug` | `source` (optional) | An entry's URL name: 1 to 120 characters, lowercase ASCII letters and digits in groups joined by single hyphens, like `my-first-post`. | `invalid_slug` |
+
+Milestone M adds `min_chars` and `pattern` to `text`, and the types `email`, `url`, `date`, `time`, `json`, `markdown`, `color`, `reference`, `object`, `list` and `blocks`. [Content modelling](/reference/content-modelling/#field-types) has each one's options, values, stored form and refusals. <Status building="M.1–M.4" />
 
 Option errors: `max_chars` out of range is `out_of_range`; `min` or `max` that isn't a number is `wrong_type`, and one that isn't a value the field could hold, or a `max` below `min`, is `out_of_range`; `values` missing is `missing_field`, and empty, too many, duplicated or badly written options are `invalid_values`.
 
@@ -95,7 +100,7 @@ A new definition replaces the current one only if every stored entry stays valid
 | Removing a field, making one required, adding a required field, narrowing a limit, removing enum options, changing a field's type | allowed if **every current draft and every published revision** fits the new definition; otherwise `422` `needs_migration`, naming the entries in the way |
 | Changing `title_field`; turning a field into or out of a slug field | always `422` `needs_migration`: the stored titles and slugs would disagree with content |
 
-Before step 3.6 (D-040 alone), every change in the second group was refused whatever was stored.
+Before step 3.6 (D-040 alone), every change in the second group was refused whatever was stored. Milestone M's types follow the same three groups; [Content modelling](/reference/content-modelling/#changing-a-type) has the full list, including pointing a reference at another collection (always refused), and the two changes the database checks: making a field unique (refused while two drafts or two published entries share a value, each one in the way with the problem `value_taken`) and making a type single (refused with `too_many_entries` while it has more than one entry). <Status building="M.1–M.4" />
 
 When a change needs checking, the server takes an exclusive lock on the collection before reading anything; entry saves, creates and publishes take the same lock shared, so no write can slip in between the check and the commit. It then validates every draft and every open publication of the collection, 200 at a time, off the request threads. More than 10,000 of them is refused without looking, with `too_many_to_check`. A migration tool for those cases doesn't exist yet.
 
@@ -228,16 +233,17 @@ Stores a new definition as the next version, if [the change is allowed](#changin
 | `422` | `validation_failed` | a definition code | The new definition breaks a rule. |
 | `422` | `validation_failed` | `needs_migration` | The change would make stored content invalid, or needs a migration whatever is stored. With `entries` and `total` when entries are in the way. |
 | `422` | `validation_failed` | `too_many_to_check` | More than 10,000 drafts and publications to check. |
+| `422` | `validation_failed` | `too_many_entries` | `single` turned on while the collection has more than one entry; the pointer is `/single`. <Status building="M.4" /> |
 | `428` | `precondition_required` | | No `If-Match`, or no `Idempotency-Key`. |
 
 ## Proof
 
-`crates/colophon-server/tests/content_types.rs` against the real binary: `a_content_type_is_defined_and_its_entries_follow_it`, `a_content_type_changes_only_in_ways_that_keep_its_entries_valid`, `a_narrowing_change_goes_through_when_nothing_stored_is_in_the_way` and `a_slug_belongs_to_one_entry_and_reaches_the_public_api` (3.6), and `only_owners_and_developers_change_content_types_and_strangers_see_nothing`; `crates/colophon-db/tests/slugs.rs` for the unique indexes; the unit tests in `schema.rs`; the load scenario `perf/k6/content-types.js`.
+`crates/colophon-server/tests/content_types.rs` against the real binary: `a_content_type_is_defined_and_its_entries_follow_it`, `a_content_type_changes_only_in_ways_that_keep_its_entries_valid`, `a_narrowing_change_goes_through_when_nothing_stored_is_in_the_way` and `a_slug_belongs_to_one_entry_and_reaches_the_public_api` (3.6), and `only_owners_and_developers_change_content_types_and_strangers_see_nothing`; `crates/colophon-db/tests/slugs.rs` for the unique indexes; the unit tests in `schema.rs`; the load scenario `perf/k6/content-types.js`. Milestone M adds `references.rs`, `singles.rs`, `unique.rs` and `a_pattern_is_checked_against_stored_content_and_holds_new_content_to_it`, and the load scenario `perf/k6/modelling.js` ([Content modelling](/reference/content-modelling/#how-it-is-tested)).
 
 ## Not built yet
 
 - Migrations, with a plan, a dry run, approval and per-entry outcomes, for the changes refused today. <Status planned="M" />
-- More field types: references, components, bounded lists, block lists, email, URL, date, time, JSON, Markdown and colour; defaults and validation by pattern. <Status planned="M" />
+- Defaults, conditional fields and shared components. <Status planned="M" />
 - URL names per locale. <Status planned="E" />
 
 See the [roadmap](/resources/roadmap/).

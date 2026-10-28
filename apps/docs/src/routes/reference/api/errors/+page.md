@@ -19,7 +19,7 @@ Every error the server sends, from any route and from its middleware (a wrong me
 
 - **Branch on `code`**, and on `details.reason` when there is one. Never on `message`: it is for people and may change.
 - `details` appears when the error is about part of the request: `reason` is a specific code, and `pointer` is an [RFC 6901 JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901) into the body (empty for the whole body or none).
-- Two reasons that depend on stored entries add `entries`, the entries in the way, and `total`, how many there are in all: `slug_taken` and `needs_migration`. Each entry has `entry` (its id), `title`, `state` (`draft` or `published`) and, for `needs_migration`, `problem`: the `reason`, `pointer` and `message` its content would get.
+- Reasons that depend on stored entries add `entries`, the entries in the way, and, for `needs_migration`, `total`, how many there are in all: `slug_taken`, `value_taken` and `needs_migration`. Each entry has `entry` (its id), `title`, `state` (`draft` or `published`) and, for `needs_migration`, `problem`: the `reason`, `pointer` and `message` its content would get. `slug_taken` and `value_taken` name an entry only to a role that may read its title, and never after a write lost a race to the database.
 - Two reasons about a scheduled time add `candidates`, the two instants a local time could mean, earlier first, in RFC 3339: `ambiguous_local_time` and `skipped_local_time` ([Schedules](/reference/api/publish-requests/#schedules)).
 - `request_id` matches the `x-request-id` header. Quote it in a bug report and the logs find the request.
 - A message never shows an internal cause: a `500` says `internal error`, and the cause goes to the server's log. A message that repeats a client's input (a JSON parser's complaint) is cut at 200 characters.
@@ -76,6 +76,10 @@ A `409` carries a reason when the client can act on it, and a header naming the 
 | `stale_role` | `PUT`, `DELETE` a role | The `If-Match` version is no longer current. | `ETag`: the current version |
 | `role_in_use` | `DELETE` a role | Members hold the role or pending invitations offer it; the message says how many. | |
 | `slug_taken` | create or save an entry; `publish` | Another entry of the collection has this URL name, as its draft or published. On a save, `pointer` is the slug field and `entries` names that entry; when a write lost a race to the database's unique index, or on publish, neither is known. | |
+| `value_taken` | create or save an entry; `publish` | Another entry of the collection has this value of a [unique field](/reference/content-modelling/#unique-fields), as its draft or published. On a save, `pointer` is the field and `entries` names that entry, as for `slug_taken`; on publish, the release would put live a value another entry still publishes. <Status building="M.4" /> | |
+| `single_exists` | create an entry | The collection is a [single type](/reference/content-modelling/#single-types) and has its entry. <Status building="M.4" /> | |
+| `references_unpublished` | `publish` | The release would publish an entry naming an entry that isn't published and wouldn't be. <Status building="M.2" /> | |
+| `still_referenced` | `publish` | The release would take down an entry a published entry still names. <Status building="M.2" /> | |
 | `already_set_up` | `POST /api/v1/setup` | The installation has an administrator already, so setup codes do nothing; ask one to invite you to a project. | |
 
 Other conflicts have no reason, only a message:
@@ -173,9 +177,23 @@ From creating or saving an entry (the pointer is into the content) and from crea
 | `not_an_object` | both | The content, the definition or a field definition isn't a JSON object. |
 | `unknown_field` | both | A key the content type, the definition or the field's type doesn't have. Never dropped silently. |
 | `missing_field` | both | A required field is missing from content; `fields`, `title_field` or an enum's `values` from a definition. |
-| `wrong_type` | both | A value of the wrong JSON type: text that isn't a string, a number that isn't one, `required` or `multiline` that isn't `true` or `false`. |
-| `out_of_range` | both | A number outside its field's `min` and `max`; in a definition, `max_chars` outside 1 to 100,000, or a `min` or `max` the field couldn't hold, or a `max` below `min`. |
-| `too_long` | content | Text over its field's `max_chars`. |
+| `wrong_type` | both | A value of the wrong JSON type: text that isn't a string, a number that isn't one, a list or page builder that isn't a list, `required`, `multiline`, `unique` or `single` that isn't `true` or `false`. |
+| `out_of_range` | both | A number outside its field's `min` and `max`; in a definition, `max_chars` outside 1 to 100,000, `min_chars` outside 1 to `max_chars`, a `min` or `max` the field couldn't hold, a `max` below `min`, or a list's, page builder's or reference list's `max` outside 1 to 100. |
+| `too_long` | content | Text or Markdown over its field's `max_chars`, or JSON over 64 KiB. |
+| `too_short` | content | Text under its field's `min_chars`. <Status building="M.1" /> |
+| `pattern_mismatch` | content | Text that doesn't match its field's `pattern` whole. <Status building="M.4" /> |
+| `invalid_email` | content | Not an address of the form `local@domain` with a dot in the domain. <Status building="M.1" /> |
+| `invalid_url` | content | Not an `http` or `https` address with a host and no credentials, or over 2,048 characters. (Also a website connection's address, above.) <Status building="M.1" /> |
+| `invalid_date` | content | Not a real calendar date written `YYYY-MM-DD`. <Status building="M.1" /> |
+| `invalid_time` | content | Not a time written `HH:MM` or `HH:MM:SS`, 24-hour. <Status building="M.1" /> |
+| `invalid_color` | content | Not `#rrggbb` in lowercase. <Status building="M.1" /> |
+| `invalid_json` | content | A JSON value nested more than 32 levels, or holding a number outside the `number` rules. <Status building="M.1" /> |
+| `invalid_reference` | content | A reference that isn't an entry id in lowercase, or an empty list of them. <Status building="M.2" /> |
+| `duplicate_reference` | content | A list of references that names one entry twice. <Status building="M.2" /> |
+| `reference_not_found` | content | A reference names no entry of its field's collection; found by the database when the version is stored. <Status building="M.2" /> |
+| `invalid_list` | content | An empty list or page builder: leave the field out instead. <Status building="M.3" /> |
+| `too_many` | content | More items in a list, page builder or reference list than its `max`. <Status building="M.2" /> |
+| `unknown_block` | content | A page-builder item whose `_block` is missing or names no kind of block the field offers; the pointer ends in `/_block`. <Status building="M.3" /> |
 | `invalid_text` | content | Empty text (leave the field out instead), control characters, or, in single-line text, spaces at either end. |
 | `not_an_integer` | content | A number in a whole-number field that isn't a whole number within ±9,007,199,254,740,991. |
 | `too_precise` | content | A decimal with more than 6 places, or 1,000,000,000 or more in size. |
@@ -187,11 +205,18 @@ From creating or saving an entry (the pointer is into the content) and from crea
 | `duplicate_field` | definition | Two fields with one id. |
 | `invalid_id` | definition | A field id that isn't 1 to 64 lowercase letters, digits and underscores, starting with a letter. |
 | `invalid_label` | definition | A label that isn't 1 to 100 characters without control characters or spaces at either end. |
-| `invalid_type` | definition | A `type` that isn't `text`, `rich_text`, `number`, `boolean`, `enum`, `datetime` or `slug`. |
+| `invalid_type` | definition | A `type` that isn't one of the [field types](/reference/content-modelling/#field-types); a URL name inside a structure; or a list whose items are lists or blocks. |
 | `invalid_values` | definition | Enum options: none, more than 100, duplicated, or badly written. |
 | `invalid_title_field` | definition | `title_field` doesn't name a required, single-line text field. |
 | `duplicate_slug` | definition | A second slug field. |
 | `invalid_source` | definition | A slug field's `source` that isn't a field id, or doesn't name a single-line text field of the type. |
+| `invalid_description` | definition | A field's description over 500 characters, or with control characters or spaces at either end. <Status building="M.1" /> |
+| `invalid_target` | definition | A reference field's `to` that isn't a collection slug. <Status building="M.2" /> |
+| `too_deep` | definition | Structures nested more than three deep. (Also a rich-text code.) <Status building="M.3" /> |
+| `invalid_blocks` | definition | A page builder offering no kinds of block, or more than 20. <Status building="M.3" /> |
+| `duplicate_block` | definition | Two kinds of block with one name. <Status building="M.3" /> |
+| `invalid_pattern` | definition | A `pattern` that isn't 1 to 500 characters, doesn't compile in Rust `regex` syntax (look-around and back-references don't), or compiles too large; the pointer ends in `/pattern`. <Status building="M.4" /> |
+| `invalid_unique` | definition | `unique` on a field that can't be unique: anything but a top-level single-line text, email, URL, number, date, time or date-time field. <Status building="M.4" /> |
 
 A rich-text field's value can also be refused with any [rich-text code](#rich-text), its pointer starting at the field.
 
@@ -199,8 +224,9 @@ A rich-text field's value can also be refused with any [rich-text code](#rich-te
 
 | `details.reason` | When | Extra details |
 |---|---|---|
-| `needs_migration` | The change would make stored content invalid, or always needs a migration: a new `title_field`, or a field turned into or out of a slug field. | When stored entries are in the way: `entries` (the first 20 drafts or publications) and `total`. Each entry's `problem.reason` is a content code from the table above, or `unreadable` if its stored content couldn't be read as JSON. |
+| `needs_migration` | The change would make stored content invalid, or always needs a migration: a new `title_field`, or a field turned into or out of a slug field. | When stored entries are in the way: `entries` (the first 20 drafts or publications) and `total`. Each entry's `problem.reason` is a content code from the table above, `value_taken` when a field being made unique shares its value with another entry's, or `unreadable` if its stored content couldn't be read as JSON. |
 | `too_many_to_check` | The change needs checking against more than 10,000 drafts and publications. | |
+| `too_many_entries` | `single` turned on while the collection has more than one entry; the pointer is `/single`. <Status building="M.4" /> | |
 
 ### Rich text
 

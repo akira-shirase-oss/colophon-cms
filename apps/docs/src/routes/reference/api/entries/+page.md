@@ -60,6 +60,8 @@ A create, a save and a read answer with the entry's draft:
 | `content` | The canonical content exactly as stored: fields in definition order, absent optional fields left out, rich text canonical. A URL name, when the type has one, is a field here like any other. Only the fields your role may read. |
 | `hidden_fields` | The content type's fields left out of `content` because your role can't read them. Absent when none are. |
 | `locked_fields` | Fields your role can read but not change. Absent when none are. |
+| `published` | On a read only: what readers get now, `{"revision_id", "generation"}` as in a list, or `null` when the entry isn't published. Creates and saves leave it out: a save never changes what is live. <Status building="api/dashboard-fields" /> |
+| `referenced_by` | On a read only: the entries whose draft or published version names this one in a [reference field](/reference/content-modelling/#references), up to 100, each `{"entry_id", "collection", "field", "in_draft", "published"}`; `field` is the path, such as `sections/1/by`. Entries in collections your role can't read, or can read only its own entries of, are left out. <Status building="M.2" /> |
 
 ## Routes
 
@@ -123,8 +125,11 @@ Creates an entry and its first revision.
 | `403` | `forbidden` | | Your role can't create entries here. |
 | `404` | `not_found` | | No such project, environment or collection. |
 | `409` | `conflict` | `idempotency_key_reused` | The key was used for different content. |
-| `409` | `conflict` | `slug_taken` | Another entry of the collection has this URL name, as its draft or published; `details.entries` names it. |
+| `409` | `conflict` | `slug_taken` | Another entry of the collection has this URL name, as its draft or published; `details.entries` names it when your role may read its title. |
+| `409` | `conflict` | `value_taken` | Another entry has this value of a [unique field](/reference/content-modelling/#unique-fields), as its draft or published; the pointer is the field, and `details.entries` names that entry when your role may read its title. <Status building="M.4" /> |
+| `409` | `conflict` | `single_exists` | The collection is a [single type](/reference/content-modelling/#single-types) and has its one entry already. <Status building="M.4" /> |
 | `422` | `validation_failed` | `field_not_permitted` | The content sets a field your role can't create. |
+| `422` | `validation_failed` | `reference_not_found` | A [reference](/reference/content-modelling/#references) names no entry of the collection its field points at; the pointer is the field, or its place in a list (`/related/1`). <Status building="M.2" /> |
 | `422` | `validation_failed` | a [content code](/reference/api/errors/#content-and-content-types) | The content doesn't fit the content type; `details.pointer` points at the value. |
 | `428` | `precondition_required` | | No `Idempotency-Key`. |
 
@@ -168,6 +173,8 @@ Content-Type: application/json
 | `409` | `conflict` | `stale_revision` | The draft has moved on; `ETag` names its revision now. |
 | `409` | `conflict` | `idempotency_key_reused` | The key was used for a different save. |
 | `409` | `conflict` | `slug_taken` | Another entry has this URL name. |
+| `409` | `conflict` | `value_taken` | Another entry has this value of a unique field. <Status building="M.4" /> |
+| `422` | `validation_failed` | `reference_not_found` | A reference names no entry of its collection. <Status building="M.2" /> |
 | `422` | `validation_failed` | `field_not_permitted` | The save changes a field your role can't change, or sends a field it can't read with a different value than stored; `details.pointer` names the field. |
 | `422` | `validation_failed` | a [content code](/reference/api/errors/#content-and-content-types) | The content doesn't fit the content type. |
 | `428` | `precondition_required` | | No `If-Match`, or no `Idempotency-Key`. |

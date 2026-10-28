@@ -266,6 +266,9 @@ Content-Type: application/json
 | `409` | `conflict` | `stale_changeset` | Its hash changed since you looked. |
 | `409` | `conflict` | `idempotency_key_reused` | The key was used for a different publish. |
 | `409` | `conflict` | `slug_taken` | An item would put live a URL name another entry still publishes. Publish that entry's new URL name first, or in the same changeset. |
+| `409` | `conflict` | `value_taken` | An item would put live a value of a [unique field](/reference/content-modelling/#unique-fields) another entry still publishes. Publish that entry's new value first, or in the same changeset. <Status building="M.4" /> |
+| `409` | `conflict` | `references_unpublished` | An item would publish an entry whose [references](/reference/content-modelling/#references) name an entry that isn't published, and wouldn't be. Publish that entry first, or in the same changeset. <Status building="M.2" /> |
+| `409` | `conflict` | `still_referenced` | An item would take down an entry that a published entry still names. Change or take down that entry first, or in the same changeset. <Status building="M.2" /> |
 | `409` | `conflict` | | Not approved: already published, stale, approval expired, or never approved. The message says which and what to do. |
 | `422` | `validation_failed` | `invalid_generation` | `/base_generation` is negative. |
 | `428` | `precondition_required` | | No `If-Match`, or no `Idempotency-Key`. |
