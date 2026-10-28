@@ -50,7 +50,7 @@ test('invite, look up, accept once, keep an owner, and revoke', async ({ page, b
 	await expect(page.getByTestId('members').locator('li')).toHaveCount(2);
 	await expect(page.getByTestId('invitations').locator('li')).toHaveCount(0);
 	await page.getByLabel('Role of Dev Owner').selectOption('editor');
-	await expect(page.getByTestId('message')).toHaveText('409 conflict');
+	await expect(page.getByTestId('message')).toHaveText('409 conflict (last_owner)');
 	await page.getByLabel('Role of Dev Editor').selectOption('owner');
 	await expect(page.getByTestId('message')).toHaveText('role changed to owner');
 	await page.getByRole('button', { name: 'Remove Dev Editor' }).click();
