@@ -86,6 +86,9 @@ test('controls follow the role: a reader canâ€™t send or update, an editor canâ€
 	await expect(other.getByRole('option', { name: 'Members' })).toBeVisible();
 	await expect(other.getByRole('option', { name: 'Settings' })).toHaveCount(0);
 	await other.keyboard.press('Escape');
+	// Checks run on settled pages: while the palette closes, its search box is still there but its
+	// list isn't, so axe would find a combobox without aria-controls (seen once in CI).
+	await expect(other.getByRole('dialog')).toHaveCount(0);
 	expect(await violations(other)).toEqual([]);
 	expect(await internalTerms(other)).toEqual([]);
 	await other.context().close();
