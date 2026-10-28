@@ -3,9 +3,10 @@
 
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{Path, Query, State, rejection::JsonRejection},
     http::StatusCode,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use colophon_db::{
     DbError,
     administrators::{self, Standing},
@@ -53,22 +54,87 @@ impl From<projects::Project> for ProjectView {
     }
 }
 
-/// `GET /api/v1/projects`: every project the caller belongs to (at most 1,000, on one page).
+/// A page of projects when none is asked for.
+const DEFAULT_PAGE: i64 = 50;
+
+/// `?limit=&cursor=&q=`: `q` matches a project's name or slug, in any case.
+#[derive(Deserialize)]
+pub(crate) struct ListQuery {
+    limit: Option<i64>,
+    cursor: Option<String>,
+    q: Option<String>,
+}
+
+/// `GET /api/v1/projects`: the projects the caller belongs to, by name, a page at a time, with an
+/// optional search. A cursor is bound to the caller it was given to. Without `limit`, `cursor` or
+/// `q` it answers as before pages existed, every project up to 1,000 on one page, until the
+/// testbed's pickers, the CLI and the load scenario ask for pages (module 04, open decisions).
 pub(crate) async fn list(
     State(state): State<AppState>,
     caller: SignedIn,
+    Query(query): Query<ListQuery>,
 ) -> Result<Json<Page<ProjectView>>, ApiError> {
     let services = services(&state)?;
-    let data = projects::list(&services.pool, caller.identity)
+    if query.limit.is_none() && query.cursor.is_none() && query.q.is_none() {
+        let data = projects::list(&services.pool, caller.identity)
+            .await
+            .map_err(ApiError::from_db)?
+            .into_iter()
+            .map(ProjectView::from)
+            .collect();
+        return Ok(Json(Page {
+            data,
+            next_cursor: None,
+        }));
+    }
+    let limit = query.limit.unwrap_or(DEFAULT_PAGE);
+    if !(1..=projects::MAX_PAGE).contains(&limit) {
+        return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
+    }
+    let search = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    if search.is_some_and(|text| text.chars().count() > projects::MAX_SEARCH) {
+        return Err(ApiError::InvalidHeader(
+            "a search is at most 100 characters",
+        ));
+    }
+    let after = query
+        .cursor
+        .as_deref()
+        .map(|cursor| after_cursor(caller.identity, cursor))
+        .transpose()?;
+    // One more than the page, to know whether there is another.
+    let mut found = projects::page(&services.pool, caller.identity, after, search, limit + 1)
         .await
-        .map_err(ApiError::from_db)?
-        .into_iter()
-        .map(ProjectView::from)
-        .collect();
+        .map_err(ApiError::from_db)?;
+    let more = found.len() > usize::try_from(limit).map_err(ApiError::internal)?;
+    found.truncate(usize::try_from(limit).map_err(ApiError::internal)?);
+    let next_cursor = more
+        .then(|| found.last().map(|last| cursor(caller.identity, last.id)))
+        .flatten();
     Ok(Json(Page {
-        data,
-        next_cursor: None,
+        data: found.into_iter().map(ProjectView::from).collect(),
+        next_cursor,
     }))
+}
+
+fn cursor(identity: Uuid, last: Uuid) -> String {
+    URL_SAFE_NO_PAD.encode(format!("v1:projects:{identity}:{last}"))
+}
+
+fn after_cursor(identity: Uuid, cursor: &str) -> Result<Uuid, ApiError> {
+    let prefix = format!("v1:projects:{identity}:");
+    URL_SAFE_NO_PAD
+        .decode(cursor)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| Uuid::try_parse(text.strip_prefix(&prefix)?).ok())
+        .ok_or(ApiError::InvalidHeader(
+            "this cursor is not valid for this list",
+        ))
 }
 
 #[derive(Deserialize)]
