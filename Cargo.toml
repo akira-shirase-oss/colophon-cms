@@ -52,6 +52,8 @@ time = { version = "0.3.55", default-features = false, features = ["std"] }
 # makes every machine resolve them the same way, with no I/O.
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 url = { version = "2.5.8", default-features = false, features = ["std"] }
+# Text patterns in content types (step M.4): linear-time matching, so no pattern can stall a save.
+regex = { version = "1.13.1", default-features = false, features = ["std", "perf", "unicode"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 
 [workspace.lints.rust]

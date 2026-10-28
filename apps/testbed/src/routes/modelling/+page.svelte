@@ -27,7 +27,7 @@
 		fields: [
 			{ id: 'title', label: 'Title', type: 'text', required: true },
 			{ id: 'hero', label: 'Hero', type: 'object', fields: [{ id: 'heading', label: 'Heading', type: 'text', required: true }] },
-			{ id: 'tags', label: 'Tags', type: 'list', of: { type: 'text' }, max: 3 },
+			{ id: 'tags', label: 'Tags', type: 'list', of: { type: 'text', pattern: '[a-z]+' }, max: 3 },
 			{
 				id: 'sections',
 				label: 'Sections',
@@ -57,11 +57,11 @@
 		return { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken(), 'Idempotency-Key': crypto.randomUUID(), ...extra };
 	}
 
-	function page(by: string) {
+	function page(by: string, tag = 'news') {
 		return {
 			title: 'Home',
 			hero: { heading: 'Welcome' },
-			tags: ['news'],
+			tags: [tag],
 			sections: [
 				{ body: '# Hello', _block: 'text_block' },
 				{ by, text: 'Ship it', _block: 'quote' }
@@ -109,6 +109,11 @@
 		message = describe(reply);
 	}
 
+	async function saveShouting() {
+		const reply = await call('POST', `${env}/collections/pages/entries`, { headers: headers(), body: JSON.stringify(page(author, 'NEWS')) });
+		message = describe(reply);
+	}
+
 	/** Makes, submits, approves and publishes a changeset of `entries`; the answer, described. */
 	async function publish(entries: string[]) {
 		const made = await call('POST', `${env}/changesets`, { headers: headers(), body: JSON.stringify({ title: 'Testbed', entries }) });
@@ -140,8 +145,8 @@
 
 <h1>Content modelling</h1>
 <p class="lede">
-	Structures and references through the real API (steps M.1 to M.3, D-064 to D-066): a page with an object, a list and blocks whose
-	quote names a person. A reference to nobody is refused where it is; a page can't be published before the person it names; the
+	Structures, references and patterns through the real API (steps M.1 to M.4, D-064 to D-066, D-069): a page with an object, a list
+	of lowercase tags and blocks whose quote names a person. A reference to nobody and a tag in capitals are refused where they are; a page can't be published before the person it names; the
 	person's read lists what references them.
 </p>
 
@@ -163,6 +168,7 @@
 				<button type="button" onclick={setUp}>Set up types and Ada</button>
 				<button type="button" onclick={savePage} disabled={!author}>Save a page quoting Ada</button>
 				<button type="button" onclick={saveBroken} disabled={!author}>Save a quote by nobody</button>
+				<button type="button" onclick={saveShouting} disabled={!author}>Save a tag in capitals</button>
 			</p>
 			<p>
 				<button type="button" onclick={() => publish([pageId])} disabled={!pageId}>Publish the page alone</button>

@@ -369,6 +369,58 @@ async fn a_narrowing_change_goes_through_when_nothing_stored_is_in_the_way() {
         "{}",
         into.body
     );
+
+    // A pattern both stored tags match goes through; a different one is checked again (D-069).
+    let patterned = |pattern: &str| {
+        let mut definition = notes();
+        let fields = definition["fields"].as_array_mut().expect("a list");
+        fields.remove(2);
+        fields[1]["required"] = json!(true);
+        fields[1]["pattern"] = json!(pattern);
+        definition
+    };
+    let lowercase = put(patterned("[a-z]+"), "\"v3\"").await;
+    assert_eq!(lowercase.status, StatusCode::OK, "{}", lowercase.body);
+    let digits = put(patterned("[0-9]+"), "\"v4\"").await;
+    assert_eq!(
+        digits.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        digits.body
+    );
+    let details = &digits.body["error"]["details"];
+    assert_eq!(
+        (&details["reason"], &details["total"]),
+        (&json!("needs_migration"), &json!(2))
+    );
+    assert_eq!(
+        details["entries"][0]["problem"]["reason"],
+        "pattern_mismatch"
+    );
+
+    // New content is held to the pattern in force.
+    let loud = call(
+        &owner,
+        Method::POST,
+        &entries(&project, "notes"),
+        Some(&json!({"title": "Three", "tag": "LOUD"})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        loud.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        loud.body
+    );
+    assert_eq!(
+        (
+            &loud.body["error"]["details"]["reason"],
+            &loud.body["error"]["details"]["pointer"]
+        ),
+        (&json!("pattern_mismatch"), &json!("/tag"))
+    );
 }
 
 fn pages() -> Value {

@@ -45,6 +45,10 @@ pub const MAX_DEPTH: usize = 3;
 pub const MAX_ITEMS: u16 = 100;
 /// Most kinds of block one page builder offers (step M.3).
 pub const MAX_BLOCK_KINDS: usize = 20;
+/// Longest text pattern (step M.4).
+pub const MAX_PATTERN_CHARS: usize = 500;
+/// The most memory one compiled pattern may take, in bytes.
+const PATTERN_SIZE_LIMIT: usize = 1 << 20;
 
 /// Most fields in a content type.
 pub const MAX_FIELDS: usize = 100;
@@ -97,6 +101,9 @@ pub enum FieldKind {
         max_chars: u64,
         /// Whether line breaks are allowed.
         multiline: bool,
+        /// A regular expression the whole value must match (step M.4, D-069): Rust `regex`
+        /// syntax, so matching takes linear time.
+        pattern: Option<Pattern>,
     },
     /// A `colophon/rich-text` v1 document.
     RichText,
@@ -481,6 +488,31 @@ fn description(object: &Map<String, Value>, pointer: &Pointer) -> Result<String,
     }
 }
 
+/// Writes a text field's options: `min_chars` and `pattern` only when set, so older definitions
+/// keep their bytes.
+fn write_text_options(
+    out: &mut String,
+    (min_chars, max_chars): (u64, u64),
+    multiline: bool,
+    pattern: Option<&str>,
+) {
+    if min_chars > 0 {
+        out.push_str(r#","min_chars":"#);
+        out.push_str(&min_chars.to_string());
+    }
+    out.push_str(r#","max_chars":"#);
+    out.push_str(&max_chars.to_string());
+    out.push_str(if multiline {
+        r#","multiline":true"#
+    } else {
+        r#","multiline":false"#
+    });
+    if let Some(pattern) = pattern {
+        out.push_str(r#","pattern":"#);
+        write_string(out, pattern);
+    }
+}
+
 /// Writes a field kind's options, each as `,"key":value`, in a fixed order.
 fn write_options(out: &mut String, kind: &FieldKind) {
     match kind {
@@ -488,19 +520,13 @@ fn write_options(out: &mut String, kind: &FieldKind) {
             min_chars,
             max_chars,
             multiline,
-        } => {
-            if *min_chars > 0 {
-                out.push_str(r#","min_chars":"#);
-                out.push_str(&min_chars.to_string());
-            }
-            out.push_str(r#","max_chars":"#);
-            out.push_str(&max_chars.to_string());
-            out.push_str(if *multiline {
-                r#","multiline":true"#
-            } else {
-                r#","multiline":false"#
-            });
-        }
+            pattern,
+        } => write_text_options(
+            out,
+            (*min_chars, *max_chars),
+            *multiline,
+            pattern.as_ref().map(Pattern::as_str),
+        ),
         FieldKind::Number { integer, min, max } => {
             out.push_str(if *integer {
                 r#","integer":true"#
@@ -893,11 +919,69 @@ fn text_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind
                 )
             })?,
     };
+    let pattern = match object.get("pattern") {
+        None => None,
+        Some(value) => Some(
+            value
+                .as_str()
+                .filter(|text| (1..=MAX_PATTERN_CHARS).contains(&text.chars().count()))
+                .and_then(Pattern::new)
+                .ok_or_else(|| {
+                    refuse(
+                        "invalid_pattern",
+                        &at(pointer, "pattern"),
+                        format!(
+                            "`pattern` is a regular expression of 1 to {MAX_PATTERN_CHARS} characters, in Rust regex syntax (no look-around or back-references)"
+                        ),
+                    )
+                })?,
+        ),
+    };
     Ok(FieldKind::Text {
         min_chars,
         max_chars,
         multiline: bool_or(object, "multiline", false, pointer)?,
+        pattern,
     })
+}
+
+/// A text field's pattern: its source as written, compiled once to match the whole value within a
+/// 1 MiB size limit. Two patterns are equal when their sources are.
+#[derive(Debug, Clone)]
+pub struct Pattern {
+    source: String,
+    whole: regex::Regex,
+}
+
+impl Pattern {
+    /// Compiles `source`; `None` when it isn't a valid pattern or is too large.
+    fn new(source: &str) -> Option<Self> {
+        let whole = regex::RegexBuilder::new(&format!("^(?:{source})$"))
+            .size_limit(PATTERN_SIZE_LIMIT)
+            .dfa_size_limit(PATTERN_SIZE_LIMIT)
+            .build()
+            .ok()?;
+        Some(Self {
+            source: source.to_owned(),
+            whole,
+        })
+    }
+
+    /// The pattern as written in the definition.
+    pub fn as_str(&self) -> &str {
+        &self.source
+    }
+
+    /// Whether `text` matches the pattern whole, in time linear in its length.
+    pub fn matches(&self, text: &str) -> bool {
+        self.whole.is_match(text)
+    }
+}
+
+impl PartialEq for Pattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+    }
 }
 
 /// A markdown field's `max_chars` (default 100,000).
@@ -1053,13 +1137,20 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
                 min_chars: old_min,
                 max_chars: old_max,
                 multiline: old_multiline,
+                pattern: old_pattern,
             },
             FieldKind::Text {
                 min_chars: new_min,
                 max_chars: new_max,
                 multiline: new_multiline,
+                pattern: new_pattern,
             },
-        ) => new_min <= old_min && new_max >= old_max && (*new_multiline || !old_multiline),
+        ) => {
+            new_min <= old_min
+                && new_max >= old_max
+                && (*new_multiline || !old_multiline)
+                && (new_pattern.is_none() || new_pattern == old_pattern)
+        }
         // Markdown accepts any text that fits, line breaks included.
         (
             FieldKind::Text {
@@ -1247,6 +1338,7 @@ impl ContentType {
                         min_chars: 0,
                         max_chars: 200,
                         multiline: false,
+                        pattern: None,
                     },
                 },
                 Field {
@@ -1539,7 +1631,7 @@ impl ContentType {
             Some("text") => {
                 only(
                     object,
-                    &[common, &["min_chars", "max_chars", "multiline"]].concat(),
+                    &[common, &["min_chars", "max_chars", "multiline", "pattern"]].concat(),
                     pointer,
                 )?;
                 text_kind(object, pointer)?
@@ -1951,7 +2043,7 @@ impl ContentType {
         label: &str,
         value: &Value,
         (min_chars, max_chars): (u64, u64),
-        multiline: bool,
+        (multiline, pattern): (bool, Option<&Pattern>),
         pointer: &Pointer,
         out: &mut String,
     ) -> Result<(), Refusal> {
@@ -1964,6 +2056,13 @@ impl ContentType {
                 "too_short",
                 pointer,
                 format!("{label} is at least {min_chars} characters"),
+            ));
+        }
+        if pattern.is_some_and(|pattern| !pattern.matches(text)) {
+            return Err(refuse(
+                "pattern_mismatch",
+                pointer,
+                format!("{label} isn't in the form this field asks for"),
             ));
         }
         write_string(out, text);
@@ -2040,16 +2139,17 @@ impl ContentType {
                 min_chars,
                 max_chars,
                 multiline,
+                pattern,
             } => Self::text(
                 label,
                 value,
                 (*min_chars, *max_chars),
-                *multiline,
+                (*multiline, pattern.as_ref()),
                 pointer,
                 out,
             )?,
             FieldKind::Markdown { max_chars } => {
-                Self::text(label, value, (0, *max_chars), true, pointer, out)?;
+                Self::text(label, value, (0, *max_chars), (true, None), pointer, out)?;
             }
             FieldKind::Email
             | FieldKind::Url
@@ -3328,5 +3428,77 @@ mod tests {
                 .map_err(|refused| refused.pointer),
             Err("/single".to_owned())
         );
+    }
+
+    fn coded(pattern: &str) -> Result<ContentType, (&'static str, String)> {
+        ContentType::parse(&json!({
+            "name": "Codes", "title_field": "code",
+            "fields": [{"id": "code", "label": "Code", "type": "text", "required": true, "max_chars": 100_000, "pattern": pattern}]
+        }))
+        .map_err(|refused| (refused.code, refused.pointer))
+    }
+
+    #[test]
+    fn a_pattern_must_match_the_whole_value() {
+        let sku = coded("[A-Z]{3}-[0-9]{4}").expect("valid");
+        assert!(
+            sku.canonical_json()
+                .contains(r#""multiline":false,"pattern":"[A-Z]{3}-[0-9]{4}"}"#)
+        );
+        assert!(sku.validate(&json!({"code": "ABC-1234"})).is_ok());
+        for bad in ["abc-1234", "ABC-1234x", "xABC-1234", "ABC-123"] {
+            let refused = sku.validate(&json!({"code": bad})).expect_err(bad);
+            assert_eq!(
+                (refused.code, refused.pointer.as_str()),
+                ("pattern_mismatch", "/code"),
+                "{bad}"
+            );
+        }
+        // Linear-time matching: a pattern that makes backtracking engines run for ages finishes.
+        let nested = coded("(a+)+").expect("valid");
+        let long = format!("{}b", "a".repeat(50_000));
+        assert_eq!(
+            nested
+                .validate(&json!({"code": long}))
+                .expect_err("no match")
+                .code,
+            "pattern_mismatch"
+        );
+    }
+
+    #[test]
+    fn patterns_are_checked_where_they_are_defined_and_changes_follow_the_rules() {
+        for bad in ["(", "(?=look)ahead", r"(a)\1", ""] {
+            assert_eq!(
+                coded(bad).map(|_| ()),
+                Err(("invalid_pattern", "/fields/0/pattern".to_owned())),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(
+            coded(&"a".repeat(501)).map(|_| ()).map_err(|e| e.0),
+            Err("invalid_pattern")
+        );
+        let plain = ContentType::parse(&json!({
+            "name": "Codes", "title_field": "code",
+            "fields": [{"id": "code", "label": "Code", "type": "text", "required": true, "max_chars": 100_000}]
+        }))
+        .expect("valid");
+        let upper = coded("[A-Z]+").expect("valid");
+        let letters = coded("[A-Za-z]+").expect("valid");
+        assert!(
+            matches!(plain.successor(&upper), Successor::CheckContent(_)),
+            "a new pattern needs the content checked"
+        );
+        assert!(
+            matches!(upper.successor(&letters), Successor::CheckContent(_)),
+            "so does a different one"
+        );
+        assert_eq!(
+            upper.successor(&plain),
+            Successor::Compatible,
+            "dropping one never refuses anything"
+        );
+        assert_eq!(upper.successor(&upper), Successor::Compatible);
     }
 }

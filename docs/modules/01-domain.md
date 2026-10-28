@@ -93,6 +93,11 @@ invariant. Production adapters and the simulator both run this code unchanged.
   a reference anywhere keeps its path, and retargeting one at any depth is `Refused`. Reusable shared components are M.4.
 - Built in step M.4 (D-067): `"single": true` makes a content type hold at most one entry (`ContentType::single`),
   written into the canonical definition only when true.
+- Built in step M.4 (D-069): a text field's `pattern` (1 to `MAX_PATTERN_CHARS` = 500 characters, Rust `regex` syntax)
+  must match the whole value. `Pattern` compiles it once when the definition is parsed, anchored and within a 1 MiB
+  size limit, and compares by its source; matching takes time linear in the value, so no pattern can stall a write.
+  Refusals: `invalid_pattern` where it is defined, `pattern_mismatch` at the value. Adding or changing a pattern is
+  `CheckContent`; removing one is `Compatible`.
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the

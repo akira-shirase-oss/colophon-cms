@@ -1,6 +1,6 @@
-// Content modelling through the testbed (steps M.1 to M.3, D-064 to D-066): types with an
-// object, a list and blocks whose quote names a person; the page is stored in canonical form, a
-// quote by nobody is refused where it is, the page can't be published before the person, both
+// Content modelling through the testbed (steps M.1 to M.4, D-064 to D-066, D-069): types with an
+// object, a list of lowercase tags and blocks whose quote names a person; the page is stored in
+// canonical form, a quote by nobody and a tag in capitals are refused where they are, the page can't be published before the person, both
 // together can, and the person's read lists what references them.
 
 import { expect, type Page, test } from '@playwright/test';
@@ -37,6 +37,8 @@ test('structures are stored canonically, references are checked, and publishing 
 
 	await page.getByRole('button', { name: 'Save a quote by nobody' }).click();
 	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (reference_not_found at /sections/1/by)');
+	await page.getByRole('button', { name: 'Save a tag in capitals' }).click();
+	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (pattern_mismatch at /tags/0)');
 
 	await page.getByRole('button', { name: 'Publish the page alone' }).click();
 	await expect(page.getByTestId('message')).toHaveText('409 conflict (references_unpublished)');
