@@ -150,7 +150,7 @@ Revokes a token. Requests already running under it finish first; none starts aft
 
 ### `GET {P}/permissions`
 
-What the caller may do in this project: a person's role and its permissions, or a token's own. Clients use it to offer only what will work; the MCP server lists its tools from it. It is discovery, not authorization: a permission narrowed to some fields or to the caller's own entries still refuses other entries, and every request is still decided on its own.
+What the caller may do in this project: a person's role and its permissions, or a token's own. Clients use it to offer only what will work; the [MCP server](/reference/mcp/) lists its tools from it. It is discovery, not authorization: a permission narrowed to some fields or to the caller's own entries still refuses other entries, and every request is still decided on its own.
 
 - **Who:** any member, and any API token of the project. It sits under `{P}`, so a revoked token gets `401` and another project's token `404`.
 

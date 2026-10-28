@@ -126,6 +126,7 @@ export const SECTIONS: Section[] = [
 			md('/reference/cli/', 'Command line', 'The colophon command: sign-in, content, the operator commands, JSON output and exit codes.', done('1.8')),
 			md('/reference/content-modelling/', 'Content modelling', 'Every field type with its options and stored form, references, objects, lists and blocks, single types, patterns and unique fields.', building('M.1–M.4')),
 			md('/reference/rich-text/', 'Rich-text format', 'colophon/rich-text v1: the stored JSON of every rich-text field, its limits and error codes.', done('0.5')),
+			md('/reference/mcp/', 'The MCP server', 'colophon-mcp: eight tools for AI agents over the same API, with a project API token; it reads, drafts and asks for review, and never approves or publishes.', building('D-068')),
 			md('/reference/webhooks/', 'Webhooks', 'The release.committed payload, CDN purges and probes: headers, retries, addresses and what a receiver must do.', done('2.3'))
 		]
 	},
