@@ -65,6 +65,11 @@ export function patternMismatch(label: string, help = ''): string {
 	return `${label} isn't in its ${ALLOWED_FORM}.${help.trim() === '' ? '' : ` ${help.trim()}`}`;
 }
 
+/** A field's default (D-071), as the builder offers it, and its refusal (`invalid_default`) when the
+ *  server's own words can't be shown. */
+export const DEFAULT_VALUE = 'Default value (optional)';
+export const INVALID_DEFAULT = 'This default isn’t a value the field accepts. Check its choices, limits and allowed form, or clear it.';
+
 /** A unique field (D-070), as the builder offers it. */
 export const UNIQUE = 'No two entries may share this';
 /** A value another entry already has (`value_taken` on a save), said under the field. */

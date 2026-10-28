@@ -109,6 +109,10 @@ export type FieldDefinition = {
 	/** No two entries may share its value (D-070): top-level single-line text, email, URL, number,
 	 *  date, time and date-time fields only. Written only when true. */
 	unique?: boolean;
+	/** What a new entry starts with when it leaves this field out (D-071), in canonical form: a
+	 *  top-level field that isn't unique and holds text, Markdown, a number, true or false, a
+	 *  choice, a date, a time, a date-time, an email, a URL or a colour. Written only when set. */
+	default?: unknown;
 } & (
 	/** `pattern` (D-069): the form every value must take, a regular expression matched against the
 	 *  whole value on the server (Rust syntax; the Studio never imitates it). */

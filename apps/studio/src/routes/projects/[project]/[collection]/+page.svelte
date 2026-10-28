@@ -174,6 +174,21 @@
 	// `?new=1` (the first-run checklist's "Write") opens the new-entry dialog at once.
 	let creating = $state(page.url.searchParams.get('new') === '1');
 	let form = $state<Record<string, FormValue>>({});
+	// Opening the dialog shows each asked field's default (D-071), so it's seen before the entry is
+	// made; what's left out gets its default from the server.
+	let prefilledFor: string | null = null;
+	$effect(() => {
+		const fields = asked;
+		if (!creating) {
+			prefilledFor = null;
+			return;
+		}
+		if (prefilledFor === collection || fields.length === 0) return;
+		prefilledFor = collection;
+		for (const field of fields) {
+			if (field.default !== undefined && form[field.id] === undefined) form[field.id] = formValue(field, field.default);
+		}
+	});
 	let error = $state('');
 	/** The single type already has its entry (409 `single_exists`): offer to open it. */
 	let exists = $state(false);

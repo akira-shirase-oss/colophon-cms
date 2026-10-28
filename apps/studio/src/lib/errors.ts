@@ -95,7 +95,7 @@ const DOES: Record<Action, string> = {
 };
 
 /** The server's message as a sentence, if it has no internal words; else `fallback`. */
-function plainOr(message: string, fallback: string): string {
+export function plainOr(message: string, fallback: string): string {
 	if (message === '' || INTERNAL_TERMS.test(message)) return fallback;
 	// The server quotes labels in backticks (`Question` is required); people read them plainly.
 	const words = message.replace(/`([^`]+)`/g, '$1');

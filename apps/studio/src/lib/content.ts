@@ -83,7 +83,8 @@ export function titleOf(definition: Definition, content: Content): string {
 export function starter(definition: Definition): Content {
 	const content: Content = {};
 	for (const field of definition.fields) {
-		if (!field.required) continue;
+		// A field with a default is left out: the server fills it on creation (D-071).
+		if (!field.required || field.default !== undefined) continue;
 		if (field.type === 'rich_text') content[field.id] = EMPTY_DOCUMENT;
 		if (field.type === 'boolean') content[field.id] = false;
 		if (field.type === 'enum') content[field.id] = field.values[0];

@@ -226,6 +226,13 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   role can't read is refused without its name. A release that would publish a value another entry still publishes is
   said in the publish flow's words. Words in `lib/words.ts`. Tests: `tests/unique.spec.ts`,
   `tests/server/unique.spec.ts`.
+- D-071 in the Studio: **field defaults**. The builder's *Default value (optional)* uses the field's own kind of input
+  (`defaultInput` in `lib/fieldDefs.ts`: a text box, a number box, Yes/No, the choices, date, time and date-time
+  pickers, a colour), only on top-level fields that aren't unique and can have one (`canHaveDefault`); cleared, it's
+  left out; `invalid_default` is said at that input. A new entry leaves defaulted fields to the server, which fills
+  them on creation (the starter no longer picks a required choice's first option or false over a default), and the
+  new-entry dialog shows a required field's default already chosen. Entries written before are never touched. Tests:
+  `tests/defaults.spec.ts`, `tests/server/defaults.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

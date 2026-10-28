@@ -13,8 +13,9 @@
 	import { Input } from '@colophon/ui/ui/input';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { type ContentType, FIELD_TYPES, type FieldDefinition, type FieldType, type ItemKind, MAX_DEPTH } from './api.ts';
-	import { blank, blankBlock, blankKind, canBeUnique, canNest, idFrom, ITEM_TYPES, NAMES, STRUCTURES } from './fieldDefs.ts';
-	import { INVALID_UNIQUE, UNIQUE } from './words.ts';
+	import { blank, blankBlock, blankKind, canBeUnique, canHaveDefault, canNest, defaultInput, idFrom, ITEM_TYPES, NAMES, STRUCTURES } from './fieldDefs.ts';
+	import { toLocal, toUtc } from './content.ts';
+	import { DEFAULT_VALUE, INVALID_UNIQUE, UNIQUE } from './words.ts';
 	import FieldsEditor from './FieldsEditor.svelte';
 
 	let {
@@ -101,6 +102,15 @@
 		if (value === undefined || value < 1) delete field.min_chars;
 		else field.min_chars = Math.trunc(value);
 	}
+
+	/** A default (D-071): the field's own kind of value, written only when set. */
+	function setDefault(field: FieldDefinition, value: unknown) {
+		if (value === undefined || value === '') delete field.default;
+		else field.default = value;
+	}
+	/** A number box's text as the default: a number, or the text itself for the server to refuse. */
+	const numberDefault = (text: string) => (text.trim() === '' ? undefined : Number.isFinite(Number(text)) ? Number(text) : text);
+	const swatch = (value: unknown) => (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : '#000000');
 
 	/** Unique (D-070): written only when true. */
 	function setUnique(field: FieldDefinition, on: boolean) {
@@ -362,6 +372,46 @@
 						<span class="text-xs text-muted-foreground">Each value belongs to one entry, among drafts and among what readers get.</span>
 					{/if}
 					{#if refusal?.pointer === `${pointer}/${index}/unique`}<span class="text-xs text-destructive" data-testid="unique-problem">{refusal.message}</span>{/if}
+				</div>
+			{/if}
+			{#if canHaveDefault(field, depth) || field.default !== undefined}
+				{@const kind = defaultInput(field)}
+				{@const refused = refusal?.pointer === `${pointer}/${index}/default`}
+				<div class="grid max-w-md gap-1 text-sm" data-testid="field-default">
+					<label class="grid gap-1">
+						<span class="text-muted-foreground">{DEFAULT_VALUE}</span>
+						{#if kind === 'yes-no'}
+							<select class={select} value={field.default === true ? 'yes' : field.default === false ? 'no' : ''} onchange={(event) => setDefault(field, { yes: true, no: false }[event.currentTarget.value as 'yes' | 'no'])} disabled={!editable} aria-invalid={refused || undefined}>
+								<option value="">No default</option>
+								<option value="yes">Yes</option>
+								<option value="no">No</option>
+							</select>
+						{:else if kind === 'choice' && field.type === 'enum'}
+							<select class={select} value={typeof field.default === 'string' ? field.default : ''} onchange={(event) => setDefault(field, event.currentTarget.value)} disabled={!editable} aria-invalid={refused || undefined}>
+								<option value="">No default</option>
+								{#each field.values as option (option)}<option value={option}>{option}</option>{/each}
+							</select>
+						{:else if kind === 'textarea'}
+							<Textarea rows={2} value={typeof field.default === 'string' ? field.default : ''} oninput={(event) => setDefault(field, event.currentTarget.value)} disabled={!editable} aria-invalid={refused || undefined} />
+						{:else if kind === 'number'}
+							<Input class="h-8 w-40 tabular" type="number" step="any" value={field.default === undefined ? '' : String(field.default)} oninput={(event) => setDefault(field, numberDefault(event.currentTarget.value))} disabled={!editable} aria-invalid={refused || undefined} />
+						{:else if kind === 'datetime-local'}
+							<Input class="h-8 max-w-60" type="datetime-local" step="1" value={typeof field.default === 'string' ? toLocal(field.default) : ''} oninput={(event) => setDefault(field, event.currentTarget.value === '' ? undefined : toUtc(event.currentTarget.value))} disabled={!editable} aria-invalid={refused || undefined} />
+						{:else if kind === 'color'}
+							<Input class="h-8 max-w-40 font-mono" placeholder="#1a2b3c" maxlength={7} value={typeof field.default === 'string' ? field.default : ''} oninput={(event) => setDefault(field, event.currentTarget.value.trim().toLowerCase())} disabled={!editable} aria-invalid={refused || undefined} />
+						{:else}
+							<Input class="h-8" type={kind ?? 'text'} value={typeof field.default === 'string' ? field.default : ''} oninput={(event) => setDefault(field, event.currentTarget.value)} disabled={!editable} aria-invalid={refused || undefined} />
+						{/if}
+					</label>
+					{#if kind === 'color'}
+						<input type="color" class="h-8 w-12 rounded-md border border-input bg-card p-1" aria-label="Pick the default {field.label}" value={swatch(field.default)} oninput={(event) => setDefault(field, event.currentTarget.value.toLowerCase())} disabled={!editable} />
+					{/if}
+					{#if !canHaveDefault(field, depth)}
+						<span class="text-xs text-destructive">A field that must be unique can't have a default: two new entries would share it. Clear it.</span>
+					{:else}
+						<span class="text-xs text-muted-foreground">New entries start with this; changing it never touches entries already written.</span>
+					{/if}
+					{#if refused}<span class="text-xs text-destructive" data-testid="default-problem">{refusal?.message}</span>{/if}
 				</div>
 			{/if}
 			<label class="grid max-w-xl gap-1 text-sm">

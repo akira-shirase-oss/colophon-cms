@@ -124,5 +124,47 @@ export function canBeUnique(field: FieldDefinition, depth: number): boolean {
 	return ['email', 'url', 'number', 'date', 'time', 'datetime'].includes(field.type);
 }
 
+/** Whether a field may have a default (D-071): top-level, not unique, and of a kind with one sensible
+ *  starting value (not rich text, JSON, links, URL names or structures). */
+export function canHaveDefault(field: FieldDefinition, depth: number): boolean {
+	return (
+		depth === 0 &&
+		field.unique !== true &&
+		['text', 'markdown', 'number', 'boolean', 'enum', 'date', 'time', 'datetime', 'email', 'url', 'color'].includes(field.type)
+	);
+}
+
+/** The control a field's default is chosen with in the builder: the field's own kind of input. */
+export type DefaultInput = 'text' | 'textarea' | 'number' | 'yes-no' | 'choice' | 'date' | 'time' | 'datetime-local' | 'email' | 'url' | 'color';
+
+export function defaultInput(field: FieldDefinition): DefaultInput | null {
+	switch (field.type) {
+		case 'text':
+			return field.multiline ? 'textarea' : 'text';
+		case 'markdown':
+			return 'textarea';
+		case 'number':
+			return 'number';
+		case 'boolean':
+			return 'yes-no';
+		case 'enum':
+			return 'choice';
+		case 'date':
+			return 'date';
+		case 'time':
+			return 'time';
+		case 'datetime':
+			return 'datetime-local';
+		case 'email':
+			return 'email';
+		case 'url':
+			return 'url';
+		case 'color':
+			return 'color';
+		default:
+			return null;
+	}
+}
+
 /** A section kind from its label. */
 export const blankBlock = (label: string): BlockKind => ({ name: idFrom(label), label, fields: [] });

@@ -15,7 +15,8 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
 	import { ApiError, type ContentType, type Definition, type Details, type FieldDefinition, newKey, updateContentType } from './api.ts';
-	import { plainError } from './errors.ts';
+	import { plainError, plainOr } from './errors.ts';
+	import { INVALID_DEFAULT } from './words.ts';
 	import { savedPaths, structureProblems } from './fieldDefs.ts';
 	import FieldsEditor from './FieldsEditor.svelte';
 	import { typesQuery } from './queries.ts';
@@ -73,6 +74,8 @@
 				const words =
 					failure.reason === 'too_many_entries' || failure.reason === 'invalid_pattern' || failure.reason === 'invalid_unique'
 						? plainError(failure)
+						: failure.reason === 'invalid_default'
+							? plainOr(failure.message, INVALID_DEFAULT)
 						: failure.reason === 'needs_migration' && failure.details?.pointer?.endsWith('/unique')
 							? 'Some entries share a value in this field, so it can’t be kept unique yet. Change them (they are listed below), then save again.'
 							: failure.message;
