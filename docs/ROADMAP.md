@@ -258,8 +258,9 @@ breaking point and fails safely past it.
 
 **Built (S.1, D-075):** `scripts/cluster.sh` (three servers and two workers behind HAProxy), `CLUSTER=1
 scripts/load.sh`, and `scripts/failover.sh kill|drain`, whose first runs passed at 100 writes a second; the readiness
-probe got a connection of its own after the first drain run found every server going unready together. Next: rate
-limits shared across instances, stress mode, and the one-, two- and three-server comparison on a quiet machine.
+probe got a connection of its own after the first drain run found every server going unready together. **Built (S.2,
+D-076):** rate limits per address and per credential, shared in Valkey and applied by each server without it. Next:
+stress mode and the one-, two- and three-server comparison on a quiet machine.
 
 **Proof gate:** a server killed under load behind the balancer fails only in-flight requests and idempotent retries
 succeed; a draining server finishes what it accepted; rate limits hold across instances and when Valkey is down;

@@ -146,6 +146,12 @@ pub struct Config {
     /// run (D-051). `COLOPHON_WORKER_LOCATION`: 1 to 63 lowercase letters, digits and dashes,
     /// default `local`.
     pub worker_location: String,
+    /// Rate limits (D-076): `COLOPHON_RATE_LIMIT_PER_ADDRESS` (default `300/600`, requests a
+    /// second and burst, or `off`), `COLOPHON_RATE_LIMIT_PER_CREDENTIAL` (default `150/300`),
+    /// `COLOPHON_RATE_LIMIT_DELIVERY` (public delivery per address, default `1000/2000`), and
+    /// `COLOPHON_TRUSTED_PROXIES` (comma-separated addresses or networks whose
+    /// `X-Forwarded-For` names the client; default none).
+    pub admission: colophon_api::admission::AdmissionSettings,
 }
 
 /// Whether `text` can name a worker's location: what destinations.location accepts.
@@ -234,6 +240,30 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
 
     fn millis(&mut self, key: &str, default_ms: u64, range: RangeInclusive<u64>) -> Duration {
         Duration::from_millis(self.ranged(key, default_ms, range))
+    }
+
+    /// A rate limit (D-076): `off`, `<per second>` or `<per second>/<burst>`.
+    fn rate(&mut self, key: &str, default: &str) -> Option<colophon_api::admission::Rate> {
+        let raw = self.raw(key).unwrap_or_else(|| default.to_owned());
+        colophon_api::admission::Rate::parse(&raw).unwrap_or_else(|error| {
+            self.problems.push(format!("{key}: {error}"));
+            colophon_api::admission::Rate::parse(default).ok().flatten()
+        })
+    }
+
+    /// Comma-separated addresses or networks; none when unset.
+    fn prefixes(&mut self, key: &str) -> Vec<colophon_api::admission::IpPrefix> {
+        let Some(raw) = self.raw(key) else {
+            return Vec::new();
+        };
+        let mut prefixes = Vec::new();
+        for item in raw.split(',') {
+            match colophon_api::admission::IpPrefix::parse(item) {
+                Ok(prefix) => prefixes.push(prefix),
+                Err(error) => self.problems.push(format!("{key}: {item:?}: {error}")),
+            }
+        }
+        prefixes
     }
 
     /// Sign-in settings: the public origin, extra trusted origins, and the OIDC client, with the
@@ -339,6 +369,12 @@ impl Config {
         let worker_slots = env.ranged("COLOPHON_WORKER_SLOTS", 8, 1..=64);
         let worker_attempt = env.millis("COLOPHON_WORKER_ATTEMPT_MS", 10_000, 100..=60_000);
         let worker_db_connections = env.ranged("COLOPHON_WORKER_DB_CONNECTIONS", 4, 1..=100);
+        let admission = colophon_api::admission::AdmissionSettings {
+            per_address: env.rate("COLOPHON_RATE_LIMIT_PER_ADDRESS", "300/600"),
+            per_credential: env.rate("COLOPHON_RATE_LIMIT_PER_CREDENTIAL", "150/300"),
+            delivery_per_address: env.rate("COLOPHON_RATE_LIMIT_DELIVERY", "1000/2000"),
+            trusted_proxies: env.prefixes("COLOPHON_TRUSTED_PROXIES"),
+        };
         let worker_location = env
             .raw("COLOPHON_WORKER_LOCATION")
             .unwrap_or_else(|| "local".to_owned());
@@ -396,6 +432,7 @@ impl Config {
                 worker_attempt,
                 worker_db_connections,
                 worker_location,
+                admission,
             })
         } else {
             Err(ConfigError {

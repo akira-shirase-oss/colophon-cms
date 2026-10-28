@@ -64,6 +64,14 @@ create → conflict → review → publish scenario produce equivalent durable r
   6. `CatchPanicLayer::custom`;
   7. timeout (504 `deadline_exceeded`);
   8. body limit (1 MiB; uploads stream separately).
+- Inside that stack, around every route: rate limits (milestone S, D-076; `admission.rs`). The management API
+  (`/api/`, `/auth/`) counts per client address and per credential (a session cookie or bearer token, hashed; a
+  made-up one counts too), public delivery (`/content/`) per client address at its own rate; health, `/version` and
+  the Studio's files never count. Over a limit: 429 `rate_limited` (`details.reason` `rate_limited`) with
+  `Retry-After` in seconds, before any handler runs. GCRA in one Valkey script on Valkey's clock, so every server
+  shares one count; without Valkey (down, or slower than 100 ms) each server applies the limits on its own. The
+  client address is the peer, or behind a trusted proxy (`COLOPHON_TRUSTED_PROXIES`) the nearest untrusted
+  `X-Forwarded-For` hop.
 - `AppState` is cheap to clone (`Arc`s); there is no global mutable state.
 - A fallback route returns the error envelope.
 

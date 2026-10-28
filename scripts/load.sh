@@ -163,6 +163,11 @@ else
     . scripts/local-env.sh
     # The public URL is the sign-in redirect URI registered in the development realm.
     export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
+    # One machine sends every request: rate limits (D-076) that never refuse, so each request
+    # still pays for its check and the run measures it.
+    export COLOPHON_RATE_LIMIT_PER_ADDRESS="${COLOPHON_RATE_LIMIT_PER_ADDRESS:-1000000/1000000}" \
+      COLOPHON_RATE_LIMIT_PER_CREDENTIAL="${COLOPHON_RATE_LIMIT_PER_CREDENTIAL:-1000000/1000000}" \
+      COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000000/1000000}"
     if [[ -n "$studio_dir" ]]; then export COLOPHON_STUDIO_DIR="$studio_dir"; fi
     exec target/release/colophon-server
   ) >"$work/server.log" 2>&1 &

@@ -53,7 +53,7 @@ is built: one version (`0.1.0-alpha.1`, `colophon --version`, `GET /version`, th
 release workflow written but not yet run on GitHub, the `@colophon-cms/cli` npm launcher, an install script and a
 Homebrew formula template; publishing waits on the maintainer (npm organization, `NPM_TOKEN`, a licence, a tag; see
 module 19). Next: step 3.8 (the site goes live, the first public demo) and the rest of M.4. D-062 adds milestones S (several servers behind a load balancer, stress
-runs, Rust benchmarks; S.1, the multi-instance stack and failover proof, is built: `scripts/cluster.sh`, `scripts/failover.sh`, D-075) and V (versions, and the CLI, SDK and MCP server packaged for npm, Cargo and Homebrew).
+runs, Rust benchmarks; S.1, the multi-instance stack and failover proof, is built: `scripts/cluster.sh`, `scripts/failover.sh`, D-075; S.2, rate limits shared in Valkey, D-076) and V (versions, and the CLI, SDK and MCP server packaged for npm, Cargo and Homebrew).
 
 ## Read first
 

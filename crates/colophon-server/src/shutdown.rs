@@ -88,9 +88,13 @@ pub async fn serve(
             tracing::debug!(%error, "could not set TCP_NODELAY");
         }
     });
-    let server = axum::serve(listener, app)
-        .with_graceful_shutdown(stop_accepting)
-        .into_future();
+    // Each request carries its peer's address, for the per-address rate limits (D-076).
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(stop_accepting)
+    .into_future();
 
     let hard_deadline = async move {
         // If the server ends without a trigger, the sender is dropped: never fire.
