@@ -53,7 +53,7 @@ is built: one version (`0.1.0-alpha.1`, `colophon --version`, `GET /version`, th
 release workflow written but not yet run on GitHub, the `@colophon-cms/cli` npm launcher, an install script and a
 Homebrew formula template; publishing waits on the maintainer (npm organization, `NPM_TOKEN`, a licence, a tag; see
 module 19). Next: step 3.8 (the site goes live, the first public demo) and the rest of M.4. D-062 adds milestones S (several servers behind a load balancer, stress
-runs, Rust benchmarks; S.1, the multi-instance stack and failover proof, is built: `scripts/cluster.sh`, `scripts/failover.sh`, D-075; S.2, rate limits shared in Valkey, D-076; S.3, `scripts/load.sh <endpoint> stress`, D-077) and V (versions, and the CLI, SDK and MCP server packaged for npm, Cargo and Homebrew).
+runs, Rust benchmarks; Criterion micro-benchmarks of the per-request hot paths and a pull-request check that times the base and the head on one runner, `crates/colophon-bench`, `scripts/bench.sh`, D-074; S.1, the multi-instance stack and failover proof, is built: `scripts/cluster.sh`, `scripts/failover.sh`, D-075; S.2, rate limits shared in Valkey, D-076; S.3, `scripts/load.sh <endpoint> stress`, D-077) and V (versions, and the CLI, SDK and MCP server packaged for npm, Cargo and Homebrew).
 
 ## Read first
 
@@ -144,7 +144,10 @@ and, when the local stack is running, CI's integration half: `scripts/stack.sh c
 the stack (`cargo test --workspace -- --ignored --test-threads=1`; they stop and restart services), `scripts/testbed.sh`
 (svelte-check and Playwright), `scripts/studio.sh` (the Studio against the real server) and the `scripts/load.sh`
 smoke runs (health, rich-text validation, signed-in requests, drafts, the Studio). Run it before every push. Full load runs:
-`scripts/load.sh throughput|steady [--baseline]`; commit the result files they write.
+`scripts/load.sh throughput|steady [--baseline]`; commit the result files they write. Micro-benchmarks:
+`scripts/bench.sh` (medians to `perf/results/`) and `scripts/bench.sh compare <base>` (both builds timed on this
+machine; never compare numbers across machines). Benchmarks go in `colophon-bench`, not `colophon-domain`, whose
+dev-dependencies change serde_json's maps (D-074).
 
 The local stack (`scripts/stack.sh up`, details in `deploy/README.md`) binds every port to `127.0.0.1`; its credentials
 are public development values. The database has two logins: `colophon` owns the tables and runs migrations

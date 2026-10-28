@@ -1,0 +1,30 @@
+[package]
+name = "colophon-bench"
+description = "Colophon's micro-benchmarks (milestone S, D-074): deterministic inputs for the per-request hot paths, and the Criterion benchmarks that time them."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The benchmarks get a crate of their own so they measure what the server ships. Inside
+# colophon-domain they would build with its dev-dependencies, whose serde_json has
+# `preserve_order`: every JSON object would be an IndexMap there and a BTreeMap in the server.
+[lib]
+# libtest would reject Criterion's flags (`--save-baseline`, `--noplot`) under `cargo bench`.
+bench = false
+
+[dependencies]
+colophon-auth.workspace = true
+colophon-domain.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "hot_paths"
+harness = false
+
+[lints]
+workspace = true

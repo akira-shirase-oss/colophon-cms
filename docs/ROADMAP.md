@@ -255,6 +255,8 @@ breaking point and fails safely past it.
 - `perf`: a stress mode for every k6 scenario (raise the rate until the latency gate breaks; record the highest
   sustained rate and the failure mode); the same runs on one, two and three servers.
 - Rust: Criterion benchmarks for hot paths with a CI regression check; profiles of each milestone's heaviest scenario.
+  **Built:** the benchmarks (`crates/colophon-bench`), `scripts/bench.sh` and the pull-request check that times base
+  and head on one runner (D-074); the profiles are still to do.
 
 **Built (S.1, D-075):** `scripts/cluster.sh` (three servers and two workers behind HAProxy), `CLUSTER=1
 scripts/load.sh`, and `scripts/failover.sh kill|drain`, whose first runs passed at 100 writes a second; the readiness

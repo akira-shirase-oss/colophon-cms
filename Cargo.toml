@@ -29,6 +29,10 @@ aws-lc-rs = { version = "1.15", default-features = false, features = ["aws-lc-sy
 axum = "0.8.9"
 base64 = "0.22"
 clap = { version = "4.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "env"] }
+# Micro-benchmarks only (crates/colophon-bench, D-074). No default features: no plots (plotters),
+# no rayon (it only parallelizes the statistics after measuring); scripts/bench.sh reads the
+# estimates Criterion writes as JSON.
+criterion = { version = "0.8.2", default-features = false }
 futures-util = { version = "0.3", default-features = false }
 http-body = "1.1"
 http-body-util = "0.1.5"
