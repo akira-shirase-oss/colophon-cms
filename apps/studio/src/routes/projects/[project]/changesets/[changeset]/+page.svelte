@@ -16,7 +16,9 @@
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Textarea } from '@colophon/ui/ui/textarea';
-	import { ApiError, type Changeset, changesetAction, getChangeset, may, mayOn, newKey, publishChangeset } from '#lib/api.ts';
+	import { ApiError, type Changeset, changesetAction, createChangeset, getChangeset, may, mayOn, newKey, publishChangeset } from '#lib/api.ts';
+	import { goto } from '$app/navigation';
+	import { explainLinks, type Named } from '#lib/references.ts';
 	import { plainError } from '#lib/errors.ts';
 	import ItemDiff from '#lib/ItemDiff.svelte';
 	import SchedulePanel from '#lib/SchedulePanel.svelte';
@@ -56,6 +58,8 @@
 
 	let comment = $state('');
 	let error = $state('');
+	/** Linked entries a refused publish named, which a new request could include. */
+	let missing = $state<Named[]>([]);
 	let notice = $state('');
 	let busy = $state(false);
 	const STALE = `This ${PUBLISH_REQUEST} changed since you loaded it. Here is the current one: check it, then try again.`;
@@ -66,10 +70,18 @@
 		busy = true;
 		error = '';
 		notice = '';
+		missing = [];
 		try {
 			await publishChangeset(project, id, shown.hash, base, publishKey);
 			publishKey = newKey();
 		} catch (failure) {
+			const links = failure instanceof ApiError ? await explainLinks(project, id, failure.reason, types.data) : null;
+			if (links !== null) {
+				error = links.text;
+				missing = links.missing.filter((entry) => !entry.title.startsWith('an entry'));
+				publishKey = newKey();
+				return;
+			}
 			if (failure instanceof ApiError && failure.reason === 'generation_moved') {
 				notice = 'Another release was published first. Check what is live now, then publish again.';
 				publishKey = newKey();
@@ -86,6 +98,24 @@
 				queryClient.invalidateQueries({ queryKey: ['changesets', project] }),
 				queryClient.invalidateQueries({ queryKey: ['entries', project] })
 			]);
+		}
+	}
+
+	/** A new request with this one's entries and the linked ones it was missing; it opens next. */
+	async function includeLinked(shown: Changeset) {
+		busy = true;
+		try {
+			const publishing = shown.items.filter((item) => item.kind === 'publish').map((item) => item.entry_id);
+			const leaving = shown.items.filter((item) => item.kind === 'unpublish').map((item) => item.entry_id);
+			const made = await createChangeset(project, `${shown.title}, with what it links to`, [...publishing, ...missing.map((entry) => entry.id)], leaving, newKey());
+			missing = [];
+			error = '';
+			await queryClient.invalidateQueries({ queryKey: ['changesets', project] });
+			await goto(resolve('/projects/[project]/changesets/[changeset]', { project, changeset: made.id }));
+		} catch (failure) {
+			error = plainError(failure, 'make this request');
+		} finally {
+			busy = false;
 		}
 	}
 
@@ -176,7 +206,16 @@
 	</ol>
 
 	{#if notice}<p role="status" class="mb-4 rounded-lg bg-pending-soft px-4 py-3 text-sm text-pending-ink" data-testid="changeset-notice">{notice}</p>{/if}
-	{#if error}<p role="alert" class="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>{/if}
+	{#if error}
+		<div role="alert" class="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive" data-testid="changeset-error">
+			<p>{error}</p>
+			{#if missing.length > 0}
+				<Button class="mt-3" variant="outline" size="sm" disabled={busy} onclick={() => includeLinked(shown)} data-testid="include-linked">
+					Make a {PUBLISH_REQUEST} that includes {missing.length === 1 ? missing[0]?.title : 'them'}
+				</Button>
+			{/if}
+		</div>
+	{/if}
 
 	<div class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
 		<section aria-labelledby="items-heading">

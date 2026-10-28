@@ -1,10 +1,11 @@
 // Links between entries (step M.2, D-065) in the Studio, against the real server: a link field built
 // in the builder; an author chosen by searching titles, kept after a reload; a list of three,
 // reordered; a linked entry the role can't read shown as "An entry you can't see"; an id the server
-// refuses marked on its chip.
+// refuses marked on its chip. Publishing a story whose author isn't published, or taking down an
+// author a published story names, is refused, and the Studio names them and says what to do.
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, key, member, newEntry, newProject, signIn, violations } from './helpers.ts';
+import { api, env, internalTerms, key, member, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
 
 const PEOPLE = {
 	name: 'People',
@@ -166,3 +167,57 @@ async function ifMatch(page: Page, project: string, entry: string): Promise<Reco
 	const etag = await page.evaluate(async (path) => (await fetch(path)).headers.get('etag') ?? '', `${env(project)}/collections/stories/entries/${entry}`);
 	return { 'If-Match': etag, 'Idempotency-Key': key() };
 }
+
+/** Readers' view of a collection: the titles it lists. */
+async function readers(page: Page, project: string, collection: string): Promise<string[]> {
+	return page.evaluate(
+		async (path) => ((await (await fetch(path, { credentials: 'omit', cache: 'no-store' })).json()) as { data: { title: string }[] }).data.map((item) => item.title),
+		`/content/v1/${project}/production/${collection}`
+	);
+}
+
+test('a story whose author isn’t published is refused by name, and published with its author', async ({ page }) => {
+	const { project, story, ada } = await newsroom(page);
+	expect((await api(page, 'PUT', `${env(project)}/collections/stories/entries/${story}`, { title: 'Notes on the engine', author: ada }, await ifMatch(page, project, story))).status).toBe(200);
+	const words = '“Notes on the engine” links to “Ada Lovelace”, which isn\'t published yet. Publish “Ada Lovelace” first, or in the same publish request.';
+
+	// One click on the story alone.
+	await page.goto(`/studio/projects/${project}/stories/${story}`);
+	await page.getByTestId('publish-button').click();
+	await expect(page.getByTestId('publish-outcome')).toContainText(`Not published: ${words}`);
+	expect(await internalTerms(page)).toEqual([]);
+
+	// The request it made, approved: publishing it says the same, and offers one with the author.
+	await page.getByTestId('publish-outcome').getByRole('link', { name: 'Open the publish request' }).click();
+	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
+	await page.getByRole('button', { name: 'Publish', exact: true }).click();
+	await expect(page.getByTestId('changeset-error')).toContainText(words);
+	expect(await violations(page)).toEqual([]);
+	expect(await internalTerms(page)).toEqual([]);
+	await page.getByTestId('include-linked').click();
+	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'open');
+	await expect(page.getByTestId('changeset-items')).toContainText('Notes on the engine');
+	await expect(page.getByTestId('changeset-items')).toContainText('Ada Lovelace');
+	await page.getByRole('button', { name: 'Ask for review' }).click();
+	await page.getByRole('button', { name: 'Approve this version' }).click();
+	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'approved');
+	await page.getByRole('button', { name: 'Publish', exact: true }).click();
+	await expect(page.getByTestId('changeset-status')).toHaveAttribute('data-state', 'published');
+	expect(await readers(page, project, 'stories')).toContain('Notes on the engine');
+	expect(await readers(page, project, 'people')).toContain('Ada Lovelace');
+});
+
+test('taking down an author a published story names is refused by name', async ({ page }) => {
+	const { project, story, ada } = await newsroom(page);
+	expect((await api(page, 'PUT', `${env(project)}/collections/stories/entries/${story}`, { title: 'Notes on the engine', author: ada }, await ifMatch(page, project, story))).status).toBe(200);
+	await publishThroughApi(page, project, 'Story and author', [story, ada]);
+
+	await page.goto(`/studio/projects/${project}/people/${ada}`);
+	await page.getByTestId('unpublish-button').click();
+	const outcome = page.getByTestId('publish-outcome');
+	await expect(outcome).toContainText(
+		'Not published: “Ada Lovelace” is still linked from “Notes on the engine”, which readers have. Change or take down “Notes on the engine” first, or in the same publish request.'
+	);
+	expect(await internalTerms(page)).toEqual([]);
+	expect(await readers(page, project, 'people')).toContain('Ada Lovelace');
+});

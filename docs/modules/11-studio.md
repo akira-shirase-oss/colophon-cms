@@ -175,6 +175,12 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     maximum and never twice. Chosen entries are named by reading each; one the role can't read is "An entry you
     can't see", never its id. An id the server refuses (`reference_not_found` at `/related/1`) is marked on its
     chip and in plain words under the field. Test: `tests/server/references.spec.ts`.
+  - **Link refusals by name** (`lib/references.ts`): the server's `references_unpublished` and `still_referenced`
+    name no entries, so the Studio works them out from the request's own: the linked entries its pinned versions
+    name that aren't published and aren't in it, and the published entries (`referenced_by`) that still link to what
+    it takes down. One-click publishing and the publish request page say, for example, "“Notes on the engine” links to
+    “Ada Lovelace”, which isn't published yet. Publish “Ada Lovelace” first, or in the same publish request.", and
+    the request page offers *Make a publish request that includes* them. Test: `tests/server/references.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

@@ -7,6 +7,7 @@
 
 import { ApiError, changesetAction, createChangeset, listReleases, may, newKey, type Project, publishChangeset } from './api.ts';
 import { plainError } from './errors.ts';
+import { explainLinks } from './references.ts';
 import { PUBLISH_REQUEST } from './words.ts';
 
 export type Outcome =
@@ -73,6 +74,9 @@ export async function publishInOneClick(options: {
 		return { kind: takingDown ? 'unpublished' : 'published', generation: published.generation, request: made.id };
 	} catch (failure) {
 		const reason = failure instanceof ApiError ? failure.reason : null;
+		// A refusal about links names the entries, from the request's own (D-065).
+		const links = request === null ? null : await explainLinks(project, request, reason);
+		if (links !== null) return { kind: 'stopped', message: links.text, request };
 		const message =
 			reason === 'generation_moved'
 				? 'Another release went live while you were publishing. Your request is approved and waiting: look at what is live now, then publish it from the request.'
