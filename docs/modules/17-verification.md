@@ -104,6 +104,7 @@ crashed clients, and `crates/colophon-db/tests/differential.rs` checks its model
 | L14 | Large media/decoder workload | Worker limits hold; content editing stays responsive |
 | L15 | Commerce concurrency and provider faults | **Parked** with commerce (D-006) |
 | L16 | A server killed (SIGKILL) or drained (SIGTERM) under writes behind the balancer (milestone S, D-075) | Every acknowledged write stored exactly once; a drain costs no request, even a first try; idempotent retries succeed. `scripts/failover.sh kill\|drain` against `scripts/cluster.sh`, results in `perf/results/` |
+| L17 | Stress: each scenario's steady mode at rates rising 25% a step until it breaks (milestone S, D-077) | The knee (highest rate that held), the failure mode (`errors`, `fell behind`, `latency`), every step with the machine's load average; `scripts/load.sh <endpoint> stress`, on one server or `CLUSTER=1` |
 
 ### Workflow cases that apply (spec §31)
 
