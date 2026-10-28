@@ -35,7 +35,7 @@ pub enum RoleError {
     InvalidDescription,
     /// Not one of [`Action::ALL`].
     #[error(
-        "an action is one of content.read, content.create, content.update, content.delete, content.review, content.publish, schema.change, members.manage, roles.manage, destinations.manage and tokens.manage"
+        "an action is one of content.read, content.create, content.update, content.delete, content.review, content.publish, schema.change, members.manage, roles.manage, destinations.manage, tokens.manage and audit.read"
     )]
     UnknownAction,
     /// Neither `*` nor a collection's slug.
@@ -43,7 +43,7 @@ pub enum RoleError {
     InvalidSubject,
     /// A project-wide action named one collection.
     #[error(
-        "members, roles, destinations and tokens belong to the whole project, so their permissions apply to `*`"
+        "members, roles, destinations, tokens and the audit log belong to the whole project, so their permissions apply to `*`"
     )]
     ProjectWide,
     /// More than [`MAX_PERMISSIONS`].
@@ -63,6 +63,11 @@ pub enum RoleError {
     /// A condition that isn't `own`.
     #[error("the one condition is own: entries the member created")]
     UnknownCondition,
+    /// An API token asked for an action no token may hold ([`TOKEN_FORBIDDEN`]).
+    #[error(
+        "an API token can't manage members, roles or tokens, or read the audit log: those stay with people"
+    )]
+    NotForTokens,
 }
 
 impl RoleError {
@@ -80,6 +85,7 @@ impl RoleError {
             Self::InvalidFields => "invalid_fields",
             Self::ConditionNotApplicable => "condition_not_applicable",
             Self::UnknownCondition => "unknown_condition",
+            Self::NotForTokens => "not_for_tokens",
         }
     }
 }
@@ -170,13 +176,15 @@ pub enum Action {
     RolesManage,
     /// Configure where releases are delivered (D-046).
     DestinationsManage,
-    /// Create and revoke API tokens.
+    /// Create and revoke API tokens (step R.4).
     TokensManage,
+    /// Read the project's audit log: who changed roles, members and tokens (step R.4).
+    AuditRead,
 }
 
 impl Action {
     /// Every action, in the order the Studio lists them.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::ContentRead,
         Self::ContentCreate,
         Self::ContentUpdate,
@@ -188,6 +196,7 @@ impl Action {
         Self::RolesManage,
         Self::DestinationsManage,
         Self::TokensManage,
+        Self::AuditRead,
     ];
 
     /// The name stored with permissions and used in the API.
@@ -204,6 +213,7 @@ impl Action {
             Self::RolesManage => "roles.manage",
             Self::DestinationsManage => "destinations.manage",
             Self::TokensManage => "tokens.manage",
+            Self::AuditRead => "audit.read",
         }
     }
 
@@ -452,7 +462,7 @@ impl Policy {
     /// | publisher | ✓ | | | ✓ |
     pub fn builtin(role: Role) -> Self {
         use Action::{
-            ContentCreate, ContentDelete, ContentPublish, ContentRead, ContentReview,
+            AuditRead, ContentCreate, ContentDelete, ContentPublish, ContentRead, ContentReview,
             ContentUpdate, DestinationsManage, MembersManage, RolesManage, SchemaChange,
             TokensManage,
         };
@@ -462,7 +472,13 @@ impl Policy {
         }
         if role == Role::Owner {
             // Every permission (D-058), deleting included: nobody could grant it otherwise.
-            actions.extend([MembersManage, RolesManage, TokensManage, ContentDelete]);
+            actions.extend([
+                MembersManage,
+                RolesManage,
+                TokensManage,
+                AuditRead,
+                ContentDelete,
+            ]);
         }
         if matches!(role, Role::Owner | Role::Publisher) {
             actions.extend([ContentReview, ContentPublish]);
@@ -530,6 +546,75 @@ impl Policy {
         self.fields_on(action, &subject, false) == Some(Fields::All)
     }
 }
+
+/// Actions no API token may hold (D-063): managing who has access, and reading the record of
+/// what was done. People keep them, so a leaked token can't hand itself or anyone else more
+/// power, and can't read the audit log of what it did.
+pub const TOKEN_FORBIDDEN: [Action; 4] = [
+    Action::MembersManage,
+    Action::RolesManage,
+    Action::TokensManage,
+    Action::AuditRead,
+];
+
+/// What an API token may do, as its creator chose it (step R.4, D-058; Strapi's three kinds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenKind {
+    /// Read every collection's entries.
+    ReadOnly,
+    /// Every action a token may hold, everywhere: content, content types and website
+    /// connections; never [`TOKEN_FORBIDDEN`].
+    FullAccess,
+    /// The permissions its creator listed, narrowed like a role's.
+    Custom,
+}
+
+impl TokenKind {
+    /// Every kind.
+    pub const ALL: [Self; 3] = [Self::ReadOnly, Self::FullAccess, Self::Custom];
+
+    /// The name stored and used in the API.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::FullAccess => "full-access",
+            Self::Custom => "custom",
+        }
+    }
+
+    /// The kind with this name.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == name)
+    }
+
+    /// The permissions a token of this kind holds: fixed for the first two, `custom`'s for a
+    /// custom token. Refuses a custom list with an action no token may hold.
+    pub fn policy(self, custom: Vec<Permission>) -> Result<Policy, RoleError> {
+        let everywhere = |actions: &mut dyn Iterator<Item = Action>| {
+            Policy::new(actions.map(Permission::everywhere).collect())
+        };
+        match self {
+            Self::ReadOnly => Ok(everywhere(&mut [Action::ContentRead].into_iter())),
+            Self::FullAccess => Ok(everywhere(
+                &mut Action::ALL
+                    .into_iter()
+                    .filter(|action| !TOKEN_FORBIDDEN.contains(action)),
+            )),
+            Self::Custom => {
+                if custom
+                    .iter()
+                    .any(|permission| TOKEN_FORBIDDEN.contains(&permission.action))
+                {
+                    return Err(RoleError::NotForTokens);
+                }
+                Ok(Policy::new(custom))
+            }
+        }
+    }
+}
+
+/// The longest an API token may live: a year and a day, so a yearly rotation never lapses.
+pub const MAX_TOKEN_DAYS: u16 = 366;
 
 #[cfg(test)]
 mod tests {
@@ -929,6 +1014,70 @@ mod tests {
         ]);
         assert_eq!(widened.permissions().len(), 1);
         assert!(widened.allows(Action::ContentRead, Some("articles")));
+    }
+
+    #[test]
+    fn tokens_never_hold_the_actions_that_manage_access_or_read_the_audit_log() {
+        let read_only = TokenKind::ReadOnly.policy(Vec::new()).expect("read-only");
+        assert!(read_only.allows(Action::ContentRead, Some("articles")));
+        assert!(!read_only.allows(Action::ContentCreate, Some("articles")));
+        let full = TokenKind::FullAccess
+            .policy(Vec::new())
+            .expect("full access");
+        for action in Action::ALL {
+            let collection = action.per_collection().then_some("articles");
+            assert_eq!(
+                full.allows(action, collection),
+                !TOKEN_FORBIDDEN.contains(&action),
+                "{action:?}"
+            );
+        }
+        for action in TOKEN_FORBIDDEN {
+            assert_eq!(
+                TokenKind::Custom.policy(vec![Permission::everywhere(action)]),
+                Err(RoleError::NotForTokens),
+                "{action:?}"
+            );
+        }
+        let custom = TokenKind::Custom
+            .policy(vec![narrowed(
+                Action::ContentUpdate,
+                "articles",
+                Some(&["title"]),
+                false,
+            )])
+            .expect("custom");
+        assert_eq!(
+            custom.fields(Action::ContentUpdate, "articles", false),
+            Some(only(&["title"]))
+        );
+        for kind in TokenKind::ALL {
+            assert_eq!(TokenKind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(TokenKind::parse("admin"), None);
+    }
+
+    #[test]
+    fn only_owners_read_the_audit_log_and_a_full_access_token_needs_an_owner() {
+        assert!(Policy::builtin(Role::Owner).allows(Action::AuditRead, None));
+        for role in [Role::Developer, Role::Editor, Role::Publisher] {
+            assert!(
+                !Policy::builtin(role).allows(Action::AuditRead, None),
+                "{role:?}"
+            );
+        }
+        assert_eq!(Action::parse("audit.read"), Some(Action::AuditRead));
+        assert!(!Action::AuditRead.per_collection());
+        // Nobody grants what they don't hold: only an owner covers a full-access token.
+        let full = TokenKind::FullAccess
+            .policy(Vec::new())
+            .expect("full access");
+        assert!(Policy::builtin(Role::Owner).covers(&full));
+        for role in [Role::Developer, Role::Editor, Role::Publisher] {
+            assert!(!Policy::builtin(role).covers(&full), "{role:?}");
+        }
+        let read_only = TokenKind::ReadOnly.policy(Vec::new()).expect("read-only");
+        assert!(Policy::builtin(Role::Editor).covers(&read_only));
     }
 
     #[test]

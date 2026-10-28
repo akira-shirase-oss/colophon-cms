@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO api_token_permissions (project_id, token_id, action, subject, fields, condition)\n         SELECT $1, $2, action, subject, string_to_array(fields, ','), condition\n         FROM unnest($3::text[], $4::text[], $5::text[], $6::text[])\n              AS t (action, subject, fields, condition)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "TextArray",
+        "TextArray",
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f72883a37bbd4a85b68b732d6f7d0ccdb67d74cf05187df1bbd049bea4b3f820"
+}

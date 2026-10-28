@@ -7,6 +7,7 @@
 
 pub mod access;
 pub mod administrators;
+pub mod audit;
 pub mod changesets;
 pub mod content_types;
 pub mod delivery;
@@ -23,6 +24,7 @@ pub mod roles;
 pub mod schedules;
 pub mod scope;
 pub mod setup;
+pub mod tokens;
 
 use std::{str::FromStr, time::Duration};
 
