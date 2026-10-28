@@ -8,3 +8,12 @@ test('the load page lists the committed runs, including a million-request run th
 	await expect(passedThroughput.first()).toBeVisible();
 	await expect(passedThroughput.filter({ hasText: '1,000,000' }).first()).toBeVisible();
 });
+
+test('stress runs have a table of their own, so their shape never breaks the runs table', async ({ page }) => {
+	await page.goto('/load');
+	await expect(page.getByRole('heading', { name: 'Stress runs' })).toBeVisible();
+	const modelling = page.getByTestId('stress').locator('tr[data-endpoint="modelling"]');
+	await expect(modelling.first()).toBeVisible();
+	await expect(modelling.first()).toContainText('737');
+	await expect(page.getByTestId('results').locator('tr[data-scenario="stress"]')).toHaveCount(0);
+});
