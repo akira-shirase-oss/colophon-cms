@@ -22,7 +22,7 @@
 	import Problem from '#lib/shell/Problem.svelte';
 	import ReleaseLabel from '#lib/shell/ReleaseLabel.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
-	import { count, PUBLISH_REQUEST, PUBLISH_REQUESTS, releaseName } from '#lib/words.ts';
+	import { count, PUBLISH_REQUEST, PUBLISH_REQUESTS, releaseName, shownTitle } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const who = createQuery(meQuery);
@@ -161,7 +161,7 @@
 					>
 						<FileTextIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 						<span class="min-w-0 flex-1">
-							<span class="block truncate text-sm font-medium">{entry.revision.title}</span>
+							<span class="block truncate text-sm font-medium">{shownTitle(entry.revision.title)}</span>
 							<span class="text-xs text-muted-foreground">{type.definition.name} · {ago(entry.updated_at)}</span>
 						</span>
 						<StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} />

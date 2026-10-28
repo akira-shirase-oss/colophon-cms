@@ -26,6 +26,7 @@
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import StatusBadge from '#lib/shell/StatusBadge.svelte';
+	import { shownTitle } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const collection = $derived(page.params.collection ?? '');
@@ -170,7 +171,8 @@
 							<Table.Cell class="max-w-0 pl-4 sm:max-w-md">
 								<a
 									class="block truncate font-medium after:absolute after:inset-0 focus-visible:underline focus-visible:outline-none"
-									href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}>{entry.revision.title}</a
+									href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}
+									class:text-muted-foreground={entry.revision.title.trim() === ''}>{shownTitle(entry.revision.title)}</a
 								>
 							</Table.Cell>
 							<Table.Cell><StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} /></Table.Cell>

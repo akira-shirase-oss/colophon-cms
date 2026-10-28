@@ -137,3 +137,9 @@ export async function member(owner: Page, browser: Browser, project: string, rol
 	await page.goto(`/studio/projects/${project}`);
 	return page;
 }
+
+/** With STUDIO_SHOTS_DIR set, saves a full-page photograph of `page` there as `<name>.png`. */
+export async function shot(page: Page, name: string) {
+	const directory = process.env['STUDIO_SHOTS_DIR'];
+	if (directory !== undefined && directory !== '') await page.screenshot({ path: `${directory}/${name}.png`, fullPage: true });
+}

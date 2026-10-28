@@ -48,6 +48,12 @@ export const REQUEST_STATE: Record<ChangesetState, string> = {
 	published: 'Published'
 };
 
+/** An entry's title as a list shows it. The server leaves a title out when the role may not read
+ *  the title field, and a draft can have none yet; either way the row still needs words. */
+export function shownTitle(title: string): string {
+	return title.trim() === '' ? 'No title to show' : title;
+}
+
 /** "Release 4, live since 3 minutes ago" pieces: a release is named by its number. */
 export function releaseName(generation: number): string {
 	return `Release ${generation}`;

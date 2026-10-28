@@ -20,6 +20,7 @@
 	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 	import * as Sidebar from '@colophon/ui/ui/sidebar';
 	import { may, mayAny, SETTINGS_ACTIONS } from '#lib/api.ts';
+	import { rememberProject } from '#lib/lastProject.ts';
 	import { ago, changesetsQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
 	import AccountMenu from '#lib/shell/AccountMenu.svelte';
 	import AppearanceMenu from '#lib/shell/AppearanceMenu.svelte';
@@ -47,6 +48,10 @@
 	// Settings is the developer area (D-059, rule 5): only roles that can change something there see it.
 	const settings = $derived(mayAny(mine.data, SETTINGS_ACTIONS));
 	let searching = $state(false);
+	// The home page shows someone's work in the project they last opened here.
+	$effect(() => {
+		if (who.data && mine.data) rememberProject(who.data.id, mine.data.id);
+	});
 
 	const SECTION: Record<string, string> = {
 		'/projects/[project]/changesets': 'Publish requests',

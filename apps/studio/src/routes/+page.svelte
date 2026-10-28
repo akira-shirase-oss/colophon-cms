@@ -18,6 +18,8 @@
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { ApiError, claimSetup, me, signInUrl, signUpUrl } from '#lib/api.ts';
+	import { lastProject } from '#lib/lastProject.ts';
+	import MyWork from '#lib/MyWork.svelte';
 	import NewProject from '#lib/NewProject.svelte';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
@@ -54,9 +56,18 @@
 	}
 
 	const bootstrapCommand = $derived(`colophon admin bootstrap --subject ${who.data?.subject ?? ''}`);
+
+	// Whose work the home page shows: the project last opened in this browser, or the first. With
+	// one project there is nothing to choose.
+	let chosen = $state<string | null>(null);
+	const projects = $derived(who.data?.projects ?? []);
+	const remembered = $derived(who.data ? lastProject(who.data.id) : null);
+	const current = $derived(
+		projects.find((project) => project.id === chosen) ?? projects.find((project) => project.id === remembered) ?? projects[0]
+	);
 </script>
 
-<svelte:head><title>Projects · Colophon Studio</title></svelte:head>
+<svelte:head><title>{who.data && who.data.projects.length > 0 ? 'Your work' : 'Projects'} · Colophon Studio</title></svelte:head>
 
 {#if who.isPending}
 	<Skeleton class="mb-4 h-10 w-48" />
@@ -117,7 +128,7 @@
 		</TechnicalDetails>
 	</div>
 {:else}
-	<PageHeader title="Projects">
+	<PageHeader title={who.data.projects.length > 0 ? 'Your work' : 'Projects'}>
 		{#snippet meta()}
 			<span data-testid="signed-in">Signed in as {who.data?.display_name ?? who.data?.id}{who.data?.administrator ? ', administrator' : ''}</span>
 		{/snippet}
@@ -144,26 +155,47 @@
 			<p class="mt-2">When the link arrives, open it in this browser and press Join.</p>
 		</EmptyState>
 	{:else}
-		<ul class="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects">
-			{#each who.data.projects as project, index (project.id)}
-				<li style="--i: {index}">
-					<a
-						href={resolve('/projects/[project]', { project: project.id })}
-						class="lift group flex h-full flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-xs outline-none hover:border-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/40"
-					>
-						<span class="flex size-9 items-center justify-center rounded-lg bg-secondary text-sm font-semibold">{project.name.slice(0, 1).toUpperCase()}</span>
-						<span data-user-content>
-							<span class="block font-medium">{project.name}</span>
-							<span class="text-xs text-muted-foreground">{project.slug}</span>
-						</span>
-						<span class="mt-auto flex items-center justify-between text-sm text-muted-foreground">
-							{project.role_name}
-							<ArrowRightIcon class="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-						</span>
-					</a>
-				</li>
-			{/each}
-		</ul>
+		{#if current}
+			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+				<p class="text-sm text-muted-foreground">In <strong class="font-medium text-foreground" data-user-content data-testid="work-project">{current.name}</strong>, as {current.role_name}</p>
+				{#if projects.length > 1}
+					<label class="flex items-center gap-2 text-sm">
+						<span class="text-muted-foreground">Show work in</span>
+						<select
+							class="h-9 max-w-56 rounded-md border border-input bg-card px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+							value={current.id}
+							onchange={(event) => (chosen = event.currentTarget.value)}
+							data-testid="work-picker"
+						>
+							{#each projects as project (project.id)}<option value={project.id}>{project.name}</option>{/each}
+						</select>
+					</label>
+				{/if}
+			</div>
+			{#key current.id}
+				<MyWork project={current.id} identity={who.data.id} />
+			{/key}
+		{/if}
+		{#if projects.length > 1}
+			<h2 class="mt-12 mb-3 text-base font-semibold" id="all-projects">All projects</h2>
+			<ul class="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects" aria-labelledby="all-projects">
+				{#each projects as project, index (project.id)}
+					<li style="--i: {index}">
+						<a
+							href={resolve('/projects/[project]', { project: project.id })}
+							class="lift group flex h-full items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-xs outline-none hover:border-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/40"
+						>
+							<span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-sm font-semibold">{project.name.slice(0, 1).toUpperCase()}</span>
+							<span class="min-w-0 flex-1" data-user-content>
+								<span class="block truncate font-medium">{project.name}</span>
+								<span class="block truncate text-xs text-muted-foreground">{project.role_name}</span>
+							</span>
+							<ArrowRightIcon class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+						</a>
+					</li>
+				{/each}
+			</ul>
+		{/if}
 		{#if !who.data.administrator}
 			<p class="mt-8 text-sm text-muted-foreground" data-testid="not-administrator">To work on another project, ask its owner for an invitation link.</p>
 		{/if}

@@ -16,6 +16,7 @@
 	import { toggleMode } from 'mode-watcher';
 	import * as Command from '@colophon/ui/ui/command';
 	import { type ContentType, entryState, searchEntries } from '#lib/api.ts';
+	import { shownTitle } from '#lib/words.ts';
 	import StatusBadge from './StatusBadge.svelte';
 
 	let {
@@ -93,7 +94,7 @@
 						onSelect={() => go(resolve('/projects/[project]/[collection]/[entry]', { project, collection: type.slug, entry: entry.id }))}
 					>
 						<FileTextIcon class="text-muted-foreground" />
-						<span class="truncate">{entry.revision.title}</span>
+						<span class="truncate">{shownTitle(entry.revision.title)}</span>
 						<span class="ml-auto flex items-center gap-2">
 							<span class="text-xs text-muted-foreground">{type.definition.name}</span>
 							<StatusBadge state={entryState(entry)} />
