@@ -226,6 +226,8 @@ pub struct ContentReference {
     pub collection: String,
     /// Its place in a list (0 for a single reference).
     pub position: u16,
+    /// Whether the field holds a list (so its place is part of where it is).
+    pub many: bool,
     /// The entry's id, a lowercase UUID.
     pub entry: String,
 }
@@ -1333,7 +1335,7 @@ impl ContentType {
             if matches!(field.kind, FieldKind::Slug { .. }) {
                 slug = value.as_str().map(str::to_owned);
             }
-            if let FieldKind::Reference { to, .. } = &field.kind {
+            if let FieldKind::Reference { to, many, .. } = &field.kind {
                 let ids = value
                     .as_array()
                     .map_or_else(|| vec![value], |list| list.iter().collect());
@@ -1342,6 +1344,7 @@ impl ContentType {
                         field: field.id.clone(),
                         collection: to.clone(),
                         position: u16::try_from(position).unwrap_or(u16::MAX),
+                        many: *many,
                         entry: id.as_str().unwrap_or_default().to_owned(),
                     });
                 }

@@ -116,7 +116,7 @@ that builds them.
 | Content types defined at runtime, safe changes | Dev-only builder | Code | done (D-040; the builder and changes checked against stored content, 3.6) |
 | Text, rich text, number, boolean, enum, date-time | ✓ | ✓ | done (D-040) |
 | Slug / UID, unique per collection | ✓ | ✓ | done (3.6, D-054) |
-| References / relations (one, many, two-way) | ✓ | ✓ | M |
+| References / relations (one, many, two-way) | ✓ | ✓ | one and many built in M.2 (D-065), never dangling; "referenced by" and the Studio's picker next |
 | Components / objects, repeatable lists | ✓ | ✓ | M |
 | Dynamic zones / block arrays (page builder) | ✓ | ✓ | M |
 | Single types / singletons | ✓ | ✓ | M |

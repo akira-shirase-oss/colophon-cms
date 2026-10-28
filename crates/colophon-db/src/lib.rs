@@ -91,6 +91,17 @@ pub enum DbError {
     /// (migration 0016, D-054).
     #[error("the slug is taken")]
     SlugTaken,
+    /// A reference field names an entry that isn't one of its collection's (migration 0024,
+    /// D-065); nothing was written.
+    #[error("a reference names no entry of its collection")]
+    MissingReference {
+        /// The field.
+        field: String,
+        /// The place in its list.
+        position: u16,
+        /// Whether the field holds a list.
+        many: bool,
+    },
     /// Applying migrations failed.
     #[error("applying migrations failed")]
     Migrate(#[source] sqlx::migrate::MigrateError),

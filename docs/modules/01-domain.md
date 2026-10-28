@@ -83,6 +83,10 @@ invariant. Production adapters and the simulator both run this code unchanged.
   which publish requests pin. Changing a field's type is `CheckContent` (text may become email if every stored value
   is one); text widens into markdown that fits it. Not yet: patterns, uniqueness, defaults and conditional fields
   (M.2), and the Studio's builder and editor for the new types (the next slice).
+- Built in step M.2 (D-065): `reference` fields (`to` a collection slug; one entry, or `many` with `max` up to 100)
+  hold entry ids as canonical lowercase UUIDs, distinct in a list. `Content::references` reports each with its field,
+  collection, place and whether the field is a list; whether an id names an entry is the database's to check.
+  Pointing a field at another collection is `Refused`.
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the

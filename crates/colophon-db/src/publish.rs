@@ -63,6 +63,9 @@ pub enum Refusal {
     /// An entry's slug is another entry's published slug (D-054). The transaction is aborted:
     /// the caller rolls it back.
     SlugTaken,
+    /// It would leave readers a reference to an entry they can't get (D-065). The caller rolls
+    /// the transaction back.
+    BrokenReference(releases::BrokenReference),
 }
 
 /// Whether a project needs someone other than the submitter to approve (D-044). Projects can't
@@ -197,6 +200,7 @@ pub async fn publish(
                 ));
             }
             Err(DbError::SlugTaken) => return Ok(Err(Refusal::SlugTaken)),
+            Ok(Committed::Broken(broken)) => return Ok(Err(Refusal::BrokenReference(broken))),
             Err(error) => return Err(error),
         }
     }
