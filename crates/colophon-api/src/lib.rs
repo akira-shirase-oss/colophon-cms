@@ -9,6 +9,7 @@ mod auth;
 mod body;
 mod cache;
 mod changesets;
+mod components;
 mod content_types;
 mod delivery;
 mod destinations;
@@ -108,6 +109,14 @@ pub fn routes(state: AppState) -> Router {
         .route(
             "/api/v1/projects/{project}/environments/{environment}/permissions",
             get(roles::own),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/components",
+            get(components::list).post(components::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/components/{slug}",
+            get(components::get).put(components::update),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/content-types",

@@ -9,6 +9,7 @@ pub mod access;
 pub mod administrators;
 pub mod audit;
 pub mod changesets;
+pub mod components;
 pub mod content_types;
 pub mod delivery;
 pub mod destinations;

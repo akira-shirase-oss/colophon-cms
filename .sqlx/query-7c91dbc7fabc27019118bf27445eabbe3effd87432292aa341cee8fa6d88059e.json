@@ -1,0 +1,77 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT ON (component) component, version, definition, definition_hash, created_at\n         FROM component_versions\n         WHERE project_id = $1 AND environment_id = $2\n         ORDER BY component, version DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "component",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "component_versions",
+            "name": "component"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "component_versions",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "definition",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "component_versions",
+            "name": "definition"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "definition_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "component_versions",
+            "name": "definition_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "component_versions",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7c91dbc7fabc27019118bf27445eabbe3effd87432292aa341cee8fa6d88059e"
+}

@@ -1,0 +1,83 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO component_versions\n           (project_id, environment_id, component, version, previous_version, definition, definition_hash, created_by)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n         RETURNING component, version, definition, definition_hash, created_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "component",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "component_versions",
+            "name": "component"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "component_versions",
+            "name": "version"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "definition",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "component_versions",
+            "name": "definition"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "definition_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "component_versions",
+            "name": "definition_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "component_versions",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int4",
+        "Int4",
+        "Text",
+        "Bytea",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "10dad68e08c1dbe8e45b29bdd161ad7addd3efb771af921a01b6875ab782fe31"
+}

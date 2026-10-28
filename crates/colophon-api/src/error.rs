@@ -263,9 +263,9 @@ pub enum ApiError {
         /// The revision the draft points at now.
         current: Uuid,
     },
-    /// A content type update named a version that is no longer current. The response's `ETag`
-    /// names the current one.
-    #[error("the content type has changed since that version; load the current one and try again")]
+    /// A content type or component update named a version that is no longer current. The
+    /// response's `ETag` names the current one.
+    #[error("the definition has changed since that version; load the current one and try again")]
     StaleVersion {
         /// The current version.
         current: i32,

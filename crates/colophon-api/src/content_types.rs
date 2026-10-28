@@ -21,13 +21,14 @@ use axum::{
     response::Response,
 };
 use colophon_db::{
+    components,
     content_types::{self, Claimed, MadeSingle, Updated, Version},
     idempotency::{self, Claim},
     scope::ProjectTransaction,
 };
 use colophon_domain::{
     project::Slug,
-    schema::{ContentType, Refusal, Successor},
+    schema::{self, Component, ContentType, Refusal, Successor, Unlisted},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
@@ -92,12 +93,12 @@ pub(crate) struct NewType {
     definition: Value,
 }
 
-fn etag(version: i32) -> HeaderValue {
+pub(crate) fn etag(version: i32) -> HeaderValue {
     HeaderValue::from_str(&format!("\"v{version}\"")).unwrap_or(HeaderValue::from_static("\"\""))
 }
 
 /// The version an `If-Match` names: exactly `"v<version>"`.
-fn if_match(headers: &HeaderMap) -> Result<i32, ApiError> {
+pub(crate) fn if_match(headers: &HeaderMap) -> Result<i32, ApiError> {
     let value = headers.get(header::IF_MATCH).ok_or(ApiError::PreconditionRequired(
         "changing a content type needs an If-Match header with the ETag of the version you edited",
     ))?;
@@ -117,6 +118,33 @@ fn if_match(headers: &HeaderMap) -> Result<i32, ApiError> {
         ))
 }
 
+/// `definition` with each component it uses holding that component's current fields, the
+/// components held still until the transaction ends (D-073): taken before the content type's own
+/// lock, as every component lock is.
+pub(crate) async fn expand(
+    tx: &mut ProjectTransaction,
+    definition: &Value,
+) -> Result<Value, ApiError> {
+    let used = schema::components_used(definition);
+    if used.is_empty() {
+        return Ok(definition.clone());
+    }
+    components::lock_for_use(tx, &used)
+        .await
+        .map_err(ApiError::from_db)?;
+    let mut fields = std::collections::BTreeMap::new();
+    for version in components::current_of(tx, &used)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        let stored: Value =
+            serde_json::from_str(&version.definition).map_err(ApiError::internal)?;
+        let component = Component::parse(&stored).map_err(ApiError::internal)?;
+        fields.insert(version.component, component.fields_json());
+    }
+    schema::expand_components(definition, &fields, Unlisted::Refuse).map_err(ApiError::Invalid)
+}
+
 fn may_change(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError> {
     crate::members::require(
         &tx.policy,
@@ -126,14 +154,14 @@ fn may_change(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError>
     )
 }
 
-fn respond(status: StatusCode, body: String, version: i32, replayed: bool) -> Response {
+pub(crate) fn respond(status: StatusCode, body: String, version: i32, replayed: bool) -> Response {
     let mut response = json(status, body, None, replayed);
     response.headers_mut().insert(header::ETAG, etag(version));
     response
 }
 
 /// Claims the key, or answers with the recorded response (its `ETag` read back from it).
-async fn claim(
+pub(crate) async fn claim(
     tx: &mut ProjectTransaction,
     operation: &str,
     key: &str,
@@ -182,7 +210,7 @@ const CHECK_PAGE: i64 = 200;
 /// Checks that `next` accepts every draft and published revision of `collection`, under the
 /// change lock. Refuses with the first [`MAX_ENTRIES_IN_THE_WAY`] that don't fit and how many
 /// don't, or, past [`content_types::MAX_CHECKED`], without looking (D-055).
-async fn check_stored(
+pub(crate) async fn check_stored(
     tx: &mut ProjectTransaction,
     collection: &str,
     next: Arc<ContentType>,
@@ -334,15 +362,20 @@ pub(crate) async fn create(
             message: format!("\"{slug}\" is the name of a Studio page; choose another slug"),
         });
     }
-    let definition = ContentType::parse(&body.definition).map_err(|refusal| {
+    let within = |refusal: Refusal| {
         ApiError::Invalid(Refusal {
             pointer: format!("/definition{}", refusal.pointer),
             ..refusal
         })
-    })?;
-    let canonical = definition.canonical_json();
+    };
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_change(&tx, slug.as_str())?;
+    let expanded = match expand(&mut tx, &body.definition).await {
+        Err(ApiError::Invalid(refusal)) => return Err(within(refusal)),
+        other => other?,
+    };
+    let definition = ContentType::parse(&expanded).map_err(within)?;
+    let canonical = definition.canonical_json();
     let request = request_hash(&[CREATE, slug.as_str(), &canonical]);
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);
@@ -458,10 +491,11 @@ pub(crate) async fn update(
     let expected = if_match(&headers)?;
     let key = idempotency_key(&headers)?;
     let Json(value) = body?;
-    let next = ContentType::parse(&value).map_err(ApiError::Invalid)?;
-    let canonical = next.canonical_json();
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_change(&tx, &path.slug)?;
+    let value = expand(&mut tx, &value).await?;
+    let next = ContentType::parse(&value).map_err(ApiError::Invalid)?;
+    let canonical = next.canonical_json();
     let request = request_hash(&[UPDATE, &path.slug, &expected.to_string(), &canonical]);
     if let Some(replay) = claim(&mut tx, UPDATE, key, &request).await? {
         return Ok(replay);

@@ -30,11 +30,13 @@
 			{ id: 'since', label: 'Editor since', type: 'date', when: { field: 'role', is: 'editor' } }
 		]
 	};
+	const SEO = { name: 'SEO', fields: [{ id: 'meta_title', label: 'Meta title', type: 'text', max_chars: 70 }] };
 	const PAGES = {
 		name: 'Pages',
 		title_field: 'title',
 		fields: [
 			{ id: 'title', label: 'Title', type: 'text', required: true },
+			{ id: 'seo', label: 'SEO', type: 'component', component: 'seo' },
 			{ id: 'hero', label: 'Hero', type: 'object', fields: [{ id: 'heading', label: 'Heading', type: 'text', required: true }] },
 			{ id: 'tags', label: 'Tags', type: 'list', of: { type: 'text', pattern: '[a-z]+' }, max: 3 },
 			{
@@ -86,6 +88,11 @@
 	}
 
 	async function setUp() {
+		const component = await call('POST', `${env}/components`, { headers: headers(), body: JSON.stringify({ slug: 'seo', definition: SEO }) });
+		if (component.status !== 201) {
+			message = `component: ${describe(component)}`;
+			return;
+		}
 		for (const [slug, definition] of [['people', PEOPLE], ['pages', PAGES]] as const) {
 			const made = await call('POST', `${env}/content-types`, { headers: headers(), body: JSON.stringify({ slug, definition }) });
 			if (made.status !== 201) {
@@ -133,6 +140,14 @@
 		message = describe(reply);
 	}
 
+	/** Adds a field to the SEO component: every type that uses it gets a new version. */
+	async function widenSeo() {
+		const wider = { ...SEO, fields: [...SEO.fields, { id: 'noindex', label: 'Hide from search', type: 'boolean' }] };
+		const reply = await call('PUT', `${env}/components/seo`, { headers: headers({ 'If-Match': '"v1"' }), body: JSON.stringify(wider) });
+		const changed = (reply.body as { data?: { content_types?: { slug: string; version: number }[] } }).data?.content_types;
+		message = reply.status === 200 && changed ? `changed: ${changed.map((type) => `${type.slug} v${type.version}`).join(', ')}` : describe(reply);
+	}
+
 	async function saveShouting() {
 		const reply = await call('POST', `${env}/collections/pages/entries`, { headers: headers(), body: JSON.stringify(page(author, 'NEWS')) });
 		message = describe(reply);
@@ -169,8 +184,8 @@
 
 <h1>Content modelling</h1>
 <p class="lede">
-	Structures, references, patterns and unique values through the real API (steps M.1 to M.4, D-064 to D-066, D-069 to D-072): a page
-	with an object, a list of lowercase tags and blocks whose quote names a person, whose name no one else may have and whose role, left out, defaults to member; an editor date applies to editors only. A reference to
+	Structures, references, patterns and unique values through the real API (steps M.1 to M.4, D-064 to D-066, D-069 to D-073): a page
+	with an object, a list of lowercase tags and blocks whose quote names a person, whose name no one else may have and whose role, left out, defaults to member; an editor date applies to editors only. Pages use a shared SEO component; widening it gives pages a new version. A reference to
 	nobody, a tag in capitals and a second Ada are refused where they are; a page can't be published before the person it names; the
 	person's read lists what references them.
 </p>
@@ -196,6 +211,7 @@
 				<button type="button" onclick={saveShouting} disabled={!author}>Save a tag in capitals</button>
 				<button type="button" onclick={secondAda} disabled={!author}>Add a second Ada</button>
 				<button type="button" onclick={memberSince} disabled={!author}>Give a member an editor date</button>
+				<button type="button" onclick={widenSeo} disabled={!author}>Widen the SEO component</button>
 			</p>
 			<p>
 				<button type="button" onclick={() => publish([pageId])} disabled={!pageId}>Publish the page alone</button>
