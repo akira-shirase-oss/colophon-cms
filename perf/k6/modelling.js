@@ -1,14 +1,15 @@
-// Load scenario for content modelling (steps M.1 to M.4, D-064 to D-066, D-069 to D-071): pages
-// built from structures, with references. setup() signs in, defines `people` (a unique name and
-// a role whose default is `member`) and `pages` (a unique title, so every save replaces its
-// page's claim; a hero object, tags each matched against a pattern, a list of questions, and
-// blocks whose quotes name a person), makes 20 people and gives each VU a page of its own. Each
-// VU reads its page (50%; the ETag must be its last accepted save), saves new structures naming
-// two random people (20%; each save checks its references in the database and keeps them), tries
-// a quote naming nobody and must get 422 reference_not_found at /sections/1/by (10%), reads a
-// person, which lists what references them (10%), lists pages (5%), or creates a person with a
-// name of its own and no role, which must come back `member` (5%). Requests are named by route,
-// so k6 keeps one series per route. scripts/load.sh gives this endpoint RATE 500 and P99_MS 250.
+// Load scenario for content modelling (steps M.1 to M.4, D-064 to D-066, D-069 to D-072): pages
+// built from structures, with references. setup() signs in, defines `people` (a unique name, a
+// role whose default is `member`, and an editor date only editors may have) and `pages` (a
+// unique title, so every save replaces its page's claim; a hero object, tags each matched against
+// a pattern, a list of questions, and blocks whose quotes name a person), makes 20 people and
+// gives each VU a page of its own. Each VU reads its page (50%; the ETag must be its last accepted
+// save), saves new structures naming two random people (20%; each save checks its references in
+// the database and keeps them), tries a quote naming nobody and must get 422 reference_not_found
+// at /sections/1/by (10%), reads a person, which lists what references them (10%), lists pages
+// (5%), or creates a person with a name of its own and no role, which must come back `member`
+// (5%). Requests are named by route, so k6 keeps one series per route. scripts/load.sh gives this
+// endpoint RATE 500 and P99_MS 250.
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
@@ -58,6 +59,7 @@ const PEOPLE_TYPE = {
   fields: [
     { id: 'name', label: 'Name', type: 'text', required: true, unique: true },
     { id: 'role', label: 'Role', type: 'enum', values: ['member', 'editor'], required: true, default: 'member' },
+    { id: 'since', label: 'Editor since', type: 'date', when: { field: 'role', is: 'editor' } },
   ],
 };
 

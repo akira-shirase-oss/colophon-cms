@@ -121,7 +121,7 @@ that builds them.
 | Dynamic zones / block arrays (page builder) | ✓ | ✓ | built in M.3 (D-066) |
 | Single types / singletons | ✓ | ✓ | built in M.4 (D-067), one entry enforced by the database |
 | Email, URL, date, time, JSON, Markdown, colour, geopoint fields | ✓ | ✓ | built in M.1 (D-064) but geopoint; the Studio's editor for them is next |
-| Validation: pattern, unique, length, value; conditional fields; defaults | ✓ | ✓ | length and value built; patterns (D-069), unique fields (D-070) and defaults (D-071) built in M.4; conditional fields in M.4 |
+| Validation: pattern, unique, length, value; conditional fields; defaults | ✓ | ✓ | length and value built; patterns (D-069), unique fields (D-070), defaults (D-071) and conditional fields (D-072) built in M.4 |
 | Field descriptions, groups and tabs, custom previews | ✓ | ✓ | descriptions in M.1 (D-064); groups, tabs and previews in M |
 | Schema migrations with a plan | Rename only | Scripts | M |
 | Media library: uploads, folders, alt text, image transforms, hotspot and crop | ✓ | ✓ | P4 |

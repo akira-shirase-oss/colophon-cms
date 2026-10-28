@@ -1,6 +1,6 @@
-// Content modelling through the testbed (steps M.1 to M.4, D-064 to D-066, D-069 to D-071):
+// Content modelling through the testbed (steps M.1 to M.4, D-064 to D-066, D-069 to D-072):
 // types with an object, a list of lowercase tags and blocks whose quote names a person, whose name
-// is unique and whose role defaults to member; the page is stored in canonical form, a quote by nobody, a tag in capitals and a second
+// is unique, whose role defaults to member and whose editor date applies to editors only; the page is stored in canonical form, a quote by nobody, a tag in capitals and a second
 // Ada are refused where they are, the page can't be published before the person, both
 // together can, and the person's read lists what references them.
 
@@ -44,6 +44,8 @@ test('structures are stored canonically, references are checked, and publishing 
 	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (pattern_mismatch at /tags/0)');
 	await page.getByRole('button', { name: 'Add a second Ada' }).click();
 	await expect(page.getByTestId('message')).toHaveText('409 conflict (value_taken at /name)');
+	await page.getByRole('button', { name: 'Give a member an editor date' }).click();
+	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (not_applicable at /since)');
 
 	await page.getByRole('button', { name: 'Publish the page alone' }).click();
 	await expect(page.getByTestId('message')).toHaveText('409 conflict (references_unpublished)');

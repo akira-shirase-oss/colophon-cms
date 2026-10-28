@@ -26,7 +26,8 @@
 		title_field: 'name',
 		fields: [
 			{ id: 'name', label: 'Name', type: 'text', required: true, unique: true },
-			{ id: 'role', label: 'Role', type: 'enum', values: ['member', 'editor'], required: true, default: 'member' }
+			{ id: 'role', label: 'Role', type: 'enum', values: ['member', 'editor'], required: true, default: 'member' },
+			{ id: 'since', label: 'Editor since', type: 'date', when: { field: 'role', is: 'editor' } }
 		]
 	};
 	const PAGES = {
@@ -124,6 +125,14 @@
 		message = describe(reply);
 	}
 
+	async function memberSince() {
+		const reply = await call('POST', `${env}/collections/people/entries`, {
+			headers: headers(),
+			body: JSON.stringify({ name: 'Bo', since: '2026-01-01' })
+		});
+		message = describe(reply);
+	}
+
 	async function saveShouting() {
 		const reply = await call('POST', `${env}/collections/pages/entries`, { headers: headers(), body: JSON.stringify(page(author, 'NEWS')) });
 		message = describe(reply);
@@ -160,8 +169,8 @@
 
 <h1>Content modelling</h1>
 <p class="lede">
-	Structures, references, patterns and unique values through the real API (steps M.1 to M.4, D-064 to D-066, D-069 to D-071): a page
-	with an object, a list of lowercase tags and blocks whose quote names a person, whose name no one else may have and whose role, left out, defaults to member. A reference to
+	Structures, references, patterns and unique values through the real API (steps M.1 to M.4, D-064 to D-066, D-069 to D-072): a page
+	with an object, a list of lowercase tags and blocks whose quote names a person, whose name no one else may have and whose role, left out, defaults to member; an editor date applies to editors only. A reference to
 	nobody, a tag in capitals and a second Ada are refused where they are; a page can't be published before the person it names; the
 	person's read lists what references them.
 </p>
@@ -186,6 +195,7 @@
 				<button type="button" onclick={saveBroken} disabled={!author}>Save a quote by nobody</button>
 				<button type="button" onclick={saveShouting} disabled={!author}>Save a tag in capitals</button>
 				<button type="button" onclick={secondAda} disabled={!author}>Add a second Ada</button>
+				<button type="button" onclick={memberSince} disabled={!author}>Give a member an editor date</button>
 			</p>
 			<p>
 				<button type="button" onclick={() => publish([pageId])} disabled={!pageId}>Publish the page alone</button>

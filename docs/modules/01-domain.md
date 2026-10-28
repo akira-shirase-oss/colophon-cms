@@ -106,6 +106,11 @@ invariant. Production adapters and the simulator both run this code unchanged.
   may have a `default`, checked by the field's own rules and kept in canonical JSON (`Field::default`), written only
   when set (`invalid_default` otherwise). `ContentType::with_defaults` fills the fields a new entry leaves out and
   says which; the API calls it on creation only. A changed default is `Compatible`.
+- Built in step M.4 (D-072): a top-level field's `when` (`Condition`: a top-level boolean or enum field that applies
+  always, and values of it, kept in that field's order) makes it apply only while `Condition::holds`; validation
+  refuses it otherwise (`not_applicable`) and requires it only while it applies. `check_conditions` checks every
+  `when` once all fields are parsed (`invalid_condition`). A narrower or different condition, or a required field
+  made unconditional, is `CheckContent`.
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the
