@@ -55,7 +55,7 @@ function firstHeading(markdown: string): string {
 	return line ? line.slice(2).replaceAll('`', '').trim() : '';
 }
 
-/** Newest first for release notes and guides: "unreleased" before p3 before p2. */
+/** Newest first for release notes and guides: "unreleased" before p3-roles-schedules before p3 before p2. */
 function newest(a: string, b: string): number {
 	if (a.startsWith('unreleased')) return -1;
 	if (b.startsWith('unreleased')) return 1;

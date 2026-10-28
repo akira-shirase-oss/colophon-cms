@@ -29,7 +29,7 @@
 	<!-- CHANGELOG.md's introduction, rendered at build time with raw HTML escaped. -->
 	{@html data.changelog.introHtml}
 	<p>
-		{count} entries. Each milestone also has <a href={href('/releases/')}>release notes</a>, and each range of database migrations an
+		{count} entries. Milestones P0 to P3 also have <a href={href('/releases/')}>release notes</a>, and each range of database migrations an
 		<a href={href('/upgrading/')}>upgrade guide</a>. Follow merged steps with the
 		<a href={href('/changelog/feed.xml')} data-sveltekit-reload><RssIcon class="inline size-4 -translate-y-px" aria-hidden="true" /> Atom feed</a>.
 	</p>

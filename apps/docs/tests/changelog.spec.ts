@@ -103,7 +103,7 @@ test("each milestone's release notes carry its section of the changelog", async 
 
 test('every range of migrations has an upgrade guide, and the release notes and guides are listed', async ({ page }) => {
 	const pages = builtPages();
-	for (const guide of ['p1', 'p2', 'p3', 'unreleased']) expect(pages, guide).toContain(`/upgrading/${guide}/`);
+	for (const guide of ['p1', 'p2', 'p3', 'p3-roles-schedules']) expect(pages, guide).toContain(`/upgrading/${guide}/`);
 	await page.goto(docs('/releases/'), { waitUntil: 'networkidle' });
 	await expect(page.getByTestId('release-note')).toHaveCount(4);
 	await page.goto(docs('/upgrading/'), { waitUntil: 'networkidle' });

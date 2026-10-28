@@ -4,16 +4,17 @@ Every change to Colophon CMS that someone could notice, newest first. The format
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), adapted for a project that hasn't released anything
 yet: Colophon is pre-release, v0.1 is not out, and nothing here is software you can install from a release. Until
 v0.1 there are no version numbers, so each step merged into `main` is one entry, grouped by the milestone of
-[docs/ROADMAP.md](docs/ROADMAP.md) it belongs to, newest first. **Unreleased** lists the work on branches: none of it
-is merged. At v0.1, version sections begin above this step history ([docs/RELEASES.md](docs/RELEASES.md)).
+[docs/ROADMAP.md](docs/ROADMAP.md) it belongs to, the latest milestone first and each milestone's steps newest first.
+**Unreleased** lists the work on branches: none of it is merged. At v0.1, version sections begin above this step
+history ([docs/RELEASES.md](docs/RELEASES.md)).
 
 Each entry gives its merge date and merge commits (`git log --merges main`), the decisions behind it
 ([docs/DECISIONS.md](docs/DECISIONS.md)), its build-log post, and the proof behind any guarantee it states: fault
 cases, tests and load results. Its changes are grouped as Added, Changed, Deprecated, Removed, Fixed and Security;
 each starts with its area and says first, in plain words, what you can now do, then the technical detail. The plain
 words are the Studio's (D-059): a **publish request** is what the API calls a changeset, a **version** a revision, a
-**URL name** a slug, and **website connections** are destinations; until step 3.7 the Studio itself still shows some
-of the older words. Load figures come from runs on one laptop, an Apple M2 Pro with 12 cores (`apple-m2-pro-12c`),
+**URL name** a slug, and **website connections** are destinations; the Studio has used them on every screen since step
+3.7. Load figures come from runs on one laptop, an Apple M2 Pro with 12 cores (`apple-m2-pro-12c`),
 with every result kept in `perf/results/`, misses included: they are evidence about the code, not a promise about
 production hardware. The build log at [404human.dev/colophon](https://404human.dev/colophon/) tells the same story
 in prose, mistakes included.
@@ -21,62 +22,6 @@ in prose, mistakes included.
 This file is the only place an entry is written: the website and the docs render it at build time.
 
 ## Unreleased
-
-### Schedules · Publishing at a time you choose
-
-- **Status:** building
-- **Branch:** `e/schedules`
-- **Decisions:** D-060 on `e/schedules` (the number is also used on `p3/3.7-onboarding` for a different decision; one will be renumbered)
-- **Proof:** `crates/colophon-server/tests/schedules.rs`, `apps/studio/tests/server/schedules.spec.ts`, `apps/testbed/tests/schedules.spec.ts`; `perf/k6/schedules.js` smoke runs
-
-Nothing from this work is merged. It belongs to milestone E (editorial parity) and is being built ahead of it; the
-spec's "Scheduled publishing" section and case X07 set its rules.
-
-#### Added
-
-- **Studio:** You can schedule an approved publish request to go live at a date and time in a time zone you pick
-  (yours first), and cancel it until then. A time the clocks show twice or skip, the night daylight saving starts or
-  ends, is never guessed: the Studio shows both moments and schedules the one you pick. A pending schedule says when it
-  publishes, there and where you are, and who scheduled it; a past one says whether it went out on time, late, not at
-  all and why, or was cancelled. The Releases page lists what is scheduled.
-- **Worker:** A schedule publishes once, at its time, as the person who scheduled it, with their role as it is then.
-  If the approval expired, the request was edited after approval, or that person can no longer publish it, the
-  schedule is blocked with the reason in plain words and nothing is published. A start more than 60 seconds late is
-  shown as delayed. Technical: a loop beside the deliveries; the release and the schedule's outcome commit together;
-  publishing moved into `colophon_db::publish`, so the API and schedules run one routine.
-- **API:** Technical side of the above: `POST …/changesets/{changeset}/schedule` with `local_time`, `time_zone` and an
-  optional `choice`, under `If-Match`; `GET …/schedules` and `DELETE …/schedules/{id}`; 422 `ambiguous_local_time`
-  and `skipped_local_time` name both candidate instants; a time must be in the future, within a year and a day, and
-  before the approval expires.
-- **Database:** Migration 0019 (`schedules`), one pending schedule per publish request.
-- **Tests:** The testbed's Schedules page, and `perf/k6/schedules.js`, run as a smoke by `scripts/check.sh` and CI.
-  Its first smoke missed its 200 ms p99 because a list sorted every schedule ever made; lists now read pending and
-  recently finished schedules through their own indexes (list p99 586 ms before, 46 ms after, on a busy laptop).
-
-### 3.7 · The non-technical path
-
-- **Status:** building
-- **Branch:** `p3/3.7-onboarding`
-- **Decisions:** D-059; D-060 on `p3/3.7-onboarding` (the number is also used on `e/schedules` for a different decision; one will be renumbered)
-
-Nothing from this step is merged, and only its first part is committed: a fresh installation can be set up from a
-browser. The rest of the step, plain words from one glossary on every screen, one-click publishing, a first-run
-checklist and empty states that teach (D-059), is planned for it and not built.
-
-#### Added
-
-- **API:** A fresh installation can be set up without the database's credentials: while nobody is an administrator,
-  the server prints a one-time setup code to its terminal when it starts, and the person who enters it, signed in,
-  becomes the first administrator. Technical: `POST /api/v1/setup`; the code is 20 characters, valid for an hour,
-  single-use, stored only as a SHA-256 hash and compared in constant time; five attempts a person and twenty in all
-  per fifteen minutes (429 `rate_limited` with `Retry-After`); every path refuses once an administrator exists;
-  migration 0020. Amends D-043; `colophon admin bootstrap` still works.
-- **API:** You can create an account from the sign-in page when the identity provider offers sign-up, and `/me` says
-  whether the installation has an administrator yet. Technical: `/auth/login?start=create` (`prompt=create`). A new
-  account grants nothing by itself.
-- **Tests:** Database tests for every property of the setup code, real-binary tests on a database nobody set up, and
-  an account made on Keycloak's sign-up form; the server's tests can run on another port
-  (`COLOPHON_TEST_ORIGIN`). The Studio's setup screens aren't built yet.
 
 ### Docs · The documentation site
 
@@ -130,14 +75,89 @@ Nothing from this work is merged. The public website is built and tested on its 
 - **Docs:** [Module 20](https://github.com/akira-shirase-oss/colophon-cms/blob/site/new-look/docs/modules/20-site.md)
   describes the site, where its numbers came from, and its invariants W1 to W9.
 
+## E · Editorial parity
+
+### Schedules · Publishing at a time you choose
+
+- **Merged:** 2026-10-27 · `bf0ecd7`
+- **Decisions:** D-060
+- **Proof:** `crates/colophon-domain/src/schedule.rs` (New York's and London's clock changes), `crates/colophon-db/tests/schedules.rs`, `crates/colophon-server/tests/schedules.rs`, `apps/studio/tests/server/schedules.spec.ts`, `apps/testbed/tests/schedules.spec.ts`; `perf/k6/schedules.js` on `db542c4`: [1,000,262 requests at 1,856/s, p99 48.4 ms](perf/results/2026-10-28T032153Z-schedules-throughput-apple-m2-pro-12c.json) and [steady at 1,000/s, p99 10.5 ms](perf/results/2026-10-28T032306Z-schedules-steady-apple-m2-pro-12c.json), nothing failed
+
+Built ahead of the rest of milestone E, on the maintainer's request; the spec's "Scheduled publishing" section and
+case X07 set its rules. E's other work (localization, review stages, comments, live collaboration) is planned.
+
+#### Added
+
+- **Studio:** You can schedule an approved publish request to go live at a date and time in a time zone you pick
+  (yours first), and cancel it until then. A time the clocks show twice or skip, the night daylight saving starts or
+  ends, is never guessed: the Studio shows both moments and schedules the one you pick. A pending schedule says when it
+  publishes, there and where you are, and who scheduled it; a past one says whether it went out on time, late, not at
+  all and why, or was cancelled. The Releases page lists what is scheduled.
+- **Worker:** A schedule publishes once, at its time, as the person who scheduled it, with their role as it is then.
+  If the approval expired, the request was edited after approval, or that person can no longer publish it, the
+  schedule is blocked with the reason in plain words and nothing is published. A start more than 60 seconds late is
+  shown as delayed. Technical: a loop beside the deliveries; the release and the schedule's outcome commit together;
+  publishing moved into `colophon_db::publish`, so the API and schedules run one routine.
+- **API:** Technical side of the above: `POST …/changesets/{changeset}/schedule` with `local_time`, `time_zone` and an
+  optional `choice`, under `If-Match`; `GET …/schedules` and `DELETE …/schedules/{schedule}`; 422
+  `ambiguous_local_time` and `skipped_local_time` name both candidate instants; a time must be in the future, within a
+  year and a day, and before the approval expires.
+- **Database:** Migration 0019 (`schedules`), one pending schedule per publish request.
+- **Tests:** The testbed's Schedules page, and `perf/k6/schedules.js`, run as a smoke by `scripts/check.sh` and CI
+  (at 500 requests a second in CI, half of what its slowest runner manages). Its first smoke missed its 200 ms p99
+  because a list sorted every schedule ever made; lists now read pending and recently finished schedules through their
+  own indexes (list p99 586 ms before, 46 ms after, on a busy laptop). Its first full runs, above, are the scenario's
+  baselines on this laptop.
+
+## R · Roles and permissions
+
+### R.3 · Permissions down to a field, and to your own entries
+
+- **Merged:** 2026-10-27 · `9991ec2`, `1b4396e`
+- **Decisions:** D-058
+- **Proof:** `crates/colophon-domain/src/policy.rs` (narrowed permissions, `Policy::fields`, `covers`), `crates/colophon-api/src/visibility.rs`, `crates/colophon-server/tests/permissions.rs` (an author role against the real binary), `apps/studio/tests/server/permissions.spec.ts`; `perf/k6/roles.js` on `db542c4`: [1,000,078 requests at 1,722/s, p99 61.9 ms](perf/results/2026-10-28T031138Z-roles-throughput-apple-m2-pro-12c.json) and [steady at 1,000/s, p99 15.0 ms](perf/results/2026-10-28T031248Z-roles-steady-apple-m2-pro-12c.json), nothing failed
+
+R.4, API tokens and the audit log, is next; milestone R's proof gate isn't met until it is.
+
+#### Added
+
+- **Studio:** Owners can limit a permission to some fields ("Edit: titles only") or to a member's own entries ("Edit:
+  Articles, only their own entries"). A role's page lists such limits in words, keeps them when the grid is saved,
+  and adds or removes them with a small form. In the editor, fields your role can't see are left out and never sent,
+  so saving can't erase what you never saw; fields you can see but not change are shown disabled, with a note saying
+  which.
+- **API:** Technical side of the above: a permission takes `"fields": [...]` on `content.read`, `content.create` and
+  `content.update`, and `"condition": "own"` (entries the member created) on `content.read`, `content.update` and
+  `content.delete`; anything else is 422 (`fields_not_applicable`, `invalid_fields`, `condition_not_applicable`,
+  `unknown_condition`). Entries leave out the fields a role can't read (`hidden_fields`) and mark those it can read but
+  not change (`locked_fields`); an entry it can't read at all is 404; a list holds only the caller's own entries when
+  that is all the role may read. Saving refuses a change to a field the role can't change (422 `field_not_permitted`,
+  pointing at the field), and puts back every field the saver can't read exactly as stored. A publish request may
+  include an entry only if the role may change it.
+- **Database:** Migration 0021: a role holds one permission per action, subject and condition, so "titles of any
+  article" and "every field of their own" can sit side by side; the database refuses field lists and conditions on
+  actions they don't apply to.
+- **Tests:** On the real binary, an author role that may change the title of any article and every field of its own
+  sees only the owner's title, retitles it while the body it never saw stays as stored, is refused a body it sends
+  anyway, and can't put the owner's article in a publish request when narrowed to its own. In the Studio, the same
+  author retitles an article without seeing its body, and a role's limits survive a save and a reload.
+  `perf/k6/roles.js` doesn't use field lists or `own`: its runs above measure R.3's code with a custom role that has
+  neither.
+
+#### Fixed
+
+- **Database:** Owners hold every permission (D-058), but migration 0017 seeded them without `content.delete`, so no
+  role could ever be given it. Migration 0022 adds it to every owner role, new and existing. No route deletes entries
+  yet.
+- **Tests:** CI's roles smoke failed on its slower runners (AMD EPYC 7763) and passed on faster ones (EPYC 9V45),
+  with the same code. It now runs at 450 requests a second, about half what a 7763 manages, as CI's other
+  database-backed smokes already did; the thresholds are unchanged.
+
 ### R.2 · Roles you define
 
-- **Status:** building
-- **Branch:** `r/r.2-custom-roles`
+- **Merged:** 2026-10-27 · `c89c102`
 - **Decisions:** D-058
 - **Proof:** `crates/colophon-server/tests/permissions.rs`, `apps/studio/tests/server/permissions.spec.ts` (passed 4 times in a row), `apps/testbed/tests/roles.spec.ts`; `perf/k6/roles.js` smoke runs; a three-run A/B of `perf/k6/members.js` against main on one laptop (commit `5cc99e4`)
-
-Nothing from this step is merged. It builds on R.1 and step 3.6, which are not merged either.
 
 #### Added
 
@@ -150,13 +170,14 @@ Nothing from this step is merged. It builds on R.1 and step 3.6, which are not m
 - **API:** Nobody hands out more than they hold: creating, changing or deleting a role needs every power of that role,
   and changing someone's role, removing them or inviting them needs every power of the roles involved. The owner role
   is fixed. Technical: `GET`/`POST /api/v1/projects/{project}/roles`, `GET`/`PUT`/`DELETE …/roles/{role}` with
-  `If-Match: "v<version>"`; 409 `stale_role`, `role_in_use`; 422 `not_yet_enforced` for field lists and conditions
-  until R.3; at most 100 roles a project; `Policy::covers`. `GET /api/v1/projects/{project}` returns your role's
-  name and permissions.
+  `If-Match: "v<version>"`; 409 `stale_role`, `role_in_use`; at most 100 roles a project; `Policy::covers`.
+  `GET /api/v1/projects/{project}` returns your role's name and permissions. On its branch, field lists and conditions
+  were refused until R.3, merged the same day, enforced them.
 - **Database:** Migration 0018 gives roles a version and makes the owner role refuse any change, even a direct write
   as the application's login; a pending invitation holds its role with an advisory lock instead of a foreign key.
 - **Tests:** The testbed's Roles page drives roles through the real API; `perf/k6/roles.js` is a load scenario for
-  custom roles, run as a smoke by `scripts/check.sh` and CI. No million-request run yet.
+  custom roles, run as a smoke by `scripts/check.sh` and CI. Its first million-request runs were made with R.3's code
+  (see R.3).
 
 #### Fixed
 
@@ -169,12 +190,11 @@ Nothing from this step is merged. It builds on R.1 and step 3.6, which are not m
 
 ### R.1 · Roles and permissions as data
 
-- **Status:** building
-- **Branch:** `r/r.1-roles-as-data`
+- **Merged:** 2026-10-27 · `85aa1f1`
 - **Decisions:** D-058
-- **Proof:** the D-042 table test for every role in every collection; `crates/colophon-db/tests/roles.rs` holds the seeded roles equal to `Policy::builtin`; the server suites pass unchanged; session load results on the branch, [quiet](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.1-roles-as-data/perf/results/2026-10-27T155703Z-session-steady-apple-m2-pro-12c.json) and [busy, missed](https://github.com/akira-shirase-oss/colophon-cms/blob/r/r.1-roles-as-data/perf/results/2026-10-27T155156Z-session-steady-apple-m2-pro-12c.json)
+- **Proof:** the D-042 table test for every role in every collection; `crates/colophon-db/tests/roles.rs` holds the seeded roles equal to `Policy::builtin`; the server suites pass unchanged; session load results, [quiet](perf/results/2026-10-27T155703Z-session-steady-apple-m2-pro-12c.json) and [busy, missed](perf/results/2026-10-27T155156Z-session-steady-apple-m2-pro-12c.json)
 
-Nothing from this step is merged. Nobody sees a difference: what each of the four roles may do is unchanged.
+Nobody sees a difference: what each of the four roles may do is unchanged.
 
 #### Added
 
@@ -191,16 +211,74 @@ Nothing from this step is merged. Nobody sees a difference: what each of the fou
   through `colophon_seed_roles`, and makes memberships and invitations name a role of their project by key; one
   deny-by-default evaluator, `colophon_domain::policy`, decides per collection.
 
+## P3 · Prove it reached the site
+
+### 3.7 · The non-technical path
+
+- **Merged:** 2026-10-27 · `76cddf8`
+- **Decisions:** D-059, D-061
+- **Proof:** `apps/studio/tests/server/journey.spec.ts` (sign-up to a first release on a new installation, axe in light and dark on every screen), `apps/studio/tests/server/words.spec.ts`, `crates/colophon-db/tests/setup.rs`, `crates/colophon-server/tests/setup.rs`, `crates/colophon-server/tests/sign_in.rs`, `apps/testbed/tests/setup.spec.ts`; `perf/k6/setup.js`: [1,000,012 requests at 3,099/s, p99 36.2 ms](perf/results/2026-10-27T211759Z-setup-throughput-apple-m2-pro-12c.json) and [steady at 2,000/s, p99 58.1 ms](perf/results/2026-10-27T210433Z-setup-steady-apple-m2-pro-12c.json), with two first runs on an oversubscribed laptop kept, one of them missed
+
+Done but for one check: D-059's rule 7, every screen readable and reviewable on a phone. So far the journey test
+checks two screens at 390 pixels wide (the publish request list and one request) for sideways scrolling, and no
+others.
+
+#### Added
+
+- **Studio:** Someone new can go from signing up to a first release without help. Signed out, the Studio offers *Sign
+  in* and *Create an account* (the identity provider's own sign-up form). On a new installation, the first person to
+  sign in enters the setup code the server printed to its terminal and becomes the administrator; an administrator
+  with no project is offered their first; anyone else learns that projects are joined by invitation, and what to ask
+  for. The invitation page offers an account too.
+- **Studio:** A new project can start as a small blog (Articles with a URL name), a documentation site (Pages with a
+  title, a URL name and a body) or blank. Technical: `lib/starters.ts`, applied through the content-type API as the
+  new owner; if that fails, the project exists and a message says how to finish it in Settings.
+- **Studio:** A checklist on a project's overview: write the first article, publish it (or ask for review), connect
+  the website, invite a teammate, see the first receipt. Each item is worked out from what really exists, and items
+  your role can't do are left out. Hidden, it stays hidden in that browser.
+- **Studio:** *Publish* on an entry: one click makes a publish request for the saved version and sends it for review;
+  when the project lets people approve their own requests and your role may approve and publish, the same click
+  approves it (recorded as your review) and publishes it. Otherwise the button is *Ask for review*. If another
+  release went live first, it stops and says so.
+- **Studio:** Empty pages say what belongs there and offer the action that fills them.
+- **API:** A fresh installation can be set up without the database's credentials: while nobody is an administrator,
+  the server prints a one-time setup code to its terminal when it starts, and the person who enters it, signed in,
+  becomes the first administrator. Technical: `POST /api/v1/setup`; the code is 20 characters, valid for an hour,
+  single-use, stored only as a SHA-256 hash and compared in constant time; five attempts a person and twenty in all
+  per fifteen minutes (429 `rate_limited` with `Retry-After`); every path refuses once an administrator exists (409
+  `already_set_up`); migration 0020. Amends D-043; `colophon admin bootstrap` still works.
+- **API:** You can create an account from the sign-in page when the identity provider offers sign-up, and `/me` says
+  whether the installation has an administrator yet. Technical: `/auth/login?start=create` (`prompt=create`). A new
+  account grants nothing by itself.
+- **API:** `GET /api/v1/projects/{project}` says whether people may approve their own publish requests
+  (`self_review`), which one-click publishing follows. It is always true until projects have settings (D-044).
+- **Tests:** The journey on a new installation with its own database and server; a test that fails on an internal
+  word in visible text outside Settings and the Technical details drawer; database tests for every property of the
+  setup code; real-binary tests on a database nobody set up, and an account made on Keycloak's sign-up form; the
+  testbed's Setup page; `perf/k6/setup.js`, run by `scripts/load.sh setup` and not among CI's smokes.
+  `scripts/first-run.sh` starts a new installation by hand on port 58400.
+
+#### Changed
+
+- **Studio:** Plain words on every screen, from one glossary (`lib/words.ts`): publish request, version, URL name,
+  website connections (rebuild the site, clear the CDN, check the site) and releases by number. Ids, hashes and API
+  addresses moved into *Technical details* drawers.
+- **Studio:** A new entry's URL name is made from its title, and when another entry has it, the next free one
+  (`hello-readers-2`); an edit that collides says which entry has the name.
+
+#### Fixed
+
+- **Studio:** A published request's comparison, opened directly, could say "Loading the comparison…" for good. Found
+  by the journey's phone step, which failed every time without the fix.
+
 ### 3.6 · Content types and URL names
 
-- **Status:** building
-- **Branch:** `p3/3.6-modelling`
-- **Decisions:** D-054, D-055; the branch also carries D-057, D-058 and D-059
+- **Merged:** 2026-10-27 · `6de850c`
+- **Decisions:** D-054, D-055; the branch also carried D-057, D-058 and D-059
 - **Proof:** `crates/colophon-db/tests/slugs.rs`, `crates/colophon-server/tests/content_types.rs`, `apps/studio/tests/server/types.spec.ts`; `scripts/check.sh` on a fresh database at `ef5939c`
 
-Nothing from this step is merged. On its branch, `scripts/check.sh` passes on a fresh database (`ef5939c`: 264 Rust
-tests, 77 Studio tests, 23 against the real server, 23 testbed tests); no million-request load result is committed
-for it yet.
+On its branch, `scripts/check.sh` passed on a fresh database (`ef5939c`: 264 Rust tests, 77 Studio tests, 23 against
+the real server, 23 testbed tests). No million-request load result is committed for it.
 
 #### Added
 
@@ -221,8 +299,6 @@ for it yet.
 - **Docs:** The scope decisions: every Strapi and Sanity feature at Colophon's bar of proof (D-057), roles and
   permissions as data (D-058), non-technical editors first (D-059), and `docs/COMPARISON.md`; the roadmap gains
   milestones R, M, E and D.
-
-## P3 · Prove it reached the site
 
 ### Fix 3.5 · Title search without walking the whole collection
 
