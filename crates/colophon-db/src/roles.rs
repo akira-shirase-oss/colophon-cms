@@ -6,7 +6,7 @@
 //! locks only that role, whose version decides which of two concurrent edits wins. The owner role
 //! is fixed: these functions say so before trying, and migration 0018 refuses it anyway.
 
-use colophon_domain::policy::{MAX_ROLES, Policy};
+use colophon_domain::policy::{Condition, MAX_ROLES, Policy};
 use sqlx::types::time::OffsetDateTime;
 
 use crate::{DbError, scope::MemberTransaction};
@@ -196,18 +196,29 @@ async fn insert_permissions(
     key: &str,
     policy: &Policy,
 ) -> Result<(), DbError> {
-    let (actions, subjects): (Vec<&str>, Vec<&str>) = policy
-        .permissions()
+    let permissions = policy.permissions();
+    let actions: Vec<&str> = permissions.iter().map(|p| p.action.as_str()).collect();
+    let subjects: Vec<&str> = permissions.iter().map(|p| p.subject.as_str()).collect();
+    // Field ids never contain commas (schema::is_field_id), so a list travels joined.
+    let fields: Vec<Option<String>> = permissions
         .iter()
-        .map(|permission| (permission.action.as_str(), permission.subject.as_str()))
-        .unzip();
+        .map(|p| p.fields.as_ref().map(|list| list.join(",")))
+        .collect();
+    let conditions: Vec<Option<&str>> = permissions
+        .iter()
+        .map(|p| p.condition.map(Condition::as_str))
+        .collect();
     sqlx::query!(
-        "INSERT INTO role_permissions (project_id, role_key, action, subject)
-         SELECT $1, $2, action, subject FROM unnest($3::text[], $4::text[]) AS t (action, subject)",
+        "INSERT INTO role_permissions (project_id, role_key, action, subject, fields, condition)
+         SELECT $1, $2, action, subject, string_to_array(fields, ','), condition
+         FROM unnest($3::text[], $4::text[], $5::text[], $6::text[])
+              AS t (action, subject, fields, condition)",
         tx.project,
         key,
         &actions as &[&str],
-        &subjects as &[&str]
+        &subjects as &[&str],
+        &fields as &[Option<String>],
+        &conditions as &[Option<&str>]
     )
     .execute(&mut *tx.transaction)
     .await

@@ -15,13 +15,16 @@
 		form = $bindable(),
 		titleField = '',
 		onchange = () => {},
-		stacked = false
+		stacked = false,
+		locked = []
 	}: {
 		fields: FieldDefinition[];
 		form: Record<string, FormValue>;
 		titleField?: string;
 		onchange?: () => void;
 		stacked?: boolean;
+		/** Fields the person's role can read but not change (D-058, step R.3): shown, disabled. */
+		locked?: string[];
 	} = $props();
 
 	const id = $props.id();
@@ -65,19 +68,20 @@
 			{#if field.type === 'boolean'}
 				<span class="text-sm font-medium" class:sr-only={stacked} aria-hidden="true">{field.label}</span>
 				<label for={input} class="flex items-center gap-2.5 text-sm">
-					<input id={input} type="checkbox" class="size-4 accent-primary" bind:checked={form[field.id] as boolean} {onchange} />
+					<input id={input} disabled={locked.includes(field.id)} type="checkbox" class="size-4 accent-primary" bind:checked={form[field.id] as boolean} {onchange} />
 					{field.label}
 				</label>
 			{:else}
 				<div class="space-y-0.5">
-					<label for={input} class="text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</label>
+					<label for={input} class="text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}{locked.includes(field.id) ? ' (your role can’t change it)' : ''}</label>
 					{#if !stacked && hint(field)}<p class="text-xs text-muted-foreground">{hint(field)}</p>{/if}
 				</div>
 				{#if field.type === 'text' && field.multiline}
-					<Textarea id={input} rows={4} maxlength={field.max_chars} bind:value={form[field.id] as string} oninput={onchange} />
+					<Textarea id={input} disabled={locked.includes(field.id)} rows={4} maxlength={field.max_chars} bind:value={form[field.id] as string} oninput={onchange} />
 				{:else if field.type === 'text'}
 					<Input
 						id={input}
+						disabled={locked.includes(field.id)}
 						maxlength={field.max_chars}
 						class={field.id === titleField ? 'h-10 text-base! font-medium' : ''}
 						bind:value={form[field.id] as string}
@@ -86,6 +90,7 @@
 				{:else if field.type === 'number'}
 					<Input
 						id={input}
+						disabled={locked.includes(field.id)}
 						type="number"
 						class="max-w-48 tabular"
 						step={field.integer ? 1 : 'any'}
@@ -95,18 +100,19 @@
 						oninput={onchange}
 					/>
 				{:else if field.type === 'enum'}
-					<select id={input} class="{select} max-w-72" bind:value={form[field.id] as string} {onchange}>
+					<select id={input} disabled={locked.includes(field.id)} class="{select} max-w-72" bind:value={form[field.id] as string} {onchange}>
 						{#if !field.required}<option value="">None</option>{/if}
 						{#each field.values as option (option)}
 							<option value={option}>{option}</option>
 						{/each}
 					</select>
 				{:else if field.type === 'datetime'}
-					<Input id={input} type="datetime-local" step="1" class="max-w-72" bind:value={form[field.id] as string} oninput={onchange} />
+					<Input id={input} disabled={locked.includes(field.id)} type="datetime-local" step="1" class="max-w-72" bind:value={form[field.id] as string} oninput={onchange} />
 				{:else if field.type === 'slug'}
 					<div class="flex max-w-xl items-center gap-2">
 						<Input
 							id={input}
+							disabled={locked.includes(field.id)}
 							class="font-mono"
 							maxlength={MAX_SLUG_CHARS}
 							autocomplete="off"
@@ -119,7 +125,7 @@
 								type="button"
 								variant="outline"
 								size="sm"
-								disabled={suggestion(field) === '' || suggestion(field) === form[field.id]}
+								disabled={locked.includes(field.id) || suggestion(field) === '' || suggestion(field) === form[field.id]}
 								onclick={() => suggest(field)}
 							>
 								From {fields.find((other) => other.id === field.source)?.label ?? field.source}

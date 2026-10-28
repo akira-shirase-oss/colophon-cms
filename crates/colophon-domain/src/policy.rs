@@ -7,9 +7,9 @@
 //! starts with the four built-in roles of D-042, whose permissions ([`Policy::builtin`]) give
 //! exactly the powers that table gave.
 //!
-//! Since step R.2, owners define more roles. Nobody can hand out power they don't hold
-//! ([`Policy::covers`]), and a permission arrives through [`Permission::parse`], which refuses
-//! field lists and conditions until step R.3 enforces them.
+//! Since step R.2, owners define more roles, and nobody can hand out power they don't hold
+//! ([`Policy::covers`]). Since step R.3, a permission can be narrowed to some fields and to the
+//! member's own entries ([`Permission::parse_narrowed`], [`Policy::fields`]).
 
 use crate::project::Slug;
 
@@ -49,11 +49,20 @@ pub enum RoleError {
     /// More than [`MAX_PERMISSIONS`].
     #[error("a role has at most 500 permissions")]
     TooManyPermissions,
-    /// A field list or a condition, which nothing enforces before step R.3.
+    /// A field list on an action that isn't about fields.
+    #[error("only content.read, content.create and content.update can be limited to some fields")]
+    FieldsNotApplicable,
+    /// A field list that is empty, too long, or names something that isn't a field id.
+    #[error("a field list names 1 to 100 field ids, like title or body")]
+    InvalidFields,
+    /// The own condition on an action it can't apply to.
     #[error(
-        "field lists and conditions arrive with step R.3; until they are enforced, they are refused rather than ignored"
+        "only content.read, content.update and content.delete can be limited to the member's own entries"
     )]
-    NotYetEnforced,
+    ConditionNotApplicable,
+    /// A condition that isn't `own`.
+    #[error("the one condition is own: entries the member created")]
+    UnknownCondition,
 }
 
 impl RoleError {
@@ -67,7 +76,10 @@ impl RoleError {
             Self::InvalidSubject => "invalid_subject",
             Self::ProjectWide => "project_wide_action",
             Self::TooManyPermissions => "too_many_permissions",
-            Self::NotYetEnforced => "not_yet_enforced",
+            Self::FieldsNotApplicable => "fields_not_applicable",
+            Self::InvalidFields => "invalid_fields",
+            Self::ConditionNotApplicable => "condition_not_applicable",
+            Self::UnknownCondition => "unknown_condition",
         }
     }
 }
@@ -304,6 +316,46 @@ impl Permission {
         })
     }
 
+    /// [`Permission::parse`], narrowed to some fields and to the member's own entries (step R.3).
+    /// Field lists apply to reading, creating and updating content; `own` to reading, updating and
+    /// deleting it (a member's own entries are the ones they created).
+    pub fn parse_narrowed(
+        action: &str,
+        subject: &str,
+        fields: Option<&[String]>,
+        condition: Option<&str>,
+    ) -> Result<Self, RoleError> {
+        let mut permission = Self::parse(action, subject)?;
+        if let Some(fields) = fields {
+            if !matches!(
+                permission.action,
+                Action::ContentRead | Action::ContentCreate | Action::ContentUpdate
+            ) {
+                return Err(RoleError::FieldsNotApplicable);
+            }
+            let mut list: Vec<String> = fields.to_vec();
+            list.sort();
+            list.dedup();
+            if !(1..=100).contains(&list.len())
+                || !list.iter().all(|field| crate::schema::is_field_id(field))
+            {
+                return Err(RoleError::InvalidFields);
+            }
+            permission.fields = Some(list);
+        }
+        if let Some(condition) = condition {
+            let condition = Condition::parse(condition).ok_or(RoleError::UnknownCondition)?;
+            if !matches!(
+                permission.action,
+                Action::ContentRead | Action::ContentUpdate | Action::ContentDelete
+            ) {
+                return Err(RoleError::ConditionNotApplicable);
+            }
+            permission.condition = Some(condition);
+        }
+        Ok(permission)
+    }
+
     /// `action` everywhere, on every field, without a condition.
     pub const fn everywhere(action: Action) -> Self {
         Self {
@@ -311,6 +363,37 @@ impl Permission {
             subject: Subject::All,
             fields: None,
             condition: None,
+        }
+    }
+}
+
+/// The fields a permission lets its holder touch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fields {
+    /// Every field.
+    All,
+    /// Only these, by field id.
+    Only(std::collections::BTreeSet<String>),
+}
+
+impl Fields {
+    /// Whether `field` is among them.
+    pub fn includes(&self, field: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(fields) => fields.contains(field),
+        }
+    }
+
+    /// Both together.
+    #[must_use]
+    pub fn union(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Only(mut one), Self::Only(other)) => {
+                one.extend(other);
+                Self::Only(one)
+            }
+            _ => Self::All,
         }
     }
 }
@@ -323,10 +406,35 @@ pub struct Policy {
 
 impl Policy {
     /// A policy of exactly these permissions.
-    pub fn new(mut permissions: Vec<Permission>) -> Self {
-        permissions.sort();
-        permissions.dedup();
-        Self { permissions }
+    /// A policy of exactly these permissions. Permissions for one action, subject and condition
+    /// merge into one, with the union of their fields (or every field, if any allows all): a role
+    /// holds at most one such permission, as the database stores it (migration 0021).
+    pub fn new(permissions: Vec<Permission>) -> Self {
+        let mut merged: Vec<Permission> = Vec::with_capacity(permissions.len());
+        for permission in permissions {
+            match merged.iter_mut().find(|held| {
+                held.action == permission.action
+                    && held.subject == permission.subject
+                    && held.condition == permission.condition
+            }) {
+                None => merged.push(permission),
+                Some(held) => {
+                    held.fields = match (held.fields.take(), permission.fields) {
+                        (Some(mut one), Some(other)) => {
+                            one.extend(other);
+                            one.sort();
+                            one.dedup();
+                            Some(one)
+                        }
+                        _ => None,
+                    };
+                }
+            }
+        }
+        merged.sort();
+        Self {
+            permissions: merged,
+        }
     }
 
     /// The permissions, sorted.
@@ -344,15 +452,17 @@ impl Policy {
     /// | publisher | ✓ | | | ✓ |
     pub fn builtin(role: Role) -> Self {
         use Action::{
-            ContentCreate, ContentPublish, ContentRead, ContentReview, ContentUpdate,
-            DestinationsManage, MembersManage, RolesManage, SchemaChange, TokensManage,
+            ContentCreate, ContentDelete, ContentPublish, ContentRead, ContentReview,
+            ContentUpdate, DestinationsManage, MembersManage, RolesManage, SchemaChange,
+            TokensManage,
         };
         let mut actions = vec![ContentRead, ContentCreate, ContentUpdate];
         if matches!(role, Role::Owner | Role::Developer) {
             actions.extend([SchemaChange, DestinationsManage]);
         }
         if role == Role::Owner {
-            actions.extend([MembersManage, RolesManage, TokensManage]);
+            // Every permission (D-058), deleting included: nobody could grant it otherwise.
+            actions.extend([MembersManage, RolesManage, TokensManage, ContentDelete]);
         }
         if matches!(role, Role::Owner | Role::Publisher) {
             actions.extend([ContentReview, ContentPublish]);
@@ -362,32 +472,62 @@ impl Policy {
 
     /// Whether a holder of this policy may hand out `other`: as a role they create or edit, or
     /// by giving someone a role. Nobody grants what they can't do themselves, so no chain of
-    /// grants ends with more power than it started with.
+    /// grants ends with more power than it started with: each of `other`'s permissions must be
+    /// within this policy's, on its subject, for its fields, with its condition (step R.3).
     pub fn covers(&self, other: &Self) -> bool {
         other.permissions.iter().all(|permission| {
-            let collection = match &permission.subject {
-                Subject::All => None,
-                Subject::Collection(slug) => Some(slug.as_str()),
-            };
-            self.allows(permission.action, collection)
+            let own = permission.condition == Some(Condition::Own);
+            match self.fields_on(permission.action, &permission.subject, own) {
+                None => false,
+                Some(mine) => match &permission.fields {
+                    None => mine == Fields::All,
+                    Some(asked) => asked.iter().all(|field| mine.includes(field)),
+                },
+            }
         })
     }
 
-    /// Whether this policy lets its holder perform `action`, in `collection` when the action is
-    /// about one (`None` for project-wide actions, and for a collection-wide check that must
-    /// hold everywhere). Deny by default: only a permission for the action on [`Subject::All`],
-    /// or on that very collection, allows it.
-    pub fn allows(&self, action: Action, collection: Option<&str>) -> bool {
-        self.permissions.iter().any(|permission| {
-            permission.action == action
-                && match (&permission.subject, collection) {
-                    (Subject::All, _) => true,
-                    (Subject::Collection(slug), Some(asked)) => {
-                        action.per_collection() && slug == asked
+    /// Which fields this policy lets its holder `action` on an entry of `collection`, `own` when
+    /// they created it; `None` when it allows nothing there (step R.3). Every permission that
+    /// applies (its action, its subject everything or this collection, its condition met) adds
+    /// its fields, and one without a field list allows them all. So "titles of any article" with
+    /// "every field of my own articles" allows every field of one's own and titles of the rest.
+    pub fn fields(&self, action: Action, collection: &str, own: bool) -> Option<Fields> {
+        self.fields_on(action, &Subject::Collection(collection.to_owned()), own)
+    }
+
+    fn fields_on(&self, action: Action, subject: &Subject, own: bool) -> Option<Fields> {
+        self.permissions
+            .iter()
+            .filter(|permission| {
+                permission.action == action
+                    && match (&permission.subject, subject) {
+                        (Subject::All, _) => true,
+                        (Subject::Collection(granted), Subject::Collection(asked)) => {
+                            action.per_collection() && granted == asked
+                        }
+                        (Subject::Collection(_), Subject::All) => false,
                     }
-                    (Subject::Collection(_), None) => false,
-                }
-        })
+                    && match permission.condition {
+                        None => true,
+                        Some(Condition::Own) => own,
+                    }
+            })
+            .map(|permission| match &permission.fields {
+                None => Fields::All,
+                Some(list) => Fields::Only(list.iter().cloned().collect()),
+            })
+            .reduce(Fields::union)
+    }
+
+    /// Whether this policy lets its holder perform `action` in `collection` (`None` for
+    /// project-wide actions, and for a check that must hold in every collection) on every field
+    /// of every entry. Deny by default: only a permission for the action on [`Subject::All`], or
+    /// on that very collection, without a field list or a condition, allows it; narrower ones
+    /// count only where [`Policy::fields`] asks about them.
+    pub fn allows(&self, action: Action, collection: Option<&str>) -> bool {
+        let subject = collection.map_or(Subject::All, |slug| Subject::Collection(slug.to_owned()));
+        self.fields_on(action, &subject, false) == Some(Fields::All)
     }
 }
 
@@ -435,7 +575,8 @@ mod tests {
                 assert_eq!(actual, expected, "{role:?} in {collection:?}");
             }
         }
-        // New actions: only owners manage roles and tokens; nobody deletes yet.
+        // New actions: only owners manage roles and tokens, and only owners delete (no route
+        // deletes yet), and the owner role holds every action there is.
         for role in Role::ALL {
             let policy = Policy::builtin(role);
             assert_eq!(
@@ -446,7 +587,18 @@ mod tests {
                 policy.allows(Action::TokensManage, None),
                 role == Role::Owner
             );
-            assert!(!policy.allows(Action::ContentDelete, Some("articles")));
+            assert_eq!(
+                policy.allows(Action::ContentDelete, Some("articles")),
+                role == Role::Owner
+            );
+        }
+    }
+
+    #[test]
+    fn the_owner_role_holds_every_action() {
+        let owner = Policy::builtin(Role::Owner);
+        for action in Action::ALL {
+            assert!(owner.allows(action, None), "{action:?}");
         }
     }
 
@@ -585,6 +737,198 @@ mod tests {
             role_description("line\nbreak"),
             Err(RoleError::InvalidDescription)
         );
+    }
+
+    fn only(fields: &[&str]) -> Fields {
+        Fields::Only(fields.iter().map(|field| (*field).to_owned()).collect())
+    }
+
+    fn narrowed(
+        action: Action,
+        collection: &str,
+        fields: Option<&[&str]>,
+        own: bool,
+    ) -> Permission {
+        Permission {
+            action,
+            subject: Subject::Collection(collection.to_owned()),
+            fields: fields.map(|list| list.iter().map(|field| (*field).to_owned()).collect()),
+            condition: own.then_some(Condition::Own),
+        }
+    }
+
+    #[test]
+    fn fields_and_ownership_narrow_what_a_permission_allows() {
+        // Titles of any article, and every field of one's own articles.
+        let policy = Policy::new(vec![
+            narrowed(Action::ContentUpdate, "articles", Some(&["title"]), false),
+            narrowed(Action::ContentUpdate, "articles", None, true),
+            narrowed(Action::ContentRead, "articles", None, true),
+        ]);
+        assert_eq!(
+            policy.fields(Action::ContentUpdate, "articles", false),
+            Some(only(&["title"]))
+        );
+        assert_eq!(
+            policy.fields(Action::ContentUpdate, "articles", true),
+            Some(Fields::All)
+        );
+        assert_eq!(policy.fields(Action::ContentUpdate, "pages", true), None);
+        assert_eq!(policy.fields(Action::ContentRead, "articles", false), None);
+        assert_eq!(
+            policy.fields(Action::ContentRead, "articles", true),
+            Some(Fields::All)
+        );
+        // Narrow permissions never grant the collection-wide power the coarse check asks for.
+        assert!(!policy.allows(Action::ContentUpdate, Some("articles")));
+        assert!(!policy.allows(Action::ContentRead, Some("articles")));
+        // Field lists add up.
+        let two = Policy::new(vec![
+            narrowed(Action::ContentRead, "articles", Some(&["title"]), false),
+            narrowed(Action::ContentRead, "articles", Some(&["body"]), false),
+        ]);
+        assert_eq!(
+            two.fields(Action::ContentRead, "articles", false),
+            Some(only(&["body", "title"]))
+        );
+        assert_eq!(only(&["a"]).union(Fields::All), Fields::All);
+        assert!(only(&["a"]).includes("a") && !only(&["a"]).includes("b"));
+        // The built-in roles allow every field of every entry.
+        assert_eq!(
+            Policy::builtin(Role::Editor).fields(Action::ContentUpdate, "articles", false),
+            Some(Fields::All)
+        );
+    }
+
+    #[test]
+    fn nobody_hands_out_more_fields_or_entries_than_they_hold() {
+        let own_articles = Policy::new(vec![narrowed(
+            Action::ContentUpdate,
+            "articles",
+            None,
+            true,
+        )]);
+        let any_article = Policy::new(vec![narrowed(
+            Action::ContentUpdate,
+            "articles",
+            None,
+            false,
+        )]);
+        let titles = Policy::new(vec![narrowed(
+            Action::ContentUpdate,
+            "articles",
+            Some(&["title"]),
+            false,
+        )]);
+        let titles_and_slugs = Policy::new(vec![narrowed(
+            Action::ContentUpdate,
+            "articles",
+            Some(&["title", "slug"]),
+            false,
+        )]);
+        assert!(
+            any_article.covers(&own_articles),
+            "everyone's covers one's own"
+        );
+        assert!(
+            !own_articles.covers(&any_article),
+            "one's own doesn't cover everyone's"
+        );
+        assert!(own_articles.covers(&own_articles));
+        assert!(any_article.covers(&titles), "every field covers some");
+        assert!(titles_and_slugs.covers(&titles));
+        assert!(!titles.covers(&titles_and_slugs), "nor fewer fields more");
+        assert!(!titles.covers(&any_article));
+        assert!(Policy::builtin(Role::Editor).covers(&titles_and_slugs));
+        assert!(
+            !own_articles.covers(&titles),
+            "own entries don't cover anyone's titles"
+        );
+    }
+
+    #[test]
+    fn narrowed_permissions_parse_only_where_they_apply_and_merge() {
+        let titles = ["title".to_owned()];
+        assert_eq!(
+            Permission::parse_narrowed("content.update", "articles", Some(&titles), None),
+            Ok(narrowed(
+                Action::ContentUpdate,
+                "articles",
+                Some(&["title"]),
+                false
+            ))
+        );
+        assert_eq!(
+            Permission::parse_narrowed("content.update", "*", None, Some("own"))
+                .map(|p| p.condition),
+            Ok(Some(Condition::Own))
+        );
+        for (action, fields, condition, error) in [
+            (
+                "content.publish",
+                Some(&titles[..]),
+                None,
+                RoleError::FieldsNotApplicable,
+            ),
+            (
+                "content.read",
+                Some(&[][..]),
+                None,
+                RoleError::InvalidFields,
+            ),
+            (
+                "content.read",
+                Some(&["Title".to_owned()][..]),
+                None,
+                RoleError::InvalidFields,
+            ),
+            (
+                "content.publish",
+                None,
+                Some("own"),
+                RoleError::ConditionNotApplicable,
+            ),
+            (
+                "content.create",
+                None,
+                Some("own"),
+                RoleError::ConditionNotApplicable,
+            ),
+            (
+                "content.read",
+                None,
+                Some("mine"),
+                RoleError::UnknownCondition,
+            ),
+        ] {
+            assert_eq!(
+                Permission::parse_narrowed(action, "articles", fields, condition),
+                Err(error),
+                "{action} {fields:?} {condition:?}"
+            );
+        }
+        // One action, subject and condition: one permission, with the union of fields.
+        let merged = Policy::new(vec![
+            narrowed(Action::ContentRead, "articles", Some(&["title"]), false),
+            narrowed(
+                Action::ContentRead,
+                "articles",
+                Some(&["body", "title"]),
+                false,
+            ),
+            narrowed(Action::ContentRead, "articles", None, true),
+        ]);
+        assert_eq!(merged.permissions().len(), 2);
+        assert_eq!(
+            merged.fields(Action::ContentRead, "articles", false),
+            Some(only(&["body", "title"]))
+        );
+        let widened = Policy::new(vec![
+            narrowed(Action::ContentRead, "articles", Some(&["title"]), false),
+            narrowed(Action::ContentRead, "articles", None, false),
+        ]);
+        assert_eq!(widened.permissions().len(), 1);
+        assert!(widened.allows(Action::ContentRead, Some("articles")));
     }
 
     #[test]

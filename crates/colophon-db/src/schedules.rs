@@ -1,4 +1,5 @@
-//! Scheduled publishing (D-060; spec "Scheduled publishing", §17, case X07; migration 0019).
+//! Scheduled publishing (D-060; spec §06 "Scheduled publishing", §14, case X07 in §31; migration
+//! 0019).
 //!
 //! The API creates and cancels schedules in a member's transaction, after checking they may
 //! publish the changeset. A worker finds what is due ([`due`]) and runs each one ([`run`]) as the

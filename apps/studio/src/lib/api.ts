@@ -35,6 +35,10 @@ export type Action =
 export interface Grant {
 	action: Action;
 	subject: string;
+	/** Only these fields (step R.3). */
+	fields?: string[];
+	/** `own`: only entries the member created (step R.3). */
+	condition?: 'own';
 }
 
 /**
@@ -108,9 +112,16 @@ export interface Draft {
 	id: string;
 	collection: string;
 	created_at: string;
+	/** Who created it: the member whose own entry it is. */
+	created_by: string;
 	updated_at: string;
 	revision: Revision;
+	/** Only the fields the person's role may read (D-058, step R.3). */
 	content: Content;
+	/** Fields left out because the role can't read them. */
+	hidden_fields?: string[];
+	/** Fields the role can read but not change. */
+	locked_fields?: string[];
 }
 
 export interface Summary {

@@ -27,6 +27,7 @@ pub mod session;
 mod shape;
 pub mod state;
 pub mod studio;
+mod visibility;
 
 use axum::{
     Router,

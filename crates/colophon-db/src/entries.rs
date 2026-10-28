@@ -64,6 +64,8 @@ pub struct Draft {
     pub collection: String,
     /// When the entry was created.
     pub created_at: OffsetDateTime,
+    /// Who created it: the member whose own entry it is (D-058, step R.3).
+    pub created_by: Uuid,
     /// When its draft last moved.
     pub updated_at: OffsetDateTime,
     /// The current draft revision.
@@ -77,6 +79,8 @@ pub struct Draft {
 pub struct Summary {
     /// The entry's id.
     pub entry_id: Uuid,
+    /// Who created it.
+    pub created_by: Uuid,
     /// When its draft last moved.
     pub updated_at: OffsetDateTime,
     /// The current draft revision.
@@ -92,7 +96,7 @@ pub const MAX_SEARCH: usize = 100;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Saved {
     /// The draft now points at the new revision.
-    Saved(Draft),
+    Saved(Box<Draft>),
     /// The draft no longer points at the expected revision; nothing was written.
     Stale {
         /// The revision it points at now.
@@ -130,6 +134,7 @@ pub async fn create(
         entry_id,
         collection: collection.to_owned(),
         created_at: entry.created_at,
+        created_by: tx.identity,
         updated_at: entry.updated_at,
         revision: Revision {
             id: revision.id,
@@ -153,7 +158,7 @@ pub async fn save(
     // Lock the entry so concurrent saves queue here. This read only tells "stale" from
     // "missing" and names the current revision; the conditional UPDATE below is the rule.
     let current = sqlx::query!(
-        "SELECT draft_revision_id, collection, created_at FROM entries
+        "SELECT draft_revision_id, collection, created_at, created_by FROM entries
          WHERE project_id = $1 AND environment_id = $2 AND id = $3
          FOR UPDATE",
         tx.project,
@@ -194,10 +199,11 @@ pub async fn save(
             current: current.draft_revision_id,
         });
     };
-    Ok(Saved::Saved(Draft {
+    Ok(Saved::Saved(Box::new(Draft {
         entry_id,
         collection: current.collection,
         created_at: current.created_at,
+        created_by: current.created_by,
         updated_at,
         revision: Revision {
             id: revision.id,
@@ -208,7 +214,7 @@ pub async fn save(
             title: revision.title.to_owned(),
         },
         content: revision.content.to_owned(),
-    }))
+    })))
 }
 
 async fn insert_revision(
@@ -284,7 +290,7 @@ pub async fn get(
     entry_id: Uuid,
 ) -> Result<Option<Draft>, DbError> {
     let row = sqlx::query!(
-        "SELECT e.collection, e.created_at, e.updated_at,
+        "SELECT e.collection, e.created_at, e.created_by, e.updated_at,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
                 r.content_hash, r.title, r.content
          FROM entries e
@@ -303,6 +309,7 @@ pub async fn get(
         entry_id,
         collection: row.collection,
         created_at: row.created_at,
+        created_by: row.created_by,
         updated_at: row.updated_at,
         revision: Revision {
             id: row.revision_id,
@@ -332,6 +339,7 @@ pub async fn list(
     before: Option<Uuid>,
     limit: i64,
     search: Option<&str>,
+    created_by: Option<Uuid>,
 ) -> Result<Vec<Summary>, DbError> {
     // A title search matches anywhere in the draft's title, case-insensitively; its own `%`, `_`
     // and `\` match themselves. It filters on the entry's copy of the title (migration 0015), so
@@ -344,7 +352,7 @@ pub async fn list(
         format!("%{escaped}%")
     });
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.updated_at,
+        r#"SELECT e.id, e.created_by, e.updated_at,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
                 r.content_hash, r.title, live.revision_id AS "published_revision_id?",
                 live.valid_from AS "published_in?"
@@ -366,6 +374,7 @@ pub async fn list(
          WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
            AND ($4::uuid IS NULL OR e.id < $4)
            AND ($6::text IS NULL OR e.draft_title ILIKE $6)
+           AND ($7::uuid IS NULL OR e.created_by = $7)
          ORDER BY e.id DESC
          LIMIT $5"#,
         tx.project,
@@ -373,7 +382,8 @@ pub async fn list(
         collection,
         before,
         limit.clamp(1, MAX_PAGE + 1),
-        pattern
+        pattern,
+        created_by
     )
     .fetch_all(&mut *tx.transaction)
     .await
@@ -382,6 +392,7 @@ pub async fn list(
         .into_iter()
         .map(|row| Summary {
             entry_id: row.id,
+            created_by: row.created_by,
             updated_at: row.updated_at,
             revision: Revision {
                 id: row.revision_id,
@@ -393,6 +404,28 @@ pub async fn list(
             },
             published: row.published_revision_id.zip(row.published_in),
         })
+        .collect())
+}
+
+/// Who created each of these entries in this environment, and their collections; entries that
+/// don't exist are missing (D-058, step R.3: the own condition).
+pub async fn creators(
+    tx: &mut ProjectTransaction,
+    entries: &[Uuid],
+) -> Result<Vec<(Uuid, String, Uuid)>, DbError> {
+    let rows = sqlx::query!(
+        "SELECT id, collection, created_by FROM entries
+         WHERE project_id = $1 AND environment_id = $2 AND id = ANY($3)",
+        tx.project,
+        tx.environment,
+        entries
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.id, row.collection, row.created_by))
         .collect())
 }
 

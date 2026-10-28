@@ -98,3 +98,77 @@ test('an owner makes a role, chooses what it may do, and someone invited with it
 	await expect(page).toHaveURL(new RegExp(`/studio/projects/${project}/settings$`));
 	await expect(page.getByTestId('roles')).not.toContainText('Copy desk');
 });
+
+/** Runs `fetch` calls as the signed-in page: JSON in, JSON out. */
+async function api(page: import('@playwright/test').Page, method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
+	return page.evaluate(
+		async ({ method, path, body, headers }) => {
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const response = await fetch(path, {
+				method,
+				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, ...headers },
+				...(body === undefined ? {} : { body: JSON.stringify(body) })
+			});
+			return { status: response.status, body: (await response.json().catch(() => null)) as Record<string, any> | null };
+		},
+		{ method, path, body, headers }
+	);
+}
+
+test('an author retitles someone else’s article without seeing or erasing its body, and the role keeps its limits', async ({ page, browser }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const base = `/api/v1/projects/${project}`;
+	const role = await api(page, 'POST', `${base}/roles`, {
+		key: 'author',
+		name: 'Author',
+		permissions: [
+			{ action: 'content.read', subject: 'articles', fields: ['title'] },
+			{ action: 'content.read', subject: 'articles', condition: 'own' },
+			{ action: 'content.create', subject: 'articles' },
+			{ action: 'content.update', subject: 'articles', fields: ['title'] },
+			{ action: 'content.update', subject: 'articles', condition: 'own' }
+		]
+	});
+	expect(role.status).toBe(201);
+	const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'The owner’s private body' }] }] };
+	const entry = await api(
+		page,
+		'POST',
+		`${base}/environments/production/collections/articles/entries`,
+		{ title: 'Owner’s note', body: { schema: 'colophon/rich-text', version: 1, doc } },
+		{ 'Idempotency-Key': crypto.randomUUID() }
+	);
+	expect(entry.status).toBe(201);
+	const entryId = entry.body?.data.id as string;
+	const invited = await api(page, 'POST', `${base}/invitations`, { role: 'author', label: 'An author' });
+	const token = String(invited.body?.data.link).split('#')[1];
+
+	const author = await (await browser.newContext()).newPage();
+	await signIn(author, 'dev-editor');
+	expect((await api(author, 'POST', '/api/v1/invitations/accept', { token })).status).toBe(200);
+	await author.goto(`/studio/projects/${project}/articles/${entryId}`);
+	await expect(author.getByTestId('role-limits')).toContainText('doesn’t show body');
+	await expect(author.getByRole('textbox', { name: 'Body' })).toHaveCount(0);
+	await author.getByLabel('Title', { exact: true }).fill('Owner’s note, retitled');
+	await expect(author.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
+	expect(await violations(author)).toEqual([]);
+
+	// The owner sees the new title and the body exactly as it was.
+	const after = await api(page, 'GET', `${base}/environments/production/collections/articles/entries/${entryId}`);
+	expect(after.body?.data.content.title).toBe('Owner’s note, retitled');
+	expect(after.body?.data.content.body).toEqual(entry.body?.data.content.body);
+
+	// Saving the role from the grid keeps its limited permissions.
+	await page.goto(`/studio/projects/${project}/settings/roles/author`);
+	const limits = page.getByTestId('limited-permissions');
+	await expect(limits).toContainText('Edit: Articles, only title');
+	await expect(limits).toContainText('Edit: Articles, only their own entries');
+	await page.getByLabel('Publish: Articles').check();
+	await page.getByRole('button', { name: 'Save role' }).click();
+	await expect(page.getByText('Version 2')).toBeVisible();
+	await page.reload();
+	await expect(page.getByTestId('limited-permissions')).toContainText('Edit: Articles, only their own entries');
+	await expect(page.getByLabel('Publish: Articles')).toBeChecked();
+	expect(await violations(page)).toEqual([]);
+});

@@ -458,3 +458,64 @@ async fn a_member_manager_never_hands_out_or_takes_away_more_than_they_hold() {
     tx.commit().await.expect("commit");
     db.drop().await;
 }
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_role_narrowed_to_fields_and_own_entries_round_trips() {
+    let db = TestDb::new().await;
+    let (alice, bob, project) = alice_and_bob(&db, "editor").await;
+    let titles = ["title".to_owned()];
+    let narrowed = Policy::new(vec![
+        Permission::parse_narrowed("content.update", "articles", Some(&titles), None)
+            .expect("titles of any article"),
+        Permission::parse_narrowed("content.update", "articles", None, Some("own"))
+            .expect("every field of their own"),
+        Permission::parse_narrowed("content.read", "articles", None, Some("own"))
+            .expect("reading their own"),
+    ]);
+    let mut tx = as_member(&db.app, alice, project).await;
+    let Written::Done(made) = roles::create(&mut tx, "author", "Author", "", &narrowed)
+        .await
+        .expect("create")
+    else {
+        panic!("created")
+    };
+    assert_eq!(made.policy, narrowed, "stored as it was given");
+    assert_eq!(
+        members::change_role(&mut tx, bob, "author")
+            .await
+            .expect("change"),
+        Change::Done
+    );
+    tx.commit().await.expect("commit");
+    let policy = as_member(&db.app, bob, project).await.policy;
+    assert_eq!(policy, narrowed);
+    assert_eq!(
+        policy.fields(Action::ContentUpdate, "articles", false),
+        Some(colophon_domain::policy::Fields::Only(
+            ["title".to_owned()].into_iter().collect()
+        ))
+    );
+
+    // The database refuses what the domain would: a field list on publishing, own on creating.
+    let owner = db.owner().await;
+    for (action, fields, condition) in [
+        ("content.publish", Some("{title}"), None),
+        ("content.create", None, Some("own")),
+        ("content.read", Some("{Title}"), None),
+    ] {
+        let refused = sqlx::query(
+            "INSERT INTO role_permissions (project_id, role_key, action, subject, fields, condition)
+             VALUES ($1, 'author', $2, 'pages', $3::text[], $4)",
+        )
+        .bind(project)
+        .bind(action)
+        .bind(fields)
+        .bind(condition)
+        .execute(&owner)
+        .await;
+        assert!(refused.is_err(), "{action} {fields:?} {condition:?}");
+    }
+    owner.close().await;
+    db.drop().await;
+}

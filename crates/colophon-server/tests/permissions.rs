@@ -170,7 +170,7 @@ async fn a_role_the_owner_defines_decides_what_its_holder_may_do() {
     .await;
     assert_eq!(fixed.status, StatusCode::CONFLICT, "{}", fixed.body);
 
-    // What nothing enforces yet is refused, not ignored.
+    // Fields and own only where they mean something.
     for (permission, reason) in [
         (
             json!({"action": "content.everything", "subject": "*"}),
@@ -181,12 +181,12 @@ async fn a_role_the_owner_defines_decides_what_its_holder_may_do() {
             "project_wide_action",
         ),
         (
-            json!({"action": "content.read", "subject": "articles", "fields": ["title"]}),
-            "not_yet_enforced",
+            json!({"action": "content.publish", "subject": "articles", "fields": ["title"]}),
+            "fields_not_applicable",
         ),
         (
-            json!({"action": "content.update", "subject": "*", "condition": "own"}),
-            "not_yet_enforced",
+            json!({"action": "content.create", "subject": "*", "condition": "own"}),
+            "condition_not_applicable",
         ),
     ] {
         let refused = send(
@@ -320,4 +320,202 @@ async fn nobody_hands_out_more_than_they_hold() {
     )
     .await;
     assert_eq!(role.status, StatusCode::FORBIDDEN, "{}", role.body);
+}
+
+/// The article's draft as `session` sees it.
+async fn read_article(session: &Session, project: &str, id: &str) -> Reply {
+    send(
+        session,
+        Method::GET,
+        &format!("{}/{id}", entries(project)),
+        None,
+        &[],
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story, told in order: an author's own articles and everyone else's"
+)]
+async fn an_author_reads_and_edits_titles_of_any_article_and_all_of_their_own() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let author = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    let made = send(
+        &owner,
+        Method::POST,
+        &roles(&project),
+        Some(&json!({
+            "key": "author",
+            "name": "Author",
+            "permissions": [
+                {"action": "content.read", "subject": "articles", "fields": ["title"]},
+                {"action": "content.read", "subject": "articles", "condition": "own"},
+                {"action": "content.create", "subject": "articles"},
+                {"action": "content.update", "subject": "articles", "fields": ["title"]},
+                {"action": "content.update", "subject": "articles", "condition": "own"}
+            ]
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    assert_eq!(
+        made.body["data"]["permissions"].as_array().map(Vec::len),
+        Some(5)
+    );
+    join(&owner, &author, &project, "author").await;
+
+    // The owner's article: the author sees its title, not its body, and may change the title.
+    let theirs = send(
+        &owner,
+        Method::POST,
+        &entries(&project),
+        Some(&article("Owner's note", "Private body")),
+        &[("idempotency-key", &key())],
+    )
+    .await;
+    let theirs_id = theirs.body["data"]["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let seen = read_article(&author, &project, &theirs_id).await;
+    assert_eq!(seen.status, StatusCode::OK, "{}", seen.body);
+    assert_eq!(
+        seen.body["data"]["content"],
+        json!({"title": "Owner's note"})
+    );
+    assert_eq!(seen.body["data"]["hidden_fields"], json!(["body"]));
+    let revision = seen.etag().expect("an etag");
+    let retitled = send(
+        &author,
+        Method::PUT,
+        &format!("{}/{theirs_id}", entries(&project)),
+        Some(&json!({"title": "Owner's note, retitled"})),
+        &[("if-match", &revision), ("idempotency-key", &key())],
+    )
+    .await;
+    assert_eq!(retitled.status, StatusCode::OK, "{}", retitled.body);
+    // The body the author never saw is exactly as it was.
+    let full = read_article(&owner, &project, &theirs_id).await;
+    assert_eq!(
+        full.body["data"]["content"]["title"],
+        "Owner's note, retitled"
+    );
+    assert_eq!(
+        full.body["data"]["content"]["body"],
+        theirs.body["data"]["content"]["body"]
+    );
+    // A body sent for it anyway is refused, not ignored.
+    let revision = retitled.etag().expect("an etag");
+    let sneaky = send(
+        &author,
+        Method::PUT,
+        &format!("{}/{theirs_id}", entries(&project)),
+        Some(&article("Owner's note, retitled", "Rewritten")),
+        &[("if-match", &revision), ("idempotency-key", &key())],
+    )
+    .await;
+    assert_eq!(
+        sneaky.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        sneaky.body
+    );
+    assert_eq!(
+        sneaky.body["error"]["details"]["reason"],
+        "field_not_permitted"
+    );
+    assert_eq!(sneaky.body["error"]["details"]["pointer"], "/body");
+
+    // Their own article: every field.
+    let mine = send(
+        &author,
+        Method::POST,
+        &entries(&project),
+        Some(&article("Author's note", "Draft")),
+        &[("idempotency-key", &key())],
+    )
+    .await;
+    assert_eq!(mine.status, StatusCode::CREATED, "{}", mine.body);
+    let mine_id = mine.body["data"]["id"].as_str().expect("an id").to_owned();
+    assert!(mine.body["data"].get("hidden_fields").is_none());
+    let revision = mine.etag().expect("an etag");
+    let rewritten = send(
+        &author,
+        Method::PUT,
+        &format!("{}/{mine_id}", entries(&project)),
+        Some(&article("Author's note", "Finished")),
+        &[("if-match", &revision), ("idempotency-key", &key())],
+    )
+    .await;
+    assert_eq!(rewritten.status, StatusCode::OK, "{}", rewritten.body);
+
+    // The list shows both, with titles.
+    let listed = send(&author, Method::GET, &entries(&project), None, &[]).await;
+    let titles: Vec<&str> = listed.body["data"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .filter_map(|entry| entry["revision"]["title"].as_str())
+        .collect();
+    assert_eq!(titles, ["Author's note", "Owner's note, retitled"]);
+
+    // Without the titles permissions, someone else's article is out of reach: not found to read,
+    // and not something to pin into a publish request.
+    let role = format!("{}/author", roles(&project));
+    let narrowed = send(
+        &owner,
+        Method::PUT,
+        &role,
+        Some(&json!({
+            "name": "Author",
+            "permissions": [
+                {"action": "content.read", "subject": "articles", "condition": "own"},
+                {"action": "content.create", "subject": "articles"},
+                {"action": "content.update", "subject": "articles", "condition": "own"}
+            ]
+        })),
+        &[("if-match", "\"v1\"")],
+    )
+    .await;
+    assert_eq!(narrowed.status, StatusCode::OK, "{}", narrowed.body);
+    assert_eq!(
+        read_article(&author, &project, &theirs_id).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let listed = send(&author, Method::GET, &entries(&project), None, &[]).await;
+    assert_eq!(
+        listed.body["data"].as_array().map(Vec::len),
+        Some(1),
+        "only their own"
+    );
+    let changesets = format!("/api/v1/projects/{project}/environments/production/changesets");
+    let pin_theirs = send(
+        &author,
+        Method::POST,
+        &changesets,
+        Some(&json!({"title": "Both", "entries": [theirs_id, mine_id]})),
+        &[("idempotency-key", &key())],
+    )
+    .await;
+    assert_eq!(
+        pin_theirs.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        pin_theirs.body
+    );
+    let pin_mine = send(
+        &author,
+        Method::POST,
+        &changesets,
+        Some(&json!({"title": "Mine", "entries": [mine_id]})),
+        &[("idempotency-key", &key())],
+    )
+    .await;
+    assert_eq!(pin_mine.status, StatusCode::CREATED, "{}", pin_mine.body);
 }

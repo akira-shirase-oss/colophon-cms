@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT e.id, e.updated_at,\n                r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,\n                r.content_hash, r.title, live.revision_id AS \"published_revision_id?\",\n                live.valid_from AS \"published_in?\"\n         FROM entries e\n         CROSS JOIN LATERAL (\n             SELECT r.id, r.base_revision_id, r.author_id, r.created_at, r.content_hash, r.title\n             FROM revisions r\n             WHERE r.project_id = e.project_id AND r.environment_id = e.environment_id\n               AND r.id = e.draft_revision_id\n             LIMIT 1\n         ) r\n         LEFT JOIN LATERAL (\n             SELECT p.revision_id, p.valid_from\n             FROM publications p\n             WHERE p.project_id = e.project_id AND p.environment_id = e.environment_id\n               AND p.entry_id = e.id AND p.valid_to IS NULL\n             LIMIT 1\n         ) live ON true\n         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3\n           AND ($4::uuid IS NULL OR e.id < $4)\n           AND ($6::text IS NULL OR e.draft_title ILIKE $6)\n         ORDER BY e.id DESC\n         LIMIT $5",
+  "query": "SELECT e.id, e.created_by, e.updated_at,\n                r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,\n                r.content_hash, r.title, live.revision_id AS \"published_revision_id?\",\n                live.valid_from AS \"published_in?\"\n         FROM entries e\n         CROSS JOIN LATERAL (\n             SELECT r.id, r.base_revision_id, r.author_id, r.created_at, r.content_hash, r.title\n             FROM revisions r\n             WHERE r.project_id = e.project_id AND r.environment_id = e.environment_id\n               AND r.id = e.draft_revision_id\n             LIMIT 1\n         ) r\n         LEFT JOIN LATERAL (\n             SELECT p.revision_id, p.valid_from\n             FROM publications p\n             WHERE p.project_id = e.project_id AND p.environment_id = e.environment_id\n               AND p.entry_id = e.id AND p.valid_to IS NULL\n             LIMIT 1\n         ) live ON true\n         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3\n           AND ($4::uuid IS NULL OR e.id < $4)\n           AND ($6::text IS NULL OR e.draft_title ILIKE $6)\n           AND ($7::uuid IS NULL OR e.created_by = $7)\n         ORDER BY e.id DESC\n         LIMIT $5",
   "describe": {
     "columns": [
       {
@@ -16,6 +16,17 @@
       },
       {
         "ordinal": 1,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -26,7 +37,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "revision_id",
         "type_info": "Uuid",
         "origin": {
@@ -37,7 +48,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "base_revision_id",
         "type_info": "Uuid",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "author_id",
         "type_info": "Uuid",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "revision_created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "content_hash",
         "type_info": "Bytea",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "title",
         "type_info": "Text",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "published_revision_id?",
         "type_info": "Uuid",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "published_in?",
         "type_info": "Int8",
         "origin": {
@@ -121,10 +132,12 @@
         "Text",
         "Uuid",
         "Int8",
-        "Text"
+        "Text",
+        "Uuid"
       ]
     },
     "nullable": [
+      false,
       false,
       false,
       false,
@@ -137,5 +150,5 @@
       false
     ]
   },
-  "hash": "67fb0bcaf3c38f8f8df8fedb262400beea6b82751df8e628b6ffb625357e3eae"
+  "hash": "82368b1ac8f5c6a325884f13f50d1acf8977806171dd26a9944acd350328ee97"
 }
