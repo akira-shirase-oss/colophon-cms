@@ -221,8 +221,8 @@
 	// One key per entry being created: pressing Create again after a lost answer is safe.
 	let key = newKey();
 
-	async function create(event: SubmitEvent) {
-		event.preventDefault();
+	async function create(event?: SubmitEvent) {
+		event?.preventDefault();
 		const definition = type.data?.definition;
 		if (definition === undefined) return;
 		// JSON that doesn't read yet would be lost or stored as text: say so, send nothing.
@@ -274,10 +274,33 @@
 						? valueTaken(definition.fields.find((field) => `/${field.id}` === failure.details?.pointer)?.label ?? 'value')
 						: plainError(failure, 'create entries here');
 			exists = failure instanceof ApiError && failure.reason === 'single_exists';
+			// Made by someone else just now: open theirs instead of saying so.
+			if (exists && !creating) {
+				error = '';
+				exists = false;
+				await queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
+			}
 		} finally {
 			busy = false;
 		}
 	}
+
+	// A single type (D-067, D-082) opens its one entry. The first visit makes it, named after the type
+	// ("Homepage"), with no dialog; only required fields that need an answer bring the dialog up,
+	// with that name filled in. Once per visit to this type, so a refusal doesn't repeat.
+	let madeFor = $state<string | null>(null);
+	const listSettled = $derived(entries.isSuccess && !entries.isPlaceholderData && !entries.isFetching);
+	$effect(() => {
+		const definition = type.data?.definition;
+		if (definition === undefined || !single || madeFor === collection || mine.data === undefined || !writes) return;
+		if (!listSettled || q !== '' || loaded.length > 0 || creating) return;
+		madeFor = collection;
+		const titleField = definition.fields.find((field) => field.id === definition.title_field);
+		const limit = titleField?.type === 'text' ? titleField.max_chars : 200;
+		form = { [definition.title_field]: definition.name.slice(0, limit) };
+		if (askedNow.some((field) => field.id !== definition.title_field)) creating = true;
+		else void create();
+	});
 </script>
 
 <svelte:head><title>{type.data?.definition.name ?? 'Entries'} · Colophon Studio</title></svelte:head>
@@ -294,6 +317,7 @@
 		{/snippet}
 	</PageHeader>
 
+	{#if !single}
 	<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div class="flex flex-wrap items-center gap-2">
 			<Tabs.Root bind:value={filter as string}>
@@ -315,20 +339,25 @@
 			<InputGroup.Input type="search" placeholder="Search {plural(named)}" aria-label="Search {plural(named)}" maxlength={100} bind:value={typed} data-testid="entry-search" />
 		</InputGroup.Root>
 	</div>
+	{/if}
 
 	{#if entries.isPending}
 		<Skeleton class="h-48 w-full rounded-xl" />
 	{:else if entries.isError}
 		<Problem error={entries.error} what={type.data.definition.name} retry={() => entries.refetch()} />
-	{:else if single && loaded.length === 0}
+	{:else if single && loaded.length === 0 && (!writes || (madeFor === collection && !busy && !creating && error !== ''))}
 		<EmptyState icon={FileTextIcon} title="{type.data.definition.name} isn't written yet" testid="single-empty">
-			There's one {type.data.definition.name.toLowerCase()} for the whole site. Create it to start; after that, this opens it.
+			{#if writes}
+				<span role="alert" data-testid="create-error">Couldn't start it: {error}</span>
+			{:else}
+				There's one {type.data.definition.name.toLowerCase()} for the whole site. Someone who can write here starts it; after that, this opens it.
+			{/if}
 			{#snippet action()}
-				{#if writes}<Button onclick={() => (creating = true)} data-testid="single-create">Create it</Button>{/if}
+				{#if writes}<Button onclick={() => ((error = ''), (madeFor = null))} data-testid="single-create">Try again</Button>{/if}
 			{/snippet}
 		</EmptyState>
 	{:else if single}
-		<p class="text-sm text-muted-foreground">Opening it…</p>
+		<p class="text-sm text-muted-foreground" role="status" data-testid="single-opening">Opening it…</p>
 	{:else if loaded.length === 0 && q === '' && creator === null}
 		<EmptyState icon={FileTextIcon} title="No {type.data.definition.name.toLowerCase()} yet" testid="entries-empty">
 			Write the first {oneOf(type.data.definition.name)}. Nobody outside the project sees it until it is published.

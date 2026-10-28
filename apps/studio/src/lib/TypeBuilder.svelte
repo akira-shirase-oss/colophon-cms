@@ -126,7 +126,9 @@
 			</p>
 		</div>
 		<div class="flex shrink-0 items-center gap-2">
-			<Button variant="ghost" size="sm" href={resolve('/projects/[project]/[collection]', { project, collection: type.slug })}>See its entries</Button>
+			<Button variant="ghost" size="sm" href={resolve('/projects/[project]/[collection]', { project, collection: type.slug })} data-testid="open-entries"
+				>{type.definition.single === true ? 'Open it' : 'See its entries'}</Button
+			>
 			{#if editable}
 				<Button variant="outline" size="sm" onclick={() => (editingType = true)} data-testid="edit-type"><PencilIcon data-icon="inline-start" />Edit type</Button>
 			{/if}
