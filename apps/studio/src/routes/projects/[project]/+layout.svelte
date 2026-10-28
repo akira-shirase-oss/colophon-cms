@@ -19,7 +19,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 	import * as Sidebar from '@colophon/ui/ui/sidebar';
-	import { may } from '#lib/api.ts';
+	import { may, mayAny, SETTINGS_ACTIONS } from '#lib/api.ts';
 	import { ago, changesetsQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
 	import AccountMenu from '#lib/shell/AccountMenu.svelte';
 	import AppearanceMenu from '#lib/shell/AppearanceMenu.svelte';
@@ -44,6 +44,8 @@
 	// Only collections the role may read are listed and searched: the server refuses the others
 	// (D-058), so offering them would lead only to a refusal.
 	const readable = $derived(mine.data === undefined ? [] : (types.data ?? []).filter((type) => may(mine.data, 'content.read', type.slug)));
+	// Settings is the developer area (D-059, rule 5): only roles that can change something there see it.
+	const settings = $derived(mayAny(mine.data, SETTINGS_ACTIONS));
 	let searching = $state(false);
 
 	const SECTION: Record<string, string> = {
@@ -210,13 +212,15 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
-					<Sidebar.MenuItem>
-						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/settings')} tooltipContent="Settings">
-							{#snippet child({ props })}
-								<a href={resolve('/projects/[project]/settings', { project })} data-testid="settings-link" {...props}><Settings2Icon /><span>Settings</span></a>
-							{/snippet}
-						</Sidebar.MenuButton>
-					</Sidebar.MenuItem>
+					{#if settings}
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/settings')} tooltipContent="Settings">
+								{#snippet child({ props })}
+									<a href={resolve('/projects/[project]/settings', { project })} data-testid="settings-link" {...props}><Settings2Icon /><span>Settings</span></a>
+								{/snippet}
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
+					{/if}
 				</Sidebar.Menu>
 			</Sidebar.Group>
 		</Sidebar.Content>
@@ -278,4 +282,4 @@
 	</Sidebar.Inset>
 </Sidebar.Provider>
 
-<CommandPalette {project} types={readable} bind:open={searching} />
+<CommandPalette {project} types={readable} {settings} bind:open={searching} />

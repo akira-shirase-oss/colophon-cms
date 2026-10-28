@@ -18,7 +18,12 @@
 	import { type ContentType, entryState, searchEntries } from '#lib/api.ts';
 	import StatusBadge from './StatusBadge.svelte';
 
-	let { project, types, open = $bindable(false) }: { project: string; types: ContentType[]; open?: boolean } = $props();
+	let {
+		project,
+		types,
+		settings = false,
+		open = $bindable(false)
+	}: { project: string; types: ContentType[]; /** Whether the role sees Settings. */ settings?: boolean; open?: boolean } = $props();
 
 	let typed = $state('');
 	let q = $state('');
@@ -62,7 +67,7 @@
 		{ label: 'Publish requests', icon: LayersIcon, href: resolve('/projects/[project]/changesets', { project }) },
 		{ label: 'Releases', icon: PackageCheckIcon, href: resolve('/projects/[project]/releases', { project }) },
 		{ label: 'Members', icon: UsersIcon, href: resolve('/projects/[project]/members', { project }) },
-		{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }
+		...(settings ? [{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }] : [])
 	]);
 	const needle = $derived(typed.trim().toLowerCase());
 	const pages = $derived(PAGES.filter((item) => item.label.toLowerCase().includes(needle)));

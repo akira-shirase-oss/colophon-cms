@@ -37,6 +37,10 @@
 	const collections = $derived([...new Set((set.data?.items ?? []).map((item) => item.collection))]);
 	const reviewer = $derived(collections.every((collection) => may(mine.data, 'content.review', collection)));
 	const publisher = $derived(collections.every((collection) => may(mine.data, 'content.publish', collection)));
+	// Sending for review and updating need edit rights on every entry in it. A role whose edit
+	// rights are only for its own entries passes here and is decided by the server; with entry
+	// creators on the request (B2) this can check them too.
+	const writer = $derived(mine.data !== undefined && collections.every((collection) => may(mine.data, 'content.update', collection)));
 	// Publishing names the release it follows: the latest one this page has seen.
 	const releases = createQuery(() => releasesQuery(project));
 	const types = createQuery(() => typesQuery(project));
@@ -144,9 +148,13 @@
 			</span>
 		{/snippet}
 		{#snippet actions()}
-			{#if shown.status.state === 'stale'}
+			{#if (shown.status.state === 'stale' || shown.status.state === 'open') && mine.data !== undefined && !writer}
+				<p class="max-w-xs text-sm text-muted-foreground" data-testid="cannot-send">
+					{shown.status.state === 'open' ? 'Someone who can edit these entries sends it for review.' : 'Someone who can edit these entries updates it.'}
+				</p>
+			{:else if shown.status.state === 'stale' && writer}
 				<Button onclick={() => act(shown, 'refresh')} disabled={busy}>Update to the latest versions</Button>
-			{:else if shown.status.state === 'open'}
+			{:else if shown.status.state === 'open' && writer}
 				<Button onclick={() => act(shown, 'submit')} disabled={busy}>Ask for review</Button>
 			{:else if shown.status.state === 'approved' && publisher}
 				<Button onclick={() => publish(shown)} disabled={busy || releases.data === undefined}>Publish</Button>

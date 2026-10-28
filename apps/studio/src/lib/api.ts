@@ -55,6 +55,16 @@ export function may(project: Pick<Project, 'permissions'> | undefined, action: A
 	);
 }
 
+/** Whether the role holds any of `actions`, anywhere: for showing an area whose parts each ask
+ *  for their own permission (Settings). */
+export function mayAny(project: Pick<Project, 'permissions'> | undefined, actions: Action[]): boolean {
+	return (project?.permissions ?? []).some((grant) => actions.includes(grant.action));
+}
+
+/** What Settings holds (D-059, rule 5): content types, website connections, roles and tokens. A
+ *  role with none of these doesn't see Settings at all. */
+export const SETTINGS_ACTIONS: Action[] = ['schema.change', 'destinations.manage', 'roles.manage', 'tokens.manage'];
+
 export interface Me {
 	id: string;
 	issuer: string;

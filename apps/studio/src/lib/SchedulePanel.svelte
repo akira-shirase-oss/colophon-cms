@@ -14,7 +14,7 @@
 	import { Label } from '@colophon/ui/ui/label';
 	import { ApiError, cancelSchedule, type Changeset, listSchedules, type Schedule, scheduleChangeset } from '#lib/api.ts';
 	import { plainError } from '#lib/errors.ts';
-	import { ago } from '#lib/queries.ts';
+	import { ago, meQuery } from '#lib/queries.ts';
 
 	let { project, changeset, canSchedule }: { project: string; changeset: Changeset; canSchedule: boolean } = $props();
 
@@ -28,6 +28,10 @@
 			(query.state.data ?? []).some((item) => item.state === 'scheduled' && Date.parse(item.run_at) - Date.now() < 60_000) ? 2_000 : false
 	}));
 	const pending = $derived(mine.data?.find((item) => item.state === 'scheduled'));
+	// A schedule is cancelled by whoever set it or by someone who may publish what it publishes
+	// (the server's rule); everyone else sees it, without the button.
+	const who = createQuery(meQuery);
+	const cancels = $derived(canSchedule || (pending !== undefined && who.data != null && pending.scheduled_by === who.data.id));
 	// When the pending one runs, the changeset's status changes too: read it again.
 	let ran: number | null = null;
 	$effect(() => {
@@ -141,7 +145,11 @@
 				Scheduled by {pending.scheduled_by_name ?? 'someone'}, {ago(pending.created_at)}. It publishes as them, if their role still allows it and nothing
 				in it has changed.
 			</p>
-			<Button variant="outline" size="sm" disabled={busy} onclick={() => cancel(pending)}>Cancel the schedule</Button>
+			{#if cancels}
+				<Button variant="outline" size="sm" disabled={busy} onclick={() => cancel(pending)}>Cancel the schedule</Button>
+			{:else}
+				<p class="text-xs text-muted-foreground" data-testid="cannot-cancel">Its author or someone who can publish it can cancel it.</p>
+			{/if}
 		</div>
 	{:else if canSchedule && changeset.status.state === 'approved'}
 		<form class="mt-3 grid gap-3" onsubmit={schedule} aria-label="Schedule publishing">
