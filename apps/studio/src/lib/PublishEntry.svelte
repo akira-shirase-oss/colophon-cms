@@ -11,7 +11,7 @@
 	import { resolve } from '$app/paths';
 	import { useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
-	import { may, type EntryState, type Project } from './api.ts';
+	import { type EntryState, mayOn, type Project } from './api.ts';
 	import { newKeys, type Outcome, publishesInOneClick, publishInOneClick } from './publishing.ts';
 	import { PUBLISH_REQUEST, releaseName } from './words.ts';
 
@@ -24,7 +24,8 @@
 		standing,
 		saved,
 		generation,
-		seenGeneration
+		seenGeneration,
+		own = true
 	}: {
 		project: string;
 		collection: string;
@@ -39,11 +40,13 @@
 		generation: number | null;
 		/** The newest release this page has seen: publishing goes on top of it, never past one unseen. */
 		seenGeneration: number | undefined;
+		/** Whether the caller created this entry, for permissions limited to one's own entries. */
+		own?: boolean;
 	} = $props();
 
 	const queryClient = useQueryClient();
 	const oneClick = $derived(publishesInOneClick(mine, [collection]));
-	const asks = $derived(may(mine, 'content.update', collection));
+	const asks = $derived(mayOn(mine, 'content.update', collection, own));
 
 	let step = $state('');
 	let outcome = $state<Outcome | null>(null);

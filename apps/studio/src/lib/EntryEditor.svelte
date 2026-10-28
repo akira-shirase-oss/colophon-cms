@@ -30,7 +30,7 @@
 	import { plainError } from './errors.ts';
 	import DiffView from './DiffView.svelte';
 	import PublishEntry from './PublishEntry.svelte';
-	import { ago, projectQuery, releasesQuery } from './queries.ts';
+	import { ago, meQuery, projectQuery, releasesQuery } from './queries.ts';
 	import RichTextToolbar from './RichTextToolbar.svelte';
 	import StatusBadge from './shell/StatusBadge.svelte';
 	import TechnicalDetails from './shell/TechnicalDetails.svelte';
@@ -84,6 +84,7 @@
 	// What the role may do here, and the newest release this page has seen: publishing goes on top
 	// of that one (D-045).
 	const mine = createQuery(() => projectQuery(project));
+	const who = createQuery(meQuery);
 	const releases = createQuery(() => releasesQuery(project));
 	const revisions = createQuery(() => ({
 		queryKey: ['history', project, collection, entry],
@@ -464,6 +465,7 @@
 					saved={saver.status === 'saved'}
 					generation={published?.generation ?? null}
 					seenGeneration={releases.data?.generation}
+					own={who.data != null && latest.created_by === who.data.id}
 				/>
 			</div>
 			<TechnicalDetails class="mt-4 hidden border-t border-dotted border-border pt-3 xl:block">

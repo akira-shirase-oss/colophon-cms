@@ -77,3 +77,35 @@ test('two people each see their own work on the home page, on a desk and on a ph
 	await phone.context().close();
 	await editor.context().close();
 });
+
+test('your drafts include one you started long ago, behind a hundred newer entries by others', async ({ page, browser }) => {
+	test.setTimeout(120_000);
+	await signIn(page);
+	const project = await newProject(page);
+	const editor = await member(page, browser, project, 'editor');
+	await newEntry(editor, project, 'Started long ago');
+	const made = await page.evaluate(async (path) => {
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const doc = { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } };
+		let created = 0;
+		for (let batch = 0; batch < 10; batch += 1) {
+			const statuses = await Promise.all(
+				Array.from({ length: 10 }, async (_, index) => {
+					const response = await fetch(path, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': crypto.randomUUID().replaceAll('-', '') },
+						body: JSON.stringify({ title: `Newer ${batch * 10 + index + 1}`, body: doc })
+					});
+					return response.status;
+				})
+			);
+			created += statuses.filter((status) => status === 201).length;
+		}
+		return created;
+	}, `${env(project)}/collections/articles/entries`);
+	expect(made).toBe(100);
+	await editor.goto('/studio/');
+	await expect(editor.getByTestId('my-drafts')).toContainText('Started long ago');
+	await expect(editor.getByTestId('my-drafts')).not.toContainText('Newer');
+	await editor.context().close();
+});

@@ -18,13 +18,13 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
-	import { ApiError, type Content, createEntry, type EntryState, entryState, getContentType, getEntry, may, newKey, searchEntries } from '#lib/api.ts';
+	import { ApiError, type Content, createEntry, type EntryState, entryState, getContentType, getEntry, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
 	import { type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
 	import { plainError } from '#lib/errors.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
 	import { oneOf } from '#lib/firstRun.ts';
 	import { newKeys, type Outcome, publishesInOneClick, publishInOneClick } from '#lib/publishing.ts';
-	import { ago, projectQuery, releasesQuery } from '#lib/queries.ts';
+	import { ago, meQuery, projectQuery, releasesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -77,6 +77,11 @@
 	let picked = $state<string[]>([]);
 	const pickedRows = $derived(loaded.filter((entry) => picked.includes(entry.id)));
 	const publishable = $derived(pickedRows.filter((entry) => entryState(entry) !== 'live'));
+	// A role that may edit only its own entries can send only those (each row says whose it is).
+	const who = createQuery(meQuery);
+	const notMine = $derived(
+		oneClick ? [] : publishable.filter((entry) => !mayOn(mine.data, 'content.update', collection, entry.created_by === who.data?.id))
+	);
 	const allShown = $derived(rows.length > 0 && rows.every((entry) => picked.includes(entry.id)));
 	let bulkStep = $state('');
 	let bulkOutcome = $state<Outcome | null>(null);
@@ -254,13 +259,15 @@
 		{#if picked.length > 0}
 			<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border bg-card px-4 py-2.5 shadow-xs" role="region" aria-label="Picked entries" data-testid="bulk-bar">
 				<span class="text-sm font-medium tabular">{picked.length} picked</span>
-				<Button size="sm" onclick={publishPicked} disabled={bulkStep !== '' || publishable.length === 0 || publishable.length > MAX_BULK} data-testid="bulk-publish">
+				<Button size="sm" onclick={publishPicked} disabled={bulkStep !== '' || publishable.length === 0 || publishable.length > MAX_BULK || notMine.length > 0} data-testid="bulk-publish">
 					{bulkStep !== '' ? bulkStep : oneClick ? `Publish ${publishable.length}` : `Ask for review of ${publishable.length}`}
 				</Button>
 				<Button size="sm" variant="ghost" onclick={() => (picked = [])}>Clear</Button>
 				<span class="text-xs text-muted-foreground">
 					{#if publishable.length > MAX_BULK}
 						At most {MAX_BULK} at a time: pick fewer.
+					{:else if notMine.length > 0}
+						Your role can send only entries you started: unpick {notMine.length === 1 ? 'the other one' : `the other ${notMine.length}`}.
 					{:else if publishable.length === 0}
 						They're live already, with nothing new to publish.
 					{:else if publishable.length < pickedRows.length}

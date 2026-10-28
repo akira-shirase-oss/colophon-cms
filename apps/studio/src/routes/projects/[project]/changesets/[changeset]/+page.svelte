@@ -16,11 +16,11 @@
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Textarea } from '@colophon/ui/ui/textarea';
-	import { ApiError, type Changeset, changesetAction, getChangeset, may, newKey, publishChangeset } from '#lib/api.ts';
+	import { ApiError, type Changeset, changesetAction, getChangeset, may, mayOn, newKey, publishChangeset } from '#lib/api.ts';
 	import { plainError } from '#lib/errors.ts';
 	import ItemDiff from '#lib/ItemDiff.svelte';
 	import SchedulePanel from '#lib/SchedulePanel.svelte';
-	import { ago, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
+	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -37,10 +37,14 @@
 	const collections = $derived([...new Set((set.data?.items ?? []).map((item) => item.collection))]);
 	const reviewer = $derived(collections.every((collection) => may(mine.data, 'content.review', collection)));
 	const publisher = $derived(collections.every((collection) => may(mine.data, 'content.publish', collection)));
-	// Sending for review and updating need edit rights on every entry in it. A role whose edit
-	// rights are only for its own entries passes here and is decided by the server; with entry
-	// creators on the request (B2) this can check them too.
-	const writer = $derived(mine.data !== undefined && collections.every((collection) => may(mine.data, 'content.update', collection)));
+	// Sending for review and updating need edit rights on every entry in it: for a role whose edit
+	// rights are only for its own entries, every entry must be the caller's (each item says whose).
+	const who = createQuery(meQuery);
+	const writer = $derived(
+		mine.data !== undefined &&
+			who.data != null &&
+			(set.data?.items ?? []).every((item) => mayOn(mine.data, 'content.update', item.collection, item.created_by === who.data?.id))
+	);
 	// Publishing names the release it follows: the latest one this page has seen.
 	const releases = createQuery(() => releasesQuery(project));
 	const types = createQuery(() => typesQuery(project));

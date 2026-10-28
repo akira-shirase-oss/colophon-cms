@@ -90,3 +90,34 @@ test('controls follow the role: a reader can’t send or update, an editor can�
 	expect(await internalTerms(other)).toEqual([]);
 	await other.context().close();
 });
+
+test('a role that may edit only its own entries is offered Ask for review only on its own', async ({ page, browser }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const permissions = [
+		{ action: 'content.read', subject: 'articles' },
+		{ action: 'content.create', subject: 'articles' },
+		{ action: 'content.update', subject: 'articles', condition: 'own' }
+	];
+	expect((await api(page, 'POST', `/api/v1/projects/${project}/roles`, { key: 'own-writer', name: 'Own writer', permissions })).status).toBe(201);
+	const theirs = await newEntry(page, project, 'The owner’s article');
+	const ownersRequest = await request(page, project, 'The owner’s request', [theirs], true);
+
+	const writer = await member(page, browser, project, 'own-writer');
+	const mine = await newEntry(writer, project, 'My own article');
+	const writersRequest = await request(writer, project, 'My own request', [mine], true);
+
+	await writer.goto(`/studio/projects/${project}/changesets/${ownersRequest.id}`);
+	await expect(writer.getByTestId('cannot-send')).toBeVisible();
+	await expect(writer.getByRole('button', { name: 'Ask for review' })).toHaveCount(0);
+	await writer.goto(`/studio/projects/${project}/changesets/${writersRequest.id}`);
+	await expect(writer.getByRole('button', { name: 'Ask for review' })).toBeVisible();
+
+	await writer.goto(`/studio/projects/${project}/articles/${theirs}`);
+	await expect(writer.getByTestId('publish-entry')).toContainText("Your role can't publish or ask for review here.");
+	await expect(writer.getByTestId('publish-button')).toHaveCount(0);
+	await writer.goto(`/studio/projects/${project}/articles/${mine}`);
+	await expect(writer.getByTestId('publish-button')).toHaveText('Ask for review');
+	expect(await violations(writer)).toEqual([]);
+	await writer.context().close();
+});

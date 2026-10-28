@@ -60,6 +60,20 @@ export function may(project: Pick<Project, 'permissions'> | undefined, action: A
 	);
 }
 
+/**
+ * Whether the role allows `action` on one entry of `collection`, `own` when the caller created it:
+ * a permission limited to their own entries (step R.3) counts only then. `may` answers "somewhere";
+ * this answers "on this entry".
+ */
+export function mayOn(project: Pick<Project, 'permissions'> | undefined, action: Action, collection: string, own: boolean): boolean {
+	return (project?.permissions ?? []).some(
+		(grant) =>
+			grant.action === action &&
+			(grant.subject === '*' || grant.subject === collection) &&
+			(grant.condition === undefined || (grant.condition === 'own' && own))
+	);
+}
+
 /** Whether the role holds any of `actions`, anywhere: for showing an area whose parts each ask
  *  for their own permission (Settings). */
 export function mayAny(project: Pick<Project, 'permissions'> | undefined, actions: Action[]): boolean {
@@ -389,11 +403,19 @@ export async function listEntries(project: string, collection: string): Promise<
 	return (await searchEntries(project, collection)).data;
 }
 
-/** Up to 100 entries, newest first; `q` searches draft titles (at most 100 characters). */
-export async function searchEntries(project: string, collection: string, q = '', cursor: string | null = null): Promise<Page<Summary>> {
+/** Up to 100 entries, newest first; `q` searches draft titles (at most 100 characters);
+ *  `createdBy` keeps one person's entries, within what the role may list. */
+export async function searchEntries(
+	project: string,
+	collection: string,
+	q = '',
+	cursor: string | null = null,
+	createdBy: string | null = null
+): Promise<Page<Summary>> {
 	const query = new URLSearchParams({ limit: '100' });
 	if (q.trim() !== '') query.set('q', q.trim());
 	if (cursor !== null) query.set('cursor', cursor);
+	if (createdBy !== null) query.set('created_by', createdBy);
 	return (await (await send('GET', `${entries(project, collection)}?${query}`)).json()) as Page<Summary>;
 }
 
@@ -596,6 +618,8 @@ export interface ChangesetItem {
 	edited: boolean;
 	/** The revision readers get now, if published: what this item changes from. */
 	published_revision_id: string | null;
+	/** Who created the entry, for permissions limited to one's own entries. */
+	created_by: string;
 }
 
 export interface ChangesetReview {

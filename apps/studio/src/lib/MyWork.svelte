@@ -1,5 +1,5 @@
 <!--
-  Someone's work in one project, for the home page: drafts they last edited that aren't live,
+  Someone's work in one project, for the home page: entries they started that aren't live,
   publish requests waiting for review and their own still in progress, what is scheduled (and any
   schedule that was blocked, with why), and the last three releases with their labels. Every row
   links to where the work happens; every list says something when it is empty or can't load.
@@ -13,9 +13,9 @@
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
-	import { entryState, listSchedules, may, mayAny, type Summary } from './api.ts';
+	import { entryState, listSchedules, may, mayAny, searchEntries, type Summary } from './api.ts';
 	import { oneOf } from './firstRun.ts';
-	import { ago, changesetsQuery, entriesQuery, projectQuery, releasesQuery, typesQuery } from './queries.ts';
+	import { ago, changesetsQuery, projectQuery, releasesQuery, typesQuery } from './queries.ts';
 	import ChangesetBadge from './shell/ChangesetBadge.svelte';
 	import Problem from './shell/Problem.svelte';
 	import ReleaseLabel from './shell/ReleaseLabel.svelte';
@@ -30,17 +30,24 @@
 	const releases = createQuery(() => releasesQuery(project));
 	const schedules = createQuery(() => ({ queryKey: ['schedules', project], queryFn: () => listSchedules(project) }));
 	const readable = $derived(mine.data === undefined ? [] : (types.data ?? []).filter((type) => may(mine.data, 'content.read', type.slug)));
-	const lists = createQueries(() => ({ queries: readable.map((type) => entriesQuery(project, type.slug)) }));
+	// Each collection's entries this person made, newest first, however many others there are (the
+	// list's `created_by`). Keyed under the collection's entries, so saving and publishing refresh it.
+	const lists = createQueries(() => ({
+		queries: readable.map((type) => ({
+			queryKey: ['entries', project, type.slug, 'by', identity],
+			queryFn: () => searchEntries(project, type.slug, '', null, identity)
+		}))
+	}));
 
 	// Read every query's data and error before testing any (svelte-query updates only what was read).
 	const listed = $derived(lists.map((list) => ({ data: list.data, error: list.isError })));
 	const listsSettled = $derived(mine.data !== undefined && types.data !== undefined && listed.every((list) => list.data !== undefined || list.error));
 	const listsFailed = $derived(listed.some((list) => list.error));
-	/** Not live, last saved by this person: the drafts they are in the middle of (newest 100 of each collection). */
+	/** Made by this person and not live as it stands: the drafts they are in the middle of. */
 	const drafts = $derived(
 		readable
 			.flatMap((type, index) => (listed[index]?.data?.data ?? []).map((entry: Summary) => ({ type, entry })))
-			.filter(({ entry }) => entry.revision.author_id === identity && entryState(entry) !== 'live')
+			.filter(({ entry }) => entryState(entry) !== 'live')
 			.sort((one, other) => other.entry.updated_at.localeCompare(one.entry.updated_at))
 			.slice(0, 6)
 	);
@@ -66,7 +73,7 @@
 <div class="grid gap-6 lg:grid-cols-2" data-testid="my-work">
 	<section class="card" aria-labelledby="my-drafts">
 		<h2 id="my-drafts" class="card-title">Your drafts</h2>
-		<p class="card-hint">What you last edited that readers don't have yet.</p>
+		<p class="card-hint">What you started that readers don't have yet.</p>
 		{#if !listsSettled}
 			<Skeleton class="h-24 w-full rounded-lg" />
 		{:else}

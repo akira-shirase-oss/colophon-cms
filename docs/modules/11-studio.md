@@ -101,7 +101,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     newest 100, so an older entry no longer shows as Draft.
   - **Your work** (`/studio/`, `lib/MyWork.svelte`): signed in with a project, the front door shows the person's work
     in the project they last opened in this browser (`lib/lastProject.ts`; a picker when they have several, none when
-    they have one): their drafts that aren't live, publish requests waiting for review (worded for whether they can
+    they have one): entries they started that aren't live, publish requests waiting for review (worded for whether they can
     approve them) and their own still in progress (`created_by`/`submitted_by`), upcoming and blocked schedules with
     why, and the last three releases with their labels; then, with several projects, every project. A list row whose
     title the role can't read (or that has none) says "No title to show". Test: `tests/server/mywork.spec.ts`.
@@ -145,6 +145,11 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     the members list and the events' own actors, so someone who left is usually still named. Settings now shows to
     roles with `audit.read` too. Test: `tests/server/activity.spec.ts` (seven changes in order, both filters, paging,
     phone width; an Editor sees neither page, in the sidebar, in search or by address, and the Studio doesn't ask).
+  - **Own-only roles and "Your drafts", with the API's creators** (790c450): *Ask for review* and *Update* on a
+    publish request, the editor's *Ask for review*, and bulk sending follow permissions limited to one's own entries
+    (`mayOn`, with each item's and entry's `created_by`). "Your drafts" lists the entries the person started
+    (`?created_by=`), however many newer ones others wrote. Tests: `tests/server/controls.spec.ts`,
+    `tests/server/mywork.spec.ts`.
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 
