@@ -98,7 +98,7 @@ Release notes so far: [P3](/releases/p3/).
 - **R.1** Roles and permissions as data, behaviour unchanged. [Changelog](/changelog/#step-r-1) <Status done="R.1" />
 - **R.2** Roles you define, and the Studio's role editor; nobody hands out more than they hold. [Changelog](/changelog/#step-r-2) <Status done="R.2" />
 - **R.3** Permissions narrowed to some fields and to a member's own entries. [Changelog](/changelog/#step-r-3) <Status done="R.3" />
-- **R.4** API tokens and the audit log: read-only, full-access and custom tokens that act as their own identity, can never manage access or read the log, and stop the moment they are revoked; every change to access recorded in an append-only log (D-063, migration 0023). Built on a branch with its tests, testbed page and load scenario; its million-request runs haven't been made, so it isn't done. [API tokens and the audit log](/reference/api/tokens/) <Status building="R.4" />
+- **R.4** API tokens and the audit log: read-only, full-access and custom tokens that act as their own identity, can never manage access or read the log, and stop the moment they are revoked; every change to access recorded in an append-only log (D-063, migration 0023). Built on a branch with its tests, testbed page and load scenario; its million-request runs haven't been made, so it isn't done. [API tokens and the audit log](/reference/api/tokens/), [changelog](/changelog/#step-r-4) <Status building="R.4" />
 
 ## M · Content modelling parity
 
@@ -106,10 +106,10 @@ Release notes so far: [P3](/releases/p3/).
 
 The steps built so far have their tests, a testbed page (`/modelling`) and a load scenario (`perf/k6/modelling.js`) run as a smoke; its million-request runs are still to be made. The Studio's builder doesn't offer the new types yet. Everything is in the [content modelling reference](/reference/content-modelling/).
 
-- **M.1** Seven more field types (email, URL, date, time, JSON, Markdown, colour), a description on any field and a minimum length on text (D-064). <Status building="M.1" />
-- **M.2** References between entries that never dangle, checked by the database on every save and by every release, with "referenced by" (D-065, migration 0024). <Status building="M.2" />
-- **M.3** Objects, lists and page-builder blocks, references inside them (D-066, migration 0025). <Status building="M.3" />
-- **M.4** Single types (D-067, migration 0026), patterns (D-069) and unique fields (D-070, migration 0027) are built; shared components, defaults and conditional fields are not. <Status building="M.4" />
+- **M.1** Seven more field types (email, URL, date, time, JSON, Markdown, colour), a description on any field and a minimum length on text (D-064). [Changelog](/changelog/#step-m-1) <Status building="M.1" />
+- **M.2** References between entries that never dangle, checked by the database on every save and by every release, with "referenced by" (D-065, migration 0024). [Changelog](/changelog/#step-m-2) <Status building="M.2" />
+- **M.3** Objects, lists and page-builder blocks, references inside them (D-066, migration 0025). [Changelog](/changelog/#step-m-3) <Status building="M.3" />
+- **M.4** Single types (D-067, migration 0026), patterns (D-069) and unique fields (D-070, migration 0027) are built; shared components, defaults and conditional fields are not. [Changelog](/changelog/#step-m-4) <Status building="M.4" />
 - **M.5** Migrations with a plan, a dry run and per-entry outcomes for the changes D-055 refuses; the simulator racing schema changes and saves. <Status planned="M.5" />
 
 ## P4 · Time travel and media
@@ -141,7 +141,7 @@ What it plans: a local multi-instance stack (HAProxy in front of three servers a
 
 **Proof gate:** a release dry run builds every artifact; `npx @colophon-cms/cli --version`, `cargo install`, the Homebrew formula and the install script each install the same version on a clean machine in CI; an old command line against a new server, and the reverse, gets a plain-words answer (D-062). Not met. <Status building="V, on a branch" />
 
-- Built and tested on a branch: one version, `0.1.0-alpha.1`, for every crate and package; `colophon --version` with the commit and build date; [`GET /version`](/reference/api/auth/#get-version); the command line saying in plain words when it is too old or too new for the server; the `@colophon-cms/cli` npm launcher and its platform packages, assembled from release archives; an install script; a Homebrew formula template; and `cargo install --git`, run from a local clone. <Status building="V" />
+- Built and tested on a branch: one version, `0.1.0-alpha.1`, for every crate and package; `colophon --version` with the commit and build date; [`GET /version`](/reference/api/auth/#get-version); the command line saying in plain words when it is too old or too new for the server; the `@colophon-cms/cli` npm launcher and its platform packages, assembled from release archives; an install script; a Homebrew formula template; and `cargo install --git`, run from a local clone. [Changelog](/changelog/#step-v) <Status building="V" />
 - Written, not yet run: the release workflow (five targets, checksums, SBOMs, signed provenance, a draft release, npm publishing behind an approval) and CI's distribution job. Their first dry run is the first real test of the cross-builds. <Status building="V" />
 - Nothing has been published to npm, Cargo or Homebrew. Publishing waits on the maintainer: an npm organization, a publishing token, a confirmed licence and a release tag.
 - Not built: crates.io publishing, the SDK, container images, and installs of published packages on clean machines in CI. <Status planned="V" />
@@ -152,7 +152,7 @@ What it plans in all: one version for the server, the worker, the command line, 
 
 **Proof gate:** zero unauthorized actions across the evaluation set; X12 (an agent interrupted halfway through a bulk edit resumes without duplicates or overwrites); L08 (a noisy agent is throttled while editors keep their latency). Not met. <Status building="P5, on a branch" />
 
-- The MCP server over local stdio: eight tools over `/api/v1` with a project API token, to read content, write drafts, make a publish request and ask for its review; nothing approves or publishes, and tool discovery follows the token's permissions (D-068). Built on a branch with unit tests and a stack test. [The MCP server](/reference/mcp/) <Status building="D-068" />
+- The MCP server over local stdio: eight tools over `/api/v1` with a project API token, to read content, write drafts, make a publish request and ask for its review; nothing approves or publishes, and tool discovery follows the token's permissions (D-068). Built on a branch with unit tests and a stack test. [The MCP server](/reference/mcp/), [changelog](/changelog/#step-p5) <Status building="D-068" />
 
 What it plans in all: machine credentials and a kill switch, typed tools and bulk manifests with per-item outcomes, budgets reserved in PostgreSQL, the MCP adapter, the CLI's full JSON contract, import and export. Its steps aren't numbered yet.
 

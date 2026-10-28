@@ -46,6 +46,11 @@ Nothing from this work is merged. The documentation site is being built and move
   platforms, with templates for release notes and upgrade guides (`docs/templates/`).
 - **Tests:** Playwright tests on the built site (108 when first committed): pages, links and anchors, accessibility
   in light and dark, search and runnable commands, run by `npm run test -w @colophon/docs`.
+- **Docs:** Pages for the work below that is built on branches: a content modelling reference with every field type,
+  its stored form and a worked example; API tokens, the audit log and `GET {P}/permissions`; the MCP server; and
+  `GET /version`. Each is labelled Building. Technical: they describe the code at `m/m4-validation` (`c127feb`),
+  which this branch doesn't carry yet, so `routes.spec.ts` passes with `COLOPHON_DOCS_CODE_REF` set to it and fails
+  on this branch's own router until that code is merged here.
 
 ### Site · The new website
 
@@ -74,6 +79,159 @@ Nothing from this work is merged. The public website is built and tested on its 
   every feature's status, the licence's wording, no sideways scrolling at 320px, and the motion rules.
 - **Docs:** [Module 20](https://github.com/akira-shirase-oss/colophon-cms/blob/site/new-look/docs/modules/20-site.md)
   describes the site, where its numbers came from, and its invariants W1 to W9.
+
+### M.4 · Single types, patterns and unique fields
+
+- **Status:** building
+- **Branch:** `m/m4-validation`
+- **Decisions:** D-067, D-069, D-070
+- **Proof:** `crates/colophon-domain/src/schema.rs` (patterns matched whole, `(a+)+` against 50,000 characters finishing; unique only where it may be), `crates/colophon-server/tests/singles.rs` (two creations racing, one wins), `unique.rs` (exact comparison, drafts against publications, a type change refused then accepted, releases, who is named, eight racing creates leaving one entry) and `content_types.rs` (a pattern checked against stored content); load smokes only
+
+Nothing from this work is merged (single types were built on `m/m4-single-types`), and M.4 isn't finished: shared
+components, defaults and conditional fields are still to come. The Studio's builder doesn't offer these options yet;
+they are set through the API.
+
+#### Added
+
+- **Content types:** A content type can hold a single entry, such as a site's settings or its home page: a second is
+  refused, however many people create one at once. Technical: `"single": true` in the definition, written only when
+  true; a partial unique index, `entries_single` (migration 0026); `409 single_exists`; turning it on is refused with
+  `422 too_many_entries` at `/single` while the collection has more than one entry.
+- **Content types:** A text field can require an allowed form, such as three capital letters, a hyphen and four
+  digits. Technical: `pattern`, 1 to 500 characters of Rust `regex` syntax matched against the whole value in linear
+  time, without look-around or back-references, where `\d` is Unicode-aware (use `[0-9]` for ASCII digits);
+  `422 invalid_pattern` where it is defined and `pattern_mismatch` at the value; adding or changing one is checked
+  against stored content, removing one never is.
+- **Content types:** A field can be unique, such as an email address or a product code: no two entries share a value
+  among drafts, and none among what is published. Technical: `"unique": true` on a top-level single-line text, email,
+  URL, number, date, time or date-time field (`invalid_unique` elsewhere); `unique_claims` and its unique constraint
+  (migration 0027), values compared exactly as stored; `409 value_taken` on a save or a release; making a field unique
+  is refused with `needs_migration` while two drafts or two publications share a value.
+
+#### Security
+
+- **API:** `slug_taken` and `value_taken` name the entry in the way only to a role that may read its title; before,
+  `slug_taken` named it to any role that could write, including one limited to its own entries.
+
+### P5 · The MCP server
+
+- **Status:** building
+- **Branch:** `p5/mcp`
+- **Decisions:** D-068
+- **Proof:** `cargo test -p colophon-mcp` (framing, arguments, refusals, configuration) and `crates/colophon-mcp/tests/stack.rs` against the local stack with a custom, a read-only and a full-access token
+
+Nothing from this work is merged or published. It is P5's first slice; P5's proof gate isn't met.
+
+#### Added
+
+- **Agents:** An AI agent can read content, write drafts and ask people to review a publish request through the Model
+  Context Protocol, with a project API token; it can never approve, publish, take down or schedule anything, or
+  manage roles, members or tokens. Technical: `crates/colophon-mcp`, local stdio, MCP 2025-11-25 on a JSON-RPC layer of
+  its own; eight tools over `/api/v1`; tool discovery from `GET {P}/permissions`; writes from the revision and hash
+  read, with idempotency keys; refusals kept whole as tool errors; bounded messages, answers, calls and concurrency.
+  Built from source only.
+
+### V · One version, and packages not yet published
+
+- **Status:** building
+- **Branch:** `v/versions-distribution`
+- **Decisions:** D-062
+
+Nothing from this work is merged, and nothing has been published to npm, Cargo or Homebrew: publishing waits on the
+maintainer (an npm organization, a publishing token, a confirmed licence and a release tag).
+
+#### Added
+
+- **CLI:** The command line says in plain words when it is too old or too new for the server it talks to, and
+  `colophon --version` names the version, commit and build date. Technical: one version, `0.1.0-alpha.1`, for every
+  crate and package; `GET /version` (unauthenticated, `no-store`, a shape that only grows).
+- **Operations:** The pieces for installing without building Rust: the `@colophon-cms/cli` npm launcher with one
+  package per platform, an install script that checks before it installs, and a Homebrew formula template. Technical:
+  a release workflow for five targets with checksums, SBOMs and signed provenance, written but not yet run.
+
+### M.3 · Objects, lists and page-builder blocks
+
+- **Status:** building
+- **Branch:** `m/m3-structures`
+- **Decisions:** D-066
+- **Proof:** `crates/colophon-domain/src/schema.rs` (structures, their depth and size, and changes inside them), `crates/colophon-server/tests/references.rs` (a reference inside a page-builder block); `perf/k6/modelling.js`, smokes only so far
+
+Nothing from this work is merged; the million-request runs of `perf/k6/modelling.js` are still to be made.
+
+#### Added
+
+- **Content types:** Fields inside fields, lists of values, and page builders whose items are blocks of the kinds you
+  offer. Technical: `object`, `list` (`of`, at most 100 items) and `blocks` (1 to 20 kinds, items marked `_block`,
+  written first); three deep at most (`too_deep`); a reference inside keeps its path (`sections/1/by`, migration
+  0025).
+
+### M.2 · References that never dangle
+
+- **Status:** building
+- **Branch:** `m/m2-references`
+- **Decisions:** D-065
+- **Proof:** `crates/colophon-server/tests/references.rs` (`readers_never_get_a_reference_to_an_entry_they_cannot_get`)
+
+Nothing from this work is merged.
+
+#### Added
+
+- **Content types:** A field can name other entries, and Colophon makes sure they exist: on every save, and on every
+  publish, so readers never get a reference to an entry they can't read. Reading an entry says what references it.
+  Technical: `reference` (`to`, `many`, `max` up to 100); `revision_references` with foreign keys (migration 0024);
+  `422 reference_not_found`; `409 references_unpublished` and `still_referenced` on publish; `referenced_by` on a read.
+
+### M.1 · Seven more field types
+
+- **Status:** building
+- **Branch:** `m/m1-field-types`
+- **Decisions:** D-064
+
+Nothing from this work is merged.
+
+#### Added
+
+- **Content types:** Email, web address, date, time, JSON, Markdown and colour fields, help text on any field, and a
+  minimum length on text. Technical: `email`, `url` (stored in its WHATWG form), `date`, `time`, `json` (keys sorted,
+  64 KiB), `markdown` and `color` (`#rrggbb`, lowercase); `description` and `min_chars`, written only when set, so
+  older definitions keep their hashes.
+
+### R.4 · API tokens and the audit log
+
+- **Status:** building
+- **Branch:** `r/r.4-tokens-audit`
+- **Decisions:** D-063
+- **Proof:** `crates/colophon-server/tests/tokens.rs` (a token does exactly what its permissions allow and stops when revoked; every change to access is in the log, which only owners read), `crates/colophon-db/tests/tokens.rs` (the log refuses even its owner; a revocation waits for a running request); `perf/k6/tokens.js`, smokes only so far
+
+Nothing from this work is merged; the million-request runs of `perf/k6/tokens.js` are still to be made, so R.4 isn't
+done. The Studio has no page for tokens or the log yet.
+
+#### Added
+
+- **API:** Owners can give a script, a build or an agent its own project API token: read-only, full access or a
+  custom set of permissions, expiring within 366 days, its secret shown once. What it writes names the token, and
+  revoking it stops it at once. Technical: `/api/v1/projects/{project}/tokens`; `colophon_api_` secrets stored as
+  SHA-256 hashes (migration 0023); no token may manage members, roles or tokens or read the log (`not_for_tokens`);
+  only its project's `{P}` routes, `api_token_not_allowed` elsewhere and for scheduling; a share lock per request
+  makes revocation exact.
+- **API:** Owners can read who changed roles, members, invitations and tokens, and when; nobody can change or delete
+  the record. Technical: `audit_events`, written in the same transaction as each change, with a trigger refusing
+  `UPDATE`, `DELETE` and `TRUNCATE` from anyone; `GET /api/v1/projects/{project}/audit` with `audit.read`.
+- **API:** Anyone can ask what they may do in a project. Technical: `GET {P}/permissions`, for people and tokens.
+
+### API · Every refusal names its reason
+
+- **Status:** building
+- **Branch:** `api/dashboard-fields`
+
+Nothing from this work is merged.
+
+#### Changed
+
+- **API:** Every `403` and `409` says why in a stable code (`missing_permission` with the permission, `cannot_grant`,
+  `last_owner`, `already_published` and more), and an entry's read says whether it is published.
+- **API:** Entry lists say who created each entry and can keep one person's (`?created_by=`); a title search looks
+  only at titles the role may read (`403 titles_not_readable` when it reads none).
 
 ## E · Editorial parity
 
