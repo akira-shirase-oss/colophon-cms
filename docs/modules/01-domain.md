@@ -73,6 +73,16 @@ invariant. Production adapters and the simulator both run this code unchanged.
   `Compatible` (widening: nothing to check), `CheckContent` (narrowing: allowed only if the new definition `accepts`
   every current draft and published revision) or `Refused` (a new title field, or a field turned into or out of a
   slug).
+- Built in step M.1 (D-064): seven more types and two options. `email` (a dot-atom local part and a host name with a
+  dot; shape, never delivery), `url` (`http`/`https` with a host and no credentials, stored in its WHATWG form, what a
+  browser's `new URL(text).href` gives), `date` (`YYYY-MM-DD`), `time` (`HH:MM` or `HH:MM:SS`), `json` (any value up to
+  64 KiB and 32 levels, keys sorted by UTF-16 code units as JavaScript sorts them, numbers as number fields write
+  them), `markdown` (multi-line text with `max_chars`; the site renders it, nothing renders it here) and `color`
+  (`#rrggbb` in lowercase). Every field may carry a `description` (help text, up to 500 characters) and text a
+  `min_chars`. Both are written only when set, so a definition from before M.1 keeps its canonical bytes and hash,
+  which publish requests pin. Changing a field's type is `CheckContent` (text may become email if every stored value
+  is one); text widens into markdown that fits it. Not yet: patterns, uniqueness, defaults and conditional fields
+  (M.2), and the Studio's builder and editor for the new types (the next slice).
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the
