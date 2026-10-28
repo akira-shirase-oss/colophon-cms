@@ -1,0 +1,178 @@
+{
+  "scenario": "stress",
+  "endpoint": "entries",
+  "date": "2026-10-28T12:33:40Z",
+  "commit": "26d9060",
+  "dirty": false,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "p99_gate_ms": 250,
+  "step_seconds": 20,
+  "knee_rate": 921,
+  "failure_mode": "fell behind",
+  "healthy_after": true,
+  "steps": [
+    {
+      "rate": 125,
+      "attempt": 1,
+      "rps": 126,
+      "p99_ms": 476.283,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": false,
+      "load_average": 10.10
+    },
+    {
+      "rate": 125,
+      "attempt": 2,
+      "rps": 90,
+      "p99_ms": 116.743,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 12.30
+    },
+    {
+      "rate": 156,
+      "attempt": 1,
+      "rps": 162,
+      "p99_ms": 13.185,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 16.62
+    },
+    {
+      "rate": 195,
+      "attempt": 1,
+      "rps": 185,
+      "p99_ms": 85.802,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 14.47
+    },
+    {
+      "rate": 243,
+      "attempt": 1,
+      "rps": 242,
+      "p99_ms": 11.424,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 12.39
+    },
+    {
+      "rate": 303,
+      "attempt": 1,
+      "rps": 270,
+      "p99_ms": 2044.417,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 194,
+      "held": false,
+      "load_average": 9.76
+    },
+    {
+      "rate": 303,
+      "attempt": 2,
+      "rps": 292,
+      "p99_ms": 15.831,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 13.56
+    },
+    {
+      "rate": 378,
+      "attempt": 1,
+      "rps": 360,
+      "p99_ms": 15.758,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 12.03
+    },
+    {
+      "rate": 472,
+      "attempt": 1,
+      "rps": 448,
+      "p99_ms": 13.546,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 10.77
+    },
+    {
+      "rate": 590,
+      "attempt": 1,
+      "rps": 550,
+      "p99_ms": 17.526,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 9.24
+    },
+    {
+      "rate": 737,
+      "attempt": 1,
+      "rps": 678,
+      "p99_ms": 104.623,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 9.17
+    },
+    {
+      "rate": 921,
+      "attempt": 1,
+      "rps": 817,
+      "p99_ms": 45.92,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 9.77
+    },
+    {
+      "rate": 1151,
+      "attempt": 1,
+      "rps": 1053,
+      "p99_ms": 345.598,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 163,
+      "held": false,
+      "load_average": 10.52
+    },
+    {
+      "rate": 1151,
+      "attempt": 2,
+      "rps": 753,
+      "p99_ms": 1821.357,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 5048,
+      "held": false,
+      "load_average": 10.75
+    }
+  ]
+}
