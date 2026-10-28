@@ -37,6 +37,8 @@ pub const MAX_URL_CHARS: usize = 2048;
 pub const MAX_JSON_BYTES: usize = 64 * 1024;
 /// Deepest nesting in a JSON value.
 pub const MAX_JSON_DEPTH: usize = 32;
+/// Most entries one reference field may name (step M.2).
+pub const MAX_REFERENCES: u16 = 100;
 
 /// Most fields in a content type.
 pub const MAX_FIELDS: usize = 100;
@@ -135,6 +137,16 @@ pub enum FieldKind {
     },
     /// A colour, `#rrggbb` in lowercase.
     Color,
+    /// Entries of another collection (or the same one), by id (step M.2, D-065): one, or a list
+    /// of distinct ones. The database refuses an id that names no entry of `to`.
+    Reference {
+        /// The collection the entries belong to.
+        to: String,
+        /// A list rather than one.
+        many: bool,
+        /// The most a list holds (1 to [`MAX_REFERENCES`]; 1 for one).
+        max: u16,
+    },
 }
 
 impl FieldKind {
@@ -155,6 +167,7 @@ impl FieldKind {
             Self::Json => "json",
             Self::Markdown { .. } => "markdown",
             Self::Color => "color",
+            Self::Reference { .. } => "reference",
         }
     }
 }
@@ -201,9 +214,29 @@ pub struct Content {
     canonical: String,
     title: String,
     slug: Option<String>,
+    references: Vec<ContentReference>,
+}
+
+/// One entry a reference field names, at its place in the field (step M.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentReference {
+    /// The field's id.
+    pub field: String,
+    /// The collection the entry must belong to.
+    pub collection: String,
+    /// Its place in a list (0 for a single reference).
+    pub position: u16,
+    /// The entry's id, a lowercase UUID.
+    pub entry: String,
 }
 
 impl Content {
+    /// Every entry the content's reference fields name, in field order: what the database
+    /// checks and keeps (D-065).
+    pub fn references(&self) -> &[ContentReference] {
+        &self.references
+    }
+
     /// The canonical JSON: the exact text stored and hashed.
     pub fn canonical_json(&self) -> &str {
         &self.canonical
@@ -422,6 +455,63 @@ fn slug_source(object: &Map<String, Value>, pointer: &Pointer) -> Result<Option<
                 .to_owned(),
         )),
     }
+}
+
+/// A reference field's target collection, `many` (default false) and, for a list, `max` (1 to
+/// [`MAX_REFERENCES`], default [`MAX_REFERENCES`]).
+fn reference_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind, Refusal> {
+    let to = object
+        .get("to")
+        .and_then(Value::as_str)
+        .filter(|to| crate::project::Slug::parse(to).is_ok())
+        .ok_or_else(|| {
+            refuse(
+                "invalid_target",
+                &at(pointer, "to"),
+                "`to` is the slug of the collection the entries belong to",
+            )
+        })?
+        .to_owned();
+    let many = bool_or(object, "many", false, pointer)?;
+    let max = match (many, object.get("max")) {
+        (_, None) => {
+            if many {
+                MAX_REFERENCES
+            } else {
+                1
+            }
+        }
+        (false, Some(_)) => {
+            return Err(refuse(
+                "out_of_range",
+                &at(pointer, "max"),
+                "`max` is for a list of references (`many`)",
+            ));
+        }
+        (true, Some(value)) => value
+            .as_u64()
+            .and_then(|max| u16::try_from(max).ok())
+            .filter(|max| (1..=MAX_REFERENCES).contains(max))
+            .ok_or_else(|| {
+                refuse(
+                    "out_of_range",
+                    &at(pointer, "max"),
+                    format!("`max` is a whole number from 1 to {MAX_REFERENCES}"),
+                )
+            })?,
+    };
+    Ok(FieldKind::Reference { to, many, max })
+}
+
+/// A UUID in its canonical spelling: 36 characters, lowercase hexadecimal, hyphens at 8, 13, 18
+/// and 23.
+fn is_uuid(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            _ => byte.is_ascii_digit() || (b'a'..=b'f').contains(byte),
+        })
 }
 
 /// The kinds step M.1 added that take no options: their type name, or `None`.
@@ -736,6 +826,18 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         | (FieldKind::Json, FieldKind::Json)
         | (FieldKind::Color, FieldKind::Color) => true,
         (
+            FieldKind::Reference {
+                to: old_to,
+                many: old_many,
+                max: old_max,
+            },
+            FieldKind::Reference {
+                to: new_to,
+                many: new_many,
+                max: new_max,
+            },
+        ) => old_to == new_to && old_many == new_many && new_max >= old_max,
+        (
             FieldKind::Number {
                 integer: old_integer,
                 min: old_min,
@@ -992,69 +1094,82 @@ impl ContentType {
         let required = bool_or(object, "required", false, pointer)?;
         let description = description(object, pointer)?;
         let common = ["id", "label", "description", "type", "required"];
-        let kind = match object.get("type").and_then(Value::as_str) {
-            Some("text") => {
-                only(
-                    object,
-                    &[&common[..], &["min_chars", "max_chars", "multiline"]].concat(),
-                    pointer,
-                )?;
-                text_kind(object, pointer)?
-            }
-            Some("rich_text") => {
-                only(object, &common, pointer)?;
-                FieldKind::RichText
-            }
-            Some("number") => {
-                only(
-                    object,
-                    &[&common[..], &["integer", "min", "max"]].concat(),
-                    pointer,
-                )?;
-                number_kind(object, pointer)?
-            }
-            Some("boolean") => {
-                only(object, &common, pointer)?;
-                FieldKind::Boolean
-            }
-            Some("enum") => {
-                only(object, &[&common[..], &["values"]].concat(), pointer)?;
-                FieldKind::Enum {
-                    values: enum_values(object, pointer)?,
-                }
-            }
-            Some("datetime") => {
-                only(object, &common, pointer)?;
-                FieldKind::DateTime
-            }
-            Some("slug") => {
-                only(object, &[&common[..], &["source"]].concat(), pointer)?;
-                FieldKind::Slug {
-                    source: slug_source(object, pointer)?,
-                }
-            }
-            Some(name) if simple_kind(name).is_some() => {
-                only(object, &common, pointer)?;
-                simple_kind(name).unwrap_or(FieldKind::Json)
-            }
-            Some("markdown") => {
-                only(object, &[&common[..], &["max_chars"]].concat(), pointer)?;
-                markdown_kind(object, pointer)?
-            }
-            _ => {
-                return Err(refuse(
-                    "invalid_type",
-                    &at(pointer, "type"),
-                    "`type` is one of text, rich_text, number, boolean, enum, datetime, slug, email, url, date, time, json, markdown, color",
-                ));
-            }
-        };
+        let kind = Self::kind(object, &common, pointer)?;
         Ok(Field {
             id,
             label,
             description,
             required,
             kind,
+        })
+    }
+
+    /// What a field holds: its `type` and that type's options, refusing any other key.
+    fn kind(
+        object: &Map<String, Value>,
+        common: &[&str],
+        pointer: &Pointer,
+    ) -> Result<FieldKind, Refusal> {
+        Ok(match object.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                only(
+                    object,
+                    &[common, &["min_chars", "max_chars", "multiline"]].concat(),
+                    pointer,
+                )?;
+                text_kind(object, pointer)?
+            }
+            Some("rich_text") => {
+                only(object, common, pointer)?;
+                FieldKind::RichText
+            }
+            Some("number") => {
+                only(
+                    object,
+                    &[common, &["integer", "min", "max"]].concat(),
+                    pointer,
+                )?;
+                number_kind(object, pointer)?
+            }
+            Some("boolean") => {
+                only(object, common, pointer)?;
+                FieldKind::Boolean
+            }
+            Some("enum") => {
+                only(object, &[common, &["values"]].concat(), pointer)?;
+                FieldKind::Enum {
+                    values: enum_values(object, pointer)?,
+                }
+            }
+            Some("datetime") => {
+                only(object, common, pointer)?;
+                FieldKind::DateTime
+            }
+            Some("slug") => {
+                only(object, &[common, &["source"]].concat(), pointer)?;
+                FieldKind::Slug {
+                    source: slug_source(object, pointer)?,
+                }
+            }
+            Some(name) if simple_kind(name).is_some() => {
+                only(object, common, pointer)?;
+                simple_kind(name).unwrap_or(FieldKind::Json)
+            }
+            Some("markdown") => {
+                only(object, &[common, &["max_chars"]].concat(), pointer)?;
+                markdown_kind(object, pointer)?
+            }
+            Some("reference") => {
+                only(object, &[common, &["to", "many", "max"]].concat(), pointer)?;
+                reference_kind(object, pointer)?
+            }
+            _ => {
+                return Err(refuse(
+                    "invalid_type",
+                    &at(pointer, "type"),
+                    "`type` is one of text, rich_text, number, boolean, enum, datetime, slug, email, url, date, time, json, markdown, color, reference",
+                ));
+            }
         })
     }
 
@@ -1152,6 +1267,16 @@ impl ContentType {
                     out.push_str(r#","max_chars":"#);
                     out.push_str(&max_chars.to_string());
                 }
+                FieldKind::Reference { to, many, max } => {
+                    out.push_str(r#","to":"#);
+                    write_string(&mut out, to);
+                    if *many {
+                        out.push_str(r#","many":true,"max":"#);
+                        out.push_str(&max.to_string());
+                    } else {
+                        out.push_str(r#","many":false"#);
+                    }
+                }
                 FieldKind::RichText
                 | FieldKind::Boolean
                 | FieldKind::DateTime
@@ -1180,6 +1305,7 @@ impl ContentType {
         let mut out = String::with_capacity(256);
         let mut title = String::new();
         let mut slug = None;
+        let mut references = Vec::new();
         out.push('{');
         let mut first = true;
         for field in &self.fields {
@@ -1207,13 +1333,97 @@ impl ContentType {
             if matches!(field.kind, FieldKind::Slug { .. }) {
                 slug = value.as_str().map(str::to_owned);
             }
+            if let FieldKind::Reference { to, .. } = &field.kind {
+                let ids = value
+                    .as_array()
+                    .map_or_else(|| vec![value], |list| list.iter().collect());
+                for (position, id) in ids.into_iter().enumerate() {
+                    references.push(ContentReference {
+                        field: field.id.clone(),
+                        collection: to.clone(),
+                        position: u16::try_from(position).unwrap_or(u16::MAX),
+                        entry: id.as_str().unwrap_or_default().to_owned(),
+                    });
+                }
+            }
         }
         out.push('}');
         Ok(Content {
             canonical: out,
             title,
             slug,
+            references,
         })
+    }
+
+    /// A reference value: one entry id, or (`many`) a list of 1 to `max` distinct ones. Whether
+    /// they name entries of the target collection is the database's to check (D-065).
+    fn reference(
+        label: &str,
+        value: &Value,
+        (many, max): (bool, u16),
+        pointer: &Pointer,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        let id = |value: &Value, pointer: &Pointer| -> Result<String, Refusal> {
+            value
+                .as_str()
+                .filter(|text| is_uuid(text))
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    refuse(
+                        "invalid_reference",
+                        pointer,
+                        format!("{label} names an entry by its id, in lowercase"),
+                    )
+                })
+        };
+        if !many {
+            write_string(out, &id(value, pointer)?);
+            return Ok(());
+        }
+        let list = value.as_array().ok_or_else(|| {
+            refuse(
+                "wrong_type",
+                pointer,
+                format!("{label} is a list of entries"),
+            )
+        })?;
+        if list.is_empty() {
+            return Err(refuse(
+                "invalid_reference",
+                pointer,
+                format!("{label} is empty; leave it out instead"),
+            ));
+        }
+        if list.len() > usize::from(max) {
+            return Err(refuse(
+                "too_many",
+                pointer,
+                format!("{label} names at most {max} entries"),
+            ));
+        }
+        let mut seen: Vec<String> = Vec::with_capacity(list.len());
+        out.push('[');
+        for (index, item) in list.iter().enumerate() {
+            let mut at = pointer.clone();
+            at.push_index(index);
+            let entry = id(item, &at)?;
+            if seen.contains(&entry) {
+                return Err(refuse(
+                    "duplicate_reference",
+                    &at,
+                    format!("{label} names this entry twice"),
+                ));
+            }
+            if index > 0 {
+                out.push(',');
+            }
+            write_string(out, &entry);
+            seen.push(entry);
+        }
+        out.push(']');
+        Ok(())
     }
 
     /// A JSON value, written canonically within [`MAX_JSON_BYTES`] and [`MAX_JSON_DEPTH`].
@@ -1387,6 +1597,9 @@ impl ContentType {
             | FieldKind::Time
             | FieldKind::Color => Self::formatted(&field.kind, label, value, pointer, out)?,
             FieldKind::Json => Self::json(label, value, pointer, out)?,
+            FieldKind::Reference { many, max, .. } => {
+                Self::reference(label, value, (*many, *max), pointer, out)?;
+            }
             FieldKind::RichText => {
                 let document = rich_text::validate(value).map_err(|rejection| Refusal {
                     code: rejection.code.as_str(),
@@ -1472,7 +1685,26 @@ impl ContentType {
             ));
         }
         let slug = |field: &Field| matches!(field.kind, FieldKind::Slug { .. });
+        let target = |field: &Field| match &field.kind {
+            FieldKind::Reference { to, .. } => Some(to.clone()),
+            _ => None,
+        };
         for (index, new) in next.fields.iter().enumerate() {
+            if let Some(old) = self.fields.iter().find(|old| old.id == new.id)
+                && target(old).is_some()
+                && target(old) != target(new)
+            {
+                let mut pointer = at(&root, "fields");
+                pointer.push_index(index);
+                return Successor::Refused(refuse(
+                    "needs_migration",
+                    &pointer,
+                    format!(
+                        "pointing `{}` at other entries needs a migration: what it stores names entries of its collection",
+                        new.id
+                    ),
+                ));
+            }
             if let Some(old) = self.fields.iter().find(|old| old.id == new.id)
                 && slug(old) != slug(new)
             {
@@ -2227,5 +2459,149 @@ mod tests {
         );
         assert_eq!(picky.successor(&plain), Successor::Compatible);
         assert_eq!(email.successor(&email), Successor::Compatible);
+    }
+
+    fn story_type(tags: &Value) -> ContentType {
+        ContentType::parse(&json!({
+            "name": "Stories",
+            "title_field": "title",
+            "fields": [
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "author", "label": "Author", "type": "reference", "to": "people"},
+                tags
+            ]
+        }))
+        .expect("a valid definition")
+    }
+
+    const A: &str = "01a18f43-a955-755e-ab9c-1ded4406683c";
+    const B: &str = "01a18f43-a955-755e-ab9c-1ded4406683d";
+
+    #[test]
+    fn references_name_entries_by_id_and_report_them_in_order() {
+        let stories = story_type(
+            &json!({"id": "tags", "label": "Tags", "type": "reference", "to": "tags", "many": true, "max": 3}),
+        );
+        let content = stories
+            .validate(&json!({"title": "Hi", "author": A, "tags": [B, A]}))
+            .expect("valid");
+        assert_eq!(
+            content.canonical_json(),
+            format!(r#"{{"title":"Hi","author":"{A}","tags":["{B}","{A}"]}}"#)
+        );
+        let named: Vec<(&str, &str, u16, &str)> = content
+            .references()
+            .iter()
+            .map(|r| {
+                (
+                    r.field.as_str(),
+                    r.collection.as_str(),
+                    r.position,
+                    r.entry.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("author", "people", 0, A),
+                ("tags", "tags", 0, B),
+                ("tags", "tags", 1, A)
+            ]
+        );
+        assert!(stories.canonical_json().contains(r#"{"id":"author","label":"Author","type":"reference","required":false,"to":"people","many":false}"#));
+        assert!(
+            stories.canonical_json().contains(
+                r#""type":"reference","required":false,"to":"tags","many":true,"max":3}"#
+            )
+        );
+
+        for (field, value, code) in [
+            ("author", json!(A.to_uppercase()), "invalid_reference"),
+            ("author", json!("not-an-id"), "invalid_reference"),
+            ("author", json!([A]), "invalid_reference"),
+            ("tags", json!(A), "wrong_type"),
+            ("tags", json!([]), "invalid_reference"),
+            ("tags", json!([A, A]), "duplicate_reference"),
+            (
+                "tags",
+                json!([
+                    A,
+                    B,
+                    "01a18f43-a955-755e-ab9c-1ded4406683e",
+                    "01a18f43-a955-755e-ab9c-1ded4406683f"
+                ]),
+                "too_many",
+            ),
+        ] {
+            let mut content = json!({"title": "Hi"});
+            content[field] = value.clone();
+            let refused = stories.validate(&content).expect_err("refused");
+            assert_eq!(refused.code, code, "{field} = {value}");
+        }
+    }
+
+    #[test]
+    fn a_reference_field_names_its_collection_and_its_limits() {
+        let parse = |field: Value| {
+            ContentType::parse(&json!({
+                "name": "T", "title_field": "t",
+                "fields": [{"id": "t", "label": "T", "type": "text", "required": true}, field]
+            }))
+            .map(|_| ())
+            .map_err(|refused| (refused.code, refused.pointer))
+        };
+        let base = |extra: Value| {
+            let mut field = json!({"id": "x", "label": "X", "type": "reference", "to": "tags"});
+            for (key, value) in extra.as_object().expect("object") {
+                field[key] = value.clone();
+            }
+            parse(field)
+        };
+        assert_eq!(
+            base(json!({"to": "Not A Slug"})),
+            Err(("invalid_target", "/fields/1/to".to_owned()))
+        );
+        assert_eq!(
+            base(json!({"max": 5})),
+            Err(("out_of_range", "/fields/1/max".to_owned()))
+        );
+        assert_eq!(
+            base(json!({"many": true, "max": 0})),
+            Err(("out_of_range", "/fields/1/max".to_owned()))
+        );
+        assert_eq!(
+            base(json!({"many": true, "max": 101})),
+            Err(("out_of_range", "/fields/1/max".to_owned()))
+        );
+        assert_eq!(base(json!({"many": true})), Ok(()));
+    }
+
+    #[test]
+    fn pointing_a_reference_elsewhere_needs_a_migration() {
+        let with = |field: Value| story_type(&field);
+        let tags = |max: u16| {
+            with(
+                json!({"id": "tags", "label": "Tags", "type": "reference", "to": "tags", "many": true, "max": max}),
+            )
+        };
+        let topics = with(
+            json!({"id": "tags", "label": "Tags", "type": "reference", "to": "topics", "many": true, "max": 3}),
+        );
+        let single =
+            with(json!({"id": "tags", "label": "Tags", "type": "reference", "to": "tags"}));
+        assert!(
+            matches!(tags(3).successor(&topics), Successor::Refused(_)),
+            "other entries entirely"
+        );
+        assert_eq!(tags(3).successor(&tags(5)), Successor::Compatible);
+        assert!(matches!(
+            tags(5).successor(&tags(3)),
+            Successor::CheckContent(_)
+        ));
+        assert!(
+            matches!(single.successor(&tags(3)), Successor::CheckContent(_)),
+            "one becomes a list only if nothing is stored"
+        );
     }
 }
