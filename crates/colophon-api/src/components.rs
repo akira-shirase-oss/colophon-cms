@@ -344,18 +344,23 @@ async fn rewrite_users(
 }
 
 /// A refusal of the change to `collection` a component change would make, said as the component
-/// change's: its pointer is into that content type's definition, not into this request.
+/// change's: the content type is named in `details.content_type` (and the message), and the
+/// pointer, which was into that type's definition, is dropped.
 fn in_type(collection: &str, error: ApiError) -> ApiError {
     let say = |message: &str| format!("`{collection}` uses this component, and {message}");
     match error {
-        ApiError::Invalid(refusal) => ApiError::Invalid(Refusal {
-            message: say(&refusal.message),
+        ApiError::Invalid(refusal) => ApiError::NeedsMigration(Box::new(InTheWay {
+            reason: refusal.code,
             pointer: String::new(),
-            ..refusal
-        }),
+            message: say(&refusal.message),
+            entries: Vec::new(),
+            total: None,
+            content_type: Some(collection.to_owned()),
+        })),
         ApiError::NeedsMigration(way) => ApiError::NeedsMigration(Box::new(InTheWay {
             message: say(&way.message),
             pointer: String::new(),
+            content_type: Some(collection.to_owned()),
             ..*way
         })),
         other => other,

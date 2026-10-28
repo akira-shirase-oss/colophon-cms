@@ -1,0 +1,16 @@
+# The multi-instance stack's load balancer (milestone S, D-075): HAProxy in front of the API
+# servers scripts/cluster.sh starts on the host. It binds 127.0.0.1 only, like the rest of the
+# local stack, and reaches the servers (which also bind 127.0.0.1) through host.docker.internal.
+# scripts/cluster.sh writes the configuration to $COLOPHON_CLUSTER_DIR/haproxy.cfg.
+name: colophon-cluster
+
+services:
+  balancer:
+    image: haproxy:3.2-alpine@sha256:5893840576071e6217cd52ebdcc14f454c6f7a631056fa6f4e0f40d3cac4215b
+    ports:
+      - "127.0.0.1:58405:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - "${COLOPHON_CLUSTER_DIR:?scripts/cluster.sh sets it}/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro"
+    restart: "no"

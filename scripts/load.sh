@@ -26,7 +26,9 @@
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090),
-# SERVER_LOG=<path> (keep the server's log there).
+# SERVER_LOG=<path> (keep the server's log there), CLUSTER=1 (run against the servers and
+# workers scripts/cluster.sh started, through its balancer, instead of one server of its own;
+# the result records how many, and is compared only with runs of the same shape: D-075).
 #
 # RATE and P99_MS default per endpoint. health and rich-text never touch the database: 20,000
 # requests/s and a 25 ms p99. session waits on database round trips, so its steady rate is
@@ -78,6 +80,17 @@ case "$endpoint" in
   *) RATE="${RATE:-20000}" P99_MS="${P99_MS:-25}" ;;
 esac
 base_url="http://127.0.0.1:$port"
+public_url="http://localhost:$port"
+cluster="${CLUSTER:-0}"
+cluster_dir="$PWD/target/cluster"
+topology='{"servers": 1, "workers": 0, "balancer": null}'
+if [[ "$cluster" == "1" ]]; then
+  base_url="http://127.0.0.1:58405"
+  public_url="http://localhost:58405"
+  servers=$(cat "$cluster_dir/servers" 2>/dev/null || echo 0)
+  workers=$(find "$cluster_dir" -name 'worker-*.pid' 2>/dev/null | wc -l | tr -d ' ')
+  topology=$(jq -cn --argjson servers "$servers" --argjson workers "$workers" '{servers: $servers, workers: $workers, balancer: "haproxy"}')
+fi
 work=$(mktemp -d)
 server_pid=""
 receiver_pid=""
@@ -130,31 +143,45 @@ if [[ "$endpoint" == "site" ]]; then
   site_pid=$!
 fi
 
-# The load-test server: the local stack's settings, its own port, and warnings-only logging,
-# as production would run (per-request lines are DEBUG).
-(
-  # shellcheck source=scripts/local-env.sh
-  . scripts/local-env.sh
-  # The public URL is the sign-in redirect URI registered in the development realm.
-  export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
-  if [[ -n "$studio_dir" ]]; then export COLOPHON_STUDIO_DIR="$studio_dir"; fi
-  exec target/release/colophon-server
-) >"$work/server.log" 2>&1 &
-server_pid=$!
-
-ready=0
-for _ in $(seq 1 100); do
-  if target/release/colophon doctor --server "$base_url" --timeout-ms 500 >/dev/null 2>&1; then
-    ready=1
-    break
+# How much each cluster process had logged before the run: only what the run adds counts.
+cluster_log_sizes() {
+  for file in "$cluster_dir"/*.log; do
+    [[ -e "$file" ]] && printf '%s %s\n' "$file" "$(wc -c <"$file" | tr -d ' ')"
+  done
+}
+if [[ "$cluster" == "1" ]]; then
+  if ! target/release/colophon doctor --server "$base_url" --timeout-ms 1000 >/dev/null 2>&1; then
+    echo "error: CLUSTER=1, but the balancer isn't ready (scripts/cluster.sh up)" >&2
+    exit 1
   fi
-  sleep 0.2
-done
-if (( ready == 0 )); then
-  echo "error: the server never became ready (is the stack up? scripts/stack.sh up)" >&2
-  target/release/colophon doctor --server "$base_url" >&2 || true
-  cat "$work/server.log" >&2
-  exit 1
+  cluster_log_sizes >"$work/log-sizes"
+else
+  # The load-test server: the local stack's settings, its own port, and warnings-only logging,
+  # as production would run (per-request lines are DEBUG).
+  (
+    # shellcheck source=scripts/local-env.sh
+    . scripts/local-env.sh
+    # The public URL is the sign-in redirect URI registered in the development realm.
+    export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
+    if [[ -n "$studio_dir" ]]; then export COLOPHON_STUDIO_DIR="$studio_dir"; fi
+    exec target/release/colophon-server
+  ) >"$work/server.log" 2>&1 &
+  server_pid=$!
+
+  ready=0
+  for _ in $(seq 1 100); do
+    if target/release/colophon doctor --server "$base_url" --timeout-ms 500 >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 0.2
+  done
+  if (( ready == 0 )); then
+    echo "error: the server never became ready (is the stack up? scripts/stack.sh up)" >&2
+    target/release/colophon doctor --server "$base_url" >&2 || true
+    cat "$work/server.log" >&2
+    exit 1
+  fi
 fi
 
 # The database the server uses: `colophon`, or COLOPHON_TEST_DATABASE's (scripts/local-env.sh
@@ -171,7 +198,7 @@ echo "running k6: $endpoint $scenario"
 k6_status=0
 "$k6" run --quiet --no-color \
   --summary-export "$work/summary.json" \
-  -e BASE_URL="$base_url" -e PUBLIC_URL="http://localhost:$port" -e SCENARIO="$scenario" \
+  -e BASE_URL="$base_url" -e PUBLIC_URL="$public_url" -e SCENARIO="$scenario" \
   -e TOTAL="${TOTAL:-1000000}" -e VUS="$VUS" \
   -e RATE="$RATE" -e DURATION="${DURATION:-60s}" \
   -e P99_MS="$P99_MS" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
@@ -185,7 +212,15 @@ target/release/colophon doctor --server "$base_url" >/dev/null || {
   echo "error: the server is not ready after the run" >&2
   k6_status=1
 }
-server_warnings=$(grep -c '"level":"\(WARN\|ERROR\)"' "$work/server.log" || true)
+if [[ "$cluster" == "1" ]]; then
+  server_warnings=0
+  while read -r file size; do
+    added=$(tail -c +"$(( size + 1 ))" "$file" | grep -c '"level":"\(WARN\|ERROR\)"' || true)
+    server_warnings=$(( server_warnings + added ))
+  done <"$work/log-sizes"
+else
+  server_warnings=$(grep -c '"level":"\(WARN\|ERROR\)"' "$work/server.log" || true)
+fi
 
 commit=$(git rev-parse --short HEAD)
 dirty=$([[ -n "$(git status --porcelain -- crates Cargo.lock perf/k6)" ]] && echo true || echo false)
@@ -199,6 +234,9 @@ else
   memory_gb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 / 1024 ))
 fi
 machine=$(printf '%s-%sc' "$cpu" "$cores" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/-$//')
+# Runs through the balancer are their own series: file names and baselines carry the shape.
+shape=""
+[[ "$cluster" == "1" ]] && shape="-cluster$(echo "$topology" | jq -r '"\(.servers)s\(.workers)w"')"
 stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 record=$(jq -c \
@@ -206,11 +244,12 @@ record=$(jq -c \
   --arg cpu "$cpu" --argjson cores "$cores" --argjson memory_gb "$memory_gb" --arg machine "$machine" \
   --arg os "$(uname -s) $(uname -r)" --arg k6 "$("$k6" version | awk '{print $2}')" \
   --argjson tx "$(( tx_after - tx_before ))" --argjson warnings "$server_warnings" \
-  --argjson k6_status "$k6_status" \
+  --argjson k6_status "$k6_status" --argjson topology "$topology" \
   --arg total "${TOTAL:-1000000}" --arg vus "$VUS" --arg rate "$RATE" --arg duration "${DURATION:-60s}" \
   '{
     scenario: $scenario, endpoint: $endpoint, date: $stamp, commit: $commit, dirty: $dirty,
     machine: { id: $machine, cpu: $cpu, cores: $cores, memory_gb: $memory_gb, os: $os },
+    topology: $topology,
     k6: $k6,
     params: (if $scenario == "throughput" then { total: ($total | tonumber), vus: ($vus | tonumber) }
              else { rate: ($rate | tonumber), duration: $duration, vus: ($vus | tonumber) } end),
@@ -233,7 +272,7 @@ echo "$record" | jq .
 
 if [[ "${KEEP:-1}" == "1" ]]; then
   mkdir -p perf/results perf/baselines
-  file="perf/results/${stamp//:/}-$endpoint-$scenario-$machine.json"
+  file="perf/results/${stamp//:/}-$endpoint-$scenario-$machine$shape.json"
   echo "$record" | jq . >"$file"
   echo "$record" >>perf/results/history.jsonl
   echo "saved $file"
@@ -245,7 +284,7 @@ if (( server_warnings > 0 )); then
   status=1
 fi
 
-baseline="perf/baselines/$endpoint-$scenario-$machine.json"
+baseline="perf/baselines/$endpoint-$scenario-$machine$shape.json"
 # Only like with like: a 10,000-request smoke spends a visible share of its requests opening
 # pool connections and preparing statements, which a million-request run amortizes away, so
 # a run with different parameters relies on its absolute thresholds alone.

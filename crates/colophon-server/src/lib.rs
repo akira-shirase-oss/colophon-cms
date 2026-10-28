@@ -159,11 +159,10 @@ pub async fn run(
 
     let cancel = CancellationToken::new();
     let mut supervisor = Supervisor::new(readiness.clone(), cancel.child_token());
-    supervisor.spawn(
-        Dependency::Database,
-        DatabaseProbe::new(pool.clone(), config.probe_timeout),
-        config.probe_interval,
-    );
+    let database_probe = DatabaseProbe::new(config.database_url.expose(), config.probe_timeout)
+        .map_err(|error| anyhow::anyhow!(error))
+        .context("configuring the database probe")?;
+    supervisor.spawn(Dependency::Database, database_probe, config.probe_interval);
     if let Some(url) = &config.cache_url {
         let probe = CacheProbe::new(url.expose(), config.probe_timeout)
             .map_err(|error| anyhow::anyhow!(error))
