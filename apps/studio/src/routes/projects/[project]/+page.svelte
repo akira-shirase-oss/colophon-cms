@@ -13,7 +13,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { entryState, may, type Summary } from '#lib/api.ts';
-	import { oneOf } from '#lib/firstRun.ts';
+	import { mainCollection, oneOf } from '#lib/firstRun.ts';
 	import FirstRun from '#lib/FirstRun.svelte';
 	import { ago, changesetsQuery, count as countOf, entriesQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
@@ -68,8 +68,8 @@
 	);
 	const answers = $derived([mine.data, who.data, sets.data, releases.data, types.data]);
 	const loaded = $derived(answers.every((answer) => answer !== undefined) && entriesSettled);
-	// Where a first entry goes: a type the project added (Pages), else Articles.
-	const main = $derived(readable.find((type) => type.slug !== 'articles') ?? readable[0]);
+	// Where a first entry goes: the first collection the project made (Pages), else Articles.
+	const main = $derived(mainCollection(readable));
 </script>
 
 <svelte:head><title>{mine.data?.name ?? 'Overview'} · Colophon Studio</title></svelte:head>

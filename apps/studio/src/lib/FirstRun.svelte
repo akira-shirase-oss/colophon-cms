@@ -1,6 +1,6 @@
 <!--
-  A project's first-run checklist (step 3.7, D-059 rule 4): write, review or publish, connect the
-  website, invite a teammate, see a receipt. Each item is worked out from the project's real
+  A project's first-run checklist (step 3.7, D-059 rule 4): decide what you'll write (content types,
+  D-082), write, review or publish, connect the website, invite a teammate, see a receipt. Each item is worked out from the project's real
   state, never ticked by hand, and links to the place that does it. Items a role can't do are
   left out (rule 5). Hidden, it stays hidden in this browser.
 -->
@@ -11,7 +11,7 @@
 	import { createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { type ChangesetSummary, type ContentType, listInvitations, listMembers, may, type Project, type Release, type Summary } from './api.ts';
-	import { hide, isHidden, oneOf, receiptSeen } from './firstRun.ts';
+	import { hide, isHidden, mainCollection, oneOf, receiptSeen } from './firstRun.ts';
 	import { destinationsQuery } from './queries.ts';
 
 	let {
@@ -56,9 +56,13 @@
 	// svelte-ignore state_referenced_locally
 	const seen = receiptSeen(project);
 
-	// The kind of content to start with: a type the project added (Pages, for a documentation
-	// site), else the built-in Articles.
-	const main = $derived(types.find((type) => type.slug !== 'articles') ?? types[0]);
+	// The kind of content to start with: the first collection the person made (Products, or Pages
+	// for a documentation site), else the built-in Articles; never a one-entry type.
+	const main = $derived(mainCollection(types));
+	// Deciding what to write is done once the project has its own kinds of content: a type beside
+	// the built-in Articles, Articles changed (the blog's URL name), or anything written.
+	const decided = $derived(types.some((type) => type.slug !== 'articles' || type.version > 1) || entries.length > 0);
+	const designs = $derived(may(mine, 'schema.change'));
 	const latest = $derived(entries[0]);
 	const live = $derived(releases[0]);
 	const selfPublish = $derived(
@@ -86,6 +90,14 @@
 		const asks = main !== undefined && may(mine, 'content.update', main.slug);
 		const list: Item[] = [
 			{
+				id: 'types',
+				title: 'Decide what you’ll write (Content types)',
+				detail: 'The kinds of content your site has, like products or pages, and the fields each one has.',
+				done: decided,
+				href: resolve('/projects/[project]/settings/types', { project }),
+				action: 'Choose'
+			},
+			{
 				id: 'write',
 				title: `Write your first ${main ? oneOf(main.definition.name) : 'entry'}`,
 				detail: 'It saves as you type, and stays a draft until it is published.',
@@ -110,7 +122,7 @@
 						href: entryHref,
 						action: latest ? 'Open it' : 'Write'
 					}
-		].filter((item) => (item.id === 'write' ? writes : item.id === 'publish' ? selfPublish || asks : true));
+		].filter((item) => (item.id === 'types' ? designs : item.id === 'write' ? writes : item.id === 'publish' ? selfPublish || asks : true));
 		if (managesConnections) {
 			list.push({
 				id: 'connect',

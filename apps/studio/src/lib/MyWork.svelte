@@ -14,7 +14,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { entryState, listSchedules, may, mayAny, searchEntries, type Summary } from './api.ts';
-	import { oneOf } from './firstRun.ts';
+	import { mainCollection, oneOf } from './firstRun.ts';
 	import { ago, changesetsQuery, projectQuery, releasesQuery, typesQuery } from './queries.ts';
 	import ChangesetBadge from './shell/ChangesetBadge.svelte';
 	import Problem from './shell/Problem.svelte';
@@ -65,7 +65,7 @@
 	);
 	const blocked = $derived((schedules.data ?? []).filter((item) => item.state === 'blocked').slice(0, 3));
 	const latest = $derived((releases.data?.releases ?? []).slice(0, 3));
-	const main = $derived(readable.find((type) => type.slug !== 'articles') ?? readable[0]);
+	const main = $derived(mainCollection(readable));
 	const writes = $derived(main !== undefined && may(mine.data, 'content.create', main.slug));
 	const when = (at: string) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
 </script>

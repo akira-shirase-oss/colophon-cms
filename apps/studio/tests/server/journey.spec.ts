@@ -191,7 +191,9 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await expect(owner.getByRole('radio', { name: 'A small blog' })).toBeChecked();
 		await owner.getByRole('button', { name: 'Create project' }).click();
 		await expect(owner.getByTestId('first-run')).toBeVisible();
-		await expect(owner.getByTestId('first-run-count')).toHaveText('0 of 5 done');
+		// The blog starting point decided what they'll write: Articles, with URL names (D-082).
+		await expect(owner.getByTestId('first-run-item').first()).toHaveAttribute('data-item', 'types');
+		await expect(owner.getByTestId('first-run-count')).toHaveText('1 of 6 done');
 		await screen(owner, 'overview-checklist');
 	});
 
@@ -244,8 +246,9 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 
 	await test.step('the checklist follows what happened', async () => {
 		await owner.getByRole('link', { name: 'Overview' }).click();
-		await expect(owner.getByTestId('first-run-count')).toHaveText('4 of 5 done');
+		await expect(owner.getByTestId('first-run-count')).toHaveText('5 of 6 done');
 		for (const [item, done] of [
+			['types', 'true'],
 			['write', 'true'],
 			['publish', 'true'],
 			['connect', 'false'],

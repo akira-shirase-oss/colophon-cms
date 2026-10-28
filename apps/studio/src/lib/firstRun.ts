@@ -31,6 +31,18 @@ export const hide = (identity: string, project: string) => write(`${HIDDEN}:${id
 export const receiptSeen = (project: string) => read(`${SEEN}:${project}`);
 export const markReceiptSeen = (project: string) => write(`${SEEN}:${project}`);
 
+/**
+ * Where a first entry goes (D-082): the first collection the person made, never a one-entry type
+ * (Homepage), else the built-in Articles, else any collection. "First made" is read from each
+ * type's `created_at`, which is its current version's: a collection changed after a later one was
+ * made can lose its place. The API doesn't say when a type was first made.
+ */
+export function mainCollection<T extends { slug: string; created_at: string; definition: { single?: boolean } }>(types: T[]): T | undefined {
+	const collections = types.filter((type) => type.definition.single !== true);
+	const made = collections.filter((type) => type.slug !== 'articles').sort((a, b) => a.created_at.localeCompare(b.created_at));
+	return made[0] ?? collections.find((type) => type.slug === 'articles') ?? collections[0];
+}
+
 /** "Articles" → "article", "Pages" → "page": what one entry of a type is called. */
 export function oneOf(typeName: string): string {
 	const lower = typeName.trim().toLowerCase();
