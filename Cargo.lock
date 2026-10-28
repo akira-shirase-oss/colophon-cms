@@ -374,6 +374,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "colophon-mcp"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "colophon-server"
 version = "0.1.0-alpha.1"
 dependencies = [

@@ -158,6 +158,7 @@ crates/
   colophon-db/       PostgreSQL adapter: a bounded, lazy pool and the readiness probe
   colophon-api/      the HTTP surface: error envelope, request IDs, middleware, /livez, /readyz
   colophon-cli/      the `colophon` binary (`colophon doctor`)
+  colophon-mcp/      the `colophon-mcp` binary: an MCP server on stdio for agents, over the same HTTP API (D-068)
   colophon-server/   the `colophon-server` binary: config, probes, graceful shutdown (--role api|worker|all)
   colophon-version/  the version, commit and build date every binary reports (--version, GET /version)
 apps/

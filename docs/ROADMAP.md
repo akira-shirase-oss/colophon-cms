@@ -314,6 +314,13 @@ evidence".
 **Proof gate:** zero unauthorized actions across the evaluation set; X12 (an agent interrupted halfway through a bulk
 edit resumes without duplicates or overwrites); L08 (a noisy agent is throttled; editors keep their latency).
 
+**Steps:** the MCP adapter over local stdio (built: D-068, closing O-013 with a thin JSON-RPC layer;
+`crates/colophon-mcp`, MCP 2025-11-25, eight typed tools over `/api/v1` with a project API token: read content, write
+drafts from the revision read, make a publish request and ask for its review; nothing approves or publishes; tool
+discovery follows the token's permissions; unit tests and a stack test over stdio) · not built: remote MCP with its
+authorization, service-account quotas and budgets, bulk manifests and jobs (X12), the CLI's full JSON contract and a
+`colophon mcp` subcommand, the evaluation suite, L08. The proof gate is not met.
+
 ## P6: Operate it (≈ spec M5)
 
 **Goal:** someone other than the maintainer can install, upgrade, back up, restore and diagnose Colophon.
