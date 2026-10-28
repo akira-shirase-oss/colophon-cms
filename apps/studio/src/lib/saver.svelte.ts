@@ -10,6 +10,7 @@
 import { ApiError, type Content, type Definition, type Draft, getEntry, type Loaded, newKey, saveEntry } from './api.ts';
 import { URL_NAME } from './words.ts';
 import { canonical, same } from './content.ts';
+import { plainError } from './errors.ts';
 import { forget, keep, type Kept, type Sent } from './drafts.ts';
 
 export type SaveStatus =
@@ -23,7 +24,10 @@ export type SaveStatus =
 	/** The server refused the content; editing again will retry. */
 	| 'refused'
 	/** The session ended; edits stay on this device until sign-in. */
-	| 'signed-out';
+	| 'signed-out'
+	/** Something typed can't be stored as it is (JSON that doesn't read yet): not sent, and not
+	 *  kept on this device, until it's fixed. */
+	| 'held';
 
 /** A save that was refused because someone else's revision is now the draft. */
 export interface Conflict {
@@ -50,6 +54,8 @@ export class Saver {
 	conflict = $state.raw<Conflict | null>(null);
 	/** False when this browser refused to keep the edits locally. */
 	keptOnDevice = $state(true);
+	/** For a refused save: the field the server named (its JSON Pointer's first part), if any. */
+	field = $state<string | null>(null);
 
 	#saved: Content;
 	#latest: Content;
@@ -59,6 +65,8 @@ export class Saver {
 	#key = '';
 	#keyFor = '';
 	#retries = 0;
+	/** Saving is held until the next edit (see `hold`). */
+	#held = false;
 	/** The request sent and not yet answered: kept on the device so a reload can resend it. */
 	#sent: Sent | null = null;
 	/** After reopening: the newest edits, applied once the resent request is answered. */
@@ -123,8 +131,24 @@ export class Saver {
 		});
 	}
 
+	/** Holds saving while something typed can't be stored: says why, sends nothing, and keeps
+	 *  nothing on this device (leaving the page warns). The next `edit` carries on. */
+	hold(reason: string): void {
+		if (this.conflict !== null || this.status === 'signed-out') return;
+		clearTimeout(this.#timer);
+		this.#held = true;
+		this.status = 'held';
+		this.message = reason;
+		this.keptOnDevice = false;
+	}
+
 	/** Records the editor's current content. */
 	edit(content: Content): void {
+		this.field = null;
+		if (this.#held) {
+			this.#held = false;
+			this.message = '';
+		}
 		this.#latest = content;
 		this.#newest = null;
 		if (this.conflict !== null) {
@@ -191,7 +215,7 @@ export class Saver {
 	}
 
 	async #save(): Promise<void> {
-		if (this.conflict !== null || this.status === 'signed-out') return;
+		if (this.conflict !== null || this.status === 'signed-out' || this.#held) return;
 		if (this.#inFlight) {
 			this.#again = true;
 			return;
@@ -239,6 +263,8 @@ export class Saver {
 			await this.#failed(error);
 		} finally {
 			this.#inFlight = false;
+			// Held while this save was out: say so, whatever it answered.
+			if (this.#held) this.status = 'held';
 			if (this.#again) {
 				this.#again = false;
 				if (this.status === 'unsaved' || this.status === 'saving') this.#schedule(0);
@@ -291,10 +317,12 @@ export class Saver {
 				this.#sent = null;
 				this.status = 'refused';
 				// The API names it a slug; the Studio says URL name (D-059), and which entry has it.
+				// Other refusals in plain words; the field they name is marked in the editor.
+				this.field = /^\/([^/]+)/.exec(error.details?.pointer ?? '')?.[1] ?? null;
 				this.message =
 					error.reason === 'slug_taken'
 						? `another entry already uses this ${URL_NAME}${error.details?.entries?.[0] ? ` (“${error.details.entries[0].title}”)` : ''}: choose another`
-						: error.message;
+						: plainError(error, 'change this entry');
 				return;
 		}
 	}

@@ -1,14 +1,18 @@
 <!--
   Inputs for a content type's plain fields (everything but rich text, which has its own
-  editor), each with a visible label. In the editor each field is a row: label left, field right,
-  a dotted rule under; `stacked` puts the label above, for dialogs.
+  editor), each with a visible label, its help text, and what is wrong with it, if anything. In
+  the editor each field is a row: label left, field right, a dotted rule under; `stacked` puts the
+  label above, for dialogs. Since D-064: native inputs for email, web address, date, time and
+  colour, a counted textarea for markdown, and a monospaced one for JSON. The checks here mirror
+  the server's (lib/content.ts); the server still decides, and a refusal it names a field for is
+  shown under that field.
 -->
 <script lang="ts">
 	import { Input } from '@colophon/ui/ui/input';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { Button } from '@colophon/ui/ui/button';
 	import type { FieldDefinition } from './api.ts';
-	import { type FormValue, MAX_SLUG_CHARS, slugify } from './content.ts';
+	import { characters, fieldProblem, type FormValue, isWebAddress, MAX_SLUG_CHARS, slugify, webAddress } from './content.ts';
 
 	let {
 		fields,
@@ -16,7 +20,8 @@
 		titleField = '',
 		onchange = () => {},
 		stacked = false,
-		locked = []
+		locked = [],
+		refused = null
 	}: {
 		fields: FieldDefinition[];
 		form: Record<string, FormValue>;
@@ -25,14 +30,39 @@
 		stacked?: boolean;
 		/** Fields the person's role can read but not change (D-058, step R.3): shown, disabled. */
 		locked?: string[];
+		/** The server's refusal of the last save, and the field it named. */
+		refused?: { field: string | null; message: string } | null;
 	} = $props();
+
+	/** What is wrong with a field now: the client's check, else the server's refusal of it. */
+	function problemOf(field: FieldDefinition): string {
+		return fieldProblem(field, form[field.id]) || (refused?.field === field.id ? refused.message : '');
+	}
+	/** The ids describing a field: its help and its problem. */
+	function describedBy(input: string, field: FieldDefinition): string | undefined {
+		const ids = [field.description ? `${input}-help` : '', problemOf(field) ? `${input}-problem` : ''].filter((id) => id !== '');
+		return ids.length > 0 ? ids.join(' ') : undefined;
+	}
+	/** A colour field's swatch needs a valid colour; anything else shows black until fixed. */
+	const swatch = (value: FormValue | undefined) => (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim().toLowerCase() : '#000000');
 
 	const id = $props.id();
 
 	function hint(field: FieldDefinition): string {
 		const parts: string[] = [];
 		if (!field.required) parts.push('Optional.');
-		if (field.type === 'text') parts.push(`Up to ${field.max_chars.toLocaleString()} characters.`);
+		if (field.type === 'text') {
+			parts.push(
+				field.min_chars === undefined
+					? `Up to ${field.max_chars.toLocaleString()} characters.`
+					: `From ${field.min_chars.toLocaleString()} to ${field.max_chars.toLocaleString()} characters.`
+			);
+		}
+		if (field.type === 'email') parts.push('An email address.');
+		if (field.type === 'url') parts.push('A web address starting with https://.');
+		if (field.type === 'time') parts.push('24-hour, like 14:30.');
+		if (field.type === 'color') parts.push('Pick it, or type it like #1a2b3c.');
+		if (field.type === 'json') parts.push('Structured data, written as JSON.');
 		if (field.type === 'number') {
 			parts.push(field.integer ? 'A whole number.' : 'A number.');
 			if (field.min !== undefined && field.max !== undefined) parts.push(`From ${field.min} to ${field.max}.`);
@@ -74,8 +104,10 @@
 			{:else}
 				<div class="space-y-0.5">
 					<label for={input} class="text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}{locked.includes(field.id) ? ' (your role can’t change it)' : ''}</label>
+					{#if field.description}<p class="text-xs text-pretty text-muted-foreground" id="{input}-help" data-user-content>{field.description}</p>{/if}
 					{#if !stacked && hint(field)}<p class="text-xs text-muted-foreground">{hint(field)}</p>{/if}
 				</div>
+				<div class="grid min-w-0 gap-1.5">
 				{#if field.type === 'text' && field.multiline}
 					<Textarea id={input} disabled={locked.includes(field.id)} rows={4} maxlength={field.max_chars} bind:value={form[field.id] as string} oninput={onchange} />
 				{:else if field.type === 'text'}
@@ -132,7 +164,123 @@
 							</Button>
 						{/if}
 					</div>
+				{:else if field.type === 'email'}
+					<Input
+						id={input}
+						disabled={locked.includes(field.id)}
+						type="email"
+						autocomplete="off"
+						spellcheck="false"
+						class="max-w-md"
+						aria-invalid={problemOf(field) ? true : undefined}
+						aria-describedby={describedBy(input, field)}
+						bind:value={form[field.id] as string}
+						oninput={onchange}
+					/>
+				{:else if field.type === 'url'}
+					<Input
+						id={input}
+						disabled={locked.includes(field.id)}
+						type="url"
+						autocomplete="off"
+						spellcheck="false"
+						placeholder="https://"
+						class="max-w-xl"
+						aria-invalid={problemOf(field) ? true : undefined}
+						aria-describedby={describedBy(input, field)}
+						bind:value={form[field.id] as string}
+						oninput={onchange}
+						onblur={() => {
+							// Show it as it will be stored, once it is a web address.
+							const text = String(form[field.id] ?? '').trim();
+							if (isWebAddress(text) && webAddress(text) !== form[field.id]) {
+								form[field.id] = webAddress(text);
+								onchange();
+							}
+						}}
+					/>
+				{:else if field.type === 'date'}
+					<Input
+						id={input}
+						disabled={locked.includes(field.id)}
+						type="date"
+						class="max-w-48"
+						aria-invalid={problemOf(field) ? true : undefined}
+						aria-describedby={describedBy(input, field)}
+						bind:value={form[field.id] as string}
+						oninput={onchange}
+					/>
+				{:else if field.type === 'time'}
+					<Input
+						id={input}
+						disabled={locked.includes(field.id)}
+						type="time"
+						class="max-w-40"
+						aria-invalid={problemOf(field) ? true : undefined}
+						aria-describedby={describedBy(input, field)}
+						bind:value={form[field.id] as string}
+						oninput={onchange}
+					/>
+				{:else if field.type === 'color'}
+					<div class="flex max-w-xs items-center gap-2">
+						<input
+							type="color"
+							class="h-9 w-12 shrink-0 cursor-pointer rounded-md border border-input bg-card p-1 disabled:cursor-not-allowed disabled:opacity-60"
+							aria-label="Pick {field.label}"
+							disabled={locked.includes(field.id)}
+							value={swatch(form[field.id])}
+							oninput={(event) => {
+								form[field.id] = event.currentTarget.value.toLowerCase();
+								onchange();
+							}}
+						/>
+						<Input
+							id={input}
+							disabled={locked.includes(field.id)}
+							class="font-mono"
+							maxlength={7}
+							autocomplete="off"
+							spellcheck="false"
+							placeholder="#1a2b3c"
+							aria-invalid={problemOf(field) ? true : undefined}
+							aria-describedby={describedBy(input, field)}
+							bind:value={form[field.id] as string}
+							oninput={onchange}
+						/>
+					</div>
+				{:else if field.type === 'markdown'}
+					<Textarea
+						id={input}
+						disabled={locked.includes(field.id)}
+						rows={8}
+						class="font-mono text-sm"
+						spellcheck="true"
+						aria-invalid={problemOf(field) ? true : undefined}
+						aria-describedby={[describedBy(input, field), `${input}-count`].filter(Boolean).join(' ')}
+						bind:value={form[field.id] as string}
+						oninput={onchange}
+					/>
+					<p class="text-xs text-muted-foreground tabular" id="{input}-count" data-testid="markdown-count">
+						{characters(String(form[field.id] ?? '')).toLocaleString()} of {field.max_chars.toLocaleString()} characters
+					</p>
+				{:else if field.type === 'json'}
+					<Textarea
+						id={input}
+						disabled={locked.includes(field.id)}
+						rows={8}
+						class="font-mono text-xs"
+						spellcheck="false"
+						autocomplete="off"
+						aria-invalid={problemOf(field) ? true : undefined}
+						aria-describedby={describedBy(input, field)}
+						bind:value={form[field.id] as string}
+						oninput={onchange}
+					/>
 				{/if}
+				{#if problemOf(field)}
+					<p class="text-xs text-destructive" id="{input}-problem" data-testid="field-problem" data-field={field.id}>{problemOf(field)}</p>
+				{/if}
+				</div>
 			{/if}
 		</div>
 	{/each}

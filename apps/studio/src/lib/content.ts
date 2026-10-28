@@ -3,6 +3,7 @@
 
 import { type RichTextValue, serialize } from '@colophon/editor';
 import type { Content, Definition, FieldDefinition } from './api.ts';
+import { canonicalJson, prettyJson, readJson } from './json.ts';
 
 export const EMPTY_DOCUMENT: RichTextValue = {
 	schema: 'colophon/rich-text',
@@ -11,13 +12,26 @@ export const EMPTY_DOCUMENT: RichTextValue = {
 };
 
 /** One string per comparable state: fields in definition order, rich text in its canonical
- *  serialization. Two contents are the same edit exactly when these are equal. */
+ *  serialization, JSON in the server's canonical form (whatever key order it arrived in). Two
+ *  contents are the same edit exactly when these are equal. */
 export function canonical(definition: Definition, content: Content): string {
 	return JSON.stringify(
 		definition.fields
 			.filter((field) => content[field.id] !== undefined)
-			.map((field) => [field.id, field.type === 'rich_text' ? serialize(content[field.id] as RichTextValue) : content[field.id]])
+			.map((field) => [field.id, comparable(field, content[field.id])])
 	);
+}
+
+function comparable(field: FieldDefinition, value: unknown): unknown {
+	if (field.type === 'rich_text') return serialize(value as RichTextValue);
+	if (field.type === 'json') {
+		try {
+			return canonicalJson(value);
+		} catch {
+			return JSON.stringify(value);
+		}
+	}
+	return value;
 }
 
 export function same(definition: Definition, a: Content, b: Content): boolean {
@@ -70,8 +84,19 @@ export function formValue(field: FieldDefinition, value: unknown): FormValue {
 			return typeof value === 'number' ? String(value) : '';
 		case 'datetime':
 			return typeof value === 'string' ? toLocal(value) : '';
+		case 'json':
+			return value === undefined ? '' : prettyJson(value);
 		default:
 			return typeof value === 'string' ? value : '';
+	}
+}
+
+/** A web address as the server stores it (`new URL(text).href`), or the text when it isn't one. */
+export function webAddress(text: string): string {
+	try {
+		return new URL(text).href;
+	} catch {
+		return text;
 	}
 }
 
@@ -87,9 +112,108 @@ export function storedValue(field: FieldDefinition, form: FormValue | undefined)
 			return Number(text);
 		case 'datetime':
 			return toUtc(text);
+		case 'url':
+			return webAddress(text.trim());
+		case 'color':
+			return text.trim().toLowerCase();
+		case 'json':
+			// Never sent while it doesn't read as JSON: the editor holds the save (fieldProblem).
+			return readJson(text).value;
 		default:
 			return text;
 	}
+}
+
+/** Characters as the server counts them: Unicode scalar values, not UTF-16 units. */
+export const characters = (text: string) => [...text].length;
+
+const HOST_LABEL = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+const LOCAL = /^[A-Za-z0-9!#$%&'*+\-/=?^_`{|}~.]+$/;
+
+/** The server's shape check for an email address (schema.rs `is_email`): never delivery. */
+export function isEmail(text: string): boolean {
+	const at = text.indexOf('@');
+	if (at < 0 || text.indexOf('@', at + 1) >= 0 || text.length > 254) return false;
+	const local = text.slice(0, at);
+	const domain = text.slice(at + 1);
+	return (
+		local.length >= 1 &&
+		local.length <= 64 &&
+		!local.startsWith('.') &&
+		!local.endsWith('.') &&
+		!local.includes('..') &&
+		LOCAL.test(local) &&
+		domain.includes('.') &&
+		domain.length <= 253 &&
+		domain.split('.').every((label) => HOST_LABEL.test(label))
+	);
+}
+
+/** The server's check for a web address: http or https, a host, no user name or password. */
+export function isWebAddress(text: string): boolean {
+	if (text.length > 2048 || /\s/.test(text)) return false;
+	try {
+		const url = new URL(text);
+		return (url.protocol === 'http:' || url.protocol === 'https:') && url.hostname !== '' && url.username === '' && url.password === '' && url.href.length <= 2048;
+	} catch {
+		return false;
+	}
+}
+
+/** `YYYY-MM-DD`, a real calendar date. */
+export function isDate(text: string): boolean {
+	const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+	if (match === null) return false;
+	const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+	const date = new Date(Date.UTC(year, month - 1, day));
+	return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+/** `HH:MM` or `HH:MM:SS`, 24-hour. */
+export function isTime(text: string): boolean {
+	const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
+	return match !== null && Number(match[1]) < 24 && Number(match[2]) < 60 && Number(match[3] ?? '0') < 60;
+}
+
+/**
+ * What the server would refuse in a field's form value, in its words, or '' when it looks fine
+ * (or is empty: a missing required value is the server's to say). The server still decides.
+ */
+export function fieldProblem(field: FieldDefinition, form: FormValue | undefined): string {
+	const text = typeof form === 'string' ? form : '';
+	if (text === '' || typeof form !== 'string') return '';
+	switch (field.type) {
+		case 'text':
+			if (field.min_chars !== undefined && characters(text) < field.min_chars) return `${field.label} is at least ${field.min_chars} characters.`;
+			if (characters(text) > field.max_chars) return `${field.label} is at most ${field.max_chars} characters.`;
+			return '';
+		case 'markdown':
+			return characters(text) > field.max_chars ? `${field.label} is at most ${field.max_chars.toLocaleString()} characters.` : '';
+		case 'email':
+			return isEmail(text) ? '' : `${field.label} is an email address like name@example.com.`;
+		case 'url':
+			return isWebAddress(text.trim()) ? '' : `${field.label} is a web address starting with https:// or http://.`;
+		case 'date':
+			return isDate(text) ? '' : `${field.label} is a date like 2026-10-28.`;
+		case 'time':
+			return isTime(text) ? '' : `${field.label} is a time like 14:30 or 14:30:15.`;
+		case 'color':
+			return /^#[0-9a-f]{6}$/.test(text.trim().toLowerCase()) ? '' : `${field.label} is a colour like #1a2b3c.`;
+		case 'json':
+			return readJson(text).problem ?? '';
+		default:
+			return '';
+	}
+}
+
+/** A JSON field whose text can't be stored holds the save: sending it would lose or change it. */
+export function blockingProblem(fields: FieldDefinition[], form: Record<string, FormValue>): string {
+	for (const field of fields) {
+		if (field.type !== 'json') continue;
+		const problem = fieldProblem(field, form[field.id]);
+		if (problem !== '') return `${field.label}: ${problem}`;
+	}
+	return '';
 }
 
 /** The most characters in a slug, as the server allows (D-054). */

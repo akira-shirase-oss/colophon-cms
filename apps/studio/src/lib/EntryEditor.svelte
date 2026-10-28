@@ -27,6 +27,7 @@
 		type Summary
 	} from './api.ts';
 	import { compare } from './diff.ts';
+	import { prettyJson } from './json.ts';
 	import { plainError } from './errors.ts';
 	import DiffView from './DiffView.svelte';
 	import PublishEntry from './PublishEntry.svelte';
@@ -35,7 +36,7 @@
 	import StatusBadge from './shell/StatusBadge.svelte';
 	import TechnicalDetails from './shell/TechnicalDetails.svelte';
 	import { releaseName } from './words.ts';
-	import { EMPTY_DOCUMENT, type FormValue, formValue, storedValue } from './content.ts';
+	import { blockingProblem, EMPTY_DOCUMENT, type FormValue, formValue, storedValue } from './content.ts';
 	import { kept } from './drafts.ts';
 	import FieldInputs from './FieldInputs.svelte';
 	import { Saver } from './saver.svelte.ts';
@@ -107,7 +108,10 @@
 	}
 
 	function changed() {
-		saver.edit(current());
+		// JSON that doesn't read yet can't be sent (it would be lost or stored as text): hold.
+		const blocked = blockingProblem(plain, form);
+		if (blocked !== '') saver.hold(blocked);
+		else saver.edit(current());
 	}
 
 	/** Shows `content`, refusing any rich text the editor can't give back exactly (D-022). */
@@ -159,6 +163,7 @@
 		if (value === undefined) return '(empty)';
 		if (field.type === 'boolean') return value === true ? 'Yes' : 'No';
 		if (field.type === 'datetime' && typeof value === 'string') return new Date(value).toLocaleString();
+		if (field.type === 'json') return prettyJson(value);
 		return String(value);
 	}
 
@@ -226,6 +231,8 @@
 				return `Not saved: ${saver.message}`;
 			case 'signed-out':
 				return 'Signed out: changes kept on this device';
+			case 'held':
+				return `Not saved: ${saver.message}`;
 		}
 	});
 
@@ -341,7 +348,14 @@
 					{#if locked.length > 0}Your role can read but not change {locked.join(', ')}.{/if}
 				</p>
 			{/if}
-			<FieldInputs fields={plain} bind:form titleField={definition.title_field} onchange={changed} {locked} />
+			<FieldInputs
+				fields={plain}
+				bind:form
+				titleField={definition.title_field}
+				onchange={changed}
+				{locked}
+				refused={saver.status === 'refused' ? { field: saver.field, message: saver.message } : null}
+			/>
 			{#each rich as field (field.id)}
 				<div class="py-5">
 					<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
@@ -423,16 +437,16 @@
 				{:else}
 					<CloudAlertIcon class="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
 				{/if}
-				<span class:text-destructive={saver.status === 'conflict' || saver.status === 'refused' || saver.status === 'signed-out'}>{label}</span>
+				<span class:text-destructive={saver.status === 'conflict' || saver.status === 'refused' || saver.status === 'signed-out' || saver.status === 'held'}>{label}</span>
 			</p>
-			{#if saver.message && saver.status !== 'refused' && saver.status !== 'conflict'}
+			{#if saver.message && saver.status !== 'refused' && saver.status !== 'conflict' && saver.status !== 'held'}
 				<p class="mt-2 text-xs text-muted-foreground" data-testid="save-message">{saver.message}</p>
 			{/if}
 			{#if saver.status === 'signed-out'}
 				<p class="mt-2 text-xs"><a class="underline" href={signInUrl(window.location.pathname)} data-sveltekit-reload>Sign in again</a> to save them.</p>
 			{/if}
 			</div>
-			<Button class="mt-3 hidden w-full xl:flex" variant="outline" size="sm" onclick={() => saver.saveNow()} disabled={saver.status === 'saved' || saver.status === 'conflict'}>
+			<Button class="mt-3 hidden w-full xl:flex" variant="outline" size="sm" onclick={() => saver.saveNow()} disabled={saver.status === 'saved' || saver.status === 'conflict' || saver.status === 'held'}>
 				Save now <kbd class="ml-auto font-sans text-[0.6875rem] text-muted-foreground">⌘S</kbd>
 			</Button>
 

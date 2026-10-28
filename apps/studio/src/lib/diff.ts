@@ -2,6 +2,7 @@
 // changeset (live → pinned) and for comparing an entry's revisions. Rich text is compared as its
 // readable text, block by block; the structure check is the validator's job, not the reader's.
 
+import { prettyJson } from './json.ts';
 import type { Content, Definition, FieldDefinition } from './api.ts';
 
 export interface Piece {
@@ -50,6 +51,8 @@ export function readable(field: FieldDefinition, value: unknown): string {
 			return value === true ? 'Yes' : 'No';
 		case 'datetime':
 			return typeof value === 'string' ? new Date(value).toLocaleString() : String(value);
+		case 'json':
+			return prettyJson(value);
 		default:
 			return String(value);
 	}

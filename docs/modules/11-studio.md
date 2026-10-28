@@ -157,6 +157,17 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     *Time of day*, *Structured data (JSON)*, *Markdown text*, *Colour*), markdown's character limit, an optional
     minimum on text, and *Help for editors* on any field; help text is sent trimmed and only when there is some, and
     the minimum only when set, as the server writes definitions. Test: `tests/server/fields.spec.ts`.
+  - **The entry editor** draws each with a fitting control: native inputs for email, web address, date, time and
+    colour (a swatch beside a `#rrggbb` box), a textarea with a live character count for markdown, and a monospaced
+    one for JSON; each field's help text sits under its label. Checks mirror the server's (`fieldProblem` in
+    `lib/content.ts`) and show under the field; the server still decides, and its refusal is marked on the field it
+    names, in plain words. Values are sent in the server's canonical forms (a web address as `new URL(text).href`,
+    shown so once it is one; colours lowercase; JSON by `lib/json.ts`, which writes `write_json`'s bytes), and
+    `canonical()` compares JSON canonically, so a value read back is never a change. JSON that doesn't read yet is
+    never sent: the save is *held* (`Saver.hold`), says why, and leaving the page warns. Tests:
+    `tests/json.spec.ts` (the canonical form, the number rules, depth and size), `tests/server/fields.spec.ts`
+    (values stored canonically and nothing to save after a reload, plain refusals, and the server's stored bytes
+    equal to `canonicalJson` for a value with astral and non-ASCII keys, `1.5` and `-0`).
 - The single-page-app trade-offs (startup time) are accepted only for this authenticated app. Public pages are
   prerendered elsewhere.
 

@@ -19,7 +19,7 @@
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
 	import { ApiError, type Content, createEntry, type EntryState, entryState, getContentType, getEntry, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
-	import { type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
+	import { blockingProblem, type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
 	import { plainError } from '#lib/errors.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
 	import { oneOf } from '#lib/firstRun.ts';
@@ -175,6 +175,12 @@
 		event.preventDefault();
 		const definition = type.data?.definition;
 		if (definition === undefined) return;
+		// JSON that doesn't read yet would be lost or stored as text: say so, send nothing.
+		const blocked = blockingProblem(asked, form);
+		if (blocked !== '') {
+			error = blocked;
+			return;
+		}
 		busy = true;
 		error = '';
 		const content = starter(definition);
