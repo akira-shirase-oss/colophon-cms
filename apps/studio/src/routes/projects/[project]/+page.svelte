@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
 	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
+	import CheckIcon from '@lucide/svelte/icons/check';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -42,6 +43,35 @@
 		)
 	);
 	const recent = $derived([...all].sort((a, b) => b.entry.updated_at.localeCompare(a.entry.updated_at)).slice(0, 8));
+	// Getting started: the four first things a new project needs, in order; each links to its
+	// page and the card retires itself once all are done.
+	const firstCollection = $derived(
+		resolve('/projects/[project]/[collection]', {
+			project,
+			collection: (types.data ?? [])[0]?.slug ?? 'articles'
+		})
+	);
+	const steps = $derived([
+		{
+			label: 'Create a collection',
+			done: (types.data ?? []).length > 1,
+			href: resolve('/projects/[project]/types/new', { project })
+		},
+		{ label: 'Write an entry', done: all.length > 0, href: firstCollection },
+		{
+			label: 'Ask for a review',
+			done: (sets.data ?? []).length > 0,
+			href: resolve('/projects/[project]/changesets', { project })
+		},
+		{
+			label: 'Publish a release',
+			done: live !== undefined,
+			href: resolve('/projects/[project]/changesets', { project })
+		}
+	]);
+	const loaded = $derived(
+		!types.isPending && !sets.isPending && !releases.isPending && !lists.some((list) => list.isPending)
+	);
 	const ROLE_WORD = { owner: 'Owner', developer: 'Developer', editor: 'Editor', publisher: 'Publisher' } as const;
 </script>
 
@@ -93,6 +123,33 @@
 			<span class="truncate text-xs text-muted-foreground">{live ? `by ${live.published_by_name ?? live.published_by}` : 'No releases yet'}</span>
 		</div>
 	</section>
+
+	{#if loaded && steps.some((step) => !step.done)}
+		<section class="mt-6 overflow-hidden rounded-xl border border-border bg-card" aria-labelledby="get-started" data-testid="get-started">
+			<div class="border-b border-border px-4 py-3">
+				<h2 id="get-started" class="text-base font-semibold">Getting started</h2>
+				<p class="mt-0.5 text-sm text-muted-foreground">Four steps to your first published release.</p>
+			</div>
+			<ol>
+				{#each steps as step, index (step.label)}
+					<li class="flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-b-0">
+						{#if step.done}
+							<span class="flex size-5 shrink-0 items-center justify-center rounded-full bg-live text-white" aria-hidden="true">
+								<CheckIcon class="size-3.5" />
+							</span>
+							<span class="text-sm text-muted-foreground line-through">{step.label}</span>
+						{:else}
+							<span class="flex size-5 shrink-0 items-center justify-center rounded-full border border-border text-xs text-muted-foreground tabular" aria-hidden="true">{index + 1}</span>
+							<a class="group flex flex-1 items-center gap-1 text-sm font-medium hover:underline" href={step.href}>
+								{step.label}
+								<ArrowRightIcon class="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+							</a>
+						{/if}
+					</li>
+				{/each}
+			</ol>
+		</section>
+	{/if}
 
 	<div class="mt-10 grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
 		<section aria-labelledby="recent">
