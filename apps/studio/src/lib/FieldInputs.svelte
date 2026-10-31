@@ -10,7 +10,7 @@
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
 	import type { FieldDefinition } from './api.ts';
-	import type { FormValue } from './content.ts';
+	import { blockStarter, type FormValue, type SubForm } from './content.ts';
 	import FieldInputs from './FieldInputs.svelte';
 	import ReferencePicker from './ReferencePicker.svelte';
 
@@ -212,6 +212,65 @@
 							>
 								<PlusIcon class="size-4" /> Add an item
 							</Button>
+						{/if}
+					</div>
+				{:else if field.type === 'blocks'}
+					{@const items = form[field.id] as FormValue[]}
+					<div class="space-y-3">
+						{#each items as _item, index (index)}
+							{@const item = items[index] as SubForm}
+							{@const block = field.blocks.find((each) => each.id === item._block)}
+							<fieldset class="space-y-3 rounded-lg border border-border p-4">
+								<div class="flex items-center justify-between gap-2">
+									<select
+										class="select max-w-48"
+										aria-label="Section type"
+										bind:value={item._block as string}
+										onchange={() => {
+											const picked = field.blocks.find((each) => each.id === item._block);
+											if (picked) items[index] = blockStarter(picked);
+											onchange();
+										}}
+									>
+										{#each field.blocks as choice (choice.id)}
+											<option value={choice.id}>{choice.label}</option>
+										{/each}
+									</select>
+									<Button
+										variant="ghost"
+										size="sm"
+										type="button"
+										onclick={() => {
+											items.splice(index, 1);
+											onchange();
+										}}
+									>
+										<Trash2Icon class="size-4" data-icon="inline-start" /> Remove
+									</Button>
+								</div>
+								{#if block}<FieldInputs fields={block.fields} form={item} {onchange} stacked />{/if}
+							</fieldset>
+						{/each}
+						{#if items.length < field.max_blocks}
+							<select
+								class="select max-w-64"
+								value=""
+								aria-label="Add a section"
+								onchange={(event) => {
+									const select = event.currentTarget;
+									const picked = field.blocks.find((each) => each.id === select.value);
+									if (picked) {
+										items.push(blockStarter(picked));
+										onchange();
+									}
+									select.value = '';
+								}}
+							>
+								<option value="" disabled>Add a section…</option>
+								{#each field.blocks as choice (choice.id)}
+									<option value={choice.id}>{choice.label}</option>
+								{/each}
+							</select>
 						{/if}
 					</div>
 				{/if}

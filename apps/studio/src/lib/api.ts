@@ -49,6 +49,7 @@ export type FieldDefinition = {
 	| { type: 'json'; max_bytes: number }
 	| { type: 'slug'; of?: string }
 	| { type: 'reference'; to: string }
+	| { type: 'blocks'; blocks: BlockTypeDef[]; min_blocks: number; max_blocks: number }
 	| { type: 'object'; fields: FieldDefinition[] }
 	| {
 			type: 'list';
@@ -59,6 +60,13 @@ export type FieldDefinition = {
 );
 
 /** A content type's definition (D-040). */
+/** One named section a `blocks` field offers, with its own fields. */
+export interface BlockTypeDef {
+	id: string;
+	label: string;
+	fields: FieldDefinition[];
+}
+
 export interface Definition {
 	name: string;
 	title_field: string;

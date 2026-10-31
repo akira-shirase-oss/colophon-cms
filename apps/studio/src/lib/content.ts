@@ -52,6 +52,11 @@ function starterFields(fields: FieldDefinition[]): Content {
 			content[field.id] = [];
 			continue;
 		}
+		if (field.type === 'blocks') {
+			// A required minimum starts filled with sections of the first type.
+			content[field.id] = Array.from({ length: field.min_blocks }, () => blockStarter(field.blocks[0]!));
+			continue;
+		}
 		if (!field.required) continue;
 		if (field.type === 'rich_text') content[field.id] = EMPTY_DOCUMENT;
 		if (field.type === 'boolean') content[field.id] = false;
@@ -70,6 +75,11 @@ export interface SubForm {
 }
 /** A list's form value: items of its kind. */
 export interface ListForm extends Array<FormValue> {}
+
+/** A new section of a `blocks` field: `{"_block": "<type>", <starter fields>}`. */
+export function blockStarter(block: { id: string; fields: FieldDefinition[] }): SubForm {
+	return { _block: block.id, ...starterFields(block.fields) };
+}
 
 /** `YYYY-MM-DDTHH:MM:SSZ` to what a `datetime-local` input shows, in the browser's time zone. */
 export function toLocal(utc: string): string {
@@ -105,6 +115,17 @@ export function formValue(field: FieldDefinition, value: unknown): FormValue {
 			);
 		case 'list':
 			return Array.isArray(value) ? value.map((item) => formValue(itemField(field), item)) : [];
+		case 'blocks':
+			return Array.isArray(value)
+				? value.map((item) => {
+						const stored = (typeof item === 'object' && item !== null ? item : {}) as Record<string, unknown>;
+						const block = field.blocks.find((block) => block.id === stored._block) ?? field.blocks[0]!;
+						return {
+							_block: String(stored._block ?? block.id),
+							...Object.fromEntries(block.fields.map((sub) => [sub.id, formValue(sub, stored[sub.id])]))
+						} as SubForm;
+					})
+				: [];
 		default:
 			return typeof value === 'string' ? value : '';
 	}
@@ -131,6 +152,21 @@ export function storedValue(field: FieldDefinition, form: FormValue | undefined)
 	if (field.type === 'list') {
 		const list = (Array.isArray(form) ? form : [])
 			.map((item) => storedValue(itemField(field), item))
+			.filter((item) => item !== undefined);
+		if (list.length === 0) return field.required ? [] : undefined;
+		return list;
+	}
+	if (field.type === 'blocks') {
+		const list = (Array.isArray(form) ? form : [])
+			.map((item) => {
+				const stored = item as SubForm;
+				const block = field.blocks.find((block) => block.id === stored._block);
+				if (block === undefined) return undefined;
+				const pairs = block.fields
+					.map((sub) => [sub.id, storedValue(sub, stored[sub.id])] as const)
+					.filter(([, value]) => value !== undefined);
+				return { _block: stored._block, ...Object.fromEntries(pairs) };
+			})
 			.filter((item) => item !== undefined);
 		if (list.length === 0) return field.required ? [] : undefined;
 		return list;
