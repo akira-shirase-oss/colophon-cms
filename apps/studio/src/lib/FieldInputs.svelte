@@ -89,6 +89,14 @@
 					</select>
 				{:else if field.type === 'datetime'}
 					<Input id={input} type="datetime-local" step="1" class="max-w-72" bind:value={form[field.id] as string} oninput={onchange} />
+				{:else if field.type === 'date'}
+					<Input id={input} type="date" class="max-w-48" bind:value={form[field.id] as string} oninput={onchange} />
+				{:else if field.type === 'time'}
+					<Input id={input} type="time" step="1" class="max-w-40" bind:value={form[field.id] as string} oninput={onchange} />
+				{:else if field.type === 'email'}
+					<Input id={input} type="email" class="max-w-72" bind:value={form[field.id] as string} oninput={onchange} />
+				{:else if field.type === 'url'}
+					<Input id={input} type="url" class="max-w-72" bind:value={form[field.id] as string} oninput={onchange} />
 				{/if}
 			{/if}
 		</div>

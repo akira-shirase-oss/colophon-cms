@@ -31,6 +31,10 @@ export type FieldDefinition = { id: string; label: string; required: boolean } &
 	| { type: 'boolean' }
 	| { type: 'enum'; values: string[] }
 	| { type: 'datetime' }
+	| { type: 'date' }
+	| { type: 'time' }
+	| { type: 'email' }
+	| { type: 'url' }
 );
 
 /** A content type's definition (D-040). */

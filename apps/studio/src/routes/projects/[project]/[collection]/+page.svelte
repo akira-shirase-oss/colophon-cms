@@ -54,7 +54,7 @@
 	// The columns beside the title: the short fields the list's summaries carry (a number, a
 	// choice, yes or no, a date and time), in the definition's order.
 	const columns = $derived(
-		(type.data?.definition.fields ?? []).filter((field) => ['number', 'boolean', 'enum', 'datetime'].includes(field.type)).slice(0, 3)
+		(type.data?.definition.fields ?? []).filter((field) => ['number', 'boolean', 'enum', 'datetime', 'date', 'time'].includes(field.type)).slice(0, 3)
 	);
 	function shown(field: (typeof columns)[number], value: string | number | boolean | null | undefined): string {
 		if (value === null || value === undefined) return '—';

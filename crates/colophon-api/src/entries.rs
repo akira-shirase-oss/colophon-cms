@@ -477,7 +477,7 @@ pub(crate) async fn list(
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     // An unknown collection is 404, not an empty list.
     let (definition, _) = content_type(&mut tx, &path.collection).await?;
-    // List columns: up to three short fields — a number, a choice, yes or no, a date and
+    // List columns: up to three short fields — a number, a choice, yes or no, a date, a
     // time — in the definition's order, so a list can show the fields that say what an
     // entry is beyond its title.
     let columns: Vec<String> = definition
@@ -490,6 +490,8 @@ pub(crate) async fn list(
                     | FieldKind::Boolean
                     | FieldKind::Enum { .. }
                     | FieldKind::DateTime
+                    | FieldKind::Date
+                    | FieldKind::Time
             )
         })
         .take(3)

@@ -84,6 +84,14 @@ pub enum FieldKind {
     },
     /// A moment in UTC, written `YYYY-MM-DDTHH:MM:SSZ`.
     DateTime,
+    /// A day, written `YYYY-MM-DD`.
+    Date,
+    /// A time of day, written `HH:MM` or `HH:MM:SS`.
+    Time,
+    /// An email address, checked as one.
+    Email,
+    /// A web address: `http:` or `https:` only, no credentials.
+    Url,
 }
 
 impl FieldKind {
@@ -96,6 +104,10 @@ impl FieldKind {
             Self::Boolean => "boolean",
             Self::Enum { .. } => "enum",
             Self::DateTime => "datetime",
+            Self::Date => "date",
+            Self::Time => "time",
+            Self::Email => "email",
+            Self::Url => "url",
         }
     }
 }
@@ -289,6 +301,72 @@ fn is_utc_timestamp(text: &str) -> bool {
     year >= 1 && (1..=days).contains(&day) && hour < 24 && minute < 60 && second < 60
 }
 
+/// A day, `YYYY-MM-DD`: the date part of a UTC timestamp's shape and ranges.
+fn is_date(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let shape = bytes.len() == 10
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            4 | 7 => *byte == b'-',
+            _ => byte.is_ascii_digit(),
+        });
+    if !shape {
+        return false;
+    }
+    is_utc_timestamp(&format!("{text}T00:00:00Z"))
+}
+
+/// A time of day, `HH:MM` or `HH:MM:SS`.
+fn is_time(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if !(bytes.len() == 5 || bytes.len() == 8)
+        || !bytes.iter().enumerate().all(|(index, byte)| match index {
+            2 | 5 => *byte == b':',
+            _ => byte.is_ascii_digit(),
+        })
+    {
+        return false;
+    }
+    let number = |range: std::ops::Range<usize>| -> u32 {
+        text.get(range)
+            .and_then(|digits| digits.parse().ok())
+            .unwrap_or(u32::MAX)
+    };
+    number(0..2) < 24 && number(3..5) < 60 && (bytes.len() == 5 || number(6..8) < 60)
+}
+
+/// An email address: one `@`, a non-empty local part and a domain with a dot, no spaces or
+/// controls.
+fn is_email(text: &str) -> bool {
+    let Some((local, domain)) = text.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.contains('@')
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && domain.split('.').all(|part| !part.is_empty())
+        && text
+            .chars()
+            .all(|c| c.is_ascii() && !c.is_control() && c != ' ')
+}
+
+/// A web address: `http:` or `https:`, a non-empty host, no credentials, no spaces or controls.
+fn is_url(text: &str) -> bool {
+    let Some(rest) = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    !host.is_empty()
+        && !host.contains('@')
+        && text
+            .chars()
+            .all(|c| c.is_ascii() && !c.is_control() && c != ' ')
+}
+
 /// A text field's limits: `max_chars` (default 200) and `multiline` (default false).
 fn text_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind, Refusal> {
     let max_chars = match object.get("max_chars") {
@@ -392,7 +470,11 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         ) => new_max >= old_max && (*new_multiline || !old_multiline),
         (FieldKind::RichText, FieldKind::RichText)
         | (FieldKind::Boolean, FieldKind::Boolean)
-        | (FieldKind::DateTime, FieldKind::DateTime) => true,
+        | (FieldKind::DateTime, FieldKind::DateTime)
+        | (FieldKind::Date, FieldKind::Date)
+        | (FieldKind::Time, FieldKind::Time)
+        | (FieldKind::Email, FieldKind::Email)
+        | (FieldKind::Url, FieldKind::Url) => true,
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -633,11 +715,27 @@ impl ContentType {
                 only(object, &common, pointer)?;
                 FieldKind::DateTime
             }
+            Some("date") => {
+                only(object, &common, pointer)?;
+                FieldKind::Date
+            }
+            Some("time") => {
+                only(object, &common, pointer)?;
+                FieldKind::Time
+            }
+            Some("email") => {
+                only(object, &common, pointer)?;
+                FieldKind::Email
+            }
+            Some("url") => {
+                only(object, &common, pointer)?;
+                FieldKind::Url
+            }
             _ => {
                 return Err(refuse(
                     "invalid_type",
                     &at(pointer, "type"),
-                    "`type` is one of text, rich_text, number, boolean, enum, datetime",
+                    "`type` is one of text, rich_text, number, boolean, enum, datetime, date, time, email, url",
                 ));
             }
         };
@@ -723,7 +821,13 @@ impl ContentType {
                     }
                     out.push(']');
                 }
-                FieldKind::RichText | FieldKind::Boolean | FieldKind::DateTime => {}
+                FieldKind::RichText
+                | FieldKind::Boolean
+                | FieldKind::DateTime
+                | FieldKind::Date
+                | FieldKind::Time
+                | FieldKind::Email
+                | FieldKind::Url => {}
             }
             out.push('}');
         }
@@ -854,6 +958,23 @@ impl ContentType {
                             format!("{label} is a UTC time like 2026-10-25T14:30:00Z"),
                         )
                     })?;
+                write_string(out, text);
+            }
+            FieldKind::Date | FieldKind::Time | FieldKind::Email | FieldKind::Url => {
+                let (check, code, hint): (fn(&str) -> bool, &str, &str) = match field.kind {
+                    FieldKind::Date => (is_date, "invalid_date", "a day like 2026-10-25"),
+                    FieldKind::Time => (is_time, "invalid_time", "a time of day like 14:30"),
+                    FieldKind::Email => (is_email, "invalid_email", "an email address"),
+                    _ => (
+                        is_url,
+                        "invalid_url",
+                        "a web address starting http:// or https://",
+                    ),
+                };
+                let text = value
+                    .as_str()
+                    .filter(|text| check(text))
+                    .ok_or_else(|| refuse(code, pointer, format!("{label} is {hint}")))?;
                 write_string(out, text);
             }
         }
@@ -1234,6 +1355,62 @@ mod tests {
             "0000-01-01T00:00:00Z",
         ] {
             assert!(!is_utc_timestamp(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn date_time_email_and_url_fields_parse_and_check_their_values() {
+        let kind = ContentType::parse(&json!({
+            "name": "Contacts",
+            "title_field": "name",
+            "fields": [
+                {"id": "name", "label": "Name", "type": "text", "required": true},
+                {"id": "day", "label": "Day", "type": "date"},
+                {"id": "opens", "label": "Opens", "type": "time"},
+                {"id": "address", "label": "Address", "type": "email"},
+                {"id": "site", "label": "Site", "type": "url"}
+            ]
+        }))
+        .expect("valid definition");
+        let canonical = kind.canonical_json();
+        for kind in ["date", "time", "email", "url"] {
+            assert!(
+                canonical.contains(&format!(r#""type":"{kind}""#)),
+                "{canonical}"
+            );
+        }
+        for (field, good) in [
+            ("day", "2026-02-28"),
+            ("day", "2028-02-29"),
+            ("opens", "14:30"),
+            ("opens", "09:15:42"),
+            ("address", "editor@colophon.dev"),
+            ("site", "https://example.com/a?q=1#frag"),
+            ("site", "http://localhost:8080"),
+        ] {
+            kind.validate(&json!({"name": "A", field: good}))
+                .unwrap_or_else(|refusal| panic!("{field} = {good}: {}", refusal.message));
+        }
+        for (field, bad, code) in [
+            ("day", "2026-02-29", "invalid_date"),
+            ("day", "2026-2-8", "invalid_date"),
+            ("opens", "24:00", "invalid_time"),
+            ("opens", "9:15", "invalid_time"),
+            ("opens", "14:60", "invalid_time"),
+            ("address", "not-an-email", "invalid_email"),
+            ("address", "a@@b.com", "invalid_email"),
+            ("address", "a@localhost", "invalid_email"),
+            ("address", "a@.com", "invalid_email"),
+            ("site", "javascript:alert(1)", "invalid_url"),
+            ("site", "https://u:p@h.com", "invalid_url"),
+            ("site", "https://", "invalid_url"),
+            ("site", "ftp://h", "invalid_url"),
+        ] {
+            let refusal = kind
+                .validate(&json!({"name": "A", field: bad}))
+                .expect_err(&format!("{field} = {bad}"));
+            assert_eq!(refusal.code, code, "{field} = {bad}");
+            assert_eq!(refusal.pointer, format!("/{field}"));
         }
     }
 }

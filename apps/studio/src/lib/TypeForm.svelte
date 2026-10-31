@@ -14,7 +14,10 @@
 	import { toast } from 'svelte-sonner';
 	import AlignLeftIcon from '@lucide/svelte/icons/align-left';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
+	import ClockIcon from '@lucide/svelte/icons/clock';
+	import GlobeIcon from '@lucide/svelte/icons/globe';
 	import HashIcon from '@lucide/svelte/icons/hash';
+	import MailIcon from '@lucide/svelte/icons/mail';
 	import ListIcon from '@lucide/svelte/icons/list';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
@@ -57,7 +60,11 @@
 		number: { name: 'Number', icon: HashIcon, about: 'A price, a quantity, a rating.' },
 		boolean: { name: 'Yes or no', icon: ToggleLeftIcon, about: 'A switch: yes or no, on or off.' },
 		enum: { name: 'Choice', icon: ListIcon, about: 'One option from a list you set, like a category.' },
-		datetime: { name: 'Date and time', icon: CalendarIcon, about: 'A day and a time, like when an event starts.' }
+		datetime: { name: 'Date and time', icon: CalendarIcon, about: 'A day and a time, like when an event starts.' },
+		date: { name: 'Date', icon: CalendarIcon, about: 'A day, like a birthday or a launch date.' },
+		time: { name: 'Time of day', icon: ClockIcon, about: 'A time of day, like when a shop opens.' },
+		email: { name: 'Email address', icon: MailIcon, about: 'An email address, checked as one.' },
+		url: { name: 'Web address', icon: GlobeIcon, about: 'A link to a page on the web.' }
 	} as const;
 	type Kind = keyof typeof KIND;
 
@@ -242,6 +249,11 @@
 						};
 					case 'datetime':
 						return { ...base, type: 'datetime' };
+					case 'date':
+					case 'time':
+					case 'email':
+					case 'url':
+						return { ...base, type: field.kind };
 				}
 			})
 		};
