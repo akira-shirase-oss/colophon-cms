@@ -157,7 +157,7 @@
 					</Sidebar.GroupAction>
 				{/if}
 				<Sidebar.Menu data-testid="nav-collections">
-					{#each types.data ?? [] as type (type.slug)}
+					{#each (types.data ?? []).filter((type) => type.definition.kind !== 'single') as type (type.slug)}
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton isActive={page.params.collection === type.slug} tooltipContent={type.definition.name}>
 								{#snippet child({ props })}
@@ -171,6 +171,26 @@
 					{/each}
 				</Sidebar.Menu>
 			</Sidebar.Group>
+
+			{#if (types.data ?? []).some((type) => type.definition.kind === 'single')}
+				<Sidebar.Group>
+					<Sidebar.GroupLabel>Single types</Sidebar.GroupLabel>
+					<Sidebar.Menu data-testid="nav-singles">
+						{#each (types.data ?? []).filter((type) => type.definition.kind === 'single') as type (type.slug)}
+							<Sidebar.MenuItem>
+								<Sidebar.MenuButton isActive={page.params.collection === type.slug} tooltipContent={type.definition.name}>
+									{#snippet child({ props })}
+										<a href={resolve('/projects/[project]/[collection]', { project, collection: type.slug })} {...props}>
+											<FileTextIcon /><span>{type.definition.name}</span>
+										</a>
+									{/snippet}
+								</Sidebar.MenuButton>
+								<CollectionCount {project} collection={type.slug} />
+							</Sidebar.MenuItem>
+						{/each}
+					</Sidebar.Menu>
+				</Sidebar.Group>
+			{/if}
 
 			<Sidebar.Group>
 				<Sidebar.GroupLabel>Publishing</Sidebar.GroupLabel>

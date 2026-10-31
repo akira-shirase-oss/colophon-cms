@@ -121,6 +121,30 @@
 		{/snippet}
 	</PageHeader>
 
+	{#if type.data.definition.kind === 'single'}
+		{#if entries.isPending}
+			<Skeleton class="h-48 w-full rounded-xl" />
+		{:else if entries.isError}
+			<Problem error={entries.error} />
+		{:else if entries.data.data.length === 0}
+			<EmptyState icon={FileTextIcon} title="One entry, not a list">
+				This collection holds a single {type.data.definition.name.toLowerCase()} entry — a homepage, a settings page.
+				<div class="mt-2"><Button onclick={() => (creating = true)}>Create the entry</Button></div>
+			</EmptyState>
+		{:else}
+			{@const entry = entries.data.data[0]!}
+			<a
+				href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}
+				class="group flex items-center justify-between gap-4 rounded-xl border border-border bg-card p-6 transition-colors hover:border-primary/40"
+			>
+				<div class="min-w-0">
+					<h2 class="truncate text-lg font-medium group-hover:underline">{entry.revision.title}</h2>
+					<p class="mt-1 text-sm text-muted-foreground">Updated {ago(entry.updated_at)}</p>
+				</div>
+				<StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} />
+			</a>
+		{/if}
+	{:else}
 	<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<Tabs.Root bind:value={filter as string}>
 			<Tabs.List aria-label="Show">
@@ -187,6 +211,7 @@
 		{#if entries.data.next_cursor !== null}
 			<p class="mt-3 text-sm text-muted-foreground">Showing the newest 100. Search to find older entries.</p>
 		{/if}
+	{/if}
 	{/if}
 
 	<Dialog.Root bind:open={creating}>
