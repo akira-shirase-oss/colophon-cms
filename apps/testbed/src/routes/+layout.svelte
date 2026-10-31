@@ -90,7 +90,7 @@
 	:global(code),
 	:global(pre) {
 		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-		font-size: 0.85em;
+		font-size: 0.875rem;
 	}
 	header {
 		display: flex;

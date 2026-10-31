@@ -89,7 +89,7 @@
 					<path d={area} fill="url(#hero-fill)" />
 					<path d={line} fill="none" stroke="var(--brand)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
 				</svg>
-				<span class="absolute top-0 left-[38%] -translate-x-1/2 rounded-md bg-primary px-2 py-1 text-[0.6875rem] font-medium text-primary-foreground shadow-press">
+				<span class="absolute top-0 left-[38%] -translate-x-1/2 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground shadow-press">
 					p99 6.9 ms
 				</span>
 			</div>
@@ -145,7 +145,7 @@
 				<p class="eyebrow mb-3">Radius</p>
 				<div class="flex flex-wrap gap-3">
 					{#each RADII as radius (radius)}
-						<div class="grid size-20 place-items-center border border-border bg-card text-[0.6875rem] text-muted-foreground shadow-hairline {radius}">
+						<div class="grid size-20 place-items-center border border-border bg-card text-xs text-muted-foreground shadow-hairline {radius}">
 							{radius.replace('rounded-', '')}
 						</div>
 					{/each}
@@ -155,7 +155,7 @@
 				<p class="eyebrow mb-3">Elevation</p>
 				<div class="flex flex-wrap gap-4">
 					{#each SHADOWS as shadow (shadow)}
-						<div class="grid h-20 w-28 place-items-center rounded-2xl bg-card text-[0.6875rem] text-muted-foreground {shadow}">
+						<div class="grid h-20 w-28 place-items-center rounded-2xl bg-card text-xs text-muted-foreground {shadow}">
 							{shadow.replace('shadow-', '')}
 						</div>
 					{/each}

@@ -51,7 +51,7 @@
 {#if who.data}
 	<DropdownMenu.Root>
 		<DropdownMenu.Trigger class="{buttonVariants({ variant: 'ghost', size: 'icon-sm' })} rounded-full" data-testid="account-menu">
-			<span class="flex size-7 items-center justify-center rounded-full border border-border bg-secondary text-[0.6875rem] font-semibold" aria-hidden="true"
+			<span class="flex size-7 items-center justify-center rounded-full border border-border bg-secondary text-xs font-semibold" aria-hidden="true"
 				>{initials}</span
 			><span class="sr-only">Account: {name}</span>
 		</DropdownMenu.Trigger>

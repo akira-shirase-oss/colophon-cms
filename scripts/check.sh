@@ -21,6 +21,7 @@ cargo test -p colophon-bench --benches --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 scripts/check-architecture.sh
 scripts/check-architecture.sh colophon-sim
+scripts/check-typography.sh
 # The simulator: 2,000 seeded runs of editors, lost answers and crashes (docs/modules/10-sim.md).
 cargo run --quiet --release --locked -p colophon-sim -- --seeds 2000
 cargo run --quiet --release --locked -p colophon-sim -- --scenario publishing --seeds 1000
