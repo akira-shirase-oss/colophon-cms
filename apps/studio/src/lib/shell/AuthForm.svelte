@@ -49,15 +49,15 @@
 	}
 </script>
 
-<form onsubmit={submit} data-testid="password-auth" class="space-y-4">
+<form onsubmit={submit} data-testid="password-auth" class="space-y-3">
 	{#if mode === 'signup'}
-		<div class="space-y-1.5">
+		<div class="space-y-1">
 			<label for="auth-name" class="text-sm font-medium">Your name</label>
 			<Input id="auth-name" bind:value={name} maxlength={200} autocomplete="name" />
 			<p class="text-sm text-muted-foreground">Shown to the people you work with.</p>
 		</div>
 	{/if}
-	<div class="space-y-1.5">
+	<div class="space-y-1">
 		<label for="auth-email" class="text-sm font-medium">Email</label>
 		<Input
 			id="auth-email"
@@ -68,7 +68,7 @@
 			autocomplete="email"
 		/>
 	</div>
-	<div class="space-y-1.5">
+	<div class="space-y-1">
 		<label for="auth-password" class="text-sm font-medium">Password</label>
 		<Input
 			id="auth-password"
@@ -81,21 +81,21 @@
 		/>
 		{#if mode === 'signup'}<p class="text-sm text-muted-foreground">At least 8 characters.</p>{/if}
 	</div>
-	{#if error}<p role="alert" class="pt-2 text-sm text-destructive">{error}</p>{/if}
-	<div class="pt-4">
+	{#if error}<p role="alert" class="pt-1 text-sm text-destructive">{error}</p>{/if}
+	<div class="pt-2">
 		<Button type="submit" class="w-full" disabled={busy} data-testid="sign-in">
 			{mode === 'signup' ? 'Create account and continue' : 'Sign in'}
 		</Button>
 	</div>
 </form>
-<p class="pt-4 text-center text-sm text-muted-foreground">
+<p class="pt-3 text-center text-sm text-muted-foreground">
 	{#if mode === 'signin'}
 		No account yet? <button type="button" class="underline underline-offset-2 hover:text-foreground" onclick={() => swap('signup')}>Create one</button>
 	{:else}
 		Already have an account? <button type="button" class="underline underline-offset-2 hover:text-foreground" onclick={() => swap('signin')}>Sign in</button>
 	{/if}
 </p>
-<div class="my-6 flex items-center gap-3 text-sm text-muted-foreground" aria-hidden="true">
+<div class="my-5 flex items-center gap-3 text-sm text-muted-foreground" aria-hidden="true">
 	<span class="h-px flex-1 bg-border"></span>or<span class="h-px flex-1 bg-border"></span>
 </div>
 <Button variant="outline" class="w-full" href={signInUrl(returnTo)} data-sveltekit-reload>
