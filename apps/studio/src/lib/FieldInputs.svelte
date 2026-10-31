@@ -12,19 +12,22 @@
 	import type { FieldDefinition } from './api.ts';
 	import type { FormValue } from './content.ts';
 	import FieldInputs from './FieldInputs.svelte';
+	import ReferencePicker from './ReferencePicker.svelte';
 
 	let {
 		fields,
 		form = $bindable(),
 		titleField = '',
 		onchange = () => {},
-		stacked = false
+		stacked = false,
+		project = ''
 	}: {
 		fields: FieldDefinition[];
 		form: Record<string, FormValue>;
 		titleField?: string;
 		onchange?: () => void;
 		stacked?: boolean;
+		project?: string;
 	} = $props();
 
 	const id = $props.id();
@@ -158,6 +161,8 @@
 					</div>
 				{:else if field.type === 'json'}
 					<Textarea id={input} rows={8} class="max-w-xl font-mono" placeholder={'{"key": "value"}'} bind:value={form[field.id] as string} oninput={onchange} />
+				{:else if field.type === 'reference'}
+					<ReferencePicker {project} to={field.to} bind:value={form[field.id] as string} required={field.required} {onchange} />
 				{:else if field.type === 'object'}
 					<fieldset class="space-y-4 rounded-lg border border-border p-4" aria-labelledby={`${input}-legend`}>
 						<legend id={`${input}-legend`} class="px-1 text-sm text-muted-foreground">{field.label}</legend>

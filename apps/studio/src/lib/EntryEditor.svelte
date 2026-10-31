@@ -300,7 +300,7 @@
 			<!-- In the definition's order: runs of plain fields as rows, rich text where it sits. -->
 			{#each segments as segment, index (index)}
 				{#if segment.kind === 'plain'}
-					<FieldInputs fields={segment.fields} bind:form titleField={definition.title_field} onchange={changed} />
+					<FieldInputs fields={segment.fields} bind:form titleField={definition.title_field} onchange={changed} {project} />
 				{:else}
 					{@const field = segment.field}
 					<div class="py-5">

@@ -118,6 +118,13 @@ pub enum FieldKind {
         /// The field it is derived from, or none to write by hand.
         of: Option<String>,
     },
+    /// A link to an entry in another collection: the value is that entry's id. The API checks
+    /// the collection exists when the definition is written and the entry exists when content
+    /// is saved; a reference may dangle if the entry is later deleted.
+    Reference {
+        /// The collection it points into.
+        to: String,
+    },
     /// A list of 0 to `max_items` values of one scalar kind (a "tags" field). Items keep their
     /// kind's standard form: a text item is single-line, at most `MAX_TEXT_CHARS` characters.
     List {
@@ -184,6 +191,7 @@ impl FieldKind {
             Self::Text { .. } => "text",
             Self::RichText => "rich_text",
             Self::Slug { .. } => "slug",
+            Self::Reference { .. } => "reference",
             Self::List { .. } => "list",
             Self::Number { .. } => "number",
             Self::Boolean => "boolean",
@@ -471,6 +479,17 @@ fn is_email(text: &str) -> bool {
 }
 
 /// A colour: `#` then six lowercase hex digits.
+/// An entry's id as a reference carries it: 32 hex digits joined as `8-4-4-4-12`.
+fn is_uuid(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() == 36
+        && [8, 13, 18, 23].into_iter().all(|at| bytes[at] == b'-')
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(at, byte)| matches!(at, 8 | 13 | 18 | 23) || byte.is_ascii_hexdigit())
+}
+
 /// A slug is lowercase letters and digits joined by single hyphens, `hello-world`.
 fn is_slug(text: &str) -> bool {
     !text.is_empty()
@@ -600,6 +619,25 @@ fn write_json(
             out.push('}');
         }
     }
+    Ok(())
+}
+
+/// A reference's value: the referenced entry's id, `8-4-4-4-12` hex.
+fn reference_value(
+    to: &str,
+    value: &Value,
+    pointer: &Pointer,
+    label: &str,
+    out: &mut String,
+) -> Result<(), Refusal> {
+    let text = value.as_str().filter(|text| is_uuid(text)).ok_or_else(|| {
+        refuse(
+            "invalid_reference",
+            pointer,
+            format!("{label} names an entry in `{to}`"),
+        )
+    })?;
+    write_string(out, text);
     Ok(())
 }
 
@@ -831,6 +869,8 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         }
         // `of` is a derivation hint, not a constraint: any slug keeps fitting a slug.
         // (slug→slug widens: it is a leaf kind in the `true` arm above)
+        // A reference keeps pointing at the same collection; `to` is the constraint itself.
+        (FieldKind::Reference { to: old }, FieldKind::Reference { to: new }) => old == new,
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -1151,6 +1191,10 @@ impl ContentType {
                 only(object, &[&common[..], &["of"]].concat(), pointer)?;
                 Self::slug_kind(object, pointer, nested)?
             }
+            Some("reference") => {
+                only(object, &[&common[..], &["to"]].concat(), pointer)?;
+                Self::reference_kind(object, pointer, nested)?
+            }
             other => {
                 let kind = Self::leaf_kind(other, pointer, nested)?;
                 only(object, &common, pointer)?;
@@ -1265,6 +1309,38 @@ impl ContentType {
         }
     }
 
+    /// A `reference` kind: `{"type": "reference", "to": "<collection>"}`. A reference can't sit
+    /// inside an object (existence checks only cover the top level), and `to` must be a
+    /// collection-shaped name; the API checks the collection actually exists.
+    fn reference_kind(
+        object: &Map<String, Value>,
+        pointer: &Pointer,
+        nested: bool,
+    ) -> Result<FieldKind, Refusal> {
+        if nested {
+            return Err(refuse(
+                "invalid_type",
+                &at(pointer, "type"),
+                "a reference can't sit inside an object",
+            ));
+        }
+        let to = object.get("to").and_then(Value::as_str).ok_or_else(|| {
+            refuse(
+                "invalid_to",
+                &at(pointer, "to"),
+                "`to` names the collection a reference points into",
+            )
+        })?;
+        if crate::project::Slug::parse(to).is_err() {
+            return Err(refuse(
+                "invalid_to",
+                &at(pointer, "to"),
+                "`to` names the collection a reference points into",
+            ));
+        }
+        Ok(FieldKind::Reference { to: to.to_owned() })
+    }
+
     /// A `list` kind: `{"type": "list", "of": "<scalar kind>", "min_items": 0, "max_items": 64}`.
     /// `of` names one of the scalar kinds; both bounds stay under `MAX_ITEMS`.
     fn list_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind, Refusal> {
@@ -1376,6 +1452,7 @@ impl ContentType {
                     | FieldKind::Json { .. }
                     | FieldKind::Object { .. }
                     | FieldKind::List { .. }
+                    | FieldKind::Reference { .. }
                     | FieldKind::Text {
                         multiline: true,
                         ..
@@ -1557,11 +1634,10 @@ impl ContentType {
             }
             FieldKind::Slug { of } => {
                 if let Some(of) = of {
-                    out.push_str(r#","of":""#);
-                    out.push_str(of);
-                    out.push('"');
+                    Self::write_kind_extra(out, "of", of);
                 }
             }
+            FieldKind::Reference { to } => Self::write_kind_extra(out, "to", to),
             FieldKind::List {
                 of,
                 min_items,
@@ -1590,6 +1666,16 @@ impl ContentType {
         }
         Self::write_options(out, field);
         out.push('}');
+    }
+
+    /// One extra key on a kind, `,"<key>":"<value>"`, written unescaped because every caller
+    /// passes schema-checked names (`of`, `to`).
+    fn write_kind_extra(out: &mut String, key: &str, value: &str) {
+        out.push_str(",\"");
+        out.push_str(key);
+        out.push_str("\":\"");
+        out.push_str(value);
+        out.push('"');
     }
 
     /// The options every field writes: `default` (already canonical), `when` and `unique`,
@@ -1894,6 +1980,9 @@ impl ContentType {
             | FieldKind::Url
             | FieldKind::Slug { .. }
             | FieldKind::Color => formatted(&field.kind, value, pointer, label, out)?,
+            FieldKind::Reference { to } => {
+                reference_value(to, value, pointer, label, out)?;
+            }
             FieldKind::Markdown { max_chars } => {
                 let text = value
                     .as_str()
@@ -2612,6 +2701,67 @@ mod tests {
         assert_eq!(refusal.code, "needs_migration");
         kind.check_successor(&before)
             .expect("dropping unique is always safe");
+    }
+
+    #[test]
+    fn a_reference_field_holds_an_entry_id() {
+        let type_ = ContentType::parse(&json!({
+            "name": "Posts",
+            "title_field": "title",
+            "fields": [
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "author", "label": "Author", "type": "reference", "to": "people"}
+            ]
+        }))
+        .expect("valid definition");
+        let canonical = type_.canonical_json();
+        assert!(
+            canonical.contains(r#""type":"reference","required":false,"to":"people""#),
+            "{canonical}"
+        );
+        type_
+            .validate(&json!({"title": "A", "author": "019a45e5-7c1d-7f2e-9b3a-4c2d1e5f6789"}))
+            .expect("valid");
+        for (value, code, pointer) in [
+            (
+                json!({"title": "A", "author": "not-an-id"}),
+                "invalid_reference",
+                "/author",
+            ),
+            (
+                json!({"title": "A", "author": 42}),
+                "invalid_reference",
+                "/author",
+            ),
+        ] {
+            let refusal = type_.validate(&value).expect_err("must refuse");
+            assert_eq!((refusal.code, refusal.pointer.as_str()), (code, pointer));
+        }
+        for (bad, code) in [
+            (
+                json!({"id": "a", "label": "A", "type": "reference", "to": "Bad Name"}),
+                "invalid_to",
+            ),
+            (
+                json!({"id": "a", "label": "A", "type": "reference"}),
+                "invalid_to",
+            ),
+            (
+                json!({"id": "a", "label": "A", "type": "reference", "to": "x", "unique": true}),
+                "invalid_unique",
+            ),
+        ] {
+            let refusal = ContentType::parse(&json!({
+                "name": "Posts",
+                "title_field": "title",
+                "fields": [
+                    {"id": "title", "label": "Title", "type": "text", "required": true},
+                    bad
+                ]
+            }))
+            .expect_err("must refuse");
+            assert_eq!(refusal.code, code);
+        }
     }
 
     #[test]

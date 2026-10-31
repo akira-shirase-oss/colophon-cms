@@ -28,7 +28,7 @@ use colophon_db::{
     idempotency::{self, Claim},
     scope::{self, ProjectTransaction},
 };
-use colophon_domain::schema::{Content, ContentType, FieldKind};
+use colophon_domain::schema::{Content, ContentType, FieldKind, Refusal};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -317,6 +317,34 @@ fn validate(value: &Value, content_type: &ContentType) -> Result<(Content, [u8; 
     Ok((content, hash))
 }
 
+/// Every `reference` value must name an entry that exists in this environment: a dangling id
+/// is refused rather than stored. (An entry deleted later still dangles — that's documented
+/// in `FieldKind::Reference`, and delivery carries the id either way.)
+async fn check_dangling(
+    tx: &mut ProjectTransaction,
+    content_type: &ContentType,
+    content: &Content,
+) -> Result<(), ApiError> {
+    for field in content_type.fields() {
+        if let FieldKind::Reference { to } = &field.kind
+            && let Some(raw) = content.value(&field.id)
+            && let Ok(id) = serde_json::from_str::<String>(raw)
+            && let Ok(uuid) = Uuid::try_parse(&id)
+            && entries::get(tx, to, uuid)
+                .await
+                .map_err(ApiError::from_db)?
+                .is_none()
+        {
+            return Err(ApiError::Invalid(Refusal {
+                code: "dangling_reference",
+                pointer: format!("/{}", field.id),
+                message: format!("`{}` names an entry that isn't in `{to}`", field.label),
+            }));
+        }
+    }
+    Ok(())
+}
+
 /// Each `unique` field's id with the hash of its canonical value — what `unique_values` claims.
 fn unique_pairs(content_type: &ContentType, content: &Content) -> Vec<(String, [u8; 32])> {
     content_type
@@ -376,6 +404,7 @@ pub(crate) async fn create(
         return Ok(replay);
     }
     let uniques = unique_pairs(&content_type, &content);
+    check_dangling(&mut tx, &content_type, &content).await?;
     let revision = NewRevision {
         id: Uuid::now_v7(),
         content: content.canonical_json(),
@@ -433,6 +462,7 @@ pub(crate) async fn save(
         schema_version: version,
     };
     let uniques = unique_pairs(&content_type, &content);
+    check_dangling(&mut tx, &content_type, &content).await?;
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.
     match entries::save(&mut tx, entry, expected, revision, &uniques)
         .await

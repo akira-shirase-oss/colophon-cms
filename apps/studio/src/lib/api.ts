@@ -48,6 +48,7 @@ export type FieldDefinition = {
 	| { type: 'color' }
 	| { type: 'json'; max_bytes: number }
 	| { type: 'slug'; of?: string }
+	| { type: 'reference'; to: string }
 	| { type: 'object'; fields: FieldDefinition[] }
 	| {
 			type: 'list';

@@ -24,7 +24,10 @@ use colophon_db::{
     idempotency::{self, Claim},
     scope::ProjectTransaction,
 };
-use colophon_domain::{project::Slug, schema::ContentType};
+use colophon_domain::{
+    project::Slug,
+    schema::{ContentType, FieldKind, Refusal},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 
@@ -260,6 +263,7 @@ pub(crate) async fn create(
         }
         other => ApiError::from_db(other),
     })?;
+    check_reference_targets(&mut tx, &definition).await?;
     finish(tx, CREATE, key, StatusCode::CREATED, version).await
 }
 
@@ -290,6 +294,29 @@ pub(crate) async fn remove(
             "the collection is not empty: delete its entries first",
         )),
     }
+}
+
+/// Every `reference` field's `to` must name a collection that exists in this environment;
+/// the check runs inside the write's transaction, so a collection may reference itself.
+async fn check_reference_targets(
+    tx: &mut ProjectTransaction,
+    next: &ContentType,
+) -> Result<(), ApiError> {
+    for (index, field) in next.fields().iter().enumerate() {
+        if let FieldKind::Reference { to } = &field.kind
+            && content_types::current(tx, to)
+                .await
+                .map_err(ApiError::from_db)?
+                .is_none()
+        {
+            return Err(ApiError::Invalid(Refusal {
+                code: "unknown_collection",
+                pointer: format!("/fields/{index}/to"),
+                message: format!("no collection named `{to}`"),
+            }));
+        }
+    }
+    Ok(())
 }
 
 /// `PUT {P}/content-types/{slug}`.
@@ -323,6 +350,7 @@ pub(crate) async fn update(
     let stored: Value = serde_json::from_str(&current.definition).map_err(ApiError::internal)?;
     let previous = ContentType::parse(&stored).map_err(ApiError::internal)?;
     previous.check_successor(&next).map_err(ApiError::Invalid)?;
+    check_reference_targets(&mut tx, &next).await?;
     match content_types::update(
         &mut tx,
         &path.slug,

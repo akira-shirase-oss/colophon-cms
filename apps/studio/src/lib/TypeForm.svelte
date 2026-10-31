@@ -10,7 +10,7 @@
 	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { useQueryClient } from '@tanstack/svelte-query';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
 	import AlignLeftIcon from '@lucide/svelte/icons/align-left';
 	import AtSignIcon from '@lucide/svelte/icons/at-sign';
@@ -24,6 +24,7 @@
 	import ListIcon from '@lucide/svelte/icons/list';
 	import PaletteIcon from '@lucide/svelte/icons/palette';
 	import ListPlusIcon from '@lucide/svelte/icons/list-plus';
+	import LinkIcon from '@lucide/svelte/icons/link';
 	import PenLineIcon from '@lucide/svelte/icons/pen-line';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
@@ -42,6 +43,7 @@
 	import {
 		ApiError,
 		createContentType,
+		listContentTypes,
 		newKey,
 		updateContentType,
 		type Definition,
@@ -76,7 +78,8 @@
 		json: { name: 'JSON', icon: BracesIcon, about: 'Structured data: objects, lists and values.' },
 		object: { name: 'Object', icon: BoxIcon, about: 'A named group of fields, like an address or a venue.' },
 		list: { name: 'List', icon: ListPlusIcon, about: 'Several values of one kind, like tags or links.' },
-		slug: { name: 'Slug', icon: AtSignIcon, about: 'A web-safe id for the entry, like my-first-post. Always unique.' }
+		slug: { name: 'Slug', icon: AtSignIcon, about: 'A web-safe id for the entry, like my-first-post. Always unique.' },
+		reference: { name: 'Reference', icon: LinkIcon, about: 'A link to an entry in another collection, like a post\'s author.' }
 	} as const;
 	type Kind = keyof typeof KIND;
 	/** The kinds a list's items can be: scalars with their standard shape. */
@@ -114,6 +117,7 @@
 		whenIn: string;
 		unique: boolean;
 		slugOf: string;
+		refTo: string;
 		subfields: SubRow[];
 		listOf: ItemKind;
 		minItems: number;
@@ -140,6 +144,7 @@
 		whenIn: '',
 		unique: false,
 		slugOf: '',
+		refTo: '',
 		subfields: [],
 		listOf: 'text',
 		minItems: 0,
@@ -194,6 +199,7 @@
 		whenIn: field.when?.in.join('\n') ?? '',
 		unique: field.unique === true,
 		slugOf: field.type === 'slug' ? (field.of ?? '') : '',
+		refTo: field.type === 'reference' ? field.to : '',
 		subfields: field.type === 'object' ? field.fields.map(subStored) : [],
 		listOf: field.type === 'list' ? field.of : 'text',
 		minItems: field.type === 'list' ? field.min_items : 0,
@@ -320,6 +326,7 @@
 						field.kind === 'json' ||
 						field.kind === 'object' ||
 						field.kind === 'list' ||
+						field.kind === 'reference' ||
 						(field.kind === 'text' && field.multiline))
 			)
 		)
@@ -333,6 +340,8 @@
 			)
 		)
 			return 'A slug can only be derived from one of the other fields.';
+		if (fields.some((field) => field.kind === 'reference' && field.refTo === ''))
+			return 'A reference needs a collection to point into.';
 		if (
 			fields.some(
 				(field) =>
@@ -353,6 +362,10 @@
 	});
 
 	const queryClient = useQueryClient();
+	const collectionsQuery = createQuery(() => ({
+		queryKey: ['types', project],
+		queryFn: () => listContentTypes(project)
+	}));
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
 		if (problem !== '' || titleRow === undefined) return;
@@ -416,6 +429,8 @@
 						return { ...base, type: 'list', of: field.listOf, min_items: field.minItems, max_items: field.maxItems };
 					case 'slug':
 						return field.slugOf === '' ? { ...base, type: 'slug' } : { ...base, type: 'slug', of: field.slugOf };
+					case 'reference':
+						return { ...base, type: 'reference', to: field.refTo };
 					case 'date':
 					case 'time':
 					case 'email':
@@ -611,7 +626,7 @@
 							</NativeSelect.Root>
 						</div>
 						<p class="text-sm text-muted-foreground">A slug is always unique: no two entries share it.</p>
-					{:else if !['rich_text', 'markdown', 'json', 'object', 'list'].includes(draft.kind) && !(draft.kind === 'text' && draft.multiline)}
+					{:else if !['rich_text', 'markdown', 'json', 'object', 'list', 'reference'].includes(draft.kind) && !(draft.kind === 'text' && draft.multiline)}
 						<label class="flex items-center gap-2 text-sm" for="field-unique">
 							<Checkbox id="field-unique" bind:checked={draft.unique} /> Unique: no two entries share this value
 						</label>
@@ -671,6 +686,19 @@
 							<Input id="field-jsonbytes" type="number" class="w-28" bind:value={draft.maxBytes} min={1} max={65536} />
 							bytes
 						</label>
+					{:else if draft.kind === 'reference'}
+						<div class="space-y-1.5">
+							<Label for="field-refto">Points into</Label>
+							<NativeSelect.Root id="field-refto" bind:value={draft.refTo} class="w-full">
+								<NativeSelect.Option value="">Choose a collection</NativeSelect.Option>
+								{#if editing}<NativeSelect.Option value={editing.collection}>{editing.collection} (this collection)</NativeSelect.Option>{/if}
+								{#each collectionsQuery.data ?? [] as other (other.slug)}
+									{#if other.slug !== editing?.collection}
+										<NativeSelect.Option value={other.slug}>{other.slug}</NativeSelect.Option>
+									{/if}
+								{/each}
+							</NativeSelect.Root>
+						</div>
 					{:else if draft.kind === 'list'}
 						<div class="space-y-1.5">
 							<Label for="field-listof">Each item is</Label>
