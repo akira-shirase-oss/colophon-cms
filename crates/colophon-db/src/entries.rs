@@ -609,3 +609,184 @@ pub async fn set_locale(
     .map_err(DbError::from_write)?;
     Ok(done.rows_affected() == 1)
 }
+
+/// One entry in a localization group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Localization {
+    /// The entry.
+    pub id: Uuid,
+    /// Its locale tag.
+    pub locale: String,
+}
+
+/// The siblings of `entry` — its whole localization group, itself included, ordered by
+/// locale. An unlocalized entry has no group and returns nothing.
+pub async fn localizations(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    entry_id: Uuid,
+) -> Result<Vec<Localization>, DbError> {
+    sqlx::query_as!(
+        Localization,
+        r#"SELECT s.id, s.locale AS "locale!" FROM entries s
+           JOIN entries e ON e.localization_id = s.localization_id
+           WHERE e.project_id = $1 AND e.environment_id = $2 AND e.id = $3 AND e.collection = $4
+             AND s.project_id = $1 AND s.environment_id = $2
+           ORDER BY s.locale"#,
+        tx.project,
+        tx.environment,
+        entry_id,
+        collection
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// What making a localized sibling did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Localized {
+    /// The new entry's draft: a copy of the source's, in the asked-for locale.
+    Made(Box<Draft>),
+    /// The group already has this locale — the sibling that does.
+    Occupied(Uuid),
+    /// No such source entry in this environment and collection.
+    Missing,
+}
+
+/// The source half of [`create_localization`]: what its draft revision holds and where it
+/// sits in a localization group.
+struct SourceRow {
+    localization_id: Option<Uuid>,
+    content: String,
+    title: String,
+    content_hash: Vec<u8>,
+    schema_version: i32,
+}
+
+/// Creates `entry_id` as `source`'s sibling in `locale`, copying the source's draft. A source
+/// with no group joins one first: after this, both are localized. All in this transaction, so
+/// the group never sits half-made.
+pub async fn create_localization(
+    tx: &mut ProjectTransaction,
+    entry_id: Uuid,
+    source_id: Uuid,
+    collection: &str,
+    locale: &str,
+) -> Result<Localized, DbError> {
+    let source = sqlx::query_as!(
+        SourceRow,
+        "SELECT e.localization_id,
+                r.content, r.title, r.content_hash, r.schema_version
+         FROM entries e
+         JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id
+                         AND r.id = e.draft_revision_id
+         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.id = $3 AND e.collection = $4
+         FOR UPDATE OF e",
+        tx.project,
+        tx.environment,
+        source_id,
+        collection
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    let Some(source) = source else {
+        return Ok(Localized::Missing);
+    };
+    let group = if let Some(group) = source.localization_id {
+        group
+    } else {
+        let group = Uuid::now_v7();
+        sqlx::query!(
+            "UPDATE entries SET localization_id = $4
+             WHERE project_id = $1 AND environment_id = $2 AND id = $3",
+            tx.project,
+            tx.environment,
+            source_id,
+            group
+        )
+        .execute(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_write)?;
+        group
+    };
+    let occupied = sqlx::query_scalar!(
+        "SELECT id FROM entries
+         WHERE project_id = $1 AND environment_id = $2 AND localization_id = $3 AND locale = $4",
+        tx.project,
+        tx.environment,
+        group,
+        locale
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    if let Some(id) = occupied {
+        return Ok(Localized::Occupied(id));
+    }
+    insert_sibling(tx, entry_id, collection, locale, group, source).await
+}
+
+/// The insert half of [`create_localization`]: the new entry, and its first revision copied
+/// verbatim from the source's draft — same content, same hash.
+async fn insert_sibling(
+    tx: &mut ProjectTransaction,
+    entry_id: Uuid,
+    collection: &str,
+    locale: &str,
+    group: Uuid,
+    source: SourceRow,
+) -> Result<Localized, DbError> {
+    let revision_id = Uuid::now_v7();
+    let entry = sqlx::query!(
+        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id,
+                              draft_title, created_by, locale, localization_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING created_at, updated_at",
+        tx.project,
+        tx.environment,
+        entry_id,
+        collection,
+        revision_id,
+        source.title,
+        tx.identity,
+        locale,
+        group
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    let mut content_hash = [0_u8; 32];
+    content_hash.copy_from_slice(&source.content_hash[..32.min(source.content_hash.len())]);
+    let created_at = insert_revision(
+        tx,
+        entry_id,
+        collection,
+        None,
+        NewRevision {
+            id: revision_id,
+            content: &source.content,
+            content_hash: &content_hash,
+            title: &source.title,
+            schema_version: source.schema_version,
+        },
+    )
+    .await?;
+    Ok(Localized::Made(Box::new(Draft {
+        entry_id,
+        collection: collection.to_owned(),
+        created_at: entry.created_at,
+        updated_at: entry.updated_at,
+        revision: Revision {
+            id: revision_id,
+            base_revision_id: None,
+            author_id: tx.identity,
+            created_at,
+            content_hash: source.content_hash.clone(),
+            title: source.title.clone(),
+        },
+        content: source.content,
+        locale: Some(locale.to_owned()),
+    })))
+}

@@ -120,6 +120,10 @@ pub fn routes(state: AppState) -> Router {
             get(entries::referenced_by),
         )
         .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/localizations",
+            post(entries::localize),
+        )
+        .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions",
             get(entries::history),
         )

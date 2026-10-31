@@ -105,6 +105,8 @@ export interface Draft {
 	content: Content;
 	/** The entry's locale tag, or `null` for the default locale. */
 	locale?: string | null;
+	/** Its localization group, itself included — empty when the entry isn't localized. */
+	localizations?: { id: string; locale: string }[];
 }
 
 export interface Summary {
@@ -454,6 +456,22 @@ export async function saveEntry(
 /** Deletes an empty collection for good. The server refuses (conflict) while it has entries. */
 export async function deleteCollection(project: string, collection: string): Promise<void> {
 	await send('DELETE', `${base(project)}/content-types/${collection}`);
+}
+
+/** Creates a sibling of `entry` in `locale`, starting from its draft. The group allows one
+ *  entry per locale; the server answers conflict when it already has one. */
+export async function createLocalization(
+	project: string,
+	collection: string,
+	entry: string,
+	locale: string,
+	key: string
+): Promise<Loaded> {
+	return loaded(
+		await send('POST', `${entries(project, collection)}/${entry}/localizations?locale=${encodeURIComponent(locale)}`, undefined, {
+			'Idempotency-Key': key
+		})
+	);
 }
 
 /** Deletes an entry for good. The server refuses (conflict) while anything references it. */

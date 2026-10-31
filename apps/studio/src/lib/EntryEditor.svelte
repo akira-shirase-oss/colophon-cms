@@ -6,6 +6,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { asset } from '$app/paths';
+	import { goto } from '$app/navigation';
 	import type { Editor } from '@tiptap/core';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { openEditor, type RichTextValue, toStored } from '@colophon/editor';
@@ -20,8 +21,10 @@
 	import LinkIcon from '@lucide/svelte/icons/link';
 	import { toast } from 'svelte-sonner';
 	import {
+		ApiError,
 		type Content,
 		type ContentType,
+		createLocalization,
 		deliveryUrl,
 		type Draft,
 		type FieldDefinition,
@@ -80,6 +83,34 @@
 	let latest = $state.raw<Draft>(initial.draft);
 	// svelte-ignore state_referenced_locally
 	let locale = $state(initial.draft.locale ?? '');
+	// Its localization group, itself included; empty while it isn't localized.
+	const siblings = $derived(latest.localizations ?? []);
+	let newLocale = $state('');
+	let versionError = $state('');
+	let versionBusy = $state(false);
+
+	/** A sibling in another language, starting from this draft — then straight to it. */
+	async function addVersion(event: SubmitEvent) {
+		event.preventDefault();
+		const tag = newLocale.trim();
+		if (tag === '') return;
+		versionBusy = true;
+		versionError = '';
+		try {
+			const made = await createLocalization(project, collection, entry, tag, crypto.randomUUID());
+			await goto(
+				resolve('/projects/[project]/[collection]/[entry]', {
+					project,
+					collection,
+					entry: made.draft.id
+				})
+			);
+		} catch (failure) {
+			versionError = failure instanceof ApiError ? failure.message : String(failure);
+		} finally {
+			versionBusy = false;
+		}
+	}
 	// svelte-ignore state_referenced_locally
 	const saver = new Saver(project, collection, entry, definition, initial, (loaded) => {
 		latest = loaded.draft;
@@ -432,6 +463,45 @@
 					</dd>
 				</div>
 			</dl>
+			<div class="mt-4 border-t border-dotted border-border pt-4" data-testid="localizations">
+				<h3 class="text-sm font-semibold">Translations</h3>
+				{#if siblings.length > 0}
+					<ul class="mt-3 flex flex-wrap gap-1.5">
+						{#each siblings as sibling (sibling.id)}
+							<li>
+								{#if sibling.id === entry}
+									<Badge variant="secondary" class="font-semibold">{sibling.locale}</Badge>
+								{:else}
+									<a
+										href={resolve('/projects/[project]/[collection]/[entry]', {
+											project,
+											collection,
+											entry: sibling.id
+										})}
+										title="Open the {sibling.locale} version"
+									>
+										<Badge variant="outline" class="hover:border-foreground/30">{sibling.locale}</Badge>
+									</a>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<form class="mt-3 flex items-center gap-2" onsubmit={addVersion}>
+					<Input
+						class="h-8 w-24 px-2 text-sm"
+						placeholder="fr"
+						bind:value={newLocale}
+						maxlength={35}
+						aria-label="Language tag for the new version"
+					/>
+					<Button type="submit" variant="outline" size="sm" disabled={versionBusy || newLocale.trim() === ''}>
+						Add version
+					</Button>
+				</form>
+				<p class="mt-2 text-sm text-muted-foreground">A translation starts as a copy of this draft.</p>
+				{#if versionError}<p class="mt-2 text-sm text-destructive" role="alert">{versionError}</p>{/if}
+			</div>
 		</div>
 	</aside>
 </div>

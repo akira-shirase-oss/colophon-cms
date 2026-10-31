@@ -24,7 +24,9 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use colophon_db::{
     content_types,
-    entries::{self, Draft, NewRevision, Removed, Revision, Saved, Summary},
+    entries::{
+        self, Draft, Localization, Localized, NewRevision, Removed, Revision, Saved, Summary,
+    },
     idempotency::{self, Claim},
     scope::{self, ProjectTransaction},
 };
@@ -50,6 +52,7 @@ const DEFAULT_PAGE: i64 = 20;
 const CREATE: &str = "entry.create";
 const SAVE: &str = "entry.save";
 const IMPORT: &str = "entry.import";
+const LOCALIZE: &str = "entry.localize";
 /// An import is at most this many lines, so one upload stays a bounded transaction.
 const IMPORT_MAX_LINES: usize = 512;
 
@@ -93,6 +96,13 @@ impl RevisionView {
     }
 }
 
+/// A sibling in the entry's localization group: same document, another locale.
+#[derive(Serialize)]
+struct LocalizationView {
+    id: Uuid,
+    locale: String,
+}
+
 #[derive(Serialize)]
 struct DraftView {
     id: Uuid,
@@ -104,10 +114,12 @@ struct DraftView {
     content: Box<RawValue>,
     /// The entry's locale tag, or `null` for the default locale.
     locale: Option<String>,
+    /// Its localization group, itself included — empty when the entry isn't localized.
+    localizations: Vec<LocalizationView>,
 }
 
 impl DraftView {
-    fn new(draft: Draft) -> Result<Self, ApiError> {
+    fn new(draft: Draft, localizations: Vec<Localization>) -> Result<Self, ApiError> {
         Ok(Self {
             id: draft.entry_id,
             collection: draft.collection,
@@ -116,6 +128,13 @@ impl DraftView {
             revision: RevisionView::new(draft.revision)?,
             content: RawValue::from_string(draft.content).map_err(ApiError::internal)?,
             locale: draft.locale,
+            localizations: localizations
+                .into_iter()
+                .map(|sibling| LocalizationView {
+                    id: sibling.id,
+                    locale: sibling.locale,
+                })
+                .collect(),
         })
     }
 }
@@ -413,9 +432,12 @@ async fn finish(
     status: StatusCode,
     draft: Draft,
 ) -> Result<Response, ApiError> {
+    let localizations = entries::localizations(&mut tx, &draft.collection, draft.entry_id)
+        .await
+        .map_err(ApiError::from_db)?;
     let revision = draft.revision.id;
     let body = serde_json::to_string(&Data {
-        data: DraftView::new(draft)?,
+        data: DraftView::new(draft, localizations)?,
     })
     .map_err(ApiError::internal)?;
     idempotency::complete(&mut tx, operation, key, status.as_u16(), &body)
@@ -703,13 +725,60 @@ pub(crate) async fn get(
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
+    let localizations = entries::localizations(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     let revision = draft.revision.id;
     let body = serde_json::to_string(&Data {
-        data: DraftView::new(draft)?,
+        data: DraftView::new(draft, localizations)?,
     })
     .map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, Some(revision), false))
+}
+
+/// `POST {P}/collections/{collection}/entries/{entry}/localizations?locale=fr`: a sibling in
+/// another locale, starting from this entry's draft. Both join (or stay in) one group — one
+/// entry per locale in it, enforced by the database.
+pub(crate) async fn localize(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<EntryPath>,
+    Query(query): Query<LocaleQuery>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let Some(locale) = query.locale.as_deref() else {
+        return Err(ApiError::InvalidField {
+            reason: "missing_locale",
+            pointer: "/locale",
+            message: "a localization needs its locale, like `?locale=fr`".to_owned(),
+        });
+    };
+    check_locale(Some(locale))?;
+    let key = idempotency_key(&headers)?;
+    let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    crate::members::require(
+        &tx.role,
+        colophon_domain::policy::Action::WriteContent,
+        "your role can't write content in this project",
+    )?;
+    // The source must exist — 404, not a silent "group already has it".
+    content_type(&mut tx, &path.collection).await?;
+    let request = request_hash(&[LOCALIZE, &path.collection, &entry.to_string(), locale]);
+    if let Some(replay) = claim(&mut tx, LOCALIZE, key, &request).await? {
+        return Ok(replay);
+    }
+    match entries::create_localization(&mut tx, Uuid::now_v7(), entry, &path.collection, locale)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Localized::Made(draft) => finish(tx, LOCALIZE, key, StatusCode::CREATED, *draft).await,
+        Localized::Occupied(_) => Err(ApiError::Conflict(
+            "a version in that locale already exists",
+        )),
+        Localized::Missing => Err(ApiError::NotFound),
+    }
 }
 
 /// `DELETE {P}/collections/{collection}/entries/{entry}`: gone for good, but only while
