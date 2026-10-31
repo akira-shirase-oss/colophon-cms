@@ -37,6 +37,7 @@ export type FieldDefinition = { id: string; label: string; required: boolean } &
 	| { type: 'url' }
 	| { type: 'markdown'; max_chars: number }
 	| { type: 'color' }
+	| { type: 'json'; max_bytes: number }
 );
 
 /** A content type's definition (D-040). */

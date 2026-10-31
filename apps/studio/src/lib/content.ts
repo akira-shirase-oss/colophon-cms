@@ -70,6 +70,8 @@ export function formValue(field: FieldDefinition, value: unknown): FormValue {
 			return typeof value === 'number' ? String(value) : '';
 		case 'datetime':
 			return typeof value === 'string' ? toLocal(value) : '';
+		case 'json':
+			return value === undefined || value === null ? '' : JSON.stringify(value, null, 2);
 		default:
 			return typeof value === 'string' ? value : '';
 	}
@@ -87,6 +89,12 @@ export function storedValue(field: FieldDefinition, form: FormValue | undefined)
 			return Number(text);
 		case 'datetime':
 			return toUtc(text);
+		case 'json':
+			try {
+				return JSON.parse(text);
+			} catch {
+				return text;
+			}
 		default:
 			return text;
 	}

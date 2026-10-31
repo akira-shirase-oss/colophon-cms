@@ -101,6 +101,8 @@
 					<Textarea id={input} rows={6} maxlength={field.max_chars} class="max-w-xl font-mono" bind:value={form[field.id] as string} oninput={onchange} />
 				{:else if field.type === 'color'}
 					<Input id={input} class="w-36 font-mono" maxlength={7} placeholder="#1a6fdd" bind:value={form[field.id] as string} oninput={onchange} />
+				{:else if field.type === 'json'}
+					<Textarea id={input} rows={8} class="max-w-xl font-mono" placeholder={'{"key": "value"}'} bind:value={form[field.id] as string} oninput={onchange} />
 				{/if}
 			{/if}
 		</div>

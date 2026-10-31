@@ -13,6 +13,7 @@
 	import { useQueryClient } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
 	import AlignLeftIcon from '@lucide/svelte/icons/align-left';
+	import BracesIcon from '@lucide/svelte/icons/braces';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
 	import ClockIcon from '@lucide/svelte/icons/clock';
 	import GlobeIcon from '@lucide/svelte/icons/globe';
@@ -68,7 +69,8 @@
 		email: { name: 'Email address', icon: MailIcon, about: 'An email address, checked as one.' },
 		url: { name: 'Web address', icon: GlobeIcon, about: 'A link to a page on the web.' },
 		markdown: { name: 'Markdown', icon: PenLineIcon, about: 'Writing in Markdown: headings, lists and links.' },
-		color: { name: 'Colour', icon: PaletteIcon, about: 'A colour, like a brand accent, written #1a6fdd.' }
+		color: { name: 'Colour', icon: PaletteIcon, about: 'A colour, like a brand accent, written #1a6fdd.' },
+		json: { name: 'JSON', icon: BracesIcon, about: 'Structured data: objects, lists and values.' }
 	} as const;
 	type Kind = keyof typeof KIND;
 
@@ -80,6 +82,7 @@
 		required: boolean;
 		kind: Kind;
 		maxChars: number;
+		maxBytes: number;
 		multiline: boolean;
 		integer: boolean;
 		min: string;
@@ -96,6 +99,7 @@
 		required: false,
 		kind: 'text',
 		maxChars: 200,
+		maxBytes: 65536,
 		multiline: false,
 		integer: false,
 		min: '',
@@ -111,6 +115,7 @@
 		required: field.required,
 		kind: field.type,
 		maxChars: field.type === 'text' || field.type === 'markdown' ? field.max_chars : 200,
+		maxBytes: field.type === 'json' ? field.max_bytes : 65536,
 		multiline: field.type === 'text' ? field.multiline : false,
 		integer: field.type === 'number' ? field.integer : false,
 		min: field.type === 'number' && field.min !== undefined ? String(field.min) : '',
@@ -255,6 +260,8 @@
 						return { ...base, type: 'datetime' };
 					case 'markdown':
 						return { ...base, type: 'markdown', max_chars: field.maxChars };
+					case 'json':
+						return { ...base, type: 'json', max_bytes: field.maxBytes };
 					case 'date':
 					case 'time':
 					case 'email':
@@ -456,6 +463,12 @@
 							Up to
 							<Input id="field-mdchars" type="number" class="w-24" bind:value={draft.maxChars} min={1} max={100000} />
 							characters
+						</label>
+					{:else if draft.kind === 'json'}
+						<label class="flex items-center gap-2 text-sm" for="field-jsonbytes">
+							Up to
+							<Input id="field-jsonbytes" type="number" class="w-28" bind:value={draft.maxBytes} min={1} max={65536} />
+							bytes
 						</label>
 					{/if}
 				</Tabs.Content>

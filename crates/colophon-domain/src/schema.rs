@@ -29,6 +29,10 @@ pub const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 pub const MAX_DECIMAL: f64 = 1e9;
 /// Most decimal places a decimal number may have.
 pub const DECIMAL_PLACES: i32 = 6;
+/// The most bytes a `json` field's canonical value may occupy.
+pub const MAX_JSON_BYTES: u64 = 65_536;
+/// The deepest a `json` field's value may nest.
+pub const MAX_JSON_DEPTH: u32 = 32;
 /// The longest unknown key repeated back in an error.
 const MAX_REPORTED_KEY_CHARS: usize = 64;
 
@@ -100,6 +104,12 @@ pub enum FieldKind {
     },
     /// A colour, written `#rrggbb` (lowercase hex).
     Color,
+    /// Any JSON value bounded in depth and bytes, written canonical with keys sorted and
+    /// numbers held to the project's decimal model ([`MAX_DECIMAL`], [`DECIMAL_PLACES`]).
+    Json {
+        /// The most bytes the canonical value may occupy.
+        max_bytes: u64,
+    },
 }
 
 impl FieldKind {
@@ -118,6 +128,7 @@ impl FieldKind {
             Self::Url => "url",
             Self::Markdown { .. } => "markdown",
             Self::Color => "color",
+            Self::Json { .. } => "json",
         }
     }
 }
@@ -408,6 +419,102 @@ fn text_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind
     })
 }
 
+/// A JSON value's canonical form: keys sorted, numbers in the project's decimal model. Depth is
+/// bounded so storing one can never blow a stack.
+fn write_json(
+    value: &Value,
+    out: &mut String,
+    depth: u32,
+    pointer: &Pointer,
+    label: &str,
+) -> Result<(), Refusal> {
+    if depth > MAX_JSON_DEPTH {
+        return Err(refuse(
+            "too_deep",
+            pointer,
+            format!("{label} is nested more than {MAX_JSON_DEPTH} levels"),
+        ));
+    }
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
+        Value::Number(number) => {
+            if let Some(whole) = number.as_i64() {
+                out.push_str(&whole.to_string());
+            } else if let Some(whole) = number.as_u64() {
+                out.push_str(&whole.to_string());
+            } else {
+                let float = number.as_f64().unwrap_or(f64::NAN);
+                // A float is kept only if its decimal-model spelling reads back to the same
+                // number: refused rather than silently altered.
+                let spelled = format!("{float:.places$}", places = DECIMAL_PLACES as usize);
+                let round_trips = spelled
+                    .trim_end_matches('0')
+                    .trim_end_matches('.')
+                    .parse::<f64>()
+                    .is_ok_and(|read| read.to_bits() == float.to_bits());
+                if !float.is_finite() || !round_trips || float.abs() > MAX_DECIMAL {
+                    return Err(refuse(
+                        "invalid_json",
+                        pointer,
+                        format!(
+                            "{label}: a number is an integer or a decimal to {DECIMAL_PLACES} places below {MAX_DECIMAL}"
+                        ),
+                    ));
+                }
+                write_number(out, float, float.fract() == 0.0);
+            }
+        }
+        Value::String(text) => write_string(out, text),
+        Value::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_json(item, out, depth + 1, pointer, label)?;
+            }
+            out.push(']');
+        }
+        Value::Object(map) => {
+            out.push('{');
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for (index, key) in keys.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_string(out, key);
+                out.push(':');
+                write_json(&map[*key], out, depth + 1, pointer, label)?;
+            }
+            out.push('}');
+        }
+    }
+    Ok(())
+}
+
+/// A `json` field's value: canonicalised, bounded in bytes, written to `out`.
+fn json_value(
+    value: &Value,
+    max_bytes: u64,
+    pointer: &Pointer,
+    label: &str,
+    out: &mut String,
+) -> Result<(), Refusal> {
+    let mut canonical = String::new();
+    write_json(value, &mut canonical, 0, pointer, label)?;
+    if u64::try_from(canonical.len()).unwrap_or(u64::MAX) > max_bytes {
+        return Err(refuse(
+            "too_large",
+            pointer,
+            format!("{label} is at most {max_bytes} bytes"),
+        ));
+    }
+    out.push_str(&canonical);
+    Ok(())
+}
+
 /// A markdown field's limit: `max_chars` (default [`MAX_TEXT_CHARS`]).
 fn markdown_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind, Refusal> {
     let max_chars = match object.get("max_chars") {
@@ -424,6 +531,24 @@ fn markdown_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<Field
             })?,
     };
     Ok(FieldKind::Markdown { max_chars })
+}
+
+/// A JSON field's limit: `max_bytes` (default [`MAX_JSON_BYTES`]).
+fn json_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind, Refusal> {
+    let max_bytes = match object.get("max_bytes") {
+        None => MAX_JSON_BYTES,
+        Some(value) => value
+            .as_u64()
+            .filter(|max| (1..=MAX_JSON_BYTES).contains(max))
+            .ok_or_else(|| {
+                refuse(
+                    "out_of_range",
+                    &at(pointer, "max_bytes"),
+                    format!("`max_bytes` is a whole number from 1 to {MAX_JSON_BYTES}"),
+                )
+            })?,
+    };
+    Ok(FieldKind::Json { max_bytes })
 }
 
 /// A number field's limits: `integer` (default false), and optional `min` and `max`.
@@ -530,6 +655,9 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
                 multiline: true,
             },
         ) => new_max >= old_max,
+        (FieldKind::Json { max_bytes: old_max }, FieldKind::Json { max_bytes: new_max }) => {
+            new_max >= old_max
+        }
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -762,6 +890,10 @@ impl ContentType {
                 only(object, &[&common[..], &["max_chars"]].concat(), pointer)?;
                 markdown_kind(object, pointer)?
             }
+            Some("json") => {
+                only(object, &[&common[..], &["max_bytes"]].concat(), pointer)?;
+                json_kind(object, pointer)?
+            }
             other => {
                 let kind = match other {
                     Some("rich_text") => FieldKind::RichText,
@@ -869,6 +1001,10 @@ impl ContentType {
                 FieldKind::Markdown { max_chars } => {
                     out.push_str(r#","max_chars":"#);
                     out.push_str(&max_chars.to_string());
+                }
+                FieldKind::Json { max_bytes } => {
+                    out.push_str(r#","max_bytes":"#);
+                    out.push_str(&max_bytes.to_string());
                 }
                 FieldKind::RichText
                 | FieldKind::Boolean
@@ -1031,6 +1167,9 @@ impl ContentType {
                     .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is text")))?;
                 check_text(text, label, *max_chars, true, pointer)?;
                 write_string(out, text);
+            }
+            FieldKind::Json { max_bytes } => {
+                json_value(value, *max_bytes, pointer, label, out)?;
             }
         }
         Ok(())
@@ -1523,6 +1662,62 @@ mod tests {
                 .expect_err(&format!("{field} = {bad}"));
             assert_eq!(refusal.code, code, "{field} = {bad}");
             assert_eq!(refusal.pointer, format!("/{field}"));
+        }
+    }
+
+    #[test]
+    fn json_fields_parse_bound_values_and_write_a_sorted_canonical_form() {
+        let kind = ContentType::parse(&json!({
+            "name": "Blocks",
+            "title_field": "name",
+            "fields": [
+                {"id": "name", "label": "Name", "type": "text", "required": true},
+                {"id": "data", "label": "Data", "type": "json", "max_bytes": 40}
+            ]
+        }))
+        .expect("valid definition");
+        let canonical = kind.canonical_json();
+        assert!(
+            canonical.contains(r#""type":"json","required":false,"max_bytes":40"#),
+            "{canonical}"
+        );
+        // Keys are sorted; scalars are values too; numbers keep the decimal model's spelling.
+        let content = kind
+            .validate(&json!({"name": "A", "data": {"b": [1, 2.5, null, true], "a": "x"}}))
+            .expect("valid");
+        assert_eq!(
+            content.canonical_json(),
+            r#"{"name":"A","data":{"a":"x","b":[1,2.5,null,true]}}"#
+        );
+        for good in [
+            json!("a string"),
+            json!(7),
+            json!(-4),
+            json!(18_446_744_073_709_551_615_u64),
+            json!(4.5),
+            json!(true),
+            json!(null),
+            json!([1, [2, [3]]]),
+        ] {
+            kind.validate(&json!({"name": "A", "data": good}))
+                .unwrap_or_else(|refusal| panic!("{good}: {}", refusal.message));
+        }
+        let mut deep = json!(0);
+        for _ in 0..40 {
+            deep = json!([deep]);
+        }
+        for (bad, code) in [
+            (deep, "too_deep"),
+            (json!({"a": "x".repeat(60)}), "too_large"),
+            (json!(1.234_567_89), "invalid_json"),
+            (json!(2_000_000_000.5), "invalid_json"),
+            (json!(1e-7), "invalid_json"),
+        ] {
+            let refusal = kind
+                .validate(&json!({"name": "A", "data": bad}))
+                .expect_err("must be refused");
+            assert_eq!(refusal.code, code, "{bad}");
+            assert_eq!(refusal.pointer, "/data");
         }
     }
 
