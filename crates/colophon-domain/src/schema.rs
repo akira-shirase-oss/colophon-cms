@@ -110,6 +110,13 @@ pub enum FieldKind {
         /// The most bytes the canonical value may occupy.
         max_bytes: u64,
     },
+    /// An object shaped by its own list of fields. Fields inside an object carry `required`
+    /// and their kind's options only — `default`, `when` and `unique` live on the object
+    /// field itself. An object can't hold another object yet.
+    Object {
+        /// The fields the object's value is shaped by.
+        fields: Vec<Field>,
+    },
 }
 
 impl FieldKind {
@@ -129,6 +136,7 @@ impl FieldKind {
             Self::Markdown { .. } => "markdown",
             Self::Color => "color",
             Self::Json { .. } => "json",
+            Self::Object { .. } => "object",
         }
     }
 }

@@ -374,7 +374,7 @@
 				<p class="mt-2 text-xs"><a class="underline" href={signInUrl(window.location.pathname)} data-sveltekit-reload>Sign in again</a> to save them.</p>
 			{/if}
 			<Button class="mt-3 w-full" variant="outline" size="sm" onclick={() => saver.saveNow()} disabled={saver.status === 'saved' || saver.status === 'conflict'}>
-				Save now <kbd class="ml-auto font-sans text-[0.6875rem] text-muted-foreground">⌘S</kbd>
+				Save now <kbd class="ml-auto font-sans text-xs text-muted-foreground">⌘S</kbd>
 			</Button>
 
 			<dl class="mt-4 space-y-2.5 border-t border-dotted border-border pt-4 text-sm">

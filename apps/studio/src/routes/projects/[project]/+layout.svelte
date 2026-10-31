@@ -264,7 +264,7 @@
 			</Breadcrumb.Root>
 			<div class="ml-auto flex items-center gap-1">
 				<Button variant="outline" size="sm" class="hidden w-56 justify-start text-muted-foreground sm:flex" onclick={() => (searching = true)}>
-					<SearchIcon />Search entries…<kbd class="ml-auto font-sans text-[0.6875rem]">⌘K</kbd>
+					<SearchIcon />Search entries…<kbd class="ml-auto font-sans text-xs">⌘K</kbd>
 				</Button>
 				<AppearanceMenu />
 			</div>
