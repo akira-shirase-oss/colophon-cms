@@ -119,6 +119,10 @@ Every feature ships with all three, in the same branch:
 - The repository is `github.com/akira-shirase-oss/colophon-cms` (remote `git@github-learning:akira-shirase-oss/colophon-cms.git`).
   Work happens on a branch and is merged into `main` when a piece is complete; the journey is recorded in the
   build log at https://404human.dev/colophon/ (source: `akira-shirase-oss/minimal-portfolio`).
+- Closing out a task means the local setup runs the finished work, not just that commits exist: merge the branch
+  into `main`, run `scripts/migrate.sh` so the local database is migrated, rebuild and (re)start the local server,
+  and check it answers healthily. A blocked migration or a stale running build is unfinished work — fix it or say
+  exactly what blocks it.
 
 ## Verification commands
 
