@@ -685,7 +685,7 @@ pub(crate) async fn save(
                     .await
                     .map_err(ApiError::from_db)?;
             }
-            finish(tx, SAVE, key, StatusCode::OK, draft).await
+            finish(tx, SAVE, key, StatusCode::OK, *draft).await
         }
         Saved::Stale { current } => Err(ApiError::StaleRevision { current }),
         Saved::NotFound => Err(ApiError::NotFound),

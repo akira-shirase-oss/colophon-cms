@@ -86,7 +86,7 @@ pub const MAX_SEARCH: usize = 100;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Saved {
     /// The draft now points at the new revision.
-    Saved(Draft),
+    Saved(Box<Draft>),
     /// The draft no longer points at the expected revision; nothing was written.
     Stale {
         /// The revision it points at now.
@@ -193,7 +193,7 @@ pub async fn save(
         });
     };
     set_uniques(tx, entry_id, &current.collection, uniques).await?;
-    Ok(Saved::Saved(Draft {
+    Ok(Saved::Saved(Box::new(Draft {
         entry_id,
         collection: current.collection,
         created_at: current.created_at,
@@ -208,7 +208,7 @@ pub async fn save(
         },
         content: revision.content.to_owned(),
         locale: current.locale,
-    }))
+    })))
 }
 
 /// The answer to a delete: gone, never there, or held in place by something that references it
