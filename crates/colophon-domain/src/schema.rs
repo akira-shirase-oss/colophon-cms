@@ -33,6 +33,8 @@ pub const DECIMAL_PLACES: i32 = 6;
 pub const MAX_JSON_BYTES: u64 = 65_536;
 /// The deepest a `json` field's value may nest.
 pub const MAX_JSON_DEPTH: u32 = 32;
+/// The most items a `list` field may hold.
+pub const MAX_ITEMS: u16 = 64;
 /// The longest unknown key repeated back in an error.
 const MAX_REPORTED_KEY_CHARS: usize = 64;
 
@@ -57,6 +59,46 @@ fn refuse(code: &'static str, pointer: &Pointer, message: impl Into<String>) -> 
     }
 }
 
+/// The kind an item in a `list` field holds: a scalar with its standard limits.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ListItem {
+    /// Single-line text, at most `MAX_TEXT_CHARS` characters.
+    Text,
+    /// Any number.
+    Number,
+    /// Yes or no.
+    Boolean,
+    /// `YYYY-MM-DDTHH:MM:SSZ`.
+    DateTime,
+    /// `YYYY-MM-DD`.
+    Date,
+    /// `HH:MM[:SS]`.
+    Time,
+    /// A checked email address.
+    Email,
+    /// An http or https address.
+    Url,
+    /// `#rrggbb`.
+    Color,
+}
+
+impl ListItem {
+    /// The name `of` carries, as the schema spells it.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Number => "number",
+            Self::Boolean => "boolean",
+            Self::DateTime => "datetime",
+            Self::Date => "date",
+            Self::Time => "time",
+            Self::Email => "email",
+            Self::Url => "url",
+            Self::Color => "color",
+        }
+    }
+}
+
 /// The kind of value a field holds, with its limits.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldKind {
@@ -70,6 +112,16 @@ pub enum FieldKind {
     },
     /// A `colophon/rich-text` v1 document.
     RichText,
+    /// A list of 0 to `max_items` values of one scalar kind (a "tags" field). Items keep their
+    /// kind's standard form: a text item is single-line, at most `MAX_TEXT_CHARS` characters.
+    List {
+        /// The kind every item is.
+        of: ListItem,
+        /// The fewest items allowed.
+        min_items: u16,
+        /// The most items allowed (at most `MAX_ITEMS`).
+        max_items: u16,
+    },
     /// A number, optionally a whole number, optionally bounded.
     Number {
         /// Only whole numbers (within JavaScript's safe range).
@@ -125,6 +177,7 @@ impl FieldKind {
         match self {
             Self::Text { .. } => "text",
             Self::RichText => "rich_text",
+            Self::List { .. } => "list",
             Self::Number { .. } => "number",
             Self::Boolean => "boolean",
             Self::Enum { .. } => "enum",
@@ -742,6 +795,21 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
                 .all(|new| !new.required || old_fields.iter().any(|old| old.id == new.id))
         }
         (
+            FieldKind::List {
+                of: old_of,
+                min_items: old_min,
+                max_items: old_max,
+            },
+            FieldKind::List {
+                of: new_of,
+                min_items: new_min,
+                max_items: new_max,
+            },
+        ) => {
+            // Stored lists hold the old items: the item kind stays, the bounds only loosen.
+            old_of == new_of && new_min <= old_min && new_max >= old_max
+        }
+        (
             FieldKind::Number {
                 integer: old_integer,
                 min: old_min,
@@ -1030,6 +1098,14 @@ impl ContentType {
                 only(object, &[&common[..], &["fields"]].concat(), pointer)?;
                 Self::object_kind(object, pointer, nested)?
             }
+            Some("list") => {
+                only(
+                    object,
+                    &[&common[..], &["of", "min_items", "max_items"]].concat(),
+                    pointer,
+                )?;
+                Self::list_kind(object, pointer)?
+            }
             other => {
                 let kind = Self::leaf_kind(other, pointer, nested)?;
                 only(object, &common, pointer)?;
@@ -1112,6 +1188,66 @@ impl ContentType {
         })
     }
 
+    /// A `list` kind: `{"type": "list", "of": "<scalar kind>", "min_items": 0, "max_items": 64}`.
+    /// `of` names one of the scalar kinds; both bounds stay under `MAX_ITEMS`.
+    fn list_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind, Refusal> {
+        let of = match object.get("of").and_then(Value::as_str) {
+            Some("text") => ListItem::Text,
+            Some("number") => ListItem::Number,
+            Some("boolean") => ListItem::Boolean,
+            Some("datetime") => ListItem::DateTime,
+            Some("date") => ListItem::Date,
+            Some("time") => ListItem::Time,
+            Some("email") => ListItem::Email,
+            Some("url") => ListItem::Url,
+            Some("color") => ListItem::Color,
+            _ => {
+                return Err(refuse(
+                    "invalid_of",
+                    &at(pointer, "of"),
+                    "`of` is one of text, number, boolean, datetime, date, time, email, url, color",
+                ));
+            }
+        };
+        let min_items = Self::item_count(object, "min_items", 0, pointer)?;
+        let max_items = Self::item_count(object, "max_items", MAX_ITEMS, pointer)?;
+        if min_items > max_items {
+            return Err(refuse(
+                "invalid_items",
+                &at(pointer, "max_items"),
+                "`max_items` is at least `min_items`",
+            ));
+        }
+        Ok(FieldKind::List {
+            of,
+            min_items,
+            max_items,
+        })
+    }
+
+    /// An item bound: a whole number from 0 to `MAX_ITEMS`, `default` when absent.
+    fn item_count(
+        object: &Map<String, Value>,
+        key: &str,
+        default: u16,
+        pointer: &Pointer,
+    ) -> Result<u16, Refusal> {
+        match object.get(key) {
+            None => Ok(default),
+            Some(count) => count
+                .as_u64()
+                .and_then(|count| u16::try_from(count).ok())
+                .filter(|count| *count <= MAX_ITEMS)
+                .ok_or_else(|| {
+                    refuse(
+                        "invalid_items",
+                        &at(pointer, key),
+                        format!("`{key}` is a whole number from 0 to {MAX_ITEMS}"),
+                    )
+                }),
+        }
+    }
+
     /// The options any kind can carry: `default` (checked like a value, kept canonical), `when`
     /// (display-only, refused on a required field) and `unique` (single, short values only).
     /// Inside an object none of them apply: they live on the object field itself.
@@ -1158,6 +1294,7 @@ impl ContentType {
                     | FieldKind::Markdown { .. }
                     | FieldKind::Json { .. }
                     | FieldKind::Object { .. }
+                    | FieldKind::List { .. }
                     | FieldKind::Text {
                         multiline: true,
                         ..
@@ -1337,6 +1474,23 @@ impl ContentType {
                 }
                 out.push(']');
             }
+            FieldKind::List {
+                of,
+                min_items,
+                max_items,
+            } => {
+                out.push_str(r#","of":""#);
+                out.push_str(of.name());
+                out.push('"');
+                if *min_items > 0 {
+                    out.push_str(r#","min_items":"#);
+                    out.push_str(&min_items.to_string());
+                }
+                if *max_items < MAX_ITEMS {
+                    out.push_str(r#","max_items":"#);
+                    out.push_str(&max_items.to_string());
+                }
+            }
             FieldKind::RichText
             | FieldKind::Boolean
             | FieldKind::DateTime
@@ -1346,6 +1500,13 @@ impl ContentType {
             | FieldKind::Url
             | FieldKind::Color => {}
         }
+        Self::write_options(out, field);
+        out.push('}');
+    }
+
+    /// The options every field writes: `default` (already canonical), `when` and `unique`,
+    /// when set.
+    fn write_options(out: &mut String, field: &Field) {
         if let Some(default) = &field.default {
             out.push_str(r#","default":"#);
             out.push_str(default);
@@ -1365,7 +1526,6 @@ impl ContentType {
         if field.unique {
             out.push_str(r#","unique":true"#);
         }
-        out.push('}');
     }
 
     /// Validates content against this definition and writes it in canonical form: fields in
@@ -1437,6 +1597,89 @@ impl ContentType {
         })
     }
 
+    /// A list's value: an array within its bounds, every item checked against the item kind,
+    /// written as one canonical array.
+    fn list_value(
+        of: ListItem,
+        min_items: u16,
+        max_items: u16,
+        value: &Value,
+        pointer: &Pointer,
+        label: &str,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        let items = value
+            .as_array()
+            .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is a list")))?;
+        if items.len() < min_items as usize {
+            return Err(refuse(
+                "too_few",
+                pointer,
+                format!("{label} holds at least {min_items} items"),
+            ));
+        }
+        if items.len() > max_items as usize {
+            return Err(refuse(
+                "too_many",
+                pointer,
+                format!("{label} holds at most {max_items} items"),
+            ));
+        }
+        out.push('[');
+        for (index, item) in items.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            Self::list_item(of, item, &at(pointer, &index.to_string()), out)?;
+        }
+        out.push(']');
+        Ok(())
+    }
+
+    /// One item of a list, checked against its kind and written canonical.
+    fn list_item(
+        of: ListItem,
+        value: &Value,
+        pointer: &Pointer,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        let label = "an item";
+        match of {
+            ListItem::Text => {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is text")))?;
+                check_text(text, label, MAX_TEXT_CHARS, false, pointer)?;
+                write_string(out, text);
+            }
+            ListItem::Number => {
+                let number = value
+                    .as_f64()
+                    .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is a number")))?;
+                check_number(number, false)
+                    .map_err(|why| refuse("out_of_range", pointer, format!("{label} {why}")))?;
+                write_number(out, number, false);
+            }
+            ListItem::Boolean => match value.as_bool() {
+                Some(boolean) => out.push_str(if boolean { "true" } else { "false" }),
+                None => {
+                    return Err(refuse(
+                        "wrong_type",
+                        pointer,
+                        format!("{label} is yes or no"),
+                    ));
+                }
+            },
+            ListItem::DateTime => formatted(&FieldKind::DateTime, value, pointer, label, out)?,
+            ListItem::Date => formatted(&FieldKind::Date, value, pointer, label, out)?,
+            ListItem::Time => formatted(&FieldKind::Time, value, pointer, label, out)?,
+            ListItem::Email => formatted(&FieldKind::Email, value, pointer, label, out)?,
+            ListItem::Url => formatted(&FieldKind::Url, value, pointer, label, out)?,
+            ListItem::Color => formatted(&FieldKind::Color, value, pointer, label, out)?,
+        }
+        Ok(())
+    }
+
     /// An object's value: only its declared fields, required ones present, each checked and
     /// written in definition order.
     fn object_value(
@@ -1505,6 +1748,13 @@ impl ContentType {
             }
             FieldKind::Object { fields } => {
                 Self::object_value(fields, label, value, pointer, out)?;
+            }
+            FieldKind::List {
+                of,
+                min_items,
+                max_items,
+            } => {
+                Self::list_value(*of, *min_items, *max_items, value, pointer, label, out)?;
             }
             FieldKind::Number { integer, min, max } => {
                 let number = value
@@ -2273,6 +2523,75 @@ mod tests {
         assert_eq!(refusal.code, "needs_migration");
         kind.check_successor(&before)
             .expect("dropping unique is always safe");
+    }
+
+    #[test]
+    fn a_list_field_holds_checked_items_of_one_kind() {
+        let type_ = ContentType::parse(&json!({
+            "name": "Posts",
+            "title_field": "title",
+            "fields": [
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "tags", "label": "Tags", "type": "list", "of": "text", "min_items": 1, "max_items": 3}
+            ]
+        }))
+        .expect("valid definition");
+        let canonical = type_.canonical_json();
+        assert!(
+            canonical.contains(
+                r#""type":"list","required":false,"of":"text","min_items":1,"max_items":3"#
+            ),
+            "{canonical}"
+        );
+        let good = type_
+            .validate(&json!({"title": "A", "tags": ["one", "two"]}))
+            .expect("valid");
+        assert_eq!(
+            good.canonical_json(),
+            r#"{"title":"A","tags":["one","two"]}"#
+        );
+        for (value, code, pointer) in [
+            (json!({"title": "A", "tags": []}), "too_few", "/tags"),
+            (
+                json!({"title": "A", "tags": ["a", "b", "c", "d"]}),
+                "too_many",
+                "/tags",
+            ),
+            (json!({"title": "A", "tags": 7}), "wrong_type", "/tags"),
+            (
+                json!({"title": "A", "tags": ["a", 42]}),
+                "wrong_type",
+                "/tags/1",
+            ),
+        ] {
+            let refusal = type_.validate(&value).expect_err("must refuse");
+            assert_eq!((refusal.code, refusal.pointer.as_str()), (code, pointer));
+        }
+        for (bad, code) in [
+            (
+                json!({"id": "tags", "label": "Tags", "type": "list", "of": "object"}),
+                "invalid_of",
+            ),
+            (
+                json!({"id": "tags", "label": "Tags", "type": "list", "of": "text", "min_items": 4, "max_items": 3}),
+                "invalid_items",
+            ),
+            (
+                json!({"id": "tags", "label": "Tags", "type": "list", "of": "text", "unique": true}),
+                "invalid_unique",
+            ),
+        ] {
+            let refusal = ContentType::parse(&json!({
+                "name": "Posts",
+                "title_field": "title",
+                "fields": [
+                    {"id": "title", "label": "Title", "type": "text", "required": true},
+                    bad
+                ]
+            }))
+            .expect_err("must refuse");
+            assert_eq!(refusal.code, code);
+        }
     }
 
     #[test]

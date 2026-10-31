@@ -6,6 +6,9 @@
 <script lang="ts">
 	import { Input } from '@colophon/ui/ui/input';
 	import { Textarea } from '@colophon/ui/ui/textarea';
+	import { Button } from '@colophon/ui/ui/button';
+	import PlusIcon from '@lucide/svelte/icons/plus';
+	import Trash2Icon from '@lucide/svelte/icons/trash-2';
 	import type { FieldDefinition } from './api.ts';
 	import type { FormValue } from './content.ts';
 	import FieldInputs from './FieldInputs.svelte';
@@ -25,6 +28,26 @@
 	} = $props();
 
 	const id = $props.id();
+
+	/** The native input type a list item's kind uses. */
+	function itemInput(of: string): string {
+		switch (of) {
+			case 'number':
+				return 'number';
+			case 'date':
+				return 'date';
+			case 'time':
+				return 'time';
+			case 'datetime':
+				return 'datetime-local';
+			case 'email':
+				return 'email';
+			case 'url':
+				return 'url';
+			default:
+				return 'text';
+		}
+	}
 
 	function hint(field: FieldDefinition): string {
 		const parts: string[] = [];
@@ -115,6 +138,52 @@
 						<legend id={`${input}-legend`} class="px-1 text-sm text-muted-foreground">{field.label}</legend>
 						<FieldInputs fields={field.fields} form={form[field.id] as Record<string, FormValue>} {onchange} stacked />
 					</fieldset>
+				{:else if field.type === 'list'}
+					{@const list = form[field.id] as FormValue[]}
+					<div class="space-y-2">
+						{#each list as _item, index (index)}
+							<div class="flex items-center gap-2">
+								{#if field.of === 'boolean'}
+									<label class="flex items-center gap-2 text-sm">
+										<input type="checkbox" class="size-4 accent-primary" bind:checked={list[index] as boolean} {onchange} /> Item {index + 1}
+									</label>
+								{:else}
+									<Input
+										type={itemInput(field.of)}
+										class="{field.of === 'number' ? 'tabular ' : ''}{field.of === 'color' ? 'w-36 font-mono ' : ''}max-w-72"
+										bind:value={list[index] as string}
+										oninput={onchange}
+										aria-label="Item {index + 1}"
+									/>
+								{/if}
+								<Button
+									variant="ghost"
+									size="icon"
+									type="button"
+									aria-label="Remove item {index + 1}"
+									onclick={() => {
+										list.splice(index, 1);
+										onchange();
+									}}
+								>
+									<Trash2Icon class="size-4" />
+								</Button>
+							</div>
+						{/each}
+						{#if list.length < field.max_items}
+							<Button
+								variant="outline"
+								size="sm"
+								type="button"
+								onclick={() => {
+									list.push(field.of === 'boolean' ? false : '');
+									onchange();
+								}}
+							>
+								<PlusIcon class="size-4" /> Add an item
+							</Button>
+						{/if}
+					</div>
 				{/if}
 			{/if}
 		</div>

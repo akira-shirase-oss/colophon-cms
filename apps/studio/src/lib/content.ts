@@ -47,6 +47,11 @@ function starterFields(fields: FieldDefinition[]): Content {
 			content[field.id] = starterFields(field.fields);
 			continue;
 		}
+		if (field.type === 'list') {
+			// The editor always gets an array to bind; an empty one stores as nothing.
+			content[field.id] = [];
+			continue;
+		}
 		if (!field.required) continue;
 		if (field.type === 'rich_text') content[field.id] = EMPTY_DOCUMENT;
 		if (field.type === 'boolean') content[field.id] = false;
@@ -58,11 +63,13 @@ function starterFields(fields: FieldDefinition[]): Content {
 /** A form's value for a field: text inputs and selects work on strings, checkboxes on
  *  booleans, and Svelte binds number inputs as numbers (or null when empty). Rich text has its
  *  own editor. */
-export type FormValue = string | boolean | number | null | SubForm;
+export type FormValue = string | boolean | number | null | SubForm | ListForm;
 /** An object's subform: named fields of form values (interfaces recurse where aliases can't). */
 export interface SubForm {
 	[key: string]: FormValue;
 }
+/** A list's form value: items of its kind. */
+export interface ListForm extends Array<FormValue> {}
 
 /** `YYYY-MM-DDTHH:MM:SSZ` to what a `datetime-local` input shows, in the browser's time zone. */
 export function toLocal(utc: string): string {
@@ -96,14 +103,38 @@ export function formValue(field: FieldDefinition, value: unknown): FormValue {
 					formValue(sub, (value as Record<string, unknown> | undefined)?.[sub.id])
 				])
 			);
+		case 'list':
+			return Array.isArray(value) ? value.map((item) => formValue(itemField(field), item)) : [];
 		default:
 			return typeof value === 'string' ? value : '';
+	}
+}
+
+/** A list item's shape as a field: the kind with its standard options (single-line text at
+ *  the schema's maximum, a number of any size). Lets `formValue`/`storedValue` convert items
+ *  with the same rules as fields. */
+function itemField(field: Extract<FieldDefinition, { type: 'list' }>): FieldDefinition {
+	const base = { id: '', label: '', required: true };
+	switch (field.of) {
+		case 'text':
+			return { ...base, type: 'text', max_chars: 100000, multiline: false };
+		case 'number':
+			return { ...base, type: 'number', integer: false };
+		default:
+			return { ...base, type: field.of } as FieldDefinition;
 	}
 }
 
 /** The stored value for a form value, or `undefined` to leave an optional field out. A
  *  required field left empty is still sent, so the server says which field and why. */
 export function storedValue(field: FieldDefinition, form: FormValue | undefined): unknown {
+	if (field.type === 'list') {
+		const list = (Array.isArray(form) ? form : [])
+			.map((item) => storedValue(itemField(field), item))
+			.filter((item) => item !== undefined);
+		if (list.length === 0) return field.required ? [] : undefined;
+		return list;
+	}
 	if (field.type === 'object') {
 		const subform = (typeof form === 'object' && form !== null ? form : {}) as Record<string, FormValue>;
 		const pairs = field.fields

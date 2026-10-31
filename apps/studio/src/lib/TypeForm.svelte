@@ -22,6 +22,7 @@
 	import MailIcon from '@lucide/svelte/icons/mail';
 	import ListIcon from '@lucide/svelte/icons/list';
 	import PaletteIcon from '@lucide/svelte/icons/palette';
+	import ListPlusIcon from '@lucide/svelte/icons/list-plus';
 	import PenLineIcon from '@lucide/svelte/icons/pen-line';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
@@ -72,12 +73,16 @@
 		markdown: { name: 'Markdown', icon: PenLineIcon, about: 'Writing in Markdown: headings, lists and links.' },
 		color: { name: 'Colour', icon: PaletteIcon, about: 'A colour, like a brand accent, written #1a6fdd.' },
 		json: { name: 'JSON', icon: BracesIcon, about: 'Structured data: objects, lists and values.' },
-		object: { name: 'Object', icon: BoxIcon, about: 'A named group of fields, like an address or a venue.' }
+		object: { name: 'Object', icon: BoxIcon, about: 'A named group of fields, like an address or a venue.' },
+		list: { name: 'List', icon: ListPlusIcon, about: 'Several values of one kind, like tags or links.' }
 	} as const;
 	type Kind = keyof typeof KIND;
+	/** The kinds a list's items can be: scalars with their standard shape. */
+	type ItemKind = 'text' | 'number' | 'boolean' | 'datetime' | 'date' | 'time' | 'email' | 'url' | 'color';
+	const ITEM_KINDS: ItemKind[] = ['text', 'number', 'boolean', 'datetime', 'date', 'time', 'email', 'url', 'color'];
 	/** The kinds a field inside an object can be: no rich text (its editor lives at the top
-	 *  level) and no object in object. */
-	type SubKind = Exclude<Kind, 'object' | 'rich_text'>;
+	 *  level), no object in object, and no list (its options don't fit the compact row). */
+	type SubKind = Exclude<Kind, 'object' | 'rich_text' | 'list'>;
 	type SubRow = {
 		key: number;
 		id: string;
@@ -107,6 +112,9 @@
 		whenIn: string;
 		unique: boolean;
 		subfields: SubRow[];
+		listOf: ItemKind;
+		minItems: number;
+		maxItems: number;
 	};
 
 	let nextKey = 0;
@@ -128,10 +136,13 @@
 		whenField: '',
 		whenIn: '',
 		unique: false,
-		subfields: []
+		subfields: [],
+		listOf: 'text',
+		minItems: 0,
+		maxItems: 64
 	});
 	const subRow = (): SubRow => ({ key: nextKey++, id: '', idTouched: false, label: '', kind: 'text', required: false, values: '' });
-	const SUB_KINDS = Object.keys(KIND).filter((kind) => kind !== 'object' && kind !== 'rich_text') as SubKind[];
+	const SUB_KINDS = Object.keys(KIND).filter((kind) => kind !== 'object' && kind !== 'rich_text' && kind !== 'list') as SubKind[];
 	/** A field inside an object: its kind's options keep the schema's spelling of defaults. */
 	const subDef = (sub: SubRow): FieldDefinition => {
 		const base = { id: sub.id, label: sub.label.trim(), required: sub.required };
@@ -155,7 +166,7 @@
 		id: field.id,
 		idTouched: true,
 		label: field.label,
-		kind: field.type === 'object' || field.type === 'rich_text' ? 'text' : field.type,
+		kind: field.type === 'object' || field.type === 'rich_text' || field.type === 'list' ? 'text' : field.type,
 		required: field.required,
 		values: field.type === 'enum' ? field.values.join('\n') : ''
 	});
@@ -178,7 +189,10 @@
 		whenField: field.when?.field ?? '',
 		whenIn: field.when?.in.join('\n') ?? '',
 		unique: field.unique === true,
-		subfields: field.type === 'object' ? field.fields.map(subStored) : []
+		subfields: field.type === 'object' ? field.fields.map(subStored) : [],
+		listOf: field.type === 'list' ? field.of : 'text',
+		minItems: field.type === 'list' ? field.min_items : 0,
+		maxItems: field.type === 'list' ? field.max_items : 64
 	});
 
 	// The component mounts once the collection is read: the props it starts with are the ones
@@ -300,10 +314,13 @@
 						field.kind === 'markdown' ||
 						field.kind === 'json' ||
 						field.kind === 'object' ||
+						field.kind === 'list' ||
 						(field.kind === 'text' && field.multiline))
 			)
 		)
 			return 'A unique value must be a single, short field.';
+		if (fields.some((field) => field.kind === 'list' && field.minItems > field.maxItems))
+			return 'A list needs its "at least" count to be no more than its "at most" count.';
 		if (
 			fields.some(
 				(field) =>
@@ -383,6 +400,8 @@
 						return { ...base, type: 'json', max_bytes: field.maxBytes };
 					case 'object':
 						return { ...base, type: 'object', fields: field.subfields.map(subDef) };
+					case 'list':
+						return { ...base, type: 'list', of: field.listOf, min_items: field.minItems, max_items: field.maxItems };
 					case 'date':
 					case 'time':
 					case 'email':
@@ -567,7 +586,7 @@
 						/>
 						<p class="text-sm text-muted-foreground">What an entry gets when the field is left out.</p>
 					</div>
-					{#if !['rich_text', 'markdown', 'json', 'object'].includes(draft.kind) && !(draft.kind === 'text' && draft.multiline)}
+					{#if !['rich_text', 'markdown', 'json', 'object', 'list'].includes(draft.kind) && !(draft.kind === 'text' && draft.multiline)}
 						<label class="flex items-center gap-2 text-sm" for="field-unique">
 							<Checkbox id="field-unique" bind:checked={draft.unique} /> Unique: no two entries share this value
 						</label>
@@ -627,6 +646,20 @@
 							<Input id="field-jsonbytes" type="number" class="w-28" bind:value={draft.maxBytes} min={1} max={65536} />
 							bytes
 						</label>
+					{:else if draft.kind === 'list'}
+						<div class="space-y-1.5">
+							<Label for="field-listof">Each item is</Label>
+							<NativeSelect.Root id="field-listof" class="w-full max-w-72" bind:value={draft.listOf}>
+								{#each ITEM_KINDS as kind (kind)}
+									<NativeSelect.Option value={kind}>{KIND[kind].name}</NativeSelect.Option>
+								{/each}
+							</NativeSelect.Root>
+						</div>
+						<div class="flex items-center gap-3">
+							<Input type="number" class="w-28" placeholder="At least" aria-label="At least" min={0} max={64} bind:value={draft.minItems} />
+							<Input type="number" class="w-28" placeholder="At most" aria-label="At most" min={0} max={64} bind:value={draft.maxItems} />
+						</div>
+						<p class="text-sm text-muted-foreground">How many items the list must and may hold (0–64).</p>
 					{:else if draft.kind === 'object'}
 						<div class="space-y-2">
 							<Label>Fields inside {draft.label.trim() || 'the object'}</Label>

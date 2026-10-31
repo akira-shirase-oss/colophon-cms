@@ -48,6 +48,12 @@ export type FieldDefinition = {
 	| { type: 'color' }
 	| { type: 'json'; max_bytes: number }
 	| { type: 'object'; fields: FieldDefinition[] }
+	| {
+			type: 'list';
+			of: 'text' | 'number' | 'boolean' | 'datetime' | 'date' | 'time' | 'email' | 'url' | 'color';
+			min_items: number;
+			max_items: number;
+	  }
 );
 
 /** A content type's definition (D-040). */
