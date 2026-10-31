@@ -364,22 +364,37 @@ async fn revisions_cannot_be_changed_or_deleted_and_pointers_cannot_cross_entrie
     let db = TestDb::new().await;
     let (alice, project, entry, first) = alice_with_an_entry(&db).await;
 
+    // UPDATE stays ungranted — a stored revision is immutable. DELETE is granted for the
+    // removal flow, so the foreign keys do the protecting, possibly deferred to commit.
     for sql in [
         "UPDATE revisions SET title = 'rewritten' WHERE id = $1",
-        "DELETE FROM revisions WHERE id = $1",
         "UPDATE entries SET collection = 'articles' WHERE draft_revision_id = $1",
-        "DELETE FROM entries WHERE draft_revision_id = $1",
     ] {
         let mut tx = enter(&db.app, alice, project).await;
         let error = sqlx::query(sql)
             .bind(first)
             .execute(&mut *tx.transaction)
             .await
-            .expect_err("no grant");
+            .expect_err("no update grant");
         assert!(
             error.to_string().contains("permission denied"),
             "{sql}: {error}"
         );
+    }
+    for sql in [
+        "DELETE FROM revisions WHERE id = $1",
+        "DELETE FROM entries WHERE draft_revision_id = $1",
+    ] {
+        let mut tx = enter(&db.app, alice, project).await;
+        let error = match sqlx::query(sql)
+            .bind(first)
+            .execute(&mut *tx.transaction)
+            .await
+        {
+            Err(error) => format!("{error:?}"),
+            Ok(_) => format!("{:?}", tx.commit().await.expect_err("refused at commit")),
+        };
+        assert!(error.contains("foreign key"), "{sql}: {error}");
     }
 
     // A second entry; then try to point the first entry's draft at the second's revision.

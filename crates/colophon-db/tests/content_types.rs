@@ -138,21 +138,25 @@ async fn versions_cannot_be_rewritten_skipped_or_seen_from_another_project() {
         .await
         .expect("created")
         .id;
-    for sql in [
-        "UPDATE content_type_versions SET definition = '{}'",
-        "DELETE FROM content_type_versions",
-        "DELETE FROM collections",
-    ] {
-        let mut tx = enter(&db.app, alice, project).await;
-        let error = sqlx::query(sql)
-            .execute(&mut *tx.transaction)
-            .await
-            .expect_err("no grant");
-        assert!(
-            error.to_string().contains("permission denied"),
-            "{sql}: {error}"
-        );
-    }
+    // UPDATE stays ungranted — a stored version is immutable. DELETE is granted for the
+    // removal flows, so the foreign keys do the protecting: a collection with versions
+    // can't be deleted straight out of the table.
+    let mut tx = enter(&db.app, alice, project).await;
+    let error = sqlx::query("UPDATE content_type_versions SET definition = '{}'")
+        .execute(&mut *tx.transaction)
+        .await
+        .expect_err("no update grant");
+    assert!(error.to_string().contains("permission denied"), "{error}");
+    drop(tx);
+    // A version can be deleted once nothing points at it — the removal order deletes
+    // versions first — but the collection itself is held by the versions that name it.
+    let mut tx = enter(&db.app, alice, project).await;
+    let error = sqlx::query("DELETE FROM collections")
+        .execute(&mut *tx.transaction)
+        .await
+        .expect_err("a versioned collection");
+    assert!(error.to_string().contains("foreign key"), "{error}");
+    drop(tx);
     // A version that skips one has no previous version to name.
     let mut tx = enter(&db.app, alice, project).await;
     let error = sqlx::query(
