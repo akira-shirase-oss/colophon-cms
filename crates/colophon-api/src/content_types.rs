@@ -352,7 +352,7 @@ pub(crate) async fn update(
     previous.check_successor(&next).map_err(ApiError::Invalid)?;
     check_reference_targets(&mut tx, &next).await?;
     if next.is_single() && !previous.is_single() {
-        let count = entries::list(&mut tx, &path.slug, None, 2, None, &[])
+        let count = entries::list(&mut tx, &path.slug, None, 2, None, &[], None)
             .await
             .map_err(ApiError::from_db)?
             .len();

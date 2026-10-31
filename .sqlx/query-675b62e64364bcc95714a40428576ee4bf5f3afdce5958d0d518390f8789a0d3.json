@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT e.id, e.updated_at,\n                r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,\n                r.content_hash, r.title, live.revision_id AS \"published_revision_id?\",\n                live.valid_from AS \"published_in?\",\n                COALESCE(\n                    (SELECT jsonb_object_agg(k, r.content::jsonb -> k) FROM unnest($7::text[]) AS u(k)),\n                    '{}'::jsonb\n                )::text AS \"fields!\"\n         FROM entries e\n         CROSS JOIN LATERAL (\n             SELECT r.id, r.base_revision_id, r.author_id, r.created_at, r.content_hash, r.title,\n                    r.content\n             FROM revisions r\n             WHERE r.project_id = e.project_id AND r.environment_id = e.environment_id\n               AND r.id = e.draft_revision_id\n             LIMIT 1\n         ) r\n         LEFT JOIN LATERAL (\n             SELECT p.revision_id, p.valid_from\n             FROM publications p\n             WHERE p.project_id = e.project_id AND p.environment_id = e.environment_id\n               AND p.entry_id = e.id AND p.valid_to IS NULL\n             LIMIT 1\n         ) live ON true\n         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3\n           AND ($4::uuid IS NULL OR e.id < $4)\n           AND ($6::text IS NULL OR e.draft_title ILIKE $6)\n         ORDER BY e.id DESC\n         LIMIT $5",
+  "query": "SELECT e.id, e.updated_at, e.locale,\n                r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,\n                r.content_hash, r.title, live.revision_id AS \"published_revision_id?\",\n                live.valid_from AS \"published_in?\",\n                COALESCE(\n                    (SELECT jsonb_object_agg(k, r.content::jsonb -> k) FROM unnest($7::text[]) AS u(k)),\n                    '{}'::jsonb\n                )::text AS \"fields!\"\n         FROM entries e\n         CROSS JOIN LATERAL (\n             SELECT r.id, r.base_revision_id, r.author_id, r.created_at, r.content_hash, r.title,\n                    r.content\n             FROM revisions r\n             WHERE r.project_id = e.project_id AND r.environment_id = e.environment_id\n               AND r.id = e.draft_revision_id\n             LIMIT 1\n         ) r\n         LEFT JOIN LATERAL (\n             SELECT p.revision_id, p.valid_from\n             FROM publications p\n             WHERE p.project_id = e.project_id AND p.environment_id = e.environment_id\n               AND p.entry_id = e.id AND p.valid_to IS NULL\n             LIMIT 1\n         ) live ON true\n         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3\n           AND ($4::uuid IS NULL OR e.id < $4)\n           AND ($6::text IS NULL OR e.draft_title ILIKE $6)\n           AND ($8::text IS NULL OR e.locale = $8)\n         ORDER BY e.id DESC\n         LIMIT $5",
   "describe": {
     "columns": [
       {
@@ -27,6 +27,17 @@
       },
       {
         "ordinal": 2,
+        "name": "locale",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "locale"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
         "name": "revision_id",
         "type_info": "Uuid",
         "origin": {
@@ -37,7 +48,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "base_revision_id",
         "type_info": "Uuid",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "author_id",
         "type_info": "Uuid",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "revision_created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "content_hash",
         "type_info": "Bytea",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "title",
         "type_info": "Text",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "published_revision_id?",
         "type_info": "Uuid",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "published_in?",
         "type_info": "Int8",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "fields!",
         "type_info": "Text",
         "origin": "Expression"
@@ -128,12 +139,14 @@
         "Uuid",
         "Int8",
         "Text",
-        "TextArray"
+        "TextArray",
+        "Text"
       ]
     },
     "nullable": [
       false,
       false,
+      true,
       false,
       true,
       false,
@@ -145,5 +158,5 @@
       null
     ]
   },
-  "hash": "122e7dd849d0fc34387ca439b11c8d43ace257612426afb00d4406a94ca6440c"
+  "hash": "675b62e64364bcc95714a40428576ee4bf5f3afdce5958d0d518390f8789a0d3"
 }

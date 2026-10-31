@@ -246,6 +246,7 @@ async fn a_collection_can_be_deleted_while_empty_and_not_once_it_has_entries() {
             schema_version: 1,
         },
         &[],
+        None,
     )
     .await
     .expect("created");
@@ -282,6 +283,7 @@ async fn a_revision_names_its_entry_s_collection_and_a_version_that_exists() {
             schema_version: 1,
         },
         &[],
+        None,
     )
     .await
     .expect("created");

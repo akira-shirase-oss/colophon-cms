@@ -48,6 +48,7 @@ async fn ready(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid, Uuid) {
             schema_version: 1,
         },
         &[],
+        None,
     )
     .await
     .expect("created");

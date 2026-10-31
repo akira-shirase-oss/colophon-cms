@@ -102,6 +102,8 @@ struct DraftView {
     revision: RevisionView,
     /// The stored canonical JSON, embedded as is: re-serializing could reorder its keys.
     content: Box<RawValue>,
+    /// The entry's locale tag, or `null` for the default locale.
+    locale: Option<String>,
 }
 
 impl DraftView {
@@ -113,6 +115,7 @@ impl DraftView {
             updated_at: rfc3339(draft.updated_at)?,
             revision: RevisionView::new(draft.revision)?,
             content: RawValue::from_string(draft.content).map_err(ApiError::internal)?,
+            locale: draft.locale,
         })
     }
 }
@@ -128,6 +131,8 @@ struct SummaryView {
     /// The draft's values of the collection's column fields, embedded as stored: a field the
     /// content doesn't have is `null`.
     fields: Box<RawValue>,
+    /// The entry's locale tag, or `null` for the default locale.
+    locale: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -143,6 +148,36 @@ pub(crate) struct ListQuery {
     limit: Option<i64>,
     cursor: Option<String>,
     q: Option<String>,
+    locale: Option<String>,
+}
+
+/// The `?locale=` a `create` or `save` may carry.
+#[derive(Deserialize)]
+pub(crate) struct LocaleQuery {
+    locale: Option<String>,
+}
+
+/// A locale tag is a short BCP-47-ish label — `en`, `en-US`, `pt-BR` — checked by shape,
+/// not by a table of known tags.
+fn check_locale(locale: &Option<String>) -> Result<(), ApiError> {
+    let Some(locale) = locale else { return Ok(()) };
+    let fine = locale.len() <= 35
+        && !locale.is_empty()
+        && locale
+            .split('-')
+            .all(|part| part.len() <= 8 && part.chars().all(|c| c.is_ascii_alphanumeric()))
+        && locale
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic());
+    if !fine {
+        return Err(ApiError::Invalid(Refusal {
+            code: "invalid_locale",
+            pointer: "/locale".to_owned(),
+            message: "a locale looks like `en` or `en-US`".to_owned(),
+        }));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -397,9 +432,11 @@ pub(crate) async fn create(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<CollectionPath>,
+    Query(query): Query<LocaleQuery>,
     headers: HeaderMap,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
+    check_locale(&query.locale)?;
     let key = idempotency_key(&headers)?;
     let Json(value) = body?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
@@ -415,7 +452,7 @@ pub(crate) async fn create(
         return Ok(replay);
     }
     if content_type.is_single()
-        && !entries::list(&mut tx, &path.collection, None, 1, None, &[])
+        && !entries::list(&mut tx, &path.collection, None, 1, None, &[], None)
             .await
             .map_err(ApiError::from_db)?
             .is_empty()
@@ -437,6 +474,8 @@ pub(crate) async fn create(
         &path.collection,
         revision,
         &uniques,
+        query.locale.as_deref(),
+        None,
     )
     .await
     .map_err(ApiError::from_db)?;
@@ -539,7 +578,7 @@ pub(crate) async fn import(
     }
     if content_type.is_single()
         && (items.len() > 1
-            || !entries::list(&mut tx, &path.collection, None, 1, None, &[])
+            || !entries::list(&mut tx, &path.collection, None, 1, None, &[], None)
                 .await
                 .map_err(ApiError::from_db)?
                 .is_empty())
@@ -566,6 +605,7 @@ pub(crate) async fn import(
             &path.collection,
             revision,
             &uniques,
+            None,
         )
         .await
         .map_err(ApiError::from_db)?;
@@ -598,9 +638,11 @@ pub(crate) async fn save(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<EntryPath>,
+    Query(query): Query<LocaleQuery>,
     headers: HeaderMap,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
+    check_locale(&query.locale)?;
     let expected = if_match(&headers)?;
     let key = idempotency_key(&headers)?;
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
@@ -637,7 +679,14 @@ pub(crate) async fn save(
         .await
         .map_err(ApiError::from_db)?
     {
-        Saved::Saved(draft) => finish(tx, SAVE, key, StatusCode::OK, draft).await,
+        Saved::Saved(draft) => {
+            if let Some(tag) = query.locale.as_deref() {
+                entries::set_locale(&mut tx, &path.collection, entry, Some(tag))
+                    .await
+                    .map_err(ApiError::from_db)?;
+            }
+            finish(tx, SAVE, key, StatusCode::OK, draft).await
+        }
         Saved::Stale { current } => Err(ApiError::StaleRevision { current }),
         Saved::NotFound => Err(ApiError::NotFound),
     }
@@ -720,6 +769,7 @@ pub(crate) async fn list(
     Path(path): Path<CollectionPath>,
     Query(query): Query<ListQuery>,
 ) -> Result<Response, ApiError> {
+    check_locale(&query.locale)?;
     let limit = query.limit.unwrap_or(DEFAULT_PAGE);
     if !(1..=entries::MAX_PAGE).contains(&limit) {
         return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
@@ -771,6 +821,7 @@ pub(crate) async fn list(
         limit + 1,
         search,
         &columns,
+        query.locale.as_deref(),
     )
     .await
     .map_err(ApiError::from_db)?;
@@ -792,6 +843,7 @@ pub(crate) async fn list(
                     generation,
                 }),
                 fields: RawValue::from_string(row.fields).map_err(ApiError::internal)?,
+                locale: row.locale,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;

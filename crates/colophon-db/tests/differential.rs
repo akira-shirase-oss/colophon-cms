@@ -175,6 +175,7 @@ async fn world(db: &TestDb, report: &Report) -> World {
                 schema_version: 1,
             },
             &[],
+            None,
         )
         .await
         .expect("entry");

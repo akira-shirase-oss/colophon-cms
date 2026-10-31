@@ -57,6 +57,8 @@ pub struct Draft {
     pub revision: Revision,
     /// The draft's canonical JSON.
     pub content: String,
+    /// The entry's locale tag, when it has one.
+    pub locale: Option<String>,
 }
 
 /// An entry in a list: its draft's metadata, without the content beyond the asked-for fields.
@@ -73,6 +75,8 @@ pub struct Summary {
     /// The draft's values of the `columns` fields `list` was asked for, as a JSON object; a
     /// field the content doesn't have is `null`.
     pub fields: String,
+    /// The entry's locale tag, when it has one.
+    pub locale: Option<String>,
 }
 
 /// The longest title search accepted.
@@ -99,10 +103,11 @@ pub async fn create(
     collection: &str,
     revision: NewRevision<'_>,
     uniques: &[(String, [u8; 32])],
+    locale: Option<&str>,
 ) -> Result<Draft, DbError> {
     let entry = sqlx::query!(
-        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_title, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_title, created_by, locale)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING created_at, updated_at",
         tx.project,
         tx.environment,
@@ -110,7 +115,8 @@ pub async fn create(
         collection,
         revision.id,
         revision.title,
-        tx.identity
+        tx.identity,
+        locale
     )
     .fetch_one(&mut *tx.transaction)
     .await
@@ -131,6 +137,7 @@ pub async fn create(
             title: revision.title.to_owned(),
         },
         content: revision.content.to_owned(),
+        locale: locale.map(str::to_owned),
     })
 }
 
@@ -145,7 +152,7 @@ pub async fn save(
     // Lock the entry so concurrent saves queue here. This read only tells "stale" from
     // "missing" and names the current revision; the conditional UPDATE below is the rule.
     let current = sqlx::query!(
-        "SELECT draft_revision_id, collection, created_at FROM entries
+        "SELECT draft_revision_id, collection, created_at, locale FROM entries
          WHERE project_id = $1 AND environment_id = $2 AND id = $3
          FOR UPDATE",
         tx.project,
@@ -200,6 +207,7 @@ pub async fn save(
             title: revision.title.to_owned(),
         },
         content: revision.content.to_owned(),
+        locale: current.locale,
     }))
 }
 
@@ -352,7 +360,7 @@ pub async fn get(
     entry_id: Uuid,
 ) -> Result<Option<Draft>, DbError> {
     let row = sqlx::query!(
-        "SELECT e.collection, e.created_at, e.updated_at,
+        "SELECT e.collection, e.created_at, e.updated_at, e.locale,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
                 r.content_hash, r.title, r.content
          FROM entries e
@@ -381,6 +389,7 @@ pub async fn get(
             title: row.title,
         },
         content: row.content,
+        locale: row.locale,
     }))
 }
 
@@ -401,6 +410,7 @@ pub async fn list(
     limit: i64,
     search: Option<&str>,
     columns: &[String],
+    locale: Option<&str>,
 ) -> Result<Vec<Summary>, DbError> {
     // A title search matches anywhere in the draft's title, case-insensitively; its own `%`, `_`
     // and `\` match themselves. It filters on the entry's copy of the title (migration 0015), so
@@ -413,7 +423,7 @@ pub async fn list(
         format!("%{escaped}%")
     });
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.updated_at,
+        r#"SELECT e.id, e.updated_at, e.locale,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
                 r.content_hash, r.title, live.revision_id AS "published_revision_id?",
                 live.valid_from AS "published_in?",
@@ -440,6 +450,7 @@ pub async fn list(
          WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
            AND ($4::uuid IS NULL OR e.id < $4)
            AND ($6::text IS NULL OR e.draft_title ILIKE $6)
+           AND ($8::text IS NULL OR e.locale = $8)
          ORDER BY e.id DESC
          LIMIT $5"#,
         tx.project,
@@ -448,7 +459,8 @@ pub async fn list(
         before,
         limit.clamp(1, MAX_PAGE + 1),
         pattern,
-        columns
+        columns,
+        locale
     )
     .fetch_all(&mut *tx.transaction)
     .await
@@ -458,6 +470,7 @@ pub async fn list(
         .map(|row| Summary {
             entry_id: row.id,
             updated_at: row.updated_at,
+            locale: row.locale,
             revision: Revision {
                 id: row.revision_id,
                 base_revision_id: row.base_revision_id,
@@ -572,4 +585,27 @@ pub async fn referencing(
             content: row.content,
         })
         .collect())
+}
+
+/// Sets an entry's locale tag, or clears it for `None`. The draft pointer doesn't move — a
+/// locale is a label on the entry, not content. Returns whether the entry was there.
+pub async fn set_locale(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    entry_id: Uuid,
+    locale: Option<&str>,
+) -> Result<bool, DbError> {
+    let done = sqlx::query!(
+        "UPDATE entries SET locale = $5
+         WHERE project_id = $1 AND environment_id = $2 AND collection = $3 AND id = $4",
+        tx.project,
+        tx.environment,
+        collection,
+        entry_id,
+        locale
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(done.rows_affected() == 1)
 }

@@ -67,7 +67,7 @@ async fn alice_with_an_entry(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid) {
     let mut tx = enter(&db.app, alice, project).await;
     let first = Content::new("First");
     let entry = Uuid::now_v7();
-    let draft = entries::create(&mut tx, entry, ARTICLES, first.revision(), &[])
+    let draft = entries::create(&mut tx, entry, ARTICLES, first.revision(), &[], None)
         .await
         .expect("created");
     assert_eq!(draft.revision.base_revision_id, None);
@@ -91,6 +91,7 @@ async fn a_collection_exports_each_draft_as_a_line() {
         ARTICLES,
         Content::new("First").revision(),
         &[],
+        None,
     )
     .await
     .expect("created");
@@ -100,6 +101,7 @@ async fn a_collection_exports_each_draft_as_a_line() {
         ARTICLES,
         Content::new("Second").revision(),
         &[],
+        None,
     )
     .await
     .expect("created");
@@ -133,6 +135,7 @@ async fn a_unique_value_can_only_be_held_by_one_entry() {
         ARTICLES,
         Content::new("A").revision(),
         &same,
+        None,
     )
     .await
     .expect("created");
@@ -146,6 +149,7 @@ async fn a_unique_value_can_only_be_held_by_one_entry() {
         ARTICLES,
         Content::new("B").revision(),
         &same,
+        None,
     )
     .await
     .expect_err("the value is already held");
@@ -162,6 +166,7 @@ async fn a_unique_value_can_only_be_held_by_one_entry() {
         ARTICLES,
         Content::new("B").revision(),
         &different,
+        None,
     )
     .await
     .expect("a different value is fine");
@@ -242,7 +247,7 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
         .collect();
     assert_eq!(history, [(second.id, Some(first)), (first, None)]);
     let columns = ["title".to_string(), "missing".to_string()];
-    let listed = entries::list(&mut tx, ARTICLES, None, 20, None, &columns)
+    let listed = entries::list(&mut tx, ARTICLES, None, 20, None, &columns, None)
         .await
         .expect("list");
     assert_eq!(listed.len(), 1);
@@ -252,12 +257,12 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
         "the draft's values of the asked-for fields, null for one it doesn't have"
     );
     // Search reads the entry's copy of its draft's title (migration 0015), which moved with it.
-    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"), &[])
+    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"), &[], None)
         .await
         .expect("search");
     assert_eq!(found.len(), 1);
     assert!(
-        entries::list(&mut tx, ARTICLES, None, 20, Some("First"), &[])
+        entries::list(&mut tx, ARTICLES, None, 20, Some("First"), &[], None)
             .await
             .expect("search")
             .is_empty(),
@@ -400,9 +405,16 @@ async fn revisions_cannot_be_changed_or_deleted_and_pointers_cannot_cross_entrie
     // A second entry; then try to point the first entry's draft at the second's revision.
     let mut tx = enter(&db.app, alice, project).await;
     let other = Content::new("Other");
-    entries::create(&mut tx, Uuid::now_v7(), ARTICLES, other.revision(), &[])
-        .await
-        .expect("created");
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        other.revision(),
+        &[],
+        None,
+    )
+    .await
+    .expect("created");
     tx.commit().await.expect("commit");
     let mut tx = enter(&db.app, alice, project).await;
     sqlx::query("UPDATE entries SET draft_revision_id = $1 WHERE id = $2")
@@ -595,6 +607,7 @@ async fn referencing_screens_drafts_that_mention_an_entry_id() {
             schema_version: 1,
         },
         &[],
+        None,
     )
     .await
     .expect("created");
