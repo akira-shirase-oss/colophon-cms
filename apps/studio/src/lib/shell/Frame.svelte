@@ -6,6 +6,7 @@
 	import type { Snippet } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import { Button } from '@colophon/ui/ui/button';
 	import AppearanceMenu from './AppearanceMenu.svelte';
 	import Mark from './Mark.svelte';
 
@@ -18,8 +19,11 @@
 			<Mark />
 			<span>Colophon Studio</span>
 		</a>
-		<span class="rounded-full border border-border bg-card px-2 py-0.5 text-xs text-muted-foreground" title="Colophon is not released yet">preview</span>
-		<div class="ml-auto"><AppearanceMenu /></div>
+		<span class="rounded-full border border-border bg-card px-2 py-0.5 text-sm text-muted-foreground" title="Colophon is not released yet">preview</span>
+		<div class="ml-auto flex items-center gap-2">
+			<Button variant="ghost" size="sm" href={resolve('/tokens')}>Tokens</Button>
+			<AppearanceMenu />
+		</div>
 	</header>
 	<main class="mx-2 mb-2 flex-1 rounded-2xl border border-sidebar-border bg-background shadow-xs">
 		{#key page.url.pathname}

@@ -67,12 +67,149 @@ async fn alice_with_an_entry(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid) {
     let mut tx = enter(&db.app, alice, project).await;
     let first = Content::new("First");
     let entry = Uuid::now_v7();
-    let draft = entries::create(&mut tx, entry, ARTICLES, first.revision())
+    let draft = entries::create(&mut tx, entry, ARTICLES, first.revision(), &[], None)
         .await
         .expect("created");
     assert_eq!(draft.revision.base_revision_id, None);
     tx.commit().await.expect("commit");
     (alice, project, entry, first.id)
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_collection_exports_each_draft_as_a_line() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = enter(&db.app, alice, project).await;
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("First").revision(),
+        &[],
+        None,
+    )
+    .await
+    .expect("created");
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("Second").revision(),
+        &[],
+        None,
+    )
+    .await
+    .expect("created");
+    tx.commit().await.expect("commit");
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let lines = entries::export(&mut tx, ARTICLES).await.expect("exported");
+    assert_eq!(lines.len(), 2);
+    // Newest first: each line is the draft's canonical content.
+    assert!(lines[0].contains(r#""title":"Second""#), "{}", lines[0]);
+    assert!(lines[1].contains(r#""title":"First""#), "{}", lines[1]);
+    tx.commit().await.expect("commit");
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_unique_value_can_only_be_held_by_one_entry() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let same = [("email".to_owned(), [9_u8; 32])];
+
+    let mut tx = enter(&db.app, alice, project).await;
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("A").revision(),
+        &same,
+        None,
+    )
+    .await
+    .expect("created");
+    tx.commit().await.expect("commit");
+
+    // The index refuses the same value under a second entry, whatever changed it.
+    let mut tx = enter(&db.app, alice, project).await;
+    let error = entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("B").revision(),
+        &same,
+        None,
+    )
+    .await
+    .expect_err("the value is already held");
+    assert!(matches!(error, colophon_db::DbError::Conflict));
+    // A refused write aborts the transaction; drop it so the next one can begin.
+    drop(tx);
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let different = [("email".to_owned(), [8_u8; 32])];
+    let entry = Uuid::now_v7();
+    entries::create(
+        &mut tx,
+        entry,
+        ARTICLES,
+        Content::new("B").revision(),
+        &different,
+        None,
+    )
+    .await
+    .expect("a different value is fine");
+    tx.commit().await.expect("commit");
+
+    // Editing back onto the held value is refused too.
+    let held = entries::get(&mut enter(&db.app, alice, project).await, ARTICLES, entry)
+        .await
+        .expect("get")
+        .expect("exists");
+    let mut tx = enter(&db.app, alice, project).await;
+    let error = entries::save(
+        &mut tx,
+        entry,
+        held.revision.id,
+        Content::new("B2").revision(),
+        &same,
+    )
+    .await
+    .expect_err("the value is already held");
+    assert!(matches!(error, colophon_db::DbError::Conflict));
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_draft_entry_can_be_deleted_and_then_is_gone() {
+    let db = TestDb::new().await;
+    let (alice, project, entry, _first) = alice_with_an_entry(&db).await;
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let removed = entries::remove(&mut tx, ARTICLES, entry)
+        .await
+        .expect("remove");
+    assert!(matches!(removed, entries::Removed::Removed));
+    tx.commit().await.expect("commit");
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let again = entries::remove(&mut tx, ARTICLES, entry)
+        .await
+        .expect("remove");
+    assert!(matches!(again, entries::Removed::NotFound));
+    let gone = entries::get(&mut tx, ARTICLES, entry).await.expect("get");
+    assert!(gone.is_none());
 }
 
 #[tokio::test]
@@ -83,7 +220,7 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
 
     let second = Content::new("Second");
     let mut tx = enter(&db.app, alice, project).await;
-    let Saved::Saved(draft) = entries::save(&mut tx, entry, first, second.revision())
+    let Saved::Saved(draft) = entries::save(&mut tx, entry, first, second.revision(), &[])
         .await
         .expect("save")
     else {
@@ -109,18 +246,23 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
         .map(|revision| (revision.id, revision.base_revision_id))
         .collect();
     assert_eq!(history, [(second.id, Some(first)), (first, None)]);
-    let listed = entries::list(&mut tx, ARTICLES, None, 20, None)
+    let columns = ["title".to_string(), "missing".to_string()];
+    let listed = entries::list(&mut tx, ARTICLES, None, 20, None, &columns, None)
         .await
         .expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].revision.title, "Second");
+    assert_eq!(
+        listed[0].fields, r#"{"title": "Second", "missing": null}"#,
+        "the draft's values of the asked-for fields, null for one it doesn't have"
+    );
     // Search reads the entry's copy of its draft's title (migration 0015), which moved with it.
-    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"))
+    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"), &[], None)
         .await
         .expect("search");
     assert_eq!(found.len(), 1);
     assert!(
-        entries::list(&mut tx, ARTICLES, None, 20, Some("First"))
+        entries::list(&mut tx, ARTICLES, None, 20, Some("First"), &[], None)
             .await
             .expect("search")
             .is_empty(),
@@ -149,7 +291,7 @@ async fn a_save_on_a_stale_draft_writes_nothing_and_names_the_current_revision()
     let (alice, project, entry, first) = alice_with_an_entry(&db).await;
     let mut tx = enter(&db.app, alice, project).await;
     let second = Content::new("Second");
-    entries::save(&mut tx, entry, first, second.revision())
+    entries::save(&mut tx, entry, first, second.revision(), &[])
         .await
         .expect("save");
     tx.commit().await.expect("commit");
@@ -157,11 +299,11 @@ async fn a_save_on_a_stale_draft_writes_nothing_and_names_the_current_revision()
     // Another editor still holds the first revision.
     let mut tx = enter(&db.app, alice, project).await;
     let late = Content::new("Late");
-    let outcome = entries::save(&mut tx, entry, first, late.revision())
+    let outcome = entries::save(&mut tx, entry, first, late.revision(), &[])
         .await
         .expect("save");
     assert_eq!(outcome, Saved::Stale { current: second.id });
-    let missing = entries::save(&mut tx, Uuid::now_v7(), first, late.revision())
+    let missing = entries::save(&mut tx, Uuid::now_v7(), first, late.revision(), &[])
         .await
         .expect("save");
     assert_eq!(missing, Saved::NotFound);
@@ -190,14 +332,14 @@ async fn two_concurrent_saves_on_one_base_revision_one_wins_one_is_stale() {
     let (a, b) = (Content::new("From A"), Content::new("From B"));
     let mut tx_a = enter(&pool, alice, project).await;
     let mut tx_b = enter(&pool, alice, project).await;
-    let saved_a = entries::save(&mut tx_a, entry, first, a.revision())
+    let saved_a = entries::save(&mut tx_a, entry, first, a.revision(), &[])
         .await
         .expect("save");
     assert!(matches!(saved_a, Saved::Saved(_)));
     // B blocks on A's row lock; it must see A's commit, not the old pointer.
     let b_id = b.id;
     let waiting = tokio::spawn(async move {
-        let outcome = entries::save(&mut tx_b, entry, first, b.revision())
+        let outcome = entries::save(&mut tx_b, entry, first, b.revision(), &[])
             .await
             .expect("save");
         tx_b.commit().await.expect("commit");
@@ -227,30 +369,52 @@ async fn revisions_cannot_be_changed_or_deleted_and_pointers_cannot_cross_entrie
     let db = TestDb::new().await;
     let (alice, project, entry, first) = alice_with_an_entry(&db).await;
 
+    // UPDATE stays ungranted — a stored revision is immutable. DELETE is granted for the
+    // removal flow, so the foreign keys do the protecting, possibly deferred to commit.
     for sql in [
         "UPDATE revisions SET title = 'rewritten' WHERE id = $1",
-        "DELETE FROM revisions WHERE id = $1",
         "UPDATE entries SET collection = 'articles' WHERE draft_revision_id = $1",
-        "DELETE FROM entries WHERE draft_revision_id = $1",
     ] {
         let mut tx = enter(&db.app, alice, project).await;
         let error = sqlx::query(sql)
             .bind(first)
             .execute(&mut *tx.transaction)
             .await
-            .expect_err("no grant");
+            .expect_err("no update grant");
         assert!(
             error.to_string().contains("permission denied"),
             "{sql}: {error}"
         );
     }
+    for sql in [
+        "DELETE FROM revisions WHERE id = $1",
+        "DELETE FROM entries WHERE draft_revision_id = $1",
+    ] {
+        let mut tx = enter(&db.app, alice, project).await;
+        let error = match sqlx::query(sql)
+            .bind(first)
+            .execute(&mut *tx.transaction)
+            .await
+        {
+            Err(error) => format!("{error:?}"),
+            Ok(_) => format!("{:?}", tx.commit().await.expect_err("refused at commit")),
+        };
+        assert!(error.contains("foreign key"), "{sql}: {error}");
+    }
 
     // A second entry; then try to point the first entry's draft at the second's revision.
     let mut tx = enter(&db.app, alice, project).await;
     let other = Content::new("Other");
-    entries::create(&mut tx, Uuid::now_v7(), ARTICLES, other.revision())
-        .await
-        .expect("created");
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        other.revision(),
+        &[],
+        None,
+    )
+    .await
+    .expect("created");
     tx.commit().await.expect("commit");
     let mut tx = enter(&db.app, alice, project).await;
     sqlx::query("UPDATE entries SET draft_revision_id = $1 WHERE id = $2")
@@ -419,4 +583,132 @@ async fn a_concurrent_duplicate_waits_for_the_first_and_replays_it() {
     );
     pool.close().await;
     db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn referencing_screens_drafts_that_mention_an_entry_id() {
+    let db = TestDb::new().await;
+    let (alice, project, entry, _first) = alice_with_an_entry(&db).await;
+    // A second article whose draft happens to contain the first entry's id.
+    let mut tx = enter(&db.app, alice, project).await;
+    let hash = [9_u8; 32];
+    let content = format!(r#"{{"title":"Referrer","about":"{entry}"}}"#);
+    let referrer = Uuid::now_v7();
+    entries::create(
+        &mut tx,
+        referrer,
+        ARTICLES,
+        NewRevision {
+            id: Uuid::now_v7(),
+            content: &content,
+            content_hash: &hash,
+            title: "Referrer",
+            schema_version: 1,
+        },
+        &[],
+        None,
+    )
+    .await
+    .expect("created");
+    tx.commit().await.expect("commit");
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let found = entries::referencing(&mut tx, ARTICLES, entry)
+        .await
+        .expect("scan");
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        (found[0].id, found[0].title.as_str()),
+        (referrer, "Referrer")
+    );
+    drop(tx);
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn an_entrys_locale_is_set_filtered_and_rewritten() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = enter(&db.app, alice, project).await;
+    let first = Content::new("English");
+    let english = Uuid::now_v7();
+    entries::create(
+        &mut tx,
+        english,
+        ARTICLES,
+        first.revision(),
+        &[],
+        Some("en"),
+    )
+    .await
+    .expect("created");
+    let french = Uuid::now_v7();
+    entries::create(
+        &mut tx,
+        french,
+        ARTICLES,
+        Content::new("French").revision(),
+        &[],
+        Some("fr"),
+    )
+    .await
+    .expect("created");
+    let plain = Uuid::now_v7();
+    entries::create(
+        &mut tx,
+        plain,
+        ARTICLES,
+        Content::new("Plain").revision(),
+        &[],
+        None,
+    )
+    .await
+    .expect("created");
+
+    // The list filter keeps only the asked-for locale; no filter sees all three.
+    let english_only = entries::list(&mut tx, ARTICLES, None, 20, None, &[], Some("en"))
+        .await
+        .expect("listed");
+    assert_eq!(
+        english_only
+            .iter()
+            .map(|row| row.entry_id)
+            .collect::<Vec<_>>(),
+        vec![english]
+    );
+    let all = entries::list(&mut tx, ARTICLES, None, 20, None, &[], None)
+        .await
+        .expect("listed");
+    assert_eq!(all.len(), 3);
+
+    // Setting the locale moves the tag; clearing it drops the entry from the filter.
+    assert!(
+        entries::set_locale(&mut tx, ARTICLES, plain, Some("de"))
+            .await
+            .expect("set")
+    );
+    let loaded = entries::get(&mut tx, ARTICLES, plain)
+        .await
+        .expect("get")
+        .expect("there");
+    assert_eq!(loaded.locale.as_deref(), Some("de"));
+    let german = entries::list(&mut tx, ARTICLES, None, 20, None, &[], Some("de"))
+        .await
+        .expect("listed");
+    assert_eq!(german.len(), 1);
+    assert!(
+        entries::set_locale(&mut tx, ARTICLES, plain, None)
+            .await
+            .expect("cleared")
+    );
+    let german = entries::list(&mut tx, ARTICLES, None, 20, None, &[], Some("de"))
+        .await
+        .expect("listed");
+    assert_eq!(german, []);
 }

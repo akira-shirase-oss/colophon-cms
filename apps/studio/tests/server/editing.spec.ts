@@ -310,6 +310,15 @@ test('an entry of a content type you define: every kind of field, saved and read
 	expect(stored.capacity).toBe(120);
 	expect(stored.starts_at).toMatch(/^2026-11-2\dT\d\d:30:00Z$/);
 	expect(stored.notes).toBe('Doors at six.\nBring a laptop.');
+
+	// The collection's columns are the definition's first three short fields: Online is fourth.
+	await page.goto(`/studio/projects/${project}/events`);
+	await expect(page.getByRole('columnheader', { name: 'Starts at' })).toBeVisible();
+	await expect(page.getByRole('columnheader', { name: 'Kind' })).toBeVisible();
+	await expect(page.getByRole('columnheader', { name: 'Capacity' })).toBeVisible();
+	await expect(page.getByRole('columnheader', { name: 'Online' })).toHaveCount(0);
+	await expect(page.getByRole('cell', { name: 'Workshop' })).toBeVisible();
+	await expect(page.getByRole('cell', { name: '120' })).toBeVisible();
 });
 
 test('a terminal is approved on the device page and gets a working token', async ({ page }) => {

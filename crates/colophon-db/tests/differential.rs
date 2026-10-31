@@ -92,6 +92,7 @@ async fn apply(db: &TestDb, world: &World, save: &Save) -> Real {
             title: &save.content,
             schema_version: 1,
         },
+        &[],
     )
     .await
     .expect("save");
@@ -173,6 +174,8 @@ async fn world(db: &TestDb, report: &Report) -> World {
                 title: content,
                 schema_version: 1,
             },
+            &[],
+            None,
         )
         .await
         .expect("entry");

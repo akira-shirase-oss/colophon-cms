@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
 	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
+	import CheckIcon from '@lucide/svelte/icons/check';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -42,6 +43,35 @@
 		)
 	);
 	const recent = $derived([...all].sort((a, b) => b.entry.updated_at.localeCompare(a.entry.updated_at)).slice(0, 8));
+	// Getting started: the four first things a new project needs, in order; each links to its
+	// page and the card retires itself once all are done.
+	const firstCollection = $derived(
+		resolve('/projects/[project]/[collection]', {
+			project,
+			collection: (types.data ?? [])[0]?.slug ?? 'articles'
+		})
+	);
+	const steps = $derived([
+		{
+			label: 'Create a collection',
+			done: (types.data ?? []).length > 1,
+			href: resolve('/projects/[project]/types/new', { project })
+		},
+		{ label: 'Write an entry', done: all.length > 0, href: firstCollection },
+		{
+			label: 'Ask for a review',
+			done: (sets.data ?? []).length > 0,
+			href: resolve('/projects/[project]/changesets', { project })
+		},
+		{
+			label: 'Publish a release',
+			done: live !== undefined,
+			href: resolve('/projects/[project]/changesets', { project })
+		}
+	]);
+	const loaded = $derived(
+		!types.isPending && !sets.isPending && !releases.isPending && !lists.some((list) => list.isPending)
+	);
 	const ROLE_WORD = { owner: 'Owner', developer: 'Developer', editor: 'Editor', publisher: 'Publisher' } as const;
 </script>
 
@@ -70,18 +100,18 @@
 				<ReleaseLabel release={live} testid="overview-label" />
 			{:else}
 				<span class="stat-value">None yet</span>
-				<span class="text-xs text-muted-foreground">Nothing is published</span>
+				<span class="text-sm text-muted-foreground">Nothing is published</span>
 			{/if}
 		</a>
 		<a class="stat lift" style="--i: 1" href={resolve('/projects/[project]/changesets', { project })}>
 			<span class="stat-label">Waiting for review</span>
 			<span class="stat-value tabular" data-testid="awaiting-count">{(sets.data ?? []).filter((set) => set.status.state === 'awaiting_review').length}</span>
-			<span class="text-xs text-muted-foreground">{waiting.length} changeset{waiting.length === 1 ? '' : 's'} in progress</span>
+			<span class="text-sm text-muted-foreground">{waiting.length} changeset{waiting.length === 1 ? '' : 's'} in progress</span>
 		</a>
 		<div class="stat" style="--i: 2">
 			<span class="stat-label">Entries</span>
 			<span class="stat-value tabular">{all.length}</span>
-			<span class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+			<span class="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
 				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-live align-middle"></span>{tally.live} live</span>
 				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-pending align-middle"></span>{tally.changed} changed</span>
 				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-draft align-middle"></span>{tally.draft} draft</span>
@@ -90,9 +120,36 @@
 		<div class="stat" style="--i: 3">
 			<span class="stat-label">Last published</span>
 			<span class="stat-value">{live ? ago(live.published_at) : '—'}</span>
-			<span class="truncate text-xs text-muted-foreground">{live ? `by ${live.published_by_name ?? live.published_by}` : 'No releases yet'}</span>
+			<span class="truncate text-sm text-muted-foreground">{live ? `by ${live.published_by_name ?? live.published_by}` : 'No releases yet'}</span>
 		</div>
 	</section>
+
+	{#if loaded && steps.some((step) => !step.done)}
+		<section class="mt-6 overflow-hidden rounded-xl border border-border bg-card" aria-labelledby="get-started" data-testid="get-started">
+			<div class="border-b border-border px-4 py-3">
+				<h2 id="get-started" class="text-base font-semibold">Getting started</h2>
+				<p class="mt-0.5 text-sm text-muted-foreground">Four steps to your first published release.</p>
+			</div>
+			<ol>
+				{#each steps as step, index (step.label)}
+					<li class="flex items-center gap-3 border-b border-border px-4 py-2.5 last:border-b-0">
+						{#if step.done}
+							<span class="flex size-5 shrink-0 items-center justify-center rounded-full bg-live text-white" aria-hidden="true">
+								<CheckIcon class="size-3.5" />
+							</span>
+							<span class="text-sm text-muted-foreground line-through">{step.label}</span>
+						{:else}
+							<span class="flex size-5 shrink-0 items-center justify-center rounded-full border border-border text-sm text-muted-foreground tabular" aria-hidden="true">{index + 1}</span>
+							<a class="group flex flex-1 items-center gap-1 text-sm font-medium hover:underline" href={step.href}>
+								{step.label}
+								<ArrowRightIcon class="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+							</a>
+						{/if}
+					</li>
+				{/each}
+			</ol>
+		</section>
+	{/if}
 
 	<div class="mt-10 grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
 		<section aria-labelledby="recent">
@@ -109,7 +166,7 @@
 						<FileTextIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 						<span class="min-w-0 flex-1">
 							<span class="block truncate text-sm font-medium">{entry.revision.title}</span>
-							<span class="text-xs text-muted-foreground">{type.definition.name} · {ago(entry.updated_at)}</span>
+							<span class="text-sm text-muted-foreground">{type.definition.name} · {ago(entry.updated_at)}</span>
 						</span>
 						<StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} />
 					</a>
@@ -129,7 +186,7 @@
 								<span class="block truncate text-sm font-medium">{set.title}</span>
 								<span class="mt-1.5 flex items-center justify-between gap-2">
 									<ChangesetBadge state={set.status.state} />
-									<span class="text-xs text-muted-foreground">{set.items} {set.items === 1 ? 'entry' : 'entries'}</span>
+									<span class="text-sm text-muted-foreground">{set.items} {set.items === 1 ? 'entry' : 'entries'}</span>
 								</span>
 							</a>
 						</li>
@@ -140,23 +197,41 @@
 			</section>
 
 			<section aria-labelledby="content-heading">
-				<h2 id="content-heading" class="mb-3 text-base font-semibold">Content</h2>
+				<div class="mb-3 flex items-baseline justify-between">
+					<h2 id="content-heading" class="text-base font-semibold">Content</h2>
+					<span class="text-sm text-muted-foreground">Collections hold your entries</span>
+				</div>
 				{#if types.isError}
 					<Problem error={types.error} />
 				{:else}
 					<ul class="space-y-1" data-testid="content-types">
 						{#each types.data ?? [] as type, index (type.slug)}
+							{@const entries = lists[index]?.data?.data ?? []}
+							{@const tally = entries.reduce((c, e) => { c[entryState(e)] += 1; return c; }, { draft: 0, live: 0, changed: 0 })}
 							<li>
 								<a class="group flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-muted" href={resolve('/projects/[project]/[collection]', { project, collection: type.slug })}>
 									<span class="min-w-0 flex-1">
 										<span class="block text-sm font-medium">{type.definition.name}</span>
-										<span class="text-xs text-muted-foreground">{type.definition.fields.length} fields · version {type.version}</span>
+										<span class="text-sm text-muted-foreground">
+											{entries.length} {entries.length === 1 ? 'entry' : 'entries'} ·
+											{#if tally.live > 0}<span class="text-live-ink">{tally.live} live</span>{:else}0 live{/if}{#if tally.changed > 0} · <span class="text-pending-ink">{tally.changed} changed</span>{/if}{#if tally.draft > 0} · <span class="text-draft-ink">{tally.draft} draft</span>{/if}
+										</span>
 									</span>
-									{#if lists[index]?.data}<Badge variant="secondary" class="tabular">{lists[index]?.data?.data.length}</Badge>{/if}
 									<ArrowRightIcon class="size-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
 								</a>
 							</li>
+						{:else}
+							<li class="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+								No collections yet — a collection is a kind of entry (articles, authors, products).
+							</li>
 						{/each}
+						{#if mine.data?.role === 'owner' || mine.data?.role === 'developer'}
+							<li>
+								<a class="group flex items-center gap-3 rounded-lg border border-dashed border-border px-2 py-2 text-sm text-muted-foreground hover:border-foreground/30 hover:text-foreground" href={resolve('/projects/[project]/types/new', { project })} data-testid="new-collection-link">
+									+ New collection
+								</a>
+							</li>
+						{/if}
 					</ul>
 				{/if}
 			</section>
@@ -180,7 +255,7 @@
 		border-color: color-mix(in oklch, var(--foreground) 20%, transparent);
 	}
 	.stat-label {
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		color: var(--muted-foreground);
 	}
 	.stat-value {

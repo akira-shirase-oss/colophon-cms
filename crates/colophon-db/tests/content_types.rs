@@ -12,7 +12,7 @@ mod common;
 use colophon_db::{
     PgPool,
     content_types::{self, ARTICLES_DEFINITION, Updated},
-    projects,
+    entries, projects,
     scope::{self, ProjectTransaction},
 };
 use colophon_domain::schema::ContentType;
@@ -138,21 +138,25 @@ async fn versions_cannot_be_rewritten_skipped_or_seen_from_another_project() {
         .await
         .expect("created")
         .id;
-    for sql in [
-        "UPDATE content_type_versions SET definition = '{}'",
-        "DELETE FROM content_type_versions",
-        "DELETE FROM collections",
-    ] {
-        let mut tx = enter(&db.app, alice, project).await;
-        let error = sqlx::query(sql)
-            .execute(&mut *tx.transaction)
-            .await
-            .expect_err("no grant");
-        assert!(
-            error.to_string().contains("permission denied"),
-            "{sql}: {error}"
-        );
-    }
+    // UPDATE stays ungranted — a stored version is immutable. DELETE is granted for the
+    // removal flows, so the foreign keys do the protecting: a collection with versions
+    // can't be deleted straight out of the table.
+    let mut tx = enter(&db.app, alice, project).await;
+    let error = sqlx::query("UPDATE content_type_versions SET definition = '{}'")
+        .execute(&mut *tx.transaction)
+        .await
+        .expect_err("no update grant");
+    assert!(error.to_string().contains("permission denied"), "{error}");
+    drop(tx);
+    // A version can be deleted once nothing points at it — the removal order deletes
+    // versions first — but the collection itself is held by the versions that name it.
+    let mut tx = enter(&db.app, alice, project).await;
+    let error = sqlx::query("DELETE FROM collections")
+        .execute(&mut *tx.transaction)
+        .await
+        .expect_err("a versioned collection");
+    assert!(error.to_string().contains("foreign key"), "{error}");
+    drop(tx);
     // A version that skips one has no previous version to name.
     let mut tx = enter(&db.app, alice, project).await;
     let error = sqlx::query(
@@ -202,6 +206,58 @@ async fn versions_cannot_be_rewritten_skipped_or_seen_from_another_project() {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_collection_can_be_deleted_while_empty_and_not_once_it_has_entries() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+
+    // An empty collection goes.
+    let mut tx = enter(&db.app, alice, project).await;
+    content_types::create(&mut tx, "notes", NOTES, &[1; 32])
+        .await
+        .expect("created");
+    let removed = content_types::remove(&mut tx, "notes")
+        .await
+        .expect("remove");
+    assert!(matches!(removed, entries::Removed::Removed));
+    let again = content_types::remove(&mut tx, "notes")
+        .await
+        .expect("remove");
+    assert!(matches!(again, entries::Removed::NotFound));
+    tx.commit().await.expect("commit");
+
+    // One with an entry stays put: the entries' foreign key answers Referenced.
+    let mut tx = enter(&db.app, alice, project).await;
+    content_types::create(&mut tx, "notes", NOTES, &[2; 32])
+        .await
+        .expect("created");
+    colophon_db::entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        "notes",
+        colophon_db::entries::NewRevision {
+            id: Uuid::now_v7(),
+            content: r#"{"title":"One"}"#,
+            content_hash: &[4; 32],
+            title: "One",
+            schema_version: 1,
+        },
+        &[],
+        None,
+    )
+    .await
+    .expect("created");
+    let kept = content_types::remove(&mut tx, "notes")
+        .await
+        .expect("remove");
+    assert!(matches!(kept, entries::Removed::Referenced));
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_revision_names_its_entry_s_collection_and_a_version_that_exists() {
     let db = TestDb::new().await;
     let alice = db.administrator("alice").await;
@@ -226,6 +282,8 @@ async fn a_revision_names_its_entry_s_collection_and_a_version_that_exists() {
             title: "One",
             schema_version: 1,
         },
+        &[],
+        None,
     )
     .await
     .expect("created");

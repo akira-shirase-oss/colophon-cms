@@ -28,6 +28,7 @@ use colophon_db::{
     changesets::{self, Head, Pin},
     idempotency::{self, Claim},
     releases::{self, Committed},
+    scheduled::{self, Cancelled, Scheduled, ScheduledOutcome},
     scope::ProjectTransaction,
 };
 use colophon_domain::{
@@ -75,11 +76,14 @@ pub(crate) struct NewChangeset {
     unpublish: Vec<String>,
 }
 
-/// `{"base_generation": 4}`: the generation the publisher saw.
+/// `{"base_generation": 4, "at": "2026-11-01T09:00:00Z"}`: the generation the publisher saw,
+/// and a future time to publish at when given — a scheduled publish, not a publish now.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NewRelease {
     base_generation: i64,
+    #[serde(default)]
+    at: Option<String>,
 }
 
 /// `{"decision": "approve", "comment": "…"}`.
@@ -690,8 +694,27 @@ fn publishable(status: &Status) -> Result<(), ApiError> {
     }
 }
 
+/// An `at` a publish may carry: an RFC 3339 time ahead of now, or a refusal.
+fn scheduled_time(at: Option<&String>) -> Result<Option<OffsetDateTime>, ApiError> {
+    let Some(at) = at else { return Ok(None) };
+    let run_at = OffsetDateTime::parse(at, &time::format_description::well_known::Rfc3339)
+        .map_err(|_| ApiError::InvalidField {
+            reason: "invalid_time",
+            pointer: "/at",
+            message: "`at` is an RFC 3339 time".to_owned(),
+        })?;
+    if run_at <= OffsetDateTime::now_utc() {
+        return Err(ApiError::InvalidField {
+            reason: "in_the_past",
+            pointer: "/at",
+            message: "a schedule is set for a time ahead of now".to_owned(),
+        });
+    }
+    Ok(Some(run_at))
+}
+
 /// `POST {P}/changesets/{changeset}/publish`: commits the approved changeset as the release after
-/// `base_generation`, if the environment is still there.
+/// `base_generation`, if the environment is still there — or schedules it for `at`.
 pub(crate) async fn publish(
     State(state): State<AppState>,
     caller: SignedIn,
@@ -709,6 +732,7 @@ pub(crate) async fn publish(
             message: "a generation is 0 or more".to_owned(),
         });
     }
+    let run_at = scheduled_time(new.at.as_ref())?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     require(
         &tx.role,
@@ -720,6 +744,7 @@ pub(crate) async fn publish(
         &path.changeset,
         &expected,
         &new.base_generation.to_string(),
+        new.at.as_deref().unwrap_or(""),
     ]);
     match idempotency::claim(&mut tx, PUBLISH, key, &request)
         .await
@@ -745,6 +770,11 @@ pub(crate) async fn publish(
     let approval = reviews
         .first()
         .ok_or_else(|| ApiError::internal(std::io::Error::other("approved without a review")))?;
+    // A future `at` schedules rather than publishes: the same approval and base are pinned so
+    // the commit runs exactly what was reviewed, and records if it could not.
+    if let Some(run_at) = run_at {
+        return schedule_response(tx, &head, approval.id, new.base_generation, run_at, key).await;
+    }
     let committed = releases::commit(
         &mut tx,
         new.base_generation,
@@ -873,4 +903,224 @@ async fn finish(mut tx: ProjectTransaction, id: Uuid) -> Result<Response, ApiErr
     let shown = view(&mut tx, head).await?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(respond(StatusCode::OK, body(&shown)?, &shown.hash, false))
+}
+
+/// The `publish` answer for a future `at`: a 202 carrying the schedule, idempotent on the
+/// same key like a publish.
+async fn schedule_response(
+    mut tx: ProjectTransaction,
+    head: &Head,
+    approval: Uuid,
+    base: i64,
+    run_at: OffsetDateTime,
+    key: &str,
+) -> Result<Response, ApiError> {
+    let row = scheduled::schedule(
+        &mut tx,
+        Uuid::now_v7(),
+        head.id,
+        &head.hash,
+        approval,
+        base,
+        run_at,
+    )
+    .await
+    .map_err(ApiError::from_db)?;
+    let text = serde_json::to_string(&Data {
+        data: ScheduledView::new(&row)?,
+    })
+    .map_err(ApiError::internal)?;
+    idempotency::complete(&mut tx, PUBLISH, key, StatusCode::ACCEPTED.as_u16(), &text)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(json(StatusCode::ACCEPTED, text, None, false))
+}
+
+/// A scheduled publish as the API shows it: when it runs and how it ended, if it did.
+#[derive(Serialize)]
+pub(crate) struct ScheduledView {
+    id: Uuid,
+    changeset_id: Uuid,
+    run_at: String,
+    base_generation: i64,
+    status: String,
+    /// The generation it committed as, once it has.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generation: Option<i64>,
+    /// Why it refused, once it has.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    created_at: String,
+}
+
+impl ScheduledView {
+    fn new(row: &Scheduled) -> Result<Self, ApiError> {
+        let (generation, error) = match &row.outcome {
+            Some(ScheduledOutcome::Committed(generation)) => (Some(*generation), None),
+            Some(ScheduledOutcome::Failed(error)) => (None, Some(error.clone())),
+            _ => (None, None),
+        };
+        Ok(Self {
+            id: row.id,
+            changeset_id: row.changeset_id,
+            run_at: rfc3339(row.run_at)?,
+            base_generation: row.base_generation,
+            status: row.status.clone(),
+            generation,
+            error,
+            created_at: rfc3339(row.created_at)?,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ScheduledPath {
+    project: String,
+    environment: String,
+    changeset: String,
+    schedule: String,
+}
+
+/// `GET {P}/changesets/{changeset}/scheduled`: the publishes set on this changeset and how
+/// the last ones ended.
+pub(crate) async fn scheduled(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<OnePath>,
+) -> Result<Json<Page<ScheduledView>>, ApiError> {
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let changeset = Uuid::try_parse(&path.changeset).map_err(|_| ApiError::NotFound)?;
+    let rows = scheduled::for_changeset(&mut tx, changeset)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let data = rows
+        .iter()
+        .map(ScheduledView::new)
+        .collect::<Result<_, ApiError>>()?;
+    Ok(Json(Page {
+        data,
+        next_cursor: None,
+    }))
+}
+
+/// `DELETE {P}/changesets/{changeset}/scheduled/{schedule}`: takes the publish off the
+/// schedule while it is still pending.
+pub(crate) async fn cancel_scheduled(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<ScheduledPath>,
+) -> Result<Json<Data<ScheduledView>>, ApiError> {
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    require(
+        &tx.role,
+        Action::Publish,
+        "only a project's owners and publishers can take a publish off the schedule",
+    )?;
+    let id = Uuid::try_parse(&path.schedule).map_err(|_| ApiError::NotFound)?;
+    match scheduled::cancel(&mut tx, id)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Cancelled::Cancelled => {
+            let row = scheduled::for_changeset(
+                &mut tx,
+                Uuid::try_parse(&path.changeset).map_err(|_| ApiError::NotFound)?,
+            )
+            .await
+            .map_err(ApiError::from_db)?
+            .into_iter()
+            .find(|row| row.id == id)
+            .ok_or(ApiError::NotFound)?;
+            tx.commit().await.map_err(ApiError::from_db)?;
+            Ok(Json(Data {
+                data: ScheduledView::new(&row)?,
+            }))
+        }
+        Cancelled::TooLate => Err(ApiError::Conflict(
+            "the publish already ran, failed or was cancelled",
+        )),
+        Cancelled::NotFound => Err(ApiError::NotFound),
+    }
+}
+
+/// One pass of the scheduled-publish loop: claims due rows and runs each through the normal
+/// publish path as the member who scheduled it. Returns how many it finished one way or the
+/// other — a schedule always ends with a record of what happened.
+pub async fn scheduled_publish_tick(
+    pool: &colophon_db::PgPool,
+    limit: i64,
+) -> Result<u32, colophon_db::DbError> {
+    // A claim older than this means its server died mid-run — record it, never retry it.
+    scheduled::expire(pool, std::time::Duration::from_secs(300)).await?;
+    let mut ran = 0;
+    for due in scheduled::claim_due(pool, limit).await? {
+        ran += 1;
+        match run_scheduled(pool, &due).await {
+            Ok(generation) => scheduled::finish(pool, due.id, generation).await?,
+            Err(message) => scheduled::fail(pool, due.id, &message).await?,
+        }
+    }
+    Ok(ran)
+}
+
+/// Replays `publish` for a claimed schedule: same role check, same hash check, same release
+/// commit — any refusal becomes the schedule's recorded failure.
+async fn run_scheduled(
+    pool: &colophon_db::PgPool,
+    due: &colophon_db::scheduled::Due,
+) -> Result<i64, String> {
+    let mut tx = colophon_db::scope::begin_in_environment(
+        pool,
+        due.requested_by,
+        due.project,
+        due.environment,
+    )
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| "the member who scheduled it is no longer in the project".to_owned())?;
+    require(
+        &tx.role,
+        Action::Publish,
+        "only a project's owners and publishers can publish",
+    )
+    .map_err(|error| error.to_string())?;
+    let head = locked(
+        &mut tx,
+        &due.changeset_id.to_string(),
+        &content_hash(&due.changeset_hash),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let items = changesets::items(&mut tx, head.id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let reviews = changesets::reviews(&mut tx, head.id, Some(&head.hash))
+        .await
+        .map_err(|error| error.to_string())?;
+    let edited = items.iter().filter(|item| item.moved()).count();
+    publishable(&decide(&head, edited, &reviews)).map_err(|error| error.to_string())?;
+    let committed = releases::commit(
+        &mut tx,
+        due.base_generation,
+        head.id,
+        &head.hash,
+        due.review_id,
+        std::time::Duration::from_secs(colophon_domain::job::LIFETIME_SECS.unsigned_abs()),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    match committed {
+        Committed::Done { generation, .. } => {
+            tx.commit().await.map_err(|error| error.to_string())?;
+            Ok(generation)
+        }
+        Committed::Moved { current } => Err(format!(
+            "the environment moved to generation {current} since it was scheduled"
+        )),
+        Committed::Unmatched => {
+            Err("an entry it takes down no longer publishes the revision it pinned".to_owned())
+        }
+    }
 }

@@ -33,7 +33,7 @@ async function approvedChangeset(page: Page, project: string, title: string): Pr
 
 const status = (page: Page) => page.getByTestId('changeset-status');
 
-test('an approved changeset is published as release 1, and a stale tab is told another release came first', async ({ page, browser }) => {
+test('an approved changeset is published as release 1, and a stale tab is told another release came first', async ({ page, browser, context }) => {
 	await signIn(page);
 	const project = await newProject(page);
 	const first = await approvedChangeset(page, project, 'Opening day');
@@ -54,6 +54,16 @@ test('an approved changeset is published as release 1, and a stale tab is told a
 	}, `/content/v1/${project}/production/articles`);
 	expect(delivered.generation).toBe('1');
 	expect(delivered.body.data.map((entry) => entry.title)).toEqual(['Opening day']);
+
+	// A live entry offers its public address in one click.
+	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+	await page.goto(`/studio/projects/${project}/articles`);
+	await page.getByRole('link', { name: 'Opening day' }).click();
+	const copyLink = page.getByTestId('copy-public-link');
+	await expect(copyLink).toBeVisible();
+	await copyLink.click();
+	await expect(page.getByText('Copied')).toBeVisible();
+	expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(new RegExp(`/content/v1/${project}/production/articles/[0-9a-f-]+$`));
 
 	// Two approved changesets; a second tab opens one while release 1 is live.
 	const second = await approvedChangeset(page, project, 'Second wave');

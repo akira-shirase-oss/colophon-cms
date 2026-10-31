@@ -11,7 +11,8 @@
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
-	import { acceptInvitation, ApiError, lookupInvitation, me, ROLE_SUMMARY, signInUrl } from '#lib/api.ts';
+	import { acceptInvitation, ApiError, lookupInvitation, me, ROLE_SUMMARY } from '#lib/api.ts';
+	import AuthForm from '#lib/shell/AuthForm.svelte';
 
 	const KEPT = 'colophon-invitation';
 
@@ -84,8 +85,11 @@
 {:else if who.isPending}
 	<p class="text-sm text-muted-foreground">Loading…</p>
 {:else if who.data === null}
-	<p data-testid="signed-out">Sign in first; this page will show the invitation afterwards.</p>
-	<Button href={signInUrl(resolve('/invite'))} data-sveltekit-reload>Sign in</Button>
+	<p class="pb-2 text-muted-foreground" data-testid="signed-out">
+		This link is kept in your browser, not sent anywhere. Sign in or create an account and the
+		invitation will be right here.
+	</p>
+	<AuthForm returnTo={resolve('/invite')} />
 {:else if outcome === 'joined' && offer.data}
 	<p data-testid="invite-outcome" role="status">
 		You're now {article(offer.data.role)}
@@ -108,7 +112,7 @@
 			<strong>{offer.data.role}</strong>, which lets you change {ROLE_SUMMARY[offer.data.role]}.
 		</p>
 		<p class="text-sm text-muted-foreground">
-			You're signed in as {who.data?.display_name ?? who.data?.id}. The invitation works once, until
+			You're signed in as {who.data?.display_name ?? 'you'}. The invitation works once, until
 			{new Date(offer.data.expires_at).toLocaleString()}.
 		</p>
 		{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}

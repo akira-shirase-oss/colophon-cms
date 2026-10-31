@@ -140,7 +140,7 @@
 						{#if shown.length > 0}
 							<fieldset class="overflow-hidden rounded-lg border border-border">
 								<legend class="sr-only">{group.type.definition.name}</legend>
-								<p class="border-b border-border bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground" aria-hidden="true">{group.type.definition.name}</p>
+								<p class="border-b border-border bg-muted/50 px-3 py-1.5 text-sm font-medium text-muted-foreground" aria-hidden="true">{group.type.definition.name}</p>
 								{#each shown as entry (entry.id)}
 									{@const standing = entryState(entry)}
 									<!-- Picking an entry publishes its current version; Unpublish takes its published one down. -->
@@ -150,7 +150,7 @@
 											<span class="truncate">{entry.revision.title}</span>
 										</label>
 										<StatusBadge state={standing} generation={entry.published?.generation ?? null} />
-										<label class="flex items-center gap-1.5 text-xs text-muted-foreground" class:invisible={standing === 'draft'}>
+										<label class="flex items-center gap-1.5 text-sm text-muted-foreground" class:invisible={standing === 'draft'}>
 											<input
 												type="checkbox"
 												class="size-3.5 accent-destructive"

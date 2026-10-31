@@ -96,7 +96,7 @@
 	table {
 		border-collapse: collapse;
 		width: 100%;
-		font-size: 0.85rem;
+		font-size: 0.875rem;
 	}
 	th,
 	td {
@@ -112,7 +112,7 @@
 		border-radius: 999px;
 		padding: 0.05rem 0.5rem;
 		font-weight: 600;
-		font-size: 0.8rem;
+		font-size: 0.875rem;
 	}
 	.ok {
 		color: var(--ok);
@@ -126,7 +126,7 @@
 		width: 100%;
 		box-sizing: border-box;
 		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-		font-size: 0.8rem;
+		font-size: 0.875rem;
 		padding: 0.6rem;
 		border: 1px solid var(--line);
 		border-radius: 8px;
@@ -140,6 +140,6 @@
 		border: 1px solid var(--line);
 		border-radius: 8px;
 		padding: 0.6rem;
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 	}
 </style>

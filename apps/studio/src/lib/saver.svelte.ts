@@ -69,7 +69,8 @@ export class Saver {
 		readonly entry: string,
 		private readonly definition: Definition,
 		loaded: Loaded,
-		private readonly onSaved: (loaded: Loaded) => void = () => {}
+		private readonly onSaved: (loaded: Loaded) => void = () => {},
+		private readonly locale: () => string | undefined = () => undefined
 	) {
 		this.etag = loaded.etag;
 		this.#saved = loaded.draft.content;
@@ -213,7 +214,7 @@ export class Saver {
 		this.#sent = { base: this.etag, key: this.#key, content };
 		this.#keep(this.etag, this.#newest ?? this.#latest);
 		try {
-			const result = await saveEntry(this.project, this.collection, this.entry, content, this.etag, this.#key);
+			const result = await saveEntry(this.project, this.collection, this.entry, content, this.etag, this.#key, this.locale());
 			this.#sent = null;
 			this.etag = result.etag;
 			this.#saved = result.draft.content;

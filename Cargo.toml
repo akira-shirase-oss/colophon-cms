@@ -22,6 +22,7 @@ colophon-worker = { path = "crates/colophon-worker" }
 # External crates: versions live here only (rust-mastery chapter 15). Minimal features;
 # one async runtime (Tokio); no TLS stack until a feature needs one.
 anyhow = "1.0.104"
+argon2 = "0.5.3"
 aws-lc-rs = { version = "1.15", default-features = false, features = ["aws-lc-sys"] }
 axum = "0.8.9"
 base64 = "0.22"

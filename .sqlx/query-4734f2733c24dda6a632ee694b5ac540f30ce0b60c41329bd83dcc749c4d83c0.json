@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE scheduled_publishes SET status = 'committed', generation = $2, finished_at = now()\n         WHERE id = $1 AND status = 'claimed'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4734f2733c24dda6a632ee694b5ac540f30ce0b60c41329bd83dcc749c4d83c0"
+}

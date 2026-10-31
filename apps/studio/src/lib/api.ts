@@ -24,19 +24,54 @@ export interface Me {
 }
 
 /** One field of a content type, as the server writes definitions: every default spelled out. */
-export type FieldDefinition = { id: string; label: string; required: boolean } & (
+export type FieldDefinition = {
+	id: string;
+	label: string;
+	required: boolean;
+	default?: unknown;
+	/** Show the field in an editor only when this other field holds one of `in` (display-only). */
+	when?: { field: string; in: string[] };
+	/** No two entries in the collection may share this value; the database's index enforces it. */
+	unique?: boolean;
+} & (
 	| { type: 'text'; max_chars: number; multiline: boolean }
 	| { type: 'rich_text' }
 	| { type: 'number'; integer: boolean; min?: number; max?: number }
 	| { type: 'boolean' }
 	| { type: 'enum'; values: string[] }
 	| { type: 'datetime' }
+	| { type: 'date' }
+	| { type: 'time' }
+	| { type: 'email' }
+	| { type: 'url' }
+	| { type: 'markdown'; max_chars: number }
+	| { type: 'color' }
+	| { type: 'json'; max_bytes: number }
+	| { type: 'slug'; of?: string }
+	| { type: 'reference'; to: string; many?: boolean; inverse?: string }
+	| { type: 'blocks'; blocks: BlockTypeDef[]; min_blocks: number; max_blocks: number }
+	| { type: 'object'; fields: FieldDefinition[] }
+	| {
+			type: 'list';
+			of: 'text' | 'number' | 'boolean' | 'datetime' | 'date' | 'time' | 'email' | 'url' | 'color';
+			min_items: number;
+			max_items: number;
+	  }
 );
 
 /** A content type's definition (D-040). */
+/** One named section a `blocks` field offers, with its own fields. */
+export interface BlockTypeDef {
+	id: string;
+	label: string;
+	fields: FieldDefinition[];
+}
+
 export interface Definition {
 	name: string;
 	title_field: string;
+	/** `single` holds exactly one entry (a homepage, a settings page); absent means a collection. */
+	kind?: 'single';
 	fields: FieldDefinition[];
 }
 
@@ -68,6 +103,10 @@ export interface Draft {
 	updated_at: string;
 	revision: Revision;
 	content: Content;
+	/** The entry's locale tag, or `null` for the default locale. */
+	locale?: string | null;
+	/** Its localization group, itself included — empty when the entry isn't localized. */
+	localizations?: { id: string; locale: string }[];
 }
 
 export interface Summary {
@@ -76,6 +115,11 @@ export interface Summary {
 	revision: Revision;
 	/** What readers get now, if published, and the release it went out in. */
 	published: { revision_id: string; generation: number } | null;
+	/** The draft's values of the collection's column fields (up to three short fields);
+	 *  a field the content doesn't have is null. */
+	fields: Record<string, string | number | boolean | null>;
+	/** The entry's locale tag, or `null` for the default locale. */
+	locale?: string | null;
 }
 
 /** Where an entry stands for readers: never published (or taken down), live as drafted, or
@@ -137,6 +181,16 @@ export function signInUrl(returnTo: string): string {
 	return `/auth/login?return_to=${encodeURIComponent(returnTo)}`;
 }
 
+/** Creates an email-and-password account and starts its session in one step. */
+export async function signUp(email: string, password: string, display_name?: string): Promise<void> {
+	await send('POST', '/auth/signup', { email, password, ...(display_name ? { display_name } : {}) });
+}
+
+/** Signs in with an email and a password; the session cookie is set by the response itself. */
+export async function signInPassword(email: string, password: string): Promise<void> {
+	await send('POST', '/auth/signin', { email, password });
+}
+
 /** Every request gives up after this long and counts as "no answer": a save is then retried with
  *  the same key, so nothing waits forever (invariant ST4). */
 export const REQUEST_TIMEOUT_MS = 15_000;
@@ -193,6 +247,80 @@ async function loaded(response: Response): Promise<Loaded> {
 const base = (project: string) => `/api/v1/projects/${project}/environments/production`;
 const entries = (project: string, collection: string) => `${base(project)}/collections/${collection}/entries`;
 
+/** The URL that downloads a collection's drafts as JSONL — one entry's content per line. */
+export function exportUrl(project: string, collection: string): string {
+	return `${base(project)}/collections/${collection}/export`;
+}
+
+/** Uploads a JSONL file: each line one entry's content; the whole file lands or nothing
+ *  does. Answers the number of entries created. */
+export async function importEntries(project: string, collection: string, body: string): Promise<number> {
+	let response: Response;
+	try {
+		response = await fetch(`${base(project)}/collections/${collection}/import`, {
+			method: 'POST',
+			cache: 'no-store',
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+			headers: {
+				'Content-Type': 'application/jsonlines',
+				'X-CSRF-Token': csrfToken(),
+				'Idempotency-Key': newKey()
+			},
+			body
+		});
+	} catch {
+		throw new ApiError('retry', 'no answer from the server');
+	}
+	if (response.ok) {
+		return ((await response.json()) as { data: { imported: number } }).data.imported;
+	}
+	const envelope = ((await response.json().catch(() => ({}))) as Envelope).error;
+	const message = envelope?.message ?? `HTTP ${response.status}`;
+	const reason = envelope?.details?.reason ?? null;
+	switch (true) {
+		case response.status === 401:
+			throw new ApiError('signed-out', message, 401);
+		case response.status === 404:
+			throw new ApiError('not-found', message, 404);
+		case response.status >= 500 || response.status === 429:
+			throw new ApiError('retry', message, response.status, reason);
+		default:
+			throw new ApiError('refused', message, response.status, reason);
+	}
+}
+
+/** A named access token, as the list of them shows it — the token itself is never stored. */
+export interface TokenInfo {
+	id: string;
+	name: string;
+	created_at: string;
+	last_used_at: string;
+	expires_at: string;
+}
+
+/** The caller's live access tokens, newest first. */
+export async function listTokens(): Promise<TokenInfo[]> {
+	return ((await (await send('GET', '/api/v1/tokens')).json()) as { data: TokenInfo[] }).data;
+}
+
+/** What `POST /api/v1/tokens` answers — `token` is shown only in that response. */
+export interface MintedToken {
+	id: string;
+	token: string;
+	name: string;
+	expires_at: string;
+}
+
+/** Mints a named access token (a name of at most 100 characters; it lasts thirty days). */
+export async function createToken(name: string): Promise<MintedToken> {
+	return ((await (await send('POST', '/api/v1/tokens', { name })).json()) as { data: MintedToken }).data;
+}
+
+/** Revokes the caller's own token. */
+export async function revokeToken(id: string): Promise<void> {
+	await send('DELETE', `/api/v1/tokens/${id}`);
+}
+
 /** Who is signed in, or `null` if nobody is. */
 export async function me(): Promise<Me | null> {
 	try {
@@ -224,15 +352,49 @@ export async function getContentType(project: string, collection: string): Promi
 	return ((await (await send('GET', `${base(project)}/content-types/${collection}`)).json()) as { data: ContentType }).data;
 }
 
+/** Owners and developers only (D-040): a new collection. Retries with the same key are safe. */
+export async function createContentType(
+	project: string,
+	slug: string,
+	definition: Definition,
+	key: string
+): Promise<ContentType> {
+	return (
+		(await (
+			await send('POST', `${base(project)}/content-types`, { slug, definition }, { 'Idempotency-Key': key })
+		).json()) as { data: ContentType }
+	).data;
+}
+
+/** Owners and developers only (D-040): a new version of a collection's definition, `If-Match`
+ *  naming the version read. The server refuses a change that would orphan stored entries. */
+export async function updateContentType(
+	project: string,
+	collection: string,
+	definition: Definition,
+	version: number,
+	key: string
+): Promise<ContentType> {
+	return (
+		(await (
+			await send('PUT', `${base(project)}/content-types/${collection}`, definition, {
+				'If-Match': `"v${version}"`,
+				'Idempotency-Key': key
+			})
+		).json()) as { data: ContentType }
+	).data;
+}
+
 export async function listEntries(project: string, collection: string): Promise<Summary[]> {
 	return (await searchEntries(project, collection)).data;
 }
 
 /** Up to 100 entries, newest first; `q` searches draft titles (at most 100 characters). */
-export async function searchEntries(project: string, collection: string, q = '', cursor: string | null = null): Promise<Page<Summary>> {
+export async function searchEntries(project: string, collection: string, q = '', cursor: string | null = null, locale?: string): Promise<Page<Summary>> {
 	const query = new URLSearchParams({ limit: '100' });
 	if (q.trim() !== '') query.set('q', q.trim());
 	if (cursor !== null) query.set('cursor', cursor);
+	if (locale && locale.trim() !== '') query.set('locale', locale.trim());
 	return (await (await send('GET', `${entries(project, collection)}?${query}`)).json()) as Page<Summary>;
 }
 
@@ -251,8 +413,28 @@ export async function getEntry(project: string, collection: string, entry: strin
 	return loaded(await send('GET', `${entries(project, collection)}/${entry}`));
 }
 
-export async function createEntry(project: string, collection: string, content: Content, key: string): Promise<Loaded> {
-	return loaded(await send('POST', entries(project, collection), content, { 'Idempotency-Key': key }));
+/** One backlink: a draft that points at this entry through a reference field. */
+export interface Referral {
+	collection: string;
+	collection_name: string;
+	field: string;
+	field_label: string;
+	entry: string;
+	title: string;
+}
+
+/** The newest drafts that point at this entry through a reference field. */
+export async function referencedBy(project: string, collection: string, entry: string): Promise<Referral[]> {
+	return (
+		(await (await send('GET', `${entries(project, collection)}/${entry}/referenced-by`)).json()) as {
+			data: Referral[];
+		}
+	).data;
+}
+
+export async function createEntry(project: string, collection: string, content: Content, key: string, locale?: string): Promise<Loaded> {
+	const query = locale && locale.trim() !== '' ? `?locale=${encodeURIComponent(locale.trim())}` : '';
+	return loaded(await send('POST', `${entries(project, collection)}${query}`, content, { 'Idempotency-Key': key }));
 }
 
 /** Saves `content` on top of the revision `etag` names. Sending the same key again is safe. */
@@ -262,11 +444,39 @@ export async function saveEntry(
 	entry: string,
 	content: Content,
 	etag: string,
+	key: string,
+	locale?: string
+): Promise<Loaded> {
+	const query = locale !== undefined && locale.trim() !== '' ? `?locale=${encodeURIComponent(locale.trim())}` : '';
+	return loaded(
+		await send('PUT', `${entries(project, collection)}/${entry}${query}`, content, { 'If-Match': etag, 'Idempotency-Key': key })
+	);
+}
+
+/** Deletes an empty collection for good. The server refuses (conflict) while it has entries. */
+export async function deleteCollection(project: string, collection: string): Promise<void> {
+	await send('DELETE', `${base(project)}/content-types/${collection}`);
+}
+
+/** Creates a sibling of `entry` in `locale`, starting from its draft. The group allows one
+ *  entry per locale; the server answers conflict when it already has one. */
+export async function createLocalization(
+	project: string,
+	collection: string,
+	entry: string,
+	locale: string,
 	key: string
 ): Promise<Loaded> {
 	return loaded(
-		await send('PUT', `${entries(project, collection)}/${entry}`, content, { 'If-Match': etag, 'Idempotency-Key': key })
+		await send('POST', `${entries(project, collection)}/${entry}/localizations?locale=${encodeURIComponent(locale)}`, undefined, {
+			'Idempotency-Key': key
+		})
 	);
+}
+
+/** Deletes an entry for good. The server refuses (conflict) while anything references it. */
+export async function deleteEntry(project: string, collection: string, entry: string): Promise<void> {
+	await send('DELETE', `${entries(project, collection)}/${entry}`);
 }
 
 export async function listRevisions(project: string, collection: string, entry: string): Promise<Revision[]> {
@@ -555,6 +765,47 @@ export async function publishChangeset(
 	const path = `${changesets(project)}/${id}/publish`;
 	const response = await send('POST', path, { base_generation: baseGeneration }, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key });
 	return ((await response.json()) as { data: { generation: number; entries_changed: number; entries_unpublished: number } }).data;
+}
+
+/** A publish set for the future: what it will publish and how it ended, once it has. */
+export interface ScheduledPublish {
+	id: string;
+	changeset_id: string;
+	/** RFC 3339; the publish runs when this passes. */
+	run_at: string;
+	base_generation: number;
+	status: 'pending' | 'claimed' | 'cancelled' | 'committed' | 'failed';
+	/** The release it landed as, for `committed`. */
+	generation?: number;
+	/** Why it could not publish, for `failed`. */
+	error?: string;
+	created_at: string;
+}
+
+/** Sets the same publish for `at` (an ISO time) instead of now: it still publishes exactly the
+ *  approved version, still on the same base — just later. Sending the same key again is safe. */
+export async function schedulePublish(
+	project: string,
+	id: string,
+	hash: string,
+	baseGeneration: number,
+	at: string,
+	key: string
+): Promise<ScheduledPublish> {
+	const path = `${changesets(project)}/${id}/publish`;
+	const response = await send('POST', path, { base_generation: baseGeneration, at }, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key });
+	return ((await response.json()) as { data: ScheduledPublish }).data;
+}
+
+/** The publishes set on one changeset, pending first then how the last ones ended. */
+export async function scheduledPublishes(project: string, id: string): Promise<ScheduledPublish[]> {
+	return ((await (await send('GET', `${changesets(project)}/${id}/scheduled`)).json()) as { data: ScheduledPublish[] }).data;
+}
+
+/** Takes a pending publish off the schedule; refused once it has already run or ended. */
+export async function cancelScheduled(project: string, id: string, schedule: string): Promise<ScheduledPublish> {
+	const path = `${changesets(project)}/${id}/scheduled/${schedule}`;
+	return ((await (await send('DELETE', path)).json()) as { data: ScheduledPublish }).data;
 }
 
 /** Where a project's releases are announced (D-046). */

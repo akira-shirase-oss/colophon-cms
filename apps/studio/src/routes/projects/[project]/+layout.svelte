@@ -9,7 +9,9 @@
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
+	import ListTreeIcon from '@lucide/svelte/icons/list-tree';
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
+	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
 	import UsersIcon from '@lucide/svelte/icons/users';
@@ -48,14 +50,25 @@
 		'/projects/[project]/releases': 'Releases',
 		'/projects/[project]/releases/[generation]': 'Releases',
 		'/projects/[project]/members': 'Members',
-		'/projects/[project]/settings': 'Settings'
+		'/projects/[project]/settings': 'Settings',
+		'/projects/[project]/types/new': 'New collection'
 	};
 	const collectionName = $derived(
 		types.data?.find((type) => type.slug === page.params.collection)?.definition.name ?? page.params.collection ?? ''
 	);
+	const editingName = $derived(
+		types.data?.find((type) => type.slug === page.params.type)?.definition.name ?? page.params.type ?? ''
+	);
 	const crumbs = $derived.by(() => {
 		const trail: { label: string; href?: string }[] = [];
-		if (route.includes('[collection]')) {
+		if (route.endsWith('types/[type]')) {
+			trail.push({ label: 'Content' });
+			trail.push({
+				label: editingName,
+				href: resolve('/projects/[project]/[collection]', { project, collection: page.params.type ?? '' })
+			});
+			trail.push({ label: 'Change fields' });
+		} else if (route.includes('[collection]')) {
 			trail.push({ label: 'Content' });
 			trail.push({
 				label: collectionName,
@@ -92,7 +105,7 @@
 									</span>
 									<span class="grid min-w-0 flex-1 text-left leading-tight">
 										<span class="truncate font-medium" data-testid="project-name">{mine.data?.name ?? '…'}</span>
-										<span class="truncate text-xs text-muted-foreground">{mine.data?.slug ?? ''}</span>
+										<span class="truncate text-sm text-muted-foreground">{mine.data?.slug ?? ''}</span>
 									</span>
 									<ChevronsUpDownIcon class="ml-auto text-muted-foreground" aria-hidden="true" />
 									<span class="sr-only">: switch project</span>
@@ -100,14 +113,14 @@
 							{/snippet}
 						</DropdownMenu.Trigger>
 						<DropdownMenu.Content class="w-64" align="start">
-							<DropdownMenu.Label class="text-xs text-muted-foreground">Projects</DropdownMenu.Label>
+							<DropdownMenu.Label class="text-sm text-muted-foreground">Projects</DropdownMenu.Label>
 							{#each (who.data?.projects ?? []).slice(0, 12) as other (other.id)}
 								<DropdownMenu.Item>
 									{#snippet child({ props })}
 										<a {...props} href={resolve('/projects/[project]', { project: other.id })}>
-											<span class="flex size-6 items-center justify-center rounded-md border border-border text-xs font-semibold">{other.name.slice(0, 1).toUpperCase()}</span>
+											<span class="flex size-6 items-center justify-center rounded-md border border-border text-sm font-semibold">{other.name.slice(0, 1).toUpperCase()}</span>
 											<span class="truncate">{other.name}</span>
-											{#if other.id === project}<span class="ml-auto text-xs text-muted-foreground">current</span>{/if}
+											{#if other.id === project}<span class="ml-auto text-sm text-muted-foreground">current</span>{/if}
 										</a>
 									{/snippet}
 								</DropdownMenu.Item>
@@ -132,19 +145,20 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
-					<Sidebar.MenuItem>
-						<Sidebar.MenuButton onclick={() => (searching = true)} tooltipContent="Search">
-							<SearchIcon /><span>Search</span>
-							<kbd class="ml-auto rounded border border-sidebar-border bg-background px-1.5 font-sans text-[0.6875rem] text-muted-foreground">⌘K</kbd>
-						</Sidebar.MenuButton>
-					</Sidebar.MenuItem>
 				</Sidebar.Menu>
 			</Sidebar.Group>
 
 			<Sidebar.Group>
 				<Sidebar.GroupLabel>Content</Sidebar.GroupLabel>
+				{#if mine.data?.role === 'owner' || mine.data?.role === 'developer'}
+					<Sidebar.GroupAction title="New collection">
+						{#snippet child({ props })}
+							<a {...props} href={resolve('/projects/[project]/types/new', { project })} aria-label="New collection" data-testid="new-collection"><PlusIcon /></a>
+						{/snippet}
+					</Sidebar.GroupAction>
+				{/if}
 				<Sidebar.Menu data-testid="nav-collections">
-					{#each types.data ?? [] as type (type.slug)}
+					{#each (types.data ?? []).filter((type) => type.definition.kind !== 'single') as type (type.slug)}
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton isActive={page.params.collection === type.slug} tooltipContent={type.definition.name}>
 								{#snippet child({ props })}
@@ -158,6 +172,26 @@
 					{/each}
 				</Sidebar.Menu>
 			</Sidebar.Group>
+
+			{#if (types.data ?? []).some((type) => type.definition.kind === 'single')}
+				<Sidebar.Group>
+					<Sidebar.GroupLabel>Single types</Sidebar.GroupLabel>
+					<Sidebar.Menu data-testid="nav-singles">
+						{#each (types.data ?? []).filter((type) => type.definition.kind === 'single') as type (type.slug)}
+							<Sidebar.MenuItem>
+								<Sidebar.MenuButton isActive={page.params.collection === type.slug} tooltipContent={type.definition.name}>
+									{#snippet child({ props })}
+										<a href={resolve('/projects/[project]/[collection]', { project, collection: type.slug })} {...props}>
+											<FileTextIcon /><span>{type.definition.name}</span>
+										</a>
+									{/snippet}
+								</Sidebar.MenuButton>
+								<CollectionCount {project} collection={type.slug} />
+							</Sidebar.MenuItem>
+						{/each}
+					</Sidebar.Menu>
+				</Sidebar.Group>
+			{/if}
 
 			<Sidebar.Group>
 				<Sidebar.GroupLabel>Publishing</Sidebar.GroupLabel>
@@ -189,6 +223,13 @@
 				<Sidebar.GroupLabel>Project</Sidebar.GroupLabel>
 				<Sidebar.Menu>
 					<Sidebar.MenuItem>
+						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/types')} tooltipContent="Types">
+							{#snippet child({ props })}
+								<a href={resolve('/projects/[project]/types', { project })} data-testid="types-link" {...props}><ListTreeIcon /><span>Types</span></a>
+							{/snippet}
+						</Sidebar.MenuButton>
+					</Sidebar.MenuItem>
+					<Sidebar.MenuItem>
 						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/members')} tooltipContent="Members">
 							{#snippet child({ props })}
 								<a href={resolve('/projects/[project]/members', { project })} data-testid="members-link" {...props}><UsersIcon /><span>Members</span></a>
@@ -209,18 +250,18 @@
 		<Sidebar.Footer class="group-data-[collapsible=icon]:hidden">
 			<div class="rounded-xl border border-sidebar-border bg-background p-3 shadow-xs" data-testid="live-card">
 				{#if releases.data === undefined}
-					<p class="text-xs text-muted-foreground">Checking what's live…</p>
+					<p class="text-sm text-muted-foreground">Checking what's live…</p>
 				{:else if live === undefined}
 					<p class="text-sm font-medium">Nothing live yet</p>
-					<p class="mt-0.5 text-xs text-muted-foreground">Publish a changeset to make release No. 1.</p>
+					<p class="mt-0.5 text-sm text-muted-foreground">Publish a changeset to make release No. 1.</p>
 				{:else}
 					<div class="flex items-baseline justify-between gap-2">
-						<span class="text-xs text-muted-foreground">Live now</span>
+						<span class="text-sm text-muted-foreground">Live now</span>
 						<a class="text-sm font-semibold tabular hover:underline" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) })}>No. {live.generation}</a>
 					</div>
 					<div class="mt-2"><ReleaseLabel release={live} testid="live-label" /></div>
 				{/if}
-				<a class="mt-3 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" href={deliveryUrl(project, 'articles')} data-sveltekit-reload target="_blank" rel="noopener">
+				<a class="mt-3 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground" href={deliveryUrl(project, 'articles')} data-sveltekit-reload target="_blank" rel="noopener">
 					Public API<ArrowUpRightIcon class="size-3" aria-hidden="true" />
 				</a>
 			</div>
@@ -251,7 +292,7 @@
 			</Breadcrumb.Root>
 			<div class="ml-auto flex items-center gap-1">
 				<Button variant="outline" size="sm" class="hidden w-56 justify-start text-muted-foreground sm:flex" onclick={() => (searching = true)}>
-					<SearchIcon />Search entries…<kbd class="ml-auto font-sans text-[0.6875rem]">⌘K</kbd>
+					<SearchIcon />Search entries…<kbd class="ml-auto font-sans text-sm">⌘K</kbd>
 				</Button>
 				<AppearanceMenu />
 			</div>

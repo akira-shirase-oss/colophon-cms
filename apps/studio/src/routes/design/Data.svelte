@@ -191,7 +191,7 @@
 					<p class="text-sm font-medium">3 destinations</p>
 					<Collapsible.Trigger class="rounded-full p-1.5 hover:bg-accent" aria-label="Show destinations"><ChevronsUpDownIcon class="size-4" /></Collapsible.Trigger>
 				</div>
-				<Collapsible.Content class="mt-3 grid gap-2 font-mono text-xs text-muted-foreground">
+				<Collapsible.Content class="mt-3 grid gap-2 font-mono text-sm text-muted-foreground">
 					<p>webhook · site builder</p>
 					<p>cdn · purge by tag</p>
 					<p>probe · eu-west</p>

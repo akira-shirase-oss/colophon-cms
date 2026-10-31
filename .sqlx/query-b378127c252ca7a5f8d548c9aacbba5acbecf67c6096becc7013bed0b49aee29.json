@@ -1,0 +1,112 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE scheduled_publishes s SET status = 'claimed', claimed_at = now()\n         WHERE (s.project_id, s.environment_id, s.id) IN (\n             SELECT t.project_id, t.environment_id, t.id\n             FROM scheduled_publishes t\n             WHERE t.status = 'pending' AND t.run_at <= now()\n             ORDER BY t.run_at\n             FOR UPDATE SKIP LOCKED\n             LIMIT $1\n         )\n         RETURNING s.id, s.project_id AS project, s.environment_id AS environment,\n                   s.changeset_id, s.changeset_hash, s.review_id, s.base_generation,\n                   s.requested_by",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "project",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "project_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "environment",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "environment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "changeset_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "changeset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "changeset_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "changeset_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "review_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "review_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "base_generation",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "base_generation"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "requested_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "requested_by"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b378127c252ca7a5f8d548c9aacbba5acbecf67c6096becc7013bed0b49aee29"
+}

@@ -65,14 +65,48 @@ fn start_worker(
     })))
 }
 
-/// Stops the worker claiming, and lets attempts in flight finish within the cleanup deadline;
-/// any it abandons are claimed again once their leases run out.
-async fn stop_worker(cancel: &CancellationToken, worker: Option<tokio::task::JoinHandle<()>>) {
+/// How often the API checks for publishes whose time has come.
+const SCHEDULE_POLL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How many due publishes one pass may run — a backlog drains in passes, never in one burst.
+const SCHEDULE_BATCH: i64 = 10;
+
+/// Runs due scheduled publishes on the API's pool: the commit replays the member's own
+/// publish, so it needs the same role that serves the management API.
+fn start_scheduler(
+    config: &Config,
+    pool: colophon_db::PgPool,
+    cancel: &CancellationToken,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if !matches!(config.role, Role::Api | Role::All) {
+        return None;
+    }
+    let cancel = cancel.clone();
+    Some(tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                () = cancel.cancelled() => break,
+                () = tokio::time::sleep(SCHEDULE_POLL) => {}
+            }
+            if let Err(error) = colophon_api::scheduled_publish_tick(&pool, SCHEDULE_BATCH).await {
+                tracing::warn!(%error, "scheduled publishes could not run this pass");
+            }
+        }
+    }))
+}
+
+/// Stops the background tasks, and lets work in flight finish within the cleanup deadline;
+/// leases a stopped worker abandons are claimed again once they run out.
+async fn stop_tasks(
+    cancel: &CancellationToken,
+    worker: Option<tokio::task::JoinHandle<()>>,
+    scheduler: Option<tokio::task::JoinHandle<()>>,
+) {
     cancel.cancel();
-    if let Some(task) = worker
-        && tokio::time::timeout(CLEANUP_DEADLINE, task).await.is_err()
-    {
-        tracing::warn!("the worker did not stop in time; its leases will run out");
+    for task in [worker, scheduler].into_iter().flatten() {
+        if tokio::time::timeout(CLEANUP_DEADLINE, task).await.is_err() {
+            tracing::warn!("a background task did not stop in time");
+        }
     }
 }
 
@@ -182,13 +216,14 @@ pub async fn run(
 
     let worker_cancel = cancel.child_token();
     let worker = start_worker(&config, &worker_cancel)?;
+    let scheduler = start_scheduler(&config, pool.clone(), &worker_cancel);
 
     let outcome = tokio::select! {
         outcome = shutdown::serve(listener, app, readiness, timing, trigger) => outcome.context("serving")?,
         never = supervisor.watch() => match never {},
     };
 
-    stop_worker(&worker_cancel, worker).await;
+    stop_tasks(&worker_cancel, worker, scheduler).await;
     supervisor.shutdown(CLEANUP_DEADLINE).await;
     if tokio::time::timeout(CLEANUP_DEADLINE, pool.close())
         .await

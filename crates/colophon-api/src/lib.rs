@@ -4,6 +4,7 @@
 //!
 //! Design: `docs/modules/04-api.md`.
 
+mod access_tokens;
 mod auth;
 mod body;
 mod cache;
@@ -32,6 +33,7 @@ use axum::{
 };
 
 pub use cache::{DeliveryCache, InvalidCacheUrl};
+pub use changesets::scheduled_publish_tick;
 pub use error::{ApiError, ErrorCode, ErrorDetails, PublicError};
 pub use health::{CheckState, Dependency, Readiness, ReadinessReport, Status};
 pub use middleware::{HttpLimits, REQUEST_ID_HEADER};
@@ -51,6 +53,8 @@ pub fn routes(state: AppState) -> Router {
         .route("/readyz", get(health::readyz))
         .route("/auth/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
+        .route("/auth/signup", post(auth::sign_up))
+        .route("/auth/signin", post(auth::sign_in))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/device", post(device::start))
         .route("/auth/device/approve", post(device::approve))
@@ -78,20 +82,46 @@ pub fn routes(state: AppState) -> Router {
         .route("/api/v1/invitations/lookup", post(members::lookup))
         .route("/api/v1/invitations/accept", post(members::accept))
         .route(
+            "/api/v1/tokens",
+            get(access_tokens::list).post(access_tokens::create),
+        )
+        .route(
+            "/api/v1/tokens/{token}",
+            axum::routing::delete(access_tokens::revoke),
+        )
+        .route(
             "/api/v1/projects/{project}/environments/{environment}/content-types",
             get(content_types::list).post(content_types::create),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/content-types/{slug}",
-            get(content_types::get).put(content_types::update),
+            get(content_types::get)
+                .put(content_types::update)
+                .delete(content_types::remove),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries",
             get(entries::list).post(entries::create),
         )
         .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/export",
+            get(entries::export),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/import",
+            post(entries::import),
+        )
+        .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}",
-            get(entries::get).put(entries::save),
+            get(entries::get).put(entries::save).delete(entries::remove),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/referenced-by",
+            get(entries::referenced_by),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/localizations",
+            post(entries::localize),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions",
@@ -133,6 +163,14 @@ fn publishing() -> Router<AppState> {
         .route(
             "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/publish",
             post(changesets::publish),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/scheduled",
+            get(changesets::scheduled),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/scheduled/{schedule}",
+            axum::routing::delete(changesets::cancel_scheduled),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/releases",

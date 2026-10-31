@@ -20,10 +20,14 @@ use axum::{
 };
 use colophon_db::{
     content_types::{self, Updated, Version},
+    entries::{self, Removed},
     idempotency::{self, Claim},
     scope::ProjectTransaction,
 };
-use colophon_domain::{project::Slug, schema::ContentType};
+use colophon_domain::{
+    project::Slug,
+    schema::{ContentType, FieldKind, Refusal},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 
@@ -35,7 +39,7 @@ use crate::{
 };
 
 /// Studio pages that sit beside a project's collections, at `/studio/projects/{project}/{slug}`.
-const RESERVED_SLUGS: [&str; 4] = ["members", "settings", "changesets", "releases"];
+const RESERVED_SLUGS: [&str; 5] = ["members", "settings", "changesets", "releases", "types"];
 
 const CREATE: &str = "content_type.create";
 const UPDATE: &str = "content_type.update";
@@ -259,7 +263,83 @@ pub(crate) async fn create(
         }
         other => ApiError::from_db(other),
     })?;
+    check_reference_targets(&mut tx, slug.as_str(), &definition).await?;
     finish(tx, CREATE, key, StatusCode::CREATED, version).await
+}
+
+/// `DELETE {P}/content-types/{collection}`: gone for good, but only while the collection is
+/// empty — its entries, and their revisions pinned to its versions, answer `conflict`.
+pub(crate) async fn remove(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<TypePath>,
+) -> Result<Response, ApiError> {
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_change(&tx)?;
+    match content_types::remove(&mut tx, &path.slug)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Removed::Removed => {
+            tx.commit().await.map_err(ApiError::from_db)?;
+            Ok(json(
+                StatusCode::OK,
+                r#"{"data":{"removed":true}}"#.to_string(),
+                None,
+                false,
+            ))
+        }
+        Removed::NotFound => Err(ApiError::NotFound),
+        Removed::Referenced => Err(ApiError::Conflict(
+            "the collection is not empty: delete its entries first",
+        )),
+    }
+}
+
+/// Every `reference` field's `to` must name a collection that exists in this environment, and
+/// a declared `inverse` must be a real reference field on that collection, pointing back at
+/// this one. The check runs inside the write's transaction, so a collection may reference
+/// itself.
+async fn check_reference_targets(
+    tx: &mut ProjectTransaction,
+    slug: &str,
+    next: &ContentType,
+) -> Result<(), ApiError> {
+    for (index, field) in next.fields().iter().enumerate() {
+        let FieldKind::Reference { to, inverse, .. } = &field.kind else {
+            continue;
+        };
+        let target = content_types::current(tx, to)
+            .await
+            .map_err(ApiError::from_db)?;
+        let Some(target) = target else {
+            return Err(ApiError::Invalid(Refusal {
+                code: "unknown_collection",
+                pointer: format!("/fields/{index}/to"),
+                message: format!("no collection named `{to}`"),
+            }));
+        };
+        if let Some(back) = inverse {
+            let stored: Value =
+                serde_json::from_str(&target.definition).map_err(ApiError::internal)?;
+            let target = ContentType::parse(&stored).map_err(ApiError::internal)?;
+            let mirrors = target.fields().iter().any(|mirror| {
+                mirror.id == *back
+                    && matches!(
+                        &mirror.kind,
+                        FieldKind::Reference { to: mirror_to, .. } if mirror_to == slug
+                    )
+            });
+            if !mirrors {
+                return Err(ApiError::Invalid(Refusal {
+                    code: "invalid_inverse",
+                    pointer: format!("/fields/{index}/inverse"),
+                    message: format!("`{to}` has no reference field `{back}` back to `{slug}`"),
+                }));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `PUT {P}/content-types/{slug}`.
@@ -293,6 +373,22 @@ pub(crate) async fn update(
     let stored: Value = serde_json::from_str(&current.definition).map_err(ApiError::internal)?;
     let previous = ContentType::parse(&stored).map_err(ApiError::internal)?;
     previous.check_successor(&next).map_err(ApiError::Invalid)?;
+    check_reference_targets(&mut tx, &path.slug, &next).await?;
+    if next.is_single() && !previous.is_single() {
+        let count = entries::list(&mut tx, &path.slug, None, 2, None, &[], None)
+            .await
+            .map_err(ApiError::from_db)?
+            .len();
+        if count > 1 {
+            return Err(ApiError::Invalid(Refusal {
+                code: "too_many_entries",
+                pointer: "/kind".to_owned(),
+                message: format!(
+                    "a single collection holds one entry; this collection holds {count}"
+                ),
+            }));
+        }
+    }
     match content_types::update(
         &mut tx,
         &path.slug,

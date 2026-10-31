@@ -124,7 +124,7 @@
 									<strong class="font-medium">{destination.name}</strong>
 									<Badge variant="secondary">{KIND[destination.kind]}{destination.location ? ` at ${destination.location}` : ''}</Badge>
 								</span>
-								<code class="block truncate font-mono text-xs text-muted-foreground">{destination.url}</code>
+								<code class="block truncate font-mono text-sm text-muted-foreground">{destination.url}</code>
 							</span>
 							<label class="flex items-center gap-2 text-sm">
 								<input

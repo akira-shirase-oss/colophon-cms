@@ -40,6 +40,127 @@ pub async fn record_sign_in(
     Ok(row.id)
 }
 
+/// The issuer an email-and-password account is recorded under: its subject is the email, so
+/// the existing uniqueness rule already gives one account per address.
+pub const PASSWORD_ISSUER: &str = "password";
+
+/// Consecutive misses before the account pauses — bounded, so guessing costs time and shows.
+pub const LOCK_AFTER: i16 = 8;
+/// How long a locked account stays locked.
+pub const LOCK_FOR: Duration = Duration::minutes(15);
+
+/// What signing up did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignedUp {
+    /// A new identity with a password credential.
+    Made(Uuid),
+    /// That email already has an account.
+    Taken,
+}
+
+/// Creates an email-and-password account: `('password', email)` with the Argon2id hash and a
+/// display name. `Taken` if the email already has one.
+pub async fn sign_up(
+    pool: &PgPool,
+    email: &str,
+    password_hash: &str,
+    display_name: Option<&str>,
+) -> Result<SignedUp, DbError> {
+    let row = sqlx::query_scalar!(
+        "INSERT INTO identities (id, issuer, subject, display_name, email, password_hash)
+         VALUES ($1, $2, $3, $4, $3, $5)
+         ON CONFLICT DO NOTHING
+         RETURNING id",
+        Uuid::now_v7(),
+        PASSWORD_ISSUER,
+        email,
+        display_name,
+        password_hash
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(match row {
+        Some(id) => SignedUp::Made(id),
+        None => SignedUp::Taken,
+    })
+}
+
+/// The answer to an email-and-password sign-in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasswordSignIn {
+    /// Right password; the counter resets and the session may start.
+    SignedIn(Uuid),
+    /// Wrong password, or no such account — the same answer, after the same work.
+    Refused,
+    /// Too many misses; the account pauses until this time.
+    Locked(OffsetDateTime),
+}
+
+/// Signs in with an email and a password: the lock check, the verify and the counter all run
+/// under one row lock, so a locked account can't be hammered concurrently.
+pub async fn password_sign_in(
+    pool: &PgPool,
+    email: &str,
+    password: &str,
+) -> Result<PasswordSignIn, DbError> {
+    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    let row = sqlx::query!(
+        "SELECT id, password_hash, locked_until FROM identities
+         WHERE issuer = $1 AND subject = $2
+         FOR UPDATE",
+        PASSWORD_ISSUER,
+        email
+    )
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    let Some(row) = row else {
+        // No such account: the same verify work runs anyway, so the answer can't be told apart.
+        let _ = crate::passwords::verify_in(password, None).await;
+        return Ok(PasswordSignIn::Refused);
+    };
+    if row
+        .locked_until
+        .is_some_and(|until| until > OffsetDateTime::now_utc())
+    {
+        return Ok(PasswordSignIn::Locked(
+            row.locked_until.unwrap_or_else(OffsetDateTime::now_utc),
+        ));
+    }
+    let right = crate::passwords::verify_in(password, row.password_hash.as_deref()).await;
+    if right {
+        sqlx::query!(
+            "UPDATE identities SET failed_sign_ins = 0, locked_until = NULL, last_sign_in_at = now()
+             WHERE id = $1",
+            row.id
+        )
+        .execute(&mut *transaction)
+        .await
+        .map_err(DbError::from_query)?;
+        transaction.commit().await.map_err(DbError::from_query)?;
+        return Ok(PasswordSignIn::SignedIn(row.id));
+    }
+    let outcome = sqlx::query_scalar!(
+        "UPDATE identities
+         SET failed_sign_ins = failed_sign_ins + 1,
+             locked_until = CASE WHEN failed_sign_ins + 1 >= $2 THEN now() + make_interval(secs => $3) END
+         WHERE id = $1
+         RETURNING locked_until",
+        row.id,
+        i32::from(LOCK_AFTER),
+        f64::from(u32::try_from(LOCK_FOR.whole_seconds()).unwrap_or(u32::MAX))
+    )
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(match outcome {
+        Some(until) => PasswordSignIn::Locked(until),
+        None => PasswordSignIn::Refused,
+    })
+}
+
 /// A live session, as stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {

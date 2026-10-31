@@ -6,6 +6,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { asset } from '$app/paths';
+	import { goto } from '$app/navigation';
 	import type { Editor } from '@tiptap/core';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { openEditor, type RichTextValue, toStored } from '@colophon/editor';
@@ -16,9 +17,15 @@
 	import { resolve } from '$app/paths';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
+	import { Input } from '@colophon/ui/ui/input';
+	import LinkIcon from '@lucide/svelte/icons/link';
+	import { toast } from 'svelte-sonner';
 	import {
+		ApiError,
 		type Content,
 		type ContentType,
+		createLocalization,
+		deliveryUrl,
 		type Draft,
 		type FieldDefinition,
 		getRevision,
@@ -62,15 +69,55 @@
 	const definition = type.definition;
 	const plain = definition.fields.filter((field) => field.type !== 'rich_text');
 	const rich = definition.fields.filter((field) => field.type === 'rich_text');
+	/** The fields in the definition's order, as the builder lists them: runs of plain fields,
+	 *  each a block of rows, between rich-text fields, each full width where it sits. */
+	type Segment = { kind: 'plain'; fields: FieldDefinition[] } | { kind: 'rich'; field: FieldDefinition };
+	const segments: Segment[] = [];
+	for (const field of definition.fields) {
+		const last = segments.at(-1);
+		if (field.type === 'rich_text') segments.push({ kind: 'rich', field });
+		else if (last?.kind === 'plain') last.fields.push(field);
+		else segments.push({ kind: 'plain', fields: [field] });
+	}
 	// svelte-ignore state_referenced_locally
 	let latest = $state.raw<Draft>(initial.draft);
+	// svelte-ignore state_referenced_locally
+	let locale = $state(initial.draft.locale ?? '');
+	// Its localization group, itself included; empty while it isn't localized.
+	const siblings = $derived(latest.localizations ?? []);
+	let newLocale = $state('');
+	let versionError = $state('');
+	let versionBusy = $state(false);
+
+	/** A sibling in another language, starting from this draft — then straight to it. */
+	async function addVersion(event: SubmitEvent) {
+		event.preventDefault();
+		const tag = newLocale.trim();
+		if (tag === '') return;
+		versionBusy = true;
+		versionError = '';
+		try {
+			const made = await createLocalization(project, collection, entry, tag, crypto.randomUUID());
+			await goto(
+				resolve('/projects/[project]/[collection]/[entry]', {
+					project,
+					collection,
+					entry: made.draft.id
+				})
+			);
+		} catch (failure) {
+			versionError = failure instanceof ApiError ? failure.message : String(failure);
+		} finally {
+			versionBusy = false;
+		}
+	}
 	// svelte-ignore state_referenced_locally
 	const saver = new Saver(project, collection, entry, definition, initial, (loaded) => {
 		latest = loaded.draft;
 		queryClient.setQueryData(['draft', project, collection, entry], loaded);
 		void queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
 		void queryClient.invalidateQueries({ queryKey: ['history', project, collection, entry] });
-	});
+	}, () => locale.trim() || undefined);
 	const revisions = createQuery(() => ({
 		queryKey: ['history', project, collection, entry],
 		queryFn: () => listRevisions(project, collection, entry)
@@ -149,6 +196,16 @@
 	const standing = $derived(
 		published === null ? 'draft' : published.revision_id === latest.revision.id && saver.status === 'saved' ? 'live' : 'changed'
 	);
+	// Where anyone can read the published version, no sign-in: same origin, the delivery address.
+	const publicAddress = $derived(`${deliveryUrl(project, collection)}/${entry}`);
+	async function copyPublic() {
+		try {
+			await navigator.clipboard.writeText(`${window.location.origin}${publicAddress}`);
+			toast.success('Copied');
+		} catch {
+			toast.error("Couldn't copy; select it and copy it yourself.");
+		}
+	}
 	let tab = $state<'content' | 'history'>('content');
 	// The revision being compared with this draft, and what it held.
 	let comparing = $state<string | null>(null);
@@ -205,7 +262,7 @@
 {#snippet version(content: Content)}
 	{#each definition.fields as field (field.id)}
 		<div class="grid gap-0.5 py-1.5">
-			<span class="text-xs font-medium text-muted-foreground">{field.label}</span>
+			<span class="text-sm font-medium text-muted-foreground">{field.label}</span>
 			{#if field.type === 'rich_text' && content[field.id] !== undefined}
 				<div class="prose-colophon text-sm">
 					<RichText value={content[field.id] as RichTextValue} {assetUrl}>
@@ -219,7 +276,7 @@
 	{/each}
 {/snippet}
 
-<div class="grid gap-8 xl:grid-cols-[minmax(0,1fr)_17rem]">
+<div class="grid max-w-5xl gap-8 xl:grid-cols-[minmax(0,1fr)_17rem]">
 	<div class="min-w-0">
 		{#if unopenable}
 			<p role="alert" class="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -268,21 +325,26 @@
 						}
 					}}
 				>
-					{name}{#if value === 'history' && revisions.data}<span class="ml-1.5 text-xs text-muted-foreground tabular">{revisions.data.length}</span>{/if}
+					{name}{#if value === 'history' && revisions.data}<span class="ml-1.5 text-sm text-muted-foreground tabular">{revisions.data.length}</span>{/if}
 				</button>
 			{/each}
 		</div>
 
 		<div role="tabpanel" id="panel-content" aria-labelledby="tab-content" hidden={tab !== 'content'}>
-			<FieldInputs fields={plain} bind:form titleField={definition.title_field} onchange={changed} />
-			{#each rich as field (field.id)}
-				<div class="py-5">
-					<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
-					<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60">
-						<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" />
-						<div class="editor px-6 py-5 sm:px-8" bind:this={hosts[field.id]}></div>
+			<!-- In the definition's order: runs of plain fields as rows, rich text where it sits. -->
+			{#each segments as segment, index (index)}
+				{#if segment.kind === 'plain'}
+					<FieldInputs fields={segment.fields} bind:form titleField={definition.title_field} onchange={changed} {project} />
+				{:else}
+					{@const field = segment.field}
+					<div class="py-5">
+						<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
+						<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60">
+							<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" />
+							<div class="editor px-6 py-5 sm:px-8" bind:this={hosts[field.id]}></div>
+						</div>
 					</div>
-				</div>
+				{/if}
 			{/each}
 		</div>
 
@@ -295,7 +357,7 @@
 							<div class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-3 py-2.5 hover:bg-muted/50">
 								<span class="min-w-0 flex-1">
 									<span class="block truncate text-sm font-medium">{revision.title}</span>
-									<span class="text-xs text-muted-foreground" title={new Date(revision.created_at).toLocaleString()}
+									<span class="text-sm text-muted-foreground" title={new Date(revision.created_at).toLocaleString()}
 										>{ago(revision.created_at)} · <span class="font-mono">{revision.content_hash.slice(7, 15)}</span></span
 									>
 								</span>
@@ -340,13 +402,13 @@
 				<span class:text-destructive={saver.status === 'conflict' || saver.status === 'refused' || saver.status === 'signed-out'}>{label}</span>
 			</p>
 			{#if saver.message && saver.status !== 'refused' && saver.status !== 'conflict'}
-				<p class="mt-2 text-xs text-muted-foreground" data-testid="save-message">{saver.message}</p>
+				<p class="mt-2 text-sm text-muted-foreground" data-testid="save-message">{saver.message}</p>
 			{/if}
 			{#if saver.status === 'signed-out'}
-				<p class="mt-2 text-xs"><a class="underline" href={signInUrl(window.location.pathname)} data-sveltekit-reload>Sign in again</a> to save them.</p>
+				<p class="mt-2 text-sm"><a class="underline" href={signInUrl(window.location.pathname)} data-sveltekit-reload>Sign in again</a> to save them.</p>
 			{/if}
 			<Button class="mt-3 w-full" variant="outline" size="sm" onclick={() => saver.saveNow()} disabled={saver.status === 'saved' || saver.status === 'conflict'}>
-				Save now <kbd class="ml-auto font-sans text-[0.6875rem] text-muted-foreground">⌘S</kbd>
+				Save now <kbd class="ml-auto font-sans text-sm text-muted-foreground">⌘S</kbd>
 			</Button>
 
 			<dl class="mt-4 space-y-2.5 border-t border-dotted border-border pt-4 text-sm">
@@ -358,9 +420,26 @@
 					<dt class="text-muted-foreground">Live in</dt>
 					<dd class="tabular">{published ? `No. ${published.generation}` : '—'}</dd>
 				</div>
+			</dl>
+			{#if published !== null}
+				<!-- The public link in one click: anyone can read the published version there. -->
+				<div class="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-dotted border-border pt-4 text-sm text-muted-foreground">
+					<span>{standing === 'changed' ? 'Anyone can read the published version.' : 'Anyone can read it.'}</span>
+					<Button variant="outline" size="xs" onclick={copyPublic} data-testid="copy-public-link"><LinkIcon data-icon="inline-start" />Copy public link</Button>
+				</div>
+			{/if}
+			<p class="mt-4 border-t border-dotted border-border pt-4 text-sm text-muted-foreground">
+				Drafts reach readers through a release.
+				<a class="underline underline-offset-2 hover:text-foreground" href={resolve('/projects/[project]/changesets', { project })}>Open changesets →</a>
+			</p>
+		</div>
+
+		<div class="mt-4 rounded-xl border border-border bg-card p-4 shadow-xs">
+			<h2 class="text-sm font-semibold">Details</h2>
+			<dl class="mt-3 space-y-2.5 text-sm">
 				<div class="flex items-center justify-between gap-2">
 					<dt class="text-muted-foreground">Revision</dt>
-					<dd class="font-mono text-xs" title={latest.revision.content_hash}>{latest.revision.content_hash.slice(7, 15)}</dd>
+					<dd class="font-mono text-sm" title={latest.revision.content_hash}>{latest.revision.content_hash.slice(7, 15)}</dd>
 				</div>
 				<div class="flex items-center justify-between gap-2">
 					<dt class="text-muted-foreground">Saved</dt>
@@ -370,11 +449,59 @@
 					<dt class="text-muted-foreground">Created</dt>
 					<dd>{new Date(latest.created_at).toLocaleDateString()}</dd>
 				</div>
+				<div class="flex items-center justify-between gap-2">
+					<dt class="text-muted-foreground"><label for="entry-locale">Locale</label></dt>
+					<dd>
+						<Input
+							id="entry-locale"
+							class="h-7 w-28 px-2 text-sm"
+							placeholder="default"
+							bind:value={locale}
+							maxlength={35}
+							title="The locale this entry is written in — saved with the draft"
+						/>
+					</dd>
+				</div>
 			</dl>
-			<p class="mt-4 border-t border-dotted border-border pt-4 text-xs text-muted-foreground">
-				Readers get it only through a reviewed changeset.
-				<a class="underline underline-offset-2 hover:text-foreground" href={resolve('/projects/[project]/changesets', { project })}>Changesets</a>
-			</p>
+			<div class="mt-4 border-t border-dotted border-border pt-4" data-testid="localizations">
+				<h3 class="text-sm font-semibold">Translations</h3>
+				{#if siblings.length > 0}
+					<ul class="mt-3 flex flex-wrap gap-1.5">
+						{#each siblings as sibling (sibling.id)}
+							<li>
+								{#if sibling.id === entry}
+									<Badge variant="secondary" class="font-semibold">{sibling.locale}</Badge>
+								{:else}
+									<a
+										href={resolve('/projects/[project]/[collection]/[entry]', {
+											project,
+											collection,
+											entry: sibling.id
+										})}
+										title="Open the {sibling.locale} version"
+									>
+										<Badge variant="outline" class="hover:border-foreground/30">{sibling.locale}</Badge>
+									</a>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<form class="mt-3 flex items-center gap-2" onsubmit={addVersion}>
+					<Input
+						class="h-8 w-24 px-2 text-sm"
+						placeholder="fr"
+						bind:value={newLocale}
+						maxlength={35}
+						aria-label="Language tag for the new version"
+					/>
+					<Button type="submit" variant="outline" size="sm" disabled={versionBusy || newLocale.trim() === ''}>
+						Add version
+					</Button>
+				</form>
+				<p class="mt-2 text-sm text-muted-foreground">A translation starts as a copy of this draft.</p>
+				{#if versionError}<p class="mt-2 text-sm text-destructive" role="alert">{versionError}</p>{/if}
+			</div>
 		</div>
 	</aside>
 </div>

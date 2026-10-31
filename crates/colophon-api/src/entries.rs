@@ -1,7 +1,9 @@
 //! Entries and their drafts (docs/modules/04-api.md, "Route families"; D-034, D-035). Under
 //! `{P}` = `/api/v1/projects/{project}/environments/{environment}`:
 //!
-//! - `GET  {P}/collections/{collection}/entries`: newest first, with a cursor;
+//! - `GET  {P}/collections/{collection}/entries`: newest first, with a cursor; each row also
+//!   carries the draft's values of up to three short fields (a number, a choice, yes or no, a
+//!   date and time, in the definition's order) under `fields`, for list columns;
 //! - `POST {P}/collections/{collection}/entries`: create (`Idempotency-Key` required);
 //! - `GET  {P}/collections/{collection}/entries/{entry}`: the draft, with its `ETag`;
 //! - `PUT  {P}/collections/{collection}/entries/{entry}`: save (`If-Match` and
@@ -22,11 +24,13 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use colophon_db::{
     content_types,
-    entries::{self, Draft, NewRevision, Revision, Saved, Summary},
+    entries::{
+        self, Draft, Localization, Localized, NewRevision, Removed, Revision, Saved, Summary,
+    },
     idempotency::{self, Claim},
     scope::{self, ProjectTransaction},
 };
-use colophon_domain::schema::{Content, ContentType};
+use colophon_domain::schema::{Content, ContentType, FieldKind, Refusal};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -47,6 +51,10 @@ const DEFAULT_PAGE: i64 = 20;
 
 const CREATE: &str = "entry.create";
 const SAVE: &str = "entry.save";
+const IMPORT: &str = "entry.import";
+const LOCALIZE: &str = "entry.localize";
+/// An import is at most this many lines, so one upload stays a bounded transaction.
+const IMPORT_MAX_LINES: usize = 512;
 
 /// The path of the collection routes.
 #[derive(Deserialize)]
@@ -88,6 +96,13 @@ impl RevisionView {
     }
 }
 
+/// A sibling in the entry's localization group: same document, another locale.
+#[derive(Serialize)]
+struct LocalizationView {
+    id: Uuid,
+    locale: String,
+}
+
 #[derive(Serialize)]
 struct DraftView {
     id: Uuid,
@@ -97,10 +112,14 @@ struct DraftView {
     revision: RevisionView,
     /// The stored canonical JSON, embedded as is: re-serializing could reorder its keys.
     content: Box<RawValue>,
+    /// The entry's locale tag, or `null` for the default locale.
+    locale: Option<String>,
+    /// Its localization group, itself included — empty when the entry isn't localized.
+    localizations: Vec<LocalizationView>,
 }
 
 impl DraftView {
-    fn new(draft: Draft) -> Result<Self, ApiError> {
+    fn new(draft: Draft, localizations: Vec<Localization>) -> Result<Self, ApiError> {
         Ok(Self {
             id: draft.entry_id,
             collection: draft.collection,
@@ -108,6 +127,14 @@ impl DraftView {
             updated_at: rfc3339(draft.updated_at)?,
             revision: RevisionView::new(draft.revision)?,
             content: RawValue::from_string(draft.content).map_err(ApiError::internal)?,
+            locale: draft.locale,
+            localizations: localizations
+                .into_iter()
+                .map(|sibling| LocalizationView {
+                    id: sibling.id,
+                    locale: sibling.locale,
+                })
+                .collect(),
         })
     }
 }
@@ -120,6 +147,11 @@ struct SummaryView {
     /// What readers get now, if the entry is published: so a list can say draft, live or
     /// changed since it went live.
     published: Option<LiveView>,
+    /// The draft's values of the collection's column fields, embedded as stored: a field the
+    /// content doesn't have is `null`.
+    fields: Box<RawValue>,
+    /// The entry's locale tag, or `null` for the default locale.
+    locale: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -135,6 +167,36 @@ pub(crate) struct ListQuery {
     limit: Option<i64>,
     cursor: Option<String>,
     q: Option<String>,
+    locale: Option<String>,
+}
+
+/// The `?locale=` a `create` or `save` may carry.
+#[derive(Deserialize)]
+pub(crate) struct LocaleQuery {
+    locale: Option<String>,
+}
+
+/// A locale tag is a short BCP-47-ish label — `en`, `en-US`, `pt-BR` — checked by shape,
+/// not by a table of known tags.
+fn check_locale(locale: Option<&str>) -> Result<(), ApiError> {
+    let Some(locale) = locale else { return Ok(()) };
+    let fine = locale.len() <= 35
+        && !locale.is_empty()
+        && locale
+            .split('-')
+            .all(|part| part.len() <= 8 && part.chars().all(|c| c.is_ascii_alphanumeric()))
+        && locale
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic());
+    if !fine {
+        return Err(ApiError::Invalid(Refusal {
+            code: "invalid_locale",
+            pointer: "/locale".to_owned(),
+            message: "a locale looks like `en` or `en-US`".to_owned(),
+        }));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -312,6 +374,197 @@ fn validate(value: &Value, content_type: &ContentType) -> Result<(Content, [u8; 
     Ok((content, hash))
 }
 
+/// Every `reference` value must name an entry that exists in this environment: a dangling id
+/// is refused rather than stored. (An entry deleted later still dangles — that's documented
+/// in `FieldKind::Reference`, and delivery carries the id either way.)
+async fn check_dangling(
+    tx: &mut ProjectTransaction,
+    content_type: &ContentType,
+    content: &Content,
+) -> Result<(), ApiError> {
+    for field in content_type.fields() {
+        if let FieldKind::Reference { to, many, .. } = &field.kind
+            && let Some(raw) = content.value(&field.id)
+        {
+            let ids: Vec<String> = if *many {
+                serde_json::from_str(raw).unwrap_or_default()
+            } else {
+                serde_json::from_str::<String>(raw).map_or(vec![], |id| vec![id])
+            };
+            for id in ids {
+                if let Ok(uuid) = Uuid::try_parse(&id)
+                    && entries::get(tx, to, uuid)
+                        .await
+                        .map_err(ApiError::from_db)?
+                        .is_none()
+                {
+                    return Err(ApiError::Invalid(Refusal {
+                        code: "dangling_reference",
+                        pointer: format!("/{}", field.id),
+                        message: format!("`{}` names an entry that isn't in `{to}`", field.label),
+                    }));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The ids a reference field holds in a stored document: one string, or a list of them.
+fn reference_ids(canonical: Option<&str>, field: &str) -> Vec<String> {
+    let Some(canonical) = canonical else {
+        return Vec::new();
+    };
+    let Ok(document) = serde_json::from_str::<Value>(canonical) else {
+        return Vec::new();
+    };
+    match document.get(field) {
+        Some(Value::String(one)) => vec![one.clone()],
+        Some(Value::Array(list)) => list
+            .iter()
+            .filter_map(|id| id.as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Adds `entry` to (or removes it from) the `back` field of `other` — one revision, inside
+/// this transaction. A `back` that can't take the write (deleted target, changed definition,
+/// required field left empty) is skipped rather than sinking the entry save it came from:
+/// the forward reference is the truth; the mirror is kept where it fits.
+async fn write_back(
+    tx: &mut ProjectTransaction,
+    to: &str,
+    back: &str,
+    mine: &str,
+    other: Uuid,
+    entry: Uuid,
+    add: bool,
+) -> Result<(), ApiError> {
+    let Some(draft) = entries::get(tx, to, other)
+        .await
+        .map_err(ApiError::from_db)?
+    else {
+        return Ok(());
+    };
+    let (b_type, version) = content_type(tx, to).await?;
+    let Some(back_field) = b_type.fields().iter().find(|field| field.id == back) else {
+        return Ok(());
+    };
+    let FieldKind::Reference {
+        to: mirror, many, ..
+    } = &back_field.kind
+    else {
+        return Ok(());
+    };
+    if mirror != mine {
+        return Ok(());
+    }
+    let mut document: Value = serde_json::from_str(&draft.content).map_err(ApiError::internal)?;
+    let id = entry.to_string();
+    if *many {
+        let mut list: Vec<String> = document
+            .get(back)
+            .and_then(Value::as_array)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|value| value.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if add {
+            if list.contains(&id) {
+                return Ok(());
+            }
+            list.push(id);
+        } else if list.iter().filter(|seen| *seen != &id).count() == list.len() {
+            return Ok(());
+        } else {
+            list.retain(|seen| *seen != id);
+        }
+        document[back] = serde_json::json!(list);
+    } else if add {
+        if document.get(back).and_then(Value::as_str) == Some(id.as_str()) {
+            return Ok(());
+        }
+        document[back] = Value::String(id);
+    } else {
+        if document.get(back).and_then(Value::as_str) != Some(id.as_str()) {
+            return Ok(());
+        }
+        if let Some(object) = document.as_object_mut() {
+            object.remove(back);
+        }
+    }
+    let Ok(content) = b_type.validate(&document) else {
+        return Ok(());
+    };
+    let hash = sha256(content.canonical_json().as_bytes());
+    let revision = NewRevision {
+        id: Uuid::now_v7(),
+        content: content.canonical_json(),
+        content_hash: &hash,
+        title: content.title(),
+        schema_version: version,
+    };
+    let uniques = unique_pairs(&b_type, &content);
+    let _ = entries::save(tx, other, draft.revision.id, revision, &uniques)
+        .await
+        .map_err(ApiError::from_db)?;
+    Ok(())
+}
+
+/// Mirrors `entry`'s `inverse`-declaring reference fields onto their targets: targets it
+/// gained get `entry` written into the back-field, targets it lost have it removed. `before`
+/// is the previous canonical document (`None` on create), `after` the new one (`None` on
+/// delete). Same transaction, so a link and its mirror commit or roll back together.
+async fn sync_inverses(
+    tx: &mut ProjectTransaction,
+    content_type: &ContentType,
+    collection: &str,
+    entry: Uuid,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> Result<(), ApiError> {
+    for field in content_type.fields() {
+        let FieldKind::Reference {
+            to,
+            inverse: Some(back),
+            ..
+        } = &field.kind
+        else {
+            continue;
+        };
+        let old_ids = reference_ids(before, &field.id);
+        let new_ids = reference_ids(after, &field.id);
+        for other in new_ids.iter().filter(|id| !old_ids.contains(id)) {
+            if let Ok(other) = Uuid::try_parse(other) {
+                write_back(tx, to, back, collection, other, entry, true).await?;
+            }
+        }
+        for other in old_ids.iter().filter(|id| !new_ids.contains(id)) {
+            if let Ok(other) = Uuid::try_parse(other) {
+                write_back(tx, to, back, collection, other, entry, false).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Each `unique` field's id with the hash of its canonical value — what `unique_values` claims.
+fn unique_pairs(content_type: &ContentType, content: &Content) -> Vec<(String, [u8; 32])> {
+    content_type
+        .fields()
+        .iter()
+        .filter(|field| field.unique)
+        .filter_map(|field| {
+            content
+                .value(&field.id)
+                .map(|spelling| (field.id.clone(), sha256(spelling.as_bytes())))
+        })
+        .collect()
+}
+
 /// Records the answer, commits, and only then responds: an acknowledged write is durable.
 async fn finish(
     mut tx: ProjectTransaction,
@@ -320,9 +573,12 @@ async fn finish(
     status: StatusCode,
     draft: Draft,
 ) -> Result<Response, ApiError> {
+    let localizations = entries::localizations(&mut tx, &draft.collection, draft.entry_id)
+        .await
+        .map_err(ApiError::from_db)?;
     let revision = draft.revision.id;
     let body = serde_json::to_string(&Data {
-        data: DraftView::new(draft)?,
+        data: DraftView::new(draft, localizations)?,
     })
     .map_err(ApiError::internal)?;
     idempotency::complete(&mut tx, operation, key, status.as_u16(), &body)
@@ -339,9 +595,11 @@ pub(crate) async fn create(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<CollectionPath>,
+    Query(query): Query<LocaleQuery>,
     headers: HeaderMap,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
+    check_locale(query.locale.as_deref())?;
     let key = idempotency_key(&headers)?;
     let Json(value) = body?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
@@ -356,6 +614,16 @@ pub(crate) async fn create(
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);
     }
+    if content_type.is_single()
+        && !entries::list(&mut tx, &path.collection, None, 1, None, &[], None)
+            .await
+            .map_err(ApiError::from_db)?
+            .is_empty()
+    {
+        return Err(ApiError::Conflict("a single collection holds one entry"));
+    }
+    let uniques = unique_pairs(&content_type, &content);
+    check_dangling(&mut tx, &content_type, &content).await?;
     let revision = NewRevision {
         id: Uuid::now_v7(),
         content: content.canonical_json(),
@@ -363,10 +631,218 @@ pub(crate) async fn create(
         title: content.title(),
         schema_version: version,
     };
-    let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision)
+    let draft = entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        &path.collection,
+        revision,
+        &uniques,
+        query.locale.as_deref(),
+    )
+    .await
+    .map_err(ApiError::from_db)?;
+    sync_inverses(
+        &mut tx,
+        &content_type,
+        &path.collection,
+        draft.entry_id,
+        None,
+        Some(&draft.content),
+    )
+    .await?;
+    finish(tx, CREATE, key, StatusCode::CREATED, draft).await
+}
+
+/// `GET {P}/collections/{collection}/export`: every draft as a JSONL line of its canonical
+/// content — what `import` takes back. The newest 10,000 entries.
+pub(crate) async fn export(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<CollectionPath>,
+) -> Result<Response, ApiError> {
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // An unknown collection is 404, not an empty export.
+    content_type(&mut tx, &path.collection).await?;
+    let lines = entries::export(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
-    finish(tx, CREATE, key, StatusCode::CREATED, draft).await
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let mut response = format!("{}\n", lines.join("\n")).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/jsonlines"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!(
+            "attachment; filename=\"{}.jsonl\"",
+            path.collection
+        ))
+        .map_err(ApiError::internal)?,
+    );
+    Ok(response)
+}
+
+/// `POST {P}/collections/{collection}/import`: a JSONL body, each non-empty line one
+/// entry's content, all validated against the type first. The file lands in one
+/// transaction or nothing does (`Idempotency-Key` required; at most `IMPORT_MAX_LINES`
+/// lines). References resolve against entries that already exist, including earlier lines.
+pub(crate) async fn import(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<CollectionPath>,
+    headers: HeaderMap,
+    body: String,
+) -> Result<Response, ApiError> {
+    let key = idempotency_key(&headers)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    crate::members::require(
+        &tx.role,
+        colophon_domain::policy::Action::WriteContent,
+        "your role can't write content in this project",
+    )?;
+    let (content_type, version) = content_type(&mut tx, &path.collection).await?;
+    let request = request_hash(&[IMPORT, &path.collection, &body]);
+    if let Some(replay) = claim(&mut tx, IMPORT, key, &request).await? {
+        return Ok(replay);
+    }
+    // One JSON per line, or one JSON array of the same objects: `[{...},{...}]`.
+    let trimmed = body.trim();
+    let (items, at_index): (Vec<Value>, fn(usize) -> String) = if trimmed.starts_with('[') {
+        (
+            serde_json::from_str::<Vec<Value>>(trimmed).map_err(|_| {
+                ApiError::Invalid(Refusal {
+                    code: "invalid_json",
+                    pointer: "/".to_owned(),
+                    message: "the body isn't a JSON array".to_owned(),
+                })
+            })?,
+            |index| format!("/{index}"),
+        )
+    } else {
+        (
+            trimmed
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .enumerate()
+                .map(|(index, line)| {
+                    serde_json::from_str::<Value>(line).map_err(|_| {
+                        ApiError::Invalid(Refusal {
+                            code: "invalid_json",
+                            pointer: format!("/line/{}", index + 1),
+                            message: format!("line {} isn't JSON", index + 1),
+                        })
+                    })
+                })
+                .collect::<Result<_, ApiError>>()?,
+            |index| format!("/line/{}", index + 1),
+        )
+    };
+    if items.len() > IMPORT_MAX_LINES {
+        return Err(ApiError::Invalid(Refusal {
+            code: "too_many_lines",
+            pointer: "/".to_owned(),
+            message: format!("an import is at most {IMPORT_MAX_LINES} items"),
+        }));
+    }
+    if content_type.is_single()
+        && (items.len() > 1
+            || !entries::list(&mut tx, &path.collection, None, 1, None, &[], None)
+                .await
+                .map_err(ApiError::from_db)?
+                .is_empty())
+    {
+        return Err(ApiError::Conflict("a single collection holds one entry"));
+    }
+    for (index, value) in items.iter().enumerate() {
+        import_one(
+            &mut tx,
+            &content_type,
+            &path.collection,
+            entity(value),
+            version,
+            &at_index(index),
+        )
+        .await?;
+    }
+    let body = serde_json::to_string(&Data {
+        data: serde_json::json!({ "imported": items.len() }),
+    })
+    .map_err(ApiError::internal)?;
+    idempotency::complete(&mut tx, IMPORT, key, StatusCode::CREATED.as_u16(), &body)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(json(StatusCode::CREATED, body, None, false))
+}
+
+/// One imported item: validated, checked for dangling references, created and mirrored.
+/// `at_index` names the item in refusals (`/line/3` or `/2`).
+async fn import_one(
+    tx: &mut ProjectTransaction,
+    content_type: &ContentType,
+    collection: &str,
+    value: &Value,
+    version: i32,
+    at_index: &str,
+) -> Result<(), ApiError> {
+    let (content, hash) =
+        validate(value, content_type).map_err(|error| on_index(error, at_index))?;
+    let uniques = unique_pairs(content_type, &content);
+    check_dangling(tx, content_type, &content)
+        .await
+        .map_err(|error| on_index(error, at_index))?;
+    let revision = NewRevision {
+        id: Uuid::now_v7(),
+        content: content.canonical_json(),
+        content_hash: &hash,
+        title: content.title(),
+        schema_version: version,
+    };
+    let draft = entries::create(tx, Uuid::now_v7(), collection, revision, &uniques, None)
+        .await
+        .map_err(ApiError::from_db)?;
+    sync_inverses(
+        tx,
+        content_type,
+        collection,
+        draft.entry_id,
+        None,
+        Some(&draft.content),
+    )
+    .await
+}
+
+/// A Strapi export entity — `{"type":"api::x.x","data":{…}}` — or a `{"version":2,"data":{…}}`
+/// marker: the payload sits under `data`, so unwrap it. Content that merely has fields named
+/// `type` or `data` is left alone: only a `::`-marked type or an explicit `version` counts.
+fn entity(value: &Value) -> &Value {
+    let Some(object) = value.as_object() else {
+        return value;
+    };
+    let Some(data) = object.get("data") else {
+        return value;
+    };
+    let marked = object
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind.contains("::"))
+        || object.contains_key("version");
+    if marked { data } else { value }
+}
+
+/// Prefixes a refusal's pointer with its import item — `/line/3` for JSONL, `/2` for a
+/// JSON array — so an error names the item it came from.
+fn on_index(error: ApiError, prefix: &str) -> ApiError {
+    match error {
+        ApiError::Invalid(mut refusal) => {
+            refusal.pointer = format!("{}{}", prefix, refusal.pointer);
+            ApiError::Invalid(refusal)
+        }
+        other => other,
+    }
 }
 
 /// `PUT {P}/collections/{collection}/entries/{entry}`.
@@ -374,9 +850,11 @@ pub(crate) async fn save(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<EntryPath>,
+    Query(query): Query<LocaleQuery>,
     headers: HeaderMap,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
+    check_locale(query.locale.as_deref())?;
     let expected = if_match(&headers)?;
     let key = idempotency_key(&headers)?;
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
@@ -406,12 +884,35 @@ pub(crate) async fn save(
         title: content.title(),
         schema_version: version,
     };
+    let uniques = unique_pairs(&content_type, &content);
+    check_dangling(&mut tx, &content_type, &content).await?;
+    // The outgoing document, for the inverse diff; the save itself still guards on `expected`.
+    let before = entries::get(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?
+        .map(|draft| draft.content);
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.
-    match entries::save(&mut tx, entry, expected, revision)
+    match entries::save(&mut tx, entry, expected, revision, &uniques)
         .await
         .map_err(ApiError::from_db)?
     {
-        Saved::Saved(draft) => finish(tx, SAVE, key, StatusCode::OK, draft).await,
+        Saved::Saved(draft) => {
+            if let Some(tag) = query.locale.as_deref() {
+                entries::set_locale(&mut tx, &path.collection, entry, Some(tag))
+                    .await
+                    .map_err(ApiError::from_db)?;
+            }
+            sync_inverses(
+                &mut tx,
+                &content_type,
+                &path.collection,
+                draft.entry_id,
+                before.as_deref(),
+                Some(&draft.content),
+            )
+            .await?;
+            finish(tx, SAVE, key, StatusCode::OK, *draft).await
+        }
         Saved::Stale { current } => Err(ApiError::StaleRevision { current }),
         Saved::NotFound => Err(ApiError::NotFound),
     }
@@ -429,13 +930,105 @@ pub(crate) async fn get(
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
+    let localizations = entries::localizations(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     let revision = draft.revision.id;
     let body = serde_json::to_string(&Data {
-        data: DraftView::new(draft)?,
+        data: DraftView::new(draft, localizations)?,
     })
     .map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, Some(revision), false))
+}
+
+/// `POST {P}/collections/{collection}/entries/{entry}/localizations?locale=fr`: a sibling in
+/// another locale, starting from this entry's draft. Both join (or stay in) one group — one
+/// entry per locale in it, enforced by the database.
+pub(crate) async fn localize(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<EntryPath>,
+    Query(query): Query<LocaleQuery>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let Some(locale) = query.locale.as_deref() else {
+        return Err(ApiError::InvalidField {
+            reason: "missing_locale",
+            pointer: "/locale",
+            message: "a localization needs its locale, like `?locale=fr`".to_owned(),
+        });
+    };
+    check_locale(Some(locale))?;
+    let key = idempotency_key(&headers)?;
+    let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    crate::members::require(
+        &tx.role,
+        colophon_domain::policy::Action::WriteContent,
+        "your role can't write content in this project",
+    )?;
+    // The source must exist — 404, not a silent "group already has it".
+    content_type(&mut tx, &path.collection).await?;
+    let request = request_hash(&[LOCALIZE, &path.collection, &entry.to_string(), locale]);
+    if let Some(replay) = claim(&mut tx, LOCALIZE, key, &request).await? {
+        return Ok(replay);
+    }
+    match entries::create_localization(&mut tx, Uuid::now_v7(), entry, &path.collection, locale)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Localized::Made(draft) => finish(tx, LOCALIZE, key, StatusCode::CREATED, *draft).await,
+        Localized::Occupied(_) => Err(ApiError::Conflict(
+            "a version in that locale already exists",
+        )),
+        Localized::Missing => Err(ApiError::NotFound),
+    }
+}
+
+/// `DELETE {P}/collections/{collection}/entries/{entry}`: gone for good, but only while
+/// nothing references it — a changeset item or a published copy answers `conflict`.
+pub(crate) async fn remove(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<EntryPath>,
+) -> Result<Response, ApiError> {
+    let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // Its mirrors lose it first: `back` fields drop this entry before it goes, same transaction.
+    if let Some(before) = entries::get(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        let (definition, _) = content_type(&mut tx, &path.collection).await?;
+        sync_inverses(
+            &mut tx,
+            &definition,
+            &path.collection,
+            entry,
+            Some(&before.content),
+            None,
+        )
+        .await?;
+    }
+    let removed = entries::remove(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?;
+    match removed {
+        Removed::Removed => {
+            tx.commit().await.map_err(ApiError::from_db)?;
+            Ok(json(
+                StatusCode::OK,
+                r#"{"data":{"removed":true}}"#.to_string(),
+                None,
+                false,
+            ))
+        }
+        Removed::NotFound => Err(ApiError::NotFound),
+        Removed::Referenced => Err(ApiError::Conflict(
+            "the entry is still referenced: it is in a changeset or was published",
+        )),
+    }
 }
 
 /// A cursor is bound to the project, environment and collection it came from (module 04).
@@ -465,13 +1058,34 @@ pub(crate) async fn list(
     Path(path): Path<CollectionPath>,
     Query(query): Query<ListQuery>,
 ) -> Result<Response, ApiError> {
+    check_locale(query.locale.as_deref())?;
     let limit = query.limit.unwrap_or(DEFAULT_PAGE);
     if !(1..=entries::MAX_PAGE).contains(&limit) {
         return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
     }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     // An unknown collection is 404, not an empty list.
-    content_type(&mut tx, &path.collection).await?;
+    let (definition, _) = content_type(&mut tx, &path.collection).await?;
+    // List columns: up to three short fields — a number, a choice, yes or no, a date, a
+    // time — in the definition's order, so a list can show the fields that say what an
+    // entry is beyond its title.
+    let columns: Vec<String> = definition
+        .fields()
+        .iter()
+        .filter(|field| {
+            matches!(
+                field.kind,
+                FieldKind::Number { .. }
+                    | FieldKind::Boolean
+                    | FieldKind::Enum { .. }
+                    | FieldKind::DateTime
+                    | FieldKind::Date
+                    | FieldKind::Time
+            )
+        })
+        .take(3)
+        .map(|field| field.id.clone())
+        .collect();
     let project = tx.project;
     let before = query
         .cursor
@@ -489,10 +1103,17 @@ pub(crate) async fn list(
             "a search is at most 100 characters",
         ));
     }
-    let mut rows: Vec<Summary> =
-        entries::list(&mut tx, &path.collection, before, limit + 1, search)
-            .await
-            .map_err(ApiError::from_db)?;
+    let mut rows: Vec<Summary> = entries::list(
+        &mut tx,
+        &path.collection,
+        before,
+        limit + 1,
+        search,
+        &columns,
+        query.locale.as_deref(),
+    )
+    .await
+    .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     let more = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);
     rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
@@ -510,6 +1131,8 @@ pub(crate) async fn list(
                     revision_id,
                     generation,
                 }),
+                fields: RawValue::from_string(row.fields).map_err(ApiError::internal)?,
+                locale: row.locale,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
@@ -565,6 +1188,77 @@ pub(crate) async fn history(
         .map(RevisionView::new)
         .collect::<Result<Vec<_>, ApiError>>()?;
     let body = serde_json::to_string(&Data { data }).map_err(ApiError::internal)?;
+    Ok(json(StatusCode::OK, body, None, false))
+}
+
+/// `GET {P}/collections/{collection}/entries/{entry}/referenced-by`: the newest drafts
+/// that point at this entry through a `reference` field — the other side of a link. The
+/// `LIKE` scan screens candidates; each row here is verified against a real reference
+/// field, so a uuid sitting in some other field doesn't name itself.
+pub(crate) async fn referenced_by(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<EntryPath>,
+) -> Result<Response, ApiError> {
+    let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    entries::get(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    let needle = entry.to_string();
+    let mut rows = Vec::new();
+    for version in content_types::list(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        let definition: Value =
+            serde_json::from_str(&version.definition).map_err(ApiError::internal)?;
+        let parsed = ContentType::parse(&definition).map_err(ApiError::internal)?;
+        let pointing: Vec<_> = parsed
+            .fields()
+            .iter()
+            .filter(|field| {
+                matches!(&field.kind, FieldKind::Reference { to, .. } if to == &path.collection)
+            })
+            .collect();
+        if pointing.is_empty() {
+            continue;
+        }
+        for candidate in entries::referencing(&mut tx, &version.collection, entry)
+            .await
+            .map_err(ApiError::from_db)?
+        {
+            let Ok(content) = serde_json::from_str::<Value>(&candidate.content) else {
+                continue;
+            };
+            for field in &pointing {
+                let held = match content.get(&field.id) {
+                    Some(Value::String(held)) => held == &needle,
+                    Some(Value::Array(held)) => held
+                        .iter()
+                        .any(|item| item.as_str() == Some(needle.as_str())),
+                    _ => false,
+                };
+                if held {
+                    rows.push(serde_json::json!({
+                        "collection": version.collection,
+                        "collection_name": parsed.name(),
+                        "field": field.id,
+                        "field_label": field.label,
+                        "entry": candidate.id,
+                        "title": candidate.title,
+                    }));
+                }
+            }
+        }
+    }
+    rows.truncate(50);
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let body = serde_json::to_string(&Data {
+        data: Value::Array(rows),
+    })
+    .map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, None, false))
 }
 
@@ -675,5 +1369,18 @@ mod tests {
         };
         assert!(after_cursor(&here_again, other_project, &token).is_err());
         assert!(after_cursor(&here_again, other_project, "not base64 !").is_err());
+    }
+
+    #[test]
+    fn a_strapi_entity_unwraps_to_its_data_and_plain_content_passes_through() {
+        let bare = serde_json::json!({"title": "Hi", "data": "a field literally called data"});
+        assert_eq!(entity(&bare), &bare);
+        let strapi = serde_json::json!({"type": "api::article.article", "data": {"title": "Hi"}});
+        assert_eq!(entity(&strapi), &serde_json::json!({"title": "Hi"}));
+        let marker = serde_json::json!({"version": 2, "data": {"title": "Hi"}});
+        assert_eq!(entity(&marker), &serde_json::json!({"title": "Hi"}));
+        // A `type` that isn't a Strapi namespace doesn't mark anything.
+        let unmarked = serde_json::json!({"type": "note", "data": {"title": "Hi"}});
+        assert_eq!(entity(&unmarked), &unmarked);
     }
 }

@@ -40,6 +40,8 @@ async fn article(tx: &mut ProjectTransaction, title: &str) -> (Uuid, Uuid) {
             title,
             schema_version: 1,
         },
+        &[],
+        None,
     )
     .await
     .expect("created");

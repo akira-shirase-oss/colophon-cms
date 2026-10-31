@@ -8,6 +8,7 @@
 	import { page } from '$app/state';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
+	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
 	import * as Table from '@colophon/ui/ui/table';
 	import FormRow from '#lib/shell/FormRow.svelte';
@@ -44,6 +45,7 @@
 
 	let error = $state('');
 	let busy = $state(false);
+	let inviting = $state(false);
 	let label = $state('');
 	let role = $state<Role>('editor');
 	// The invitation just made: its link exists only in this answer.
@@ -102,6 +104,17 @@
 		await refresh();
 	}
 
+	// Closing the dialog resets it: reopening always starts a fresh invitation, and the
+	// just-made link stays up until it is dismissed.
+	function openInvite(open: boolean) {
+		inviting = open;
+		if (!open) {
+			made = null;
+			copied = false;
+			label = '';
+		}
+	}
+
 	const select =
 		'h-8 rounded-md border border-input bg-card px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
 	const initials = (name: string) =>
@@ -126,6 +139,9 @@
 
 <PageHeader title="Members">
 	{#snippet description()}Who belongs to this project and what each role may do. Owners invite people with a link that works once.{/snippet}
+	{#snippet actions()}
+		{#if owner}<Button onclick={() => openInvite(true)}>Invite a member</Button>{/if}
+	{/snippet}
 </PageHeader>
 
 {#if error}<p role="alert" class="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive" data-testid="members-error">{error}</p>{/if}
@@ -147,12 +163,12 @@
 			</Table.Header>
 			<Table.Body data-testid="members">
 				{#each people.data as member (member.identity_id)}
-					{@const name = member.display_name ?? member.identity_id}
+					{@const name = member.display_name ?? `Member ${member.identity_id.slice(0, 8)}`}
 					{@const self = member.identity_id === who.data?.id}
 					<Table.Row data-testid="member">
 						<Table.Cell class="pl-4">
 							<span class="flex items-center gap-3">
-								<span class="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium" aria-hidden="true">{initials(name)}</span>
+								<span class="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-sm font-medium" aria-hidden="true">{initials(name)}</span>
 								<span class="font-medium">{name}{#if self}<span class="font-normal text-muted-foreground"> (you)</span>{/if}</span>
 							</span>
 						</Table.Cell>
@@ -165,7 +181,7 @@
 									disabled={busy}
 									onchange={(event) => setRole(event.currentTarget, member.identity_id, member.role)}
 								>
-									{#each ROLES as option (option)}<option value={option}>{option}</option>{/each}
+									{#each ROLES as option (option)}<option value={option}>{option.slice(0, 1).toUpperCase()}{option.slice(1)}</option>{/each}
 								</select>
 							{:else}
 								<span class="text-sm capitalize">{member.role}</span>
@@ -185,35 +201,54 @@
 	</div>
 {/if}
 
-{#if owner}
-	<section class="mt-12 max-w-4xl" aria-labelledby="invite-heading">
-		<h2 id="invite-heading" class="mb-1 text-base font-semibold">Invite someone</h2>
-		<p class="mb-4 text-sm text-muted-foreground">The link is shown once, works once, and expires on its own.</p>
-		<form onsubmit={invite} aria-label="Invite someone">
-			<FormRow label="Who is it for?" hint="Only you see this, to recognise the invitation." for="invite-label">
-				<Input id="invite-label" class="max-w-md" bind:value={label} maxlength={100} required placeholder="Sam, copy editor" />
-			</FormRow>
-			<FormRow label="Role" hint={ROLE_SUMMARY[role]} for="invite-role">
-				<select id="invite-role" class="{select} h-9 w-full max-w-md" bind:value={role}>
-					{#each ROLES as option (option)}<option value={option}>{option}: {ROLE_SUMMARY[option]}</option>{/each}
-				</select>
-			</FormRow>
-			<div class="flex justify-end"><Button type="submit" disabled={busy}>Create invitation link</Button></div>
-		</form>
-
+<Dialog.Root open={inviting} onOpenChange={openInvite}>
+	<Dialog.Content>
 		{#if made?.link}
-			<section class="mt-6 rounded-xl border border-live/40 bg-live-soft/50 p-4" data-testid="invitation-link" aria-label="Invitation link">
+			<Dialog.Header>
+				<Dialog.Title>Invitation ready</Dialog.Title>
+				<Dialog.Description>It is shown only now, works once, and expires on its own.</Dialog.Description>
+			</Dialog.Header>
+			<div class="rounded-xl border border-live/40 bg-live-soft/50 p-4" data-testid="invitation-link" aria-label="Invitation link">
 				<p class="text-sm">
 					Send this link to <strong>{made.label}</strong>. It is shown only now, works once, and expires {new Date(made.expires_at).toLocaleString()}.
 				</p>
 				<div class="mt-3 flex gap-2">
-					<Input readonly value={made.link} aria-label="Invitation link" class="font-mono text-xs" onfocus={(event) => event.currentTarget.select()} />
+					<Input readonly value={made.link} aria-label="Invitation link" class="font-mono text-sm" onfocus={(event) => event.currentTarget.select()} />
 					<Button variant="secondary" onclick={copy}>{copied ? 'Copied' : 'Copy'}</Button>
 				</div>
-			</section>
+			</div>
+			<Dialog.Footer>
+				<Button onclick={() => openInvite(false)}>Done</Button>
+			</Dialog.Footer>
+		{:else}
+			<Dialog.Header>
+				<Dialog.Title>Invite a member</Dialog.Title>
+				<Dialog.Description>Make a link for them — it works once and expires on its own.</Dialog.Description>
+			</Dialog.Header>
+			<form onsubmit={invite} aria-label="Invite a member">
+				{#if error}<p role="alert" class="mb-2 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>{/if}
+				<div class="space-y-4 py-2">
+					<FormRow label="Who is it for?" hint="Only you see this, to recognise the invitation." for="invite-label">
+						<Input id="invite-label" bind:value={label} maxlength={100} required placeholder="Sam, copy editor" />
+					</FormRow>
+					<FormRow label="Role" hint={ROLE_SUMMARY[role]} for="invite-role">
+						<select id="invite-role" class="{select} h-9 w-full" bind:value={role}>
+							{#each ROLES as option (option)}<option value={option}>{option.slice(0, 1).toUpperCase()}{option.slice(1)} — {ROLE_SUMMARY[option]}</option>{/each}
+						</select>
+					</FormRow>
+				</div>
+				<Dialog.Footer>
+					<Button variant="outline" type="button" onclick={() => openInvite(false)}>Cancel</Button>
+					<Button type="submit" disabled={busy || label.trim() === ''}>Create invitation link</Button>
+				</Dialog.Footer>
+			</form>
 		{/if}
+	</Dialog.Content>
+</Dialog.Root>
 
-		<h2 class="mt-10 mb-3 text-base font-semibold">Pending invitations</h2>
+{#if owner}
+	<section class="mt-12 max-w-4xl" aria-labelledby="invite-heading">
+		<h2 id="invite-heading" class="mb-3 text-base font-semibold">Pending invitations</h2>
 		{#if pending.isPending}
 			<p class="text-sm text-muted-foreground">Loading…</p>
 		{:else if pending.isError}
@@ -224,7 +259,7 @@
 					<li class="rule-dotted flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 last:border-b-0">
 						<span class="min-w-0 flex-1 font-medium">{invitation.label}</span>
 						<span class="text-sm capitalize">{invitation.role}</span>
-						<span class="text-xs text-muted-foreground">until {new Date(invitation.expires_at).toLocaleString()}</span>
+						<span class="text-sm text-muted-foreground">until {new Date(invitation.expires_at).toLocaleString()}</span>
 						<Button
 							variant="ghost"
 							size="sm"

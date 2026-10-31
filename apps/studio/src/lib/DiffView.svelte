@@ -14,7 +14,7 @@
 <div class="space-y-4" data-testid="diff">
 	{#each changed as change (change.field.id)}
 		<div class="grid gap-1.5" data-testid="diff-field" data-field={change.field.id}>
-			<p class="text-xs font-medium text-muted-foreground">{change.field.label}</p>
+			<p class="text-sm font-medium text-muted-foreground">{change.field.label}</p>
 			<p class="text-sm leading-relaxed whitespace-pre-wrap">
 				{#each change.pieces as piece, index (index)}
 					{#if piece.kind === 'same'}<span>{piece.text}</span>{:else if piece.kind === 'removed'}<del
@@ -29,6 +29,6 @@
 		<p class="text-sm text-muted-foreground">No differences between {before.toLowerCase()} and {after.toLowerCase()}.</p>
 	{/each}
 	{#if same > 0 && changed.length > 0}
-		<p class="text-xs text-muted-foreground">{same} other field{same === 1 ? '' : 's'} unchanged.</p>
+		<p class="text-sm text-muted-foreground">{same} other field{same === 1 ? '' : 's'} unchanged.</p>
 	{/if}
 </div>

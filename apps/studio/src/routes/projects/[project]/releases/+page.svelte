@@ -81,7 +81,7 @@
 		{:else}
 			<span>Live: release {releases.data.generation}.</span>
 			<span class="text-muted-foreground">Anyone can read it at</span>
-			<a class="inline-flex items-center gap-1 font-mono text-xs underline underline-offset-2" href={deliveryUrl(project, 'articles')} data-testid="delivery-link" data-sveltekit-reload
+			<a class="inline-flex items-center gap-1 font-mono text-sm underline underline-offset-2" href={deliveryUrl(project, 'articles')} data-testid="delivery-link" data-sveltekit-reload
 				>{deliveryUrl(project, 'articles')}<ArrowUpRightIcon class="size-3" aria-hidden="true" /></a
 			>
 		{/if}

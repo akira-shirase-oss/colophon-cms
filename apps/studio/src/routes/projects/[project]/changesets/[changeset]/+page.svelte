@@ -12,10 +12,11 @@
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
+	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Textarea } from '@colophon/ui/ui/textarea';
-	import { ApiError, type Changeset, changesetAction, getChangeset, newKey, publishChangeset } from '#lib/api.ts';
+	import { ApiError, type Changeset, changesetAction, cancelScheduled, getChangeset, newKey, publishChangeset, scheduledPublishes, schedulePublish } from '#lib/api.ts';
 	import ItemDiff from '#lib/ItemDiff.svelte';
 	import { ago, projectQuery, releasesQuery } from '#lib/queries.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
@@ -32,8 +33,11 @@
 	const reviewer = $derived(role === 'owner' || role === 'publisher');
 	// Publishing names the release it follows: the latest one this page has seen.
 	const releases = createQuery(() => releasesQuery(project));
+	// The publishes set on this changeset: pending first, then how the last ones ended.
+	const planned = createQuery(() => ({ queryKey: ['scheduled', project, id], queryFn: () => scheduledPublishes(project, id) }));
 	// One key per publish attempt: pressing Publish again after a lost answer is safe.
 	let publishKey = newKey();
+	let publishAt = $state('');
 	// Which items show their comparison; the first few open by default.
 	let open = $state<Record<string, boolean>>({});
 
@@ -70,6 +74,59 @@
 				queryClient.invalidateQueries({ queryKey: ['entries', project] })
 			]);
 		}
+	}
+
+	// Sets the same publish for a future time: it still publishes exactly the approved version,
+	// still on the same base — just later.
+	async function schedule(shown: Changeset) {
+		const base = releases.data?.generation;
+		const at = publishAt === '' ? Number.NaN : new Date(publishAt).getTime();
+		if (base === undefined || Number.isNaN(at)) {
+			error = 'Pick a date and time for the publish.';
+			return;
+		}
+		if (at <= Date.now()) {
+			error = 'Pick a time in the future.';
+			return;
+		}
+		busy = true;
+		error = '';
+		notice = '';
+		try {
+			await schedulePublish(project, id, shown.hash, base, new Date(at).toISOString(), publishKey);
+			publishKey = newKey();
+			publishAt = '';
+			notice = 'The publish is on the schedule — it still publishes exactly this version.';
+		} catch (failure) {
+			if (failure instanceof ApiError && failure.reason === 'stale_changeset') {
+				notice = STALE;
+			} else {
+				error = failure instanceof ApiError ? failure.message : String(failure);
+			}
+		} finally {
+			busy = false;
+			await queryClient.invalidateQueries({ queryKey: ['scheduled', project, id] });
+		}
+	}
+
+	async function deschedule(schedule: string) {
+		busy = true;
+		error = '';
+		notice = '';
+		try {
+			await cancelScheduled(project, id, schedule);
+			notice = 'The publish is off the schedule.';
+		} catch (failure) {
+			error = failure instanceof ApiError ? failure.message : String(failure);
+		} finally {
+			busy = false;
+			await queryClient.invalidateQueries({ queryKey: ['scheduled', project, id] });
+		}
+	}
+
+	/** A schedule's moment, readable: "Nov 2, 2026, 9:00 AM". */
+	function at(iso: string): string {
+		return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 	}
 
 	async function act(shown: Changeset, action: 'submit' | 'refresh' | 'reviews', decision?: 'approve' | 'request_changes') {
@@ -134,7 +191,7 @@
 				{/if}
 			</span>
 			<span aria-hidden="true">·</span>
-			<span>Version <code class="font-mono text-xs" title={shown.hash}>{shown.hash.slice(7, 19)}</code></span>
+			<span>Version <code class="font-mono text-sm" title={shown.hash}>{shown.hash.slice(7, 19)}</code></span>
 		{/snippet}
 		{#snippet actions()}
 			{#if shown.status.state === 'stale'}
@@ -151,7 +208,7 @@
 		{#each STEPS as step, index (step)}
 			<li class="grid gap-1.5">
 				<span class="h-1 rounded-full {index < reached(shown) ? 'bg-foreground' : 'bg-border'}"></span>
-				<span class="text-xs {index < reached(shown) ? 'text-foreground' : 'text-muted-foreground'}">{step}</span>
+				<span class="text-sm {index < reached(shown) ? 'text-foreground' : 'text-muted-foreground'}">{step}</span>
 			</li>
 		{/each}
 	</ol>
@@ -171,14 +228,14 @@
 								<a class="block truncate font-medium hover:underline" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.collection, entry: item.entry_id })}
 									>{item.title}</a
 								>
-								<span class="text-xs text-muted-foreground">{item.collection} · <span class="font-mono">{item.content_hash.slice(7, 15)}</span></span>
+								<span class="text-sm text-muted-foreground">{item.collection} · <span class="font-mono">{item.content_hash.slice(7, 15)}</span></span>
 							</span>
 							{#if item.kind === 'unpublish'}
-								<Badge variant="attention" data-testid="unpublish">unpublish</Badge>
+								<Badge variant="attention" data-testid="unpublish">Unpublish</Badge>
 							{:else if item.published_revision_id === null}
-								<Badge variant="live">new</Badge>
+								<Badge variant="live">New</Badge>
 							{:else}
-								<Badge variant="pending">update</Badge>
+								<Badge variant="pending">Update</Badge>
 							{/if}
 							{#if item.edited}
 								<Badge variant="attention" data-testid="edited"
@@ -209,7 +266,7 @@
 			{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale' && shown.status.state !== 'published'}
 				<section class="rounded-xl border border-border bg-card p-4 shadow-xs" aria-label="Review">
 					<h2 class="text-base font-semibold">Review</h2>
-					<p class="mt-1 text-sm text-muted-foreground">You approve version <code class="font-mono text-xs">{shown.hash.slice(7, 19)}</code>, exactly as shown.</p>
+					<p class="mt-1 text-sm text-muted-foreground">You approve version <code class="font-mono text-sm">{shown.hash.slice(7, 19)}</code>, exactly as shown.</p>
 					<div class="mt-4 grid gap-1.5">
 						<Label for="review-comment">Comment (optional)</Label>
 						<Textarea id="review-comment" bind:value={comment} rows={3} maxlength={2000} />
@@ -221,6 +278,40 @@
 				</section>
 			{/if}
 
+			{#if reviewer && ((planned.data ?? []).length > 0 || shown.status.state === 'approved')}
+				<section class="rounded-xl border border-border bg-card p-4 shadow-xs" aria-label="Schedule">
+					<h2 class="text-base font-semibold">Schedule</h2>
+					{#each planned.data ?? [] as slot (slot.id)}
+						<div class="mt-3 text-sm">
+							{#if slot.status === 'pending' || slot.status === 'claimed'}
+								<div class="flex items-center justify-between gap-3">
+									<p>Publishes {at(slot.run_at)}</p>
+									{#if reviewer}
+										<Button variant="outline" size="sm" onclick={() => deschedule(slot.id)} disabled={busy}>Cancel</Button>
+									{/if}
+								</div>
+							{:else if slot.status === 'committed'}
+								<p>Published as <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases', { project })}>release {slot.generation}</a></p>
+							{:else if slot.status === 'cancelled'}
+								<p class="text-muted-foreground">A publish set for {at(slot.run_at)} was cancelled.</p>
+							{:else}
+								<p class="text-destructive">The publish set for {at(slot.run_at)} could not run: {slot.error}</p>
+							{/if}
+						</div>
+					{/each}
+					{#if shown.status.state === 'approved'}
+						<p class="mt-1 text-sm text-muted-foreground">Or publish this version later — the schedule still commits exactly what was approved.</p>
+						<div class="mt-3 grid gap-1.5">
+							<Label for="publish-at">Publish at</Label>
+							<Input id="publish-at" type="datetime-local" bind:value={publishAt} disabled={busy} />
+						</div>
+						<div class="mt-3">
+							<Button variant="outline" onclick={() => schedule(shown)} disabled={busy || releases.data === undefined || publishAt === ''}>Set the schedule</Button>
+						</div>
+					{/if}
+				</section>
+			{/if}
+
 			<section aria-labelledby="history-heading">
 				<h2 id="history-heading" class="mb-3 text-base font-semibold">History</h2>
 				<ol class="space-y-3 border-l border-dotted border-border pl-5" data-testid="changeset-reviews">
@@ -229,9 +320,9 @@
 							<span class="absolute top-1.5 -left-[1.6rem] size-2.5 rounded-full border-2 border-background {review.decision === 'approve' ? 'bg-live' : 'bg-attention'}" aria-hidden="true"></span>
 							<p>
 								<strong class="font-medium">{review.decision === 'approve' ? 'Approved' : 'Changes requested'}</strong>
-								by {review.reviewer_name ?? review.reviewer_id}
+								by {review.reviewer_name ?? 'a member'}
 							</p>
-							<p class="text-xs text-muted-foreground" title={new Date(review.created_at).toLocaleString()}>
+							<p class="text-sm text-muted-foreground" title={new Date(review.created_at).toLocaleString()}>
 								{ago(review.created_at)}{#if !review.current}<span> · on an earlier version</span>{/if}
 							</p>
 							{#if review.comment}
@@ -245,13 +336,13 @@
 						<li class="relative text-sm">
 							<span class="absolute top-1.5 -left-[1.6rem] size-2.5 rounded-full border-2 border-background bg-pending" aria-hidden="true"></span>
 							<p>Submitted for review</p>
-							<p class="text-xs text-muted-foreground">{ago(shown.submitted_at)}</p>
+							<p class="text-sm text-muted-foreground">{ago(shown.submitted_at)}</p>
 						</li>
 					{/if}
 					<li class="relative text-sm">
 						<span class="absolute top-1.5 -left-[1.6rem] size-2.5 rounded-full border-2 border-background bg-draft" aria-hidden="true"></span>
 						<p>Pinned</p>
-						<p class="text-xs text-muted-foreground">{ago(shown.created_at)}</p>
+						<p class="text-sm text-muted-foreground">{ago(shown.created_at)}</p>
 					</li>
 				</ol>
 			</section>

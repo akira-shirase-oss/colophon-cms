@@ -16,10 +16,13 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
-	import { ApiError, createEntry, type EntryState, entryState, getContentType, newKey } from '#lib/api.ts';
+	import { ApiError, createEntry, type EntryState, entryState, exportUrl, getContentType, importEntries, newKey } from '#lib/api.ts';
+	import { toast } from 'svelte-sonner';
+	import DownloadIcon from '@lucide/svelte/icons/download';
+	import UploadIcon from '@lucide/svelte/icons/upload';
 	import { type FormValue, formValue, starter, storedValue } from '#lib/content.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
-	import { ago, entriesQuery } from '#lib/queries.ts';
+	import { ago, entriesQuery, projectQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -28,6 +31,8 @@
 	const project = $derived(page.params.project ?? '');
 	const collection = $derived(page.params.collection ?? '');
 	const type = createQuery(() => ({ queryKey: ['type', project, collection], queryFn: () => getContentType(project, collection) }));
+	const mine = createQuery(() => projectQuery(project));
+	const mayChange = $derived(mine.data?.role === 'owner' || mine.data?.role === 'developer');
 
 	let typed = $state('');
 	let q = $state('');
@@ -37,6 +42,24 @@
 		return () => clearTimeout(timer);
 	});
 	const entries = createQuery(() => ({ ...entriesQuery(project, collection, q), placeholderData: keepPreviousData }));
+	let fileInput: HTMLInputElement | undefined = $state();
+	let importing = $state(false);
+	async function importFile(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (file === undefined) return;
+		importing = true;
+		try {
+			const imported = await importEntries(project, collection, await file.text());
+			toast.success(`${imported} ${imported === 1 ? 'entry' : 'entries'} imported`);
+			await entries.refetch();
+		} catch (error) {
+			toast.error(error instanceof ApiError ? error.message : 'The import failed');
+		} finally {
+			importing = false;
+			input.value = '';
+		}
+	}
 	let filter = $state<'all' | EntryState>('all');
 	const rows = $derived((entries.data?.data ?? []).filter((entry) => filter === 'all' || entryState(entry) === filter));
 	const tally = $derived(
@@ -48,6 +71,19 @@
 			{ draft: 0, live: 0, changed: 0 }
 		)
 	);
+
+	// The columns beside the title: the short fields the list's summaries carry (a number, a
+	// choice, yes or no, a date and time), in the definition's order.
+	const columns = $derived(
+		(type.data?.definition.fields ?? []).filter((field) => ['number', 'boolean', 'enum', 'datetime', 'date', 'time'].includes(field.type)).slice(0, 3)
+	);
+	function shown(field: (typeof columns)[number], value: string | number | boolean | null | undefined): string {
+		if (value === null || value === undefined) return '—';
+		if (field.type === 'boolean') return value === true ? 'Yes' : 'No';
+		if (field.type === 'number') return Number(value).toLocaleString();
+		if (field.type === 'datetime') return new Date(String(value)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+		return String(value);
+	}
 
 	// A new entry asks only for the required fields that have no natural starting value.
 	const asked = $derived(
@@ -97,10 +133,42 @@
 			<span>{type.data.definition.fields.length} fields</span><span aria-hidden="true">·</span><span>version {type.data.version}</span>
 		{/snippet}
 		{#snippet actions()}
-			<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>
+			<Button variant="outline" href={exportUrl(project, collection)} download={`${collection}.jsonl`} data-testid="export-entries"><DownloadIcon data-icon="inline-start" />Export</Button>
+			{#if mayChange}
+				<Button variant="outline" onclick={() => fileInput?.click()} disabled={importing} data-testid="import-entries"><UploadIcon data-icon="inline-start" />{importing ? 'Importing…' : 'Import'}</Button>
+				<input type="file" accept=".jsonl,.txt,.json" class="hidden" bind:this={fileInput} onchange={importFile} />
+				<Button variant="outline" href={resolve('/projects/[project]/types/[type]', { project, type: collection })} data-testid="change-fields">Change fields</Button>
+			{/if}
+			{#if !(type.data.definition.kind === 'single' && (entries.data?.data.length ?? 0) >= 1)}
+				<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>
+			{/if}
 		{/snippet}
 	</PageHeader>
 
+	{#if type.data.definition.kind === 'single'}
+		{#if entries.isPending}
+			<Skeleton class="h-48 w-full rounded-xl" />
+		{:else if entries.isError}
+			<Problem error={entries.error} />
+		{:else if entries.data.data.length === 0}
+			<EmptyState icon={FileTextIcon} title="One entry, not a list">
+				This collection holds a single {type.data.definition.name.toLowerCase()} entry — a homepage, a settings page.
+				<div class="mt-2"><Button onclick={() => (creating = true)}>Create the entry</Button></div>
+			</EmptyState>
+		{:else}
+			{@const entry = entries.data.data[0]!}
+			<a
+				href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}
+				class="group flex items-center justify-between gap-4 rounded-xl border border-border bg-card p-6 transition-colors hover:border-primary/40"
+			>
+				<div class="min-w-0">
+					<h2 class="truncate text-lg font-medium group-hover:underline">{entry.revision.title}</h2>
+					<p class="mt-1 text-sm text-muted-foreground">Updated {ago(entry.updated_at)}</p>
+				</div>
+				<StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} />
+			</a>
+		{/if}
+	{:else}
 	<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<Tabs.Root bind:value={filter as string}>
 			<Tabs.List aria-label="Show">
@@ -128,6 +196,9 @@
 				<Table.Header>
 					<Table.Row class="hover:bg-transparent">
 						<Table.Head class="pl-4">Title</Table.Head>
+						{#each columns as column (column.id)}
+							<Table.Head class="hidden md:table-cell">{column.label}</Table.Head>
+						{/each}
 						<Table.Head>Status</Table.Head>
 						<Table.Head class="hidden md:table-cell">Live in</Table.Head>
 						<Table.Head class="pr-4 text-right">Updated</Table.Head>
@@ -141,7 +212,13 @@
 									class="block truncate font-medium after:absolute after:inset-0 focus-visible:underline focus-visible:outline-none"
 									href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}>{entry.revision.title}</a
 								>
+								{#if entry.locale}
+									<span class="ml-2 inline-flex items-center rounded border border-border px-1.5 py-0.5 text-sm font-medium uppercase text-muted-foreground">{entry.locale}</span>
+								{/if}
 							</Table.Cell>
+							{#each columns as column (column.id)}
+								<Table.Cell class="hidden max-w-0 truncate text-sm text-muted-foreground md:table-cell">{shown(column, entry.fields?.[column.id])}</Table.Cell>
+							{/each}
 							<Table.Cell><StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} /></Table.Cell>
 							<Table.Cell class="hidden text-sm text-muted-foreground tabular md:table-cell">
 								{entry.published ? `No. ${entry.published.generation}` : '—'}
@@ -150,7 +227,7 @@
 						</Table.Row>
 					{:else}
 						<Table.Row class="hover:bg-transparent">
-							<Table.Cell colspan={4} class="py-10 text-center text-muted-foreground">
+							<Table.Cell colspan={4 + columns.length} class="py-10 text-center text-muted-foreground">
 								{q === '' ? 'No entries in this view.' : `No titles match “${q}”.`}
 							</Table.Cell>
 						</Table.Row>
@@ -161,6 +238,7 @@
 		{#if entries.data.next_cursor !== null}
 			<p class="mt-3 text-sm text-muted-foreground">Showing the newest 100. Search to find older entries.</p>
 		{/if}
+	{/if}
 	{/if}
 
 	<Dialog.Root bind:open={creating}>
