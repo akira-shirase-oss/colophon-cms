@@ -20,7 +20,7 @@ use axum::{
 };
 use colophon_db::{
     content_types::{self, Updated, Version},
-    entries::Removed,
+    entries::{self, Removed},
     idempotency::{self, Claim},
     scope::ProjectTransaction,
 };
@@ -351,6 +351,21 @@ pub(crate) async fn update(
     let previous = ContentType::parse(&stored).map_err(ApiError::internal)?;
     previous.check_successor(&next).map_err(ApiError::Invalid)?;
     check_reference_targets(&mut tx, &next).await?;
+    if next.is_single() && !previous.is_single() {
+        let count = entries::list(&mut tx, &path.slug, None, 2, None, &[])
+            .await
+            .map_err(ApiError::from_db)?
+            .len();
+        if count > 1 {
+            return Err(ApiError::Invalid(Refusal {
+                code: "too_many_entries",
+                pointer: "/kind".to_owned(),
+                message: format!(
+                    "a single collection holds one entry; this collection holds {count}"
+                ),
+            }));
+        }
+    }
     match content_types::update(
         &mut tx,
         &path.slug,

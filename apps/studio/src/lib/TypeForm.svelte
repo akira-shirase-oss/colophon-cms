@@ -220,6 +220,8 @@
 	);
 	// svelte-ignore state_referenced_locally
 	let titleKey = $state(String(editing?.definition.fields.findIndex((field) => field.id === editing.definition.title_field) ?? 0));
+	// svelte-ignore state_referenced_locally
+	let single = $state(editing?.definition.kind === 'single');
 	let error = $state('');
 	let busy = $state(false);
 
@@ -374,6 +376,7 @@
 		const definition: Definition = {
 			name: name.trim(),
 			title_field: titleRow.id,
+			...(single ? { kind: 'single' as const } : {}),
 			fields: fields.map((field): FieldDefinition => {
 				const base = {
 					id: field.id,
@@ -482,6 +485,11 @@
 			readonly={editing !== null}
 			placeholder="articles"
 		/>
+	</FormRow>
+	<FormRow label="Entries" hint="A single collection holds exactly one entry — a homepage, a settings page.">
+		<label class="flex items-center gap-2 text-sm" for="type-single">
+			<Checkbox id="type-single" bind:checked={single} /> This collection holds one entry
+		</label>
 	</FormRow>
 	<FormRow label="Fields" hint="At least one. Entries keep whatever they were validated against.">
 		<div class="overflow-hidden rounded-md border border-border bg-card">

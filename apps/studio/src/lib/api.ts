@@ -62,6 +62,8 @@ export type FieldDefinition = {
 export interface Definition {
 	name: string;
 	title_field: string;
+	/** `single` holds exactly one entry (a homepage, a settings page); absent means a collection. */
+	kind?: 'single';
 	fields: FieldDefinition[];
 }
 

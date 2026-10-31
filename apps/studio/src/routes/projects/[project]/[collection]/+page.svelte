@@ -115,7 +115,9 @@
 			{#if mayChange}
 				<Button variant="outline" href={resolve('/projects/[project]/types/[type]', { project, type: collection })} data-testid="change-fields">Change fields</Button>
 			{/if}
-			<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>
+			{#if !(type.data.definition.kind === 'single' && (entries.data?.data.length ?? 0) >= 1)}
+				<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>
+			{/if}
 		{/snippet}
 	</PageHeader>
 

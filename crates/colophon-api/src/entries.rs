@@ -403,6 +403,14 @@ pub(crate) async fn create(
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);
     }
+    if content_type.is_single()
+        && !entries::list(&mut tx, &path.collection, None, 1, None, &[])
+            .await
+            .map_err(ApiError::from_db)?
+            .is_empty()
+    {
+        return Err(ApiError::Conflict("a single collection holds one entry"));
+    }
     let uniques = unique_pairs(&content_type, &content);
     check_dangling(&mut tx, &content_type, &content).await?;
     let revision = NewRevision {

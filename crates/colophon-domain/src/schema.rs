@@ -247,6 +247,9 @@ pub struct When {
 pub struct ContentType {
     name: String,
     title_field: String,
+    /// A `single` collection holds exactly one entry (a homepage, a settings page); the API
+    /// refuses a second. Anything else is a collection.
+    single: bool,
     fields: Vec<Field>,
 }
 
@@ -940,6 +943,7 @@ impl ContentType {
         Self {
             name: "Articles".to_owned(),
             title_field: "title".to_owned(),
+            single: false,
             fields: vec![
                 Field {
                     id: "title".to_owned(),
@@ -972,7 +976,19 @@ impl ContentType {
         let object = value
             .as_object()
             .ok_or_else(|| refuse("not_an_object", &root, "a definition is a JSON object"))?;
-        only(object, &["name", "title_field", "fields"], &root)?;
+        only(object, &["name", "title_field", "kind", "fields"], &root)?;
+        let single = match object.get("kind") {
+            None => false,
+            Some(Value::String(kind)) if kind == "collection" => false,
+            Some(Value::String(kind)) if kind == "single" => true,
+            _ => {
+                return Err(refuse(
+                    "invalid_kind",
+                    &at(&root, "kind"),
+                    "`kind` is \"collection\" or \"single\"",
+                ));
+            }
+        };
         let name = object
             .get("name")
             .and_then(Value::as_str)
@@ -1036,6 +1052,7 @@ impl ContentType {
         Ok(Self {
             name,
             title_field,
+            single,
             fields,
         })
     }
@@ -1542,6 +1559,11 @@ impl ContentType {
         &self.title_field
     }
 
+    /// Whether this is a single collection: it holds one entry, never two.
+    pub fn is_single(&self) -> bool {
+        self.single
+    }
+
     /// The fields, in order.
     pub fn fields(&self) -> &[Field] {
         &self.fields
@@ -1554,6 +1576,9 @@ impl ContentType {
         write_string(&mut out, &self.name);
         out.push_str(r#","title_field":"#);
         write_string(&mut out, &self.title_field);
+        if self.single {
+            out.push_str(r#","kind":"single""#);
+        }
         out.push_str(r#","fields":["#);
         for (index, field) in self.fields.iter().enumerate() {
             if index > 0 {
@@ -2701,6 +2726,46 @@ mod tests {
         assert_eq!(refusal.code, "needs_migration");
         kind.check_successor(&before)
             .expect("dropping unique is always safe");
+    }
+
+    #[test]
+    fn a_single_collection_is_marked_and_canonical() {
+        let type_ = ContentType::parse(&json!({
+            "name": "Homepage",
+            "title_field": "title",
+            "kind": "single",
+            "fields": [{"id": "title", "label": "Title", "type": "text", "required": true}]
+        }))
+        .expect("valid definition");
+        assert!(type_.is_single());
+        let canonical = type_.canonical_json();
+        assert!(
+            canonical.contains(r#""title_field":"title","kind":"single""#),
+            "{canonical}"
+        );
+        assert!(
+            !ContentType::articles().is_single(),
+            "the built-in type stays a collection"
+        );
+        for (kind, code) in [(json!("many"), "invalid_kind"), (json!(1), "invalid_kind")] {
+            let refusal = ContentType::parse(&json!({
+                "name": "Homepage",
+                "title_field": "title",
+                "kind": kind,
+                "fields": [{"id": "title", "label": "Title", "type": "text", "required": true}]
+            }))
+            .expect_err("must refuse");
+            assert_eq!((refusal.code, refusal.pointer.as_str()), (code, "/kind"));
+        }
+        // "collection" is the word the same rule means: it parses and writes nothing.
+        let back = ContentType::parse(&json!({
+            "name": "Homepage",
+            "title_field": "title",
+            "kind": "collection",
+            "fields": [{"id": "title", "label": "Title", "type": "text", "required": true}]
+        }))
+        .expect("collection parses");
+        assert!(!back.is_single() && !back.canonical_json().contains("kind"));
     }
 
     #[test]
