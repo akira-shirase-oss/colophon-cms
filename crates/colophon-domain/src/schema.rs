@@ -728,6 +728,19 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         (FieldKind::Json { max_bytes: old_max }, FieldKind::Json { max_bytes: new_max }) => {
             new_max >= old_max
         }
+        (FieldKind::Object { fields: old_fields }, FieldKind::Object { fields: new_fields }) => {
+            // Stored objects hold the old shape: every old field must still be there, widened
+            // and not newly required, and a new field can't arrive required.
+            old_fields.iter().all(|old| {
+                new_fields.iter().any(|new| {
+                    new.id == old.id
+                        && widens(&old.kind, &new.kind)
+                        && (!new.required || old.required)
+                })
+            }) && new_fields
+                .iter()
+                .all(|new| !new.required || old_fields.iter().any(|old| old.id == new.id))
+        }
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -859,20 +872,7 @@ impl ContentType {
                 format!("a content type has 1 to {MAX_FIELDS} fields"),
             ));
         }
-        let mut fields: Vec<Field> = Vec::with_capacity(list.len());
-        for (index, item) in list.iter().enumerate() {
-            let mut pointer = at(&root, "fields");
-            pointer.push_index(index);
-            let field = Self::field(item, &pointer)?;
-            if fields.iter().any(|seen| seen.id == field.id) {
-                return Err(refuse(
-                    "duplicate_field",
-                    &at(&pointer, "id"),
-                    format!("`{}` is used by two fields", field.id),
-                ));
-            }
-            fields.push(field);
-        }
+        let fields = Self::field_list(list, &at(&root, "fields"), false)?;
         let title_field = object
             .get("title_field")
             .and_then(Value::as_str)
@@ -936,7 +936,34 @@ impl ContentType {
         Ok(())
     }
 
-    fn field(value: &Value, pointer: &Pointer) -> Result<Field, Refusal> {
+    /// A `fields` array: 1 to `MAX_FIELDS` fields with distinct ids. `nested` marks a list
+    /// inside an object field, where per-field options don't apply.
+    fn field_list(list: &[Value], pointer: &Pointer, nested: bool) -> Result<Vec<Field>, Refusal> {
+        if list.is_empty() || list.len() > MAX_FIELDS {
+            return Err(refuse(
+                "invalid_fields",
+                pointer,
+                format!("a field list has 1 to {MAX_FIELDS} fields"),
+            ));
+        }
+        let mut fields: Vec<Field> = Vec::with_capacity(list.len());
+        for (index, item) in list.iter().enumerate() {
+            let mut at_index = pointer.clone();
+            at_index.push_index(index);
+            let field = Self::field(item, &at_index, nested)?;
+            if fields.iter().any(|seen| seen.id == field.id) {
+                return Err(refuse(
+                    "duplicate_field",
+                    &at(&at_index, "id"),
+                    format!("`{}` is used by two fields", field.id),
+                ));
+            }
+            fields.push(field);
+        }
+        Ok(fields)
+    }
+
+    fn field(value: &Value, pointer: &Pointer, nested: bool) -> Result<Field, Refusal> {
         let object = value
             .as_object()
             .ok_or_else(|| refuse("not_an_object", pointer, "a field is a JSON object"))?;
@@ -999,24 +1026,12 @@ impl ContentType {
                 only(object, &[&common[..], &["max_bytes"]].concat(), pointer)?;
                 json_kind(object, pointer)?
             }
+            Some("object") => {
+                only(object, &[&common[..], &["fields"]].concat(), pointer)?;
+                Self::object_kind(object, pointer, nested)?
+            }
             other => {
-                let kind = match other {
-                    Some("rich_text") => FieldKind::RichText,
-                    Some("boolean") => FieldKind::Boolean,
-                    Some("datetime") => FieldKind::DateTime,
-                    Some("date") => FieldKind::Date,
-                    Some("time") => FieldKind::Time,
-                    Some("email") => FieldKind::Email,
-                    Some("url") => FieldKind::Url,
-                    Some("color") => FieldKind::Color,
-                    _ => {
-                        return Err(refuse(
-                            "invalid_type",
-                            &at(pointer, "type"),
-                            "`type` is one of text, rich_text, number, boolean, enum, datetime, date, time, email, url, markdown, color",
-                        ));
-                    }
-                };
+                let kind = Self::leaf_kind(other, pointer, nested)?;
                 only(object, &common, pointer)?;
                 kind
             }
@@ -1030,17 +1045,94 @@ impl ContentType {
             when: None,
             unique: false,
         };
-        Self::field_options(&mut field, object, pointer)?;
+        Self::field_options(&mut field, object, pointer, nested)?;
         Ok(field)
     }
 
-    /// The options any kind can carry: `default` (checked like a value, kept canonical) and
-    /// `when` (display-only, refused on a required field).
+    /// A kind that needs no options of its own. Rich text can't sit inside an object (its
+    /// editor lives at the top level), and an unrecognised name is `invalid_type`.
+    fn leaf_kind(
+        other: Option<&str>,
+        pointer: &Pointer,
+        nested: bool,
+    ) -> Result<FieldKind, Refusal> {
+        let kind = match other {
+            Some("rich_text") if nested => {
+                return Err(refuse(
+                    "invalid_type",
+                    &at(pointer, "type"),
+                    "rich text can't sit inside an object",
+                ));
+            }
+            Some("rich_text") => FieldKind::RichText,
+            Some("boolean") => FieldKind::Boolean,
+            Some("datetime") => FieldKind::DateTime,
+            Some("date") => FieldKind::Date,
+            Some("time") => FieldKind::Time,
+            Some("email") => FieldKind::Email,
+            Some("url") => FieldKind::Url,
+            Some("color") => FieldKind::Color,
+            _ => {
+                return Err(refuse(
+                    "invalid_type",
+                    &at(pointer, "type"),
+                    "`type` is one of text, rich_text, number, boolean, enum, datetime, date, time, email, url, markdown, color",
+                ));
+            }
+        };
+        Ok(kind)
+    }
+
+    /// An `object` kind: `{"type": "object", "fields": [...]}`. An object can't hold another
+    /// object or rich text, and its fields carry `required` and kind options only.
+    fn object_kind(
+        object: &Map<String, Value>,
+        pointer: &Pointer,
+        nested: bool,
+    ) -> Result<FieldKind, Refusal> {
+        if nested {
+            return Err(refuse(
+                "invalid_type",
+                &at(pointer, "type"),
+                "an object can't hold another object yet",
+            ));
+        }
+        let list = object
+            .get("fields")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                refuse(
+                    "invalid_fields",
+                    &at(pointer, "fields"),
+                    "an object's `fields` is a list of fields",
+                )
+            })?;
+        Ok(FieldKind::Object {
+            fields: Self::field_list(list, &at(pointer, "fields"), true)?,
+        })
+    }
+
+    /// The options any kind can carry: `default` (checked like a value, kept canonical), `when`
+    /// (display-only, refused on a required field) and `unique` (single, short values only).
+    /// Inside an object none of them apply: they live on the object field itself.
     fn field_options(
         field: &mut Field,
         object: &Map<String, Value>,
         pointer: &Pointer,
+        nested: bool,
     ) -> Result<(), Refusal> {
+        if nested {
+            for key in ["default", "when", "unique"] {
+                if object.contains_key(key) {
+                    return Err(refuse(
+                        "invalid_field",
+                        &at(pointer, key),
+                        format!("`{key}` goes on the object field, not a field inside it"),
+                    ));
+                }
+            }
+            return Ok(());
+        }
         if let Some(default) = object.get("default") {
             // The default must hold for the kind: it goes through the same check a value does
             // and keeps the canonical spelling, so writing it later changes no bytes.
@@ -1065,6 +1157,7 @@ impl ContentType {
                 FieldKind::RichText
                     | FieldKind::Markdown { .. }
                     | FieldKind::Json { .. }
+                    | FieldKind::Object { .. }
                     | FieldKind::Text {
                         multiline: true,
                         ..
@@ -1171,93 +1264,108 @@ impl ContentType {
             if index > 0 {
                 out.push(',');
             }
-            out.push_str(r#"{"id":"#);
-            write_string(&mut out, &field.id);
-            out.push_str(r#","label":"#);
-            write_string(&mut out, &field.label);
-            out.push_str(r#","type":"#);
-            write_string(&mut out, field.kind.name());
-            out.push_str(if field.required {
-                r#","required":true"#
-            } else {
-                r#","required":false"#
-            });
-            match &field.kind {
-                FieldKind::Text {
-                    max_chars,
-                    multiline,
-                } => {
-                    out.push_str(r#","max_chars":"#);
-                    out.push_str(&max_chars.to_string());
-                    out.push_str(if *multiline {
-                        r#","multiline":true"#
-                    } else {
-                        r#","multiline":false"#
-                    });
-                }
-                FieldKind::Number { integer, min, max } => {
-                    out.push_str(if *integer {
-                        r#","integer":true"#
-                    } else {
-                        r#","integer":false"#
-                    });
-                    for (key, value) in [(r#","min":"#, min), (r#","max":"#, max)] {
-                        if let Some(value) = value {
-                            out.push_str(key);
-                            write_number(&mut out, *value, *integer);
-                        }
-                    }
-                }
-                FieldKind::Enum { values } => {
-                    out.push_str(r#","values":["#);
-                    for (index, value) in values.iter().enumerate() {
-                        if index > 0 {
-                            out.push(',');
-                        }
-                        write_string(&mut out, value);
-                    }
-                    out.push(']');
-                }
-                FieldKind::Markdown { max_chars } => {
-                    out.push_str(r#","max_chars":"#);
-                    out.push_str(&max_chars.to_string());
-                }
-                FieldKind::Json { max_bytes } => {
-                    out.push_str(r#","max_bytes":"#);
-                    out.push_str(&max_bytes.to_string());
-                }
-                FieldKind::RichText
-                | FieldKind::Boolean
-                | FieldKind::DateTime
-                | FieldKind::Date
-                | FieldKind::Time
-                | FieldKind::Email
-                | FieldKind::Url
-                | FieldKind::Color => {}
-            }
-            if let Some(default) = &field.default {
-                out.push_str(r#","default":"#);
-                out.push_str(default);
-            }
-            if let Some(clause) = &field.when {
-                out.push_str(r#","when":{"field":"#);
-                write_string(&mut out, &clause.field);
-                out.push_str(r#","in":["#);
-                for (index, option) in clause.options.iter().enumerate() {
-                    if index > 0 {
-                        out.push(',');
-                    }
-                    write_string(&mut out, option);
-                }
-                out.push_str("]}");
-            }
-            if field.unique {
-                out.push_str(r#","unique":true"#);
-            }
-            out.push('}');
+            Self::write_field(&mut out, field);
         }
         out.push_str("]}");
         out
+    }
+
+    /// One field of a definition in canonical form — used at the top level and inside objects.
+    fn write_field(out: &mut String, field: &Field) {
+        out.push_str(r#"{"id":"#);
+        write_string(out, &field.id);
+        out.push_str(r#","label":"#);
+        write_string(out, &field.label);
+        out.push_str(r#","type":"#);
+        write_string(out, field.kind.name());
+        out.push_str(if field.required {
+            r#","required":true"#
+        } else {
+            r#","required":false"#
+        });
+        match &field.kind {
+            FieldKind::Text {
+                max_chars,
+                multiline,
+            } => {
+                out.push_str(r#","max_chars":"#);
+                out.push_str(&max_chars.to_string());
+                out.push_str(if *multiline {
+                    r#","multiline":true"#
+                } else {
+                    r#","multiline":false"#
+                });
+            }
+            FieldKind::Number { integer, min, max } => {
+                out.push_str(if *integer {
+                    r#","integer":true"#
+                } else {
+                    r#","integer":false"#
+                });
+                for (key, value) in [(r#","min":"#, min), (r#","max":"#, max)] {
+                    if let Some(value) = value {
+                        out.push_str(key);
+                        write_number(out, *value, *integer);
+                    }
+                }
+            }
+            FieldKind::Enum { values } => {
+                out.push_str(r#","values":["#);
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    write_string(out, value);
+                }
+                out.push(']');
+            }
+            FieldKind::Markdown { max_chars } => {
+                out.push_str(r#","max_chars":"#);
+                out.push_str(&max_chars.to_string());
+            }
+            FieldKind::Json { max_bytes } => {
+                out.push_str(r#","max_bytes":"#);
+                out.push_str(&max_bytes.to_string());
+            }
+            FieldKind::Object { fields } => {
+                out.push_str(r#","fields":["#);
+                for (index, nested) in fields.iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    Self::write_field(out, nested);
+                }
+                out.push(']');
+            }
+            FieldKind::RichText
+            | FieldKind::Boolean
+            | FieldKind::DateTime
+            | FieldKind::Date
+            | FieldKind::Time
+            | FieldKind::Email
+            | FieldKind::Url
+            | FieldKind::Color => {}
+        }
+        if let Some(default) = &field.default {
+            out.push_str(r#","default":"#);
+            out.push_str(default);
+        }
+        if let Some(clause) = &field.when {
+            out.push_str(r#","when":{"field":"#);
+            write_string(out, &clause.field);
+            out.push_str(r#","in":["#);
+            for (index, option) in clause.options.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_string(out, option);
+            }
+            out.push_str("]}");
+        }
+        if field.unique {
+            out.push_str(r#","unique":true"#);
+        }
+        out.push('}');
     }
 
     /// Validates content against this definition and writes it in canonical form: fields in
@@ -1329,6 +1437,46 @@ impl ContentType {
         })
     }
 
+    /// An object's value: only its declared fields, required ones present, each checked and
+    /// written in definition order.
+    fn object_value(
+        fields: &[Field],
+        label: &str,
+        value: &Value,
+        pointer: &Pointer,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        let nested = value
+            .as_object()
+            .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is an object")))?;
+        let ids: Vec<&str> = fields.iter().map(|field| field.id.as_str()).collect();
+        only(nested, &ids, pointer)?;
+        out.push('{');
+        let mut first = true;
+        for field in fields {
+            let at_field = at(pointer, &field.id);
+            let Some(nested_value) = nested.get(&field.id) else {
+                if field.required {
+                    return Err(refuse(
+                        "missing_field",
+                        &at_field,
+                        format!("`{}` is required", field.label),
+                    ));
+                }
+                continue;
+            };
+            if !first {
+                out.push(',');
+            }
+            first = false;
+            write_string(out, &field.id);
+            out.push(':');
+            Self::value(field, nested_value, &at_field, out)?;
+        }
+        out.push('}');
+        Ok(())
+    }
+
     fn value(
         field: &Field,
         value: &Value,
@@ -1354,6 +1502,9 @@ impl ContentType {
                     message: rejection.to_string(),
                 })?;
                 out.push_str(document.canonical_json());
+            }
+            FieldKind::Object { fields } => {
+                Self::object_value(fields, label, value, pointer, out)?;
             }
             FieldKind::Number { integer, min, max } => {
                 let number = value
@@ -2122,6 +2273,138 @@ mod tests {
         assert_eq!(refusal.code, "needs_migration");
         kind.check_successor(&before)
             .expect("dropping unique is always safe");
+    }
+
+    #[test]
+    fn an_object_field_validates_its_shape_and_points_inside_itself() {
+        let kind = ContentType::parse(&json!({
+            "name": "Events",
+            "title_field": "name",
+            "fields": [
+                {"id": "name", "label": "Name", "type": "text", "required": true},
+                {"id": "venue", "label": "Venue", "type": "object", "fields": [
+                    {"id": "place", "label": "Place", "type": "text", "required": true},
+                    {"id": "seats", "label": "Seats", "type": "number", "integer": true}
+                ]}
+            ]
+        }))
+        .expect("valid definition");
+        let canonical = kind.canonical_json();
+        assert!(
+            canonical.contains(
+                r#""type":"object","required":false,"fields":[{"id":"place","label":"Place","type":"text","required":true"#
+            ),
+            "{canonical}"
+        );
+        // Content keeps the definition's order at every level.
+        let content = kind
+            .validate(&json!({"name": "Launch", "venue": {"seats": 40, "place": "Hall"}}))
+            .expect("valid");
+        assert_eq!(
+            content.canonical_json(),
+            r#"{"name":"Launch","venue":{"place":"Hall","seats":40}}"#
+        );
+        for (value, code, pointer) in [
+            (json!("a tent"), "wrong_type", "/venue"),
+            (
+                json!({"place": "Hall", "extra": 1}),
+                "unknown_field",
+                "/venue/extra",
+            ),
+            (json!({"seats": 40}), "missing_field", "/venue/place"),
+            (
+                json!({"place": "Hall", "seats": "many"}),
+                "wrong_type",
+                "/venue/seats",
+            ),
+        ] {
+            let refusal = kind
+                .validate(&json!({"name": "Launch", "venue": value}))
+                .expect_err("refused");
+            assert_eq!((refusal.code, refusal.pointer.as_str()), (code, pointer));
+        }
+        for (field, code, pointer) in [
+            // An object can't hold another object yet.
+            (
+                json!({"id": "v", "label": "V", "type": "object", "fields": [{"id": "a", "label": "A", "type": "object", "fields": [{"id": "b", "label": "B", "type": "text"}]}]}),
+                "invalid_type",
+                "/fields/1/fields/0/type",
+            ),
+            // Whole-object values aren't single, short values.
+            (
+                json!({"id": "v", "label": "V", "type": "object", "unique": true, "fields": [{"id": "a", "label": "A", "type": "text"}]}),
+                "invalid_unique",
+                "/fields/1/unique",
+            ),
+            // Options live on the object field, not inside it.
+            (
+                json!({"id": "v", "label": "V", "type": "object", "fields": [{"id": "a", "label": "A", "type": "text", "default": "x"}]}),
+                "invalid_field",
+                "/fields/1/fields/0/default",
+            ),
+        ] {
+            let refusal = ContentType::parse(&json!({
+                "name": "Events",
+                "title_field": "name",
+                "fields": [
+                    {"id": "name", "label": "Name", "type": "text", "required": true},
+                    field
+                ]
+            }))
+            .expect_err("refused");
+            assert_eq!((refusal.code, refusal.pointer.as_str()), (code, pointer));
+        }
+    }
+
+    #[test]
+    fn an_objects_shape_widens_only_one_way() {
+        let shape = |fields: Value| {
+            ContentType::parse(&json!({
+                "name": "Events",
+                "title_field": "name",
+                "fields": [
+                    {"id": "name", "label": "Name", "type": "text", "required": true},
+                    {"id": "venue", "label": "Venue", "type": "object", "fields": fields}
+                ]
+            }))
+            .expect("valid definition")
+        };
+        let place = json!({"id": "place", "label": "Place", "type": "text", "required": true});
+        let wide_place = json!({"id": "place", "label": "Place", "type": "text", "required": true, "max_chars": 10000});
+        let loose_place =
+            json!({"id": "place", "label": "Place", "type": "text", "required": false});
+        let seats = json!({"id": "seats", "label": "Seats", "type": "number"});
+        let required_seats =
+            json!({"id": "seats", "label": "Seats", "type": "number", "required": true});
+        // An extra optional field widens; an extra required one needs a migration.
+        shape(json!([place.clone()]))
+            .check_successor(&shape(json!([place.clone(), seats.clone()])))
+            .expect("an optional field widens");
+        let refusal = shape(json!([place.clone()]))
+            .check_successor(&shape(json!([place.clone(), required_seats])))
+            .expect_err("a required field would orphan stored objects");
+        assert_eq!(refusal.code, "needs_migration");
+        let base = shape(json!([place.clone(), seats.clone()]));
+        // Widening or loosening inside still counts as widening.
+        base.check_successor(&shape(json!([wide_place.clone(), seats.clone()])))
+            .expect("widening inside widens");
+        base.check_successor(&shape(json!([loose_place, seats])))
+            .expect("loosening required inside widens");
+        // Dropping a field or asking more of it refuses.
+        for new in [
+            json!([required_seats.clone()]),                // place is gone
+            json!([place.clone(), required_seats.clone()]), // seats turns required
+            json!([place.clone()]),                         // seats is gone
+        ] {
+            assert_eq!(
+                base.check_successor(&shape(new)).expect_err("refused").code,
+                "needs_migration"
+            );
+        }
+        let refusal = shape(json!([wide_place]))
+            .check_successor(&shape(json!([place])))
+            .expect_err("a smaller allowance cuts off stored values");
+        assert_eq!(refusal.code, "needs_migration");
     }
 
     #[test]

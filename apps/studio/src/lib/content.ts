@@ -32,10 +32,19 @@ export function titleOf(definition: Definition, content: Content): string {
 /** What a new entry starts with: an empty document in required rich-text fields, false in
  *  required checkboxes, the first option of required choices; everything else is asked for. */
 export function starter(definition: Definition): Content {
+	return starterFields(definition.fields);
+}
+
+function starterFields(fields: FieldDefinition[]): Content {
 	const content: Content = {};
-	for (const field of definition.fields) {
+	for (const field of fields) {
 		if (field.default !== undefined) {
 			content[field.id] = field.default;
+			continue;
+		}
+		if (field.type === 'object') {
+			// The editor always gets a subform to bind; an empty one stores as nothing.
+			content[field.id] = starterFields(field.fields);
 			continue;
 		}
 		if (!field.required) continue;
@@ -49,7 +58,11 @@ export function starter(definition: Definition): Content {
 /** A form's value for a field: text inputs and selects work on strings, checkboxes on
  *  booleans, and Svelte binds number inputs as numbers (or null when empty). Rich text has its
  *  own editor. */
-export type FormValue = string | boolean | number | null;
+export type FormValue = string | boolean | number | null | SubForm;
+/** An object's subform: named fields of form values (interfaces recurse where aliases can't). */
+export interface SubForm {
+	[key: string]: FormValue;
+}
 
 /** `YYYY-MM-DDTHH:MM:SSZ` to what a `datetime-local` input shows, in the browser's time zone. */
 export function toLocal(utc: string): string {
@@ -76,6 +89,13 @@ export function formValue(field: FieldDefinition, value: unknown): FormValue {
 			return typeof value === 'string' ? toLocal(value) : '';
 		case 'json':
 			return value === undefined || value === null ? '' : JSON.stringify(value, null, 2);
+		case 'object':
+			return Object.fromEntries(
+				field.fields.map((sub) => [
+					sub.id,
+					formValue(sub, (value as Record<string, unknown> | undefined)?.[sub.id])
+				])
+			);
 		default:
 			return typeof value === 'string' ? value : '';
 	}
@@ -84,6 +104,16 @@ export function formValue(field: FieldDefinition, value: unknown): FormValue {
 /** The stored value for a form value, or `undefined` to leave an optional field out. A
  *  required field left empty is still sent, so the server says which field and why. */
 export function storedValue(field: FieldDefinition, form: FormValue | undefined): unknown {
+	if (field.type === 'object') {
+		const subform = (typeof form === 'object' && form !== null ? form : {}) as Record<string, FormValue>;
+		const pairs = field.fields
+			.map((sub) => [sub.id, storedValue(sub, subform[sub.id])] as const)
+			.filter(([, value]) => value !== undefined);
+		// An empty optional object is left out; an empty required one is sent so the server
+		// names every field it still needs.
+		if (pairs.length === 0) return field.required ? {} : undefined;
+		return Object.fromEntries(pairs);
+	}
 	if (field.type === 'boolean') return form === true;
 	if (typeof form === 'number') return Number.isFinite(form) ? form : undefined;
 	const text = typeof form === 'string' ? form : '';

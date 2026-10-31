@@ -8,6 +8,7 @@
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import type { FieldDefinition } from './api.ts';
 	import type { FormValue } from './content.ts';
+	import FieldInputs from './FieldInputs.svelte';
 
 	let {
 		fields,
@@ -109,6 +110,11 @@
 					<Input id={input} class="w-36 font-mono" maxlength={7} placeholder="#1a6fdd" bind:value={form[field.id] as string} oninput={onchange} />
 				{:else if field.type === 'json'}
 					<Textarea id={input} rows={8} class="max-w-xl font-mono" placeholder={'{"key": "value"}'} bind:value={form[field.id] as string} oninput={onchange} />
+				{:else if field.type === 'object'}
+					<fieldset class="space-y-4 rounded-lg border border-border p-4" aria-labelledby={`${input}-legend`}>
+						<legend id={`${input}-legend`} class="px-1 text-sm text-muted-foreground">{field.label}</legend>
+						<FieldInputs fields={field.fields} form={form[field.id] as Record<string, FormValue>} {onchange} stacked />
+					</fieldset>
 				{/if}
 			{/if}
 		</div>

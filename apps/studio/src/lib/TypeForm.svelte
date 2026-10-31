@@ -13,6 +13,7 @@
 	import { useQueryClient } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
 	import AlignLeftIcon from '@lucide/svelte/icons/align-left';
+	import BoxIcon from '@lucide/svelte/icons/box';
 	import BracesIcon from '@lucide/svelte/icons/braces';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
 	import ClockIcon from '@lucide/svelte/icons/clock';
@@ -70,9 +71,22 @@
 		url: { name: 'Web address', icon: GlobeIcon, about: 'A link to a page on the web.' },
 		markdown: { name: 'Markdown', icon: PenLineIcon, about: 'Writing in Markdown: headings, lists and links.' },
 		color: { name: 'Colour', icon: PaletteIcon, about: 'A colour, like a brand accent, written #1a6fdd.' },
-		json: { name: 'JSON', icon: BracesIcon, about: 'Structured data: objects, lists and values.' }
+		json: { name: 'JSON', icon: BracesIcon, about: 'Structured data: objects, lists and values.' },
+		object: { name: 'Object', icon: BoxIcon, about: 'A named group of fields, like an address or a venue.' }
 	} as const;
 	type Kind = keyof typeof KIND;
+	/** The kinds a field inside an object can be: no rich text (its editor lives at the top
+	 *  level) and no object in object. */
+	type SubKind = Exclude<Kind, 'object' | 'rich_text'>;
+	type SubRow = {
+		key: number;
+		id: string;
+		idTouched: boolean;
+		label: string;
+		kind: SubKind;
+		required: boolean;
+		values: string;
+	};
 
 	type FieldRow = {
 		key: number;
@@ -92,6 +106,7 @@
 		whenField: string;
 		whenIn: string;
 		unique: boolean;
+		subfields: SubRow[];
 	};
 
 	let nextKey = 0;
@@ -112,7 +127,37 @@
 		defaultStr: '',
 		whenField: '',
 		whenIn: '',
-		unique: false
+		unique: false,
+		subfields: []
+	});
+	const subRow = (): SubRow => ({ key: nextKey++, id: '', idTouched: false, label: '', kind: 'text', required: false, values: '' });
+	const SUB_KINDS = Object.keys(KIND).filter((kind) => kind !== 'object' && kind !== 'rich_text') as SubKind[];
+	/** A field inside an object: its kind's options keep the schema's spelling of defaults. */
+	const subDef = (sub: SubRow): FieldDefinition => {
+		const base = { id: sub.id, label: sub.label.trim(), required: sub.required };
+		switch (sub.kind) {
+			case 'text':
+				return { ...base, type: 'text', max_chars: 200, multiline: false };
+			case 'number':
+				return { ...base, type: 'number', integer: false };
+			case 'enum':
+				return { ...base, type: 'enum', values: sub.values.split('\n').map((v) => v.trim()).filter((v) => v !== '') };
+			case 'markdown':
+				return { ...base, type: 'markdown', max_chars: 2000 };
+			case 'json':
+				return { ...base, type: 'json', max_bytes: 65536 };
+			default:
+				return { ...base, type: sub.kind } as FieldDefinition;
+		}
+	};
+	const subStored = (field: FieldDefinition): SubRow => ({
+		...subRow(),
+		id: field.id,
+		idTouched: true,
+		label: field.label,
+		kind: field.type === 'object' || field.type === 'rich_text' ? 'text' : field.type,
+		required: field.required,
+		values: field.type === 'enum' ? field.values.join('\n') : ''
 	});
 	/** A field of the collection being changed, as a row: its id stays put unless edited by hand. */
 	const fromStored = (field: FieldDefinition): FieldRow => ({
@@ -132,7 +177,8 @@
 		defaultStr: field.default === undefined ? '' : JSON.stringify(field.default),
 		whenField: field.when?.field ?? '',
 		whenIn: field.when?.in.join('\n') ?? '',
-		unique: field.unique === true
+		unique: field.unique === true,
+		subfields: field.type === 'object' ? field.fields.map(subStored) : []
 	});
 
 	// The component mounts once the collection is read: the props it starts with are the ones
@@ -253,10 +299,27 @@
 					(field.kind === 'rich_text' ||
 						field.kind === 'markdown' ||
 						field.kind === 'json' ||
+						field.kind === 'object' ||
 						(field.kind === 'text' && field.multiline))
 			)
 		)
 			return 'A unique value must be a single, short field.';
+		if (
+			fields.some(
+				(field) =>
+					field.kind === 'object' &&
+					(field.subfields.length === 0 ||
+						new Set(field.subfields.map((sub) => sub.id)).size !== field.subfields.length ||
+						field.subfields.some(
+							(sub) =>
+								!FIELD_ID.test(sub.id) ||
+								sub.label.trim() === '' ||
+								(sub.kind === 'enum' &&
+									sub.values.split('\n').filter((value) => value.trim() !== '').length === 0)
+						))
+			)
+		)
+			return 'An object field needs fields inside it: each with a name and a distinct id (a choice needs options).';
 		return '';
 	});
 
@@ -318,6 +381,8 @@
 						return { ...base, type: 'markdown', max_chars: field.maxChars };
 					case 'json':
 						return { ...base, type: 'json', max_bytes: field.maxBytes };
+					case 'object':
+						return { ...base, type: 'object', fields: field.subfields.map(subDef) };
 					case 'date':
 					case 'time':
 					case 'email':
@@ -502,7 +567,7 @@
 						/>
 						<p class="text-sm text-muted-foreground">What an entry gets when the field is left out.</p>
 					</div>
-					{#if !['rich_text', 'markdown', 'json'].includes(draft.kind) && !(draft.kind === 'text' && draft.multiline)}
+					{#if !['rich_text', 'markdown', 'json', 'object'].includes(draft.kind) && !(draft.kind === 'text' && draft.multiline)}
 						<label class="flex items-center gap-2 text-sm" for="field-unique">
 							<Checkbox id="field-unique" bind:checked={draft.unique} /> Unique: no two entries share this value
 						</label>
@@ -562,6 +627,66 @@
 							<Input id="field-jsonbytes" type="number" class="w-28" bind:value={draft.maxBytes} min={1} max={65536} />
 							bytes
 						</label>
+					{:else if draft.kind === 'object'}
+						<div class="space-y-2">
+							<Label>Fields inside {draft.label.trim() || 'the object'}</Label>
+							<div class="space-y-2 rounded-lg border border-border p-3">
+								{#each draft.subfields as sub, index (sub.key)}
+									<div class="flex items-center gap-2">
+										<Input
+											class="w-32"
+											placeholder="Name"
+											aria-label="Field name"
+											bind:value={sub.label}
+											oninput={() => {
+												if (!sub.idTouched) sub.id = idOf(sub.label);
+											}}
+										/>
+										<Input
+											class="w-24 font-mono"
+											placeholder="id"
+											aria-label="Field id"
+											bind:value={sub.id}
+											oninput={() => (sub.idTouched = true)}
+										/>
+										<NativeSelect.Root class="w-32" bind:value={sub.kind} aria-label="Field kind">
+											{#each SUB_KINDS as kind (kind)}
+												<NativeSelect.Option value={kind}>{KIND[kind].name}</NativeSelect.Option>
+											{/each}
+										</NativeSelect.Root>
+										<label class="flex items-center gap-1.5 text-sm">
+											<Checkbox bind:checked={sub.required} /> Required
+										</label>
+										<Button
+											variant="ghost"
+											size="icon"
+											type="button"
+											aria-label="Remove field"
+											onclick={() => draft?.subfields.splice(index, 1)}
+										>
+											<Trash2Icon class="size-4" />
+										</Button>
+									</div>
+									{#if sub.kind === 'enum'}
+										<Textarea
+											rows={2}
+											class="font-mono"
+											placeholder="Options, one per line"
+											bind:value={sub.values}
+											aria-label="Choice options"
+										/>
+									{/if}
+								{:else}
+									<p class="text-sm text-muted-foreground">Nothing inside yet.</p>
+								{/each}
+								<Button variant="outline" size="sm" type="button" onclick={() => draft?.subfields.push(subRow())}>
+									<PlusIcon class="size-4" /> Add a field inside
+								</Button>
+							</div>
+							<p class="text-sm text-muted-foreground">
+								A field inside an object can be any kind except rich text or another object.
+							</p>
+						</div>
 					{/if}
 				</Tabs.Content>
 			</Tabs.Root>
