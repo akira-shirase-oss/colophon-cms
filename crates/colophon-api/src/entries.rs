@@ -49,6 +49,9 @@ const DEFAULT_PAGE: i64 = 20;
 
 const CREATE: &str = "entry.create";
 const SAVE: &str = "entry.save";
+const IMPORT: &str = "entry.import";
+/// An import is at most this many lines, so one upload stays a bounded transaction.
+const IMPORT_MAX_LINES: usize = 512;
 
 /// The path of the collection routes.
 #[derive(Deserialize)]
@@ -430,6 +433,134 @@ pub(crate) async fn create(
     .await
     .map_err(ApiError::from_db)?;
     finish(tx, CREATE, key, StatusCode::CREATED, draft).await
+}
+
+/// `GET {P}/collections/{collection}/export`: every draft as a JSONL line of its canonical
+/// content — what `import` takes back. The newest 10,000 entries.
+pub(crate) async fn export(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<CollectionPath>,
+) -> Result<Response, ApiError> {
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // An unknown collection is 404, not an empty export.
+    content_type(&mut tx, &path.collection).await?;
+    let lines = entries::export(&mut tx, &path.collection)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let mut response = format!("{}\n", lines.join("\n")).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/jsonlines"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!(
+            "attachment; filename=\"{}.jsonl\"",
+            path.collection
+        ))
+        .map_err(ApiError::internal)?,
+    );
+    Ok(response)
+}
+
+/// `POST {P}/collections/{collection}/import`: a JSONL body, each non-empty line one
+/// entry's content, all validated against the type first. The file lands in one
+/// transaction or nothing does (`Idempotency-Key` required; at most `IMPORT_MAX_LINES`
+/// lines). References resolve against entries that already exist, including earlier lines.
+pub(crate) async fn import(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<CollectionPath>,
+    headers: HeaderMap,
+    body: String,
+) -> Result<Response, ApiError> {
+    let key = idempotency_key(&headers)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    crate::members::require(
+        &tx.role,
+        colophon_domain::policy::Action::WriteContent,
+        "your role can't write content in this project",
+    )?;
+    let (content_type, version) = content_type(&mut tx, &path.collection).await?;
+    let request = request_hash(&[IMPORT, &path.collection, &body]);
+    if let Some(replay) = claim(&mut tx, IMPORT, key, &request).await? {
+        return Ok(replay);
+    }
+    let lines: Vec<&str> = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.len() > IMPORT_MAX_LINES {
+        return Err(ApiError::Invalid(Refusal {
+            code: "too_many_lines",
+            pointer: "/".to_owned(),
+            message: format!("an import is at most {IMPORT_MAX_LINES} lines"),
+        }));
+    }
+    if content_type.is_single()
+        && (lines.len() > 1
+            || !entries::list(&mut tx, &path.collection, None, 1, None, &[])
+                .await
+                .map_err(ApiError::from_db)?
+                .is_empty())
+    {
+        return Err(ApiError::Conflict("a single collection holds one entry"));
+    }
+    for (index, line) in lines.iter().enumerate() {
+        let value: Value = serde_json::from_str(line).map_err(|_| {
+            ApiError::Invalid(Refusal {
+                code: "invalid_json",
+                pointer: format!("/line/{}", index + 1),
+                message: format!("line {} isn't JSON", index + 1),
+            })
+        })?;
+        let (content, hash) =
+            validate(&value, &content_type).map_err(|error| on_line(error, index))?;
+        let uniques = unique_pairs(&content_type, &content);
+        check_dangling(&mut tx, &content_type, &content)
+            .await
+            .map_err(|error| on_line(error, index))?;
+        let revision = NewRevision {
+            id: Uuid::now_v7(),
+            content: content.canonical_json(),
+            content_hash: &hash,
+            title: content.title(),
+            schema_version: version,
+        };
+        entries::create(
+            &mut tx,
+            Uuid::now_v7(),
+            &path.collection,
+            revision,
+            &uniques,
+        )
+        .await
+        .map_err(ApiError::from_db)?;
+    }
+    let body = serde_json::to_string(&Data {
+        data: serde_json::json!({ "imported": lines.len() }),
+    })
+    .map_err(ApiError::internal)?;
+    idempotency::complete(&mut tx, IMPORT, key, StatusCode::CREATED.as_u16(), &body)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(json(StatusCode::CREATED, body, None, false))
+}
+
+/// Prefixes a refusal's pointer with its import line number, so an error names the line.
+fn on_line(error: ApiError, index: usize) -> ApiError {
+    match error {
+        ApiError::Invalid(mut refusal) => {
+            refusal.pointer = format!("/line/{}{}", index + 1, refusal.pointer);
+            ApiError::Invalid(refusal)
+        }
+        other => other,
+    }
 }
 
 /// `PUT {P}/collections/{collection}/entries/{entry}`.

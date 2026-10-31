@@ -16,7 +16,10 @@
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
-	import { ApiError, createEntry, type EntryState, entryState, getContentType, newKey } from '#lib/api.ts';
+	import { ApiError, createEntry, type EntryState, entryState, exportUrl, getContentType, importEntries, newKey } from '#lib/api.ts';
+	import { toast } from 'svelte-sonner';
+	import DownloadIcon from '@lucide/svelte/icons/download';
+	import UploadIcon from '@lucide/svelte/icons/upload';
 	import { type FormValue, formValue, starter, storedValue } from '#lib/content.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
 	import { ago, entriesQuery, projectQuery } from '#lib/queries.ts';
@@ -39,6 +42,24 @@
 		return () => clearTimeout(timer);
 	});
 	const entries = createQuery(() => ({ ...entriesQuery(project, collection, q), placeholderData: keepPreviousData }));
+	let fileInput: HTMLInputElement | undefined = $state();
+	let importing = $state(false);
+	async function importFile(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (file === undefined) return;
+		importing = true;
+		try {
+			const imported = await importEntries(project, collection, await file.text());
+			toast.success(`${imported} ${imported === 1 ? 'entry' : 'entries'} imported`);
+			await entries.refetch();
+		} catch (error) {
+			toast.error(error instanceof ApiError ? error.message : 'The import failed');
+		} finally {
+			importing = false;
+			input.value = '';
+		}
+	}
 	let filter = $state<'all' | EntryState>('all');
 	const rows = $derived((entries.data?.data ?? []).filter((entry) => filter === 'all' || entryState(entry) === filter));
 	const tally = $derived(
@@ -112,7 +133,10 @@
 			<span>{type.data.definition.fields.length} fields</span><span aria-hidden="true">·</span><span>version {type.data.version}</span>
 		{/snippet}
 		{#snippet actions()}
+			<Button variant="outline" href={exportUrl(project, collection)} download={`${collection}.jsonl`} data-testid="export-entries"><DownloadIcon data-icon="inline-start" />Export</Button>
 			{#if mayChange}
+				<Button variant="outline" onclick={() => fileInput?.click()} disabled={importing} data-testid="import-entries"><UploadIcon data-icon="inline-start" />{importing ? 'Importing…' : 'Import'}</Button>
+				<input type="file" accept=".jsonl,.txt,.json" class="hidden" bind:this={fileInput} onchange={importFile} />
 				<Button variant="outline" href={resolve('/projects/[project]/types/[type]', { project, type: collection })} data-testid="change-fields">Change fields</Button>
 			{/if}
 			{#if !(type.data.definition.kind === 'single' && (entries.data?.data.length ?? 0) >= 1)}

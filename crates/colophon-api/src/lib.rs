@@ -92,6 +92,14 @@ pub fn routes(state: AppState) -> Router {
             get(entries::list).post(entries::create),
         )
         .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/export",
+            get(entries::export),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/import",
+            post(entries::import),
+        )
+        .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}",
             get(entries::get).put(entries::save).delete(entries::remove),
         )

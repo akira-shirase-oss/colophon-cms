@@ -231,6 +231,48 @@ async function loaded(response: Response): Promise<Loaded> {
 const base = (project: string) => `/api/v1/projects/${project}/environments/production`;
 const entries = (project: string, collection: string) => `${base(project)}/collections/${collection}/entries`;
 
+/** The URL that downloads a collection's drafts as JSONL — one entry's content per line. */
+export function exportUrl(project: string, collection: string): string {
+	return `${base(project)}/collections/${collection}/export`;
+}
+
+/** Uploads a JSONL file: each line one entry's content; the whole file lands or nothing
+ *  does. Answers the number of entries created. */
+export async function importEntries(project: string, collection: string, body: string): Promise<number> {
+	let response: Response;
+	try {
+		response = await fetch(`${base(project)}/collections/${collection}/import`, {
+			method: 'POST',
+			cache: 'no-store',
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+			headers: {
+				'Content-Type': 'application/jsonlines',
+				'X-CSRF-Token': csrfToken(),
+				'Idempotency-Key': newKey()
+			},
+			body
+		});
+	} catch {
+		throw new ApiError('retry', 'no answer from the server');
+	}
+	if (response.ok) {
+		return ((await response.json()) as { data: { imported: number } }).data.imported;
+	}
+	const envelope = ((await response.json().catch(() => ({}))) as Envelope).error;
+	const message = envelope?.message ?? `HTTP ${response.status}`;
+	const reason = envelope?.details?.reason ?? null;
+	switch (true) {
+		case response.status === 401:
+			throw new ApiError('signed-out', message, 401);
+		case response.status === 404:
+			throw new ApiError('not-found', message, 404);
+		case response.status >= 500 || response.status === 429:
+			throw new ApiError('retry', message, response.status, reason);
+		default:
+			throw new ApiError('refused', message, response.status, reason);
+	}
+}
+
 /** Who is signed in, or `null` if nobody is. */
 export async function me(): Promise<Me | null> {
 	try {

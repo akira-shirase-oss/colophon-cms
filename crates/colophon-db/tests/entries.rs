@@ -77,6 +77,46 @@ async fn alice_with_an_entry(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid) {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_collection_exports_each_draft_as_a_line() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = enter(&db.app, alice, project).await;
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("First").revision(),
+        &[],
+    )
+    .await
+    .expect("created");
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("Second").revision(),
+        &[],
+    )
+    .await
+    .expect("created");
+    tx.commit().await.expect("commit");
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let lines = entries::export(&mut tx, ARTICLES).await.expect("exported");
+    assert_eq!(lines.len(), 2);
+    // Newest first: each line is the draft's canonical content.
+    assert!(lines[0].contains(r#""title":"Second""#), "{}", lines[0]);
+    assert!(lines[1].contains(r#""title":"First""#), "{}", lines[1]);
+    tx.commit().await.expect("commit");
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_unique_value_can_only_be_held_by_one_entry() {
     let db = TestDb::new().await;
     let alice = db.administrator("alice").await;

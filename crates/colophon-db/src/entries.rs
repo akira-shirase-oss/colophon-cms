@@ -211,6 +211,32 @@ pub enum Removed {
     Referenced,
 }
 
+/// Every draft's canonical content, newest first — the lines of a collection's export.
+/// Capped at 10,000 rows so an export stays a bounded read.
+pub async fn export(tx: &mut ProjectTransaction, collection: &str) -> Result<Vec<String>, DbError> {
+    let rows = sqlx::query!(
+        r#"SELECT r.content
+           FROM entries e
+           CROSS JOIN LATERAL (
+               SELECT r.content
+               FROM revisions r
+               WHERE r.project_id = e.project_id AND r.environment_id = e.environment_id
+                 AND r.id = e.draft_revision_id
+               LIMIT 1
+           ) r
+           WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
+           ORDER BY e.created_at DESC, e.id DESC
+           LIMIT 10000"#,
+        tx.project,
+        tx.environment,
+        collection
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(rows.into_iter().map(|row| row.content).collect())
+}
+
 /// Deletes an entry and its revisions outright. Only a draft-entry is really removable: a
 /// revision pinned by a changeset item or carried by a release fails the foreign keys.
 pub async fn remove(
