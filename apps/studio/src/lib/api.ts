@@ -179,6 +179,16 @@ export function signInUrl(returnTo: string): string {
 	return `/auth/login?return_to=${encodeURIComponent(returnTo)}`;
 }
 
+/** Creates an email-and-password account and starts its session in one step. */
+export async function signUp(email: string, password: string, display_name?: string): Promise<void> {
+	await send('POST', '/auth/signup', { email, password, ...(display_name ? { display_name } : {}) });
+}
+
+/** Signs in with an email and a password; the session cookie is set by the response itself. */
+export async function signInPassword(email: string, password: string): Promise<void> {
+	await send('POST', '/auth/signin', { email, password });
+}
+
 /** Every request gives up after this long and counts as "no answer": a save is then retried with
  *  the same key, so nothing waits forever (invariant ST4). */
 export const REQUEST_TIMEOUT_MS = 15_000;

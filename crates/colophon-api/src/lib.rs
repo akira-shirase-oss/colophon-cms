@@ -53,6 +53,8 @@ pub fn routes(state: AppState) -> Router {
         .route("/readyz", get(health::readyz))
         .route("/auth/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
+        .route("/auth/signup", post(auth::sign_up))
+        .route("/auth/signin", post(auth::sign_in))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/device", post(device::start))
         .route("/auth/device/approve", post(device::approve))

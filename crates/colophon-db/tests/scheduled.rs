@@ -112,7 +112,9 @@ async fn a_schedule_claims_once_runs_once_and_ends_in_evidence() {
         .await
         .expect("finished");
     let mut tx = enter(&db.app, alice, project).await;
-    let ended = scheduled::for_changeset(&mut tx, set).await.expect("listed");
+    let ended = scheduled::for_changeset(&mut tx, set)
+        .await
+        .expect("listed");
     tx.commit().await.expect("commit");
     assert_eq!(
         ended.first().expect("one").outcome,
@@ -152,11 +154,15 @@ async fn a_schedule_cancels_only_while_pending_and_fails_with_why() {
 
     // Cancelling a pending schedule works once; the second time it is too late.
     assert_eq!(
-        scheduled::cancel(&mut tx, schedule.id).await.expect("cancel"),
+        scheduled::cancel(&mut tx, schedule.id)
+            .await
+            .expect("cancel"),
         Cancelled::Cancelled
     );
     assert_eq!(
-        scheduled::cancel(&mut tx, schedule.id).await.expect("again"),
+        scheduled::cancel(&mut tx, schedule.id)
+            .await
+            .expect("again"),
         Cancelled::TooLate
     );
     assert_eq!(
@@ -187,7 +193,10 @@ async fn a_schedule_cancels_only_while_pending_and_fails_with_why() {
         .await
         .expect("backdated");
     assert_eq!(
-        scheduled::claim_due(&db.app, 10).await.expect("claim").len(),
+        scheduled::claim_due(&db.app, 10)
+            .await
+            .expect("claim")
+            .len(),
         1
     );
     let mut tx = enter(&db.app, alice, project).await;
@@ -201,7 +210,9 @@ async fn a_schedule_cancels_only_while_pending_and_fails_with_why() {
         .await
         .expect("failed");
     let mut tx = enter(&db.app, alice, project).await;
-    let ended = scheduled::for_changeset(&mut tx, set).await.expect("listed");
+    let ended = scheduled::for_changeset(&mut tx, set)
+        .await
+        .expect("listed");
     tx.commit().await.expect("commit");
     assert_eq!(
         ended
@@ -248,7 +259,10 @@ async fn a_stale_claim_is_recorded_and_another_project_sees_nothing() {
 
     // Claimed, then abandoned as if the server died: expiry records it, never reruns it.
     assert_eq!(
-        scheduled::claim_due(&db.app, 10).await.expect("claim").len(),
+        scheduled::claim_due(&db.app, 10)
+            .await
+            .expect("claim")
+            .len(),
         1
     );
     let owner = db.owner().await;
@@ -273,7 +287,9 @@ async fn a_stale_claim_is_recorded_and_another_project_sees_nothing() {
         "an expired claim never runs"
     );
     let mut tx = enter(&db.app, alice, project).await;
-    let ended = scheduled::for_changeset(&mut tx, set).await.expect("listed");
+    let ended = scheduled::for_changeset(&mut tx, set)
+        .await
+        .expect("listed");
     tx.commit().await.expect("commit");
     assert!(matches!(
         ended.first().expect("one").outcome,
@@ -295,7 +311,9 @@ async fn a_stale_claim_is_recorded_and_another_project_sees_nothing() {
         "another project's schedules do not exist to it"
     );
     assert_eq!(
-        scheduled::cancel(&mut tx, schedule.id).await.expect("cancel"),
+        scheduled::cancel(&mut tx, schedule.id)
+            .await
+            .expect("cancel"),
         Cancelled::NotFound
     );
     tx.commit().await.expect("commit");
