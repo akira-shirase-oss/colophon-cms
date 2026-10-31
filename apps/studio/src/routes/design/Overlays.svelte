@@ -77,7 +77,7 @@
 					<div class="mx-auto w-full max-w-sm">
 						<Drawer.Header>
 							<Drawer.Title>Release 42</Drawer.Title>
-							<Drawer.Description>Saved → Published in CMS → Verified at 1 location.</Drawer.Description>
+							<Drawer.Description>Saved → Published in Colophon → Verified at 1 location.</Drawer.Description>
 						</Drawer.Header>
 						<Drawer.Footer>
 							<Drawer.Close class={buttonVariants()}>Done</Drawer.Close>

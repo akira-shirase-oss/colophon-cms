@@ -27,7 +27,7 @@
 	const when = (at: string) => new Date(at).toLocaleString();
 	const named = (id: string) => receipt.data?.deliveries.find((delivery) => delivery.destination_id === id)?.name ?? 'a probe';
 	const DOT: Record<Delivery['state'], string> = { done: 'bg-live', covered: 'bg-live', pending: 'bg-pending', failed: 'bg-attention' };
-	const KIND: Record<Delivery['kind'], string> = { webhook: 'Webhook', cdn: 'CDN', probe: 'Probe' };
+	const KIND: Record<Delivery['kind'], string> = { webhook: 'Site rebuild', cdn: 'Cache clear', probe: 'Site check' };
 </script>
 
 <svelte:head><title>Release {generation} · Colophon Studio</title></svelte:head>

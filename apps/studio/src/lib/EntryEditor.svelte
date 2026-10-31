@@ -16,9 +16,12 @@
 	import { resolve } from '$app/paths';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
+	import LinkIcon from '@lucide/svelte/icons/link';
+	import { toast } from 'svelte-sonner';
 	import {
 		type Content,
 		type ContentType,
+		deliveryUrl,
 		type Draft,
 		type FieldDefinition,
 		getRevision,
@@ -159,6 +162,16 @@
 	const standing = $derived(
 		published === null ? 'draft' : published.revision_id === latest.revision.id && saver.status === 'saved' ? 'live' : 'changed'
 	);
+	// Where anyone can read the published version, no sign-in: same origin, the delivery address.
+	const publicAddress = $derived(`${deliveryUrl(project, collection)}/${entry}`);
+	async function copyPublic() {
+		try {
+			await navigator.clipboard.writeText(`${window.location.origin}${publicAddress}`);
+			toast.success('Copied');
+		} catch {
+			toast.error("Couldn't copy; select it and copy it yourself.");
+		}
+	}
 	let tab = $state<'content' | 'history'>('content');
 	// The revision being compared with this draft, and what it held.
 	let comparing = $state<string | null>(null);
@@ -386,8 +399,15 @@
 					<dd>{new Date(latest.created_at).toLocaleDateString()}</dd>
 				</div>
 			</dl>
+			{#if published !== null}
+				<!-- The public link in one click: anyone can read the published version there. -->
+				<div class="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-dotted border-border pt-4 text-xs text-muted-foreground">
+					<span>{standing === 'changed' ? 'Anyone can read the published version.' : 'Anyone can read it.'}</span>
+					<Button variant="outline" size="xs" onclick={copyPublic} data-testid="copy-public-link"><LinkIcon data-icon="inline-start" />Copy public link</Button>
+				</div>
+			{/if}
 			<p class="mt-4 border-t border-dotted border-border pt-4 text-xs text-muted-foreground">
-				Readers get it only through a reviewed changeset.
+				Readers get an entry only once a release with it is published.
 				<a class="underline underline-offset-2 hover:text-foreground" href={resolve('/projects/[project]/changesets', { project })}>Changesets</a>
 			</p>
 		</div>
