@@ -1,5 +1,22 @@
 # Colophon CMS: agent instructions
 
+**Current state (2026-10-31, `studio/content-cards` line).** Local `main` carries the Strapi-style
+modelling work (field-order type builder, many/mirrored references, JSON-array and Strapi-entity
+import, scheduled publishes, email-and-password accounts, locales and localization groups,
+typography floor, invite dialog) and is pushed to `origin/lineage/content-cards`. `origin/main` is
+a **different lineage** ~200 commits ahead (own migrations 0016–0030: roles, tokens, audit,
+components, reference paths); integrating it is an open decision — merge (137 conflicts,
+migration renumbering) or port this line's unique work onto it. The shared `colophon` dev
+database belongs to that lineage — do not migrate it; this line runs on `colophon_studio`.
+
+Running locally: `COLOPHON_TEST_DATABASE=colophon_studio` (rewrites both database URLs in
+`scripts/local-env.sh`) plus `COLOPHON_STUDIO_DIR=apps/studio/build`, then
+`target/release/colophon-server` — Studio at `http://localhost:58000/studio/`, sign in as
+`dev-owner` (bootstrapped). Rebuild the Studio bundle with `npm run build -w @colophon/studio`
+and the running server picks it up from disk; the server binary needs a rebuild only for Rust
+changes. Stack tests run with the same `COLOPHON_TEST_DATABASE`. After touching `sqlx` queries,
+re-prepare with `cargo sqlx prepare --workspace --all-targets` (plain `prepare` wipes `.sqlx`).
+
 **Status (2026-10-27): milestone P3 in progress.** P0 is complete: steps 0.1 to 0.7 built the pinned toolchain and
 workspace, the local stack in `deploy/`, the error envelope and health checks, `apps/testbed` and the k6 harness in
 `perf/`, the rich-text format with its editor, validator and renderer, and `packages/ui` with the Studio's first screen
