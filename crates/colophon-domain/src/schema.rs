@@ -147,6 +147,19 @@ pub struct Field {
     /// What an entry gets when the field is left out, as canonical JSON; `None` unless set.
     /// Checked against the kind when the definition is parsed.
     pub default: Option<String>,
+    /// When an editor shows the field, decided by another field's value; `None` means always.
+    /// Display-only: a stored value is checked the same whether or not the field would show,
+    /// and a required field can't hide.
+    pub when: Option<When>,
+}
+
+/// The values of another field under which this field shows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct When {
+    /// The other field's id.
+    pub field: String,
+    /// The values that show it, compared as strings (`"true"` for a checked yes/no).
+    pub options: Vec<String>,
 }
 
 /// A parsed, valid content type definition.
@@ -772,6 +785,7 @@ impl ContentType {
                         multiline: false,
                     },
                     default: None,
+                    when: None,
                 },
                 Field {
                     id: "body".to_owned(),
@@ -779,6 +793,7 @@ impl ContentType {
                     required: true,
                     kind: FieldKind::RichText,
                     default: None,
+                    when: None,
                 },
             ],
         }
@@ -863,11 +878,38 @@ impl ContentType {
                 "`title_field` must name a required, single-line text field",
             ));
         }
+        Self::check_whens(&fields, &root)?;
         Ok(Self {
             name,
             title_field,
             fields,
         })
+    }
+
+    /// A `when` can only name a field that exists, and never the field itself.
+    fn check_whens(fields: &[Field], root: &Pointer) -> Result<(), Refusal> {
+        for (index, field) in fields.iter().enumerate() {
+            if let Some(clause) = &field.when {
+                let mut pointer = at(root, "fields");
+                pointer.push_index(index);
+                pointer.push("when");
+                if clause.field == field.id {
+                    return Err(refuse(
+                        "invalid_when",
+                        &at(&pointer, "field"),
+                        "a field can't depend on itself",
+                    ));
+                }
+                if !fields.iter().any(|other| other.id == clause.field) {
+                    return Err(refuse(
+                        "unknown_field",
+                        &at(&pointer, "field"),
+                        format!("no field named `{}`", clause.field),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn field(value: &Value, pointer: &Pointer) -> Result<Field, Refusal> {
@@ -899,7 +941,7 @@ impl ContentType {
             })?
             .to_owned();
         let required = bool_or(object, "required", false, pointer)?;
-        let common = ["id", "label", "type", "required", "default"];
+        let common = ["id", "label", "type", "required", "default", "when"];
         let kind = match object.get("type").and_then(Value::as_str) {
             Some("text") => {
                 only(
@@ -959,15 +1001,101 @@ impl ContentType {
             required,
             kind,
             default: None,
+            when: None,
         };
+        Self::field_options(&mut field, object, pointer)?;
+        Ok(field)
+    }
+
+    /// The options any kind can carry: `default` (checked like a value, kept canonical) and
+    /// `when` (display-only, refused on a required field).
+    fn field_options(
+        field: &mut Field,
+        object: &Map<String, Value>,
+        pointer: &Pointer,
+    ) -> Result<(), Refusal> {
         if let Some(default) = object.get("default") {
             // The default must hold for the kind: it goes through the same check a value does
             // and keeps the canonical spelling, so writing it later changes no bytes.
             let mut canonical = String::new();
-            Self::value(&field, default, &at(pointer, "default"), &mut canonical)?;
+            Self::value(field, default, &at(pointer, "default"), &mut canonical)?;
             field.default = Some(canonical);
         }
-        Ok(field)
+        if let Some(clause) = object.get("when") {
+            field.when = Some(Self::when_clause(clause, &at(pointer, "when"))?);
+            if field.required {
+                return Err(refuse(
+                    "invalid_when",
+                    &at(pointer, "when"),
+                    "a required field can't hide",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A `when` clause: `{"field": <id>, "in": [<string>, ...]}`, 1 to 10 distinct plain
+    /// strings. Whether the named field exists is checked once every field is parsed.
+    fn when_clause(value: &Value, pointer: &Pointer) -> Result<When, Refusal> {
+        let object = value.as_object().ok_or_else(|| {
+            refuse(
+                "invalid_when",
+                pointer,
+                "`when` is an object like {\"field\": \"section\", \"in\": [\"News\"]}",
+            )
+        })?;
+        only(object, &["field", "in"], pointer)?;
+        let field = object
+            .get("field")
+            .and_then(Value::as_str)
+            .filter(|field| is_field_id(field))
+            .ok_or_else(|| {
+                refuse(
+                    "invalid_when",
+                    &at(pointer, "field"),
+                    "`when.field` is another field's id",
+                )
+            })?
+            .to_owned();
+        let options = object
+            .get("in")
+            .and_then(Value::as_array)
+            .filter(|values| !values.is_empty() && values.len() <= 10)
+            .ok_or_else(|| {
+                refuse(
+                    "invalid_when",
+                    &at(pointer, "in"),
+                    "`when.in` is 1 to 10 strings",
+                )
+            })?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|option| plain_text(option, 100))
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        refuse(
+                            "invalid_when",
+                            &at(pointer, "in"),
+                            "`when.in` is 1 to 10 strings",
+                        )
+                    })
+            })
+            .collect::<Result<Vec<String>, Refusal>>()?;
+        if options
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != options.len()
+        {
+            return Err(refuse(
+                "invalid_when",
+                &at(pointer, "in"),
+                "`when.in` repeats a value",
+            ));
+        }
+        Ok(When { field, options })
     }
 
     /// The name.
@@ -1064,6 +1192,18 @@ impl ContentType {
             if let Some(default) = &field.default {
                 out.push_str(r#","default":"#);
                 out.push_str(default);
+            }
+            if let Some(clause) = &field.when {
+                out.push_str(r#","when":{"field":"#);
+                write_string(&mut out, &clause.field);
+                out.push_str(r#","in":["#);
+                for (index, option) in clause.options.iter().enumerate() {
+                    if index > 0 {
+                        out.push(',');
+                    }
+                    write_string(&mut out, option);
+                }
+                out.push_str("]}");
             }
             out.push('}');
         }
@@ -1823,6 +1963,58 @@ mod tests {
             assert_eq!(refusal.code, code, "{default}");
             assert_eq!(refusal.pointer, "/fields/1/default");
         }
+    }
+
+    #[test]
+    fn a_when_clause_names_another_field_and_never_hides_a_required_one() {
+        let kind = ContentType::parse(&json!({
+            "name": "Posts",
+            "title_field": "headline",
+            "fields": [
+                {"id": "headline", "label": "Headline", "type": "text", "required": true},
+                {"id": "section", "label": "Section", "type": "enum", "values": ["News", "Guides"]},
+                {"id": "sub", "label": "Sub-section", "type": "text", "when": {"field": "section", "in": ["Guides"]}}
+            ]
+        }))
+        .expect("valid definition");
+        assert!(
+            kind.canonical_json()
+                .contains(r#""when":{"field":"section","in":["Guides"]}"#),
+            "{}",
+            kind.canonical_json()
+        );
+        for (clause, code) in [
+            (json!({"field": "nowhere", "in": ["x"]}), "unknown_field"),
+            (json!({"field": "sub", "in": ["x"]}), "invalid_when"),
+            (json!({"field": "section", "in": []}), "invalid_when"),
+            (
+                json!({"field": "section", "in": ["a", "a"]}),
+                "invalid_when",
+            ),
+        ] {
+            let refusal = ContentType::parse(&json!({
+                "name": "Posts",
+                "title_field": "headline",
+                "fields": [
+                    {"id": "headline", "label": "Headline", "type": "text", "required": true},
+                    {"id": "section", "label": "Section", "type": "enum", "values": ["News"]},
+                    {"id": "sub", "label": "Sub", "type": "text", "when": clause}
+                ]
+            }))
+            .expect_err("must be refused");
+            assert_eq!(refusal.code, code, "{clause}");
+        }
+        let refusal = ContentType::parse(&json!({
+            "name": "Posts",
+            "title_field": "headline",
+            "fields": [
+                {"id": "headline", "label": "Headline", "type": "text", "required": true},
+                {"id": "section", "label": "Section", "type": "enum", "values": ["News"]},
+                {"id": "sub", "label": "Sub", "type": "text", "required": true, "when": {"field": "section", "in": ["News"]}}
+            ]
+        }))
+        .expect_err("a required field can't hide");
+        assert_eq!(refusal.code, "invalid_when");
     }
 
     #[test]

@@ -24,7 +24,14 @@ export interface Me {
 }
 
 /** One field of a content type, as the server writes definitions: every default spelled out. */
-export type FieldDefinition = { id: string; label: string; required: boolean; default?: unknown } & (
+export type FieldDefinition = {
+	id: string;
+	label: string;
+	required: boolean;
+	default?: unknown;
+	/** Show the field in an editor only when this other field holds one of `in` (display-only). */
+	when?: { field: string; in: string[] };
+} & (
 	| { type: 'text'; max_chars: number; multiline: boolean }
 	| { type: 'rich_text' }
 	| { type: 'number'; integer: boolean; min?: number; max?: number }

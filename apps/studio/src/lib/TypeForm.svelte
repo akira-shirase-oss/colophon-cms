@@ -89,6 +89,8 @@
 		max: string;
 		values: string;
 		defaultStr: string;
+		whenField: string;
+		whenIn: string;
 	};
 
 	let nextKey = 0;
@@ -106,7 +108,9 @@
 		min: '',
 		max: '',
 		values: '',
-		defaultStr: ''
+		defaultStr: '',
+		whenField: '',
+		whenIn: ''
 	});
 	/** A field of the collection being changed, as a row: its id stays put unless edited by hand. */
 	const fromStored = (field: FieldDefinition): FieldRow => ({
@@ -123,7 +127,9 @@
 		min: field.type === 'number' && field.min !== undefined ? String(field.min) : '',
 		max: field.type === 'number' && field.max !== undefined ? String(field.max) : '',
 		values: field.type === 'enum' ? field.values.join('\n') : '',
-		defaultStr: field.default === undefined ? '' : JSON.stringify(field.default)
+		defaultStr: field.default === undefined ? '' : JSON.stringify(field.default),
+		whenField: field.when?.field ?? '',
+		whenIn: field.when?.in.join('\n') ?? ''
 	});
 
 	// The component mounts once the collection is read: the props it starts with are the ones
@@ -233,6 +239,10 @@
 			})
 		)
 			return 'A default must be JSON: "a string in quotes", true, false, a number, or {…}.';
+		if (fields.some((field) => field.whenField !== '' && field.whenIn.trim() === ''))
+			return 'A "show only when" rule needs at least one value.';
+		if (fields.some((field) => field.required && field.whenField !== ''))
+			return 'A required field can\'t hide.';
 		return '';
 	});
 
@@ -250,7 +260,18 @@
 					id: field.id,
 					label: field.label.trim(),
 					required: field.required,
-					...(field.defaultStr.trim() !== '' ? { default: JSON.parse(field.defaultStr) as unknown } : {})
+					...(field.defaultStr.trim() !== '' ? { default: JSON.parse(field.defaultStr) as unknown } : {}),
+					...(field.whenField !== ''
+						? {
+								when: {
+									field: field.whenField,
+									in: field.whenIn
+										.split('\n')
+										.map((value) => value.trim())
+										.filter((value) => value !== '')
+								}
+							}
+						: {})
 				};
 				switch (field.kind) {
 					case 'text':
@@ -466,6 +487,27 @@
 						/>
 						<p class="text-sm text-muted-foreground">What an entry gets when the field is left out.</p>
 					</div>
+					{#if fields.length > 1}
+						<div class="space-y-1.5">
+							<Label for="field-when">Show only when</Label>
+							<NativeSelect.Root id="field-when" bind:value={draft.whenField} class="w-full">
+								<NativeSelect.Option value="">Always — no rule</NativeSelect.Option>
+								{#each fields.filter((each) => each.key !== draft?.key) as each (each.key)}
+									<NativeSelect.Option value={each.id}>{each.label || each.id}</NativeSelect.Option>
+								{/each}
+							</NativeSelect.Root>
+							{#if draft.whenField !== ''}
+								<Textarea
+									rows={2}
+									class="font-mono"
+									placeholder={'One value per line, e.g.\nNews'}
+									bind:value={draft.whenIn}
+									aria-label="Values that show the field"
+								/>
+								<p class="text-sm text-muted-foreground">A yes/no field's values are true and false.</p>
+							{/if}
+						</div>
+					{/if}
 					{#if draft.kind === 'text'}
 						<label class="flex items-center gap-2 text-sm" for="field-multiline">
 							<Checkbox id="field-multiline" bind:checked={draft.multiline} /> Multiple lines
