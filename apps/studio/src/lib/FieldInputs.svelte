@@ -93,7 +93,7 @@
 				<span class="text-sm font-medium" class:sr-only={stacked} aria-hidden="true">{field.label}</span>
 				<label for={input} class="flex items-center gap-2.5 text-sm">
 					<input id={input} type="checkbox" class="size-4 accent-primary" bind:checked={form[field.id] as boolean} {onchange} />
-					{field.label}
+					{stacked ? field.label : (field.description ?? '')}
 				</label>
 			{:else}
 				<div class="space-y-0.5">

@@ -16,6 +16,7 @@
 	import { resolve } from '$app/paths';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
+	import { Input } from '@colophon/ui/ui/input';
 	import LinkIcon from '@lucide/svelte/icons/link';
 	import { toast } from 'svelte-sonner';
 	import {
@@ -46,8 +47,7 @@
 		entry,
 		type,
 		initial,
-		published = null,
-		locale = () => undefined
+		published = null
 	}: {
 		project: string;
 		collection: string;
@@ -56,8 +56,6 @@
 		initial: Loaded;
 		/** What readers get now, from the collection's list; null when not published. */
 		published?: Summary['published'];
-		/** The entry's locale tag, read at each save so a field in the page can set it. */
-		locale?: () => string | undefined;
 	} = $props();
 
 	const queryClient = useQueryClient();
@@ -81,12 +79,14 @@
 	// svelte-ignore state_referenced_locally
 	let latest = $state.raw<Draft>(initial.draft);
 	// svelte-ignore state_referenced_locally
+	let locale = $state(initial.draft.locale ?? '');
+	// svelte-ignore state_referenced_locally
 	const saver = new Saver(project, collection, entry, definition, initial, (loaded) => {
 		latest = loaded.draft;
 		queryClient.setQueryData(['draft', project, collection, entry], loaded);
 		void queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
 		void queryClient.invalidateQueries({ queryKey: ['history', project, collection, entry] });
-	}, locale);
+	}, () => locale.trim() || undefined);
 	const revisions = createQuery(() => ({
 		queryKey: ['history', project, collection, entry],
 		queryFn: () => listRevisions(project, collection, entry)
@@ -245,7 +245,7 @@
 	{/each}
 {/snippet}
 
-<div class="grid gap-8 xl:grid-cols-[minmax(0,1fr)_17rem]">
+<div class="grid max-w-5xl gap-8 xl:grid-cols-[minmax(0,1fr)_17rem]">
 	<div class="min-w-0">
 		{#if unopenable}
 			<p role="alert" class="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -389,6 +389,23 @@
 					<dt class="text-muted-foreground">Live in</dt>
 					<dd class="tabular">{published ? `No. ${published.generation}` : '—'}</dd>
 				</div>
+			</dl>
+			{#if published !== null}
+				<!-- The public link in one click: anyone can read the published version there. -->
+				<div class="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-dotted border-border pt-4 text-xs text-muted-foreground">
+					<span>{standing === 'changed' ? 'Anyone can read the published version.' : 'Anyone can read it.'}</span>
+					<Button variant="outline" size="xs" onclick={copyPublic} data-testid="copy-public-link"><LinkIcon data-icon="inline-start" />Copy public link</Button>
+				</div>
+			{/if}
+			<p class="mt-4 border-t border-dotted border-border pt-4 text-xs text-muted-foreground">
+				Drafts reach readers through a release.
+				<a class="underline underline-offset-2 hover:text-foreground" href={resolve('/projects/[project]/changesets', { project })}>Open changesets →</a>
+			</p>
+		</div>
+
+		<div class="mt-4 rounded-xl border border-border bg-card p-4 shadow-xs">
+			<h2 class="text-sm font-semibold">Details</h2>
+			<dl class="mt-3 space-y-2.5 text-sm">
 				<div class="flex items-center justify-between gap-2">
 					<dt class="text-muted-foreground">Revision</dt>
 					<dd class="font-mono text-xs" title={latest.revision.content_hash}>{latest.revision.content_hash.slice(7, 15)}</dd>
@@ -401,18 +418,20 @@
 					<dt class="text-muted-foreground">Created</dt>
 					<dd>{new Date(latest.created_at).toLocaleDateString()}</dd>
 				</div>
-			</dl>
-			{#if published !== null}
-				<!-- The public link in one click: anyone can read the published version there. -->
-				<div class="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-dotted border-border pt-4 text-xs text-muted-foreground">
-					<span>{standing === 'changed' ? 'Anyone can read the published version.' : 'Anyone can read it.'}</span>
-					<Button variant="outline" size="xs" onclick={copyPublic} data-testid="copy-public-link"><LinkIcon data-icon="inline-start" />Copy public link</Button>
+				<div class="flex items-center justify-between gap-2">
+					<dt class="text-muted-foreground"><label for="entry-locale">Locale</label></dt>
+					<dd>
+						<Input
+							id="entry-locale"
+							class="h-7 w-28 px-2 text-xs"
+							placeholder="default"
+							bind:value={locale}
+							maxlength={35}
+							title="The locale this entry is written in — saved with the draft"
+						/>
+					</dd>
 				</div>
-			{/if}
-			<p class="mt-4 border-t border-dotted border-border pt-4 text-xs text-muted-foreground">
-				Readers get an entry only once a release with it is published.
-				<a class="underline underline-offset-2 hover:text-foreground" href={resolve('/projects/[project]/changesets', { project })}>Changesets</a>
-			</p>
+			</dl>
 		</div>
 	</aside>
 </div>
