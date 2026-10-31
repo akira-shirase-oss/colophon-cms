@@ -710,5 +710,5 @@ async fn an_entrys_locale_is_set_filtered_and_rewritten() {
     let german = entries::list(&mut tx, ARTICLES, None, 20, None, &[], Some("de"))
         .await
         .expect("listed");
-    assert!(german.is_empty());
+    assert_eq!(german, []);
 }
