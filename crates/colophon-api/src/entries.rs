@@ -24,7 +24,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use colophon_db::{
     content_types,
-    entries::{self, Draft, NewRevision, Revision, Saved, Summary},
+    entries::{self, Draft, NewRevision, Removed, Revision, Saved, Summary},
     idempotency::{self, Claim},
     scope::{self, ProjectTransaction},
 };
@@ -463,6 +463,35 @@ pub(crate) async fn get(
     })
     .map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, Some(revision), false))
+}
+
+/// `DELETE {P}/collections/{collection}/entries/{entry}`: gone for good, but only while
+/// nothing references it — a changeset item or a published copy answers `conflict`.
+pub(crate) async fn remove(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<EntryPath>,
+) -> Result<Response, ApiError> {
+    let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let removed = entries::remove(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?;
+    match removed {
+        Removed::Removed => {
+            tx.commit().await.map_err(ApiError::from_db)?;
+            Ok(json(
+                StatusCode::OK,
+                r#"{"data":{"removed":true}}"#.to_string(),
+                None,
+                false,
+            ))
+        }
+        Removed::NotFound => Err(ApiError::NotFound),
+        Removed::Referenced => Err(ApiError::Conflict(
+            "the entry is still referenced: it is in a changeset or was published",
+        )),
+    }
 }
 
 /// A cursor is bound to the project, environment and collection it came from (module 04).

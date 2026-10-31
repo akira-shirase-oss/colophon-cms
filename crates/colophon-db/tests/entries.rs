@@ -147,6 +147,28 @@ async fn a_unique_value_can_only_be_held_by_one_entry() {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_draft_entry_can_be_deleted_and_then_is_gone() {
+    let db = TestDb::new().await;
+    let (alice, project, entry, _first) = alice_with_an_entry(&db).await;
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let removed = entries::remove(&mut tx, ARTICLES, entry)
+        .await
+        .expect("remove");
+    assert!(matches!(removed, entries::Removed::Removed));
+    tx.commit().await.expect("commit");
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let again = entries::remove(&mut tx, ARTICLES, entry)
+        .await
+        .expect("remove");
+    assert!(matches!(again, entries::Removed::NotFound));
+    let gone = entries::get(&mut tx, ARTICLES, entry).await.expect("get");
+    assert!(gone.is_none());
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
     let db = TestDb::new().await;
     let (alice, project, entry, first) = alice_with_an_entry(&db).await;

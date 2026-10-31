@@ -322,6 +322,11 @@ export async function saveEntry(
 	);
 }
 
+/** Deletes an entry for good. The server refuses (conflict) while anything references it. */
+export async function deleteEntry(project: string, collection: string, entry: string): Promise<void> {
+	await send('DELETE', `${entries(project, collection)}/${entry}`);
+}
+
 export async function listRevisions(project: string, collection: string, entry: string): Promise<Revision[]> {
 	return ((await (await send('GET', `${entries(project, collection)}/${entry}/revisions`)).json()) as { data: Revision[] }).data;
 }

@@ -203,6 +203,54 @@ pub async fn save(
     }))
 }
 
+/// The answer to a delete: gone, never there, or held in place by something that references it
+/// (a changeset item or a published copy — Postgres refuses, and that's the rule).
+pub enum Removed {
+    Removed,
+    NotFound,
+    Referenced,
+}
+
+/// Deletes an entry and its revisions outright. Only a draft-entry is really removable: a
+/// revision pinned by a changeset item or carried by a release fails the foreign keys.
+pub async fn remove(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    entry_id: Uuid,
+) -> Result<Removed, DbError> {
+    let revisions = sqlx::query!(
+        "DELETE FROM revisions WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3",
+        tx.project,
+        tx.environment,
+        entry_id
+    )
+    .execute(&mut *tx.transaction)
+    .await;
+    if let Err(error) = &revisions
+        && matches!(error, sqlx::Error::Database(database) if database.is_foreign_key_violation())
+    {
+        return Ok(Removed::Referenced);
+    }
+    revisions.map_err(DbError::from_write)?;
+    let entries = sqlx::query!(
+        "DELETE FROM entries WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND collection = $4",
+        tx.project,
+        tx.environment,
+        entry_id,
+        collection
+    )
+    .execute(&mut *tx.transaction)
+    .await;
+    match entries {
+        Ok(done) if done.rows_affected() > 0 => Ok(Removed::Removed),
+        Ok(_) => Ok(Removed::NotFound),
+        Err(sqlx::Error::Database(database)) if database.is_foreign_key_violation() => {
+            Ok(Removed::Referenced)
+        }
+        Err(error) => Err(DbError::from_write(error)),
+    }
+}
+
 /// Replaces the entry's `unique_values` rows with its new draft's: `uniques` is each unique
 /// field's id with the sha256 of its canonical value. A value another entry already holds trips
 /// the table's primary key, surfaced as [`DbError::Conflict`].
