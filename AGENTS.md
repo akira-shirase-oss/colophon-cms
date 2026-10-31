@@ -1,5 +1,34 @@
 # Colophon CMS: agent instructions
 
+**Current state (2026-10-31, port onto the main lineage).** Local `main` now tracks
+`origin/main` (`fb8c49f`; migrations to 0030). The former `studio/content-cards` line is archived
+at `origin/lineage/content-cards` and local `studio/content-cards` (`81e7002`) — 61 commits of
+Strapi-style modelling on a diverged base; the maintainer chose to **port its unique work onto
+this lineage** rather than merge. Port backlog, in intended order:
+
+1. typography floor (14px minimum; `check-typography.sh` + Studio/testbed CSS — no migration)
+2. delete an empty collection
+3. email-and-password accounts (sign up, sign in, join by invitation; sign-in card UX)
+4. mirrored references (a writable inverse field; main lineage has read-only "Linked from")
+5. import/export (JSON array and Strapi-entity import, JSONL export)
+6. locales and localization groups (deepest port — entry model, lists, API, Studio)
+7. Studio polish (invite dialog, neutral Keycloak theme, new-project checklist)
+
+Each port is a `port/<name>` branch merged into `main` when complete, migrations renumber from
+0031, and every port owes the D-018 trio (regression tests, testbed page, load scenario) on the
+new base. Check the archived line for the reference implementation: `git show studio/content-cards:<path>`.
+
+Running locally: `scripts/migrate.sh` migrates the shared `colophon` dev database (this
+lineage's own migrations — `colophon_studio` belonged to the archived line and must not be
+reused), then `COLOPHON_STUDIO_DIR=apps/studio/build target/release/colophon-server` — Studio at
+`http://localhost:58000/studio/`, sign in as `dev-owner`. Port branches run against their own
+database via `COLOPHON_TEST_DATABASE=colophon_port` (rewrites both URLs in
+`scripts/local-env.sh`); merge back to the shared database only when the port lands on `main`.
+Rebuild the Studio bundle with `npm run build -w @colophon/studio` and the running server picks
+it up from disk; the server binary needs a rebuild only for Rust changes. After touching `sqlx`
+queries, re-prepare with `cargo sqlx prepare --workspace --all-targets` (plain `prepare` wipes
+`.sqlx`).
+
 **Status (2026-10-27): milestone P3 in progress.** P0 is complete: steps 0.1 to 0.7 built the pinned toolchain and
 workspace, the local stack in `deploy/`, the error envelope and health checks, `apps/testbed` and the k6 harness in
 `perf/`, the rich-text format with its editor, validator and renderer, and `packages/ui` with the Studio's first screen
