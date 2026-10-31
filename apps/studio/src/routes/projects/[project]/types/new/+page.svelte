@@ -22,6 +22,7 @@
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Checkbox } from '@colophon/ui/ui/checkbox';
+	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
 	import * as NativeSelect from '@colophon/ui/ui/native-select';
@@ -39,12 +40,12 @@
 	const mayChange = $derived(mine.data?.role === 'owner' || mine.data?.role === 'developer');
 
 	const KIND = {
-		text: { name: 'Text', icon: TypeIcon },
-		rich_text: { name: 'Rich text', icon: AlignLeftIcon },
-		number: { name: 'Number', icon: HashIcon },
-		boolean: { name: 'Yes or no', icon: ToggleLeftIcon },
-		enum: { name: 'Choice', icon: ListIcon },
-		datetime: { name: 'Date and time', icon: CalendarIcon }
+		text: { name: 'Text', icon: TypeIcon, about: 'A title, a name, a short description.' },
+		rich_text: { name: 'Rich text', icon: AlignLeftIcon, about: 'Long writing with headings, lists, links and images.' },
+		number: { name: 'Number', icon: HashIcon, about: 'A price, a quantity, a rating.' },
+		boolean: { name: 'Yes or no', icon: ToggleLeftIcon, about: 'A switch: yes or no, on or off.' },
+		enum: { name: 'Choice', icon: ListIcon, about: 'One option from a list you set, like a category.' },
+		datetime: { name: 'Date and time', icon: CalendarIcon, about: 'A day and a time, like when an event starts.' }
 	} as const;
 	type Kind = keyof typeof KIND;
 
@@ -109,8 +110,12 @@
 		return /^[a-z]/.test(id) ? id : `f_${id}`;
 	};
 
-	function add() {
-		fields = [...fields, row()];
+	let picking = $state(false);
+	function pick(kind: Kind) {
+		const field = row();
+		field.kind = kind;
+		fields.push(field);
+		picking = false;
 	}
 	function remove(field: FieldRow) {
 		fields = fields.filter((each) => each.key !== field.key);
@@ -341,7 +346,7 @@
 					</div>
 				{/each}
 				<div>
-					<Button variant="outline" size="sm" onclick={add}><PlusIcon /> Add field</Button>
+					<Button variant="outline" size="sm" onclick={() => (picking = true)}><PlusIcon /> Add field</Button>
 				</div>
 			</div>
 		</FormRow>
@@ -362,4 +367,35 @@
 			<Button type="submit" disabled={busy || problem !== ''}>Create collection</Button>
 		</div>
 	</form>
+
+	<Dialog.Root bind:open={picking}>
+		<Dialog.Content class="sm:max-w-2xl" data-testid="field-picker">
+			<Dialog.Header>
+				<Dialog.Title>Add a field</Dialog.Title>
+				<Dialog.Description>Choose what kind of value it holds. You name it next.</Dialog.Description>
+			</Dialog.Header>
+			<ul class="grid gap-2 sm:grid-cols-2">
+				{#each Object.entries(KIND) as [kind, option] (kind)}
+					{@const Icon = option.icon}
+					<li>
+						<button
+							type="button"
+							class="flex h-full w-full items-start gap-3 rounded-md border border-border bg-card p-3 text-left transition-colors outline-none hover:border-ring/60 hover:bg-accent focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/25"
+							onclick={() => pick(kind as Kind)}
+							data-testid="pick-{kind}"
+						>
+							<span
+								class="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-background text-foreground"
+								aria-hidden="true"><Icon class="size-4" /></span
+							>
+							<span class="grid min-w-0 gap-0.5">
+								<span class="text-sm font-medium">{option.name}</span>
+								<span class="text-xs text-muted-foreground">{option.about}</span>
+							</span>
+						</button>
+					</li>
+				{/each}
+			</ul>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}
