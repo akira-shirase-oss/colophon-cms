@@ -9,6 +9,7 @@
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
+	import ListTreeIcon from '@lucide/svelte/icons/list-tree';
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SearchIcon from '@lucide/svelte/icons/search';
@@ -221,6 +222,13 @@
 			<Sidebar.Group>
 				<Sidebar.GroupLabel>Project</Sidebar.GroupLabel>
 				<Sidebar.Menu>
+					<Sidebar.MenuItem>
+						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/types')} tooltipContent="Types">
+							{#snippet child({ props })}
+								<a href={resolve('/projects/[project]/types', { project })} data-testid="types-link" {...props}><ListTreeIcon /><span>Types</span></a>
+							{/snippet}
+						</Sidebar.MenuButton>
+					</Sidebar.MenuItem>
 					<Sidebar.MenuItem>
 						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/members')} tooltipContent="Members">
 							{#snippet child({ props })}
