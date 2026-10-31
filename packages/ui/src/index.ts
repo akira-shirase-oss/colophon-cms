@@ -1,6 +1,7 @@
 export { default as AppearanceMenu } from './components/AppearanceMenu.svelte';
 export { default as Button } from './components/Button.svelte';
 export { default as Dialog } from './components/Dialog.svelte';
+export { default as NavigationRail } from './components/NavigationRail.svelte';
 export { default as Tabs } from './components/Tabs.svelte';
 export { default as TextField } from './components/TextField.svelte';
 export { default as Toolbar } from './components/Toolbar.svelte';

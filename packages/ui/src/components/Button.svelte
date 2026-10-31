@@ -1,16 +1,25 @@
-<!-- An M3 common button: filled, tonal, outlined or text. -->
+<!-- An M3 common button: filled, tonal, outlined or text. Can be a button or a link. -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { HTMLButtonAttributes } from 'svelte/elements';
+	import type { HTMLButtonAttributes, HTMLAnchorAttributes } from 'svelte/elements';
 
 	let {
 		variant = 'filled',
+		href,
 		children,
 		...rest
-	}: { variant?: 'filled' | 'tonal' | 'outlined' | 'text'; children: Snippet } & HTMLButtonAttributes = $props();
+	}: {
+		variant?: 'filled' | 'tonal' | 'outlined' | 'text';
+		href?: string;
+		children: Snippet;
+	} & Omit<HTMLButtonAttributes & HTMLAnchorAttributes, 'href'> = $props();
 </script>
 
-<button class="button {variant}" {...rest}>{@render children()}</button>
+{#if href}
+	<a class="button {variant}" {href} {...rest}>{@render children()}</a>
+{:else}
+	<button class="button {variant}" {...rest}>{@render children()}</button>
+{/if}
 
 <style>
 	.button {
@@ -29,6 +38,7 @@
 		cursor: pointer;
 		overflow: hidden;
 		transition: box-shadow var(--md-sys-motion-duration-short4) var(--md-sys-motion-easing-standard);
+		text-decoration: none;
 	}
 	/* The state layer: the element's own text colour at the state's opacity. */
 	.button::before {
@@ -70,14 +80,14 @@
 		color: var(--md-sys-color-primary);
 		padding: 0 0.75rem;
 	}
-	.button:disabled {
+	button:disabled {
 		cursor: not-allowed;
 		background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
 		color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
 		border-color: transparent;
 		box-shadow: none;
 	}
-	.button:disabled::before {
+	button:disabled::before {
 		opacity: 0;
 	}
 </style>
