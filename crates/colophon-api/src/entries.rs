@@ -383,7 +383,7 @@ async fn check_dangling(
     content: &Content,
 ) -> Result<(), ApiError> {
     for field in content_type.fields() {
-        if let FieldKind::Reference { to, many } = &field.kind
+        if let FieldKind::Reference { to, many, .. } = &field.kind
             && let Some(raw) = content.value(&field.id)
         {
             let ids: Vec<String> = if *many {
@@ -404,6 +404,147 @@ async fn check_dangling(
                         message: format!("`{}` names an entry that isn't in `{to}`", field.label),
                     }));
                 }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The ids a reference field holds in a stored document: one string, or a list of them.
+fn reference_ids(canonical: Option<&str>, field: &str) -> Vec<String> {
+    let Some(canonical) = canonical else {
+        return Vec::new();
+    };
+    let Ok(document) = serde_json::from_str::<Value>(canonical) else {
+        return Vec::new();
+    };
+    match document.get(field) {
+        Some(Value::String(one)) => vec![one.clone()],
+        Some(Value::Array(list)) => list
+            .iter()
+            .filter_map(|id| id.as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Adds `entry` to (or removes it from) the `back` field of `other` — one revision, inside
+/// this transaction. A `back` that can't take the write (deleted target, changed definition,
+/// required field left empty) is skipped rather than sinking the entry save it came from:
+/// the forward reference is the truth; the mirror is kept where it fits.
+async fn write_back(
+    tx: &mut ProjectTransaction,
+    to: &str,
+    back: &str,
+    mine: &str,
+    other: Uuid,
+    entry: Uuid,
+    add: bool,
+) -> Result<(), ApiError> {
+    let Some(draft) = entries::get(tx, to, other)
+        .await
+        .map_err(ApiError::from_db)?
+    else {
+        return Ok(());
+    };
+    let (b_type, version) = content_type(tx, to).await?;
+    let Some(back_field) = b_type.fields().iter().find(|field| field.id == back) else {
+        return Ok(());
+    };
+    let FieldKind::Reference {
+        to: mirror, many, ..
+    } = &back_field.kind
+    else {
+        return Ok(());
+    };
+    if mirror != mine {
+        return Ok(());
+    }
+    let mut document: Value = serde_json::from_str(&draft.content).map_err(ApiError::internal)?;
+    let id = entry.to_string();
+    if *many {
+        let mut list: Vec<String> = document
+            .get(back)
+            .and_then(Value::as_array)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|value| value.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if add {
+            if list.contains(&id) {
+                return Ok(());
+            }
+            list.push(id);
+        } else if list.iter().filter(|seen| *seen != &id).count() == list.len() {
+            return Ok(());
+        } else {
+            list.retain(|seen| *seen != id);
+        }
+        document[back] = serde_json::json!(list);
+    } else if add {
+        if document.get(back).and_then(Value::as_str) == Some(id.as_str()) {
+            return Ok(());
+        }
+        document[back] = Value::String(id);
+    } else {
+        if document.get(back).and_then(Value::as_str) != Some(id.as_str()) {
+            return Ok(());
+        }
+        if let Some(object) = document.as_object_mut() {
+            object.remove(back);
+        }
+    }
+    let Ok(content) = b_type.validate(&document) else {
+        return Ok(());
+    };
+    let hash = sha256(content.canonical_json().as_bytes());
+    let revision = NewRevision {
+        id: Uuid::now_v7(),
+        content: content.canonical_json(),
+        content_hash: &hash,
+        title: content.title(),
+        schema_version: version,
+    };
+    let uniques = unique_pairs(&b_type, &content);
+    let _ = entries::save(tx, other, draft.revision.id, revision, &uniques)
+        .await
+        .map_err(ApiError::from_db)?;
+    Ok(())
+}
+
+/// Mirrors `entry`'s `inverse`-declaring reference fields onto their targets: targets it
+/// gained get `entry` written into the back-field, targets it lost have it removed. `before`
+/// is the previous canonical document (`None` on create), `after` the new one (`None` on
+/// delete). Same transaction, so a link and its mirror commit or roll back together.
+async fn sync_inverses(
+    tx: &mut ProjectTransaction,
+    content_type: &ContentType,
+    collection: &str,
+    entry: Uuid,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> Result<(), ApiError> {
+    for field in content_type.fields() {
+        let FieldKind::Reference {
+            to,
+            inverse: Some(back),
+            ..
+        } = &field.kind
+        else {
+            continue;
+        };
+        let old_ids = reference_ids(before, &field.id);
+        let new_ids = reference_ids(after, &field.id);
+        for other in new_ids.iter().filter(|id| !old_ids.contains(id)) {
+            if let Ok(other) = Uuid::try_parse(other) {
+                write_back(tx, to, back, collection, other, entry, true).await?;
+            }
+        }
+        for other in old_ids.iter().filter(|id| !new_ids.contains(id)) {
+            if let Ok(other) = Uuid::try_parse(other) {
+                write_back(tx, to, back, collection, other, entry, false).await?;
             }
         }
     }
@@ -500,6 +641,15 @@ pub(crate) async fn create(
     )
     .await
     .map_err(ApiError::from_db)?;
+    sync_inverses(
+        &mut tx,
+        &content_type,
+        &path.collection,
+        draft.entry_id,
+        None,
+        Some(&draft.content),
+    )
+    .await?;
     finish(tx, CREATE, key, StatusCode::CREATED, draft).await
 }
 
@@ -607,29 +757,15 @@ pub(crate) async fn import(
         return Err(ApiError::Conflict("a single collection holds one entry"));
     }
     for (index, value) in items.iter().enumerate() {
-        let (content, hash) = validate(entity(value), &content_type)
-            .map_err(|error| on_index(error, &at_index(index)))?;
-        let uniques = unique_pairs(&content_type, &content);
-        check_dangling(&mut tx, &content_type, &content)
-            .await
-            .map_err(|error| on_index(error, &at_index(index)))?;
-        let revision = NewRevision {
-            id: Uuid::now_v7(),
-            content: content.canonical_json(),
-            content_hash: &hash,
-            title: content.title(),
-            schema_version: version,
-        };
-        entries::create(
+        import_one(
             &mut tx,
-            Uuid::now_v7(),
+            &content_type,
             &path.collection,
-            revision,
-            &uniques,
-            None,
+            entity(value),
+            version,
+            &at_index(index),
         )
-        .await
-        .map_err(ApiError::from_db)?;
+        .await?;
     }
     let body = serde_json::to_string(&Data {
         data: serde_json::json!({ "imported": items.len() }),
@@ -640,6 +776,43 @@ pub(crate) async fn import(
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(json(StatusCode::CREATED, body, None, false))
+}
+
+/// One imported item: validated, checked for dangling references, created and mirrored.
+/// `at_index` names the item in refusals (`/line/3` or `/2`).
+async fn import_one(
+    tx: &mut ProjectTransaction,
+    content_type: &ContentType,
+    collection: &str,
+    value: &Value,
+    version: i32,
+    at_index: &str,
+) -> Result<(), ApiError> {
+    let (content, hash) =
+        validate(value, content_type).map_err(|error| on_index(error, at_index))?;
+    let uniques = unique_pairs(content_type, &content);
+    check_dangling(tx, content_type, &content)
+        .await
+        .map_err(|error| on_index(error, at_index))?;
+    let revision = NewRevision {
+        id: Uuid::now_v7(),
+        content: content.canonical_json(),
+        content_hash: &hash,
+        title: content.title(),
+        schema_version: version,
+    };
+    let draft = entries::create(tx, Uuid::now_v7(), collection, revision, &uniques, None)
+        .await
+        .map_err(ApiError::from_db)?;
+    sync_inverses(
+        tx,
+        content_type,
+        collection,
+        draft.entry_id,
+        None,
+        Some(&draft.content),
+    )
+    .await
 }
 
 /// A Strapi export entity — `{"type":"api::x.x","data":{…}}` — or a `{"version":2,"data":{…}}`
@@ -713,6 +886,11 @@ pub(crate) async fn save(
     };
     let uniques = unique_pairs(&content_type, &content);
     check_dangling(&mut tx, &content_type, &content).await?;
+    // The outgoing document, for the inverse diff; the save itself still guards on `expected`.
+    let before = entries::get(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?
+        .map(|draft| draft.content);
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.
     match entries::save(&mut tx, entry, expected, revision, &uniques)
         .await
@@ -724,6 +902,15 @@ pub(crate) async fn save(
                     .await
                     .map_err(ApiError::from_db)?;
             }
+            sync_inverses(
+                &mut tx,
+                &content_type,
+                &path.collection,
+                draft.entry_id,
+                before.as_deref(),
+                Some(&draft.content),
+            )
+            .await?;
             finish(tx, SAVE, key, StatusCode::OK, *draft).await
         }
         Saved::Stale { current } => Err(ApiError::StaleRevision { current }),
@@ -808,6 +995,22 @@ pub(crate) async fn remove(
 ) -> Result<Response, ApiError> {
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // Its mirrors lose it first: `back` fields drop this entry before it goes, same transaction.
+    if let Some(before) = entries::get(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        let (definition, _) = content_type(&mut tx, &path.collection).await?;
+        sync_inverses(
+            &mut tx,
+            &definition,
+            &path.collection,
+            entry,
+            Some(&before.content),
+            None,
+        )
+        .await?;
+    }
     let removed = entries::remove(&mut tx, &path.collection, entry)
         .await
         .map_err(ApiError::from_db)?;

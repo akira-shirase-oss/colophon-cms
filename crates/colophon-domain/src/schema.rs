@@ -126,6 +126,10 @@ pub enum FieldKind {
         to: String,
         /// `true` holds a list of references to that collection, `false` holds one.
         many: bool,
+        /// The field on the target collection that mirrors this link: saving this entry adds
+        /// it to (or removes it from) that field on every target, in the same transaction.
+        /// `None` is a plain one-way reference.
+        inverse: Option<String>,
     },
     /// An ordered list of sections, each one of the declared block types: the value is a list
     /// of objects whose `"_block"` names the type, like `[{"_block": "quote", "text": "…"}]`.
@@ -991,9 +995,11 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         // `of` is a derivation hint, not a constraint: any slug keeps fitting a slug.
         // (slug→slug widens: it is a leaf kind in the `true` arm above)
         // A reference keeps pointing at the same collection; `to` is the constraint itself.
-        (FieldKind::Reference { to: a, many: x }, FieldKind::Reference { to: b, many: y }) => {
-            a == b && x == y
-        }
+        // `inverse` is sync metadata, not a shape: changing it can't widen or narrow.
+        (
+            FieldKind::Reference { to: a, many: x, .. },
+            FieldKind::Reference { to: b, many: y, .. },
+        ) => a == b && x == y,
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -1460,6 +1466,7 @@ impl ContentType {
             object,
             &[
                 "id", "label", "type", "required", "default", "when", "unique", "to", "many",
+                "inverse",
             ],
             pointer,
         )?;
@@ -1495,9 +1502,21 @@ impl ContentType {
                 ));
             }
         };
+        let inverse = match object.get("inverse") {
+            None => None,
+            Some(Value::String(back)) if is_field_id(back) => Some(back.clone()),
+            Some(_) => {
+                return Err(refuse(
+                    "invalid_inverse",
+                    &at(pointer, "inverse"),
+                    "`inverse` names a reference field on the target collection",
+                ));
+            }
+        };
         Ok(FieldKind::Reference {
             to: to.to_owned(),
             many,
+            inverse,
         })
     }
 
@@ -1978,10 +1997,13 @@ impl ContentType {
                     Self::write_kind_extra(out, "of", of);
                 }
             }
-            FieldKind::Reference { to, many } => {
+            FieldKind::Reference { to, many, inverse } => {
                 Self::write_kind_extra(out, "to", to);
                 if *many {
                     out.push_str(",\"many\":true");
+                }
+                if let Some(back) = inverse {
+                    Self::write_kind_extra(out, "inverse", back);
                 }
             }
             FieldKind::Blocks {
@@ -2392,7 +2414,7 @@ impl ContentType {
             | FieldKind::Url
             | FieldKind::Slug { .. }
             | FieldKind::Color => formatted(&field.kind, value, pointer, label, out)?,
-            FieldKind::Reference { to, many } => {
+            FieldKind::Reference { to, many, .. } => {
                 reference_value(to, *many, value, pointer, label, out)?;
             }
             FieldKind::Blocks {

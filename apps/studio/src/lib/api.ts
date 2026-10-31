@@ -48,7 +48,7 @@ export type FieldDefinition = {
 	| { type: 'color' }
 	| { type: 'json'; max_bytes: number }
 	| { type: 'slug'; of?: string }
-	| { type: 'reference'; to: string; many?: boolean }
+	| { type: 'reference'; to: string; many?: boolean; inverse?: string }
 	| { type: 'blocks'; blocks: BlockTypeDef[]; min_blocks: number; max_blocks: number }
 	| { type: 'object'; fields: FieldDefinition[] }
 	| {

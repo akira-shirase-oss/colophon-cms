@@ -121,6 +121,7 @@
 		slugOf: string;
 		refTo: string;
 		refMany: boolean;
+		refInverse: string;
 		blockTypes: BlockRow[];
 		subfields: SubRow[];
 		listOf: ItemKind;
@@ -150,6 +151,7 @@
 		slugOf: '',
 		refTo: '',
 		refMany: false,
+		refInverse: '',
 		blockTypes: [],
 		subfields: [],
 		listOf: 'text',
@@ -217,6 +219,7 @@
 		slugOf: field.type === 'slug' ? (field.of ?? '') : '',
 		refTo: field.type === 'reference' ? field.to : '',
 		refMany: field.type === 'reference' ? (field.many ?? false) : false,
+		refInverse: field.type === 'reference' ? (field.inverse ?? '') : '',
 		blockTypes: field.type === 'blocks' ? field.blocks.map(blockStored) : [],
 		subfields: field.type === 'object' ? field.fields.map(subStored) : [],
 		listOf: field.type === 'list' ? field.of : 'text',
@@ -483,8 +486,10 @@
 						return { ...base, type: 'list', of: field.listOf, min_items: field.minItems, max_items: field.maxItems };
 					case 'slug':
 						return field.slugOf === '' ? { ...base, type: 'slug' } : { ...base, type: 'slug', of: field.slugOf };
-					case 'reference':
-						return { ...base, type: 'reference', to: field.refTo, ...(field.refMany ? { many: true as const } : {}) };
+					case 'reference': {
+						const inverse = field.refInverse.trim();
+						return { ...base, type: 'reference', to: field.refTo, ...(field.refMany ? { many: true as const } : {}), ...(inverse !== '' ? { inverse } : {}) };
+					}
 					case 'blocks':
 						return { ...base, type: 'blocks', blocks: field.blockTypes.map(blockDef), min_blocks: field.minItems, max_blocks: field.maxItems };
 					case 'date':
@@ -809,6 +814,19 @@
 						<label class="flex items-center gap-2 text-sm" for="field-refmany">
 							<Checkbox id="field-refmany" bind:checked={draft.refMany} /> Holds more than one — a list of entries
 						</label>
+						<div class="space-y-1.5">
+							<Label for="field-refinverse">Mirrored by</Label>
+							<Input
+								id="field-refinverse"
+								class="w-full font-mono"
+								placeholder="a reference field on that collection, like articles"
+								bind:value={draft.refInverse}
+								maxlength={64}
+							/>
+							<p class="text-sm text-muted-foreground">
+								Optional. Saving this entry updates that field on each linked entry, and the other way around.
+							</p>
+						</div>
 					{:else if draft.kind === 'blocks'}
 						<div class="space-y-3">
 							<p class="text-sm font-medium">Section types</p>
