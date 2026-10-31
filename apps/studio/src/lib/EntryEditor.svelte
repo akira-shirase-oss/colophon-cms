@@ -62,6 +62,16 @@
 	const definition = type.definition;
 	const plain = definition.fields.filter((field) => field.type !== 'rich_text');
 	const rich = definition.fields.filter((field) => field.type === 'rich_text');
+	/** The fields in the definition's order, as the builder lists them: runs of plain fields,
+	 *  each a block of rows, between rich-text fields, each full width where it sits. */
+	type Segment = { kind: 'plain'; fields: FieldDefinition[] } | { kind: 'rich'; field: FieldDefinition };
+	const segments: Segment[] = [];
+	for (const field of definition.fields) {
+		const last = segments.at(-1);
+		if (field.type === 'rich_text') segments.push({ kind: 'rich', field });
+		else if (last?.kind === 'plain') last.fields.push(field);
+		else segments.push({ kind: 'plain', fields: [field] });
+	}
 	// svelte-ignore state_referenced_locally
 	let latest = $state.raw<Draft>(initial.draft);
 	// svelte-ignore state_referenced_locally
@@ -274,15 +284,20 @@
 		</div>
 
 		<div role="tabpanel" id="panel-content" aria-labelledby="tab-content" hidden={tab !== 'content'}>
-			<FieldInputs fields={plain} bind:form titleField={definition.title_field} onchange={changed} />
-			{#each rich as field (field.id)}
-				<div class="py-5">
-					<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
-					<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60">
-						<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" />
-						<div class="editor px-6 py-5 sm:px-8" bind:this={hosts[field.id]}></div>
+			<!-- In the definition's order: runs of plain fields as rows, rich text where it sits. -->
+			{#each segments as segment, index (index)}
+				{#if segment.kind === 'plain'}
+					<FieldInputs fields={segment.fields} bind:form titleField={definition.title_field} onchange={changed} />
+				{:else}
+					{@const field = segment.field}
+					<div class="py-5">
+						<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
+						<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60">
+							<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" />
+							<div class="editor px-6 py-5 sm:px-8" bind:this={hosts[field.id]}></div>
+						</div>
 					</div>
-				</div>
+				{/if}
 			{/each}
 		</div>
 
