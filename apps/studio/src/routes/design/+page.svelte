@@ -14,7 +14,7 @@
 	import Section from './Section.svelte';
 
 	const COLOURS = [
-		{ group: 'Paper and ink', tokens: ['background', 'card', 'foreground', 'muted-foreground', 'border', 'input'] },
+		{ group: 'Ink and grey', tokens: ['background', 'card', 'foreground', 'muted-foreground', 'border', 'input'] },
 		{ group: 'Actions', tokens: ['primary', 'secondary', 'accent', 'destructive', 'ring'] },
 		{ group: 'Accent', tokens: ['brand', 'brand-ink', 'brand-soft', 'glow-1', 'glow-2', 'glow-3'] },
 		{ group: 'States', tokens: ['live', 'live-soft', 'pending', 'pending-soft', 'attention', 'attention-soft', 'draft', 'draft-soft'] },
@@ -48,10 +48,11 @@
 <div class="grid gap-10 pb-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:items-center">
 	<div class="space-y-6">
 		<Badge variant="brand">Design system · D-056</Badge>
-		<h1 class="display-1 max-w-xl">Quiet paper, black ink, one warm accent.</h1>
+		<h1 class="display-1 max-w-xl">White, ink, and colour only where it means something.</h1>
 		<p class="max-w-lg text-[1.0625rem] leading-relaxed text-pretty text-muted-foreground">
-			The Studio's tokens, type and every shadcn-svelte component, restyled. White sheets float on soft shadows; actions are black pills; the
-			orange only glows. Every text colour passes WCAG AA, and AAA when the system asks for more contrast.
+			The Studio's tokens, type and every shadcn-svelte component, on the neutral theme. Grounds are white, actions are
+			near-black, system type, and colour is reserved for state. Every text colour passes WCAG AA, and AAA when the
+			system asks for more contrast.
 		</p>
 		<nav class="flex flex-wrap gap-2" aria-label="Sections">
 			{#each NAV as name (name)}
@@ -165,15 +166,15 @@
 	</div>
 </Section>
 
-<Section id="actions" title="Actions" lead="Black pills do the one thing a page is for; outlined pills do the rest. Badges say state, never decoration.">
+<Section id="actions" title="Actions" lead="The black button does the one thing a page is for; outlined buttons do the rest. Badges say state, never decoration.">
 	<Actions />
 </Section>
 
-<Section id="forms" title="Forms" lead="Boxed white fields with a hairline, a soft ring on focus, and errors said in words beside the field.">
+<Section id="forms" title="Forms" lead="Boxed fields with a grey border, a grey ring on focus, and errors said in words beside the field.">
 	<Forms />
 </Section>
 
-<Section id="overlays" title="Overlays" lead="Dialogs, sheets and menus float on the same soft shadow as cards, with generous radius and quiet motion.">
+<Section id="overlays" title="Overlays" lead="Dialogs, sheets and menus sit on the same soft shadow as cards, with quiet motion.">
 	<Overlays />
 </Section>
 
