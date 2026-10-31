@@ -7,6 +7,7 @@
 	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
 	import { Button } from '@colophon/ui/ui/button';
+	import { Input } from '@colophon/ui/ui/input';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import EntryEditor from '#lib/EntryEditor.svelte';
 	import { deleteEntry, getContentType, getEntry } from '#lib/api.ts';
@@ -19,6 +20,10 @@
 	const entry = $derived(page.params.entry ?? '');
 	const type = createQuery(() => ({ queryKey: ['type', project, collection], queryFn: () => getContentType(project, collection) }));
 	const links = createQuery(() => referencedByQuery(project, collection, entry));
+	let locale = $state('');
+	$effect(() => {
+		if (locale === '') locale = draft.data?.draft.locale ?? '';
+	});
 	// Loaded once per visit: after that the editor owns the content, and saving keeps it current.
 	const draft = createQuery(() => ({
 		queryKey: ['draft', project, collection, entry],
@@ -49,7 +54,8 @@
 			<span class="font-mono text-xs">{entry.slice(-12)}</span>
 		{/snippet}
 	</PageHeader>
-	<div class="mb-6 flex justify-end">
+	<div class="mb-6 flex items-center justify-end gap-2">
+		<Input id="entry-locale" class="w-28" placeholder="locale" bind:value={locale} aria-label="Locale" title="The locale this entry is written in — saved with the draft" maxlength={35} />
 		{#if confirming}
 			<Button
 				variant="destructive"
@@ -72,7 +78,7 @@
 		{/if}
 	</div>
 	{#key entry}
-		<EntryEditor {project} {collection} {entry} type={type.data} initial={draft.data} {published} />
+		<EntryEditor {project} {collection} {entry} type={type.data} initial={draft.data} {published} locale={() => locale} />
 	{/key}
 	{#if links.data && links.data.length > 0}
 		<section class="mt-8 max-w-3xl" aria-labelledby="referenced-by-heading">

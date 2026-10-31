@@ -212,6 +212,9 @@
 									class="block truncate font-medium after:absolute after:inset-0 focus-visible:underline focus-visible:outline-none"
 									href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}>{entry.revision.title}</a
 								>
+								{#if entry.locale}
+									<span class="ml-2 inline-flex items-center rounded border border-border px-1.5 py-0.5 text-xs font-medium uppercase text-muted-foreground">{entry.locale}</span>
+								{/if}
 							</Table.Cell>
 							{#each columns as column (column.id)}
 								<Table.Cell class="hidden max-w-0 truncate text-sm text-muted-foreground md:table-cell">{shown(column, entry.fields?.[column.id])}</Table.Cell>

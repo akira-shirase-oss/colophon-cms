@@ -103,6 +103,8 @@ export interface Draft {
 	updated_at: string;
 	revision: Revision;
 	content: Content;
+	/** The entry's locale tag, or `null` for the default locale. */
+	locale?: string | null;
 }
 
 export interface Summary {
@@ -114,6 +116,8 @@ export interface Summary {
 	/** The draft's values of the collection's column fields (up to three short fields);
 	 *  a field the content doesn't have is null. */
 	fields: Record<string, string | number | boolean | null>;
+	/** The entry's locale tag, or `null` for the default locale. */
+	locale?: string | null;
 }
 
 /** Where an entry stands for readers: never published (or taken down), live as drafted, or
@@ -374,10 +378,11 @@ export async function listEntries(project: string, collection: string): Promise<
 }
 
 /** Up to 100 entries, newest first; `q` searches draft titles (at most 100 characters). */
-export async function searchEntries(project: string, collection: string, q = '', cursor: string | null = null): Promise<Page<Summary>> {
+export async function searchEntries(project: string, collection: string, q = '', cursor: string | null = null, locale?: string): Promise<Page<Summary>> {
 	const query = new URLSearchParams({ limit: '100' });
 	if (q.trim() !== '') query.set('q', q.trim());
 	if (cursor !== null) query.set('cursor', cursor);
+	if (locale && locale.trim() !== '') query.set('locale', locale.trim());
 	return (await (await send('GET', `${entries(project, collection)}?${query}`)).json()) as Page<Summary>;
 }
 
@@ -415,8 +420,9 @@ export async function referencedBy(project: string, collection: string, entry: s
 	).data;
 }
 
-export async function createEntry(project: string, collection: string, content: Content, key: string): Promise<Loaded> {
-	return loaded(await send('POST', entries(project, collection), content, { 'Idempotency-Key': key }));
+export async function createEntry(project: string, collection: string, content: Content, key: string, locale?: string): Promise<Loaded> {
+	const query = locale && locale.trim() !== '' ? `?locale=${encodeURIComponent(locale.trim())}` : '';
+	return loaded(await send('POST', `${entries(project, collection)}${query}`, content, { 'Idempotency-Key': key }));
 }
 
 /** Saves `content` on top of the revision `etag` names. Sending the same key again is safe. */
@@ -426,10 +432,12 @@ export async function saveEntry(
 	entry: string,
 	content: Content,
 	etag: string,
-	key: string
+	key: string,
+	locale?: string
 ): Promise<Loaded> {
+	const query = locale !== undefined && locale.trim() !== '' ? `?locale=${encodeURIComponent(locale.trim())}` : '';
 	return loaded(
-		await send('PUT', `${entries(project, collection)}/${entry}`, content, { 'If-Match': etag, 'Idempotency-Key': key })
+		await send('PUT', `${entries(project, collection)}/${entry}${query}`, content, { 'If-Match': etag, 'Idempotency-Key': key })
 	);
 }
 

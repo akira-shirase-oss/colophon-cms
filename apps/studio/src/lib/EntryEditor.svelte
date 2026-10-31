@@ -46,7 +46,8 @@
 		entry,
 		type,
 		initial,
-		published = null
+		published = null,
+		locale = () => undefined
 	}: {
 		project: string;
 		collection: string;
@@ -55,6 +56,8 @@
 		initial: Loaded;
 		/** What readers get now, from the collection's list; null when not published. */
 		published?: Summary['published'];
+		/** The entry's locale tag, read at each save so a field in the page can set it. */
+		locale?: () => string | undefined;
 	} = $props();
 
 	const queryClient = useQueryClient();
@@ -83,7 +86,7 @@
 		queryClient.setQueryData(['draft', project, collection, entry], loaded);
 		void queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
 		void queryClient.invalidateQueries({ queryKey: ['history', project, collection, entry] });
-	});
+	}, locale);
 	const revisions = createQuery(() => ({
 		queryKey: ['history', project, collection, entry],
 		queryFn: () => listRevisions(project, collection, entry)
