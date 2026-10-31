@@ -88,6 +88,7 @@
 		min: string;
 		max: string;
 		values: string;
+		defaultStr: string;
 	};
 
 	let nextKey = 0;
@@ -104,7 +105,8 @@
 		integer: false,
 		min: '',
 		max: '',
-		values: ''
+		values: '',
+		defaultStr: ''
 	});
 	/** A field of the collection being changed, as a row: its id stays put unless edited by hand. */
 	const fromStored = (field: FieldDefinition): FieldRow => ({
@@ -120,7 +122,8 @@
 		integer: field.type === 'number' ? field.integer : false,
 		min: field.type === 'number' && field.min !== undefined ? String(field.min) : '',
 		max: field.type === 'number' && field.max !== undefined ? String(field.max) : '',
-		values: field.type === 'enum' ? field.values.join('\n') : ''
+		values: field.type === 'enum' ? field.values.join('\n') : '',
+		defaultStr: field.default === undefined ? '' : JSON.stringify(field.default)
 	});
 
 	// The component mounts once the collection is read: the props it starts with are the ones
@@ -218,6 +221,18 @@
 		)
 			return 'A choice field needs at least one option.';
 		if (!usable) return 'The title field must be a required, single-line text field.';
+		if (
+			fields.some((field) => {
+				if (field.defaultStr.trim() === '') return false;
+				try {
+					JSON.parse(field.defaultStr);
+					return false;
+				} catch {
+					return true;
+				}
+			})
+		)
+			return 'A default must be JSON: "a string in quotes", true, false, a number, or {…}.';
 		return '';
 	});
 
@@ -231,7 +246,12 @@
 			name: name.trim(),
 			title_field: titleRow.id,
 			fields: fields.map((field): FieldDefinition => {
-				const base = { id: field.id, label: field.label.trim(), required: field.required };
+				const base = {
+					id: field.id,
+					label: field.label.trim(),
+					required: field.required,
+					...(field.defaultStr.trim() !== '' ? { default: JSON.parse(field.defaultStr) as unknown } : {})
+				};
 				switch (field.kind) {
 					case 'text':
 						return { ...base, type: 'text', max_chars: field.maxChars, multiline: field.multiline };
@@ -435,6 +455,16 @@
 							maxlength={64}
 						/>
 						<p class="text-xs text-muted-foreground">The key in the API's JSON: lowercase letters, digits and underscores.</p>
+					</div>
+					<div class="space-y-1.5">
+						<Label for="field-default">Default value</Label>
+						<Input
+							id="field-default"
+							class="font-mono"
+							bind:value={draft.defaultStr}
+							placeholder='"Guides", true, 42 — JSON, optional'
+						/>
+						<p class="text-sm text-muted-foreground">What an entry gets when the field is left out.</p>
 					</div>
 					{#if draft.kind === 'text'}
 						<label class="flex items-center gap-2 text-sm" for="field-multiline">

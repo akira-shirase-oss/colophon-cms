@@ -34,6 +34,10 @@ export function titleOf(definition: Definition, content: Content): string {
 export function starter(definition: Definition): Content {
 	const content: Content = {};
 	for (const field of definition.fields) {
+		if (field.default !== undefined) {
+			content[field.id] = field.default;
+			continue;
+		}
 		if (!field.required) continue;
 		if (field.type === 'rich_text') content[field.id] = EMPTY_DOCUMENT;
 		if (field.type === 'boolean') content[field.id] = false;

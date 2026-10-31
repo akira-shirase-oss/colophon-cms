@@ -24,7 +24,7 @@ export interface Me {
 }
 
 /** One field of a content type, as the server writes definitions: every default spelled out. */
-export type FieldDefinition = { id: string; label: string; required: boolean } & (
+export type FieldDefinition = { id: string; label: string; required: boolean; default?: unknown } & (
 	| { type: 'text'; max_chars: number; multiline: boolean }
 	| { type: 'rich_text' }
 	| { type: 'number'; integer: boolean; min?: number; max?: number }

@@ -144,6 +144,9 @@ pub struct Field {
     pub required: bool,
     /// What it holds.
     pub kind: FieldKind,
+    /// What an entry gets when the field is left out, as canonical JSON; `None` unless set.
+    /// Checked against the kind when the definition is parsed.
+    pub default: Option<String>,
 }
 
 /// A parsed, valid content type definition.
@@ -768,12 +771,14 @@ impl ContentType {
                         max_chars: 200,
                         multiline: false,
                     },
+                    default: None,
                 },
                 Field {
                     id: "body".to_owned(),
                     label: "Body".to_owned(),
                     required: true,
                     kind: FieldKind::RichText,
+                    default: None,
                 },
             ],
         }
@@ -894,7 +899,7 @@ impl ContentType {
             })?
             .to_owned();
         let required = bool_or(object, "required", false, pointer)?;
-        let common = ["id", "label", "type", "required"];
+        let common = ["id", "label", "type", "required", "default"];
         let kind = match object.get("type").and_then(Value::as_str) {
             Some("text") => {
                 only(
@@ -948,12 +953,21 @@ impl ContentType {
                 kind
             }
         };
-        Ok(Field {
+        let mut field = Field {
             id,
             label,
             required,
             kind,
-        })
+            default: None,
+        };
+        if let Some(default) = object.get("default") {
+            // The default must hold for the kind: it goes through the same check a value does
+            // and keeps the canonical spelling, so writing it later changes no bytes.
+            let mut canonical = String::new();
+            Self::value(&field, default, &at(pointer, "default"), &mut canonical)?;
+            field.default = Some(canonical);
+        }
+        Ok(field)
     }
 
     /// The name.
@@ -1047,6 +1061,10 @@ impl ContentType {
                 | FieldKind::Url
                 | FieldKind::Color => {}
             }
+            if let Some(default) = &field.default {
+                out.push_str(r#","default":"#);
+                out.push_str(default);
+            }
             out.push('}');
         }
         out.push_str("]}");
@@ -1068,6 +1086,26 @@ impl ContentType {
         let mut first = true;
         for field in &self.fields {
             let pointer = at(&root, &field.id);
+            if object.get(&field.id).is_none()
+                && let Some(canonical) = &field.default
+            {
+                // Left out with a default: the entry gets it, already canonical.
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                write_string(&mut out, &field.id);
+                out.push(':');
+                out.push_str(canonical);
+                if field.id == self.title_field
+                    && let Some(text) = serde_json::from_str::<Value>(canonical)
+                        .ok()
+                        .and_then(|parsed| parsed.as_str().map(str::to_owned))
+                {
+                    title = text;
+                }
+                continue;
+            }
             let Some(value) = object.get(&field.id) else {
                 if field.required {
                     return Err(refuse(
@@ -1728,6 +1766,62 @@ mod tests {
                 .expect_err("must be refused");
             assert_eq!(refusal.code, code, "{bad}");
             assert_eq!(refusal.pointer, "/data");
+        }
+    }
+
+    #[test]
+    fn a_default_is_checked_at_parse_fills_what_is_left_out_and_keeps_its_canonical_spelling() {
+        let kind = ContentType::parse(&json!({
+            "name": "Posts",
+            "title_field": "headline",
+            "fields": [
+                {"id": "headline", "label": "Headline", "type": "text", "required": true},
+                {"id": "section", "label": "Section", "type": "enum", "values": ["News", "Guides"], "default": "Guides"},
+                {"id": "featured", "label": "Featured", "type": "boolean", "default": false},
+                {"id": "rating", "label": "Rating", "type": "number", "default": 3}
+            ]
+        }))
+        .expect("valid definition");
+        let canonical = kind.canonical_json();
+        for spelling in [
+            r#""type":"enum","required":false,"values":["News","Guides"],"default":"Guides""#,
+            r#""type":"boolean","required":false,"default":false"#,
+            r#""type":"number","required":false,"integer":false,"default":3"#,
+        ] {
+            assert!(canonical.contains(spelling), "{canonical}");
+        }
+        // Left out: the entry gets the defaults, in definition order.
+        let content = kind
+            .validate(&json!({"headline": "Hi"}))
+            .expect("defaults fill what is left out");
+        assert_eq!(
+            content.canonical_json(),
+            r#"{"headline":"Hi","section":"Guides","featured":false,"rating":3}"#
+        );
+        // Given: the entry's value wins.
+        let content = kind
+            .validate(&json!({"headline": "Hi", "section": "News", "rating": 5}))
+            .expect("valid");
+        assert_eq!(
+            content.canonical_json(),
+            r#"{"headline":"Hi","section":"News","featured":false,"rating":5}"#
+        );
+        // A default the kind refuses is refused at parse, pointing at it.
+        for (default, code) in [
+            (json!("Sports"), "not_an_option"),
+            (json!(true), "not_an_option"),
+        ] {
+            let refusal = ContentType::parse(&json!({
+                "name": "Posts",
+                "title_field": "headline",
+                "fields": [
+                    {"id": "headline", "label": "Headline", "type": "text", "required": true},
+                    {"id": "section", "label": "Section", "type": "enum", "values": ["News"], "default": default}
+                ]
+            }))
+            .expect_err("must be refused");
+            assert_eq!(refusal.code, code, "{default}");
+            assert_eq!(refusal.pointer, "/fields/1/default");
         }
     }
 
