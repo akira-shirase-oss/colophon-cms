@@ -828,6 +828,77 @@ pub(crate) async fn history(
     Ok(json(StatusCode::OK, body, None, false))
 }
 
+/// `GET {P}/collections/{collection}/entries/{entry}/referenced-by`: the newest drafts
+/// that point at this entry through a `reference` field — the other side of a link. The
+/// `LIKE` scan screens candidates; each row here is verified against a real reference
+/// field, so a uuid sitting in some other field doesn't name itself.
+pub(crate) async fn referenced_by(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<EntryPath>,
+) -> Result<Response, ApiError> {
+    let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    entries::get(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    let needle = entry.to_string();
+    let mut rows = Vec::new();
+    for version in content_types::list(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        let definition: Value =
+            serde_json::from_str(&version.definition).map_err(ApiError::internal)?;
+        let parsed = ContentType::parse(&definition).map_err(ApiError::internal)?;
+        let pointing: Vec<_> = parsed
+            .fields()
+            .iter()
+            .filter(|field| {
+                matches!(&field.kind, FieldKind::Reference { to, .. } if to == &path.collection)
+            })
+            .collect();
+        if pointing.is_empty() {
+            continue;
+        }
+        for candidate in entries::referencing(&mut tx, &version.collection, entry)
+            .await
+            .map_err(ApiError::from_db)?
+        {
+            let Ok(content) = serde_json::from_str::<Value>(&candidate.content) else {
+                continue;
+            };
+            for field in &pointing {
+                let held = match content.get(&field.id) {
+                    Some(Value::String(held)) => held == &needle,
+                    Some(Value::Array(held)) => held
+                        .iter()
+                        .any(|item| item.as_str() == Some(needle.as_str())),
+                    _ => false,
+                };
+                if held {
+                    rows.push(serde_json::json!({
+                        "collection": version.collection,
+                        "collection_name": parsed.name(),
+                        "field": field.id,
+                        "field_label": field.label,
+                        "entry": candidate.id,
+                        "title": candidate.title,
+                    }));
+                }
+            }
+        }
+    }
+    rows.truncate(50);
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let body = serde_json::to_string(&Data {
+        data: Value::Array(rows),
+    })
+    .map_err(ApiError::internal)?;
+    Ok(json(StatusCode::OK, body, None, false))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

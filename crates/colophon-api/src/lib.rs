@@ -113,6 +113,10 @@ pub fn routes(state: AppState) -> Router {
             get(entries::get).put(entries::save).delete(entries::remove),
         )
         .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/referenced-by",
+            get(entries::referenced_by),
+        )
+        .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions",
             get(entries::history),
         )

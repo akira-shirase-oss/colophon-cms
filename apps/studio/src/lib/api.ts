@@ -396,6 +396,25 @@ export async function getEntry(project: string, collection: string, entry: strin
 	return loaded(await send('GET', `${entries(project, collection)}/${entry}`));
 }
 
+/** One backlink: a draft that points at this entry through a reference field. */
+export interface Referral {
+	collection: string;
+	collection_name: string;
+	field: string;
+	field_label: string;
+	entry: string;
+	title: string;
+}
+
+/** The newest drafts that point at this entry through a reference field. */
+export async function referencedBy(project: string, collection: string, entry: string): Promise<Referral[]> {
+	return (
+		(await (await send('GET', `${entries(project, collection)}/${entry}/referenced-by`)).json()) as {
+			data: Referral[];
+		}
+	).data;
+}
+
 export async function createEntry(project: string, collection: string, content: Content, key: string): Promise<Loaded> {
 	return loaded(await send('POST', entries(project, collection), content, { 'Idempotency-Key': key }));
 }

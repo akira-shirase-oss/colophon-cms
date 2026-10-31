@@ -531,3 +531,45 @@ pub async fn revision(
         )
     }))
 }
+
+/// A draft that mentions an entry id anywhere in its canonical content: the coarse screen
+/// before the caller checks which `reference` field, if any, actually holds it.
+pub struct Referring {
+    /// The entry the draft belongs to.
+    pub id: Uuid,
+    /// The draft's title.
+    pub title: String,
+    /// The draft's canonical content.
+    pub content: String,
+}
+
+/// The newest drafts in `collection` whose content mentions `id`, latest change first,
+/// capped at fifty. `LIKE` only screens: a text field can hold the same id, so a row is a
+/// candidate, not a proof.
+pub async fn referencing(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    id: Uuid,
+) -> Result<Vec<Referring>, DbError> {
+    let rows = sqlx::query!(
+        r#"SELECT e.id, r.title, r.content
+           FROM entries e
+           JOIN revisions r ON r.id = e.draft_revision_id
+           WHERE e.collection = $1 AND r.content LIKE '%' || $2 || '%'
+           ORDER BY e.updated_at DESC, e.id
+           LIMIT 50"#,
+        collection,
+        id.to_string()
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| Referring {
+            id: row.id,
+            title: row.title,
+            content: row.content,
+        })
+        .collect())
+}

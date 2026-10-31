@@ -572,3 +572,43 @@ async fn a_concurrent_duplicate_waits_for_the_first_and_replays_it() {
     pool.close().await;
     db.drop().await;
 }
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn referencing_screens_drafts_that_mention_an_entry_id() {
+    let db = TestDb::new().await;
+    let (alice, project, entry, _first) = alice_with_an_entry(&db).await;
+    // A second article whose draft happens to contain the first entry's id.
+    let mut tx = enter(&db.app, alice, project).await;
+    let hash = [9_u8; 32];
+    let content = format!(r#"{{"title":"Referrer","about":"{entry}"}}"#);
+    let referrer = Uuid::now_v7();
+    entries::create(
+        &mut tx,
+        referrer,
+        ARTICLES,
+        NewRevision {
+            id: Uuid::now_v7(),
+            content: &content,
+            content_hash: &hash,
+            title: "Referrer",
+            schema_version: 1,
+        },
+        &[],
+    )
+    .await
+    .expect("created");
+    tx.commit().await.expect("commit");
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let found = entries::referencing(&mut tx, ARTICLES, entry)
+        .await
+        .expect("scan");
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        (found[0].id, found[0].title.as_str()),
+        (referrer, "Referrer")
+    );
+    drop(tx);
+    db.drop().await;
+}

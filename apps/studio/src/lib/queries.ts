@@ -8,6 +8,7 @@ import {
 	listDestinations,
 	listReleases,
 	me,
+	referencedBy,
 	searchEntries
 } from './api.ts';
 
@@ -21,6 +22,11 @@ export const destinationsQuery = (project: string) => ({ queryKey: ['destination
 export const entriesQuery = (project: string, collection: string, q = '') => ({
 	queryKey: ['entries', project, collection, q.trim()],
 	queryFn: () => searchEntries(project, collection, q)
+});
+/** The newest drafts that point at `entry` through a reference field. */
+export const referencedByQuery = (project: string, collection: string, entry: string) => ({
+	queryKey: ['referenced-by', project, collection, entry],
+	queryFn: () => referencedBy(project, collection, entry)
 });
 
 /** "12" or, when there are more than a page, "100+". */

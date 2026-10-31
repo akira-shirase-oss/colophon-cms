@@ -956,10 +956,9 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         // `of` is a derivation hint, not a constraint: any slug keeps fitting a slug.
         // (slug→slug widens: it is a leaf kind in the `true` arm above)
         // A reference keeps pointing at the same collection; `to` is the constraint itself.
-        (
-            FieldKind::Reference { to: a, many: x },
-            FieldKind::Reference { to: b, many: y },
-        ) => a == b && x == y,
+        (FieldKind::Reference { to: a, many: x }, FieldKind::Reference { to: b, many: y }) => {
+            a == b && x == y
+        }
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -2382,7 +2381,11 @@ impl ContentType {
             FieldKind::Reference { to, many } => {
                 reference_value(to, *many, value, pointer, label, out)?;
             }
-            FieldKind::Blocks { types, min_blocks, max_blocks } => {
+            FieldKind::Blocks {
+                types,
+                min_blocks,
+                max_blocks,
+            } => {
                 Self::blocks_value(types, *min_blocks, *max_blocks, value, pointer, label, out)?;
             }
             FieldKind::Markdown { max_chars } => {
@@ -3317,7 +3320,10 @@ mod tests {
         }))
         .expect("valid definition");
         let canonical = type_.canonical_json();
-        assert!(canonical.contains(r#""to":"people","many":true"#), "{canonical}");
+        assert!(
+            canonical.contains(r#""to":"people","many":true"#),
+            "{canonical}"
+        );
         type_
             .validate(&json!({
                 "title": "A",
@@ -3383,8 +3389,18 @@ mod tests {
         }))
         .expect("valid definition");
         assert!(!widens(
-            &type_.fields().iter().find(|field| field.id == "authors").unwrap().kind,
-            &other.fields().iter().find(|field| field.id == "authors").unwrap().kind
+            &type_
+                .fields()
+                .iter()
+                .find(|field| field.id == "authors")
+                .unwrap()
+                .kind,
+            &other
+                .fields()
+                .iter()
+                .find(|field| field.id == "authors")
+                .unwrap()
+                .kind
         ));
     }
 
