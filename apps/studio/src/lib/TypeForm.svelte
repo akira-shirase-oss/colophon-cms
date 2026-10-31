@@ -120,6 +120,7 @@
 		unique: boolean;
 		slugOf: string;
 		refTo: string;
+		refMany: boolean;
 		blockTypes: BlockRow[];
 		subfields: SubRow[];
 		listOf: ItemKind;
@@ -148,6 +149,7 @@
 		unique: false,
 		slugOf: '',
 		refTo: '',
+		refMany: false,
 		blockTypes: [],
 		subfields: [],
 		listOf: 'text',
@@ -214,6 +216,7 @@
 		unique: field.unique === true,
 		slugOf: field.type === 'slug' ? (field.of ?? '') : '',
 		refTo: field.type === 'reference' ? field.to : '',
+		refMany: field.type === 'reference' ? (field.many ?? false) : false,
 		blockTypes: field.type === 'blocks' ? field.blocks.map(blockStored) : [],
 		subfields: field.type === 'object' ? field.fields.map(subStored) : [],
 		listOf: field.type === 'list' ? field.of : 'text',
@@ -481,7 +484,7 @@
 					case 'slug':
 						return field.slugOf === '' ? { ...base, type: 'slug' } : { ...base, type: 'slug', of: field.slugOf };
 					case 'reference':
-						return { ...base, type: 'reference', to: field.refTo };
+						return { ...base, type: 'reference', to: field.refTo, ...(field.refMany ? { many: true as const } : {}) };
 					case 'blocks':
 						return { ...base, type: 'blocks', blocks: field.blockTypes.map(blockDef), min_blocks: field.minItems, max_blocks: field.maxItems };
 					case 'date':
@@ -803,6 +806,9 @@
 								{/each}
 							</NativeSelect.Root>
 						</div>
+						<label class="flex items-center gap-2 text-sm" for="field-refmany">
+							<Checkbox id="field-refmany" bind:checked={draft.refMany} /> Holds more than one — a list of entries
+						</label>
 					{:else if draft.kind === 'blocks'}
 						<div class="space-y-3">
 							<p class="text-sm font-medium">Section types</p>

@@ -303,7 +303,7 @@ async fn check_reference_targets(
     next: &ContentType,
 ) -> Result<(), ApiError> {
     for (index, field) in next.fields().iter().enumerate() {
-        if let FieldKind::Reference { to } = &field.kind
+        if let FieldKind::Reference { to, .. } = &field.kind
             && content_types::current(tx, to)
                 .await
                 .map_err(ApiError::from_db)?

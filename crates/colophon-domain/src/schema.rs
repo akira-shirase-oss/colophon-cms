@@ -124,6 +124,8 @@ pub enum FieldKind {
     Reference {
         /// The collection it points into.
         to: String,
+        /// `true` holds a list of references to that collection, `false` holds one.
+        many: bool,
     },
     /// An ordered list of sections, each one of the declared block types: the value is a list
     /// of objects whose `"_block"` names the type, like `[{"_block": "quote", "text": "…"}]`.
@@ -648,22 +650,56 @@ fn write_json(
     Ok(())
 }
 
-/// A reference's value: the referenced entry's id, `8-4-4-4-12` hex.
+/// A reference's value: the referenced entry's id, `8-4-4-4-12` hex — or, with `many`,
+/// a list of them bounded by `MAX_ITEMS`.
 fn reference_value(
     to: &str,
+    many: bool,
     value: &Value,
     pointer: &Pointer,
     label: &str,
     out: &mut String,
 ) -> Result<(), Refusal> {
-    let text = value.as_str().filter(|text| is_uuid(text)).ok_or_else(|| {
+    if !many {
+        let text = value.as_str().filter(|text| is_uuid(text)).ok_or_else(|| {
+            refuse(
+                "invalid_reference",
+                pointer,
+                format!("{label} names an entry in `{to}`"),
+            )
+        })?;
+        write_string(out, text);
+        return Ok(());
+    }
+    let items = value.as_array().ok_or_else(|| {
         refuse(
-            "invalid_reference",
+            "wrong_type",
             pointer,
-            format!("{label} names an entry in `{to}`"),
+            format!("{label} is a list of entries in `{to}`"),
         )
     })?;
-    write_string(out, text);
+    if items.len() > usize::from(MAX_ITEMS) {
+        return Err(refuse(
+            "too_many",
+            pointer,
+            format!("{label} holds at most {MAX_ITEMS} entries"),
+        ));
+    }
+    out.push('[');
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        let text = item.as_str().filter(|text| is_uuid(text)).ok_or_else(|| {
+            refuse(
+                "invalid_reference",
+                &at(pointer, &index.to_string()),
+                format!("{label} names an entry in `{to}`"),
+            )
+        })?;
+        write_string(out, text);
+    }
+    out.push(']');
     Ok(())
 }
 
@@ -920,7 +956,10 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         // `of` is a derivation hint, not a constraint: any slug keeps fitting a slug.
         // (slug→slug widens: it is a leaf kind in the `true` arm above)
         // A reference keeps pointing at the same collection; `to` is the constraint itself.
-        (FieldKind::Reference { to: old }, FieldKind::Reference { to: new }) => old == new,
+        (
+            FieldKind::Reference { to: a, many: x },
+            FieldKind::Reference { to: b, many: y },
+        ) => a == b && x == y,
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -1386,7 +1425,7 @@ impl ContentType {
         only(
             object,
             &[
-                "id", "label", "type", "required", "default", "when", "unique", "to",
+                "id", "label", "type", "required", "default", "when", "unique", "to", "many",
             ],
             pointer,
         )?;
@@ -1411,7 +1450,21 @@ impl ContentType {
                 "`to` names the collection a reference points into",
             ));
         }
-        Ok(FieldKind::Reference { to: to.to_owned() })
+        let many = match object.get("many") {
+            None => false,
+            Some(Value::Bool(many)) => *many,
+            Some(_) => {
+                return Err(refuse(
+                    "invalid_many",
+                    &at(pointer, "many"),
+                    "`many` is true or false",
+                ));
+            }
+        };
+        Ok(FieldKind::Reference {
+            to: to.to_owned(),
+            many,
+        })
     }
 
     /// A `blocks` kind: `{"type": "blocks", "blocks": [{"id","label","fields":[…]}]}` plus
@@ -1891,7 +1944,12 @@ impl ContentType {
                     Self::write_kind_extra(out, "of", of);
                 }
             }
-            FieldKind::Reference { to } => Self::write_kind_extra(out, "to", to),
+            FieldKind::Reference { to, many } => {
+                Self::write_kind_extra(out, "to", to);
+                if *many {
+                    out.push_str(",\"many\":true");
+                }
+            }
             FieldKind::Blocks {
                 types,
                 min_blocks,
@@ -2321,12 +2379,10 @@ impl ContentType {
             | FieldKind::Url
             | FieldKind::Slug { .. }
             | FieldKind::Color => formatted(&field.kind, value, pointer, label, out)?,
-            FieldKind::Reference { to } => reference_value(to, value, pointer, label, out)?,
-            FieldKind::Blocks {
-                types,
-                min_blocks,
-                max_blocks,
-            } => {
+            FieldKind::Reference { to, many } => {
+                reference_value(to, *many, value, pointer, label, out)?;
+            }
+            FieldKind::Blocks { types, min_blocks, max_blocks } => {
                 Self::blocks_value(types, *min_blocks, *max_blocks, value, pointer, label, out)?;
             }
             FieldKind::Markdown { max_chars } => {
@@ -3247,6 +3303,89 @@ mod tests {
             .expect_err("must refuse");
             assert_eq!(refusal.code, code);
         }
+    }
+
+    #[test]
+    fn a_many_reference_field_holds_a_list_of_entry_ids() {
+        let type_ = ContentType::parse(&json!({
+            "name": "Posts",
+            "title_field": "title",
+            "fields": [
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "authors", "label": "Authors", "type": "reference", "to": "people", "many": true}
+            ]
+        }))
+        .expect("valid definition");
+        let canonical = type_.canonical_json();
+        assert!(canonical.contains(r#""to":"people","many":true"#), "{canonical}");
+        type_
+            .validate(&json!({
+                "title": "A",
+                "authors": [
+                    "019a45e5-7c1d-7f2e-9b3a-4c2d1e5f6789",
+                    "019a45e5-7c1d-7f2e-9b3a-4c2d1e5f678a"
+                ]
+            }))
+            .expect("valid");
+        type_
+            .validate(&json!({"title": "A", "authors": []}))
+            .expect("an empty list is fine");
+        for (value, code, pointer) in [
+            (
+                json!({"title": "A", "authors": "019a45e5-7c1d-7f2e-9b3a-4c2d1e5f6789"}),
+                "wrong_type",
+                "/authors",
+            ),
+            (
+                json!({"title": "A", "authors": ["bad-id"]}),
+                "invalid_reference",
+                "/authors/0",
+            ),
+            (
+                json!({"title": "A", "authors": vec![json!("019a45e5-7c1d-7f2e-9b3a-4c2d1e5f6789"); usize::from(MAX_ITEMS) + 1]}),
+                "too_many",
+                "/authors",
+            ),
+        ] {
+            let refusal = type_.validate(&value).expect_err("must refuse");
+            assert_eq!((refusal.code, refusal.pointer.as_str()), (code, pointer));
+        }
+        for (bad, code) in [
+            (
+                json!({"id": "a", "label": "A", "type": "reference", "to": "x", "many": "yes"}),
+                "invalid_many",
+            ),
+            (
+                json!({"id": "a", "label": "A", "type": "reference", "to": "x", "many": true, "unique": true}),
+                "invalid_unique",
+            ),
+        ] {
+            let refusal = ContentType::parse(&json!({
+                "name": "Posts",
+                "title_field": "title",
+                "fields": [
+                    {"id": "title", "label": "Title", "type": "text", "required": true},
+                    bad
+                ]
+            }))
+            .expect_err("must refuse");
+            assert_eq!(refusal.code, code);
+        }
+        // Single↔many flips the value's shape: `widens` requires `many` to match, so a
+        // stored definition can't flip it while entries exist.
+        let other = ContentType::parse(&json!({
+            "name": "Posts",
+            "title_field": "title",
+            "fields": [
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "authors", "label": "Authors", "type": "reference", "to": "people"}
+            ]
+        }))
+        .expect("valid definition");
+        assert!(!widens(
+            &type_.fields().iter().find(|field| field.id == "authors").unwrap().kind,
+            &other.fields().iter().find(|field| field.id == "authors").unwrap().kind
+        ));
     }
 
     #[test]

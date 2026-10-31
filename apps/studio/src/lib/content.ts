@@ -113,6 +113,14 @@ export function formValue(field: FieldDefinition, value: unknown): FormValue {
 					formValue(sub, (value as Record<string, unknown> | undefined)?.[sub.id])
 				])
 			);
+		case 'reference':
+			return field.many
+				? Array.isArray(value)
+					? value.filter((item): item is string => typeof item === 'string')
+					: []
+				: typeof value === 'string'
+					? value
+					: '';
 		case 'list':
 			return Array.isArray(value) ? value.map((item) => formValue(itemField(field), item)) : [];
 		case 'blocks':
@@ -168,6 +176,13 @@ export function storedValue(field: FieldDefinition, form: FormValue | undefined)
 				return { _block: stored._block, ...Object.fromEntries(pairs) };
 			})
 			.filter((item) => item !== undefined);
+		if (list.length === 0) return field.required ? [] : undefined;
+		return list;
+	}
+	if (field.type === 'reference' && field.many) {
+		const list = (Array.isArray(form) ? form : []).filter(
+			(item): item is string => typeof item === 'string' && item !== ''
+		);
 		if (list.length === 0) return field.required ? [] : undefined;
 		return list;
 	}

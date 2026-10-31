@@ -329,20 +329,28 @@ async fn check_dangling(
     content: &Content,
 ) -> Result<(), ApiError> {
     for field in content_type.fields() {
-        if let FieldKind::Reference { to } = &field.kind
+        if let FieldKind::Reference { to, many } = &field.kind
             && let Some(raw) = content.value(&field.id)
-            && let Ok(id) = serde_json::from_str::<String>(raw)
-            && let Ok(uuid) = Uuid::try_parse(&id)
-            && entries::get(tx, to, uuid)
-                .await
-                .map_err(ApiError::from_db)?
-                .is_none()
         {
-            return Err(ApiError::Invalid(Refusal {
-                code: "dangling_reference",
-                pointer: format!("/{}", field.id),
-                message: format!("`{}` names an entry that isn't in `{to}`", field.label),
-            }));
+            let ids: Vec<String> = if *many {
+                serde_json::from_str(raw).unwrap_or_default()
+            } else {
+                serde_json::from_str::<String>(raw).map_or(vec![], |id| vec![id])
+            };
+            for id in ids {
+                if let Ok(uuid) = Uuid::try_parse(&id)
+                    && entries::get(tx, to, uuid)
+                        .await
+                        .map_err(ApiError::from_db)?
+                        .is_none()
+                {
+                    return Err(ApiError::Invalid(Refusal {
+                        code: "dangling_reference",
+                        pointer: format!("/{}", field.id),
+                        message: format!("`{}` names an entry that isn't in `{to}`", field.label),
+                    }));
+                }
+            }
         }
     }
     Ok(())

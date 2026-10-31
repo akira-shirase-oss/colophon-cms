@@ -162,7 +162,39 @@
 				{:else if field.type === 'json'}
 					<Textarea id={input} rows={8} class="max-w-xl font-mono" placeholder={'{"key": "value"}'} bind:value={form[field.id] as string} oninput={onchange} />
 				{:else if field.type === 'reference'}
-					<ReferencePicker {project} to={field.to} bind:value={form[field.id] as string} required={field.required} {onchange} />
+					{#if field.many}
+						{@const list = form[field.id] as string[]}
+						<div class="space-y-2">
+							{#each list as _item, index (index)}
+								<div class="flex items-center gap-2">
+									<ReferencePicker {project} to={field.to} bind:value={list[index]} required={field.required} {onchange} />
+									<Button
+										variant="ghost"
+										size="icon"
+										type="button"
+										aria-label="Remove item {index + 1}"
+										onclick={() => {
+											list.splice(index, 1);
+											onchange();
+										}}
+									>
+										<Trash2Icon class="size-4" />
+									</Button>
+								</div>
+							{/each}
+							<Button
+								variant="outline"
+								size="sm"
+								type="button"
+								onclick={() => {
+									list.push('');
+									onchange();
+								}}
+							>Add one</Button>
+						</div>
+					{:else}
+						<ReferencePicker {project} to={field.to} bind:value={form[field.id] as string} required={field.required} {onchange} />
+					{/if}
 				{:else if field.type === 'object'}
 					<fieldset class="space-y-4 rounded-lg border border-border p-4" aria-labelledby={`${input}-legend`}>
 						<legend id={`${input}-legend`} class="px-1 text-sm text-muted-foreground">{field.label}</legend>
