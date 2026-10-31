@@ -91,6 +91,7 @@
 		defaultStr: string;
 		whenField: string;
 		whenIn: string;
+		unique: boolean;
 	};
 
 	let nextKey = 0;
@@ -110,7 +111,8 @@
 		values: '',
 		defaultStr: '',
 		whenField: '',
-		whenIn: ''
+		whenIn: '',
+		unique: false
 	});
 	/** A field of the collection being changed, as a row: its id stays put unless edited by hand. */
 	const fromStored = (field: FieldDefinition): FieldRow => ({
@@ -129,7 +131,8 @@
 		values: field.type === 'enum' ? field.values.join('\n') : '',
 		defaultStr: field.default === undefined ? '' : JSON.stringify(field.default),
 		whenField: field.when?.field ?? '',
-		whenIn: field.when?.in.join('\n') ?? ''
+		whenIn: field.when?.in.join('\n') ?? '',
+		unique: field.unique === true
 	});
 
 	// The component mounts once the collection is read: the props it starts with are the ones
@@ -243,6 +246,17 @@
 			return 'A "show only when" rule needs at least one value.';
 		if (fields.some((field) => field.required && field.whenField !== ''))
 			return 'A required field can\'t hide.';
+		if (
+			fields.some(
+				(field) =>
+					field.unique &&
+					(field.kind === 'rich_text' ||
+						field.kind === 'markdown' ||
+						field.kind === 'json' ||
+						(field.kind === 'text' && field.multiline))
+			)
+		)
+			return 'A unique value must be a single, short field.';
 		return '';
 	});
 
@@ -261,6 +275,7 @@
 					label: field.label.trim(),
 					required: field.required,
 					...(field.defaultStr.trim() !== '' ? { default: JSON.parse(field.defaultStr) as unknown } : {}),
+					...(field.unique ? { unique: true } : {}),
 					...(field.whenField !== ''
 						? {
 								when: {
@@ -487,6 +502,11 @@
 						/>
 						<p class="text-sm text-muted-foreground">What an entry gets when the field is left out.</p>
 					</div>
+					{#if !['rich_text', 'markdown', 'json'].includes(draft.kind) && !(draft.kind === 'text' && draft.multiline)}
+						<label class="flex items-center gap-2 text-sm" for="field-unique">
+							<Checkbox id="field-unique" bind:checked={draft.unique} /> Unique: no two entries share this value
+						</label>
+					{/if}
 					{#if fields.length > 1}
 						<div class="space-y-1.5">
 							<Label for="field-when">Show only when</Label>

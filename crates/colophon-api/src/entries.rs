@@ -317,6 +317,20 @@ fn validate(value: &Value, content_type: &ContentType) -> Result<(Content, [u8; 
     Ok((content, hash))
 }
 
+/// Each `unique` field's id with the hash of its canonical value — what `unique_values` claims.
+fn unique_pairs(content_type: &ContentType, content: &Content) -> Vec<(String, [u8; 32])> {
+    content_type
+        .fields()
+        .iter()
+        .filter(|field| field.unique)
+        .filter_map(|field| {
+            content
+                .value(&field.id)
+                .map(|spelling| (field.id.clone(), sha256(spelling.as_bytes())))
+        })
+        .collect()
+}
+
 /// Records the answer, commits, and only then responds: an acknowledged write is durable.
 async fn finish(
     mut tx: ProjectTransaction,
@@ -361,6 +375,7 @@ pub(crate) async fn create(
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);
     }
+    let uniques = unique_pairs(&content_type, &content);
     let revision = NewRevision {
         id: Uuid::now_v7(),
         content: content.canonical_json(),
@@ -368,9 +383,15 @@ pub(crate) async fn create(
         title: content.title(),
         schema_version: version,
     };
-    let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision)
-        .await
-        .map_err(ApiError::from_db)?;
+    let draft = entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        &path.collection,
+        revision,
+        &uniques,
+    )
+    .await
+    .map_err(ApiError::from_db)?;
     finish(tx, CREATE, key, StatusCode::CREATED, draft).await
 }
 
@@ -411,8 +432,9 @@ pub(crate) async fn save(
         title: content.title(),
         schema_version: version,
     };
+    let uniques = unique_pairs(&content_type, &content);
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.
-    match entries::save(&mut tx, entry, expected, revision)
+    match entries::save(&mut tx, entry, expected, revision, &uniques)
         .await
         .map_err(ApiError::from_db)?
     {

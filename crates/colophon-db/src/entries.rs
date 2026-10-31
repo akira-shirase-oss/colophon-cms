@@ -98,6 +98,7 @@ pub async fn create(
     entry_id: Uuid,
     collection: &str,
     revision: NewRevision<'_>,
+    uniques: &[(String, [u8; 32])],
 ) -> Result<Draft, DbError> {
     let entry = sqlx::query!(
         "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_title, created_by)
@@ -115,6 +116,7 @@ pub async fn create(
     .await
     .map_err(DbError::from_write)?;
     let created_at = insert_revision(tx, entry_id, collection, None, revision).await?;
+    set_uniques(tx, entry_id, collection, uniques).await?;
     Ok(Draft {
         entry_id,
         collection: collection.to_owned(),
@@ -138,6 +140,7 @@ pub async fn save(
     entry_id: Uuid,
     expected: Uuid,
     revision: NewRevision<'_>,
+    uniques: &[(String, [u8; 32])],
 ) -> Result<Saved, DbError> {
     // Lock the entry so concurrent saves queue here. This read only tells "stale" from
     // "missing" and names the current revision; the conditional UPDATE below is the rule.
@@ -182,6 +185,7 @@ pub async fn save(
             current: current.draft_revision_id,
         });
     };
+    set_uniques(tx, entry_id, &current.collection, uniques).await?;
     Ok(Saved::Saved(Draft {
         entry_id,
         collection: current.collection,
@@ -197,6 +201,44 @@ pub async fn save(
         },
         content: revision.content.to_owned(),
     }))
+}
+
+/// Replaces the entry's `unique_values` rows with its new draft's: `uniques` is each unique
+/// field's id with the sha256 of its canonical value. A value another entry already holds trips
+/// the table's primary key, surfaced as [`DbError::Conflict`].
+async fn set_uniques(
+    tx: &mut ProjectTransaction,
+    entry_id: Uuid,
+    collection: &str,
+    uniques: &[(String, [u8; 32])],
+) -> Result<(), DbError> {
+    sqlx::query!(
+        "DELETE FROM unique_values
+         WHERE project_id = $1 AND environment_id = $2 AND collection = $3 AND entry_id = $4",
+        tx.project,
+        tx.environment,
+        collection,
+        entry_id
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    for (field_id, hash) in uniques {
+        sqlx::query!(
+            "INSERT INTO unique_values (project_id, environment_id, collection, field_id, entry_id, value_hash)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+            tx.project,
+            tx.environment,
+            collection,
+            field_id,
+            entry_id,
+            &hash[..]
+        )
+        .execute(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_write)?;
+    }
+    Ok(())
 }
 
 async fn insert_revision(

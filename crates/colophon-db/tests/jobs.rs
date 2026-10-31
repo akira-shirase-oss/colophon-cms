@@ -74,6 +74,7 @@ async fn release(db: &TestDb, alice: Uuid, project: Uuid, base: i64) {
             title: "Hi",
             schema_version: 1,
         },
+        &[],
     )
     .await
     .expect("entry");

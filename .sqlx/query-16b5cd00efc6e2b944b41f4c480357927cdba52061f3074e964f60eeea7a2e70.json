@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM unique_values\n         WHERE project_id = $1 AND environment_id = $2 AND collection = $3 AND entry_id = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "16b5cd00efc6e2b944b41f4c480357927cdba52061f3074e964f60eeea7a2e70"
+}

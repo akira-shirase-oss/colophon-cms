@@ -31,6 +31,8 @@ export type FieldDefinition = {
 	default?: unknown;
 	/** Show the field in an editor only when this other field holds one of `in` (display-only). */
 	when?: { field: string; in: string[] };
+	/** No two entries in the collection may share this value; the database's index enforces it. */
+	unique?: boolean;
 } & (
 	| { type: 'text'; max_chars: number; multiline: boolean }
 	| { type: 'rich_text' }

@@ -151,6 +151,10 @@ pub struct Field {
     /// Display-only: a stored value is checked the same whether or not the field would show,
     /// and a required field can't hide.
     pub when: Option<When>,
+    /// Whether no two entries in the collection may share its value. Enforced by the
+    /// `unique_values` index in the database (migration 0016), kept to kinds whose values are
+    /// single and short.
+    pub unique: bool,
 }
 
 /// The values of another field under which this field shows.
@@ -175,6 +179,8 @@ pub struct ContentType {
 pub struct Content {
     canonical: String,
     title: String,
+    /// Each written field's id and its canonical spelling, in definition order.
+    values: Vec<(String, String)>,
 }
 
 impl Content {
@@ -186,6 +192,14 @@ impl Content {
     /// The value of the content type's title field, for lists.
     pub fn title(&self) -> &str {
         &self.title
+    }
+
+    /// A written field's canonical spelling, by field id (`None` when the field was left out).
+    pub fn value(&self, field_id: &str) -> Option<&str> {
+        self.values
+            .iter()
+            .find(|(id, _)| id == field_id)
+            .map(|(_, spelling)| spelling.as_str())
     }
 }
 
@@ -786,6 +800,7 @@ impl ContentType {
                     },
                     default: None,
                     when: None,
+                    unique: false,
                 },
                 Field {
                     id: "body".to_owned(),
@@ -794,6 +809,7 @@ impl ContentType {
                     kind: FieldKind::RichText,
                     default: None,
                     when: None,
+                    unique: false,
                 },
             ],
         }
@@ -941,7 +957,9 @@ impl ContentType {
             })?
             .to_owned();
         let required = bool_or(object, "required", false, pointer)?;
-        let common = ["id", "label", "type", "required", "default", "when"];
+        let common = [
+            "id", "label", "type", "required", "default", "when", "unique",
+        ];
         let kind = match object.get("type").and_then(Value::as_str) {
             Some("text") => {
                 only(
@@ -1002,6 +1020,7 @@ impl ContentType {
             kind,
             default: None,
             when: None,
+            unique: false,
         };
         Self::field_options(&mut field, object, pointer)?;
         Ok(field)
@@ -1030,6 +1049,25 @@ impl ContentType {
                     "a required field can't hide",
                 ));
             }
+        }
+        field.unique = bool_or(object, "unique", false, pointer)?;
+        if field.unique
+            && matches!(
+                field.kind,
+                FieldKind::RichText
+                    | FieldKind::Markdown { .. }
+                    | FieldKind::Json { .. }
+                    | FieldKind::Text {
+                        multiline: true,
+                        ..
+                    }
+            )
+        {
+            return Err(refuse(
+                "invalid_unique",
+                &at(pointer, "unique"),
+                "a unique value must be a single, short value",
+            ));
         }
         Ok(())
     }
@@ -1205,6 +1243,9 @@ impl ContentType {
                 }
                 out.push_str("]}");
             }
+            if field.unique {
+                out.push_str(r#","unique":true"#);
+            }
             out.push('}');
         }
         out.push_str("]}");
@@ -1222,6 +1263,7 @@ impl ContentType {
         only(object, &ids, &root)?;
         let mut out = String::with_capacity(256);
         let mut title = String::new();
+        let mut values: Vec<(String, String)> = Vec::with_capacity(self.fields.len());
         out.push('{');
         let mut first = true;
         for field in &self.fields {
@@ -1236,7 +1278,9 @@ impl ContentType {
                 first = false;
                 write_string(&mut out, &field.id);
                 out.push(':');
+                let start = out.len();
                 out.push_str(canonical);
+                values.push((field.id.clone(), out[start..].to_owned()));
                 if field.id == self.title_field
                     && let Some(text) = serde_json::from_str::<Value>(canonical)
                         .ok()
@@ -1262,7 +1306,9 @@ impl ContentType {
             first = false;
             write_string(&mut out, &field.id);
             out.push(':');
+            let start = out.len();
             Self::value(field, value, &pointer, &mut out)?;
+            values.push((field.id.clone(), out[start..].to_owned()));
             if field.id == self.title_field {
                 value.as_str().unwrap_or_default().clone_into(&mut title);
             }
@@ -1271,6 +1317,7 @@ impl ContentType {
         Ok(Content {
             canonical: out,
             title,
+            values,
         })
     }
 
@@ -1391,7 +1438,7 @@ impl ContentType {
             let mut pointer = at(&root, "fields");
             pointer.push_index(index);
             let wider = widens(&old.kind, &new.kind);
-            if !wider || (new.required && !old.required) {
+            if !wider || (new.required && !old.required) || (new.unique && !old.unique) {
                 return Err(refuse(
                     "needs_migration",
                     &pointer,
@@ -2015,6 +2062,58 @@ mod tests {
         }))
         .expect_err("a required field can't hide");
         assert_eq!(refusal.code, "invalid_when");
+    }
+
+    #[test]
+    fn a_unique_field_is_kept_to_single_short_values_and_written_true() {
+        let kind = ContentType::parse(&json!({
+            "name": "Authors",
+            "title_field": "name",
+            "fields": [
+                {"id": "name", "label": "Name", "type": "text", "required": true},
+                {"id": "email", "label": "Email", "type": "email", "unique": true}
+            ]
+        }))
+        .expect("valid definition");
+        assert!(
+            kind.canonical_json()
+                .contains(r#""type":"email","required":false,"unique":true"#),
+            "{}",
+            kind.canonical_json()
+        );
+        for field in [
+            json!({"id": "m", "label": "M", "type": "markdown", "unique": true}),
+            json!({"id": "m", "label": "M", "type": "rich_text", "unique": true}),
+            json!({"id": "m", "label": "M", "type": "json", "unique": true}),
+            json!({"id": "m", "label": "M", "type": "text", "multiline": true, "unique": true}),
+        ] {
+            let refusal = ContentType::parse(&json!({
+                "name": "Authors",
+                "title_field": "name",
+                "fields": [
+                    {"id": "name", "label": "Name", "type": "text", "required": true},
+                    field
+                ]
+            }))
+            .expect_err("must be refused");
+            assert_eq!(refusal.code, "invalid_unique");
+            assert_eq!(refusal.pointer, "/fields/1/unique");
+        }
+        let before = ContentType::parse(&json!({
+            "name": "Authors",
+            "title_field": "name",
+            "fields": [
+                {"id": "name", "label": "Name", "type": "text", "required": true},
+                {"id": "email", "label": "Email", "type": "email"}
+            ]
+        }))
+        .expect("valid");
+        let refusal = before
+            .check_successor(&kind)
+            .expect_err("making a stored field unique can't be checked without the content");
+        assert_eq!(refusal.code, "needs_migration");
+        kind.check_successor(&before)
+            .expect("dropping unique is always safe");
     }
 
     #[test]

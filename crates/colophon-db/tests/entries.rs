@@ -67,12 +67,82 @@ async fn alice_with_an_entry(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid) {
     let mut tx = enter(&db.app, alice, project).await;
     let first = Content::new("First");
     let entry = Uuid::now_v7();
-    let draft = entries::create(&mut tx, entry, ARTICLES, first.revision())
+    let draft = entries::create(&mut tx, entry, ARTICLES, first.revision(), &[])
         .await
         .expect("created");
     assert_eq!(draft.revision.base_revision_id, None);
     tx.commit().await.expect("commit");
     (alice, project, entry, first.id)
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_unique_value_can_only_be_held_by_one_entry() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let same = [("email".to_owned(), [9_u8; 32])];
+
+    let mut tx = enter(&db.app, alice, project).await;
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("A").revision(),
+        &same,
+    )
+    .await
+    .expect("created");
+    tx.commit().await.expect("commit");
+
+    // The index refuses the same value under a second entry, whatever changed it.
+    let mut tx = enter(&db.app, alice, project).await;
+    let error = entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("B").revision(),
+        &same,
+    )
+    .await
+    .expect_err("the value is already held");
+    assert!(matches!(error, colophon_db::DbError::Conflict));
+    // A refused write aborts the transaction; drop it so the next one can begin.
+    drop(tx);
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let different = [("email".to_owned(), [8_u8; 32])];
+    let entry = Uuid::now_v7();
+    entries::create(
+        &mut tx,
+        entry,
+        ARTICLES,
+        Content::new("B").revision(),
+        &different,
+    )
+    .await
+    .expect("a different value is fine");
+    tx.commit().await.expect("commit");
+
+    // Editing back onto the held value is refused too.
+    let held = entries::get(&mut enter(&db.app, alice, project).await, ARTICLES, entry)
+        .await
+        .expect("get")
+        .expect("exists");
+    let mut tx = enter(&db.app, alice, project).await;
+    let error = entries::save(
+        &mut tx,
+        entry,
+        held.revision.id,
+        Content::new("B2").revision(),
+        &same,
+    )
+    .await
+    .expect_err("the value is already held");
+    assert!(matches!(error, colophon_db::DbError::Conflict));
 }
 
 #[tokio::test]
@@ -83,7 +153,7 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
 
     let second = Content::new("Second");
     let mut tx = enter(&db.app, alice, project).await;
-    let Saved::Saved(draft) = entries::save(&mut tx, entry, first, second.revision())
+    let Saved::Saved(draft) = entries::save(&mut tx, entry, first, second.revision(), &[])
         .await
         .expect("save")
     else {
@@ -154,7 +224,7 @@ async fn a_save_on_a_stale_draft_writes_nothing_and_names_the_current_revision()
     let (alice, project, entry, first) = alice_with_an_entry(&db).await;
     let mut tx = enter(&db.app, alice, project).await;
     let second = Content::new("Second");
-    entries::save(&mut tx, entry, first, second.revision())
+    entries::save(&mut tx, entry, first, second.revision(), &[])
         .await
         .expect("save");
     tx.commit().await.expect("commit");
@@ -162,11 +232,11 @@ async fn a_save_on_a_stale_draft_writes_nothing_and_names_the_current_revision()
     // Another editor still holds the first revision.
     let mut tx = enter(&db.app, alice, project).await;
     let late = Content::new("Late");
-    let outcome = entries::save(&mut tx, entry, first, late.revision())
+    let outcome = entries::save(&mut tx, entry, first, late.revision(), &[])
         .await
         .expect("save");
     assert_eq!(outcome, Saved::Stale { current: second.id });
-    let missing = entries::save(&mut tx, Uuid::now_v7(), first, late.revision())
+    let missing = entries::save(&mut tx, Uuid::now_v7(), first, late.revision(), &[])
         .await
         .expect("save");
     assert_eq!(missing, Saved::NotFound);
@@ -195,14 +265,14 @@ async fn two_concurrent_saves_on_one_base_revision_one_wins_one_is_stale() {
     let (a, b) = (Content::new("From A"), Content::new("From B"));
     let mut tx_a = enter(&pool, alice, project).await;
     let mut tx_b = enter(&pool, alice, project).await;
-    let saved_a = entries::save(&mut tx_a, entry, first, a.revision())
+    let saved_a = entries::save(&mut tx_a, entry, first, a.revision(), &[])
         .await
         .expect("save");
     assert!(matches!(saved_a, Saved::Saved(_)));
     // B blocks on A's row lock; it must see A's commit, not the old pointer.
     let b_id = b.id;
     let waiting = tokio::spawn(async move {
-        let outcome = entries::save(&mut tx_b, entry, first, b.revision())
+        let outcome = entries::save(&mut tx_b, entry, first, b.revision(), &[])
             .await
             .expect("save");
         tx_b.commit().await.expect("commit");
@@ -253,7 +323,7 @@ async fn revisions_cannot_be_changed_or_deleted_and_pointers_cannot_cross_entrie
     // A second entry; then try to point the first entry's draft at the second's revision.
     let mut tx = enter(&db.app, alice, project).await;
     let other = Content::new("Other");
-    entries::create(&mut tx, Uuid::now_v7(), ARTICLES, other.revision())
+    entries::create(&mut tx, Uuid::now_v7(), ARTICLES, other.revision(), &[])
         .await
         .expect("created");
     tx.commit().await.expect("commit");
