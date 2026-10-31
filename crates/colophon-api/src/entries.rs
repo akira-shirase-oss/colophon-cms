@@ -475,7 +475,6 @@ pub(crate) async fn create(
         revision,
         &uniques,
         query.locale.as_deref(),
-        None,
     )
     .await
     .map_err(ApiError::from_db)?;
