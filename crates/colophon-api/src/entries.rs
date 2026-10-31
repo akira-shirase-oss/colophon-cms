@@ -607,8 +607,8 @@ pub(crate) async fn import(
         return Err(ApiError::Conflict("a single collection holds one entry"));
     }
     for (index, value) in items.iter().enumerate() {
-        let (content, hash) =
-            validate(value, &content_type).map_err(|error| on_index(error, &at_index(index)))?;
+        let (content, hash) = validate(entity(value), &content_type)
+            .map_err(|error| on_index(error, &at_index(index)))?;
         let uniques = unique_pairs(&content_type, &content);
         check_dangling(&mut tx, &content_type, &content)
             .await
@@ -640,6 +640,24 @@ pub(crate) async fn import(
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(json(StatusCode::CREATED, body, None, false))
+}
+
+/// A Strapi export entity — `{"type":"api::x.x","data":{…}}` — or a `{"version":2,"data":{…}}`
+/// marker: the payload sits under `data`, so unwrap it. Content that merely has fields named
+/// `type` or `data` is left alone: only a `::`-marked type or an explicit `version` counts.
+fn entity(value: &Value) -> &Value {
+    let Some(object) = value.as_object() else {
+        return value;
+    };
+    let Some(data) = object.get("data") else {
+        return value;
+    };
+    let marked = object
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind.contains("::"))
+        || object.contains_key("version");
+    if marked { data } else { value }
 }
 
 /// Prefixes a refusal's pointer with its import item — `/line/3` for JSONL, `/2` for a
@@ -1148,5 +1166,18 @@ mod tests {
         };
         assert!(after_cursor(&here_again, other_project, &token).is_err());
         assert!(after_cursor(&here_again, other_project, "not base64 !").is_err());
+    }
+
+    #[test]
+    fn a_strapi_entity_unwraps_to_its_data_and_plain_content_passes_through() {
+        let bare = serde_json::json!({"title": "Hi", "data": "a field literally called data"});
+        assert_eq!(entity(&bare), &bare);
+        let strapi = serde_json::json!({"type": "api::article.article", "data": {"title": "Hi"}});
+        assert_eq!(entity(&strapi), &serde_json::json!({"title": "Hi"}));
+        let marker = serde_json::json!({"version": 2, "data": {"title": "Hi"}});
+        assert_eq!(entity(&marker), &serde_json::json!({"title": "Hi"}));
+        // A `type` that isn't a Strapi namespace doesn't mark anything.
+        let unmarked = serde_json::json!({"type": "note", "data": {"title": "Hi"}});
+        assert_eq!(entity(&unmarked), &unmarked);
     }
 }
