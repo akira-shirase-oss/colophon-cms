@@ -497,20 +497,48 @@ pub(crate) async fn import(
     if let Some(replay) = claim(&mut tx, IMPORT, key, &request).await? {
         return Ok(replay);
     }
-    let lines: Vec<&str> = body
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect();
-    if lines.len() > IMPORT_MAX_LINES {
+    // One JSON per line, or one JSON array of the same objects: `[{...},{...}]`.
+    let trimmed = body.trim();
+    let (items, at_index): (Vec<Value>, fn(usize) -> String) = if trimmed.starts_with('[') {
+        (
+            serde_json::from_str::<Vec<Value>>(trimmed).map_err(|_| {
+                ApiError::Invalid(Refusal {
+                    code: "invalid_json",
+                    pointer: "/".to_owned(),
+                    message: "the body isn't a JSON array".to_owned(),
+                })
+            })?,
+            |index| format!("/{index}"),
+        )
+    } else {
+        (
+            trimmed
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .enumerate()
+                .map(|(index, line)| {
+                    serde_json::from_str::<Value>(line).map_err(|_| {
+                        ApiError::Invalid(Refusal {
+                            code: "invalid_json",
+                            pointer: format!("/line/{}", index + 1),
+                            message: format!("line {} isn't JSON", index + 1),
+                        })
+                    })
+                })
+                .collect::<Result<_, ApiError>>()?,
+            |index| format!("/line/{}", index + 1),
+        )
+    };
+    if items.len() > IMPORT_MAX_LINES {
         return Err(ApiError::Invalid(Refusal {
             code: "too_many_lines",
             pointer: "/".to_owned(),
-            message: format!("an import is at most {IMPORT_MAX_LINES} lines"),
+            message: format!("an import is at most {IMPORT_MAX_LINES} items"),
         }));
     }
     if content_type.is_single()
-        && (lines.len() > 1
+        && (items.len() > 1
             || !entries::list(&mut tx, &path.collection, None, 1, None, &[])
                 .await
                 .map_err(ApiError::from_db)?
@@ -518,20 +546,13 @@ pub(crate) async fn import(
     {
         return Err(ApiError::Conflict("a single collection holds one entry"));
     }
-    for (index, line) in lines.iter().enumerate() {
-        let value: Value = serde_json::from_str(line).map_err(|_| {
-            ApiError::Invalid(Refusal {
-                code: "invalid_json",
-                pointer: format!("/line/{}", index + 1),
-                message: format!("line {} isn't JSON", index + 1),
-            })
-        })?;
+    for (index, value) in items.iter().enumerate() {
         let (content, hash) =
-            validate(&value, &content_type).map_err(|error| on_line(error, index))?;
+            validate(value, &content_type).map_err(|error| on_index(error, &at_index(index)))?;
         let uniques = unique_pairs(&content_type, &content);
         check_dangling(&mut tx, &content_type, &content)
             .await
-            .map_err(|error| on_line(error, index))?;
+            .map_err(|error| on_index(error, &at_index(index)))?;
         let revision = NewRevision {
             id: Uuid::now_v7(),
             content: content.canonical_json(),
@@ -550,7 +571,7 @@ pub(crate) async fn import(
         .map_err(ApiError::from_db)?;
     }
     let body = serde_json::to_string(&Data {
-        data: serde_json::json!({ "imported": lines.len() }),
+        data: serde_json::json!({ "imported": items.len() }),
     })
     .map_err(ApiError::internal)?;
     idempotency::complete(&mut tx, IMPORT, key, StatusCode::CREATED.as_u16(), &body)
@@ -560,11 +581,12 @@ pub(crate) async fn import(
     Ok(json(StatusCode::CREATED, body, None, false))
 }
 
-/// Prefixes a refusal's pointer with its import line number, so an error names the line.
-fn on_line(error: ApiError, index: usize) -> ApiError {
+/// Prefixes a refusal's pointer with its import item — `/line/3` for JSONL, `/2` for a
+/// JSON array — so an error names the item it came from.
+fn on_index(error: ApiError, prefix: &str) -> ApiError {
     match error {
         ApiError::Invalid(mut refusal) => {
-            refusal.pointer = format!("/line/{}{}", index + 1, refusal.pointer);
+            refusal.pointer = format!("{}{}", prefix, refusal.pointer);
             ApiError::Invalid(refusal)
         }
         other => other,

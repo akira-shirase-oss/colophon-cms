@@ -703,6 +703,41 @@ fn reference_value(
     Ok(())
 }
 
+/// A number's value: finite, integral when the field is, and inside the field's range.
+fn number_value(
+    integer: bool,
+    min: Option<f64>,
+    max: Option<f64>,
+    value: &Value,
+    pointer: &Pointer,
+    label: &str,
+    out: &mut String,
+) -> Result<(), Refusal> {
+    let number = value
+        .as_f64()
+        .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is a number")))?;
+    check_number(number, integer).map_err(|message| {
+        refuse(
+            if integer {
+                "not_an_integer"
+            } else {
+                "too_precise"
+            },
+            pointer,
+            format!("{label}: {message}"),
+        )
+    })?;
+    if min.is_some_and(|min| number < min) || max.is_some_and(|max| number > max) {
+        return Err(refuse(
+            "out_of_range",
+            pointer,
+            format!("{label} is outside its allowed range"),
+        ));
+    }
+    write_number(out, number, integer);
+    Ok(())
+}
+
 /// The string kinds checked by a shape: each names its check, refusal code and hint.
 fn formatted(
     kind: &FieldKind,
@@ -2329,28 +2364,7 @@ impl ContentType {
                 Self::list_value(*of, *min_items, *max_items, value, pointer, label, out)?;
             }
             FieldKind::Number { integer, min, max } => {
-                let number = value
-                    .as_f64()
-                    .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is a number")))?;
-                check_number(number, *integer).map_err(|message| {
-                    refuse(
-                        if *integer {
-                            "not_an_integer"
-                        } else {
-                            "too_precise"
-                        },
-                        pointer,
-                        format!("{label}: {message}"),
-                    )
-                })?;
-                if min.is_some_and(|min| number < min) || max.is_some_and(|max| number > max) {
-                    return Err(refuse(
-                        "out_of_range",
-                        pointer,
-                        format!("{label} is outside its allowed range"),
-                    ));
-                }
-                write_number(out, number, *integer);
+                number_value(*integer, *min, *max, value, pointer, label, out)?;
             }
             FieldKind::Boolean => {
                 let flag = value.as_bool().ok_or_else(|| {
