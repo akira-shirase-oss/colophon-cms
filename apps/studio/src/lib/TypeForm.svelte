@@ -1,8 +1,10 @@
 <!--
   The collection builder's form (D-040), shared by New collection and a collection's Change
   fields: its name, the slug the API knows it by (fixed once created), and the fields entries
-  carry, built field by field, kinds picked from a dialog in plain words. Saving a change to an
-  existing collection keeps every stored entry valid; the server refuses what doesn't.
+  carry, listed as rows like a CMS's content-type builder. Adding a field is two steps — pick
+  its kind, then name and set it in a dialog with basic and advanced settings, the same dialog a
+  field's row opens for editing. Saving a change to an existing collection keeps every stored
+  entry valid; the server refuses what doesn't.
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
@@ -12,9 +14,9 @@
 	import { toast } from 'svelte-sonner';
 	import AlignLeftIcon from '@lucide/svelte/icons/align-left';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
-	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import HashIcon from '@lucide/svelte/icons/hash';
 	import ListIcon from '@lucide/svelte/icons/list';
+	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import ToggleLeftIcon from '@lucide/svelte/icons/toggle-left';
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
@@ -26,6 +28,7 @@
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
 	import * as NativeSelect from '@colophon/ui/ui/native-select';
+	import * as Tabs from '@colophon/ui/ui/tabs';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import {
 		ApiError,
@@ -65,7 +68,6 @@
 		label: string;
 		required: boolean;
 		kind: Kind;
-		open: boolean;
 		maxChars: number;
 		multiline: boolean;
 		integer: boolean;
@@ -82,7 +84,6 @@
 		label: '',
 		required: false,
 		kind: 'text',
-		open: true,
 		maxChars: 200,
 		multiline: false,
 		integer: false,
@@ -90,11 +91,9 @@
 		max: '',
 		values: ''
 	});
-	/** A field of the collection being changed, as a row: its id stays put unless edited by hand,
-	 *  and it opens folded — it's complete already. */
+	/** A field of the collection being changed, as a row: its id stays put unless edited by hand. */
 	const fromStored = (field: FieldDefinition): FieldRow => ({
 		...row(),
-		open: false,
 		id: field.id,
 		idTouched: true,
 		label: field.label,
@@ -145,15 +144,32 @@
 		return /^[a-z]/.test(id) ? id : `f_${id}`;
 	};
 
+	// The kind picker, then the field's settings dialog — the same dialog a row opens, a copy of
+	// the row when editing (Cancel keeps the field as it was), a fresh one when adding.
 	let picking = $state(false);
+	let draft = $state<FieldRow | null>(null);
+	let draftNew = $state(false);
+	let settingsTab = $state<'basic' | 'advanced'>('basic');
+
 	async function pick(kind: Kind) {
-		const field = row();
-		field.kind = kind;
-		fields.push(field);
+		draft = { ...row(), kind };
+		draftNew = true;
 		picking = false;
-		// "You name it next": the label box of the field just added.
+		settingsTab = 'basic';
+		// "You name it next": the label box.
 		await tick();
-		document.getElementById(`f-label-${field.key}`)?.focus();
+		document.getElementById('field-label')?.focus();
+	}
+	function edit(field: FieldRow) {
+		draft = { ...field };
+		draftNew = false;
+		settingsTab = 'basic';
+	}
+	function finish() {
+		if (draft === null) return;
+		if (draftNew) fields.push(draft);
+		else fields = fields.map((field) => (field.key === draft?.key ? draft : field));
+		draft = null;
 	}
 	function remove(field: FieldRow) {
 		fields = fields.filter((each) => each.key !== field.key);
@@ -273,109 +289,34 @@
 		/>
 	</FormRow>
 	<FormRow label="Fields" hint="At least one. Entries keep whatever they were validated against.">
-		<div class="space-y-2">
+		<div class="overflow-hidden rounded-md border border-border bg-card">
 			{#each fields as field, index (field.key)}
 				{@const Meta = KIND[field.kind]}
-				<div class="overflow-hidden rounded-md border border-border bg-card">
-					<div class="flex items-center gap-1.5 py-1.5 pr-1.5 pl-3">
-						<button
-							type="button"
-							class="flex min-w-0 flex-1 items-center gap-2.5 text-left"
-							onclick={() => (field.open = !field.open)}
-							aria-expanded={field.open}
-						>
-							<Meta.icon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-							<span class="min-w-0 flex-1 truncate text-sm font-medium">{field.label || `Field ${index + 1}`}</span>
-							{#if field.id}<code class="hidden font-mono text-xs text-muted-foreground md:block">{field.id}</code>{/if}
-							<Badge variant="secondary" class="shrink-0">{Meta.name}</Badge>
-							{#if field.required}<Badge variant="outline" class="shrink-0">required</Badge>{/if}
-							<ChevronDownIcon class="size-4 shrink-0 text-muted-foreground transition-transform {field.open ? 'rotate-180' : ''}" aria-hidden="true" />
-						</button>
-						<Button
-							variant="ghost"
-							size="icon-sm"
-							onclick={() => remove(field)}
-							disabled={fields.length === 1}
-							aria-label="Remove field {index + 1}"><Trash2Icon /></Button
-						>
-					</div>
-					{#if field.open}
-						<div class="space-y-3 border-t border-border px-3 py-3">
-							<div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_9rem_11rem]">
-								<div class="space-y-1">
-									<Label for="f-label-{field.key}">Label</Label>
-									<Input
-										id="f-label-{field.key}"
-										bind:value={field.label}
-										oninput={() => {
-											if (!field.idTouched) field.id = idOf(field.label);
-										}}
-										maxlength={100}
-										placeholder="Field {index + 1}"
-									/>
-								</div>
-								<div class="space-y-1">
-									<Label for="f-id-{field.key}">Id</Label>
-									<Input
-										id="f-id-{field.key}"
-										class="font-mono"
-										bind:value={field.id}
-										oninput={() => (field.idTouched = true)}
-										maxlength={64}
-									/>
-								</div>
-								<div class="space-y-1">
-									<Label for="f-kind-{field.key}">Type</Label>
-									<NativeSelect.Root id="f-kind-{field.key}" bind:value={field.kind} class="w-full">
-										{#each Object.entries(KIND) as [kind, option] (kind)}
-											<NativeSelect.Option value={kind}>{option.name}</NativeSelect.Option>
-										{/each}
-									</NativeSelect.Root>
-								</div>
-							</div>
-							<div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-								<label class="flex items-center gap-2" for="f-required-{field.key}">
-									<Checkbox id="f-required-{field.key}" bind:checked={field.required} /> Required
-								</label>
-								{#if field.kind === 'text'}
-									<label class="flex items-center gap-2" for="f-multiline-{field.key}">
-										<Checkbox id="f-multiline-{field.key}" bind:checked={field.multiline} /> Multiple lines
-									</label>
-									<label class="flex items-center gap-2" for="f-maxchars-{field.key}">
-										Up to
-										<Input
-											id="f-maxchars-{field.key}"
-											type="number"
-											class="w-24"
-											bind:value={field.maxChars}
-											min={1}
-											max={100000}
-										/>
-										characters
-									</label>
-								{:else if field.kind === 'number'}
-									<label class="flex items-center gap-2" for="f-integer-{field.key}">
-										<Checkbox id="f-integer-{field.key}" bind:checked={field.integer} /> Whole numbers
-									</label>
-									<Input type="number" class="w-28" placeholder="min" bind:value={field.min} aria-label="Minimum" />
-									<Input type="number" class="w-28" placeholder="max" bind:value={field.max} aria-label="Maximum" />
-								{:else if field.kind === 'enum'}
-									<Textarea
-										class="w-full"
-										rows={3}
-										placeholder="One option per line"
-										bind:value={field.values}
-										aria-label="Options"
-									/>
-								{/if}
-							</div>
-						</div>
-					{/if}
+				<div class="flex items-center gap-1 border-b border-border py-1.5 pr-1.5 pl-3 last:border-b-0">
+					<button
+						type="button"
+						class="flex min-w-0 flex-1 items-center gap-2.5 rounded-sm py-1 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
+						onclick={() => edit(field)}
+					>
+						<Meta.icon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+						<span class="min-w-0 flex-1 truncate text-sm font-medium">{field.label || `Field ${index + 1}`}</span>
+						{#if field.id}<code class="hidden font-mono text-xs text-muted-foreground md:block">{field.id}</code>{/if}
+						<span class="shrink-0 text-xs text-muted-foreground">{Meta.name}</span>
+						{#if field.required}<Badge variant="outline" class="shrink-0">required</Badge>{/if}
+					</button>
+					<Button variant="ghost" size="icon-sm" onclick={() => edit(field)} aria-label="Edit field {index + 1}"><PencilIcon /></Button>
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						onclick={() => remove(field)}
+						disabled={fields.length === 1}
+						aria-label="Remove field {index + 1}"><Trash2Icon /></Button
+					>
 				</div>
 			{/each}
-			<div>
-				<Button variant="outline" size="sm" onclick={() => (picking = true)}><PlusIcon /> Add field</Button>
-			</div>
+		</div>
+		<div class="mt-2">
+			<Button variant="outline" size="sm" onclick={() => (picking = true)}><PlusIcon /> Add field</Button>
 		</div>
 	</FormRow>
 	<FormRow label="Title field" hint="The field an entry is listed by: a required, single-line text field." for="title-field">
@@ -424,5 +365,80 @@
 				</li>
 			{/each}
 		</ul>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root open={draft !== null} onOpenChange={(open) => { if (!open) draft = null; }}>
+	<Dialog.Content class="sm:max-w-xl" data-testid="field-settings">
+		{#if draft !== null}
+			{@const Meta = KIND[draft.kind]}
+			<Dialog.Header>
+				<Dialog.Title>{draftNew ? 'Add a field' : 'Edit field'} · {Meta.name}</Dialog.Title>
+				<Dialog.Description>{Meta.about}</Dialog.Description>
+			</Dialog.Header>
+			<Tabs.Root bind:value={settingsTab}>
+				<Tabs.List class="w-full">
+					<Tabs.Trigger value="basic" class="flex-1">Basic settings</Tabs.Trigger>
+					<Tabs.Trigger value="advanced" class="flex-1">Advanced settings</Tabs.Trigger>
+				</Tabs.List>
+				<Tabs.Content value="basic" class="grid gap-4 pt-4">
+					<div class="space-y-1.5">
+						<Label for="field-label">Name</Label>
+						<Input
+							id="field-label"
+							bind:value={draft.label}
+							oninput={() => {
+								if (draft && !draft.idTouched) draft.id = idOf(draft.label);
+							}}
+							maxlength={100}
+							placeholder="What editors see, like Price"
+						/>
+					</div>
+					<label class="flex items-center gap-2 text-sm" for="field-required">
+						<Checkbox id="field-required" bind:checked={draft.required} /> Required: an entry can't be saved without it
+					</label>
+				</Tabs.Content>
+				<Tabs.Content value="advanced" class="grid gap-4 pt-4">
+					<div class="space-y-1.5">
+						<Label for="field-id">Id</Label>
+						<Input
+							id="field-id"
+							class="font-mono"
+							bind:value={draft.id}
+							oninput={() => draft && (draft.idTouched = true)}
+							maxlength={64}
+						/>
+						<p class="text-xs text-muted-foreground">The key in the API's JSON: lowercase letters, digits and underscores.</p>
+					</div>
+					{#if draft.kind === 'text'}
+						<label class="flex items-center gap-2 text-sm" for="field-multiline">
+							<Checkbox id="field-multiline" bind:checked={draft.multiline} /> Multiple lines
+						</label>
+						<label class="flex items-center gap-2 text-sm" for="field-maxchars">
+							Up to
+							<Input id="field-maxchars" type="number" class="w-24" bind:value={draft.maxChars} min={1} max={100000} />
+							characters
+						</label>
+					{:else if draft.kind === 'number'}
+						<label class="flex items-center gap-2 text-sm" for="field-integer">
+							<Checkbox id="field-integer" bind:checked={draft.integer} /> Whole numbers only
+						</label>
+						<div class="flex items-center gap-3">
+							<Input type="number" class="w-28" placeholder="Smallest" bind:value={draft.min} aria-label="Smallest" />
+							<Input type="number" class="w-28" placeholder="Largest" bind:value={draft.max} aria-label="Largest" />
+						</div>
+					{:else if draft.kind === 'enum'}
+						<div class="space-y-1.5">
+							<Label for="field-values">Options</Label>
+							<Textarea id="field-values" rows={4} placeholder="One option per line" bind:value={draft.values} />
+						</div>
+					{/if}
+				</Tabs.Content>
+			</Tabs.Root>
+			<Dialog.Footer>
+				<Button variant="outline" type="button" onclick={() => (draft = null)}>Cancel</Button>
+				<Button type="button" onclick={finish} data-testid="field-finish">Finish</Button>
+			</Dialog.Footer>
+		{/if}
 	</Dialog.Content>
 </Dialog.Root>
