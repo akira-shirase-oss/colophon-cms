@@ -5,10 +5,15 @@
 -->
 <script lang="ts">
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { createQuery } from '@tanstack/svelte-query';
+	import { toast } from 'svelte-sonner';
 	import LockIcon from '@lucide/svelte/icons/lock';
+	import Trash2Icon from '@lucide/svelte/icons/trash-2';
+	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
-	import { getContentType } from '#lib/api.ts';
+	import { deleteCollection, getContentType } from '#lib/api.ts';
 	import { projectQuery } from '#lib/queries.ts';
 	import TypeForm from '#lib/TypeForm.svelte';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
@@ -20,6 +25,7 @@
 	const mine = createQuery(() => projectQuery(project));
 	const type = createQuery(() => ({ queryKey: ['type', project, collection], queryFn: () => getContentType(project, collection) }));
 	const mayChange = $derived(mine.data?.role === 'owner' || mine.data?.role === 'developer');
+	let confirming = $state(false);
 </script>
 
 <svelte:head><title>Change fields · {type.data?.definition.name ?? collection} · Colophon Studio</title></svelte:head>
@@ -44,4 +50,26 @@
 		{/snippet}
 	</PageHeader>
 	<TypeForm {project} editing={{ collection, definition: type.data.definition, version: type.data.version }} />
+	<div class="mt-8 flex justify-end border-t border-border pt-6">
+		{#if confirming}
+			<Button
+				variant="destructive"
+				size="sm"
+				onclick={async () => {
+					try {
+						await deleteCollection(project, collection);
+						await goto(resolve('/projects/[project]', { project }));
+					} catch {
+						confirming = false;
+						toast.error('Could not delete: the collection still has entries.');
+					}
+				}}>Really delete?</Button
+			>
+			<Button variant="outline" size="sm" class="ml-2" onclick={() => (confirming = false)}>Keep it</Button>
+		{:else}
+			<Button variant="outline" size="sm" onclick={() => (confirming = true)}>
+				<Trash2Icon class="size-4" /> Delete collection
+			</Button>
+		{/if}
+	</div>
 {/if}

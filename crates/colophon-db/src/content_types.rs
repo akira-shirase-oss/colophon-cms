@@ -4,7 +4,7 @@
 
 use sqlx::types::time::OffsetDateTime;
 
-use crate::{DbError, scope::ProjectTransaction};
+use crate::{DbError, entries::Removed, scope::ProjectTransaction};
 
 /// The built-in articles definition every environment starts with: exactly
 /// `colophon_domain::schema::ContentType::articles().canonical_json()`, which a test checks, as
@@ -38,6 +38,42 @@ pub enum Updated {
     },
     /// No such collection here.
     NotFound,
+}
+
+/// Deletes a collection and every version of its definition. Only really possible while the
+/// collection is empty: entries reference it, and their revisions reference its versions, so
+/// the foreign keys refuse as [`Removed::Referenced`].
+pub async fn remove(tx: &mut ProjectTransaction, collection: &str) -> Result<Removed, DbError> {
+    let versions = sqlx::query!(
+        "DELETE FROM content_type_versions WHERE project_id = $1 AND environment_id = $2 AND collection = $3",
+        tx.project,
+        tx.environment,
+        collection
+    )
+    .execute(&mut *tx.transaction)
+    .await;
+    if let Err(error) = &versions
+        && matches!(error, sqlx::Error::Database(database) if database.is_foreign_key_violation())
+    {
+        return Ok(Removed::Referenced);
+    }
+    versions.map_err(DbError::from_write)?;
+    let collections = sqlx::query!(
+        "DELETE FROM collections WHERE project_id = $1 AND environment_id = $2 AND slug = $3",
+        tx.project,
+        tx.environment,
+        collection
+    )
+    .execute(&mut *tx.transaction)
+    .await;
+    match collections {
+        Ok(done) if done.rows_affected() > 0 => Ok(Removed::Removed),
+        Ok(_) => Ok(Removed::NotFound),
+        Err(sqlx::Error::Database(database)) if database.is_foreign_key_violation() => {
+            Ok(Removed::Referenced)
+        }
+        Err(error) => Err(DbError::from_write(error)),
+    }
 }
 
 /// The current version of every content type, by slug.

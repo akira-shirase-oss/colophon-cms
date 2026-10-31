@@ -20,6 +20,7 @@ use axum::{
 };
 use colophon_db::{
     content_types::{self, Updated, Version},
+    entries::Removed,
     idempotency::{self, Claim},
     scope::ProjectTransaction,
 };
@@ -260,6 +261,35 @@ pub(crate) async fn create(
         other => ApiError::from_db(other),
     })?;
     finish(tx, CREATE, key, StatusCode::CREATED, version).await
+}
+
+/// `DELETE {P}/content-types/{collection}`: gone for good, but only while the collection is
+/// empty — its entries, and their revisions pinned to its versions, answer `conflict`.
+pub(crate) async fn remove(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<TypePath>,
+) -> Result<Response, ApiError> {
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_change(&tx)?;
+    match content_types::remove(&mut tx, &path.slug)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Removed::Removed => {
+            tx.commit().await.map_err(ApiError::from_db)?;
+            Ok(json(
+                StatusCode::OK,
+                r#"{"data":{"removed":true}}"#.to_string(),
+                None,
+                false,
+            ))
+        }
+        Removed::NotFound => Err(ApiError::NotFound),
+        Removed::Referenced => Err(ApiError::Conflict(
+            "the collection is not empty: delete its entries first",
+        )),
+    }
 }
 
 /// `PUT {P}/content-types/{slug}`.

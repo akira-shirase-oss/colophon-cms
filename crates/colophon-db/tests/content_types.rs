@@ -12,7 +12,7 @@ mod common;
 use colophon_db::{
     PgPool,
     content_types::{self, ARTICLES_DEFINITION, Updated},
-    projects,
+    entries, projects,
     scope::{self, ProjectTransaction},
 };
 use colophon_domain::schema::ContentType;
@@ -198,6 +198,57 @@ async fn versions_cannot_be_rewritten_skipped_or_seen_from_another_project() {
     );
     drop(tx);
     db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_collection_can_be_deleted_while_empty_and_not_once_it_has_entries() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+
+    // An empty collection goes.
+    let mut tx = enter(&db.app, alice, project).await;
+    content_types::create(&mut tx, "notes", NOTES, &[1; 32])
+        .await
+        .expect("created");
+    let removed = content_types::remove(&mut tx, "notes")
+        .await
+        .expect("remove");
+    assert!(matches!(removed, entries::Removed::Removed));
+    let again = content_types::remove(&mut tx, "notes")
+        .await
+        .expect("remove");
+    assert!(matches!(again, entries::Removed::NotFound));
+    tx.commit().await.expect("commit");
+
+    // One with an entry stays put: the entries' foreign key answers Referenced.
+    let mut tx = enter(&db.app, alice, project).await;
+    content_types::create(&mut tx, "notes", NOTES, &[2; 32])
+        .await
+        .expect("created");
+    colophon_db::entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        "notes",
+        colophon_db::entries::NewRevision {
+            id: Uuid::now_v7(),
+            content: r#"{"title":"One"}"#,
+            content_hash: &[4; 32],
+            title: "One",
+            schema_version: 1,
+        },
+        &[],
+    )
+    .await
+    .expect("created");
+    let kept = content_types::remove(&mut tx, "notes")
+        .await
+        .expect("remove");
+    assert!(matches!(kept, entries::Removed::Referenced));
 }
 
 #[tokio::test]

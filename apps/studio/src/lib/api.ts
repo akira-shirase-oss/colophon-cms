@@ -322,6 +322,11 @@ export async function saveEntry(
 	);
 }
 
+/** Deletes an empty collection for good. The server refuses (conflict) while it has entries. */
+export async function deleteCollection(project: string, collection: string): Promise<void> {
+	await send('DELETE', `${base(project)}/content-types/${collection}`);
+}
+
 /** Deletes an entry for good. The server refuses (conflict) while anything references it. */
 export async function deleteEntry(project: string, collection: string, entry: string): Promise<void> {
 	await send('DELETE', `${entries(project, collection)}/${entry}`);
