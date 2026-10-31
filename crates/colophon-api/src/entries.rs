@@ -159,7 +159,7 @@ pub(crate) struct LocaleQuery {
 
 /// A locale tag is a short BCP-47-ish label — `en`, `en-US`, `pt-BR` — checked by shape,
 /// not by a table of known tags.
-fn check_locale(locale: &Option<String>) -> Result<(), ApiError> {
+fn check_locale(locale: Option<&str>) -> Result<(), ApiError> {
     let Some(locale) = locale else { return Ok(()) };
     let fine = locale.len() <= 35
         && !locale.is_empty()
@@ -436,7 +436,7 @@ pub(crate) async fn create(
     headers: HeaderMap,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    check_locale(&query.locale)?;
+    check_locale(query.locale.as_deref())?;
     let key = idempotency_key(&headers)?;
     let Json(value) = body?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
@@ -641,7 +641,7 @@ pub(crate) async fn save(
     headers: HeaderMap,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    check_locale(&query.locale)?;
+    check_locale(query.locale.as_deref())?;
     let expected = if_match(&headers)?;
     let key = idempotency_key(&headers)?;
     let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
@@ -768,7 +768,7 @@ pub(crate) async fn list(
     Path(path): Path<CollectionPath>,
     Query(query): Query<ListQuery>,
 ) -> Result<Response, ApiError> {
-    check_locale(&query.locale)?;
+    check_locale(query.locale.as_deref())?;
     let limit = query.limit.unwrap_or(DEFAULT_PAGE);
     if !(1..=entries::MAX_PAGE).contains(&limit) {
         return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
