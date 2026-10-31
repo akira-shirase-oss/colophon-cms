@@ -35,6 +35,8 @@ export type FieldDefinition = { id: string; label: string; required: boolean } &
 	| { type: 'time' }
 	| { type: 'email' }
 	| { type: 'url' }
+	| { type: 'markdown'; max_chars: number }
+	| { type: 'color' }
 );
 
 /** A content type's definition (D-040). */

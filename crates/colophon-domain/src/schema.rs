@@ -92,6 +92,14 @@ pub enum FieldKind {
     Email,
     /// A web address: `http:` or `https:` only, no credentials.
     Url,
+    /// Text written in Markdown, at most `max_chars` characters; line breaks and tabs allowed,
+    /// other control characters not.
+    Markdown {
+        /// The most characters allowed.
+        max_chars: u64,
+    },
+    /// A colour, written `#rrggbb` (lowercase hex).
+    Color,
 }
 
 impl FieldKind {
@@ -108,6 +116,8 @@ impl FieldKind {
             Self::Time => "time",
             Self::Email => "email",
             Self::Url => "url",
+            Self::Markdown { .. } => "markdown",
+            Self::Color => "color",
         }
     }
 }
@@ -351,6 +361,16 @@ fn is_email(text: &str) -> bool {
             .all(|c| c.is_ascii() && !c.is_control() && c != ' ')
 }
 
+/// A colour: `#` then six lowercase hex digits.
+fn is_color(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() == 7
+        && bytes[0] == b'#'
+        && bytes[1..]
+            .iter()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
 /// A web address: `http:` or `https:`, a non-empty host, no credentials, no spaces or controls.
 fn is_url(text: &str) -> bool {
     let Some(rest) = text
@@ -386,6 +406,24 @@ fn text_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind
         max_chars,
         multiline: bool_or(object, "multiline", false, pointer)?,
     })
+}
+
+/// A markdown field's limit: `max_chars` (default [`MAX_TEXT_CHARS`]).
+fn markdown_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<FieldKind, Refusal> {
+    let max_chars = match object.get("max_chars") {
+        None => MAX_TEXT_CHARS,
+        Some(value) => value
+            .as_u64()
+            .filter(|max| (1..=MAX_TEXT_CHARS).contains(max))
+            .ok_or_else(|| {
+                refuse(
+                    "out_of_range",
+                    &at(pointer, "max_chars"),
+                    format!("`max_chars` is a whole number from 1 to {MAX_TEXT_CHARS}"),
+                )
+            })?,
+    };
+    Ok(FieldKind::Markdown { max_chars })
 }
 
 /// A number field's limits: `integer` (default false), and optional `min` and `max`.
@@ -474,7 +512,24 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         | (FieldKind::Date, FieldKind::Date)
         | (FieldKind::Time, FieldKind::Time)
         | (FieldKind::Email, FieldKind::Email)
-        | (FieldKind::Url, FieldKind::Url) => true,
+        | (FieldKind::Url, FieldKind::Url)
+        | (FieldKind::Color, FieldKind::Color) => true,
+        // Any text value is Markdown if it fits the new limit; Markdown is text only for a
+        // multi-line target that fits (stored values may hold line breaks).
+        (
+            FieldKind::Text {
+                max_chars: old_max, ..
+            }
+            | FieldKind::Markdown { max_chars: old_max },
+            FieldKind::Markdown { max_chars: new_max },
+        )
+        | (
+            FieldKind::Markdown { max_chars: old_max },
+            FieldKind::Text {
+                max_chars: new_max,
+                multiline: true,
+            },
+        ) => new_max >= old_max,
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -689,10 +744,6 @@ impl ContentType {
                 )?;
                 text_kind(object, pointer)?
             }
-            Some("rich_text") => {
-                only(object, &common, pointer)?;
-                FieldKind::RichText
-            }
             Some("number") => {
                 only(
                     object,
@@ -701,42 +752,36 @@ impl ContentType {
                 )?;
                 number_kind(object, pointer)?
             }
-            Some("boolean") => {
-                only(object, &common, pointer)?;
-                FieldKind::Boolean
-            }
             Some("enum") => {
                 only(object, &[&common[..], &["values"]].concat(), pointer)?;
                 FieldKind::Enum {
                     values: enum_values(object, pointer)?,
                 }
             }
-            Some("datetime") => {
-                only(object, &common, pointer)?;
-                FieldKind::DateTime
+            Some("markdown") => {
+                only(object, &[&common[..], &["max_chars"]].concat(), pointer)?;
+                markdown_kind(object, pointer)?
             }
-            Some("date") => {
+            other => {
+                let kind = match other {
+                    Some("rich_text") => FieldKind::RichText,
+                    Some("boolean") => FieldKind::Boolean,
+                    Some("datetime") => FieldKind::DateTime,
+                    Some("date") => FieldKind::Date,
+                    Some("time") => FieldKind::Time,
+                    Some("email") => FieldKind::Email,
+                    Some("url") => FieldKind::Url,
+                    Some("color") => FieldKind::Color,
+                    _ => {
+                        return Err(refuse(
+                            "invalid_type",
+                            &at(pointer, "type"),
+                            "`type` is one of text, rich_text, number, boolean, enum, datetime, date, time, email, url, markdown, color",
+                        ));
+                    }
+                };
                 only(object, &common, pointer)?;
-                FieldKind::Date
-            }
-            Some("time") => {
-                only(object, &common, pointer)?;
-                FieldKind::Time
-            }
-            Some("email") => {
-                only(object, &common, pointer)?;
-                FieldKind::Email
-            }
-            Some("url") => {
-                only(object, &common, pointer)?;
-                FieldKind::Url
-            }
-            _ => {
-                return Err(refuse(
-                    "invalid_type",
-                    &at(pointer, "type"),
-                    "`type` is one of text, rich_text, number, boolean, enum, datetime, date, time, email, url",
-                ));
+                kind
             }
         };
         Ok(Field {
@@ -821,13 +866,18 @@ impl ContentType {
                     }
                     out.push(']');
                 }
+                FieldKind::Markdown { max_chars } => {
+                    out.push_str(r#","max_chars":"#);
+                    out.push_str(&max_chars.to_string());
+                }
                 FieldKind::RichText
                 | FieldKind::Boolean
                 | FieldKind::DateTime
                 | FieldKind::Date
                 | FieldKind::Time
                 | FieldKind::Email
-                | FieldKind::Url => {}
+                | FieldKind::Url
+                | FieldKind::Color => {}
             }
             out.push('}');
         }
@@ -947,34 +997,39 @@ impl ContentType {
                     })?;
                 write_string(out, text);
             }
-            FieldKind::DateTime => {
-                let text = value
-                    .as_str()
-                    .filter(|text| is_utc_timestamp(text))
-                    .ok_or_else(|| {
-                        refuse(
-                            "invalid_datetime",
-                            pointer,
-                            format!("{label} is a UTC time like 2026-10-25T14:30:00Z"),
-                        )
-                    })?;
-                write_string(out, text);
-            }
-            FieldKind::Date | FieldKind::Time | FieldKind::Email | FieldKind::Url => {
+            FieldKind::DateTime
+            | FieldKind::Date
+            | FieldKind::Time
+            | FieldKind::Email
+            | FieldKind::Url
+            | FieldKind::Color => {
                 let (check, code, hint): (fn(&str) -> bool, &str, &str) = match field.kind {
+                    FieldKind::DateTime => (
+                        is_utc_timestamp,
+                        "invalid_datetime",
+                        "a UTC time like 2026-10-25T14:30:00Z",
+                    ),
                     FieldKind::Date => (is_date, "invalid_date", "a day like 2026-10-25"),
                     FieldKind::Time => (is_time, "invalid_time", "a time of day like 14:30"),
                     FieldKind::Email => (is_email, "invalid_email", "an email address"),
-                    _ => (
+                    FieldKind::Url => (
                         is_url,
                         "invalid_url",
                         "a web address starting http:// or https://",
                     ),
+                    _ => (is_color, "invalid_color", "a colour like #1a6fdd"),
                 };
                 let text = value
                     .as_str()
                     .filter(|text| check(text))
                     .ok_or_else(|| refuse(code, pointer, format!("{label} is {hint}")))?;
+                write_string(out, text);
+            }
+            FieldKind::Markdown { max_chars } => {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is text")))?;
+                check_text(text, label, *max_chars, true, pointer)?;
                 write_string(out, text);
             }
         }
@@ -1412,5 +1467,96 @@ mod tests {
             assert_eq!(refusal.code, code, "{field} = {bad}");
             assert_eq!(refusal.pointer, format!("/{field}"));
         }
+    }
+
+    #[test]
+    fn markdown_and_color_fields_parse_and_check_their_values() {
+        let kind = ContentType::parse(&json!({
+            "name": "Notes",
+            "title_field": "name",
+            "fields": [
+                {"id": "name", "label": "Name", "type": "text", "required": true},
+                {"id": "body", "label": "Body", "type": "markdown", "max_chars": 20},
+                {"id": "tint", "label": "Tint", "type": "color"}
+            ]
+        }))
+        .expect("valid definition");
+        let canonical = kind.canonical_json();
+        assert!(
+            canonical.contains(r#""type":"markdown","required":false,"max_chars":20"#),
+            "{canonical}"
+        );
+        assert!(
+            canonical.contains(r#""type":"color","required":false}"#),
+            "{canonical}"
+        );
+        let defaulted = ContentType::parse(&json!({
+            "name": "Notes",
+            "title_field": "name",
+            "fields": [
+                {"id": "name", "label": "Name", "type": "text", "required": true},
+                {"id": "body", "label": "Body", "type": "markdown"}
+            ]
+        }))
+        .expect("valid definition");
+        assert!(defaulted.canonical_json().contains(&format!(
+            r#""type":"markdown","required":false,"max_chars":{MAX_TEXT_CHARS}"#
+        )));
+        for (field, good) in [
+            ("body", "# Title\n**b**"),
+            ("tint", "#1a6fdd"),
+            ("tint", "#000000"),
+        ] {
+            kind.validate(&json!({"name": "A", field: good}))
+                .unwrap_or_else(|refusal| panic!("{field} = {good}: {}", refusal.message));
+        }
+        for (field, bad, code) in [
+            ("body", "this is longer than twenty characters", "too_long"),
+            ("body", "", "invalid_text"),
+            ("tint", "#AABBCC", "invalid_color"),
+            ("tint", "red", "invalid_color"),
+            ("tint", "#1a6fdd ", "invalid_color"),
+            ("tint", "#1a6fd", "invalid_color"),
+        ] {
+            let refusal = kind
+                .validate(&json!({"name": "A", field: bad}))
+                .expect_err(&format!("{field} = {bad}"));
+            assert_eq!(refusal.code, code, "{field} = {bad}");
+            assert_eq!(refusal.pointer, format!("/{field}"));
+        }
+    }
+
+    #[test]
+    fn text_widens_into_markdown_that_fits_and_markdown_only_into_wide_multi_line_text() {
+        let first = |fields: Value| {
+            ContentType::parse(&json!({
+                "name": "Notes",
+                "title_field": "n",
+                "fields": fields
+            }))
+            .expect("valid definition")
+        };
+        let n = json!({"id": "n", "label": "N", "type": "text", "required": true});
+        let with = |field: Value| first(json!([n.clone(), field]));
+        let old = with(json!({"id": "b", "label": "B", "type": "text", "max_chars": 200}));
+        old.check_successor(&with(
+            json!({"id": "b", "label": "B", "type": "markdown", "max_chars": 500}),
+        ))
+        .expect("text widens to markdown");
+        old.check_successor(&with(
+            json!({"id": "b", "label": "B", "type": "markdown", "max_chars": 100}),
+        ))
+        .expect_err("shorter markdown does not widen");
+        let md = with(json!({"id": "b", "label": "B", "type": "markdown", "max_chars": 500}));
+        md.check_successor(&with(
+            json!({"id": "b", "label": "B", "type": "text", "max_chars": 500, "multiline": true}),
+        ))
+        .expect("markdown widens to multi-line text");
+        md.check_successor(&with(
+            json!({"id": "b", "label": "B", "type": "text", "max_chars": 500}),
+        ))
+        .expect_err("single-line text would reject stored line breaks");
+        md.check_successor(&with(json!({"id": "b", "label": "B", "type": "color"})))
+            .expect_err("a kind change needs a migration");
     }
 }

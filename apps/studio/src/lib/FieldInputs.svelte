@@ -97,6 +97,10 @@
 					<Input id={input} type="email" class="max-w-72" bind:value={form[field.id] as string} oninput={onchange} />
 				{:else if field.type === 'url'}
 					<Input id={input} type="url" class="max-w-72" bind:value={form[field.id] as string} oninput={onchange} />
+				{:else if field.type === 'markdown'}
+					<Textarea id={input} rows={6} maxlength={field.max_chars} class="max-w-xl font-mono" bind:value={form[field.id] as string} oninput={onchange} />
+				{:else if field.type === 'color'}
+					<Input id={input} class="w-36 font-mono" maxlength={7} placeholder="#1a6fdd" bind:value={form[field.id] as string} oninput={onchange} />
 				{/if}
 			{/if}
 		</div>

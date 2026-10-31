@@ -19,6 +19,8 @@
 	import HashIcon from '@lucide/svelte/icons/hash';
 	import MailIcon from '@lucide/svelte/icons/mail';
 	import ListIcon from '@lucide/svelte/icons/list';
+	import PaletteIcon from '@lucide/svelte/icons/palette';
+	import PenLineIcon from '@lucide/svelte/icons/pen-line';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import ToggleLeftIcon from '@lucide/svelte/icons/toggle-left';
@@ -64,7 +66,9 @@
 		date: { name: 'Date', icon: CalendarIcon, about: 'A day, like a birthday or a launch date.' },
 		time: { name: 'Time of day', icon: ClockIcon, about: 'A time of day, like when a shop opens.' },
 		email: { name: 'Email address', icon: MailIcon, about: 'An email address, checked as one.' },
-		url: { name: 'Web address', icon: GlobeIcon, about: 'A link to a page on the web.' }
+		url: { name: 'Web address', icon: GlobeIcon, about: 'A link to a page on the web.' },
+		markdown: { name: 'Markdown', icon: PenLineIcon, about: 'Writing in Markdown: headings, lists and links.' },
+		color: { name: 'Colour', icon: PaletteIcon, about: 'A colour, like a brand accent, written #1a6fdd.' }
 	} as const;
 	type Kind = keyof typeof KIND;
 
@@ -106,7 +110,7 @@
 		label: field.label,
 		required: field.required,
 		kind: field.type,
-		maxChars: field.type === 'text' ? field.max_chars : 200,
+		maxChars: field.type === 'text' || field.type === 'markdown' ? field.max_chars : 200,
 		multiline: field.type === 'text' ? field.multiline : false,
 		integer: field.type === 'number' ? field.integer : false,
 		min: field.type === 'number' && field.min !== undefined ? String(field.min) : '',
@@ -249,10 +253,13 @@
 						};
 					case 'datetime':
 						return { ...base, type: 'datetime' };
+					case 'markdown':
+						return { ...base, type: 'markdown', max_chars: field.maxChars };
 					case 'date':
 					case 'time':
 					case 'email':
 					case 'url':
+					case 'color':
 						return { ...base, type: field.kind };
 				}
 			})
@@ -444,6 +451,12 @@
 							<Label for="field-values">Options</Label>
 							<Textarea id="field-values" rows={4} placeholder="One option per line" bind:value={draft.values} />
 						</div>
+					{:else if draft.kind === 'markdown'}
+						<label class="flex items-center gap-2 text-sm" for="field-mdchars">
+							Up to
+							<Input id="field-mdchars" type="number" class="w-24" bind:value={draft.maxChars} min={1} max={100000} />
+							characters
+						</label>
 					{/if}
 				</Tabs.Content>
 			</Tabs.Root>
