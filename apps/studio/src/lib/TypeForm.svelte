@@ -563,8 +563,8 @@
 					>
 						<Meta.icon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 						<span class="min-w-0 flex-1 truncate text-sm font-medium">{field.label || `Field ${index + 1}`}</span>
-						{#if field.id}<code class="hidden font-mono text-xs text-muted-foreground md:block">{field.id}</code>{/if}
-						<span class="shrink-0 text-xs text-muted-foreground">{Meta.name}</span>
+						{#if field.id}<code class="hidden font-mono text-sm text-muted-foreground md:block">{field.id}</code>{/if}
+						<span class="shrink-0 text-sm text-muted-foreground">{Meta.name}</span>
 						{#if field.required}<Badge variant="outline" class="shrink-0">required</Badge>{/if}
 					</button>
 					<Button variant="ghost" size="icon-sm" onclick={() => edit(field)} aria-label="Edit field {index + 1}"><PencilIcon /></Button>
@@ -661,7 +661,7 @@
 						>
 						<span class="grid min-w-0 gap-0.5">
 							<span class="text-sm font-medium">{option.name}</span>
-							<span class="text-xs text-muted-foreground">{option.about}</span>
+							<span class="text-sm text-muted-foreground">{option.about}</span>
 						</span>
 					</button>
 				</li>
@@ -710,7 +710,7 @@
 							oninput={() => draft && (draft.idTouched = true)}
 							maxlength={64}
 						/>
-						<p class="text-xs text-muted-foreground">The key in the API's JSON: lowercase letters, digits and underscores.</p>
+						<p class="text-sm text-muted-foreground">The key in the API's JSON: lowercase letters, digits and underscores.</p>
 					</div>
 					<div class="space-y-1.5">
 						<Label for="field-default">Default value</Label>

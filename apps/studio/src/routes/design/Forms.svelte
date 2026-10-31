@@ -40,7 +40,7 @@
 		<h3 class="display-2">Sign in to the Studio</h3>
 		<p class="mt-2 text-[0.9375rem] text-muted-foreground">Write, review and publish, with proof it reached the site.</p>
 		<Button variant="outline" size="lg" class="mt-8 w-full">Continue with Keycloak</Button>
-		<div class="my-6 flex items-center gap-3 text-xs text-muted-foreground">
+		<div class="my-6 flex items-center gap-3 text-sm text-muted-foreground">
 			<span class="h-px flex-1 bg-border"></span>or with email<span class="h-px flex-1 bg-border"></span>
 		</div>
 		<form class="grid gap-5" onsubmit={(event) => event.preventDefault()}>
@@ -62,7 +62,7 @@
 				</div>
 			</div>
 			<Button size="lg" type="submit" class="mt-2 w-full">Sign in</Button>
-			<p class="flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+			<p class="flex flex-wrap justify-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
 				<span class="flex items-center gap-1"><ShieldCheckIcon class="size-3.5 text-live" />Server-side sessions</span>
 				<span class="flex items-center gap-1"><LockIcon class="size-3.5 text-live" />CSRF and Origin checks</span>
 			</p>

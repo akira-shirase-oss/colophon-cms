@@ -231,7 +231,7 @@
 {#snippet version(content: Content)}
 	{#each definition.fields as field (field.id)}
 		<div class="grid gap-0.5 py-1.5">
-			<span class="text-xs font-medium text-muted-foreground">{field.label}</span>
+			<span class="text-sm font-medium text-muted-foreground">{field.label}</span>
 			{#if field.type === 'rich_text' && content[field.id] !== undefined}
 				<div class="prose-colophon text-sm">
 					<RichText value={content[field.id] as RichTextValue} {assetUrl}>
@@ -294,7 +294,7 @@
 						}
 					}}
 				>
-					{name}{#if value === 'history' && revisions.data}<span class="ml-1.5 text-xs text-muted-foreground tabular">{revisions.data.length}</span>{/if}
+					{name}{#if value === 'history' && revisions.data}<span class="ml-1.5 text-sm text-muted-foreground tabular">{revisions.data.length}</span>{/if}
 				</button>
 			{/each}
 		</div>
@@ -326,7 +326,7 @@
 							<div class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-3 py-2.5 hover:bg-muted/50">
 								<span class="min-w-0 flex-1">
 									<span class="block truncate text-sm font-medium">{revision.title}</span>
-									<span class="text-xs text-muted-foreground" title={new Date(revision.created_at).toLocaleString()}
+									<span class="text-sm text-muted-foreground" title={new Date(revision.created_at).toLocaleString()}
 										>{ago(revision.created_at)} · <span class="font-mono">{revision.content_hash.slice(7, 15)}</span></span
 									>
 								</span>
@@ -371,13 +371,13 @@
 				<span class:text-destructive={saver.status === 'conflict' || saver.status === 'refused' || saver.status === 'signed-out'}>{label}</span>
 			</p>
 			{#if saver.message && saver.status !== 'refused' && saver.status !== 'conflict'}
-				<p class="mt-2 text-xs text-muted-foreground" data-testid="save-message">{saver.message}</p>
+				<p class="mt-2 text-sm text-muted-foreground" data-testid="save-message">{saver.message}</p>
 			{/if}
 			{#if saver.status === 'signed-out'}
-				<p class="mt-2 text-xs"><a class="underline" href={signInUrl(window.location.pathname)} data-sveltekit-reload>Sign in again</a> to save them.</p>
+				<p class="mt-2 text-sm"><a class="underline" href={signInUrl(window.location.pathname)} data-sveltekit-reload>Sign in again</a> to save them.</p>
 			{/if}
 			<Button class="mt-3 w-full" variant="outline" size="sm" onclick={() => saver.saveNow()} disabled={saver.status === 'saved' || saver.status === 'conflict'}>
-				Save now <kbd class="ml-auto font-sans text-xs text-muted-foreground">⌘S</kbd>
+				Save now <kbd class="ml-auto font-sans text-sm text-muted-foreground">⌘S</kbd>
 			</Button>
 
 			<dl class="mt-4 space-y-2.5 border-t border-dotted border-border pt-4 text-sm">
@@ -392,12 +392,12 @@
 			</dl>
 			{#if published !== null}
 				<!-- The public link in one click: anyone can read the published version there. -->
-				<div class="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-dotted border-border pt-4 text-xs text-muted-foreground">
+				<div class="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-dotted border-border pt-4 text-sm text-muted-foreground">
 					<span>{standing === 'changed' ? 'Anyone can read the published version.' : 'Anyone can read it.'}</span>
 					<Button variant="outline" size="xs" onclick={copyPublic} data-testid="copy-public-link"><LinkIcon data-icon="inline-start" />Copy public link</Button>
 				</div>
 			{/if}
-			<p class="mt-4 border-t border-dotted border-border pt-4 text-xs text-muted-foreground">
+			<p class="mt-4 border-t border-dotted border-border pt-4 text-sm text-muted-foreground">
 				Drafts reach readers through a release.
 				<a class="underline underline-offset-2 hover:text-foreground" href={resolve('/projects/[project]/changesets', { project })}>Open changesets →</a>
 			</p>
@@ -408,7 +408,7 @@
 			<dl class="mt-3 space-y-2.5 text-sm">
 				<div class="flex items-center justify-between gap-2">
 					<dt class="text-muted-foreground">Revision</dt>
-					<dd class="font-mono text-xs" title={latest.revision.content_hash}>{latest.revision.content_hash.slice(7, 15)}</dd>
+					<dd class="font-mono text-sm" title={latest.revision.content_hash}>{latest.revision.content_hash.slice(7, 15)}</dd>
 				</div>
 				<div class="flex items-center justify-between gap-2">
 					<dt class="text-muted-foreground">Saved</dt>
@@ -423,7 +423,7 @@
 					<dd>
 						<Input
 							id="entry-locale"
-							class="h-7 w-28 px-2 text-xs"
+							class="h-7 w-28 px-2 text-sm"
 							placeholder="default"
 							bind:value={locale}
 							maxlength={35}

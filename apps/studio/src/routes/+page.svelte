@@ -65,7 +65,7 @@
 {:else}
 	<PageHeader title="Projects">
 		{#snippet meta()}
-			<span data-testid="signed-in">Signed in as {who.data?.display_name ?? who.data?.id}{who.data?.administrator ? ', administrator' : ''}</span>
+			<span data-testid="signed-in">Signed in as {who.data?.display_name ?? 'you'}{who.data?.administrator ? ', administrator' : ''}</span>
 		{/snippet}
 	</PageHeader>
 
@@ -84,7 +84,7 @@
 						<span class="flex size-9 items-center justify-center rounded-lg bg-secondary text-sm font-semibold">{project.name.slice(0, 1).toUpperCase()}</span>
 						<span>
 							<span class="block font-medium">{project.name}</span>
-							<span class="text-xs text-muted-foreground">{project.slug}</span>
+							<span class="text-sm text-muted-foreground">{project.slug}</span>
 						</span>
 						<span class="mt-auto flex items-center justify-between text-sm text-muted-foreground">
 							{ROLE_WORD[project.role]}

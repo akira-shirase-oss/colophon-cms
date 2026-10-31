@@ -96,7 +96,7 @@
 	<Toolbar.Button pressed={active('link')} onclick={toggleLink} aria-label="Link"><LinkIcon /></Toolbar.Button>
 	<Toolbar.Separator />
 	{#each [2, 3, 4] as const as level (level)}
-		<Toolbar.Button pressed={active('heading', { level })} onclick={run((e) => e.chain().focus().toggleHeading({ level }).run())} class="text-xs font-semibold">H{level}</Toolbar.Button>
+		<Toolbar.Button pressed={active('heading', { level })} onclick={run((e) => e.chain().focus().toggleHeading({ level }).run())} class="text-sm font-semibold">H{level}</Toolbar.Button>
 	{/each}
 	<Toolbar.Button pressed={active('bulletList')} onclick={run((e) => e.chain().focus().toggleBulletList().run())} aria-label="Bulleted list"><ListIcon /></Toolbar.Button>
 	<Toolbar.Button pressed={active('orderedList')} onclick={run((e) => e.chain().focus().toggleOrderedList().run())} aria-label="Numbered list"><ListOrderedIcon /></Toolbar.Button>
@@ -122,7 +122,7 @@
 		<div class="grid min-w-64 flex-1 gap-1">
 			<Label for="{id}-link" class="sr-only">Link address</Label>
 			<Input id="{id}-link" bind:value={linkHref} placeholder="https://… or /page" aria-invalid={linkError !== ''} aria-describedby="{id}-link-error" />
-			{#if linkError}<p id="{id}-link-error" role="alert" class="text-xs text-destructive">{linkError}</p>{/if}
+			{#if linkError}<p id="{id}-link-error" role="alert" class="text-sm text-destructive">{linkError}</p>{/if}
 		</div>
 		<Button type="submit" variant="secondary">Apply</Button>
 	</form>

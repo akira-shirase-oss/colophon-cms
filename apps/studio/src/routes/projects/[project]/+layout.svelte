@@ -105,7 +105,7 @@
 									</span>
 									<span class="grid min-w-0 flex-1 text-left leading-tight">
 										<span class="truncate font-medium" data-testid="project-name">{mine.data?.name ?? '…'}</span>
-										<span class="truncate text-xs text-muted-foreground">{mine.data?.slug ?? ''}</span>
+										<span class="truncate text-sm text-muted-foreground">{mine.data?.slug ?? ''}</span>
 									</span>
 									<ChevronsUpDownIcon class="ml-auto text-muted-foreground" aria-hidden="true" />
 									<span class="sr-only">: switch project</span>
@@ -113,14 +113,14 @@
 							{/snippet}
 						</DropdownMenu.Trigger>
 						<DropdownMenu.Content class="w-64" align="start">
-							<DropdownMenu.Label class="text-xs text-muted-foreground">Projects</DropdownMenu.Label>
+							<DropdownMenu.Label class="text-sm text-muted-foreground">Projects</DropdownMenu.Label>
 							{#each (who.data?.projects ?? []).slice(0, 12) as other (other.id)}
 								<DropdownMenu.Item>
 									{#snippet child({ props })}
 										<a {...props} href={resolve('/projects/[project]', { project: other.id })}>
-											<span class="flex size-6 items-center justify-center rounded-md border border-border text-xs font-semibold">{other.name.slice(0, 1).toUpperCase()}</span>
+											<span class="flex size-6 items-center justify-center rounded-md border border-border text-sm font-semibold">{other.name.slice(0, 1).toUpperCase()}</span>
 											<span class="truncate">{other.name}</span>
-											{#if other.id === project}<span class="ml-auto text-xs text-muted-foreground">current</span>{/if}
+											{#if other.id === project}<span class="ml-auto text-sm text-muted-foreground">current</span>{/if}
 										</a>
 									{/snippet}
 								</DropdownMenu.Item>
@@ -250,18 +250,18 @@
 		<Sidebar.Footer class="group-data-[collapsible=icon]:hidden">
 			<div class="rounded-xl border border-sidebar-border bg-background p-3 shadow-xs" data-testid="live-card">
 				{#if releases.data === undefined}
-					<p class="text-xs text-muted-foreground">Checking what's live…</p>
+					<p class="text-sm text-muted-foreground">Checking what's live…</p>
 				{:else if live === undefined}
 					<p class="text-sm font-medium">Nothing live yet</p>
-					<p class="mt-0.5 text-xs text-muted-foreground">Publish a changeset to make release No. 1.</p>
+					<p class="mt-0.5 text-sm text-muted-foreground">Publish a changeset to make release No. 1.</p>
 				{:else}
 					<div class="flex items-baseline justify-between gap-2">
-						<span class="text-xs text-muted-foreground">Live now</span>
+						<span class="text-sm text-muted-foreground">Live now</span>
 						<a class="text-sm font-semibold tabular hover:underline" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(live.generation) })}>No. {live.generation}</a>
 					</div>
 					<div class="mt-2"><ReleaseLabel release={live} testid="live-label" /></div>
 				{/if}
-				<a class="mt-3 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" href={deliveryUrl(project, 'articles')} data-sveltekit-reload target="_blank" rel="noopener">
+				<a class="mt-3 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground" href={deliveryUrl(project, 'articles')} data-sveltekit-reload target="_blank" rel="noopener">
 					Public API<ArrowUpRightIcon class="size-3" aria-hidden="true" />
 				</a>
 			</div>
@@ -292,7 +292,7 @@
 			</Breadcrumb.Root>
 			<div class="ml-auto flex items-center gap-1">
 				<Button variant="outline" size="sm" class="hidden w-56 justify-start text-muted-foreground sm:flex" onclick={() => (searching = true)}>
-					<SearchIcon />Search entries…<kbd class="ml-auto font-sans text-xs">⌘K</kbd>
+					<SearchIcon />Search entries…<kbd class="ml-auto font-sans text-sm">⌘K</kbd>
 				</Button>
 				<AppearanceMenu />
 			</div>

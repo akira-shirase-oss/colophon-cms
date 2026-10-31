@@ -32,7 +32,7 @@
 		<div class="group flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-muted">
 			<a class="min-w-0 flex-1" href={resolve('/projects/[project]/types/[type]', { project, type: type.slug })}>
 				<span class="block text-sm font-medium">{type.definition.name}</span>
-				<span class="text-xs text-muted-foreground">
+				<span class="text-sm text-muted-foreground">
 					{type.slug} · {type.definition.fields.length} {type.definition.fields.length === 1 ? 'field' : 'fields'} · v{type.version}
 				</span>
 			</a>
@@ -63,7 +63,7 @@
 	<section class="mt-2" aria-labelledby="collections-heading">
 		<div class="mb-3 flex items-baseline justify-between">
 			<h2 id="collections-heading" class="text-base font-semibold">Collections</h2>
-			<span class="text-xs text-muted-foreground">Many entries of a kind</span>
+			<span class="text-sm text-muted-foreground">Many entries of a kind</span>
 		</div>
 		{#if collections.length === 0}
 			<p class="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">No collections yet — a collection is a kind of entry (articles, authors, products).</p>
@@ -79,7 +79,7 @@
 	<section class="mt-8" aria-labelledby="singles-heading">
 		<div class="mb-3 flex items-baseline justify-between">
 			<h2 id="singles-heading" class="text-base font-semibold">Single types</h2>
-			<span class="text-xs text-muted-foreground">Exactly one entry — a homepage, a settings page</span>
+			<span class="text-sm text-muted-foreground">Exactly one entry — a homepage, a settings page</span>
 		</div>
 		{#if singles.length === 0}
 			<p class="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">No single types — mark "This collection holds one entry" on a type to make one.</p>

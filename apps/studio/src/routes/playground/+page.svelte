@@ -83,7 +83,7 @@
 	<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
 		<RichTextToolbar {editor} />
 		<div class="editor px-6 py-5 sm:px-8" bind:this={host} data-testid="editor"></div>
-		<p class="border-t border-dotted border-border px-4 py-2 text-xs text-muted-foreground tabular" data-testid="limits">
+		<p class="border-t border-dotted border-border px-4 py-2 text-sm text-muted-foreground tabular" data-testid="limits">
 			Depth {size.depth}/{LIMITS.maxDepth} · {size.nodes} nodes/{LIMITS.maxNodes} · {size.bytes.toLocaleString()} bytes/{LIMITS.maxBytes.toLocaleString()}
 		</p>
 	</div>
@@ -121,11 +121,11 @@
 				<Tabs.Trigger value="preview">Preview</Tabs.Trigger>
 			</Tabs.List>
 			<Tabs.Content value="json" class="mt-3">
-				<p class="mb-2 text-xs text-muted-foreground">What Colophon would save: canonical colophon/rich-text v1.</p>
+				<p class="mb-2 text-sm text-muted-foreground">What Colophon would save: canonical colophon/rich-text v1.</p>
 				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 				<!-- A scrollable region must be reachable by keyboard (WCAG 2.1.1; axe scrollable-region-focusable). -->
 				<pre
-					class="max-h-[34rem] overflow-auto rounded-lg border border-border bg-muted/50 p-3 font-mono text-xs"
+					class="max-h-[34rem] overflow-auto rounded-lg border border-border bg-muted/50 p-3 font-mono text-sm"
 					data-testid="stored"
 					data-json={canonical}
 					tabindex="0"
@@ -133,7 +133,7 @@
 			</Tabs.Content>
 			<Tabs.Content value="preview" class="mt-3">
 				<div class="rounded-lg border border-border bg-card px-5 py-4" data-testid="preview">
-					<p class="mb-3 font-sans text-xs text-muted-foreground">Rendered by the same renderer the public site uses.</p>
+					<p class="mb-3 font-sans text-sm text-muted-foreground">Rendered by the same renderer the public site uses.</p>
 					<div class="prose-colophon">
 						<RichText {value} {assetUrl}>
 							{#snippet fallback(problem)}

@@ -100,18 +100,18 @@
 				<ReleaseLabel release={live} testid="overview-label" />
 			{:else}
 				<span class="stat-value">None yet</span>
-				<span class="text-xs text-muted-foreground">Nothing is published</span>
+				<span class="text-sm text-muted-foreground">Nothing is published</span>
 			{/if}
 		</a>
 		<a class="stat lift" style="--i: 1" href={resolve('/projects/[project]/changesets', { project })}>
 			<span class="stat-label">Waiting for review</span>
 			<span class="stat-value tabular" data-testid="awaiting-count">{(sets.data ?? []).filter((set) => set.status.state === 'awaiting_review').length}</span>
-			<span class="text-xs text-muted-foreground">{waiting.length} changeset{waiting.length === 1 ? '' : 's'} in progress</span>
+			<span class="text-sm text-muted-foreground">{waiting.length} changeset{waiting.length === 1 ? '' : 's'} in progress</span>
 		</a>
 		<div class="stat" style="--i: 2">
 			<span class="stat-label">Entries</span>
 			<span class="stat-value tabular">{all.length}</span>
-			<span class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+			<span class="flex flex-wrap gap-x-3 gap-y-1 text-sm text-muted-foreground">
 				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-live align-middle"></span>{tally.live} live</span>
 				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-pending align-middle"></span>{tally.changed} changed</span>
 				<span><span class="mr-1 inline-block size-1.5 rounded-full bg-draft align-middle"></span>{tally.draft} draft</span>
@@ -120,7 +120,7 @@
 		<div class="stat" style="--i: 3">
 			<span class="stat-label">Last published</span>
 			<span class="stat-value">{live ? ago(live.published_at) : '—'}</span>
-			<span class="truncate text-xs text-muted-foreground">{live ? `by ${live.published_by_name ?? live.published_by}` : 'No releases yet'}</span>
+			<span class="truncate text-sm text-muted-foreground">{live ? `by ${live.published_by_name ?? live.published_by}` : 'No releases yet'}</span>
 		</div>
 	</section>
 
@@ -139,7 +139,7 @@
 							</span>
 							<span class="text-sm text-muted-foreground line-through">{step.label}</span>
 						{:else}
-							<span class="flex size-5 shrink-0 items-center justify-center rounded-full border border-border text-xs text-muted-foreground tabular" aria-hidden="true">{index + 1}</span>
+							<span class="flex size-5 shrink-0 items-center justify-center rounded-full border border-border text-sm text-muted-foreground tabular" aria-hidden="true">{index + 1}</span>
 							<a class="group flex flex-1 items-center gap-1 text-sm font-medium hover:underline" href={step.href}>
 								{step.label}
 								<ArrowRightIcon class="size-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
@@ -166,7 +166,7 @@
 						<FileTextIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 						<span class="min-w-0 flex-1">
 							<span class="block truncate text-sm font-medium">{entry.revision.title}</span>
-							<span class="text-xs text-muted-foreground">{type.definition.name} · {ago(entry.updated_at)}</span>
+							<span class="text-sm text-muted-foreground">{type.definition.name} · {ago(entry.updated_at)}</span>
 						</span>
 						<StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} />
 					</a>
@@ -186,7 +186,7 @@
 								<span class="block truncate text-sm font-medium">{set.title}</span>
 								<span class="mt-1.5 flex items-center justify-between gap-2">
 									<ChangesetBadge state={set.status.state} />
-									<span class="text-xs text-muted-foreground">{set.items} {set.items === 1 ? 'entry' : 'entries'}</span>
+									<span class="text-sm text-muted-foreground">{set.items} {set.items === 1 ? 'entry' : 'entries'}</span>
 								</span>
 							</a>
 						</li>
@@ -199,7 +199,7 @@
 			<section aria-labelledby="content-heading">
 				<div class="mb-3 flex items-baseline justify-between">
 					<h2 id="content-heading" class="text-base font-semibold">Content</h2>
-					<span class="text-xs text-muted-foreground">Collections hold your entries</span>
+					<span class="text-sm text-muted-foreground">Collections hold your entries</span>
 				</div>
 				{#if types.isError}
 					<Problem error={types.error} />
@@ -212,7 +212,7 @@
 								<a class="group flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-muted" href={resolve('/projects/[project]/[collection]', { project, collection: type.slug })}>
 									<span class="min-w-0 flex-1">
 										<span class="block text-sm font-medium">{type.definition.name}</span>
-										<span class="text-xs text-muted-foreground">
+										<span class="text-sm text-muted-foreground">
 											{entries.length} {entries.length === 1 ? 'entry' : 'entries'} ·
 											{#if tally.live > 0}<span class="text-live-ink">{tally.live} live</span>{:else}0 live{/if}{#if tally.changed > 0} · <span class="text-pending-ink">{tally.changed} changed</span>{/if}{#if tally.draft > 0} · <span class="text-draft-ink">{tally.draft} draft</span>{/if}
 										</span>

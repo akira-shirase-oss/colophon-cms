@@ -84,7 +84,7 @@
 						>
 							<span class="min-w-0 flex-1">
 								<span class="block text-sm font-medium">{link.title}</span>
-								<span class="text-xs text-muted-foreground">{link.collection_name} · {link.field_label}</span>
+								<span class="text-sm text-muted-foreground">{link.collection_name} · {link.field_label}</span>
 							</span>
 							<ArrowRightIcon class="size-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
 						</a>

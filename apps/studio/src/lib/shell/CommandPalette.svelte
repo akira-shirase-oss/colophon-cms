@@ -79,7 +79,7 @@
 						<FileTextIcon class="text-muted-foreground" />
 						<span class="truncate">{entry.revision.title}</span>
 						<span class="ml-auto flex items-center gap-2">
-							<span class="text-xs text-muted-foreground">{type.definition.name}</span>
+							<span class="text-sm text-muted-foreground">{type.definition.name}</span>
 							<StatusBadge state={entryState(entry)} />
 						</span>
 					</Command.Item>

@@ -191,7 +191,7 @@
 				{/if}
 			</span>
 			<span aria-hidden="true">·</span>
-			<span>Version <code class="font-mono text-xs" title={shown.hash}>{shown.hash.slice(7, 19)}</code></span>
+			<span>Version <code class="font-mono text-sm" title={shown.hash}>{shown.hash.slice(7, 19)}</code></span>
 		{/snippet}
 		{#snippet actions()}
 			{#if shown.status.state === 'stale'}
@@ -208,7 +208,7 @@
 		{#each STEPS as step, index (step)}
 			<li class="grid gap-1.5">
 				<span class="h-1 rounded-full {index < reached(shown) ? 'bg-foreground' : 'bg-border'}"></span>
-				<span class="text-xs {index < reached(shown) ? 'text-foreground' : 'text-muted-foreground'}">{step}</span>
+				<span class="text-sm {index < reached(shown) ? 'text-foreground' : 'text-muted-foreground'}">{step}</span>
 			</li>
 		{/each}
 	</ol>
@@ -228,14 +228,14 @@
 								<a class="block truncate font-medium hover:underline" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.collection, entry: item.entry_id })}
 									>{item.title}</a
 								>
-								<span class="text-xs text-muted-foreground">{item.collection} · <span class="font-mono">{item.content_hash.slice(7, 15)}</span></span>
+								<span class="text-sm text-muted-foreground">{item.collection} · <span class="font-mono">{item.content_hash.slice(7, 15)}</span></span>
 							</span>
 							{#if item.kind === 'unpublish'}
-								<Badge variant="attention" data-testid="unpublish">unpublish</Badge>
+								<Badge variant="attention" data-testid="unpublish">Unpublish</Badge>
 							{:else if item.published_revision_id === null}
-								<Badge variant="live">new</Badge>
+								<Badge variant="live">New</Badge>
 							{:else}
-								<Badge variant="pending">update</Badge>
+								<Badge variant="pending">Update</Badge>
 							{/if}
 							{#if item.edited}
 								<Badge variant="attention" data-testid="edited"
@@ -266,7 +266,7 @@
 			{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale' && shown.status.state !== 'published'}
 				<section class="rounded-xl border border-border bg-card p-4 shadow-xs" aria-label="Review">
 					<h2 class="text-base font-semibold">Review</h2>
-					<p class="mt-1 text-sm text-muted-foreground">You approve version <code class="font-mono text-xs">{shown.hash.slice(7, 19)}</code>, exactly as shown.</p>
+					<p class="mt-1 text-sm text-muted-foreground">You approve version <code class="font-mono text-sm">{shown.hash.slice(7, 19)}</code>, exactly as shown.</p>
 					<div class="mt-4 grid gap-1.5">
 						<Label for="review-comment">Comment (optional)</Label>
 						<Textarea id="review-comment" bind:value={comment} rows={3} maxlength={2000} />
@@ -320,9 +320,9 @@
 							<span class="absolute top-1.5 -left-[1.6rem] size-2.5 rounded-full border-2 border-background {review.decision === 'approve' ? 'bg-live' : 'bg-attention'}" aria-hidden="true"></span>
 							<p>
 								<strong class="font-medium">{review.decision === 'approve' ? 'Approved' : 'Changes requested'}</strong>
-								by {review.reviewer_name ?? review.reviewer_id}
+								by {review.reviewer_name ?? 'a member'}
 							</p>
-							<p class="text-xs text-muted-foreground" title={new Date(review.created_at).toLocaleString()}>
+							<p class="text-sm text-muted-foreground" title={new Date(review.created_at).toLocaleString()}>
 								{ago(review.created_at)}{#if !review.current}<span> · on an earlier version</span>{/if}
 							</p>
 							{#if review.comment}
@@ -336,13 +336,13 @@
 						<li class="relative text-sm">
 							<span class="absolute top-1.5 -left-[1.6rem] size-2.5 rounded-full border-2 border-background bg-pending" aria-hidden="true"></span>
 							<p>Submitted for review</p>
-							<p class="text-xs text-muted-foreground">{ago(shown.submitted_at)}</p>
+							<p class="text-sm text-muted-foreground">{ago(shown.submitted_at)}</p>
 						</li>
 					{/if}
 					<li class="relative text-sm">
 						<span class="absolute top-1.5 -left-[1.6rem] size-2.5 rounded-full border-2 border-background bg-draft" aria-hidden="true"></span>
 						<p>Pinned</p>
-						<p class="text-xs text-muted-foreground">{ago(shown.created_at)}</p>
+						<p class="text-sm text-muted-foreground">{ago(shown.created_at)}</p>
 					</li>
 				</ol>
 			</section>

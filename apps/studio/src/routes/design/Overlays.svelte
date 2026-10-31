@@ -93,7 +93,7 @@
 				<Popover.Content class="w-72">
 					<div class="grid gap-2">
 						<p class="text-sm font-medium">Public API</p>
-						<Input readonly value="/content/v1/my-site/production/articles" class="font-mono text-xs" />
+						<Input readonly value="/content/v1/my-site/production/articles" class="font-mono text-sm" />
 					</div>
 				</Popover.Content>
 			</Popover.Root>

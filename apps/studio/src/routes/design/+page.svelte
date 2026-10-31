@@ -68,7 +68,7 @@
 					<span class="grid size-9 place-items-center rounded-xl bg-brand-soft text-sm font-semibold text-brand-ink">42</span>
 					<div>
 						<p class="text-sm font-semibold">Release 42</p>
-						<p class="text-xs text-muted-foreground">production · gen 42</p>
+						<p class="text-sm text-muted-foreground">production · gen 42</p>
 					</div>
 				</div>
 				<Badge variant="live"><span class="size-1.5 rounded-full bg-live"></span>Live</Badge>
@@ -90,7 +90,7 @@
 					<path d={area} fill="url(#hero-fill)" />
 					<path d={line} fill="none" stroke="var(--brand)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
 				</svg>
-				<span class="absolute top-0 left-[38%] -translate-x-1/2 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground shadow-press">
+				<span class="absolute top-0 left-[38%] -translate-x-1/2 rounded-md bg-primary px-2 py-1 text-sm font-medium text-primary-foreground shadow-press">
 					p99 6.9 ms
 				</span>
 			</div>
@@ -122,7 +122,7 @@
 					{#each tokens as token (token)}
 						<div class="overflow-hidden rounded-2xl border border-border bg-card shadow-hairline">
 							<div class="h-16" style="background: var(--{token})"></div>
-							<p class="px-3 py-2 font-mono text-xs">--{token}</p>
+							<p class="px-3 py-2 font-mono text-sm">--{token}</p>
 						</div>
 					{/each}
 				</div>
@@ -134,7 +134,7 @@
 			<div class="divide-y divide-border overflow-hidden rounded-3xl border border-border bg-card shadow-hairline">
 				{#each TYPE as item (item.name)}
 					<div class="grid gap-2 px-6 py-5 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-baseline">
-						<p class="text-xs text-muted-foreground">{item.name}</p>
+						<p class="text-sm text-muted-foreground">{item.name}</p>
 						<p class={item.class}>{item.sample}</p>
 					</div>
 				{/each}
@@ -146,7 +146,7 @@
 				<p class="eyebrow mb-3">Radius</p>
 				<div class="flex flex-wrap gap-3">
 					{#each RADII as radius (radius)}
-						<div class="grid size-20 place-items-center border border-border bg-card text-xs text-muted-foreground shadow-hairline {radius}">
+						<div class="grid size-20 place-items-center border border-border bg-card text-sm text-muted-foreground shadow-hairline {radius}">
 							{radius.replace('rounded-', '')}
 						</div>
 					{/each}
@@ -156,7 +156,7 @@
 				<p class="eyebrow mb-3">Elevation</p>
 				<div class="flex flex-wrap gap-4">
 					{#each SHADOWS as shadow (shadow)}
-						<div class="grid h-20 w-28 place-items-center rounded-2xl bg-card text-xs text-muted-foreground {shadow}">
+						<div class="grid h-20 w-28 place-items-center rounded-2xl bg-card text-sm text-muted-foreground {shadow}">
 							{shadow.replace('shadow-', '')}
 						</div>
 					{/each}

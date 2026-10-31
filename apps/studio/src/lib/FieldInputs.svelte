@@ -98,7 +98,7 @@
 			{:else}
 				<div class="space-y-0.5">
 					<label for={input} class="text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</label>
-					{#if !stacked && hint(field)}<p class="text-xs text-muted-foreground">{hint(field)}</p>{/if}
+					{#if !stacked && hint(field)}<p class="text-sm text-muted-foreground">{hint(field)}</p>{/if}
 				</div>
 				{#if field.type === 'text' && field.multiline}
 					<Textarea id={input} rows={4} maxlength={field.max_chars} bind:value={form[field.id] as string} oninput={onchange} />

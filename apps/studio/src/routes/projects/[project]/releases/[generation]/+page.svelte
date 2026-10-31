@@ -73,7 +73,7 @@
 						<span class="mt-1.5 size-2 shrink-0 rounded-full {DOT[delivery.state]}" class:breathe={delivery.state === 'pending'} aria-hidden="true"></span>
 						<span class="min-w-0 flex-1">
 							<strong class="font-medium">{delivery.name}</strong>
-							<span class="text-xs text-muted-foreground">{KIND[delivery.kind]}{delivery.location ? ` at ${delivery.location}` : ''}</span>:
+							<span class="text-sm text-muted-foreground">{KIND[delivery.kind]}{delivery.location ? ` at ${delivery.location}` : ''}</span>:
 							{deliveryText(delivery)}{#if delivery.attempts && delivery.attempts > 1}, after {delivery.attempts} attempts{/if}
 						</span>
 					</li>
@@ -98,7 +98,7 @@
 								HTTP {seen.http_status}{/if}{#if seen.error && seen.error !== `HTTP ${seen.http_status}`}
 								<span class="text-muted-foreground">({seen.error})</span>{/if}
 						</p>
-						<p class="text-xs text-muted-foreground"><time datetime={seen.observed_at} title={when(seen.observed_at)}>{ago(seen.observed_at)}</time></p>
+						<p class="text-sm text-muted-foreground"><time datetime={seen.observed_at} title={when(seen.observed_at)}>{ago(seen.observed_at)}</time></p>
 					</li>
 				{:else}
 					<li class="text-sm text-muted-foreground">No probe has looked for this release.</li>

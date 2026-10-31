@@ -108,7 +108,7 @@
 			<strong>{offer.data.role}</strong>, which lets you change {ROLE_SUMMARY[offer.data.role]}.
 		</p>
 		<p class="text-sm text-muted-foreground">
-			You're signed in as {who.data?.display_name ?? who.data?.id}. The invitation works once, until
+			You're signed in as {who.data?.display_name ?? 'you'}. The invitation works once, until
 			{new Date(offer.data.expires_at).toLocaleString()}.
 		</p>
 		{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}

@@ -213,7 +213,7 @@
 									href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}>{entry.revision.title}</a
 								>
 								{#if entry.locale}
-									<span class="ml-2 inline-flex items-center rounded border border-border px-1.5 py-0.5 text-xs font-medium uppercase text-muted-foreground">{entry.locale}</span>
+									<span class="ml-2 inline-flex items-center rounded border border-border px-1.5 py-0.5 text-sm font-medium uppercase text-muted-foreground">{entry.locale}</span>
 								{/if}
 							</Table.Cell>
 							{#each columns as column (column.id)}

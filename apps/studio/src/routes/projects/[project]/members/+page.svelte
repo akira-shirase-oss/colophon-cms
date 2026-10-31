@@ -163,12 +163,12 @@
 			</Table.Header>
 			<Table.Body data-testid="members">
 				{#each people.data as member (member.identity_id)}
-					{@const name = member.display_name ?? member.identity_id}
+					{@const name = member.display_name ?? `Member ${member.identity_id.slice(0, 8)}`}
 					{@const self = member.identity_id === who.data?.id}
 					<Table.Row data-testid="member">
 						<Table.Cell class="pl-4">
 							<span class="flex items-center gap-3">
-								<span class="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium" aria-hidden="true">{initials(name)}</span>
+								<span class="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-sm font-medium" aria-hidden="true">{initials(name)}</span>
 								<span class="font-medium">{name}{#if self}<span class="font-normal text-muted-foreground"> (you)</span>{/if}</span>
 							</span>
 						</Table.Cell>
@@ -181,7 +181,7 @@
 									disabled={busy}
 									onchange={(event) => setRole(event.currentTarget, member.identity_id, member.role)}
 								>
-									{#each ROLES as option (option)}<option value={option}>{option}</option>{/each}
+									{#each ROLES as option (option)}<option value={option}>{option.slice(0, 1).toUpperCase()}{option.slice(1)}</option>{/each}
 								</select>
 							{:else}
 								<span class="text-sm capitalize">{member.role}</span>
@@ -233,7 +233,7 @@
 					</FormRow>
 					<FormRow label="Role" hint={ROLE_SUMMARY[role]} for="invite-role">
 						<select id="invite-role" class="{select} h-9 w-full" bind:value={role}>
-							{#each ROLES as option (option)}<option value={option}>{option}: {ROLE_SUMMARY[option]}</option>{/each}
+							{#each ROLES as option (option)}<option value={option}>{option.slice(0, 1).toUpperCase()}{option.slice(1)} — {ROLE_SUMMARY[option]}</option>{/each}
 						</select>
 					</FormRow>
 				</div>
@@ -259,7 +259,7 @@
 					<li class="rule-dotted flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 last:border-b-0">
 						<span class="min-w-0 flex-1 font-medium">{invitation.label}</span>
 						<span class="text-sm capitalize">{invitation.role}</span>
-						<span class="text-xs text-muted-foreground">until {new Date(invitation.expires_at).toLocaleString()}</span>
+						<span class="text-sm text-muted-foreground">until {new Date(invitation.expires_at).toLocaleString()}</span>
 						<Button
 							variant="ghost"
 							size="sm"
