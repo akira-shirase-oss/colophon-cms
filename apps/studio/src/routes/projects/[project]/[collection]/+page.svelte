@@ -49,6 +49,19 @@
 		)
 	);
 
+	// The columns beside the title: the short fields the list's summaries carry (a number, a
+	// choice, yes or no, a date and time), in the definition's order.
+	const columns = $derived(
+		(type.data?.definition.fields ?? []).filter((field) => ['number', 'boolean', 'enum', 'datetime'].includes(field.type)).slice(0, 3)
+	);
+	function shown(field: (typeof columns)[number], value: string | number | boolean | null | undefined): string {
+		if (value === null || value === undefined) return '—';
+		if (field.type === 'boolean') return value === true ? 'Yes' : 'No';
+		if (field.type === 'number') return Number(value).toLocaleString();
+		if (field.type === 'datetime') return new Date(String(value)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+		return String(value);
+	}
+
 	// A new entry asks only for the required fields that have no natural starting value.
 	const asked = $derived(
 		(type.data?.definition.fields ?? []).filter((field) => field.required && field.type !== 'rich_text' && field.type !== 'boolean')
@@ -128,6 +141,9 @@
 				<Table.Header>
 					<Table.Row class="hover:bg-transparent">
 						<Table.Head class="pl-4">Title</Table.Head>
+						{#each columns as column (column.id)}
+							<Table.Head class="hidden md:table-cell">{column.label}</Table.Head>
+						{/each}
 						<Table.Head>Status</Table.Head>
 						<Table.Head class="hidden md:table-cell">Live in</Table.Head>
 						<Table.Head class="pr-4 text-right">Updated</Table.Head>
@@ -142,6 +158,9 @@
 									href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}>{entry.revision.title}</a
 								>
 							</Table.Cell>
+							{#each columns as column (column.id)}
+								<Table.Cell class="hidden max-w-0 truncate text-sm text-muted-foreground md:table-cell">{shown(column, entry.fields?.[column.id])}</Table.Cell>
+							{/each}
 							<Table.Cell><StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} /></Table.Cell>
 							<Table.Cell class="hidden text-sm text-muted-foreground tabular md:table-cell">
 								{entry.published ? `No. ${entry.published.generation}` : '—'}
@@ -150,7 +169,7 @@
 						</Table.Row>
 					{:else}
 						<Table.Row class="hover:bg-transparent">
-							<Table.Cell colspan={4} class="py-10 text-center text-muted-foreground">
+							<Table.Cell colspan={4 + columns.length} class="py-10 text-center text-muted-foreground">
 								{q === '' ? 'No entries in this view.' : `No titles match “${q}”.`}
 							</Table.Cell>
 						</Table.Row>

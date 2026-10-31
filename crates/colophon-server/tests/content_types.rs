@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::{Server, Session, call, key, project, sign_in};
+use common::{Server, Session, article, call, key, project, sign_in};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 
@@ -147,6 +147,58 @@ async fn a_content_type_is_defined_and_its_entries_follow_it() {
         missing.status,
         StatusCode::NOT_FOUND,
         "an unknown collection"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_list_carries_the_short_fields_values_for_its_columns() {
+    let _server = Server::start().await;
+    let editor = sign_in("dev-owner").await;
+    let project = project(&editor).await;
+    create_posts(&editor, &project).await;
+    let post = call(
+        &editor,
+        Method::POST,
+        &entries(&project, "posts"),
+        Some(&json!({"section": "Guides", "headline": "Hello", "minutes": 3})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(post.status, StatusCode::CREATED, "{}", post.body);
+
+    let list = call(&editor, Method::GET, &entries(&project, "posts"), None, &[])
+        .await
+        .expect("request");
+    assert_eq!(
+        list.body["data"][0]["fields"],
+        json!({"minutes": 3, "section": "Guides"}),
+        "the columns carry the short fields' values, not the text title"
+    );
+    let made = call(
+        &editor,
+        Method::POST,
+        &entries(&project, "articles"),
+        Some(&article("A", "x")),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let articles = call(
+        &editor,
+        Method::GET,
+        &entries(&project, "articles"),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        articles.body["data"][0]["fields"],
+        json!({}),
+        "a type with no short fields lists none"
     );
 }
 

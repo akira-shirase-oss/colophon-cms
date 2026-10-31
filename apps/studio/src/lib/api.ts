@@ -76,6 +76,9 @@ export interface Summary {
 	revision: Revision;
 	/** What readers get now, if published, and the release it went out in. */
 	published: { revision_id: string; generation: number } | null;
+	/** The draft's values of the collection's column fields (up to three short fields);
+	 *  a field the content doesn't have is null. */
+	fields: Record<string, string | number | boolean | null>;
 }
 
 /** Where an entry stands for readers: never published (or taken down), live as drafted, or

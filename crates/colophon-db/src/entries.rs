@@ -59,7 +59,7 @@ pub struct Draft {
     pub content: String,
 }
 
-/// An entry in a list: its draft's metadata, without the content.
+/// An entry in a list: its draft's metadata, without the content beyond the asked-for fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Summary {
     /// The entry's id.
@@ -70,6 +70,9 @@ pub struct Summary {
     pub revision: Revision,
     /// The revision readers get now, and the release it went out in, if it is published.
     pub published: Option<(Uuid, i64)>,
+    /// The draft's values of the `columns` fields `list` was asked for, as a JSON object; a
+    /// field the content doesn't have is `null`.
+    pub fields: String,
 }
 
 /// The longest title search accepted.
@@ -281,6 +284,7 @@ pub async fn list(
     before: Option<Uuid>,
     limit: i64,
     search: Option<&str>,
+    columns: &[String],
 ) -> Result<Vec<Summary>, DbError> {
     // A title search matches anywhere in the draft's title, case-insensitively; its own `%`, `_`
     // and `\` match themselves. It filters on the entry's copy of the title (migration 0015), so
@@ -296,10 +300,15 @@ pub async fn list(
         r#"SELECT e.id, e.updated_at,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
                 r.content_hash, r.title, live.revision_id AS "published_revision_id?",
-                live.valid_from AS "published_in?"
+                live.valid_from AS "published_in?",
+                COALESCE(
+                    (SELECT jsonb_object_agg(k, r.content::jsonb -> k) FROM unnest($7::text[]) AS u(k)),
+                    '{}'::jsonb
+                )::text AS "fields!"
          FROM entries e
          CROSS JOIN LATERAL (
-             SELECT r.id, r.base_revision_id, r.author_id, r.created_at, r.content_hash, r.title
+             SELECT r.id, r.base_revision_id, r.author_id, r.created_at, r.content_hash, r.title,
+                    r.content
              FROM revisions r
              WHERE r.project_id = e.project_id AND r.environment_id = e.environment_id
                AND r.id = e.draft_revision_id
@@ -322,7 +331,8 @@ pub async fn list(
         collection,
         before,
         limit.clamp(1, MAX_PAGE + 1),
-        pattern
+        pattern,
+        columns
     )
     .fetch_all(&mut *tx.transaction)
     .await
@@ -341,6 +351,7 @@ pub async fn list(
                 title: row.title,
             },
             published: row.published_revision_id.zip(row.published_in),
+            fields: row.fields,
         })
         .collect())
 }

@@ -109,18 +109,23 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
         .map(|revision| (revision.id, revision.base_revision_id))
         .collect();
     assert_eq!(history, [(second.id, Some(first)), (first, None)]);
-    let listed = entries::list(&mut tx, ARTICLES, None, 20, None)
+    let columns = ["title".to_string(), "missing".to_string()];
+    let listed = entries::list(&mut tx, ARTICLES, None, 20, None, &columns)
         .await
         .expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].revision.title, "Second");
+    assert_eq!(
+        listed[0].fields, r#"{"title": "Second", "missing": null}"#,
+        "the draft's values of the asked-for fields, null for one it doesn't have"
+    );
     // Search reads the entry's copy of its draft's title (migration 0015), which moved with it.
-    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"))
+    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"), &[])
         .await
         .expect("search");
     assert_eq!(found.len(), 1);
     assert!(
-        entries::list(&mut tx, ARTICLES, None, 20, Some("First"))
+        entries::list(&mut tx, ARTICLES, None, 20, Some("First"), &[])
             .await
             .expect("search")
             .is_empty(),

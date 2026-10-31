@@ -1,7 +1,9 @@
 //! Entries and their drafts (docs/modules/04-api.md, "Route families"; D-034, D-035). Under
 //! `{P}` = `/api/v1/projects/{project}/environments/{environment}`:
 //!
-//! - `GET  {P}/collections/{collection}/entries`: newest first, with a cursor;
+//! - `GET  {P}/collections/{collection}/entries`: newest first, with a cursor; each row also
+//!   carries the draft's values of up to three short fields (a number, a choice, yes or no, a
+//!   date and time, in the definition's order) under `fields`, for list columns;
 //! - `POST {P}/collections/{collection}/entries`: create (`Idempotency-Key` required);
 //! - `GET  {P}/collections/{collection}/entries/{entry}`: the draft, with its `ETag`;
 //! - `PUT  {P}/collections/{collection}/entries/{entry}`: save (`If-Match` and
@@ -26,7 +28,7 @@ use colophon_db::{
     idempotency::{self, Claim},
     scope::{self, ProjectTransaction},
 };
-use colophon_domain::schema::{Content, ContentType};
+use colophon_domain::schema::{Content, ContentType, FieldKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -120,6 +122,9 @@ struct SummaryView {
     /// What readers get now, if the entry is published: so a list can say draft, live or
     /// changed since it went live.
     published: Option<LiveView>,
+    /// The draft's values of the collection's column fields, embedded as stored: a field the
+    /// content doesn't have is `null`.
+    fields: Box<RawValue>,
 }
 
 #[derive(Serialize)]
@@ -471,7 +476,25 @@ pub(crate) async fn list(
     }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     // An unknown collection is 404, not an empty list.
-    content_type(&mut tx, &path.collection).await?;
+    let (definition, _) = content_type(&mut tx, &path.collection).await?;
+    // List columns: up to three short fields — a number, a choice, yes or no, a date and
+    // time — in the definition's order, so a list can show the fields that say what an
+    // entry is beyond its title.
+    let columns: Vec<String> = definition
+        .fields()
+        .iter()
+        .filter(|field| {
+            matches!(
+                field.kind,
+                FieldKind::Number { .. }
+                    | FieldKind::Boolean
+                    | FieldKind::Enum { .. }
+                    | FieldKind::DateTime
+            )
+        })
+        .take(3)
+        .map(|field| field.id.clone())
+        .collect();
     let project = tx.project;
     let before = query
         .cursor
@@ -489,10 +512,16 @@ pub(crate) async fn list(
             "a search is at most 100 characters",
         ));
     }
-    let mut rows: Vec<Summary> =
-        entries::list(&mut tx, &path.collection, before, limit + 1, search)
-            .await
-            .map_err(ApiError::from_db)?;
+    let mut rows: Vec<Summary> = entries::list(
+        &mut tx,
+        &path.collection,
+        before,
+        limit + 1,
+        search,
+        &columns,
+    )
+    .await
+    .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     let more = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);
     rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
@@ -510,6 +539,7 @@ pub(crate) async fn list(
                     revision_id,
                     generation,
                 }),
+                fields: RawValue::from_string(row.fields).map_err(ApiError::internal)?,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
