@@ -239,6 +239,11 @@
 	let single = $state(editing?.definition.kind === 'single');
 	let error = $state('');
 	let busy = $state(false);
+	// A new type starts with its name asked for first, like Strapi's create dialog.
+	// svelte-ignore state_referenced_locally
+	let intro = $state(editing === null);
+	// svelte-ignore state_referenced_locally
+	let titleLabel = $state(fields[0]?.label ?? 'Title');
 
 	// Anything that differs from the last saved definition is lost if the page is left.
 	const snapshot = () => JSON.stringify({ name, slug, single, titleKey, fields });
@@ -591,6 +596,45 @@
 		<Button type="submit" disabled={busy || problem !== ''}>{editing === null ? 'Create collection' : 'Save fields'}</Button>
 	</div>
 </form>
+
+<Dialog.Root open={intro} onOpenChange={(open) => (intro = open)}>
+	<Dialog.Content>
+		<Dialog.Header>
+			<Dialog.Title>Name the new type</Dialog.Title>
+			<Dialog.Description>A type is a kind of entry — a collection holds many of them, a single type holds exactly one.</Dialog.Description>
+		</Dialog.Header>
+		<div class="space-y-4 py-2">
+			<FormRow label="Name" hint="What editors see: Articles, Authors, Products." for="intro-name">
+				<Input
+					id="intro-name"
+					bind:value={name}
+					oninput={() => {
+						if (!slugTouched) slug = slugOf(name);
+					}}
+					maxlength={100}
+					required
+					placeholder="Articles"
+				/>
+			</FormRow>
+			<FormRow label="Title field" hint="Every entry needs one field that names it in lists — 'Title' is a good default." for="intro-title">
+				<Input id="intro-title" bind:value={titleLabel} maxlength={100} required />
+			</FormRow>
+			<label class="flex items-center gap-2 text-sm" for="intro-single">
+				<Checkbox id="intro-single" bind:checked={single} /> This collection holds one entry — like a homepage or a settings page
+			</label>
+		</div>
+		<Dialog.Footer>
+			<Button variant="outline" onclick={() => goto(resolve('/projects/[project]/types', { project }))}>Cancel</Button>
+			<Button
+				onclick={() => {
+					if (fields[0]) fields[0].label = titleLabel.trim() || 'Title';
+					intro = false;
+				}}
+				disabled={name.trim() === ''}
+			>Continue</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root bind:open={picking}>
 	<Dialog.Content class="sm:max-w-2xl" data-testid="field-picker">
