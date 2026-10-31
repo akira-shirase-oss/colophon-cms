@@ -4,6 +4,7 @@
   is listed by. Owners and developers only; everyone else is told, not refused mid-form.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -111,11 +112,14 @@
 	};
 
 	let picking = $state(false);
-	function pick(kind: Kind) {
+	async function pick(kind: Kind) {
 		const field = row();
 		field.kind = kind;
 		fields.push(field);
 		picking = false;
+		// "You name it next": the label box of the field just added.
+		await tick();
+		document.getElementById(`f-label-${field.key}`)?.focus();
 	}
 	function remove(field: FieldRow) {
 		fields = fields.filter((each) => each.key !== field.key);
