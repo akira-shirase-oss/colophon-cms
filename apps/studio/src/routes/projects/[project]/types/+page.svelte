@@ -30,7 +30,7 @@
 {#snippet typeRow(type: ContentType)}
 	<li>
 		<div class="group flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-muted">
-			<a class="min-w-0 flex-1" href={resolve('/projects/[project]/[collection]', { project, collection: type.slug })}>
+			<a class="min-w-0 flex-1" href={resolve('/projects/[project]/types/[type]', { project, type: type.slug })}>
 				<span class="block text-sm font-medium">{type.definition.name}</span>
 				<span class="text-xs text-muted-foreground">
 					{type.slug} · {type.definition.fields.length} {type.definition.fields.length === 1 ? 'field' : 'fields'} · v{type.version}

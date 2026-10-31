@@ -8,7 +8,7 @@
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
@@ -239,6 +239,17 @@
 	let single = $state(editing?.definition.kind === 'single');
 	let error = $state('');
 	let busy = $state(false);
+
+	// Anything that differs from the last saved definition is lost if the page is left.
+	const snapshot = () => JSON.stringify({ name, slug, single, titleKey, fields });
+	// svelte-ignore state_referenced_locally
+	let baseline = $state(snapshot());
+	const dirty = $derived(snapshot() !== baseline);
+	beforeNavigate((navigation) => {
+		if (dirty && !window.confirm('Leave without saving? Your changes to the type will be lost.')) {
+			navigation.cancel();
+		}
+	});
 
 	const RESERVED = ['members', 'settings', 'changesets', 'releases', 'types'];
 	const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -486,6 +497,7 @@
 			await queryClient.invalidateQueries({ queryKey: ['types', project] });
 			await queryClient.invalidateQueries({ queryKey: ['type', project, collection] });
 			toast.success(editing === null ? `Created ${made.definition.name}` : `Saved ${made.definition.name}`);
+			baseline = snapshot();
 			await goto(resolve('/projects/[project]/[collection]', { project, collection }));
 		} catch (failure) {
 			error = failure instanceof ApiError ? failure.message : String(failure);
@@ -494,6 +506,12 @@
 		}
 	}
 </script>
+
+<svelte:window
+	on:beforeunload={(event) => {
+		if (dirty) event.preventDefault();
+	}}
+/>
 
 <form class="max-w-3xl" onsubmit={submit} aria-label={editing === null ? 'New collection' : 'Change fields'}>
 	<FormRow label="Name" hint="What editors see: Articles, Authors, Products." for="type-name">
