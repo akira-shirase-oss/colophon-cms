@@ -125,6 +125,17 @@ pub enum FieldKind {
         /// The collection it points into.
         to: String,
     },
+    /// An ordered list of sections, each one of the declared block types: the value is a list
+    /// of objects whose `"_block"` names the type, like `[{"_block": "quote", "text": "…"}]`.
+    /// A block type's fields follow object rules — no objects, lists or references inside.
+    Blocks {
+        /// The block types an item may pick, each with its own fields.
+        types: Vec<BlockType>,
+        /// How many sections an entry must hold.
+        min_blocks: u16,
+        /// How many sections it may hold.
+        max_blocks: u16,
+    },
     /// A list of 0 to `max_items` values of one scalar kind (a "tags" field). Items keep their
     /// kind's standard form: a text item is single-line, at most `MAX_TEXT_CHARS` characters.
     List {
@@ -205,6 +216,7 @@ impl FieldKind {
             Self::Color => "color",
             Self::Json { .. } => "json",
             Self::Object { .. } => "object",
+            Self::Blocks { .. } => "blocks",
         }
     }
 }
@@ -240,6 +252,17 @@ pub struct When {
     pub field: String,
     /// The values that show it, compared as strings (`"true"` for a checked yes/no).
     pub options: Vec<String>,
+}
+
+/// One named section kind a `blocks` field offers, with the fields its items carry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockType {
+    /// The `"_block"` discriminant — kebab-id like a field's.
+    pub id: String,
+    /// What the section is called.
+    pub label: String,
+    /// Its fields, nested rules: `required` + kind options only, no second-level structures.
+    pub fields: Vec<Field>,
 }
 
 /// A parsed, valid content type definition.
@@ -802,6 +825,19 @@ fn check_text(
 }
 
 /// Whether every value `old` accepts is also accepted by `new`.
+/// Stored shaped content holds the old shape: every old field must still be there, widened
+/// and not newly required, and a new field can't arrive required. Shared by `object` and by
+/// each block type of a `blocks` field.
+fn fields_widen(old_fields: &[Field], new_fields: &[Field]) -> bool {
+    old_fields.iter().all(|old| {
+        new_fields.iter().any(|new| {
+            new.id == old.id && widens(&old.kind, &new.kind) && (!new.required || old.required)
+        })
+    }) && new_fields
+        .iter()
+        .all(|new| !new.required || old_fields.iter().any(|old| old.id == new.id))
+}
+
 fn widens(old: &FieldKind, new: &FieldKind) -> bool {
     match (old, new) {
         (
@@ -843,17 +879,28 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
             new_max >= old_max
         }
         (FieldKind::Object { fields: old_fields }, FieldKind::Object { fields: new_fields }) => {
-            // Stored objects hold the old shape: every old field must still be there, widened
-            // and not newly required, and a new field can't arrive required.
-            old_fields.iter().all(|old| {
-                new_fields.iter().any(|new| {
-                    new.id == old.id
-                        && widens(&old.kind, &new.kind)
-                        && (!new.required || old.required)
-                })
-            }) && new_fields
-                .iter()
-                .all(|new| !new.required || old_fields.iter().any(|old| old.id == new.id))
+            fields_widen(old_fields, new_fields)
+        }
+        (
+            FieldKind::Blocks {
+                types: old_types,
+                min_blocks: old_min,
+                max_blocks: old_max,
+            },
+            FieldKind::Blocks {
+                types: new_types,
+                min_blocks: new_min,
+                max_blocks: new_max,
+            },
+        ) => {
+            // Stored sections carry their old type: every old type id stays, its fields widen
+            // like an object's, and the bounds only loosen. A new type is a new option — safe.
+            old_types.iter().all(|old| {
+                new_types
+                    .iter()
+                    .any(|new| new.id == old.id && fields_widen(&old.fields, &new.fields))
+            }) && new_min <= old_min
+                && new_max >= old_max
         }
         (
             FieldKind::List {
@@ -1204,14 +1251,9 @@ impl ContentType {
                 )?;
                 Self::list_kind(object, pointer)?
             }
-            Some("slug") => {
-                only(object, &[&common[..], &["of"]].concat(), pointer)?;
-                Self::slug_kind(object, pointer, nested)?
-            }
-            Some("reference") => {
-                only(object, &[&common[..], &["to"]].concat(), pointer)?;
-                Self::reference_kind(object, pointer, nested)?
-            }
+            Some("slug") => Self::slug_kind(object, pointer, nested)?,
+            Some("reference") => Self::reference_kind(object, pointer, nested)?,
+            Some("blocks") => Self::blocks_kind(object, pointer, nested)?,
             other => {
                 let kind = Self::leaf_kind(other, pointer, nested)?;
                 only(object, &common, pointer)?;
@@ -1301,6 +1343,13 @@ impl ContentType {
         pointer: &Pointer,
         nested: bool,
     ) -> Result<FieldKind, Refusal> {
+        only(
+            object,
+            &[
+                "id", "label", "type", "required", "default", "when", "unique", "of",
+            ],
+            pointer,
+        )?;
         if nested {
             return Err(refuse(
                 "invalid_type",
@@ -1334,6 +1383,13 @@ impl ContentType {
         pointer: &Pointer,
         nested: bool,
     ) -> Result<FieldKind, Refusal> {
+        only(
+            object,
+            &[
+                "id", "label", "type", "required", "default", "when", "unique", "to",
+            ],
+            pointer,
+        )?;
         if nested {
             return Err(refuse(
                 "invalid_type",
@@ -1356,6 +1412,131 @@ impl ContentType {
             ));
         }
         Ok(FieldKind::Reference { to: to.to_owned() })
+    }
+
+    /// A `blocks` kind: `{"type": "blocks", "blocks": [{"id","label","fields":[…]}]}` plus
+    /// optional `min_blocks`/`max_blocks` (bounded by `MAX_ITEMS`). Block types follow object
+    /// rules; a `blocks` field can't sit inside an object or another block.
+    fn blocks_kind(
+        object: &Map<String, Value>,
+        pointer: &Pointer,
+        nested: bool,
+    ) -> Result<FieldKind, Refusal> {
+        only(
+            object,
+            &[
+                "id",
+                "label",
+                "type",
+                "required",
+                "default",
+                "when",
+                "unique",
+                "blocks",
+                "min_blocks",
+                "max_blocks",
+            ],
+            pointer,
+        )?;
+        if nested {
+            return Err(refuse(
+                "invalid_type",
+                &at(pointer, "type"),
+                "blocks can't sit inside an object",
+            ));
+        }
+        let list = object
+            .get("blocks")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                refuse(
+                    "invalid_blocks",
+                    &at(pointer, "blocks"),
+                    "`blocks` is a list of section types, each with an id, a label and fields",
+                )
+            })?;
+        if list.is_empty() || list.len() > MAX_FIELDS {
+            return Err(refuse(
+                "invalid_blocks",
+                &at(pointer, "blocks"),
+                format!("`blocks` names 1 to {MAX_FIELDS} section types"),
+            ));
+        }
+        let mut types: Vec<BlockType> = Vec::with_capacity(list.len());
+        for (index, item) in list.iter().enumerate() {
+            let mut at_index = pointer.clone();
+            at_index.push("blocks");
+            at_index.push_index(index);
+            let block = Self::block_type(item, &at_index)?;
+            if types.iter().any(|seen| seen.id == block.id) {
+                return Err(refuse(
+                    "duplicate_field",
+                    &at(&at_index, "id"),
+                    format!("`{}` is used by two block types", block.id),
+                ));
+            }
+            types.push(block);
+        }
+        let min_blocks = Self::item_count(object, "min_blocks", 0, pointer)?;
+        let max_blocks = Self::item_count(object, "max_blocks", MAX_ITEMS, pointer)?;
+        if min_blocks > max_blocks {
+            return Err(refuse(
+                "invalid_items",
+                &at(pointer, "min_blocks"),
+                "`min_blocks` is no more than `max_blocks`",
+            ));
+        }
+        Ok(FieldKind::Blocks {
+            types,
+            min_blocks,
+            max_blocks,
+        })
+    }
+
+    /// One block type, `{"id": "quote", "label": "Quote", "fields": […]}`: an id, a label and
+    /// a nested field list (no second-level structures).
+    fn block_type(item: &Value, pointer: &Pointer) -> Result<BlockType, Refusal> {
+        let object = item
+            .as_object()
+            .ok_or_else(|| refuse("not_an_object", pointer, "a block type is an object"))?;
+        only(object, &["id", "label", "fields"], pointer)?;
+        let id = object
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| is_field_id(id))
+            .ok_or_else(|| {
+                refuse(
+                    "invalid_id",
+                    &at(pointer, "id"),
+                    "a block type needs an id, like `quote` or `figure`",
+                )
+            })?;
+        let label = object
+            .get("label")
+            .and_then(Value::as_str)
+            .filter(|label| plain_text(label, 100))
+            .ok_or_else(|| {
+                refuse(
+                    "invalid_label",
+                    &at(pointer, "label"),
+                    "a block type needs a label",
+                )
+            })?;
+        let fields = object
+            .get("fields")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                refuse(
+                    "invalid_fields",
+                    &at(pointer, "fields"),
+                    "a block type declares its fields",
+                )
+            })?;
+        Ok(BlockType {
+            id: id.to_owned(),
+            label: label.to_owned(),
+            fields: Self::field_list(fields, &at(pointer, "fields"), true)?,
+        })
     }
 
     /// A `list` kind: `{"type": "list", "of": "<scalar kind>", "min_items": 0, "max_items": 64}`.
@@ -1469,6 +1650,7 @@ impl ContentType {
                     | FieldKind::Json { .. }
                     | FieldKind::Object { .. }
                     | FieldKind::List { .. }
+                    | FieldKind::Blocks { .. }
                     | FieldKind::Reference { .. }
                     | FieldKind::Text {
                         multiline: true,
@@ -1590,6 +1772,58 @@ impl ContentType {
         out
     }
 
+    /// A comma-joined list of fields in canonical form — shared by objects and block types.
+    fn write_field_list(out: &mut String, fields: &[Field]) {
+        for (inner, nested) in fields.iter().enumerate() {
+            if inner > 0 {
+                out.push(',');
+            }
+            Self::write_field(out, nested);
+        }
+    }
+
+    /// A `blocks` kind in canonical form: `"blocks":[{id,label,fields}]` plus non-default
+    /// bounds.
+    fn write_blocks(out: &mut String, types: &[BlockType], min: u16, max: u16) {
+        out.push_str(r#","blocks":["#);
+        for (index, block) in types.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            out.push_str(r#"{"id":"#);
+            write_string(out, &block.id);
+            out.push_str(r#","label":"#);
+            write_string(out, &block.label);
+            out.push_str(r#","fields":["#);
+            Self::write_field_list(out, &block.fields);
+            out.push_str("]}");
+        }
+        out.push(']');
+        if min > 0 {
+            out.push_str(r#","min_blocks":"#);
+            out.push_str(&min.to_string());
+        }
+        if max < MAX_ITEMS {
+            out.push_str(r#","max_blocks":"#);
+            out.push_str(&max.to_string());
+        }
+    }
+
+    /// A `list` kind in canonical form: `"of"` plus non-default bounds.
+    fn write_list(out: &mut String, of: ListItem, min: u16, max: u16) {
+        out.push_str(r#","of":""#);
+        out.push_str(of.name());
+        out.push('"');
+        if min > 0 {
+            out.push_str(r#","min_items":"#);
+            out.push_str(&min.to_string());
+        }
+        if max < MAX_ITEMS {
+            out.push_str(r#","max_items":"#);
+            out.push_str(&max.to_string());
+        }
+    }
+
     /// One field of a definition in canonical form — used at the top level and inside objects.
     fn write_field(out: &mut String, field: &Field) {
         out.push_str(r#"{"id":"#);
@@ -1649,12 +1883,7 @@ impl ContentType {
             }
             FieldKind::Object { fields } => {
                 out.push_str(r#","fields":["#);
-                for (index, nested) in fields.iter().enumerate() {
-                    if index > 0 {
-                        out.push(',');
-                    }
-                    Self::write_field(out, nested);
-                }
+                Self::write_field_list(out, fields);
                 out.push(']');
             }
             FieldKind::Slug { of } => {
@@ -1663,23 +1892,16 @@ impl ContentType {
                 }
             }
             FieldKind::Reference { to } => Self::write_kind_extra(out, "to", to),
+            FieldKind::Blocks {
+                types,
+                min_blocks,
+                max_blocks,
+            } => Self::write_blocks(out, types, *min_blocks, *max_blocks),
             FieldKind::List {
                 of,
                 min_items,
                 max_items,
-            } => {
-                out.push_str(r#","of":""#);
-                out.push_str(of.name());
-                out.push('"');
-                if *min_items > 0 {
-                    out.push_str(r#","min_items":"#);
-                    out.push_str(&min_items.to_string());
-                }
-                if *max_items < MAX_ITEMS {
-                    out.push_str(r#","max_items":"#);
-                    out.push_str(&max_items.to_string());
-                }
-            }
+            } => Self::write_list(out, *of, *min_items, *max_items),
             FieldKind::RichText
             | FieldKind::Boolean
             | FieldKind::DateTime
@@ -1879,25 +2101,18 @@ impl ContentType {
         Ok(())
     }
 
-    /// An object's value: only its declared fields, required ones present, each checked and
-    /// written in definition order.
-    fn object_value(
+    /// The `,"id":value` pairs of a shaped object, in definition order. `first` says whether
+    /// the first pair takes a leading comma — a block item's `"_block"` pair already did.
+    fn object_pairs(
         fields: &[Field],
-        label: &str,
-        value: &Value,
+        object: &Map<String, Value>,
         pointer: &Pointer,
         out: &mut String,
+        mut first: bool,
     ) -> Result<(), Refusal> {
-        let nested = value
-            .as_object()
-            .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is an object")))?;
-        let ids: Vec<&str> = fields.iter().map(|field| field.id.as_str()).collect();
-        only(nested, &ids, pointer)?;
-        out.push('{');
-        let mut first = true;
         for field in fields {
             let at_field = at(pointer, &field.id);
-            let Some(nested_value) = nested.get(&field.id) else {
+            let Some(nested_value) = object.get(&field.id) else {
                 if field.required {
                     return Err(refuse(
                         "missing_field",
@@ -1915,6 +2130,107 @@ impl ContentType {
             out.push(':');
             Self::value(field, nested_value, &at_field, out)?;
         }
+        Ok(())
+    }
+
+    /// A `blocks` value: a list of sections, each `{"_block": "<type>", <fields>}` — the type
+    /// picks which declared fields it carries.
+    fn blocks_value(
+        types: &[BlockType],
+        min: u16,
+        max: u16,
+        value: &Value,
+        pointer: &Pointer,
+        label: &str,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        let items = value.as_array().ok_or_else(|| {
+            refuse(
+                "wrong_type",
+                pointer,
+                format!("{label} is a list of sections"),
+            )
+        })?;
+        let count = u16::try_from(items.len()).map_err(|_| {
+            refuse(
+                "too_many",
+                pointer,
+                format!("{label} allows at most {MAX_ITEMS} sections"),
+            )
+        })?;
+        if count < min {
+            return Err(refuse(
+                "too_few",
+                pointer,
+                format!("{label} needs at least {min} sections"),
+            ));
+        }
+        if count > max {
+            return Err(refuse(
+                "too_many",
+                pointer,
+                format!("{label} allows at most {max} sections"),
+            ));
+        }
+        out.push('[');
+        for (index, item) in items.iter().enumerate() {
+            let mut at_index = pointer.clone();
+            at_index.push_index(index);
+            let object = item
+                .as_object()
+                .ok_or_else(|| refuse("wrong_type", &at_index, "a section is an object"))?;
+            let block_id = object
+                .get("_block")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    refuse(
+                        "invalid_block",
+                        &at(&at_index, "_block"),
+                        "a section names its type in `_block`",
+                    )
+                })?;
+            let Some(block) = types.iter().find(|block| block.id == block_id) else {
+                return Err(refuse(
+                    "unknown_block",
+                    &at(&at_index, "_block"),
+                    format!("`{block_id}` is not one of the sections"),
+                ));
+            };
+            let ids: Vec<&str> = block
+                .fields
+                .iter()
+                .map(|field| field.id.as_str())
+                .chain(["_block"])
+                .collect();
+            only(object, &ids, &at_index)?;
+            if index > 0 {
+                out.push(',');
+            }
+            out.push_str(r#"{"_block":"#);
+            write_string(out, &block.id);
+            Self::object_pairs(&block.fields, object, &at_index, out, false)?;
+            out.push('}');
+        }
+        out.push(']');
+        Ok(())
+    }
+
+    /// An object's value: only its declared fields, required ones present, each checked and
+    /// written in definition order.
+    fn object_value(
+        fields: &[Field],
+        label: &str,
+        value: &Value,
+        pointer: &Pointer,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        let nested = value
+            .as_object()
+            .ok_or_else(|| refuse("wrong_type", pointer, format!("{label} is an object")))?;
+        let ids: Vec<&str> = fields.iter().map(|field| field.id.as_str()).collect();
+        only(nested, &ids, pointer)?;
+        out.push('{');
+        Self::object_pairs(fields, nested, pointer, out, true)?;
         out.push('}');
         Ok(())
     }
@@ -2005,8 +2321,13 @@ impl ContentType {
             | FieldKind::Url
             | FieldKind::Slug { .. }
             | FieldKind::Color => formatted(&field.kind, value, pointer, label, out)?,
-            FieldKind::Reference { to } => {
-                reference_value(to, value, pointer, label, out)?;
+            FieldKind::Reference { to } => reference_value(to, value, pointer, label, out)?,
+            FieldKind::Blocks {
+                types,
+                min_blocks,
+                max_blocks,
+            } => {
+                Self::blocks_value(types, *min_blocks, *max_blocks, value, pointer, label, out)?;
             }
             FieldKind::Markdown { max_chars } => {
                 let text = value
@@ -2726,6 +3047,105 @@ mod tests {
         assert_eq!(refusal.code, "needs_migration");
         kind.check_successor(&before)
             .expect("dropping unique is always safe");
+    }
+
+    #[test]
+    fn a_blocks_field_holds_sections_of_named_types() {
+        let type_ = ContentType::parse(&json!({
+            "name": "Pages",
+            "title_field": "title",
+            "fields": [
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "body", "label": "Body", "type": "blocks", "blocks": [
+                    {"id": "text", "label": "Text", "fields": [{"id": "content", "label": "Content", "type": "markdown", "required": true}]},
+                    {"id": "quote", "label": "Quote", "fields": [{"id": "text", "label": "Text", "type": "text", "required": true}, {"id": "cite", "label": "Cite", "type": "text"}]}
+                ], "min_blocks": 1, "max_blocks": 8}
+            ]
+        }))
+        .expect("valid definition");
+        let canonical = type_.canonical_json();
+        assert!(canonical.contains(r#""type":"blocks"#), "{canonical}");
+        assert!(
+            canonical.contains(r#""min_blocks":1,"max_blocks":8"#),
+            "{canonical}"
+        );
+        assert!(
+            canonical
+                .contains(r#""blocks":[{"id":"text","label":"Text","fields":[{"id":"content""#),
+            "{canonical}"
+        );
+        type_
+            .validate(&json!({
+                "title": "A",
+                "body": [
+                    {"_block": "text", "content": "Hello"},
+                    {"_block": "quote", "text": "To be", "cite": "Hamlet"}
+                ]
+            }))
+            .expect("valid");
+        for (body, code, pointer) in [
+            (json!([]), "too_few", "/body"),
+            (json!("x"), "wrong_type", "/body"),
+            (
+                json!(
+                    (0..9)
+                        .map(|_| json!({"_block": "text", "content": "a"}))
+                        .collect::<Vec<Value>>()
+                ),
+                "too_many",
+                "/body",
+            ),
+            (json!([{"cite": "x"}]), "invalid_block", "/body/0/_block"),
+            (
+                json!([{"_block": "nope"}]),
+                "unknown_block",
+                "/body/0/_block",
+            ),
+            (
+                json!([{"_block": "text"}]),
+                "missing_field",
+                "/body/0/content",
+            ),
+            (
+                json!([{"_block": "text", "content": "a", "bogus": 1}]),
+                "unknown_field",
+                "/body/0/bogus",
+            ),
+        ] {
+            let refusal = type_
+                .validate(&json!({"title": "A", "body": body}))
+                .expect_err("must refuse");
+            assert_eq!((refusal.code, refusal.pointer.as_str()), (code, pointer));
+        }
+        for (bad, code) in [
+            (
+                json!({"id": "b", "label": "B", "type": "blocks", "blocks": []}),
+                "invalid_blocks",
+            ),
+            (
+                json!({"id": "b", "label": "B", "type": "blocks", "blocks": [{"id": "t", "label": "T", "fields": [{"id": "x", "label": "X", "type": "object", "fields": [{"id": "y", "label": "Y", "type": "text"}]}]}]}),
+                "invalid_type",
+            ),
+            (
+                json!({"id": "b", "label": "B", "type": "blocks", "blocks": [{"id": "t", "label": "T", "fields": []}]}),
+                "invalid_fields",
+            ),
+            (
+                json!({"id": "b", "label": "B", "type": "blocks", "blocks": [{"id": "t", "label": "T", "fields": [{"id": "x", "label": "X", "type": "text"}]}], "min_blocks": 5, "max_blocks": 2}),
+                "invalid_items",
+            ),
+        ] {
+            let refusal = ContentType::parse(&json!({
+                "name": "Pages",
+                "title_field": "title",
+                "fields": [
+                    {"id": "title", "label": "Title", "type": "text", "required": true},
+                    bad
+                ]
+            }))
+            .expect_err("must refuse");
+            assert_eq!(refusal.code, code);
+        }
     }
 
     #[test]
