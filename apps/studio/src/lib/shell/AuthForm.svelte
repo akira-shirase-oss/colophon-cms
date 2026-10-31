@@ -8,7 +8,6 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
 	import { ApiError, signInPassword, signInUrl, signUp } from '#lib/api.ts';
-	import FormRow from '#lib/shell/FormRow.svelte';
 
 	/** Where the single sign-on button comes back to afterwards. */
 	let { returnTo = '/' }: { returnTo?: string } = $props();
@@ -50,20 +49,27 @@
 	}
 </script>
 
-<form onsubmit={submit} data-testid="password-auth">
+<form onsubmit={submit} data-testid="password-auth" class="space-y-4">
 	{#if mode === 'signup'}
-		<FormRow label="Your name" hint="Shown to the people you work with." for="auth-name">
+		<div class="space-y-1.5">
+			<label for="auth-name" class="text-sm font-medium">Your name</label>
 			<Input id="auth-name" bind:value={name} maxlength={200} autocomplete="name" />
-		</FormRow>
+			<p class="text-sm text-muted-foreground">Shown to the people you work with.</p>
+		</div>
 	{/if}
-	<FormRow label="Email" for="auth-email">
-		<Input id="auth-email" type="email" bind:value={email} required maxlength={254} autocomplete="email" />
-	</FormRow>
-	<FormRow
-		label="Password"
-		hint={mode === 'signup' ? 'At least 8 characters.' : undefined}
-		for="auth-password"
-	>
+	<div class="space-y-1.5">
+		<label for="auth-email" class="text-sm font-medium">Email</label>
+		<Input
+			id="auth-email"
+			type="email"
+			bind:value={email}
+			required
+			maxlength={254}
+			autocomplete="email"
+		/>
+	</div>
+	<div class="space-y-1.5">
+		<label for="auth-password" class="text-sm font-medium">Password</label>
 		<Input
 			id="auth-password"
 			type="password"
@@ -73,7 +79,8 @@
 			maxlength={512}
 			autocomplete={mode === 'signup' ? 'new-password' : 'current-password'}
 		/>
-	</FormRow>
+		{#if mode === 'signup'}<p class="text-sm text-muted-foreground">At least 8 characters.</p>{/if}
+	</div>
 	{#if error}<p role="alert" class="pt-2 text-sm text-destructive">{error}</p>{/if}
 	<div class="pt-4">
 		<Button type="submit" class="w-full" disabled={busy} data-testid="sign-in">
