@@ -200,7 +200,7 @@
 					<Sidebar.MenuItem>
 						<Sidebar.MenuButton onclick={() => (searching = true)} tooltipContent="Search">
 							<SearchIcon /><span>Search</span>
-							<kbd class="ml-auto rounded border border-sidebar-border bg-background px-1.5 font-sans text-[0.6875rem] text-muted-foreground">⌘K</kbd>
+							<kbd class="ml-auto rounded border border-sidebar-border bg-background px-1.5 font-sans text-xs text-muted-foreground">⌘K</kbd>
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
 				</Sidebar.Menu>
@@ -333,7 +333,7 @@
 			</Breadcrumb.Root>
 			<div class="ml-auto flex items-center gap-1">
 				<Button variant="outline" size="sm" class="hidden w-56 justify-start text-muted-foreground sm:flex" onclick={() => (searching = true)}>
-					<SearchIcon />Search entries…<kbd class="ml-auto font-sans text-[0.6875rem]">⌘K</kbd>
+					<SearchIcon />Search entries…<kbd class="ml-auto font-sans text-xs">⌘K</kbd>
 				</Button>
 				<AppearanceMenu />
 				<AccountMenu />

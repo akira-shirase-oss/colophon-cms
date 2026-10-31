@@ -176,6 +176,10 @@
 	--font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
 	--font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
 
+	/* No text under 14px anywhere: the smallest utility renders at reading size. */
+	--text-xs: 0.875rem;
+	--text-xs--line-height: 1.25rem;
+
 	--radius-sm: calc(var(--radius) * 0.5);
 	--radius-md: calc(var(--radius) * 0.75);
 	--radius-lg: var(--radius);
@@ -295,7 +299,7 @@
 		font-weight: 450;
 	}
 	.eyebrow {
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 		line-height: 1rem;
 		font-weight: 500;
 		color: var(--muted-foreground);

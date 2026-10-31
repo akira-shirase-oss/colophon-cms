@@ -333,7 +333,7 @@
 	label {
 		display: grid;
 		gap: 0.25rem;
-		font-size: 0.85rem;
+		font-size: 0.875rem;
 		color: var(--muted);
 	}
 	input,
@@ -367,7 +367,7 @@
 		text-decoration: underline;
 	}
 	.meta {
-		font-size: 0.85rem;
+		font-size: 0.875rem;
 		color: var(--muted);
 	}
 </style>
