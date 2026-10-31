@@ -174,6 +174,10 @@
 	--font-serif: ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
 	--font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 
+	/* No text under 14px anywhere: the smallest utility renders at reading size. */
+	--text-xs: 0.875rem;
+	--text-xs--line-height: 1.25rem;
+
 	--radius-sm: calc(var(--radius) * 0.5);
 	--radius-md: calc(var(--radius) * 0.75);
 	--radius-lg: var(--radius);

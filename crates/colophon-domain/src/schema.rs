@@ -494,6 +494,38 @@ fn write_json(
     Ok(())
 }
 
+/// The string kinds checked by a shape: each names its check, refusal code and hint.
+fn formatted(
+    kind: &FieldKind,
+    value: &Value,
+    pointer: &Pointer,
+    label: &str,
+    out: &mut String,
+) -> Result<(), Refusal> {
+    let (check, code, hint): (fn(&str) -> bool, &str, &str) = match kind {
+        FieldKind::DateTime => (
+            is_utc_timestamp,
+            "invalid_datetime",
+            "a UTC time like 2026-10-25T14:30:00Z",
+        ),
+        FieldKind::Date => (is_date, "invalid_date", "a day like 2026-10-25"),
+        FieldKind::Time => (is_time, "invalid_time", "a time of day like 14:30"),
+        FieldKind::Email => (is_email, "invalid_email", "an email address"),
+        FieldKind::Url => (
+            is_url,
+            "invalid_url",
+            "a web address starting http:// or https://",
+        ),
+        _ => (is_color, "invalid_color", "a colour like #1a6fdd"),
+    };
+    let text = value
+        .as_str()
+        .filter(|text| check(text))
+        .ok_or_else(|| refuse(code, pointer, format!("{label} is {hint}")))?;
+    write_string(out, text);
+    Ok(())
+}
+
 /// A `json` field's value: canonicalised, bounded in bytes, written to `out`.
 fn json_value(
     value: &Value,
@@ -1138,29 +1170,7 @@ impl ContentType {
             | FieldKind::Time
             | FieldKind::Email
             | FieldKind::Url
-            | FieldKind::Color => {
-                let (check, code, hint): (fn(&str) -> bool, &str, &str) = match field.kind {
-                    FieldKind::DateTime => (
-                        is_utc_timestamp,
-                        "invalid_datetime",
-                        "a UTC time like 2026-10-25T14:30:00Z",
-                    ),
-                    FieldKind::Date => (is_date, "invalid_date", "a day like 2026-10-25"),
-                    FieldKind::Time => (is_time, "invalid_time", "a time of day like 14:30"),
-                    FieldKind::Email => (is_email, "invalid_email", "an email address"),
-                    FieldKind::Url => (
-                        is_url,
-                        "invalid_url",
-                        "a web address starting http:// or https://",
-                    ),
-                    _ => (is_color, "invalid_color", "a colour like #1a6fdd"),
-                };
-                let text = value
-                    .as_str()
-                    .filter(|text| check(text))
-                    .ok_or_else(|| refuse(code, pointer, format!("{label} is {hint}")))?;
-                write_string(out, text);
-            }
+            | FieldKind::Color => formatted(&field.kind, value, pointer, label, out)?,
             FieldKind::Markdown { max_chars } => {
                 let text = value
                     .as_str()
