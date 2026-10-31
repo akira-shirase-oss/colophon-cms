@@ -19,7 +19,7 @@
 	import { ApiError, createEntry, type EntryState, entryState, getContentType, newKey } from '#lib/api.ts';
 	import { type FormValue, formValue, starter, storedValue } from '#lib/content.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
-	import { ago, entriesQuery } from '#lib/queries.ts';
+	import { ago, entriesQuery, projectQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -28,6 +28,8 @@
 	const project = $derived(page.params.project ?? '');
 	const collection = $derived(page.params.collection ?? '');
 	const type = createQuery(() => ({ queryKey: ['type', project, collection], queryFn: () => getContentType(project, collection) }));
+	const mine = createQuery(() => projectQuery(project));
+	const mayChange = $derived(mine.data?.role === 'owner' || mine.data?.role === 'developer');
 
 	let typed = $state('');
 	let q = $state('');
@@ -110,6 +112,9 @@
 			<span>{type.data.definition.fields.length} fields</span><span aria-hidden="true">·</span><span>version {type.data.version}</span>
 		{/snippet}
 		{#snippet actions()}
+			{#if mayChange}
+				<Button variant="outline" href={resolve('/projects/[project]/types/[type]', { project, type: collection })} data-testid="change-fields">Change fields</Button>
+			{/if}
 			<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>
 		{/snippet}
 	</PageHeader>

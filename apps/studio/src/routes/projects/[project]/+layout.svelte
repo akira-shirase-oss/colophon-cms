@@ -55,9 +55,19 @@
 	const collectionName = $derived(
 		types.data?.find((type) => type.slug === page.params.collection)?.definition.name ?? page.params.collection ?? ''
 	);
+	const editingName = $derived(
+		types.data?.find((type) => type.slug === page.params.type)?.definition.name ?? page.params.type ?? ''
+	);
 	const crumbs = $derived.by(() => {
 		const trail: { label: string; href?: string }[] = [];
-		if (route.includes('[collection]')) {
+		if (route.endsWith('types/[type]')) {
+			trail.push({ label: 'Content' });
+			trail.push({
+				label: editingName,
+				href: resolve('/projects/[project]/[collection]', { project, collection: page.params.type ?? '' })
+			});
+			trail.push({ label: 'Change fields' });
+		} else if (route.includes('[collection]')) {
 			trail.push({ label: 'Content' });
 			trail.push({
 				label: collectionName,

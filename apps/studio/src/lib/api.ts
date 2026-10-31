@@ -241,6 +241,25 @@ export async function createContentType(
 	).data;
 }
 
+/** Owners and developers only (D-040): a new version of a collection's definition, `If-Match`
+ *  naming the version read. The server refuses a change that would orphan stored entries. */
+export async function updateContentType(
+	project: string,
+	collection: string,
+	definition: Definition,
+	version: number,
+	key: string
+): Promise<ContentType> {
+	return (
+		(await (
+			await send('PUT', `${base(project)}/content-types/${collection}`, definition, {
+				'If-Match': `"v${version}"`,
+				'Idempotency-Key': key
+			})
+		).json()) as { data: ContentType }
+	).data;
+}
+
 export async function listEntries(project: string, collection: string): Promise<Summary[]> {
 	return (await searchEntries(project, collection)).data;
 }
