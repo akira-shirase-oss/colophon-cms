@@ -273,6 +273,38 @@ export async function importEntries(project: string, collection: string, body: s
 	}
 }
 
+/** A named access token, as the list of them shows it — the token itself is never stored. */
+export interface TokenInfo {
+	id: string;
+	name: string;
+	created_at: string;
+	last_used_at: string;
+	expires_at: string;
+}
+
+/** The caller's live access tokens, newest first. */
+export async function listTokens(): Promise<TokenInfo[]> {
+	return ((await (await send('GET', '/api/v1/tokens')).json()) as { data: TokenInfo[] }).data;
+}
+
+/** What `POST /api/v1/tokens` answers — `token` is shown only in that response. */
+export interface MintedToken {
+	id: string;
+	token: string;
+	name: string;
+	expires_at: string;
+}
+
+/** Mints a named access token (a name of at most 100 characters; it lasts thirty days). */
+export async function createToken(name: string): Promise<MintedToken> {
+	return ((await (await send('POST', '/api/v1/tokens', { name })).json()) as { data: MintedToken }).data;
+}
+
+/** Revokes the caller's own token. */
+export async function revokeToken(id: string): Promise<void> {
+	await send('DELETE', `/api/v1/tokens/${id}`);
+}
+
 /** Who is signed in, or `null` if nobody is. */
 export async function me(): Promise<Me | null> {
 	try {

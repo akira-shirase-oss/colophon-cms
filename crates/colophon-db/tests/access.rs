@@ -187,3 +187,55 @@ async fn a_token_works_until_revoked_or_expired_and_only_its_hash_is_kept() {
     assert!(error.to_string().contains("permission denied"), "{error}");
     db.drop().await;
 }
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_member_lists_and_revokes_only_their_own_tokens() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let bob = db.administrator("bob").await;
+    let mine = access::create_access_token(&db.app, alice, &[1_u8; 32], "laptop", in_minutes(60))
+        .await
+        .expect("created");
+    let bobs = access::create_access_token(&db.app, bob, &[2_u8; 32], "bobs", in_minutes(60))
+        .await
+        .expect("created");
+
+    let listed = access::list_access_tokens(&db.app, alice)
+        .await
+        .expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].name, "laptop");
+
+    // Revoking another person's token is a no-op; revoking your own works exactly once.
+    assert!(
+        !access::revoke_own_access_token(&db.app, alice, bobs)
+            .await
+            .expect("revoke")
+    );
+    assert!(
+        access::revoke_own_access_token(&db.app, alice, mine)
+            .await
+            .expect("revoke")
+    );
+    assert!(
+        !access::revoke_own_access_token(&db.app, alice, mine)
+            .await
+            .expect("revoke")
+    );
+    assert_eq!(
+        access::list_access_tokens(&db.app, alice)
+            .await
+            .expect("list"),
+        []
+    );
+    // Bob's token is untouched.
+    assert_eq!(
+        access::list_access_tokens(&db.app, bob)
+            .await
+            .expect("list")
+            .len(),
+        1
+    );
+    db.drop().await;
+}

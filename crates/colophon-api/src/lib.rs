@@ -4,6 +4,7 @@
 //!
 //! Design: `docs/modules/04-api.md`.
 
+mod access_tokens;
 mod auth;
 mod body;
 mod cache;
@@ -77,6 +78,14 @@ pub fn routes(state: AppState) -> Router {
         )
         .route("/api/v1/invitations/lookup", post(members::lookup))
         .route("/api/v1/invitations/accept", post(members::accept))
+        .route(
+            "/api/v1/tokens",
+            get(access_tokens::list).post(access_tokens::create),
+        )
+        .route(
+            "/api/v1/tokens/{token}",
+            axum::routing::delete(access_tokens::revoke),
+        )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/content-types",
             get(content_types::list).post(content_types::create),

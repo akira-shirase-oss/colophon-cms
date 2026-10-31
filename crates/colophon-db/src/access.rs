@@ -193,6 +193,53 @@ pub async fn touch_access_token(pool: &PgPool, id: Uuid) -> Result<(), DbError> 
     Ok(())
 }
 
+/// A token of yours, as the list of them shows it — never the token itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenInfo {
+    /// The token's id.
+    pub id: Uuid,
+    /// The name it was given.
+    pub name: String,
+    /// When it was created.
+    pub created_at: OffsetDateTime,
+    /// When it last authenticated a request.
+    pub last_used_at: OffsetDateTime,
+    /// When it stops working.
+    pub expires_at: OffsetDateTime,
+}
+
+/// The caller's live tokens, newest first; revoked and expired ones stay hidden.
+pub async fn list_access_tokens(pool: &PgPool, identity: Uuid) -> Result<Vec<TokenInfo>, DbError> {
+    sqlx::query_as!(
+        TokenInfo,
+        "SELECT id, name, created_at, last_used_at, expires_at FROM access_tokens
+         WHERE identity_id = $1 AND revoked_at IS NULL AND expires_at > now()
+         ORDER BY created_at DESC
+         LIMIT 100",
+        identity
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// Revokes the caller's own token; `false` means it wasn't theirs or was already gone.
+pub async fn revoke_own_access_token(
+    pool: &PgPool,
+    identity: Uuid,
+    id: Uuid,
+) -> Result<bool, DbError> {
+    let result = sqlx::query!(
+        "UPDATE access_tokens SET revoked_at = now() WHERE id = $1 AND identity_id = $2 AND revoked_at IS NULL",
+        id,
+        identity
+    )
+    .execute(pool)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Revokes a token. Revoked tokens are kept for the audit trail.
 pub async fn revoke_access_token(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
     sqlx::query!(
