@@ -625,3 +625,90 @@ async fn referencing_screens_drafts_that_mention_an_entry_id() {
     drop(tx);
     db.drop().await;
 }
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn an_entrys_locale_is_set_filtered_and_rewritten() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = enter(&db.app, alice, project).await;
+    let first = Content::new("English");
+    let english = Uuid::now_v7();
+    entries::create(
+        &mut tx,
+        english,
+        ARTICLES,
+        first.revision(),
+        &[],
+        Some("en"),
+    )
+    .await
+    .expect("created");
+    let french = Uuid::now_v7();
+    entries::create(
+        &mut tx,
+        french,
+        ARTICLES,
+        Content::new("French").revision(),
+        &[],
+        Some("fr"),
+    )
+    .await
+    .expect("created");
+    let plain = Uuid::now_v7();
+    entries::create(
+        &mut tx,
+        plain,
+        ARTICLES,
+        Content::new("Plain").revision(),
+        &[],
+        None,
+    )
+    .await
+    .expect("created");
+
+    // The list filter keeps only the asked-for locale; no filter sees all three.
+    let english_only = entries::list(&mut tx, ARTICLES, None, 20, None, &[], Some("en"))
+        .await
+        .expect("listed");
+    assert_eq!(
+        english_only
+            .iter()
+            .map(|row| row.entry_id)
+            .collect::<Vec<_>>(),
+        vec![english]
+    );
+    let all = entries::list(&mut tx, ARTICLES, None, 20, None, &[], None)
+        .await
+        .expect("listed");
+    assert_eq!(all.len(), 3);
+
+    // Setting the locale moves the tag; clearing it drops the entry from the filter.
+    assert!(
+        entries::set_locale(&mut tx, ARTICLES, plain, Some("de"))
+            .await
+            .expect("set")
+    );
+    let loaded = entries::get(&mut tx, ARTICLES, plain)
+        .await
+        .expect("get")
+        .expect("there");
+    assert_eq!(loaded.locale.as_deref(), Some("de"));
+    let german = entries::list(&mut tx, ARTICLES, None, 20, None, &[], Some("de"))
+        .await
+        .expect("listed");
+    assert_eq!(german.len(), 1);
+    assert!(
+        entries::set_locale(&mut tx, ARTICLES, plain, None)
+            .await
+            .expect("cleared")
+    );
+    let german = entries::list(&mut tx, ARTICLES, None, 20, None, &[], Some("de"))
+        .await
+        .expect("listed");
+    assert!(german.is_empty());
+}
