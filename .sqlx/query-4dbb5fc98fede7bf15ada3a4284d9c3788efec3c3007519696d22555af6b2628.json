@@ -1,0 +1,150 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, changeset_id, changeset_hash, review_id, base_generation,\n                requested_by, run_at, status, generation, error, created_at\n         FROM scheduled_publishes\n         WHERE project_id = $1 AND environment_id = $2 AND changeset_id = $3\n         ORDER BY (status = 'pending' OR status = 'claimed') DESC, created_at DESC\n         LIMIT 10",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "changeset_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "changeset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "changeset_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "changeset_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "review_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "review_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "base_generation",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "base_generation"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "requested_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "requested_by"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "run_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "run_at"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "generation",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "generation"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "scheduled_publishes",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "4dbb5fc98fede7bf15ada3a4284d9c3788efec3c3007519696d22555af6b2628"
+}

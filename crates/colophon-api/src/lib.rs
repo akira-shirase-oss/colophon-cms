@@ -33,6 +33,7 @@ use axum::{
 };
 
 pub use cache::{DeliveryCache, InvalidCacheUrl};
+pub use changesets::scheduled_publish_tick;
 pub use error::{ApiError, ErrorCode, ErrorDetails, PublicError};
 pub use health::{CheckState, Dependency, Readiness, ReadinessReport, Status};
 pub use middleware::{HttpLimits, REQUEST_ID_HEADER};
@@ -156,6 +157,14 @@ fn publishing() -> Router<AppState> {
         .route(
             "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/publish",
             post(changesets::publish),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/scheduled",
+            get(changesets::scheduled),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/scheduled/{schedule}",
+            axum::routing::delete(changesets::cancel_scheduled),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/releases",

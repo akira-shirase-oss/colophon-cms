@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT set_config('app.claim', 'on', true) AS claiming",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "claiming",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a2dd7b4b958ca91eac9c8cec550a375f122c7a3945feb34d876e978c3c3ed7f7"
+}

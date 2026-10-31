@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE scheduled_publishes\n         SET status = 'failed', finished_at = now(),\n             error = 'the server stopped while it ran; the releases show whether it published'\n         WHERE status = 'claimed' AND claimed_at < now() - make_interval(secs => $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d10e1546474847b662b5cdc8130339c567a7eecedfe026d1efcc790626f49f83"
+}

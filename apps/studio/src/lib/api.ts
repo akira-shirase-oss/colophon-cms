@@ -739,6 +739,47 @@ export async function publishChangeset(
 	return ((await response.json()) as { data: { generation: number; entries_changed: number; entries_unpublished: number } }).data;
 }
 
+/** A publish set for the future: what it will publish and how it ended, once it has. */
+export interface ScheduledPublish {
+	id: string;
+	changeset_id: string;
+	/** RFC 3339; the publish runs when this passes. */
+	run_at: string;
+	base_generation: number;
+	status: 'pending' | 'claimed' | 'cancelled' | 'committed' | 'failed';
+	/** The release it landed as, for `committed`. */
+	generation?: number;
+	/** Why it could not publish, for `failed`. */
+	error?: string;
+	created_at: string;
+}
+
+/** Sets the same publish for `at` (an ISO time) instead of now: it still publishes exactly the
+ *  approved version, still on the same base — just later. Sending the same key again is safe. */
+export async function schedulePublish(
+	project: string,
+	id: string,
+	hash: string,
+	baseGeneration: number,
+	at: string,
+	key: string
+): Promise<ScheduledPublish> {
+	const path = `${changesets(project)}/${id}/publish`;
+	const response = await send('POST', path, { base_generation: baseGeneration, at }, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key });
+	return ((await response.json()) as { data: ScheduledPublish }).data;
+}
+
+/** The publishes set on one changeset, pending first then how the last ones ended. */
+export async function scheduledPublishes(project: string, id: string): Promise<ScheduledPublish[]> {
+	return ((await (await send('GET', `${changesets(project)}/${id}/scheduled`)).json()) as { data: ScheduledPublish[] }).data;
+}
+
+/** Takes a pending publish off the schedule; refused once it has already run or ended. */
+export async function cancelScheduled(project: string, id: string, schedule: string): Promise<ScheduledPublish> {
+	const path = `${changesets(project)}/${id}/scheduled/${schedule}`;
+	return ((await (await send('DELETE', path)).json()) as { data: ScheduledPublish }).data;
+}
+
 /** Where a project's releases are announced (D-046). */
 export interface Destination {
 	id: string;

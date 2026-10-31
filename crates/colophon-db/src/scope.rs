@@ -145,3 +145,23 @@ pub async fn begin_in_project(
         role: member.role,
     }))
 }
+
+/// [`begin_as_member`], then scopes to the environment's id — for work that already knows the
+/// id (the scheduler), where [`begin_in_project`] resolves it from a slug.
+pub async fn begin_in_environment(
+    pool: &PgPool,
+    identity: Uuid,
+    project: Uuid,
+    environment: Uuid,
+) -> Result<Option<ProjectTransaction>, DbError> {
+    let Some(member) = begin_as_member(pool, identity, project).await? else {
+        return Ok(None);
+    };
+    Ok(Some(ProjectTransaction {
+        transaction: member.transaction,
+        identity,
+        project,
+        environment,
+        role: member.role,
+    }))
+}
