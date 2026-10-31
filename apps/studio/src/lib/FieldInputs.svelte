@@ -29,6 +29,14 @@
 
 	const id = $props.id();
 
+	/** Lowercase letters and digits joined by single hyphens — the slug's shape. */
+	function kebab(text: string): string {
+		return text
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-+|-+$/g, '');
+	}
+
 	/** The native input type a list item's kind uses. */
 	function itemInput(of: string): string {
 		switch (of) {
@@ -131,6 +139,23 @@
 					<Textarea id={input} rows={6} maxlength={field.max_chars} class="max-w-xl font-mono" bind:value={form[field.id] as string} oninput={onchange} />
 				{:else if field.type === 'color'}
 					<Input id={input} class="w-36 font-mono" maxlength={7} placeholder="#1a6fdd" bind:value={form[field.id] as string} oninput={onchange} />
+				{:else if field.type === 'slug'}
+					<div class="flex items-center gap-2">
+						<Input id={input} class="max-w-72 font-mono" placeholder="my-first-post" bind:value={form[field.id] as string} oninput={onchange} />
+						{#if field.of}
+							<Button
+								variant="ghost"
+								size="sm"
+								type="button"
+								onclick={() => {
+									form[field.id] = kebab(String(form[field.of ?? ''] ?? ''));
+									onchange();
+								}}
+							>
+								From {field.of}
+							</Button>
+						{/if}
+					</div>
 				{:else if field.type === 'json'}
 					<Textarea id={input} rows={8} class="max-w-xl font-mono" placeholder={'{"key": "value"}'} bind:value={form[field.id] as string} oninput={onchange} />
 				{:else if field.type === 'object'}

@@ -47,6 +47,7 @@ export type FieldDefinition = {
 	| { type: 'markdown'; max_chars: number }
 	| { type: 'color' }
 	| { type: 'json'; max_bytes: number }
+	| { type: 'slug'; of?: string }
 	| { type: 'object'; fields: FieldDefinition[] }
 	| {
 			type: 'list';

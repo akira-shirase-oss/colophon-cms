@@ -112,6 +112,12 @@ pub enum FieldKind {
     },
     /// A `colophon/rich-text` v1 document.
     RichText,
+    /// A web-safe identifier derived from another field: lowercase letters, digits and
+    /// hyphens. A slug is always unique across the collection's entries.
+    Slug {
+        /// The field it is derived from, or none to write by hand.
+        of: Option<String>,
+    },
     /// A list of 0 to `max_items` values of one scalar kind (a "tags" field). Items keep their
     /// kind's standard form: a text item is single-line, at most `MAX_TEXT_CHARS` characters.
     List {
@@ -177,6 +183,7 @@ impl FieldKind {
         match self {
             Self::Text { .. } => "text",
             Self::RichText => "rich_text",
+            Self::Slug { .. } => "slug",
             Self::List { .. } => "list",
             Self::Number { .. } => "number",
             Self::Boolean => "boolean",
@@ -464,6 +471,17 @@ fn is_email(text: &str) -> bool {
 }
 
 /// A colour: `#` then six lowercase hex digits.
+/// A slug is lowercase letters and digits joined by single hyphens, `hello-world`.
+fn is_slug(text: &str) -> bool {
+    !text.is_empty()
+        && text.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        })
+}
+
 fn is_color(text: &str) -> bool {
     let bytes = text.as_bytes();
     bytes.len() == 7
@@ -600,6 +618,7 @@ fn formatted(
             "a UTC time like 2026-10-25T14:30:00Z",
         ),
         FieldKind::Date => (is_date, "invalid_date", "a day like 2026-10-25"),
+        FieldKind::Slug { .. } => (is_slug, "invalid_slug", "a web-safe id like my-first-post"),
         FieldKind::Time => (is_time, "invalid_time", "a time of day like 14:30"),
         FieldKind::Email => (is_email, "invalid_email", "an email address"),
         FieldKind::Url => (
@@ -761,6 +780,7 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         | (FieldKind::Time, FieldKind::Time)
         | (FieldKind::Email, FieldKind::Email)
         | (FieldKind::Url, FieldKind::Url)
+        | (FieldKind::Slug { .. }, FieldKind::Slug { .. })
         | (FieldKind::Color, FieldKind::Color) => true,
         // Any text value is Markdown if it fits the new limit; Markdown is text only for a
         // multi-line target that fits (stored values may hold line breaks).
@@ -809,6 +829,8 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
             // Stored lists hold the old items: the item kind stays, the bounds only loosen.
             old_of == new_of && new_min <= old_min && new_max >= old_max
         }
+        // `of` is a derivation hint, not a constraint: any slug keeps fitting a slug.
+        // (slug→slug widens: it is a leaf kind in the `true` arm above)
         (
             FieldKind::Number {
                 integer: old_integer,
@@ -978,9 +1000,28 @@ impl ContentType {
         })
     }
 
-    /// A `when` can only name a field that exists, and never the field itself.
+    /// A `when` or a slug's `of` can only name a field that exists, and never the field itself.
     fn check_whens(fields: &[Field], root: &Pointer) -> Result<(), Refusal> {
         for (index, field) in fields.iter().enumerate() {
+            if let FieldKind::Slug { of: Some(of) } = &field.kind {
+                let mut pointer = at(root, "fields");
+                pointer.push_index(index);
+                pointer.push("of");
+                if of == &field.id {
+                    return Err(refuse(
+                        "invalid_of",
+                        &pointer,
+                        "a slug can't be derived from itself",
+                    ));
+                }
+                if !fields.iter().any(|other| &other.id == of) {
+                    return Err(refuse(
+                        "unknown_field",
+                        &pointer,
+                        format!("no field named `{of}`"),
+                    ));
+                }
+            }
             if let Some(clause) = &field.when {
                 let mut pointer = at(root, "fields");
                 pointer.push_index(index);
@@ -1106,6 +1147,10 @@ impl ContentType {
                 )?;
                 Self::list_kind(object, pointer)?
             }
+            Some("slug") => {
+                only(object, &[&common[..], &["of"]].concat(), pointer)?;
+                Self::slug_kind(object, pointer, nested)?
+            }
             other => {
                 let kind = Self::leaf_kind(other, pointer, nested)?;
                 only(object, &common, pointer)?;
@@ -1186,6 +1231,38 @@ impl ContentType {
         Ok(FieldKind::Object {
             fields: Self::field_list(list, &at(pointer, "fields"), true)?,
         })
+    }
+
+    /// A `slug` kind: `{"type": "slug", "of": "<field-id>"}`. A slug can't sit inside an
+    /// object (uniqueness is only indexed at the top level), and `of` is optional.
+    fn slug_kind(
+        object: &Map<String, Value>,
+        pointer: &Pointer,
+        nested: bool,
+    ) -> Result<FieldKind, Refusal> {
+        if nested {
+            return Err(refuse(
+                "invalid_type",
+                &at(pointer, "type"),
+                "a slug can't sit inside an object",
+            ));
+        }
+        match object.get("of") {
+            None => Ok(FieldKind::Slug { of: None }),
+            Some(of) => Ok(FieldKind::Slug {
+                of: Some(
+                    of.as_str()
+                        .ok_or_else(|| {
+                            refuse(
+                                "invalid_of",
+                                &at(pointer, "of"),
+                                "`of` names the field a slug is derived from",
+                            )
+                        })?
+                        .to_owned(),
+                ),
+            }),
+        }
     }
 
     /// A `list` kind: `{"type": "list", "of": "<scalar kind>", "min_items": 0, "max_items": 64}`.
@@ -1287,6 +1364,10 @@ impl ContentType {
             }
         }
         field.unique = bool_or(object, "unique", false, pointer)?;
+        // A slug is always unique: it is what an entry is addressed by.
+        if matches!(field.kind, FieldKind::Slug { .. }) {
+            field.unique = true;
+        }
         if field.unique
             && matches!(
                 field.kind,
@@ -1473,6 +1554,13 @@ impl ContentType {
                     Self::write_field(out, nested);
                 }
                 out.push(']');
+            }
+            FieldKind::Slug { of } => {
+                if let Some(of) = of {
+                    out.push_str(r#","of":""#);
+                    out.push_str(of);
+                    out.push('"');
+                }
             }
             FieldKind::List {
                 of,
@@ -1804,6 +1892,7 @@ impl ContentType {
             | FieldKind::Time
             | FieldKind::Email
             | FieldKind::Url
+            | FieldKind::Slug { .. }
             | FieldKind::Color => formatted(&field.kind, value, pointer, label, out)?,
             FieldKind::Markdown { max_chars } => {
                 let text = value
@@ -2523,6 +2612,64 @@ mod tests {
         assert_eq!(refusal.code, "needs_migration");
         kind.check_successor(&before)
             .expect("dropping unique is always safe");
+    }
+
+    #[test]
+    fn a_slug_field_is_checked_and_always_unique() {
+        let type_ = ContentType::parse(&json!({
+            "name": "Posts",
+            "title_field": "title",
+            "fields": [
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "handle", "label": "Handle", "type": "slug", "of": "title"}
+            ]
+        }))
+        .expect("valid definition");
+        let canonical = type_.canonical_json();
+        assert!(
+            canonical.contains(r#""type":"slug","required":false,"of":"title","unique":true"#),
+            "{canonical}"
+        );
+        type_
+            .validate(&json!({"title": "A", "handle": "my-first-post"}))
+            .expect("valid");
+        for (handle, code) in [
+            (json!("My Post"), "invalid_slug"),
+            (json!("a--b"), "invalid_slug"),
+            (json!("-x"), "invalid_slug"),
+            (json!(""), "invalid_slug"),
+            (json!(42), "invalid_slug"),
+        ] {
+            let refusal = type_
+                .validate(&json!({"title": "A", "handle": handle}))
+                .expect_err("must refuse");
+            assert_eq!((refusal.code, refusal.pointer.as_str()), (code, "/handle"));
+        }
+        for (bad, code) in [
+            (
+                json!({"id": "handle", "label": "H", "type": "slug", "of": "missing"}),
+                "unknown_field",
+            ),
+            (
+                json!({"id": "handle", "label": "H", "type": "slug", "of": "handle"}),
+                "invalid_of",
+            ),
+            (
+                json!({"id": "v", "label": "V", "type": "object", "fields": [{"id": "s", "label": "S", "type": "slug"}]}),
+                "invalid_type",
+            ),
+        ] {
+            let refusal = ContentType::parse(&json!({
+                "name": "Posts",
+                "title_field": "title",
+                "fields": [
+                    {"id": "title", "label": "Title", "type": "text", "required": true},
+                    bad
+                ]
+            }))
+            .expect_err("must refuse");
+            assert_eq!(refusal.code, code);
+        }
     }
 
     #[test]

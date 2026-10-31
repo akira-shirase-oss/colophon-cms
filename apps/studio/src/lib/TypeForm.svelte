@@ -13,6 +13,7 @@
 	import { useQueryClient } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
 	import AlignLeftIcon from '@lucide/svelte/icons/align-left';
+	import AtSignIcon from '@lucide/svelte/icons/at-sign';
 	import BoxIcon from '@lucide/svelte/icons/box';
 	import BracesIcon from '@lucide/svelte/icons/braces';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
@@ -74,7 +75,8 @@
 		color: { name: 'Colour', icon: PaletteIcon, about: 'A colour, like a brand accent, written #1a6fdd.' },
 		json: { name: 'JSON', icon: BracesIcon, about: 'Structured data: objects, lists and values.' },
 		object: { name: 'Object', icon: BoxIcon, about: 'A named group of fields, like an address or a venue.' },
-		list: { name: 'List', icon: ListPlusIcon, about: 'Several values of one kind, like tags or links.' }
+		list: { name: 'List', icon: ListPlusIcon, about: 'Several values of one kind, like tags or links.' },
+		slug: { name: 'Slug', icon: AtSignIcon, about: 'A web-safe id for the entry, like my-first-post. Always unique.' }
 	} as const;
 	type Kind = keyof typeof KIND;
 	/** The kinds a list's items can be: scalars with their standard shape. */
@@ -111,6 +113,7 @@
 		whenField: string;
 		whenIn: string;
 		unique: boolean;
+		slugOf: string;
 		subfields: SubRow[];
 		listOf: ItemKind;
 		minItems: number;
@@ -136,6 +139,7 @@
 		whenField: '',
 		whenIn: '',
 		unique: false,
+		slugOf: '',
 		subfields: [],
 		listOf: 'text',
 		minItems: 0,
@@ -189,6 +193,7 @@
 		whenField: field.when?.field ?? '',
 		whenIn: field.when?.in.join('\n') ?? '',
 		unique: field.unique === true,
+		slugOf: field.type === 'slug' ? (field.of ?? '') : '',
 		subfields: field.type === 'object' ? field.fields.map(subStored) : [],
 		listOf: field.type === 'list' ? field.of : 'text',
 		minItems: field.type === 'list' ? field.min_items : 0,
@@ -324,6 +329,13 @@
 		if (
 			fields.some(
 				(field) =>
+					field.kind === 'slug' && field.slugOf !== '' && !fields.some((other) => other.key !== field.key && other.id === field.slugOf)
+			)
+		)
+			return 'A slug can only be derived from one of the other fields.';
+		if (
+			fields.some(
+				(field) =>
 					field.kind === 'object' &&
 					(field.subfields.length === 0 ||
 						new Set(field.subfields.map((sub) => sub.id)).size !== field.subfields.length ||
@@ -402,6 +414,8 @@
 						return { ...base, type: 'object', fields: field.subfields.map(subDef) };
 					case 'list':
 						return { ...base, type: 'list', of: field.listOf, min_items: field.minItems, max_items: field.maxItems };
+					case 'slug':
+						return field.slugOf === '' ? { ...base, type: 'slug' } : { ...base, type: 'slug', of: field.slugOf };
 					case 'date':
 					case 'time':
 					case 'email':
@@ -586,7 +600,18 @@
 						/>
 						<p class="text-sm text-muted-foreground">What an entry gets when the field is left out.</p>
 					</div>
-					{#if !['rich_text', 'markdown', 'json', 'object', 'list'].includes(draft.kind) && !(draft.kind === 'text' && draft.multiline)}
+					{#if draft.kind === 'slug'}
+						<div class="space-y-1.5">
+							<Label for="field-sluof">Derive it from</Label>
+							<NativeSelect.Root id="field-sluof" bind:value={draft.slugOf} class="w-full">
+								<NativeSelect.Option value="">Written by hand — no source</NativeSelect.Option>
+								{#each fields.filter((each) => each.key !== draft?.key) as each (each.key)}
+									<NativeSelect.Option value={each.id}>{each.label || each.id}</NativeSelect.Option>
+								{/each}
+							</NativeSelect.Root>
+						</div>
+						<p class="text-sm text-muted-foreground">A slug is always unique: no two entries share it.</p>
+					{:else if !['rich_text', 'markdown', 'json', 'object', 'list'].includes(draft.kind) && !(draft.kind === 'text' && draft.multiline)}
 						<label class="flex items-center gap-2 text-sm" for="field-unique">
 							<Checkbox id="field-unique" bind:checked={draft.unique} /> Unique: no two entries share this value
 						</label>
