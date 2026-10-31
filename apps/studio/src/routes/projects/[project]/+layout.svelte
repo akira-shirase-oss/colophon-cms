@@ -10,6 +10,7 @@
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
+	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
 	import UsersIcon from '@lucide/svelte/icons/users';
@@ -48,7 +49,8 @@
 		'/projects/[project]/releases': 'Releases',
 		'/projects/[project]/releases/[generation]': 'Releases',
 		'/projects/[project]/members': 'Members',
-		'/projects/[project]/settings': 'Settings'
+		'/projects/[project]/settings': 'Settings',
+		'/projects/[project]/types/new': 'New collection'
 	};
 	const collectionName = $derived(
 		types.data?.find((type) => type.slug === page.params.collection)?.definition.name ?? page.params.collection ?? ''
@@ -132,17 +134,18 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
-					<Sidebar.MenuItem>
-						<Sidebar.MenuButton onclick={() => (searching = true)} tooltipContent="Search">
-							<SearchIcon /><span>Search</span>
-							<kbd class="ml-auto rounded border border-sidebar-border bg-background px-1.5 font-sans text-[0.6875rem] text-muted-foreground">⌘K</kbd>
-						</Sidebar.MenuButton>
-					</Sidebar.MenuItem>
 				</Sidebar.Menu>
 			</Sidebar.Group>
 
 			<Sidebar.Group>
 				<Sidebar.GroupLabel>Content</Sidebar.GroupLabel>
+				{#if mine.data?.role === 'owner' || mine.data?.role === 'developer'}
+					<Sidebar.GroupAction title="New collection">
+						{#snippet child({ props })}
+							<a {...props} href={resolve('/projects/[project]/types/new', { project })} aria-label="New collection" data-testid="new-collection"><PlusIcon /></a>
+						{/snippet}
+					</Sidebar.GroupAction>
+				{/if}
 				<Sidebar.Menu data-testid="nav-collections">
 					{#each types.data ?? [] as type (type.slug)}
 						<Sidebar.MenuItem>

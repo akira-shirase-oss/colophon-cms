@@ -140,23 +140,41 @@
 			</section>
 
 			<section aria-labelledby="content-heading">
-				<h2 id="content-heading" class="mb-3 text-base font-semibold">Content</h2>
+				<div class="mb-3 flex items-baseline justify-between">
+					<h2 id="content-heading" class="text-base font-semibold">Content</h2>
+					<span class="text-xs text-muted-foreground">Collections hold your entries</span>
+				</div>
 				{#if types.isError}
 					<Problem error={types.error} />
 				{:else}
 					<ul class="space-y-1" data-testid="content-types">
 						{#each types.data ?? [] as type, index (type.slug)}
+							{@const entries = lists[index]?.data?.data ?? []}
+							{@const tally = entries.reduce((c, e) => { c[entryState(e)] += 1; return c; }, { draft: 0, live: 0, changed: 0 })}
 							<li>
 								<a class="group flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-muted" href={resolve('/projects/[project]/[collection]', { project, collection: type.slug })}>
 									<span class="min-w-0 flex-1">
 										<span class="block text-sm font-medium">{type.definition.name}</span>
-										<span class="text-xs text-muted-foreground">{type.definition.fields.length} fields · version {type.version}</span>
+										<span class="text-xs text-muted-foreground">
+											{entries.length} {entries.length === 1 ? 'entry' : 'entries'} ·
+											{#if tally.live > 0}<span class="text-live-ink">{tally.live} live</span>{:else}0 live{/if}{#if tally.changed > 0} · <span class="text-pending-ink">{tally.changed} changed</span>{/if}{#if tally.draft > 0} · <span class="text-draft-ink">{tally.draft} draft</span>{/if}
+										</span>
 									</span>
-									{#if lists[index]?.data}<Badge variant="secondary" class="tabular">{lists[index]?.data?.data.length}</Badge>{/if}
 									<ArrowRightIcon class="size-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" />
 								</a>
 							</li>
+						{:else}
+							<li class="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+								No collections yet — a collection is a kind of entry (articles, authors, products).
+							</li>
 						{/each}
+						{#if mine.data?.role === 'owner' || mine.data?.role === 'developer'}
+							<li>
+								<a class="group flex items-center gap-3 rounded-lg border border-dashed border-border px-2 py-2 text-sm text-muted-foreground hover:border-foreground/30 hover:text-foreground" href={resolve('/projects/[project]/types/new', { project })} data-testid="new-collection-link">
+									+ New collection
+								</a>
+							</li>
+						{/if}
 					</ul>
 				{/if}
 			</section>

@@ -224,6 +224,20 @@ export async function getContentType(project: string, collection: string): Promi
 	return ((await (await send('GET', `${base(project)}/content-types/${collection}`)).json()) as { data: ContentType }).data;
 }
 
+/** Owners and developers only (D-040): a new collection. Retries with the same key are safe. */
+export async function createContentType(
+	project: string,
+	slug: string,
+	definition: Definition,
+	key: string
+): Promise<ContentType> {
+	return (
+		(await (
+			await send('POST', `${base(project)}/content-types`, { slug, definition }, { 'Idempotency-Key': key })
+		).json()) as { data: ContentType }
+	).data;
+}
+
 export async function listEntries(project: string, collection: string): Promise<Summary[]> {
 	return (await searchEntries(project, collection)).data;
 }
