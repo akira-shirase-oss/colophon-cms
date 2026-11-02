@@ -5,7 +5,7 @@
 // screenshots of the builder and the editor.
 
 import { expect, type Page, test } from '@playwright/test';
-import { addField, newProject, saveBuilder, signIn, violations } from './helpers.ts';
+import { addField, applyField, newContentType, newProject, saveBuilder, signIn, startField, violations } from './helpers.ts';
 
 const shots = process.env['STUDIO_SHOTS_DIR'];
 async function shot(page: Page, name: string) {
@@ -110,6 +110,41 @@ test('an empty collection can be deleted from its page, and a held one says why'
 	await expect(page.getByText('Deleted Clippings')).toBeVisible();
 	await expect(page.getByTestId('builder-type-clippings')).toHaveCount(0);
 	expect((await api(page, 'GET', `${base}/content-types/clippings`)).status).toBe(404);
+});
+
+test('a reference field can be mirrored by a field on the other side (D-085)', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const base = `/api/v1/projects/${project}/environments/production`;
+	// Writers first, with the field that will keep its side of the link.
+	const writers = {
+		slug: 'writers',
+		definition: {
+			name: 'Writers',
+			title_field: 'name',
+			fields: [
+				{ id: 'name', label: 'Name', type: 'text', required: true },
+				{ id: 'posts', label: 'Posts', type: 'reference', to: 'posts', many: true, max: 10 }
+			]
+		}
+	};
+	expect((await api(page, 'POST', `${base}/content-types`, writers)).status).toBe(201);
+
+	await newContentType(page, project, 'Posts');
+	const dialog = await startField(page, 'Writer', 'reference');
+	await dialog.getByLabel('Links to').selectOption({ label: 'Writers' });
+	// Only the fields that point back are offered: Writers' text field isn't one.
+	const mirror = dialog.getByTestId('inverse');
+	await expect(mirror.getByRole('option')).toHaveText(['No field', 'Posts']);
+	await mirror.selectOption({ label: 'Posts' });
+	await applyField(page);
+	expect(await violations(page)).toEqual([]);
+	await saveBuilder(page);
+	await expect(page.getByText('Saved Posts, version 2')).toBeVisible();
+
+	const saved = await api(page, 'GET', `${base}/content-types/posts`);
+	const fields = (saved.body['data'] as { definition: { fields: Record<string, unknown>[] } }).definition.fields;
+	expect(fields[1]).toMatchObject({ id: 'writer', type: 'reference', to: 'writers', inverse: 'posts' });
 });
 
 test('a change that would break a saved entry is refused naming it, and goes through once it is fixed', async ({ page }) => {

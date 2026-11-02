@@ -164,6 +164,10 @@ pub enum FieldKind {
         many: bool,
         /// The most a list holds (1 to [`MAX_REFERENCES`]; 1 for one).
         max: u16,
+        /// A top-level reference field on the target collection that mirrors this link (D-085):
+        /// a write to this entry adds it to (or removes it from) that field on every target, in
+        /// the same transaction. `None` is a plain one-way reference.
+        inverse: Option<String>,
     },
     /// Fields nested in one value (step M.3, D-066): Strapi's component, Sanity's object.
     Object {
@@ -584,6 +588,29 @@ fn write_text_options(
     }
 }
 
+/// A reference's options: the collection, whether one or a bounded list, and an optional
+/// `inverse` naming the target's field that mirrors the link (D-085).
+fn write_reference_options(
+    out: &mut String,
+    to: &str,
+    many: bool,
+    max: u16,
+    inverse: Option<&str>,
+) {
+    out.push_str(r#","to":"#);
+    write_string(out, to);
+    if many {
+        out.push_str(r#","many":true,"max":"#);
+        out.push_str(&max.to_string());
+    } else {
+        out.push_str(r#","many":false"#);
+    }
+    if let Some(back) = inverse {
+        out.push_str(r#","inverse":"#);
+        write_string(out, back);
+    }
+}
+
 /// Writes a field kind's options, each as `,"key":value`, in a fixed order.
 fn write_options(out: &mut String, kind: &FieldKind) {
     match kind {
@@ -631,16 +658,12 @@ fn write_options(out: &mut String, kind: &FieldKind) {
             out.push_str(r#","max_chars":"#);
             out.push_str(&max_chars.to_string());
         }
-        FieldKind::Reference { to, many, max } => {
-            out.push_str(r#","to":"#);
-            write_string(out, to);
-            if *many {
-                out.push_str(r#","many":true,"max":"#);
-                out.push_str(&max.to_string());
-            } else {
-                out.push_str(r#","many":false"#);
-            }
-        }
+        FieldKind::Reference {
+            to,
+            many,
+            max,
+            inverse,
+        } => write_reference_options(out, to, *many, *max, inverse.as_deref()),
         FieldKind::Object { fields, component } => {
             if let Some(component) = component {
                 out.push_str(r#","component":"#);
@@ -822,7 +845,23 @@ fn reference_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<Fiel
                 )
             })?,
     };
-    Ok(FieldKind::Reference { to, many, max })
+    let inverse = match object.get("inverse") {
+        None => None,
+        Some(Value::String(back)) if is_field_id(back) => Some(back.clone()),
+        Some(_) => {
+            return Err(refuse(
+                "invalid_inverse",
+                &at(pointer, "inverse"),
+                "`inverse` names a reference field on the target collection",
+            ));
+        }
+    };
+    Ok(FieldKind::Reference {
+        to,
+        many,
+        max,
+        inverse,
+    })
 }
 
 /// A UUID in its canonical spelling: 36 characters, lowercase hexadecimal, hyphens at 8, 13, 18
@@ -1272,18 +1311,8 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         | (FieldKind::Time, FieldKind::Time)
         | (FieldKind::Json, FieldKind::Json)
         | (FieldKind::Color, FieldKind::Color) => true,
-        (
-            FieldKind::Reference {
-                to: old_to,
-                many: old_many,
-                max: old_max,
-            },
-            FieldKind::Reference {
-                to: new_to,
-                many: new_many,
-                max: new_max,
-            },
-        ) => old_to == new_to && old_many == new_many && new_max >= old_max,
+        // `inverse` is sync metadata, not a shape: changing it neither widens nor narrows.
+        (FieldKind::Reference { .. }, FieldKind::Reference { .. }) => reference_widens(old, new),
         (FieldKind::Object { fields: old, .. }, FieldKind::Object { fields: new, .. }) => {
             fields_widen(old, new)
         }
@@ -1336,6 +1365,29 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether a reference's shape widened: same target and cardinality, a bound no smaller.
+/// `inverse` (D-085) is sync metadata, not a shape: it is ignored here.
+fn reference_widens(old: &FieldKind, new: &FieldKind) -> bool {
+    let (
+        FieldKind::Reference {
+            to: old_to,
+            many: old_many,
+            max: old_max,
+            ..
+        },
+        FieldKind::Reference {
+            to: new_to,
+            many: new_many,
+            max: new_max,
+            ..
+        },
+    ) = (old, new)
+    else {
+        return false;
+    };
+    old_to == new_to && old_many == new_many && new_max >= old_max
 }
 
 /// An enum field's options: distinct, plain, 1 to [`MAX_ENUM_OPTIONS`].
@@ -1865,6 +1917,17 @@ impl ContentType {
                 "only a top-level single-line text, email, URL, number, date, time or date-time field can be unique",
             ));
         }
+        if depth > 0
+            && let FieldKind::Reference {
+                inverse: Some(_), ..
+            } = kind
+        {
+            return Err(refuse(
+                "invalid_inverse",
+                &at(pointer, "inverse"),
+                "only a content type's own fields can mirror a link",
+            ));
+        }
         let default = match object.get("default") {
             None => None,
             Some(value) => Some(Self::default_value(
@@ -1985,7 +2048,11 @@ impl ContentType {
                 markdown_kind(object, pointer)?
             }
             Some("reference") => {
-                only(object, &[common, &["to", "many", "max"]].concat(), pointer)?;
+                only(
+                    object,
+                    &[common, &["to", "many", "max", "inverse"]].concat(),
+                    pointer,
+                )?;
                 reference_kind(object, pointer)?
             }
             Some("object") => {
@@ -2553,7 +2620,7 @@ impl ContentType {
                     Self::block(blocks, label, item, at_item, out, references)
                 })?;
             }
-            FieldKind::Reference { to, many, max } => {
+            FieldKind::Reference { to, many, max, .. } => {
                 Self::reference(label, value, (*many, *max), pointer, out)?;
                 collect(to, *many, value, pointer, references);
             }
@@ -4604,5 +4671,76 @@ mod tests {
             (unexpanded.code, unexpanded.pointer.as_str()),
             ("unexpanded_component", "/fields/1/type")
         );
+    }
+
+    #[test]
+    fn an_inverse_names_a_field_id_and_only_on_top_level_fields() {
+        let definition = |extra: Value| {
+            let mut field =
+                json!({"id": "writer", "label": "Writer", "type": "reference", "to": "writers"});
+            for (key, value) in extra.as_object().expect("object") {
+                field[key] = value.clone();
+            }
+            json!({
+                "name": "Posts",
+                "title_field": "title",
+                "fields": [
+                    {"id": "title", "label": "Title", "type": "text", "required": true},
+                    field
+                ]
+            })
+        };
+        let posts = ContentType::parse(&definition(json!({"inverse": "posts"}))).expect("valid");
+        assert!(
+            posts.canonical_json().contains(
+                r#"{"id":"writer","label":"Writer","type":"reference","required":false,"to":"writers","many":false,"inverse":"posts"}"#
+            ),
+            "{}",
+            posts.canonical_json()
+        );
+        // Round-trips: parsing the canonical form keeps the inverse.
+        let again =
+            ContentType::parse(&serde_json::from_str(&posts.canonical_json()).expect("JSON"))
+                .expect("valid");
+        assert_eq!(again.canonical_json(), posts.canonical_json());
+
+        for (inverse, code) in [
+            (json!("Not A Field"), "invalid_inverse"),
+            (json!(42), "invalid_inverse"),
+            (json!(true), "invalid_inverse"),
+        ] {
+            let refused =
+                ContentType::parse(&definition(json!({"inverse": inverse}))).expect_err("refused");
+            assert_eq!(
+                (refused.code, refused.pointer.as_str()),
+                (code, "/fields/1/inverse")
+            );
+        }
+
+        // Only a type's own fields can mirror a link — not nested ones.
+        let nested = json!({
+            "name": "Posts",
+            "title_field": "title",
+            "fields": [
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "hero", "label": "Hero", "type": "object", "fields": [
+                    {"id": "writer", "label": "Writer", "type": "reference", "to": "writers", "inverse": "posts"}
+                ]}
+            ]
+        });
+        let refused = ContentType::parse(&nested).expect_err("nested inverse refused");
+        assert_eq!(
+            (refused.code, refused.pointer.as_str()),
+            ("invalid_inverse", "/fields/1/fields/0/inverse")
+        );
+
+        // Sync metadata, not a shape: adding, changing or dropping it needs no migration.
+        let bare = ContentType::parse(&definition(json!({}))).expect("valid");
+        let with = ContentType::parse(&definition(json!({"inverse": "posts"}))).expect("valid");
+        let renamed =
+            ContentType::parse(&definition(json!({"inverse": "articles"}))).expect("valid");
+        assert_eq!(bare.successor(&with), Successor::Compatible);
+        assert_eq!(with.successor(&bare), Successor::Compatible);
+        assert_eq!(with.successor(&renamed), Successor::Compatible);
     }
 }

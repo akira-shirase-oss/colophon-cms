@@ -11,7 +11,9 @@
 # entries (drafts: reads, lists and If-Match saves, each read checked against the last save),
 # content-types (the same for entries of a seven-field type, plus reads of its definition),
 # modelling (pages of objects, lists and blocks whose quotes reference people: saves, refused
-# references, reads, lists and "referenced by" reads), deletion (articles created and deleted
+# references, reads, lists and "referenced by" reads), inverses (a mirrored link moved between
+# two writers: every move is a save plus two mirror revisions in one transaction, with mirror
+# reads checked against where the link says it is; D-085), deletion (articles created and deleted
 # with If-Match, replayed deletions, 404 reads of what was deleted, and deletions refused because
 # the article is published, in a changeset or stale; D-080),
 # cli (requests authenticated by a bearer token, as the CLI sends them), members (member lists,
@@ -50,7 +52,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|deletion|collection-delete|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|inverses|deletion|collection-delete|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -77,6 +79,10 @@ case "$endpoint" in
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
   cli | members | roles | tokens | schedules | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
   entries | content-types | modelling) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
+  # A move writes three revisions in one transaction (the post's, and a mirror into each
+  # writer): half of entries' steady rate, and the p99 threshold is END_GOAL's editorial
+  # write budget — a smoke run on the reference laptop sat at p99 ~580 ms.
+  inverses) RATE="${RATE:-250}" P99_MS="${P99_MS:-700}" ;;
   # RATE counts iterations here: a create and a deletion, sometimes a read or a replay, or one
   # refused deletion or a list; about 2.3 requests each, three in four of them writes.
   deletion) RATE="${RATE:-200}" P99_MS="${P99_MS:-250}" ;;
