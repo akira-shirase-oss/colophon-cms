@@ -84,6 +84,24 @@ export function envelopeOf(body: unknown): Envelope['error'] | null {
 	};
 }
 
+/**
+ * Every project the caller belongs to, a page at a time: the unpaged `GET /api/v1/projects`
+ * answers at most 1,000, and a project under test sorts wherever its name does.
+ */
+export async function listProjects<T>(): Promise<{ status: number; projects: T[] }> {
+	const projects: T[] = [];
+	let cursor = '';
+	for (;;) {
+		const query = cursor === '' ? '?limit=100' : `?limit=100&cursor=${encodeURIComponent(cursor)}`;
+		const reply = await call('GET', `/api/v1/projects${query}`);
+		if (reply.status !== 200) return { status: reply.status, projects: [] };
+		const page = reply.body as { data: T[]; next_cursor: string | null };
+		projects.push(...page.data);
+		if (page.next_cursor === null) return { status: 200, projects };
+		cursor = page.next_cursor;
+	}
+}
+
 /** The session's CSRF token, which cookie-authenticated writes echo in `X-CSRF-Token`. */
 export function csrfToken(): string {
 	const match = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='));
