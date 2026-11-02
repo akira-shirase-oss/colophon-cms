@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO identities (id, issuer, subject, display_name, email, password_hash)\n         VALUES ($1, $2, $3, $4, $3, $5)\n         ON CONFLICT DO NOTHING\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "identities",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0c21ff920a2bdb4ec99a9242a307254486938d9dc024ca2692821ebc46d9db87"
+}

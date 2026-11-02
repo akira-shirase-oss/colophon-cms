@@ -18,6 +18,7 @@ pub mod idempotency;
 pub mod identity;
 pub mod jobs;
 pub mod members;
+pub mod passwords;
 pub mod projects;
 pub mod publish;
 pub mod releases;

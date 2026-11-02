@@ -162,32 +162,179 @@ pub(crate) async fn callback(
     )
     .await
     .map_err(ApiError::from_db)?;
+    let (session_token, csrf_token) = issue_session(services, identity_id).await?;
+
+    let mut response = Redirect::to(&attempt.return_to).into_response();
+    session_cookies(
+        &mut response,
+        &session_token,
+        &csrf_token,
+        services.sessions.lifetime.as_secs(),
+    );
+    response
+        .headers_mut()
+        .append(header::SET_COOKIE, clear(SIGN_IN_COOKIE, "/auth"));
+    Ok(response)
+}
+
+/// Issues a session for `identity` and answers its fresh token and CSRF token.
+async fn issue_session(
+    services: &crate::state::Services,
+    identity: uuid::Uuid,
+) -> Result<(String, String), ApiError> {
     let (session_token, csrf_token) = (random()?, random()?);
     identity::create_session(
         &services.pool,
-        identity_id,
+        identity,
         &tokens::hash(&session_token),
         &tokens::hash(&csrf_token),
         expires_in(services.sessions.lifetime),
     )
     .await
     .map_err(ApiError::from_db)?;
-    tracing::info!(identity = %identity_id, "signed in");
+    tracing::info!(identity = %identity, "signed in");
+    Ok((session_token, csrf_token))
+}
 
-    let lifetime = services.sessions.lifetime.as_secs();
-    let mut response = Redirect::to(&attempt.return_to).into_response();
+/// The `Set-Cookie` pair a new session puts on a browser.
+fn session_cookies(response: &mut Response, session_token: &str, csrf_token: &str, lifetime: u64) {
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.append(
         header::SET_COOKIE,
-        set_cookie(SESSION_COOKIE, &session_token, lifetime, true, "Lax", "/"),
+        set_cookie(SESSION_COOKIE, session_token, lifetime, true, "Lax", "/"),
     );
     headers.append(
         header::SET_COOKIE,
-        set_cookie(CSRF_COOKIE, &csrf_token, lifetime, false, "Strict", "/"),
+        set_cookie(CSRF_COOKIE, csrf_token, lifetime, false, "Strict", "/"),
     );
-    headers.append(header::SET_COOKIE, clear(SIGN_IN_COOKIE, "/auth"));
+}
+
+/// What making an account asks for.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SignUp {
+    email: String,
+    password: String,
+    /// A name to show; optional, the email fills in.
+    display_name: Option<String>,
+}
+
+/// What signing in asks for.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PasswordSignIn {
+    email: String,
+    password: String,
+}
+
+/// Normalizes an email for storing or finding: trimmed and lowered, then checked it can be
+/// one address (`a@b`, nothing else, 254 bytes at most).
+fn clean_email(email: &str) -> Result<String, ApiError> {
+    let email = email.trim().to_lowercase();
+    let valid = email.len() <= 254
+        && match email.split_once('@') {
+            Some((local, domain)) => {
+                !local.is_empty() && !domain.is_empty() && !domain.contains('@')
+            }
+            None => false,
+        };
+    if !valid {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_email",
+            pointer: "/email",
+            message: "this doesn't look like an email address".to_owned(),
+        });
+    }
+    Ok(email)
+}
+
+/// Checks a password can be tried: at least eight characters, and bounded so a giant body
+/// can't keep Argon2 busy far past the request limit.
+fn check_password(password: &str) -> Result<(), ApiError> {
+    if password.chars().count() < 8 {
+        return Err(ApiError::InvalidField {
+            reason: "weak_password",
+            pointer: "/password",
+            message: "pick at least eight characters".to_owned(),
+        });
+    }
+    if password.len() > 512 {
+        return Err(ApiError::InvalidField {
+            reason: "weak_password",
+            pointer: "/password",
+            message: "keep it under 512 bytes".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// `POST /auth/signup`: makes an email-and-password account and signs it in at once, so a
+/// person who followed an invitation can join right after.
+pub(crate) async fn sign_up(
+    State(state): State<AppState>,
+    Json(body): Json<SignUp>,
+) -> Result<Response, ApiError> {
+    let services = services(&state)?;
+    let email = clean_email(&body.email)?;
+    check_password(&body.password)?;
+    let phc = colophon_db::passwords::hashed(&body.password)
+        .await
+        .map_err(ApiError::from_db)?;
+    let name = body
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty());
+    let id = match identity::sign_up(&services.pool, &email, &phc, name).await {
+        Ok(identity::SignedUp::Made(id)) => id,
+        Ok(identity::SignedUp::Taken) => {
+            return Err(ApiError::Conflict {
+                reason: "email_taken",
+                message: "that email already has an account",
+            });
+        }
+        Err(error) => return Err(ApiError::from_db(error)),
+    };
+    let (session_token, csrf_token) = issue_session(services, id).await?;
+    let mut response = StatusCode::CREATED.into_response();
+    session_cookies(
+        &mut response,
+        &session_token,
+        &csrf_token,
+        services.sessions.lifetime.as_secs(),
+    );
     Ok(response)
+}
+
+/// `POST /auth/signin`: trades an email and password for a session. A wrong password, a
+/// missing account and a locked account are refused the same way, and a locked account says
+/// how long it pauses for.
+pub(crate) async fn sign_in(
+    State(state): State<AppState>,
+    Json(body): Json<PasswordSignIn>,
+) -> Result<Response, ApiError> {
+    let services = services(&state)?;
+    let email = clean_email(&body.email)?;
+    match identity::password_sign_in(&services.pool, &email, &body.password).await {
+        Ok(identity::PasswordSignIn::SignedIn(id)) => {
+            let (session_token, csrf_token) = issue_session(services, id).await?;
+            let mut response = StatusCode::NO_CONTENT.into_response();
+            session_cookies(
+                &mut response,
+                &session_token,
+                &csrf_token,
+                services.sessions.lifetime.as_secs(),
+            );
+            Ok(response)
+        }
+        Ok(identity::PasswordSignIn::Refused) => Err(ApiError::SignInFailed),
+        Ok(identity::PasswordSignIn::Locked(_)) => Err(ApiError::Conflict {
+            reason: "too_many_attempts",
+            message: "too many tries; wait a while and try again",
+        }),
+        Err(error) => Err(ApiError::from_db(error)),
+    }
 }
 
 /// What signing out answers in a browser.
