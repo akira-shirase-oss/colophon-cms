@@ -116,3 +116,81 @@ test('a slug field gives each entry its own URL name', async ({ page }) => {
 	expect(taken.body.error?.details?.entries?.[0]?.title).toBe('About');
 	expect((await create({ title: 'About us', slug: 'About Us' })).body.error?.details?.reason).toBe('invalid_slug');
 });
+
+test('an empty collection is deleted; one with entries, referrers, or history is refused', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	await page.goto('/content-types');
+	await page.getByLabel('Project').selectOption(projectId);
+
+	// Create a bare collection and delete it for good.
+	await page.getByLabel('Slug').fill('notes');
+	await page.getByLabel('Definition', { exact: true }).fill(
+		JSON.stringify({ name: 'Notes', title_field: 'title', fields: [{ id: 'title', label: 'Title', type: 'text', required: true }] })
+	);
+	await page.getByRole('button', { name: 'Create content type' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created notes v1');
+	await page.getByRole('button', { name: 'Notes' }).click();
+	await page.getByTestId('delete-type').click();
+	await expect(page.getByTestId('message')).toHaveText('deleted notes');
+	await expect(page.getByTestId('types').locator('[data-slug="notes"]')).toHaveCount(0);
+
+	// Its slug is free again.
+	await page.getByLabel('Slug').fill('notes');
+	await page.getByLabel('Definition', { exact: true }).fill(
+		JSON.stringify({ name: 'Notes', title_field: 'title', fields: [{ id: 'title', label: 'Title', type: 'text', required: true }] })
+	);
+	await page.getByRole('button', { name: 'Create content type' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created notes v1');
+
+	// Another type linking to entries here keeps it (still_referenced).
+	await page.getByLabel('Slug').fill('mentions');
+	await page.getByLabel('Definition', { exact: true }).fill(
+		JSON.stringify({
+			name: 'Mentions',
+			title_field: 'title',
+			fields: [
+				{ id: 'title', label: 'Title', type: 'text', required: true },
+				{ id: 'note', label: 'Note', type: 'reference', to: 'notes' }
+			]
+		})
+	);
+	await page.getByRole('button', { name: 'Create content type' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created mentions v1');
+	await page.getByRole('button', { name: 'Notes' }).click();
+	await page.getByTestId('delete-type').click();
+	await expect(page.getByTestId('message')).toContainText('409 conflict (still_referenced)');
+
+	// An entry keeps it too.
+	const entry = await page.evaluate(async ({ project }) => {
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const response = await fetch(`/server/api/v1/projects/${project}/environments/production/collections/notes/entries`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': crypto.randomUUID() },
+			body: JSON.stringify({ title: 'Kept' })
+		});
+		return { status: response.status, id: ((await response.json()) as { data: { id: string } }).data.id };
+	}, { project: projectId });
+	expect(entry.status).toBe(201);
+	// `mentions` no longer links: remove the referrer, then the entry is what stays it.
+	await page.getByRole('button', { name: 'Mentions' }).click();
+	await page.getByTestId('delete-type').click();
+	await expect(page.getByTestId('message')).toHaveText('deleted mentions');
+	await page.getByRole('button', { name: 'Notes' }).click();
+	await page.getByTestId('delete-type').click();
+	await expect(page.getByTestId('message')).toContainText('409 conflict (collection_not_empty)');
+
+	// Even with the entry deleted, its history pins the collection (collection_has_history).
+	const gone = await page.evaluate(async ({ project, id }) => {
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const path = `/server/api/v1/projects/${project}/environments/production/collections/notes/entries/${id}`;
+		const read = await fetch(path);
+		const etag = read.headers.get('etag') ?? '';
+		const reply = await fetch(path, { method: 'DELETE', headers: { 'If-Match': etag, 'X-CSRF-Token': csrf, 'Idempotency-Key': crypto.randomUUID() } });
+		return reply.status;
+	}, { project: projectId, id: entry.id });
+	expect(gone).toBe(200);
+	await page.getByRole('button', { name: 'Notes' }).click();
+	await page.getByTestId('delete-type').click();
+	await expect(page.getByTestId('message')).toContainText('409 conflict (collection_has_history)');
+});

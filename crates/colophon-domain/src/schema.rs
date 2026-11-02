@@ -2090,6 +2090,14 @@ impl ContentType {
             .collect()
     }
 
+    /// Every reference field's (path, target collection), at any depth: a list's items are
+    /// `*`, a block's fields sit under its name. Deleting a collection checks these.
+    pub fn reference_targets(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        targets(&self.fields, "", &mut out);
+        out
+    }
+
     /// The definition in canonical form, every default written out: the bytes stored and hashed.
     pub fn canonical_json(&self) -> String {
         let mut out = String::with_capacity(256);

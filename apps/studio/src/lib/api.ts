@@ -556,6 +556,14 @@ export async function updateContentType(
 	);
 }
 
+/** Deletes the content type for good, on top of the version `etag` names (D-083). Refused while
+ *  another type links to entries here (`still_referenced`), while it still has entries
+ *  (`collection_not_empty`), and while deleted entries keep their history here
+ *  (`collection_has_history`). */
+export async function deleteContentType(project: string, slug: string, etag: string, key: string): Promise<void> {
+	await send('DELETE', `${base(project)}/content-types/${slug}`, undefined, { 'If-Match': etag, 'Idempotency-Key': key });
+}
+
 export async function listEntries(project: string, collection: string): Promise<Summary[]> {
 	return (await searchEntries(project, collection)).data;
 }

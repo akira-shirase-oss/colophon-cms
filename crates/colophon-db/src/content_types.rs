@@ -64,6 +64,21 @@ pub enum Updated {
     NotFound,
 }
 
+/// What deleting a collection did, or why it was refused (D-083).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Removed {
+    /// The collection and every version of its definition are gone.
+    Removed,
+    /// No such collection here.
+    NotFound,
+    /// Live entries still belong to it: how many the application's role sees.
+    NotEmpty(i64),
+    /// No live entries, but deleted ones keep their revisions, which still pin the collection's
+    /// versions: the application's role doesn't see them, the foreign keys do. A collection
+    /// that has ever held an entry keeps its history.
+    HasHistory,
+}
+
 /// The current version of every content type, by slug.
 pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Version>, DbError> {
     sqlx::query_as!(
@@ -152,6 +167,64 @@ pub async fn update(
             current: expected + 1,
         }),
         Err(other) => Err(other),
+    }
+}
+
+/// Deletes `collection` and every version of its definition, for good (D-083). Possible only
+/// while nothing of it remains: live entries answer [`Removed::NotEmpty`], and deleted ones,
+/// whose revisions still pin its versions, answer [`Removed::HasHistory`] — revisions are
+/// insert-only and tombstones never move, so a collection that has held an entry can't go. The
+/// caller holds the collection's [`lock_for_change`], so no entry is written meanwhile.
+/// [`Removed::HasHistory`] comes from a foreign-key violation, which has already aborted the
+/// transaction: it is answered to a caller that rolls back, as the API's delete route does.
+pub async fn remove(tx: &mut ProjectTransaction, collection: &str) -> Result<Removed, DbError> {
+    // Only live entries are visible to the application's role; deleted ones surface as foreign
+    // key violations below.
+    let live = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!" FROM entries
+           WHERE project_id = $1 AND environment_id = $2 AND collection = $3"#,
+        tx.project,
+        tx.environment,
+        collection
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    if live > 0 {
+        return Ok(Removed::NotEmpty(live));
+    }
+    // Versions first: a revision that still names one refuses the delete, whether its entry is
+    // live or a tombstone.
+    let versions = sqlx::query!(
+        "DELETE FROM content_type_versions WHERE project_id = $1 AND environment_id = $2 AND collection = $3",
+        tx.project,
+        tx.environment,
+        collection
+    )
+    .execute(&mut *tx.transaction)
+    .await;
+    match versions {
+        Err(sqlx::Error::Database(database)) if database.is_foreign_key_violation() => {
+            return Ok(Removed::HasHistory);
+        }
+        Err(error) => return Err(DbError::from_write(error)),
+        Ok(_) => {}
+    }
+    match sqlx::query!(
+        "DELETE FROM collections WHERE project_id = $1 AND environment_id = $2 AND slug = $3",
+        tx.project,
+        tx.environment,
+        collection
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    {
+        Ok(done) if done.rows_affected() > 0 => Ok(Removed::Removed),
+        Ok(_) => Ok(Removed::NotFound),
+        Err(sqlx::Error::Database(database)) if database.is_foreign_key_violation() => {
+            Ok(Removed::HasHistory)
+        }
+        Err(error) => Err(DbError::from_write(error)),
     }
 }
 

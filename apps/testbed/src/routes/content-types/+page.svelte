@@ -98,6 +98,20 @@
 		await loadTypes();
 	}
 
+	/** Deletes the open type (D-083): the server answers `collection_not_empty` while it has
+	 *  entries, `still_referenced` while another type links here, and `collection_has_history`
+	 *  while deleted entries keep their history here. */
+	async function remove() {
+		const reply = await call('DELETE', `${base}/${editing}`, { headers: headers({ 'If-Match': etag }) });
+		if (reply.status === 200) {
+			message = `deleted ${editing}`;
+			editing = '';
+		} else {
+			message = describe(reply);
+		}
+		await loadTypes();
+	}
+
 	onMount(loadProjects);
 </script>
 
@@ -146,6 +160,7 @@
 				<label class="field">Current definition <textarea bind:value={edited} name="edited" rows="12"></textarea></label>
 				<button type="submit">Save definition</button>
 			</form>
+			<button data-testid="delete-type" onclick={remove}>Delete it for good</button>
 		</section>
 	{/if}
 {/if}

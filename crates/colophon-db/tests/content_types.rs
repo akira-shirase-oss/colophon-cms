@@ -138,21 +138,14 @@ async fn versions_cannot_be_rewritten_skipped_or_seen_from_another_project() {
         .await
         .expect("created")
         .id;
-    for sql in [
-        "UPDATE content_type_versions SET definition = '{}'",
-        "DELETE FROM content_type_versions",
-        "DELETE FROM collections",
-    ] {
-        let mut tx = enter(&db.app, alice, project).await;
-        let error = sqlx::query(sql)
-            .execute(&mut *tx.transaction)
-            .await
-            .expect_err("no grant");
-        assert!(
-            error.to_string().contains("permission denied"),
-            "{sql}: {error}"
-        );
-    }
+    // Versions are still insert-only to the API role; DELETE is granted since 0031 (D-083).
+    let mut tx = enter(&db.app, alice, project).await;
+    let error = sqlx::query("UPDATE content_type_versions SET definition = '{}'")
+        .execute(&mut *tx.transaction)
+        .await
+        .expect_err("no grant");
+    assert!(error.to_string().contains("permission denied"), "{error}");
+    drop(tx);
     // A version that skips one has no previous version to name.
     let mut tx = enter(&db.app, alice, project).await;
     let error = sqlx::query(
@@ -257,5 +250,131 @@ async fn a_revision_names_its_entry_s_collection_and_a_version_that_exists() {
         .expect_err(why);
         assert!(error.to_string().contains("foreign key"), "{why}: {error}");
     }
+    db.drop().await;
+}
+
+/// One entry in `collection`, committed, and its first revision's id.
+async fn with_an_entry(db: &TestDb, alice: Uuid, project: Uuid, collection: &str) -> (Uuid, Uuid) {
+    let mut tx = enter(&db.app, alice, project).await;
+    let entry = Uuid::now_v7();
+    let first = Uuid::now_v7();
+    colophon_db::entries::create(
+        &mut tx,
+        entry,
+        collection,
+        colophon_db::entries::NewRevision {
+            id: first,
+            content: r#"{"title":"One"}"#,
+            content_hash: &[4; 32],
+            title: "One",
+            slug: None,
+            schema_version: 1,
+            references: &[],
+            unique: &[],
+        },
+    )
+    .await
+    .expect("created");
+    tx.commit().await.expect("commit");
+    (entry, first)
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn an_empty_collection_is_deleted_and_its_slug_is_free_again() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = enter(&db.app, alice, project).await;
+    content_types::create(&mut tx, "notes", NOTES, &[1; 32])
+        .await
+        .expect("created");
+    let removed = content_types::remove(&mut tx, "notes")
+        .await
+        .expect("remove");
+    assert_eq!(removed, content_types::Removed::Removed);
+    assert_eq!(
+        content_types::remove(&mut tx, "notes")
+            .await
+            .expect("remove"),
+        content_types::Removed::NotFound
+    );
+    assert_eq!(
+        content_types::list(&mut tx).await.expect("list").len(),
+        1,
+        "only articles remains"
+    );
+    // Its versions are gone with it: the slug takes a fresh v1, not a continuation.
+    content_types::create(&mut tx, "notes", NOTES_V2, &[2; 32])
+        .await
+        .expect("recreated");
+    assert_eq!(
+        content_types::current(&mut tx, "notes")
+            .await
+            .expect("current")
+            .map(|version| version.version),
+        Some(1)
+    );
+    tx.commit().await.expect("commit");
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_collection_with_entries_is_not_empty_and_with_history_is_kept() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = enter(&db.app, alice, project).await;
+    content_types::create(&mut tx, "notes", NOTES, &[1; 32])
+        .await
+        .expect("created");
+    tx.commit().await.expect("commit");
+
+    let (entry, first) = with_an_entry(&db, alice, project, "notes").await;
+
+    // A live entry is NotEmpty.
+    let mut tx = enter(&db.app, alice, project).await;
+    assert_eq!(
+        content_types::remove(&mut tx, "notes")
+            .await
+            .expect("remove"),
+        content_types::Removed::NotEmpty(1)
+    );
+    drop(tx);
+
+    // The entry deleted, only its history remains: a tombstone the application's role can't
+    // see still pins the collection's versions, so the collection stays (D-083).
+    let mut tx = enter(&db.app, alice, project).await;
+    let deleted = colophon_db::entries::delete(&mut tx, "notes", entry, first)
+        .await
+        .expect("delete");
+    assert!(matches!(
+        deleted,
+        colophon_db::entries::Deleted::Deleted { .. }
+    ));
+    assert_eq!(
+        content_types::remove(&mut tx, "notes")
+            .await
+            .expect("remove"),
+        content_types::Removed::HasHistory
+    );
+    drop(tx);
+
+    // And it is all still there: the type reads as ever, and the slug stays taken.
+    let mut tx = enter(&db.app, alice, project).await;
+    assert!(
+        content_types::current(&mut tx, "notes")
+            .await
+            .expect("current")
+            .is_some()
+    );
+    tx.commit().await.expect("commit");
     db.drop().await;
 }

@@ -6,7 +6,10 @@
 //! - `GET  {P}/content-types/{slug}`: the current version, with `ETag: "v<version>"`;
 //! - `PUT  {P}/content-types/{slug}`: a new definition (`If-Match` and `Idempotency-Key`
 //!   required), allowed only if every stored entry stays valid; anything else is refused with
-//!   `needs_migration`.
+//!   `needs_migration`;
+//! - `DELETE {P}/content-types/{slug}`: the collection and its versions, gone for good
+//!   (`If-Match` and `Idempotency-Key` required), refused while another type's field links to
+//!   it, while it still has entries, and while deleted entries' revisions still pin it (D-083).
 //!
 //! Any member may read them; a role with `schema.change` may change them (the built-in owners
 //! and developers, and any role an owner gives it, D-058). The slugs in [`RESERVED_SLUGS`] name
@@ -22,7 +25,7 @@ use axum::{
 };
 use colophon_db::{
     components,
-    content_types::{self, Claimed, MadeSingle, Updated, Version},
+    content_types::{self, Claimed, MadeSingle, Removed, Updated, Version},
     idempotency::{self, Claim},
     scope::ProjectTransaction,
 };
@@ -37,7 +40,7 @@ use uuid::Uuid;
 use crate::{
     ApiError, AppState,
     entries::{content_hash, idempotency_key, json, open, request_hash, rfc3339, sha256},
-    error::{EntryInTheWay, InTheWay, MAX_ENTRIES_IN_THE_WAY, Problem},
+    error::{EntryInTheWay, InTheWay, MAX_ENTRIES_IN_THE_WAY, Problem, StillNeeded},
     session::SignedIn,
     shape::{Data, Page},
 };
@@ -47,6 +50,7 @@ const RESERVED_SLUGS: [&str; 4] = ["members", "settings", "changesets", "release
 
 const CREATE: &str = "content_type.create";
 const UPDATE: &str = "content_type.update";
+const DELETE: &str = "content_type.delete";
 
 /// The path of the collection routes.
 #[derive(Deserialize)]
@@ -558,6 +562,137 @@ pub(crate) async fn update(
         Updated::Updated(version) => finish(tx, UPDATE, key, StatusCode::OK, version).await,
         Updated::Stale { current } => Err(ApiError::StaleVersion { current }),
         Updated::NotFound => Err(ApiError::NotFound),
+    }
+}
+
+/// A deleted collection's answer.
+#[derive(Serialize)]
+struct RemovedView {
+    slug: String,
+    removed: bool,
+}
+
+/// Every (type, field path) whose reference fields name `collection`, over every other type's
+/// current definition, its components expanded (D-073). Runs before the collection's own change
+/// lock, as every component lock must.
+async fn schema_referrers(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+) -> Result<Vec<(String, String)>, ApiError> {
+    let mut out = Vec::new();
+    for version in content_types::list(tx).await.map_err(ApiError::from_db)? {
+        if version.collection == collection {
+            continue;
+        }
+        let stored: Value =
+            serde_json::from_str(&version.definition).map_err(ApiError::internal)?;
+        let expanded = expand(tx, &stored).await?;
+        let parsed = ContentType::parse(&expanded).map_err(ApiError::internal)?;
+        out.extend(
+            parsed
+                .reference_targets()
+                .into_iter()
+                .filter(|(_, to)| to == collection)
+                .map(|(path, _)| (version.collection.clone(), path)),
+        );
+    }
+    Ok(out)
+}
+
+/// `DELETE {P}/content-types/{slug}`: the collection and every version of its definition, gone
+/// for good (D-083). Refused while another type's field links to entries here
+/// (`still_referenced`, naming them), while it still has entries (`collection_not_empty`), and
+/// while deleted entries' revisions still pin its versions (`collection_has_history`).
+pub(crate) async fn delete(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<TypePath>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let expected = if_match(&headers)?;
+    let key = idempotency_key(&headers)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_change(&tx, &path.slug)?;
+    let request = request_hash(&[DELETE, &path.slug, &expected.to_string()]);
+    // Claimed before the collection is looked up: a retry after a lost answer finds it deleted,
+    // and must get the recorded answer, not a 404.
+    match idempotency::claim(&mut tx, DELETE, key, &request)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Claim::Fresh => {}
+        Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+        Claim::Replay { status, response } => {
+            let status = StatusCode::from_u16(status).map_err(ApiError::internal)?;
+            return Ok(json(status, response, None, true));
+        }
+    }
+    // Schema-level references first: a field that links to entries here keeps meaning only
+    // while the collection exists.
+    let referrers = schema_referrers(&mut tx, &path.slug).await?;
+    if let Some((first_type, first_field)) = referrers.first() {
+        let others = if referrers.len() > 1 {
+            format!(" (and {} more)", referrers.len() - 1)
+        } else {
+            String::new()
+        };
+        let message = format!(
+            "the `{first_type}` type links to entries here through `{first_field}`{others}: retarget or remove the field first, then delete the collection"
+        );
+        return Err(ApiError::StillNeeded(Box::new(StillNeeded {
+            reason: "still_referenced",
+            message,
+            referenced_by: Vec::new(),
+            changesets: Vec::new(),
+        })));
+    }
+    // From here, writes in the collection wait until this commits (D-055).
+    content_types::lock_for_change(&mut tx, &path.slug)
+        .await
+        .map_err(ApiError::from_db)?;
+    let current = content_types::current(&mut tx, &path.slug)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    if current.version != expected {
+        return Err(ApiError::StaleVersion {
+            current: current.version,
+        });
+    }
+    match content_types::remove(&mut tx, &path.slug)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Removed::Removed => {
+            let body = serde_json::to_string(&Data {
+                data: RemovedView {
+                    slug: path.slug.clone(),
+                    removed: true,
+                },
+            })
+            .map_err(ApiError::internal)?;
+            idempotency::complete(&mut tx, DELETE, key, StatusCode::OK.as_u16(), &body)
+                .await
+                .map_err(ApiError::from_db)?;
+            tx.commit().await.map_err(ApiError::from_db)?;
+            Ok(json(StatusCode::OK, body, None, false))
+        }
+        Removed::NotFound => Err(ApiError::NotFound),
+        Removed::NotEmpty(live) => {
+            let noun = if live == 1 { "entry" } else { "entries" };
+            Err(ApiError::StillNeeded(Box::new(StillNeeded {
+                reason: "collection_not_empty",
+                message: format!(
+                    "the collection still has {live} {noun}: delete them first, then delete it"
+                ),
+                referenced_by: Vec::new(),
+                changesets: Vec::new(),
+            })))
+        }
+        Removed::HasHistory => Err(ApiError::conflict(
+            "collection_has_history",
+            "its deleted entries keep their history here, so the collection stays: make a new collection instead",
+        )),
     }
 }
 
