@@ -769,6 +769,39 @@ pub async fn list(
         .collect())
 }
 
+/// Every draft's canonical content, newest first — the lines of a collection's export (D-086),
+/// of one creator's entries when `created_by` says whose. Capped at 10,000 rows so an export
+/// stays a bounded read.
+pub async fn export(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    created_by: Option<Uuid>,
+) -> Result<Vec<String>, DbError> {
+    let rows = sqlx::query!(
+        r#"SELECT r.content
+           FROM entries e
+           CROSS JOIN LATERAL (
+               SELECT r.content
+               FROM revisions r
+               WHERE r.project_id = e.project_id AND r.environment_id = e.environment_id
+                 AND r.id = e.draft_revision_id
+               LIMIT 1
+           ) r
+           WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
+             AND ($4::uuid IS NULL OR e.created_by = $4)
+           ORDER BY e.created_at DESC, e.id DESC
+           LIMIT 10000"#,
+        tx.project,
+        tx.environment,
+        collection,
+        created_by
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(rows.into_iter().map(|row| row.content).collect())
+}
+
 /// An entry whose draft or published revision names another (D-065).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Referrer {

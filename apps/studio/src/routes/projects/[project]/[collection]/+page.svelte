@@ -5,9 +5,11 @@
 -->
 <script lang="ts">
 	import CopyIcon from '@lucide/svelte/icons/copy';
+	import DownloadIcon from '@lucide/svelte/icons/download';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SearchIcon from '@lucide/svelte/icons/search';
+	import UploadIcon from '@lucide/svelte/icons/upload';
 	import UserIcon from '@lucide/svelte/icons/user';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -21,7 +23,7 @@
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
 	import { Toggle } from '@colophon/ui/ui/toggle';
-	import { ApiError, type Content, createEntry, type EntryState, entryState, getContentType, getEntry, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
+	import { ApiError, type Content, createEntry, type EntryState, entryState, exportUrl, getContentType, getEntry, importEntries, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
 	import { applies, blockingProblem, type FormValue, formValue, slugify, starter, storedValue } from '#lib/content.ts';
 	import { plainError } from '#lib/errors.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
@@ -54,6 +56,32 @@
 	let onlyMine = $state(false);
 	const readsOthers = $derived(mayOn(mine.data, 'content.read', collection, false));
 	const creator = $derived(onlyMine && readsOthers ? (who.data?.id ?? null) : null);
+	// Transfer (D-086): the file has to come back whole, so export asks for a role that reads
+	// every field (of anyone's entries or of its own — the server scopes it the same way).
+	const exportable = $derived(
+		(mine.data?.permissions ?? []).some(
+			(grant) =>
+				grant.action === 'content.read' && (grant.subject === '*' || grant.subject === collection) && grant.fields === undefined
+		)
+	);
+	let fileInput: HTMLInputElement | undefined = $state();
+	let importing = $state(false);
+	async function importFile(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (file === undefined) return;
+		importing = true;
+		try {
+			const imported = await importEntries(project, collection, await file.text());
+			toast.success(`Imported ${imported} ${imported === 1 ? 'entry' : 'entries'}`);
+			await entries.refetch();
+		} catch (failure) {
+			toast.error(plainError(failure, 'import this file'));
+		} finally {
+			importing = false;
+			input.value = '';
+		}
+	}
 	// Pages of 100, newest first, followed with the server's cursor when someone asks for more. Keyed
 	// under the collection's entries, so saving and publishing refresh it.
 	const entries = createInfiniteQuery(() => ({
@@ -287,7 +315,12 @@
 	<PageHeader title={type.data.definition.name}>
 		{#snippet description()}Everything here saves as you type and stays a draft until it is published.{/snippet}
 		{#snippet actions()}
-			{#if writes && !single}<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>{/if}
+			{#if exportable}<Button variant="outline" href={exportUrl(project, collection)} download="{collection}.jsonl" data-testid="export-entries"><DownloadIcon data-icon="inline-start" />Export</Button>{/if}
+			{#if writes && !single}
+				<Button variant="outline" onclick={() => fileInput?.click()} disabled={importing} data-testid="import-entries"><UploadIcon data-icon="inline-start" />{importing ? 'Importing…' : 'Import'}</Button>
+				<input type="file" accept=".jsonl,.txt,.json" class="hidden" bind:this={fileInput} onchange={importFile} data-testid="import-file" />
+				<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>
+			{/if}
 		{/snippet}
 	</PageHeader>
 

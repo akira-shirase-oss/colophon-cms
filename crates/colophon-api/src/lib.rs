@@ -135,9 +135,30 @@ pub fn routes(state: AppState) -> Router {
                 .put(content_types::update)
                 .delete(content_types::delete),
         )
+        .merge(collections())
+        .route("/api/v1/rich-text/validate", post(rich_text::validate))
+        .merge(publishing())
+        .fallback(fallback)
+        // Rate limits (D-076): inside the error envelope, before any handler does work.
+        .layer(admission)
+        .with_state(state)
+}
+
+/// One collection's entries: pages, drafts, their history, and the JSONL export/import
+/// transfer routes (D-086).
+fn collections() -> Router<AppState> {
+    Router::new()
         .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries",
             get(entries::list).post(entries::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/export",
+            get(entries::export),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/import",
+            post(entries::import),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}",
@@ -151,12 +172,6 @@ pub fn routes(state: AppState) -> Router {
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions/{revision}",
             get(entries::revision),
         )
-        .route("/api/v1/rich-text/validate", post(rich_text::validate))
-        .merge(publishing())
-        .fallback(fallback)
-        // Rate limits (D-076): inside the error envelope, before any handler does work.
-        .layer(admission)
-        .with_state(state)
 }
 
 /// Changesets, releases, their deliveries and public delivery (P2).

@@ -8,7 +8,10 @@
 //!   `Idempotency-Key` required);
 //! - `DELETE {P}/collections/{collection}/entries/{entry}`: delete, leaving a tombstone
 //!   (`If-Match` and `Idempotency-Key` required; D-080);
-//! - `GET  {P}/collections/{collection}/entries/{entry}/revisions`: history, newest first.
+//! - `GET  {P}/collections/{collection}/entries/{entry}/revisions`: history, newest first;
+//! - `GET  {P}/collections/{collection}/export`: every draft as a JSONL line (D-086);
+//! - `POST {P}/collections/{collection}/import`: JSONL or a JSON array of entries back, in one
+//!   transaction (`Idempotency-Key` required; D-086).
 //!
 //! A project the caller isn't in, an environment, collection or entry that doesn't exist: all
 //! answer 404 alike. A draft's `ETag` names its revision; a save whose `If-Match` names an older
@@ -32,7 +35,7 @@ use colophon_db::{
 };
 use colophon_domain::{
     policy::{Action, Fields, Policy},
-    schema::{Content, ContentType, FieldKind},
+    schema::{Content, ContentType, FieldKind, Refusal},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
@@ -58,6 +61,9 @@ const DEFAULT_PAGE: i64 = 20;
 const CREATE: &str = "entry.create";
 const SAVE: &str = "entry.save";
 const DELETE: &str = "entry.delete";
+const IMPORT: &str = "entry.import";
+/// An import is at most this many items, so one upload stays a bounded transaction (D-086).
+const IMPORT_MAX_ITEMS: usize = 512;
 
 /// The path of the collection routes.
 #[derive(Deserialize)]
@@ -833,6 +839,242 @@ pub(crate) async fn create(
     finish(tx, CREATE, key, StatusCode::CREATED, view).await
 }
 
+/// `GET {P}/collections/{collection}/export`: every draft's canonical content as a JSONL
+/// line — what `import` takes back (D-086). The file has to hold every field to import back,
+/// so the role must read them all, of everyone's entries or of its own: a partial read would
+/// write a file that can't come back whole, so it is refused rather than clipped.
+pub(crate) async fn export(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<CollectionPath>,
+) -> Result<Response, ApiError> {
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // An unknown collection is 404, not an empty export.
+    content_type(&state, &mut tx, &path.collection).await?;
+    let by = if tx
+        .policy
+        .fields(Action::ContentRead, &path.collection, false)
+        == Some(Fields::All)
+    {
+        None
+    } else if tx
+        .policy
+        .fields(Action::ContentRead, &path.collection, true)
+        == Some(Fields::All)
+    {
+        Some(tx.identity)
+    } else {
+        return Err(ApiError::forbidden(
+            "fields_not_readable",
+            "an export holds every field, so it needs a role that reads them all",
+        ));
+    };
+    let lines = entries::export(&mut tx, &path.collection, by)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let mut response = format!("{}\n", lines.join("\n")).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/jsonlines"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!(
+            "attachment; filename=\"{}.jsonl\"",
+            path.collection
+        ))
+        .map_err(ApiError::internal)?,
+    );
+    Ok(response)
+}
+
+/// `POST {P}/collections/{collection}/import`: one JSON object per line, or one JSON array
+/// of the same objects, each an entry's content — and a Strapi export entity
+/// (`{"type":"api::…","data":{…}}`) or a `{"version":…,"data":{…}}` marker hands validation
+/// its `data` (D-086). The file lands in one transaction or nothing does (`Idempotency-Key`
+/// required; at most `IMPORT_MAX_ITEMS` items). References resolve against entries that
+/// already exist, including earlier items, and mirrors update as on any create (D-085).
+pub(crate) async fn import(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<CollectionPath>,
+    headers: HeaderMap,
+    body: String,
+) -> Result<Response, ApiError> {
+    let key = idempotency_key(&headers)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // Imported entries are their importer's own, like a create's are its creator's.
+    let create = tx
+        .policy
+        .fields(Action::ContentCreate, &path.collection, true)
+        .ok_or(ApiError::missing(
+            Action::ContentCreate,
+            "your role can't create entries here",
+        ))?;
+    content_types::lock_for_write(&mut tx, &path.collection)
+        .await
+        .map_err(ApiError::from_db)?;
+    let (content_type, version) = content_type(&state, &mut tx, &path.collection).await?;
+    let request = request_hash(&[IMPORT, &path.collection, &body]);
+    if let Some(replay) = claim(&mut tx, IMPORT, key, &request).await? {
+        return Ok(replay);
+    }
+    let ImportItems {
+        items,
+        at: at_index,
+    } = import_items(&body)?;
+    if items.len() > IMPORT_MAX_ITEMS {
+        return Err(ApiError::Invalid(Refusal {
+            code: "too_many_items",
+            pointer: "/".to_owned(),
+            message: format!("an import is at most {IMPORT_MAX_ITEMS} items"),
+        }));
+    }
+    // A single type holds one entry: refuse the file before writing any of it.
+    if content_type.single()
+        && (items.len() > 1
+            || !entries::list(&mut tx, &path.collection, None, 1, None, None)
+                .await
+                .map_err(ApiError::from_db)?
+                .is_empty())
+    {
+        return Err(ApiError::conflict(
+            "single_exists",
+            "this collection is a single type and already has its entry; edit that one",
+        ));
+    }
+    for (index, value) in items.iter().enumerate() {
+        let at = at_index(index);
+        // Left-out fields get the type's defaults, like a create (D-071).
+        let (value, defaulted) = content_type.with_defaults(entity(value));
+        let (content, hash) =
+            validate(&value, &content_type).map_err(|error| on_index(error, &at))?;
+        visibility::only_permitted_fields(content.canonical_json(), &create, &defaulted)
+            .map_err(|error| on_index(error, &at))?;
+        slug_free(&mut tx, &path.collection, &content_type, &content, None)
+            .await
+            .map_err(|error| on_index(error, &at))?;
+        let unique = content_type.unique_fields();
+        unique_free(
+            &mut tx,
+            &path.collection,
+            &content_type,
+            &unique,
+            &content,
+            None,
+        )
+        .await
+        .map_err(|error| on_index(error, &at))?;
+        let draft = entries::create(
+            &mut tx,
+            Uuid::now_v7(),
+            &path.collection,
+            new_revision(&content, &hash, version, &unique),
+        )
+        .await
+        .map_err(|error| on_index(ApiError::from_db(error), &at))?;
+        sync_inverses(
+            &state,
+            &mut tx,
+            &content_type,
+            &path.collection,
+            draft.entry_id,
+            None,
+            Some(&draft.content),
+        )
+        .await?;
+    }
+    let body = serde_json::to_string(&Data {
+        data: serde_json::json!({ "imported": items.len() }),
+    })
+    .map_err(ApiError::internal)?;
+    idempotency::complete(&mut tx, IMPORT, key, StatusCode::CREATED.as_u16(), &body)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(json(StatusCode::CREATED, body, None, false))
+}
+
+/// An import body as items, with `at` mapping an index to its pointer prefix — `/line/3` for
+/// JSONL, `/2` for a JSON array — so a refusal names the item it came from.
+struct ImportItems {
+    items: Vec<Value>,
+    at: fn(usize) -> String,
+}
+
+/// One JSON object per line, or one JSON array of the same objects (`[{...},{...}]`).
+fn import_items(body: &str) -> Result<ImportItems, ApiError> {
+    let trimmed = body.trim();
+    if trimmed.starts_with('[') {
+        let items = serde_json::from_str::<Vec<Value>>(trimmed).map_err(|_| {
+            ApiError::Invalid(Refusal {
+                code: "invalid_json",
+                pointer: "/".to_owned(),
+                message: "the body isn't a JSON array".to_owned(),
+            })
+        })?;
+        return Ok(ImportItems {
+            items,
+            at: |index| format!("/{index}"),
+        });
+    }
+    let items = trimmed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .enumerate()
+        .map(|(index, line)| {
+            serde_json::from_str::<Value>(line).map_err(|_| {
+                ApiError::Invalid(Refusal {
+                    code: "invalid_json",
+                    pointer: format!("/line/{}", index + 1),
+                    message: format!("line {} isn't JSON", index + 1),
+                })
+            })
+        })
+        .collect::<Result<_, ApiError>>()?;
+    Ok(ImportItems {
+        items,
+        at: |index| format!("/line/{}", index + 1),
+    })
+}
+
+/// A Strapi export entity — `{"type":"api::x.x","data":{…}}` — or a `{"version":2,"data":{…}}`
+/// marker: the payload sits under `data`, so unwrap it. Content that merely has fields named
+/// `type` or `data` is left alone: only a `::`-marked type or an explicit `version` counts.
+fn entity(value: &Value) -> &Value {
+    let Some(object) = value.as_object() else {
+        return value;
+    };
+    let Some(data) = object.get("data") else {
+        return value;
+    };
+    let marked = object
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind.contains("::"))
+        || object.contains_key("version");
+    if marked { data } else { value }
+}
+
+/// Prefixes a refusal's pointer with its import item — `/line/3` for JSONL, `/2` for a JSON
+/// array — so an error names the item it came from.
+fn on_index(error: ApiError, prefix: &str) -> ApiError {
+    match error {
+        ApiError::Invalid(mut refusal) => {
+            refusal.pointer = format!("{prefix}{}", refusal.pointer);
+            ApiError::Invalid(refusal)
+        }
+        ApiError::Taken(mut in_the_way) => {
+            in_the_way.pointer = format!("{prefix}{}", in_the_way.pointer);
+            ApiError::Taken(in_the_way)
+        }
+        other => other,
+    }
+}
+
 /// `PUT {P}/collections/{collection}/entries/{entry}`.
 pub(crate) async fn save(
     State(state): State<AppState>,
@@ -1513,5 +1755,18 @@ mod tests {
         };
         assert!(after_cursor(&here_again, other_project, &token).is_err());
         assert!(after_cursor(&here_again, other_project, "not base64 !").is_err());
+    }
+
+    #[test]
+    fn a_strapi_entity_unwraps_to_its_data_and_plain_content_passes_through() {
+        let bare = serde_json::json!({"title": "Hi", "data": "a field literally called data"});
+        assert_eq!(entity(&bare), &bare);
+        let strapi = serde_json::json!({"type": "api::article.article", "data": {"title": "Hi"}});
+        assert_eq!(entity(&strapi), &serde_json::json!({"title": "Hi"}));
+        let marker = serde_json::json!({"version": 2, "data": {"title": "Hi"}});
+        assert_eq!(entity(&marker), &serde_json::json!({"title": "Hi"}));
+        // A `type` that isn't a Strapi namespace doesn't mark anything.
+        let unmarked = serde_json::json!({"type": "note", "data": {"title": "Hi"}});
+        assert_eq!(entity(&unmarked), &unmarked);
     }
 }
