@@ -179,6 +179,7 @@ async fn world(db: &TestDb, report: &Report) -> World {
                 references: &[],
                 unique: &[],
             },
+            None,
         )
         .await
         .expect("entry");

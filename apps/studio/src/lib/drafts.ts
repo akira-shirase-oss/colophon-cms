@@ -8,6 +8,8 @@ export interface Sent {
 	base: string;
 	key: string;
 	content: Content;
+	/** The `?locale=` the request carried (D-087): undefined when it sent none. */
+	locale?: string;
 }
 
 export interface Kept {

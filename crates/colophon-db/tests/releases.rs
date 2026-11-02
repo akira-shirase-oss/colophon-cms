@@ -50,6 +50,7 @@ async fn ready(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid, Uuid) {
             references: &[],
             unique: &[],
         },
+        None,
     )
     .await
     .expect("created");

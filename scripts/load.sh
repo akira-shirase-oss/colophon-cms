@@ -15,7 +15,8 @@
 # two writers: every move is a save plus two mirror revisions in one transaction, with mirror
 # reads checked against where the link says it is; D-085), transfer (a collection's drafts
 # exported as JSONL, nine requests in ten; the tenth imports a three-line file, entries and
-# a Strapi entity, in one transaction; D-086), deletion (articles created and deleted
+# a Strapi entity, in one transaction; D-086), locales (a French sibling's save carrying its
+# locale, the source's group read, and a locale-filtered list; D-087), deletion (articles created and deleted
 # with If-Match, replayed deletions, 404 reads of what was deleted, and deletions refused because
 # the article is published, in a changeset or stale; D-080),
 # cli (requests authenticated by a bearer token, as the CLI sends them), members (member lists,
@@ -54,7 +55,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|inverses|transfer|deletion|collection-delete|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -89,6 +90,10 @@ case "$endpoint" in
   # revision writes in a transaction): near entries' steady rate, but the p99 threshold is
   # END_GOAL's editorial write budget for the import arm.
   transfer) RATE="${RATE:-500}" P99_MS="${P99_MS:-700}" ;;
+  # A save carrying its locale, a group read, and a locale-filtered list in about equal
+  # measure: inverses' rate, and the p99 threshold is END_GOAL's editorial write budget for
+  # the save arm (a revision plus the locale row in one transaction).
+  locales) RATE="${RATE:-250}" P99_MS="${P99_MS:-700}" ;;
   # RATE counts iterations here: a create and a deletion, sometimes a read or a replay, or one
   # refused deletion or a list; about 2.3 requests each, three in four of them writes.
   deletion) RATE="${RATE:-200}" P99_MS="${P99_MS:-250}" ;;

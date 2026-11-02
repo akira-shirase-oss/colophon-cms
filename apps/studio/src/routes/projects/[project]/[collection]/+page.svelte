@@ -16,6 +16,7 @@
 	import { page } from '$app/state';
 	import { createInfiniteQuery, createQuery, keepPreviousData, useQueryClient } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
+	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import * as InputGroup from '@colophon/ui/ui/input-group';
@@ -450,6 +451,7 @@
 									href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}
 									class:text-muted-foreground={entry.revision.title.trim() === ''}>{shownTitle(entry.revision.title)}</a
 								>
+								{#if entry.locale !== null}<Badge variant="outline" class="ml-1.5 font-mono">{entry.locale}</Badge>{/if}
 							</Table.Cell>
 							<Table.Cell><StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} /></Table.Cell>
 							<Table.Cell class="hidden text-sm text-muted-foreground tabular md:table-cell">

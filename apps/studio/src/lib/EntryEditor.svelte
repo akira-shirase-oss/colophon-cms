@@ -23,9 +23,13 @@
 	import LoaderIcon from '@lucide/svelte/icons/loader-circle';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
+	import { Input } from '@colophon/ui/ui/input';
+	import { goto } from '$app/navigation';
 	import {
+		ApiError,
 		type Content,
 		type ContentType,
+		createLocalization,
 		deliveryUrl,
 		type Draft,
 		type FieldDefinition,
@@ -111,6 +115,12 @@
 	const rich = visible.filter((field) => field.type === 'rich_text');
 	// svelte-ignore state_referenced_locally
 	let latest = $state.raw<Draft>(initial.draft);
+	// A fresh draft arriving after mount — the entry's query refetched, say a sibling was
+	// added elsewhere — replaces what the status row and details show. The form state is
+	// untouched: edits live in `form` and the editors.
+	$effect(() => {
+		latest = initial.draft;
+	});
 	// svelte-ignore state_referenced_locally
 	const saver = new Saver(project, collection, entry, definition, initial, (loaded) => {
 		latest = loaded.draft;
@@ -134,6 +144,32 @@
 	/** Bumped each time the whole content is (re)shown, so nested controls start from it. */
 	let showings = $state(0);
 	let unopenable = $state('');
+
+	// Locales (D-087): the tag rides every save through `saver.locale`; the Versions card lists
+	// the group and adds a sibling in another locale, which opens as its own entry.
+	let versionLocale = $state('');
+	let addingVersion = $state(false);
+	let versionProblem = $state('');
+
+	async function addVersion() {
+		const tag = versionLocale.trim();
+		if (tag === '' || addingVersion) return;
+		addingVersion = true;
+		versionProblem = '';
+		try {
+			const loaded = await createLocalization(project, collection, entry, tag);
+			toast.success(`Added the ${tag} version.`);
+			// The source's group changed under it: its cached draft (and the collection's
+			// lists) refetch rather than show a Versions card a sibling short.
+			void queryClient.invalidateQueries({ queryKey: ['draft', project, collection] });
+			void queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
+			await goto(resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: loaded.draft.id }));
+		} catch (error) {
+			versionProblem = plainError(error);
+		} finally {
+			addingVersion = false;
+		}
+	}
 
 	// Conditional fields (D-072): a field applies while the field it depends on holds one of its
 	// values, judged from what this editor would save. One that doesn't apply is hidden and left
@@ -652,6 +688,57 @@
 
 		<div class="min-w-0 text-xs text-muted-foreground xl:mt-4 xl:border-t xl:border-dotted xl:border-border xl:pt-3" data-testid="entry-details">
 			<p title={new Date(latest.created_at).toLocaleString()}>Created {new Date(latest.created_at).toLocaleDateString()}</p>
+
+			<!-- The entry's locale (D-087): saved with the next save like any change; empty is the
+				project's default. A grouped entry's own tag is shown in Versions below. -->
+			<div class="mt-3 space-y-1.5" data-testid="entry-locale">
+				<label class="block font-medium text-foreground" for="entry-locale-input">Locale</label>
+				<Input
+					id="entry-locale-input"
+					class="h-8 text-xs"
+					placeholder="default (e.g. en, pt-BR)"
+					bind:value={saver.locale}
+					onchange={() => saver.edit(current())}
+				/>
+				<p class="text-muted-foreground">Which language this entry is written in, like <span class="font-mono">en</span> or <span class="font-mono">pt-BR</span>. Empty is the project's default.</p>
+			</div>
+
+			<!-- Its localization group (D-087): this entry in bold, siblings as links that open
+				their own editors, and the "add a version" row. -->
+			<section class="mt-3 space-y-1.5" aria-labelledby="versions-heading" data-testid="versions">
+				<h2 id="versions-heading" class="font-medium text-foreground">Versions</h2>
+				{#if latest.localizations.length === 0}
+					<p>No other versions — this entry is its own version.</p>
+				{:else}
+					<ul class="space-y-1" data-testid="version-list">
+						{#each latest.localizations as sibling (sibling.id)}
+							<li class="flex items-center gap-2">
+								{#if sibling.id === entry}
+									<strong>This entry</strong>
+								{:else}
+									<a class="text-foreground underline underline-offset-2" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: sibling.id })}>{sibling.locale ?? 'default'}</a>
+								{/if}
+								<Badge variant="secondary" class="font-mono">{sibling.id === entry ? (sibling.locale ?? 'default') : sibling.id.slice(0, 8)}</Badge>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<div class="flex items-center gap-1.5">
+					<Input
+						class="h-8 w-24 text-xs"
+						placeholder="fr"
+						aria-label="Locale of the new version"
+						bind:value={versionLocale}
+						disabled={addingVersion}
+						data-testid="version-locale"
+					/>
+					<Button variant="outline" size="xs" onclick={addVersion} disabled={addingVersion || versionLocale.trim() === ''} data-testid="add-version">
+						{addingVersion ? 'Adding…' : 'Add version'}
+					</Button>
+				</div>
+				{#if versionProblem !== ''}<p class="text-destructive" role="alert" data-testid="version-problem">{versionProblem}</p>{/if}
+			</section>
+
 			<TechnicalDetails class="mt-3">
 				{#if published !== null}
 					<!-- Where readers get it (the public read, no sign-in): the published version, not the draft. -->

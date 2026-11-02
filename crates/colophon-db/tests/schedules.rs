@@ -66,6 +66,7 @@ async fn ready(db: &TestDb) -> Ready {
             references: &[],
             unique: &[],
         },
+        None,
     )
     .await
     .expect("created");

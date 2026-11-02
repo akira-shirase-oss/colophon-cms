@@ -112,7 +112,7 @@ async fn create(
     draft: &Draft,
 ) -> Result<(Uuid, Uuid), DbError> {
     let entry = Uuid::now_v7();
-    entries::create(tx, entry, collection, draft.revision()).await?;
+    entries::create(tx, entry, collection, draft.revision(), None).await?;
     Ok((entry, draft.id))
 }
 
@@ -222,7 +222,7 @@ async fn a_deleted_entry_is_a_tombstone_the_application_no_longer_sees() {
         .await
         .expect("creators");
     assert_eq!(creators, Vec::new());
-    let listed: Vec<Uuid> = entries::list(&mut tx, ARTICLES, None, 100, None, None)
+    let listed: Vec<Uuid> = entries::list(&mut tx, ARTICLES, None, 100, None, None, None)
         .await
         .expect("list")
         .into_iter()
