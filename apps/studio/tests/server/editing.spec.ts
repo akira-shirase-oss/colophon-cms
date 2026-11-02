@@ -128,6 +128,8 @@ test('the home page is accessible signed out and signed in, and lists your proje
 	expect(await violations(page)).toEqual([]);
 	await signIn(page);
 	const project = await newProject(page);
+	// The projects grid lists them all only when there is more than one.
+	await newProject(page);
 	await page.goto('/studio/');
 	await expect(page.getByTestId('projects').getByRole('link')).not.toHaveCount(0);
 	await expect(page.locator(`a[href="/studio/projects/${project}"]`)).toBeVisible();

@@ -14,6 +14,7 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await expect(page.getByLabel('Role of Dev Owner')).toHaveValue('owner');
 
 	// The link is shown once; the list of pending invitations never shows it again.
+	await page.getByTestId('invite-member').click();
 	await page.getByLabel('Who is it for?').fill('A guest editor');
 	await page.getByLabel('Role', { exact: true }).selectOption('editor');
 	await page.getByRole('button', { name: 'Create invitation link' }).click();
@@ -45,7 +46,7 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await guest.getByTestId('members-link').click();
 	await expect(guest.getByTestId('member')).toHaveCount(2);
 	await expect(guest.getByRole('combobox')).toHaveCount(0);
-	await expect(guest.getByRole('button', { name: 'Create invitation link' })).toHaveCount(0);
+	await expect(guest.getByTestId('invite-member')).toHaveCount(0);
 	expect(await violations(guest)).toEqual([]);
 
 	// The owner sees them join, and can't step down while they're the only owner.
@@ -60,9 +61,11 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await expect(page.getByTestId('members-error')).toHaveCount(0);
 
 	// A revoked invitation stops working at once.
+	await page.getByTestId('invite-member').click();
 	await page.getByLabel('Who is it for?').fill('Changed my mind');
 	await page.getByRole('button', { name: 'Create invitation link' }).click();
 	const revokedLink = await page.getByRole('textbox', { name: 'Invitation link' }).inputValue();
+	await page.getByRole('button', { name: 'Done' }).click();
 	await page.getByRole('button', { name: 'Revoke the invitation for Changed my mind' }).click();
 	await expect(page.getByTestId('invitations')).toContainText('None.');
 	await guest.goto(new URL(revokedLink).pathname + new URL(revokedLink).hash);

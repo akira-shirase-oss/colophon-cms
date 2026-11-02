@@ -194,11 +194,13 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await owner.getByTestId('members-link').click();
 		await expect(owner.getByTestId('members-alone')).toBeVisible();
 		await screen(owner, 'members');
+		await owner.getByTestId('invite-member').click();
 		await owner.getByLabel('Who is it for?').fill('Sam, writer');
 		await owner.getByRole('button', { name: 'Create invitation link' }).click();
 		invitation = await owner.getByRole('textbox', { name: 'Invitation link' }).inputValue();
 		expect(invitation).toContain('/studio/invite#');
 		await screen(owner, 'invited');
+		await owner.getByRole('button', { name: 'Done' }).click();
 	});
 
 	await test.step('the checklist follows what happened', async () => {
