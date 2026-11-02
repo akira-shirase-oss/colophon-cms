@@ -608,6 +608,51 @@ export async function createEntry(project: string, collection: string, content: 
 	return loaded(await send('POST', entries(project, collection), content, { 'Idempotency-Key': key }));
 }
 
+/** The URL that downloads a collection's drafts as JSONL — one entry's content per line (D-086). */
+export function exportUrl(project: string, collection: string): string {
+	return `${base(project)}/collections/${collection}/export`;
+}
+
+/** Uploads an import file: one entry's content per JSONL line, or one JSON array of the same
+ *  (Strapi export entities unwrap to their `data`). The whole file lands or nothing does —
+ *  `send` can't carry it because the body is the file, not a JSON document. Answers the number
+ *  of entries created. */
+export async function importEntries(project: string, collection: string, body: string): Promise<number> {
+	let response: Response;
+	try {
+		response = await fetch(`${base(project)}/collections/${collection}/import`, {
+			method: 'POST',
+			cache: 'no-store',
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+			headers: {
+				'Content-Type': 'application/jsonlines',
+				'X-CSRF-Token': csrfToken(),
+				'Idempotency-Key': newKey()
+			},
+			body
+		});
+	} catch {
+		throw new ApiError('retry', 'no answer from the server');
+	}
+	if (response.ok) {
+		return ((await response.json()) as { data: { imported: number } }).data.imported;
+	}
+	const envelope = ((await response.json().catch(() => ({}))) as Envelope).error;
+	const message = envelope?.message ?? `HTTP ${response.status}`;
+	const details = envelope?.details ?? null;
+	const reason = details?.reason ?? null;
+	switch (true) {
+		case response.status === 401:
+			throw new ApiError('signed-out', message, 401);
+		case response.status === 404:
+			throw new ApiError('not-found', message, 404);
+		case response.status >= 500 || response.status === 429:
+			throw new ApiError('retry', message, response.status, reason);
+		default:
+			throw new ApiError('refused', message, response.status, reason, null, details);
+	}
+}
+
 /** Saves `content` on top of the revision `etag` names. Sending the same key again is safe. */
 export async function saveEntry(
 	project: string,

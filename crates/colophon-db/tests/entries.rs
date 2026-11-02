@@ -147,6 +147,55 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_collection_exports_each_draft_as_a_line() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = enter(&db.app, alice, project).await;
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("First").revision(),
+    )
+    .await
+    .expect("created");
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("Second").revision(),
+    )
+    .await
+    .expect("created");
+    tx.commit().await.expect("commit");
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let lines = entries::export(&mut tx, ARTICLES, None)
+        .await
+        .expect("exported");
+    assert_eq!(lines.len(), 2);
+    // Newest first: each line is the draft's canonical content.
+    assert!(lines[0].contains(r#""title":"Second""#), "{}", lines[0]);
+    assert!(lines[1].contains(r#""title":"First""#), "{}", lines[1]);
+    // Scoped to one creator when asked: Alice made both, so an unknown creator sees none.
+    let own = entries::export(&mut tx, ARTICLES, Some(alice))
+        .await
+        .expect("exported");
+    assert_eq!(own.len(), 2);
+    let nobody = entries::export(&mut tx, ARTICLES, Some(Uuid::now_v7()))
+        .await
+        .expect("exported");
+    assert_eq!(nobody, Vec::<String>::new());
+    tx.commit().await.expect("commit");
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_save_on_a_stale_draft_writes_nothing_and_names_the_current_revision() {
     let db = TestDb::new().await;
     let (alice, project, entry, first) = alice_with_an_entry(&db).await;

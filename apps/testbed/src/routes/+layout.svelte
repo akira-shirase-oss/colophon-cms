@@ -17,6 +17,7 @@
 		{ href: resolve('/content-types'), label: 'Content types' },
 		{ href: resolve('/modelling'), label: 'Content modelling' },
 		{ href: resolve('/inverses'), label: 'Mirrored references' },
+		{ href: resolve('/transfer'), label: 'Import & export' },
 		{ href: resolve('/device'), label: 'Device sign-in' },
 		{ href: resolve('/members'), label: 'Members' },
 		{ href: resolve('/roles'), label: 'Roles' },
