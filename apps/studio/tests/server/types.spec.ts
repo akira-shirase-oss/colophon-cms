@@ -81,6 +81,37 @@ test('an owner builds a content type in Content types, and its entries get URL n
 	await expect(status(page)).toContainText('another entry already uses this URL name (“Lemon tart”)');
 });
 
+test('an empty collection can be deleted from its page, and a held one says why', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const base = `/api/v1/projects/${project}/environments/production`;
+	const notes = {
+		slug: 'notes',
+		definition: { name: 'Notes', title_field: 'title', fields: [{ id: 'title', label: 'Title', type: 'text', required: true }] }
+	};
+	expect((await api(page, 'POST', `${base}/content-types`, notes)).status).toBe(201);
+	const entry = await api(page, 'POST', `${base}/collections/notes/entries`, { title: 'Kept' });
+	expect(entry.status).toBe(201);
+
+	// While it holds an entry the page says why, and nothing is deleted.
+	await page.goto(`/studio/projects/${project}/settings/types/notes`);
+	await page.getByTestId('delete-type').click();
+	await page.getByTestId('delete-type-confirm').click();
+	await expect(page.getByTestId('delete-type-refusal')).toContainText('still has 1 entry');
+	expect((await api(page, 'GET', `${base}/content-types/notes`)).status).toBe(200);
+
+	// An empty one goes: two clicks, a toast, and the list no longer shows it.
+	const clippings = { slug: 'clippings', definition: { ...notes.definition, name: 'Clippings' } };
+	expect((await api(page, 'POST', `${base}/content-types`, clippings)).status).toBe(201);
+	await page.goto(`/studio/projects/${project}/settings/types/clippings`);
+	await page.getByTestId('delete-type').click();
+	await page.getByTestId('delete-type-confirm').click();
+	await expect(page).toHaveURL(`/studio/projects/${project}/settings/types`);
+	await expect(page.getByText('Deleted Clippings')).toBeVisible();
+	await expect(page.getByTestId('builder-type-clippings')).toHaveCount(0);
+	expect((await api(page, 'GET', `${base}/content-types/clippings`)).status).toBe(404);
+});
+
 test('a change that would break a saved entry is refused naming it, and goes through once it is fixed', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);

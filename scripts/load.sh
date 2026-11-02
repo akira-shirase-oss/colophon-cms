@@ -50,7 +50,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|deletion|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|deletion|collection-delete|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -77,6 +77,9 @@ case "$endpoint" in
   # RATE counts iterations here: a create and a deletion, sometimes a read or a replay, or one
   # refused deletion or a list; about 2.3 requests each, three in four of them writes.
   deletion) RATE="${RATE:-200}" P99_MS="${P99_MS:-250}" ;;
+  # An iteration is a create and a collection delete, sometimes a replay, or one refused delete
+  # or a list: about 2.2 requests each, and a delete scans the other types' reference fields.
+  collection-delete) RATE="${RATE:-100}" P99_MS="${P99_MS:-250}" ;;
   studio) RATE="${RATE:-5000}" P99_MS="${P99_MS:-25}" ;;
   # RATE counts publishes here, five requests each, and every request writes and commits: on the
   # reference laptop that tops out around 500 to 700 requests a second, so the steady rate is 40

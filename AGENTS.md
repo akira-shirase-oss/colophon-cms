@@ -4,10 +4,11 @@
 `origin/main` (`fb8c49f`; migrations to 0030). The former `studio/content-cards` line is archived
 at `origin/lineage/content-cards` and local `studio/content-cards` (`81e7002`) — 61 commits of
 Strapi-style modelling on a diverged base; the maintainer chose to **port its unique work onto
-this lineage** rather than merge. Port backlog, in intended order:
+this lineage** rather than merge. Port backlog, in intended order (done: 1 typography, 2 collection delete — D-083, migration
+0031):
 
-1. typography floor (14px minimum; `check-typography.sh` + Studio/testbed CSS — no migration)
-2. delete an empty collection
+1. ~~typography floor (14px minimum; `check-typography.sh` + Studio/testbed CSS — no migration)~~
+2. ~~delete an empty collection~~
 3. email-and-password accounts (sign up, sign in, join by invitation; sign-in card UX)
 4. mirrored references (a writable inverse field; main lineage has read-only "Linked from")
 5. import/export (JSON array and Strapi-entity import, JSONL export)

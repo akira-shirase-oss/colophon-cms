@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { call, csrfToken, detailsOf, envelopeOf, type Reply } from '#lib/api.ts';
+	import { call, csrfToken, detailsOf, envelopeOf, listProjects, type Reply } from '#lib/api.ts';
 
 	interface Project {
 		id: string;
@@ -50,9 +50,9 @@
 	}
 
 	async function loadProjects() {
-		const reply = await call('GET', '/api/v1/projects');
+		const reply = await listProjects<Project>();
 		signedIn = reply.status === 200;
-		projects = signedIn ? (reply.body as { data: Project[] }).data : [];
+		projects = reply.projects;
 		if (projectId === '' && projects.length > 0) projectId = projects[0]?.id ?? '';
 		if (projectId !== '') await loadTypes();
 	}
@@ -92,6 +92,20 @@
 		const reply = await call('PUT', `${base}/${editing}`, { headers: headers({ 'If-Match': etag }), body: edited });
 		if (reply.status === 200) {
 			message = `updated ${editing} to v${(reply.body as { data: TypeVersion }).data.version}`;
+		} else {
+			message = describe(reply);
+		}
+		await loadTypes();
+	}
+
+	/** Deletes the open type (D-083): the server answers `collection_not_empty` while it has
+	 *  entries, `still_referenced` while another type links here, and `collection_has_history`
+	 *  while deleted entries keep their history here. */
+	async function remove() {
+		const reply = await call('DELETE', `${base}/${editing}`, { headers: headers({ 'If-Match': etag }) });
+		if (reply.status === 200) {
+			message = `deleted ${editing}`;
+			editing = '';
 		} else {
 			message = describe(reply);
 		}
@@ -146,6 +160,7 @@
 				<label class="field">Current definition <textarea bind:value={edited} name="edited" rows="12"></textarea></label>
 				<button type="submit">Save definition</button>
 			</form>
+			<button data-testid="delete-type" onclick={remove}>Delete it for good</button>
 		</section>
 	{/if}
 {/if}

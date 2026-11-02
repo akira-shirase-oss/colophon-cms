@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM collections WHERE project_id = $1 AND environment_id = $2 AND slug = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "11778e3bb3815b2660defa266eb86cd5c372722b991f43c2f181a71938cb84df"
+}
