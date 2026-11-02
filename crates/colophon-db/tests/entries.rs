@@ -70,7 +70,7 @@ async fn alice_with_an_entry(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid) {
     let mut tx = enter(&db.app, alice, project).await;
     let first = Content::new("First");
     let entry = Uuid::now_v7();
-    let draft = entries::create(&mut tx, entry, ARTICLES, first.revision())
+    let draft = entries::create(&mut tx, entry, ARTICLES, first.revision(), None)
         .await
         .expect("created");
     assert_eq!(draft.revision.base_revision_id, None);
@@ -112,18 +112,18 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
         .map(|revision| (revision.id, revision.base_revision_id))
         .collect();
     assert_eq!(history, [(second.id, Some(first)), (first, None)]);
-    let listed = entries::list(&mut tx, ARTICLES, None, 20, None, None)
+    let listed = entries::list(&mut tx, ARTICLES, None, 20, None, None, None)
         .await
         .expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].revision.title, "Second");
     // Search reads the entry's copy of its draft's title (migration 0015), which moved with it.
-    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"), None)
+    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"), None, None)
         .await
         .expect("search");
     assert_eq!(found.len(), 1);
     assert!(
-        entries::list(&mut tx, ARTICLES, None, 20, Some("First"), None)
+        entries::list(&mut tx, ARTICLES, None, 20, Some("First"), None, None)
             .await
             .expect("search")
             .is_empty(),
@@ -160,6 +160,7 @@ async fn a_collection_exports_each_draft_as_a_line() {
         Uuid::now_v7(),
         ARTICLES,
         Content::new("First").revision(),
+        None,
     )
     .await
     .expect("created");
@@ -168,6 +169,7 @@ async fn a_collection_exports_each_draft_as_a_line() {
         Uuid::now_v7(),
         ARTICLES,
         Content::new("Second").revision(),
+        None,
     )
     .await
     .expect("created");
@@ -300,7 +302,7 @@ async fn revisions_cannot_be_changed_or_deleted_and_pointers_cannot_cross_entrie
     // A second entry; then try to point the first entry's draft at the second's revision.
     let mut tx = enter(&db.app, alice, project).await;
     let other = Content::new("Other");
-    entries::create(&mut tx, Uuid::now_v7(), ARTICLES, other.revision())
+    entries::create(&mut tx, Uuid::now_v7(), ARTICLES, other.revision(), None)
         .await
         .expect("created");
     tx.commit().await.expect("commit");

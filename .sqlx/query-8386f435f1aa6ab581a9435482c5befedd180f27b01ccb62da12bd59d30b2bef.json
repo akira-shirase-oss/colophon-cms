@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT draft_revision_id, collection, created_at, created_by FROM entries\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3\n         FOR UPDATE",
+  "query": "SELECT draft_revision_id, collection, created_at, created_by, locale FROM entries\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3\n         FOR UPDATE",
   "describe": {
     "columns": [
       {
@@ -46,6 +46,17 @@
             "name": "created_by"
           }
         }
+      },
+      {
+        "ordinal": 4,
+        "name": "locale",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "locale"
+          }
+        }
       }
     ],
     "parameters": {
@@ -59,8 +70,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "24d125fec406d2cc7a202ec09462a3d926a92eb6c95b44272eb32574857645ec"
+  "hash": "8386f435f1aa6ab581a9435482c5befedd180f27b01ccb62da12bd59d30b2bef"
 }

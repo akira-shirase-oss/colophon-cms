@@ -55,7 +55,7 @@ async fn create(
 ) -> Result<(Uuid, Uuid), DbError> {
     let entry = Uuid::now_v7();
     let new = revision(title, slug);
-    entries::create(tx, entry, collection, new).await?;
+    entries::create(tx, entry, collection, new, None).await?;
     Ok((entry, new.id))
 }
 

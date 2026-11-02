@@ -165,6 +165,10 @@ fn collections() -> Router<AppState> {
             get(entries::get).put(entries::save).delete(entries::delete),
         )
         .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/localizations",
+            post(entries::localize),
+        )
+        .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions",
             get(entries::history),
         )

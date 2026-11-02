@@ -96,6 +96,8 @@ pub struct Draft {
     pub revision: Revision,
     /// The draft's canonical JSON.
     pub content: String,
+    /// The entry's locale tag, or `None` for the project's default (D-087).
+    pub locale: Option<String>,
 }
 
 /// An entry in a list: its draft's metadata, without the content.
@@ -111,6 +113,8 @@ pub struct Summary {
     pub revision: Revision,
     /// The revision readers get now, and the release it went out in, if it is published.
     pub published: Option<(Uuid, i64)>,
+    /// The entry's locale tag, or `None` for the project's default (D-087).
+    pub locale: Option<String>,
 }
 
 /// The longest title search accepted.
@@ -136,16 +140,18 @@ pub async fn create(
     entry_id: Uuid,
     collection: &str,
     revision: NewRevision<'_>,
+    locale: Option<&str>,
 ) -> Result<Draft, DbError> {
     let entry = sqlx::query!(
-        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single)
+        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
                  -- Single types (D-067): the current version's flag, held still by the caller's
                  -- shared lock on the content type. `entries_single` refuses a second entry.
                  coalesce((SELECT (v.definition::jsonb ->> 'single')::boolean
                            FROM content_type_versions v
                            WHERE v.project_id = $1 AND v.environment_id = $2 AND v.collection = $4
-                           ORDER BY v.version DESC LIMIT 1), false))
+                           ORDER BY v.version DESC LIMIT 1), false),
+                 $9)
          RETURNING created_at, updated_at",
         tx.project,
         tx.environment,
@@ -154,7 +160,8 @@ pub async fn create(
         revision.id,
         revision.slug,
         revision.title,
-        tx.identity
+        tx.identity,
+        locale
     )
     .fetch_one(&mut *tx.transaction)
     .await
@@ -176,6 +183,7 @@ pub async fn create(
             title: revision.title.to_owned(),
         },
         content: revision.content.to_owned(),
+        locale: locale.map(str::to_owned),
     })
 }
 
@@ -189,7 +197,7 @@ pub async fn save(
     // Lock the entry so concurrent saves queue here. This read only tells "stale" from
     // "missing" and names the current revision; the conditional UPDATE below is the rule.
     let current = sqlx::query!(
-        "SELECT draft_revision_id, collection, created_at, created_by FROM entries
+        "SELECT draft_revision_id, collection, created_at, created_by, locale FROM entries
          WHERE project_id = $1 AND environment_id = $2 AND id = $3
          FOR UPDATE",
         tx.project,
@@ -246,6 +254,7 @@ pub async fn save(
             title: revision.title.to_owned(),
         },
         content: revision.content.to_owned(),
+        locale: current.locale,
     })))
 }
 
@@ -641,7 +650,7 @@ pub async fn get_with_live(
     entry_id: Uuid,
 ) -> Result<Option<(Draft, Option<(Uuid, i64)>)>, DbError> {
     let row = sqlx::query!(
-        r#"SELECT e.collection, e.created_at, e.created_by, e.updated_at,
+        r#"SELECT e.collection, e.created_at, e.created_by, e.updated_at, e.locale,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
                 r.content_hash, r.title, r.content,
                 live.revision_id AS "published_revision_id?", live.valid_from AS "published_in?"
@@ -680,6 +689,7 @@ pub async fn get_with_live(
                 title: row.title,
             },
             content: row.content,
+            locale: row.locale,
         };
         (draft, row.published_revision_id.zip(row.published_in))
     }))
@@ -702,6 +712,7 @@ pub async fn list(
     limit: i64,
     search: Option<&str>,
     created_by: Option<Uuid>,
+    locale: Option<&str>,
 ) -> Result<Vec<Summary>, DbError> {
     // A title search matches anywhere in the draft's title, case-insensitively; its own `%`, `_`
     // and `\` match themselves. It filters on the entry's copy of the title (migration 0015), so
@@ -714,7 +725,7 @@ pub async fn list(
         format!("%{escaped}%")
     });
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.created_by, e.updated_at,
+        r#"SELECT e.id, e.created_by, e.updated_at, e.locale,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
                 r.content_hash, r.title, live.revision_id AS "published_revision_id?",
                 live.valid_from AS "published_in?"
@@ -737,6 +748,7 @@ pub async fn list(
            AND ($4::uuid IS NULL OR e.id < $4)
            AND ($6::text IS NULL OR e.draft_title ILIKE $6)
            AND ($7::uuid IS NULL OR e.created_by = $7)
+           AND ($8::text IS NULL OR e.locale = $8)
          ORDER BY e.id DESC
          LIMIT $5"#,
         tx.project,
@@ -745,7 +757,8 @@ pub async fn list(
         before,
         limit.clamp(1, MAX_PAGE + 1),
         pattern,
-        created_by
+        created_by,
+        locale
     )
     .fetch_all(&mut *tx.transaction)
     .await
@@ -765,6 +778,7 @@ pub async fn list(
                 title: row.title,
             },
             published: row.published_revision_id.zip(row.published_in),
+            locale: row.locale,
         })
         .collect())
 }
@@ -800,6 +814,265 @@ pub async fn export(
     .await
     .map_err(DbError::from_query)?;
     Ok(rows.into_iter().map(|row| row.content).collect())
+}
+
+/// What setting an entry's locale did (D-087). Every refusal writes nothing; the caller rolls
+/// back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetLocale {
+    /// The locale was stored.
+    Set,
+    /// Another member of the entry's group already has that locale: its id.
+    Occupied(Uuid),
+    /// The entry is in a group; a grouped entry can't lose its locale (the CHECK on
+    /// `localization_id` requires one). It leaves the default only by deletion.
+    Grouped,
+    /// No live entry has that id in the collection.
+    Missing,
+}
+
+/// Stores an entry's locale label — `None` clears it back to the project's default. A grouped
+/// entry keeps a locale (the migration's CHECK), and one it changes to must be free in its
+/// group; both rules hold in the same transaction a save made its revision in.
+pub async fn set_locale(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    entry_id: Uuid,
+    locale: Option<&str>,
+) -> Result<SetLocale, DbError> {
+    // Lock the entry like a save does, so a localize or another locale write queues here.
+    let group = sqlx::query!(
+        "SELECT localization_id FROM entries
+         WHERE project_id = $1 AND environment_id = $2 AND collection = $3
+           AND id = $4 AND deleted_at IS NULL
+         FOR UPDATE",
+        tx.project,
+        tx.environment,
+        collection,
+        entry_id
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?
+    .map(|row| row.localization_id);
+    let Some(group) = group else {
+        return Ok(SetLocale::Missing);
+    };
+    if locale.is_none() && group.is_some() {
+        return Ok(SetLocale::Grouped);
+    }
+    if let (Some(group), Some(locale)) = (group, locale) {
+        let occupied = sqlx::query!(
+            "SELECT id FROM entries
+             WHERE project_id = $1 AND environment_id = $2 AND localization_id = $3
+               AND locale = $4 AND id <> $5 AND deleted_at IS NULL",
+            tx.project,
+            tx.environment,
+            group,
+            locale,
+            entry_id
+        )
+        .fetch_optional(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query)?;
+        if let Some(row) = occupied {
+            return Ok(SetLocale::Occupied(row.id));
+        }
+    }
+    sqlx::query!(
+        "UPDATE entries SET locale = $5
+         WHERE project_id = $1 AND environment_id = $2 AND collection = $3 AND id = $4",
+        tx.project,
+        tx.environment,
+        collection,
+        entry_id,
+        locale
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(SetLocale::Set)
+}
+
+/// A sibling entry in a localization group (D-087).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Localization {
+    /// The sibling's entry id.
+    pub id: Uuid,
+    /// Its locale tag — never `None` (the group's CHECK requires one).
+    pub locale: Option<String>,
+}
+
+/// Every live entry in an entry's localization group, including the entry itself, ordered by
+/// locale: what an editor sees as the document's translations. Empty when it is unlocalized —
+/// an unlocalized entry is its own version, not a group of one.
+pub async fn localizations(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    entry_id: Uuid,
+) -> Result<Vec<Localization>, DbError> {
+    let rows = sqlx::query!(
+        "SELECT s.id, s.locale FROM entries s
+         JOIN entries e ON e.project_id = s.project_id AND e.environment_id = s.environment_id
+                       AND e.localization_id = s.localization_id
+         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
+           AND e.id = $4 AND e.deleted_at IS NULL AND s.deleted_at IS NULL
+         ORDER BY s.locale",
+        tx.project,
+        tx.environment,
+        collection,
+        entry_id
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| Localization {
+            id: row.id,
+            locale: row.locale,
+        })
+        .collect())
+}
+
+/// What a localization write found (D-087). The refusals write nothing; the caller rolls back.
+#[derive(Debug)]
+pub enum Localized {
+    /// The sibling was made and the source's group holds them both.
+    Made(Box<Draft>),
+    /// The locale is already held by the named group member.
+    Occupied(Uuid),
+    /// The source is missing or tombstoned.
+    Missing,
+}
+
+/// The state a sibling copy needs from its source (D-087).
+#[derive(Debug, Clone)]
+pub struct SourceRow {
+    /// The source's group, if it already has one — `None` means the localize creates it.
+    pub localization_id: Option<Uuid>,
+    /// The source's locale tag: `None` means it can't join a group until one is named — the
+    /// CHECK on `localization_id` requires every member tagged.
+    pub locale: Option<String>,
+    /// The source draft's canonical content: the sibling's seed, before the caller's rewrite.
+    pub content: String,
+}
+
+/// Reads and locks the source of a localization: its group, its tag and its draft's content.
+/// The lock makes the group's first member queue here rather than race the unique index.
+pub async fn source_for_localization(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    source_id: Uuid,
+) -> Result<Option<SourceRow>, DbError> {
+    sqlx::query_as!(
+        SourceRow,
+        "SELECT e.localization_id, e.locale, r.content
+         FROM entries e
+         JOIN revisions r ON r.project_id = e.project_id AND r.environment_id = e.environment_id
+                         AND r.id = e.draft_revision_id
+         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
+           AND e.id = $4 AND e.deleted_at IS NULL
+         FOR UPDATE OF e",
+        tx.project,
+        tx.environment,
+        collection,
+        source_id
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// Inserts the sibling a localize prepared: gives the source a group if it has none, checks the
+/// locale is free in it, then writes the entry and its first revision — the same statements
+/// [`create`] runs, with the group attached.
+pub async fn create_localization(
+    tx: &mut ProjectTransaction,
+    entry_id: Uuid,
+    source_id: Uuid,
+    collection: &str,
+    locale: &str,
+    revision: NewRevision<'_>,
+) -> Result<Localized, DbError> {
+    // The source was locked by `source_for_localization`; COALESCE keeps a group a concurrent
+    // localize won while this one prepared its copy.
+    let candidate = Uuid::now_v7();
+    let group = sqlx::query!(
+        "UPDATE entries SET localization_id = coalesce(localization_id, $5)
+         WHERE project_id = $1 AND environment_id = $2 AND collection = $3
+           AND id = $4 AND deleted_at IS NULL
+         RETURNING localization_id",
+        tx.project,
+        tx.environment,
+        collection,
+        source_id,
+        candidate
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    let Some(assigned) = group else {
+        return Ok(Localized::Missing);
+    };
+    let group = assigned.localization_id.unwrap_or(candidate);
+    let occupied = sqlx::query!(
+        "SELECT id FROM entries
+         WHERE project_id = $1 AND environment_id = $2 AND localization_id = $3
+           AND locale = $4 AND deleted_at IS NULL",
+        tx.project,
+        tx.environment,
+        group,
+        locale
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    if let Some(row) = occupied {
+        return Ok(Localized::Occupied(row.id));
+    }
+    let entry = sqlx::query!(
+        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale, localization_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                 coalesce((SELECT (v.definition::jsonb ->> 'single')::boolean
+                           FROM content_type_versions v
+                           WHERE v.project_id = $1 AND v.environment_id = $2 AND v.collection = $4
+                           ORDER BY v.version DESC LIMIT 1), false),
+                 $9, $10)
+         RETURNING created_at, updated_at",
+        tx.project,
+        tx.environment,
+        entry_id,
+        collection,
+        revision.id,
+        revision.slug,
+        revision.title,
+        tx.identity,
+        Some(locale),
+        group
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    let created_at = insert_revision(tx, entry_id, collection, None, revision).await?;
+    claim_draft(tx, entry_id, collection, revision).await?;
+    Ok(Localized::Made(Box::new(Draft {
+        entry_id,
+        collection: collection.to_owned(),
+        created_at: entry.created_at,
+        created_by: tx.identity,
+        updated_at: entry.updated_at,
+        revision: Revision {
+            id: revision.id,
+            base_revision_id: None,
+            author_id: tx.identity,
+            created_at,
+            content_hash: revision.content_hash.to_vec(),
+            title: revision.title.to_owned(),
+        },
+        content: revision.content.to_owned(),
+        locale: Some(locale.to_owned()),
+    })))
 }
 
 /// An entry whose draft or published revision names another (D-065).

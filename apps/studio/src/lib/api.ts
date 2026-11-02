@@ -257,6 +257,16 @@ export interface Draft {
 	/** On a read: entries that link to this one (at most 100, only in collections the role reads),
 	 *  by field, and whether their draft and what readers get of them link to it (D-065). */
 	referenced_by?: Referrer[];
+	/** The entry's locale tag, or null for the project's default (D-087). */
+	locale: string | null;
+	/** Its localization group, itself included; empty when unlocalized (D-087). */
+	localizations: Localization[];
+}
+
+/** A sibling in a localization group (D-087). */
+export interface Localization {
+	id: string;
+	locale: string | null;
 }
 
 /** An entry that links to another (D-065). */
@@ -278,6 +288,8 @@ export interface Summary {
 	revision: Revision;
 	/** What readers get now, if published, and the release it went out in. */
 	published: { revision_id: string; generation: number } | null;
+	/** The entry's locale tag, or null for the project's default (D-087). */
+	locale: string | null;
 }
 
 /** Where an entry stands for readers: never published (or taken down), live as drafted, or
@@ -580,12 +592,14 @@ export async function searchEntries(
 	collection: string,
 	q = '',
 	cursor: string | null = null,
-	createdBy: string | null = null
+	createdBy: string | null = null,
+	locale: string | null = null
 ): Promise<Page<Summary>> {
 	const query = new URLSearchParams({ limit: '100' });
 	if (q.trim() !== '') query.set('q', q.trim());
 	if (cursor !== null) query.set('cursor', cursor);
 	if (createdBy !== null) query.set('created_by', createdBy);
+	if (locale !== null) query.set('locale', locale);
 	return (await (await send('GET', `${entries(project, collection)}?${query}`)).json()) as Page<Summary>;
 }
 
@@ -653,17 +667,38 @@ export async function importEntries(project: string, collection: string, body: s
 	}
 }
 
-/** Saves `content` on top of the revision `etag` names. Sending the same key again is safe. */
+/** Saves `content` on top of the revision `etag` names; `locale` rides the same write, an empty
+ *  tag clearing to the default (D-087). Sending the same key again is safe. */
 export async function saveEntry(
 	project: string,
 	collection: string,
 	entry: string,
 	content: Content,
 	etag: string,
-	key: string
+	key: string,
+	locale?: string
+): Promise<Loaded> {
+	const query = locale === undefined ? '' : `?locale=${encodeURIComponent(locale)}`;
+	return loaded(
+		await send('PUT', `${entries(project, collection)}/${entry}${query}`, content, { 'If-Match': etag, 'Idempotency-Key': key })
+	);
+}
+
+/** Adds a sibling to the entry's localization group in `locale`, starting from its draft; the
+ *  answer is the new entry's loaded draft (D-087). */
+export async function createLocalization(
+	project: string,
+	collection: string,
+	entry: string,
+	locale: string
 ): Promise<Loaded> {
 	return loaded(
-		await send('PUT', `${entries(project, collection)}/${entry}`, content, { 'If-Match': etag, 'Idempotency-Key': key })
+		await send(
+			'POST',
+			`${entries(project, collection)}/${entry}/localizations?locale=${encodeURIComponent(locale)}`,
+			undefined,
+			{ 'Idempotency-Key': newKey() }
+		)
 	);
 }
 

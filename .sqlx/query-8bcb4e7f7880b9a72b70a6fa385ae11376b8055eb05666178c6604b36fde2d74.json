@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT localization_id FROM entries\n         WHERE project_id = $1 AND environment_id = $2 AND collection = $3\n           AND id = $4 AND deleted_at IS NULL\n         FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "localization_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "localization_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "8bcb4e7f7880b9a72b70a6fa385ae11376b8055eb05666178c6604b36fde2d74"
+}

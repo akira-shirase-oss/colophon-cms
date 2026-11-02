@@ -6,14 +6,14 @@ at `origin/lineage/content-cards` and local `studio/content-cards` (`81e7002`) �
 Strapi-style modelling on a diverged base; the maintainer chose to **port its unique work onto
 this lineage** rather than merge. Port backlog, in intended order (done: 1 typography, 2 collection delete — D-083, migration
 0031; 3 email/password — D-084, migration 0032; 4 mirrored references — D-085, no migration;
-5 import/export — D-086, migration 0033):
+5 import/export — D-086, migration 0033; 6 locales — D-087, migration 0034):
 
 1. ~~typography floor (14px minimum; `check-typography.sh` + Studio/testbed CSS — no migration)~~
 2. ~~delete an empty collection~~
 3. ~~email-and-password accounts (sign up, sign in, join by invitation; sign-in card UX)~~
 4. ~~mirrored references (a writable inverse field; main lineage has read-only "Linked from")~~
 5. ~~import/export (JSON array and Strapi-entity import, JSONL export)~~
-6. locales and localization groups (deepest port — entry model, lists, API, Studio)
+6. ~~locales and localization groups (deepest port — entry model, lists, API, Studio)~~
 7. Studio polish (invite dialog, neutral Keycloak theme, new-project checklist)
 
 Each port is a `port/<name>` branch merged into `main` when complete, migrations renumber from

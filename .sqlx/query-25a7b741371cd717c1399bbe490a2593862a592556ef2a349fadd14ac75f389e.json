@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE entries SET localization_id = coalesce(localization_id, $5)\n         WHERE project_id = $1 AND environment_id = $2 AND collection = $3\n           AND id = $4 AND deleted_at IS NULL\n         RETURNING localization_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "localization_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "localization_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "25a7b741371cd717c1399bbe490a2593862a592556ef2a349fadd14ac75f389e"
+}

@@ -62,6 +62,7 @@ const CREATE: &str = "entry.create";
 const SAVE: &str = "entry.save";
 const DELETE: &str = "entry.delete";
 const IMPORT: &str = "entry.import";
+const LOCALIZE: &str = "entry.localize";
 /// An import is at most this many items, so one upload stays a bounded transaction (D-086).
 const IMPORT_MAX_ITEMS: usize = 512;
 
@@ -131,6 +132,18 @@ struct DraftView {
     /// collections the caller's role reads; left out of create and save answers.
     #[serde(skip_serializing_if = "Option::is_none")]
     referenced_by: Option<Vec<ReferrerView>>,
+    /// The entry's locale tag, or `null` for the project's default (D-087).
+    locale: Option<String>,
+    /// The entries of its localization group, including itself (D-087): `[]` when it is
+    /// unlocalized. Filled by the answer's writer, which looks them up in the transaction.
+    localizations: Vec<LocalizationView>,
+}
+
+/// A sibling in a localization group, as a draft's `localizations` lists it (D-087).
+#[derive(Serialize)]
+struct LocalizationView {
+    id: Uuid,
+    locale: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -171,6 +184,8 @@ impl DraftView {
             hidden_fields,
             published,
             referenced_by: None,
+            locale: draft.locale,
+            localizations: Vec::new(),
         })
     }
 }
@@ -193,6 +208,8 @@ struct SummaryView {
     /// What readers get now, if the entry is published: so a list can say draft, live or
     /// changed since it went live.
     published: Option<LiveView>,
+    /// The entry's locale tag, or `null` for the project's default (D-087).
+    locale: Option<String>,
 }
 
 /// Whether an entry is live, as an answer about it says.
@@ -246,6 +263,36 @@ pub(crate) struct ListQuery {
     cursor: Option<String>,
     q: Option<String>,
     created_by: Option<String>,
+    locale: Option<String>,
+}
+
+/// The `?locale=` a create, save or localize takes (D-087).
+#[derive(Deserialize)]
+pub(crate) struct LocaleQuery {
+    locale: Option<String>,
+}
+
+/// A locale label is a BCP-47 tag: `en`, `en-US`, `pt-BR` — a language subtag of two or three
+/// letters, then subtags of one to eight letters or digits, at most 35 characters over all
+/// (BCP 47's own bound). The API shape-checks it; there is no locale table to join against.
+fn check_locale(locale: &str) -> Result<(), ApiError> {
+    let shape = locale.len() <= 35
+        && locale.split('-').enumerate().all(|(index, tag)| {
+            if index == 0 {
+                (2..=3).contains(&tag.len()) && tag.bytes().all(|byte| byte.is_ascii_alphabetic())
+            } else {
+                (1..=8).contains(&tag.len()) && tag.bytes().all(|byte| byte.is_ascii_alphanumeric())
+            }
+        });
+    if shape {
+        Ok(())
+    } else {
+        Err(ApiError::Invalid(Refusal {
+            code: "invalid_locale",
+            pointer: "/locale".to_owned(),
+            message: format!("\"{locale}\" isn't a BCP-47 locale tag (like \"en\" or \"pt-BR\")"),
+        }))
+    }
 }
 
 #[derive(Deserialize)]
@@ -514,6 +561,32 @@ async fn unique_free(
     ))
 }
 
+/// The `?locale=` a save writes once its revision lands (D-087): `None` clears to the project's
+/// default. A locale a sibling of the entry's group already holds is refused `locale_taken`,
+/// and clearing a grouped entry `locale_required` — the group needs each member named.
+async fn apply_locale(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    entry: Uuid,
+    locale: Option<&str>,
+) -> Result<(), ApiError> {
+    match entries::set_locale(tx, collection, entry, locale)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        entries::SetLocale::Set => Ok(()),
+        entries::SetLocale::Occupied(_) => Err(ApiError::conflict(
+            "locale_taken",
+            "a version in that locale already exists",
+        )),
+        entries::SetLocale::Grouped => Err(ApiError::conflict(
+            "locale_required",
+            "an entry in a localization group keeps a locale",
+        )),
+        entries::SetLocale::Missing => Err(ApiError::NotFound),
+    }
+}
+
 /// Whether a refusal may name an entry in the way, created by `created_by`: only when the
 /// caller's role reads its title (step R.3), so a refusal never shows a title the role can't
 /// read. The refusal itself still says the slug or value is taken, as any unique rule must.
@@ -764,9 +837,19 @@ async fn finish(
     operation: &str,
     key: &str,
     status: StatusCode,
-    view: DraftView,
+    mut view: DraftView,
 ) -> Result<Response, ApiError> {
     let revision = view.revision.id;
+    // Every draft answer carries its localization group (D-087); unlocalized entries answer `[]`.
+    view.localizations = entries::localizations(&mut tx, &view.collection, view.id)
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .map(|sibling| LocalizationView {
+            id: sibling.id,
+            locale: sibling.locale,
+        })
+        .collect();
     let body = serde_json::to_string(&Data { data: view }).map_err(ApiError::internal)?;
     idempotency::complete(&mut tx, operation, key, status.as_u16(), &body)
         .await
@@ -782,11 +865,18 @@ pub(crate) async fn create(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<CollectionPath>,
+    Query(query): Query<LocaleQuery>,
     headers: HeaderMap,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let key = idempotency_key(&headers)?;
     let Json(value) = body?;
+    // `?locale=` names the entry's locale; an empty value leaves it unlocalized, like omitting
+    // the parameter.
+    let locale = query.locale.as_deref().filter(|locale| !locale.is_empty());
+    if let Some(locale) = locale {
+        check_locale(locale)?;
+    }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     // A new entry is the creator's own.
     let create = tx
@@ -805,7 +895,12 @@ pub(crate) async fn create(
     let (value, defaulted) = content_type.with_defaults(&value);
     let (content, hash) = validate(&value, &content_type)?;
     visibility::only_permitted_fields(content.canonical_json(), &create, &defaulted)?;
-    let request = request_hash(&[CREATE, &path.collection, content.canonical_json()]);
+    let request = request_hash(&[
+        CREATE,
+        &path.collection,
+        locale.unwrap_or(""),
+        content.canonical_json(),
+    ]);
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
         return Ok(replay);
     }
@@ -821,7 +916,7 @@ pub(crate) async fn create(
     )
     .await?;
     let revision = new_revision(&content, &hash, version, &unique);
-    let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision)
+    let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision, locale)
         .await
         .map_err(ApiError::from_db)?;
     sync_inverses(
@@ -935,7 +1030,7 @@ pub(crate) async fn import(
     // A single type holds one entry: refuse the file before writing any of it.
     if content_type.single()
         && (items.len() > 1
-            || !entries::list(&mut tx, &path.collection, None, 1, None, None)
+            || !entries::list(&mut tx, &path.collection, None, 1, None, None, None)
                 .await
                 .map_err(ApiError::from_db)?
                 .is_empty())
@@ -972,6 +1067,8 @@ pub(crate) async fn import(
             Uuid::now_v7(),
             &path.collection,
             new_revision(&content, &hash, version, &unique),
+            // An imported entry lands unlocalized; its locale is set on it afterwards.
+            None,
         )
         .await
         .map_err(|error| on_index(ApiError::from_db(error), &at))?;
@@ -995,6 +1092,155 @@ pub(crate) async fn import(
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(json(StatusCode::CREATED, body, None, false))
+}
+
+/// `POST {P}/collections/{collection}/entries/{entry}/localizations?locale=` (D-087): a
+/// sibling entry holding a copy of the source's draft, in one group with it. Creating it is a
+/// create — `content.create` gates it and the copied document goes through the same
+/// validation, field lists, slug and uniqueness checks as any new entry — plus its own rules:
+/// one entry per locale per group, and a group member's locale can't be taken by another.
+pub(crate) async fn localize(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<EntryPath>,
+    Query(query): Query<LocaleQuery>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let key = idempotency_key(&headers)?;
+    let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
+    let locale = query.locale.as_deref().ok_or(ApiError::InvalidField {
+        reason: "missing_locale",
+        pointer: "/locale",
+        message: "name the locale to add, like ?locale=fr".to_owned(),
+    })?;
+    check_locale(locale)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let create = tx
+        .policy
+        .fields(Action::ContentCreate, &path.collection, true)
+        .ok_or(ApiError::missing(
+            Action::ContentCreate,
+            "your role can't create entries here",
+        ))?;
+    content_types::lock_for_write(&mut tx, &path.collection)
+        .await
+        .map_err(ApiError::from_db)?;
+    let (content_type, version) = content_type(&state, &mut tx, &path.collection).await?;
+    let request = request_hash(&[LOCALIZE, &path.collection, &entry.to_string(), locale]);
+    if let Some(replay) = claim(&mut tx, LOCALIZE, key, &request).await? {
+        return Ok(replay);
+    }
+    let source = entries::source_for_localization(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    // A group member keeps a locale (the table's CHECK); an untagged source can't join one, so
+    // its first version is asked to name its own locale first — the editor's locale field does.
+    if source.locale.is_none() {
+        return Err(ApiError::conflict(
+            "locale_required",
+            "give this entry a locale before adding versions",
+        ));
+    }
+    // The sibling starts as the source's draft, with a slug of its own where the type has one:
+    // the copied one would fail `entries_draft_slug` the moment it was stored.
+    let mut value: Value = serde_json::from_str(&source.content).map_err(ApiError::internal)?;
+    derive_slug(&mut tx, &path.collection, &content_type, &mut value, locale).await?;
+    let (value, defaulted) = content_type.with_defaults(&value);
+    let (content, hash) = validate(&value, &content_type)?;
+    visibility::only_permitted_fields(content.canonical_json(), &create, &defaulted)?;
+    let unique = content_type.unique_fields();
+    unique_free(
+        &mut tx,
+        &path.collection,
+        &content_type,
+        &unique,
+        &content,
+        None,
+    )
+    .await?;
+    let revision = new_revision(&content, &hash, version, &unique);
+    match entries::create_localization(
+        &mut tx,
+        Uuid::now_v7(),
+        entry,
+        &path.collection,
+        locale,
+        revision,
+    )
+    .await
+    .map_err(ApiError::from_db)?
+    {
+        entries::Localized::Made(draft) => {
+            // The copy's references count like a create's: their mirrors point back at the
+            // sibling (D-085).
+            sync_inverses(
+                &state,
+                &mut tx,
+                &content_type,
+                &path.collection,
+                draft.entry_id,
+                None,
+                Some(&draft.content),
+            )
+            .await?;
+            let access = Access::of(&tx.policy, tx.identity, &path.collection, draft.created_by);
+            let view = DraftView::shown(*draft, Publication::NotLookedUp, &access, &content_type)?;
+            finish(tx, LOCALIZE, key, StatusCode::CREATED, view).await
+        }
+        entries::Localized::Occupied(_) => Err(ApiError::conflict(
+            "locale_taken",
+            "a version in that locale already exists",
+        )),
+        entries::Localized::Missing => Err(ApiError::NotFound),
+    }
+}
+
+/// Gives a copied document a slug of its own: `{slug}-{locale}`, numbered past it when that is
+/// taken — at most ten tries before the write is refused. A document whose type has no slug
+/// field, or whose slug is empty, copies verbatim.
+async fn derive_slug(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    content_type: &ContentType,
+    value: &mut Value,
+    locale: &str,
+) -> Result<(), ApiError> {
+    let Some(field) = content_type
+        .fields()
+        .iter()
+        .find(|field| matches!(field.kind, FieldKind::Slug { .. }))
+    else {
+        return Ok(());
+    };
+    let Some(object) = value.as_object_mut() else {
+        return Ok(());
+    };
+    let Some(base) = object.get(&field.id).and_then(Value::as_str) else {
+        return Ok(());
+    };
+    if base.is_empty() {
+        return Ok(());
+    }
+    for suffix in 1..=10 {
+        let candidate = if suffix == 1 {
+            format!("{base}-{locale}")
+        } else {
+            format!("{base}-{locale}-{suffix}")
+        };
+        if entries::slug_holder(tx, collection, &candidate, None)
+            .await
+            .map_err(ApiError::from_db)?
+            .is_none()
+        {
+            object.insert(field.id.clone(), Value::String(candidate));
+            return Ok(());
+        }
+    }
+    Err(ApiError::conflict(
+        "slug_taken",
+        "no free slug for a version in that locale; rename a sibling's slug first",
+    ))
 }
 
 /// An import body as items, with `at` mapping an index to its pointer prefix — `/line/3` for
@@ -1075,19 +1321,32 @@ fn on_index(error: ApiError, prefix: &str) -> ApiError {
     }
 }
 
-/// `PUT {P}/collections/{collection}/entries/{entry}`.
-pub(crate) async fn save(
-    State(state): State<AppState>,
-    caller: SignedIn,
-    Path(path): Path<EntryPath>,
-    headers: HeaderMap,
-    body: Result<Json<Value>, JsonRejection>,
-) -> Result<Response, ApiError> {
-    let expected = if_match(&headers)?;
-    let key = idempotency_key(&headers)?;
-    let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
-    let Json(value) = body?;
-    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+/// What a save's preamble established (D-058, step R.3).
+struct PreparedSave {
+    /// What the caller may do with this entry, by whose it is.
+    access: Access,
+    /// The collection's current content type and its version.
+    content_type: Arc<ContentType>,
+    version: i32,
+    /// The validated new document and its hash.
+    content: Content,
+    hash: [u8; 32],
+    /// The document `If-Match` named — the mirror diff's "before" and the base hidden fields
+    /// are restored from.
+    stored: Option<String>,
+}
+
+/// The checks a save runs before its revision is built: the role may change this entry at all,
+/// the type is locked and loaded, the stored revision the editor started from is restored into
+/// the hidden fields, and the document validates under the caller's update grant.
+async fn prepare_save(
+    state: &AppState,
+    tx: &mut ProjectTransaction,
+    path: &EntryPath,
+    entry: Uuid,
+    expected: Uuid,
+    value: Value,
+) -> Result<PreparedSave, ApiError> {
     if [false, true].into_iter().all(|own| {
         tx.policy
             .fields(Action::ContentUpdate, &path.collection, own)
@@ -1098,12 +1357,12 @@ pub(crate) async fn save(
             "your role can't change entries here",
         ));
     }
-    content_types::lock_for_write(&mut tx, &path.collection)
+    content_types::lock_for_write(tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
-    let (content_type, version) = content_type(&state, &mut tx, &path.collection).await?;
+    let (content_type, version) = content_type(state, tx, &path.collection).await?;
     // What this caller may do with this entry, by whose it is (D-058, step R.3).
-    let created_by = entries::creators(&mut tx, &[entry])
+    let created_by = entries::creators(tx, &[entry])
         .await
         .map_err(ApiError::from_db)?
         .into_iter()
@@ -1118,7 +1377,7 @@ pub(crate) async fn save(
     ))?;
     // The version the editor started from; revisions never change. A stale one is reported by
     // the save itself.
-    let stored = entries::revision(&mut tx, &path.collection, entry, expected)
+    let stored = entries::revision(tx, &path.collection, entry, expected)
         .await
         .map_err(ApiError::from_db)?
         .map(|(_, content)| content);
@@ -1130,12 +1389,48 @@ pub(crate) async fn save(
     if let Some(stored) = &stored {
         visibility::only_permitted_changes(content.canonical_json(), stored, &update)?;
     }
+    Ok(PreparedSave {
+        access,
+        content_type,
+        version,
+        content,
+        hash,
+        stored,
+    })
+}
+
+/// `PUT {P}/collections/{collection}/entries/{entry}`.
+pub(crate) async fn save(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<EntryPath>,
+    Query(query): Query<LocaleQuery>,
+    headers: HeaderMap,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let expected = if_match(&headers)?;
+    let key = idempotency_key(&headers)?;
+    let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
+    let Json(value) = body?;
+    // `?locale=` rides the same write: a tag names the entry's locale, an empty value clears it
+    // to the project's default (D-087). An absent parameter leaves the locale alone.
+    let set = query
+        .locale
+        .as_deref()
+        .map(|locale| (!locale.is_empty()).then_some(locale));
+    if let Some(Some(locale)) = set {
+        check_locale(locale)?;
+    }
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let prepared = prepare_save(&state, &mut tx, &path, entry, expected, value).await?;
     let request = request_hash(&[
         SAVE,
         &path.collection,
         &entry.to_string(),
         &expected.to_string(),
-        content.canonical_json(),
+        // Absent and clear must hash differently: they are different requests.
+        set.map_or("", |locale| locale.unwrap_or("\u{0}")),
+        prepared.content.canonical_json(),
     ]);
     if let Some(replay) = claim(&mut tx, SAVE, key, &request).await? {
         return Ok(replay);
@@ -1143,22 +1438,22 @@ pub(crate) async fn save(
     slug_free(
         &mut tx,
         &path.collection,
-        &content_type,
-        &content,
+        &prepared.content_type,
+        &prepared.content,
         Some(entry),
     )
     .await?;
-    let unique = content_type.unique_fields();
+    let unique = prepared.content_type.unique_fields();
     unique_free(
         &mut tx,
         &path.collection,
-        &content_type,
+        &prepared.content_type,
         &unique,
-        &content,
+        &prepared.content,
         Some(entry),
     )
     .await?;
-    let revision = new_revision(&content, &hash, version, &unique);
+    let revision = new_revision(&prepared.content, &prepared.hash, prepared.version, &unique);
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.
     match entries::save(&mut tx, entry, expected, revision)
         .await
@@ -1170,14 +1465,25 @@ pub(crate) async fn save(
             sync_inverses(
                 &state,
                 &mut tx,
-                &content_type,
+                &prepared.content_type,
                 &path.collection,
                 draft.entry_id,
-                stored.as_deref(),
+                prepared.stored.as_deref(),
                 Some(&draft.content),
             )
             .await?;
-            let view = DraftView::shown(*draft, Publication::NotLookedUp, &access, &content_type)?;
+            let mut draft = *draft;
+            // The save and the locale change commit or fail together (D-087).
+            if let Some(locale) = set {
+                apply_locale(&mut tx, &path.collection, entry, locale).await?;
+                draft.locale = locale.map(str::to_owned);
+            }
+            let view = DraftView::shown(
+                draft,
+                Publication::NotLookedUp,
+                &prepared.access,
+                &prepared.content_type,
+            )?;
             finish(tx, SAVE, key, StatusCode::OK, view).await
         }
         Saved::Stale { current } => Err(ApiError::StaleRevision { current }),
@@ -1394,10 +1700,21 @@ pub(crate) async fn get(
             published: referrer.published,
         })
         .collect();
+    // Its localization group, the entry itself included (D-087).
+    let localizations = entries::localizations(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        .map(|sibling| LocalizationView {
+            id: sibling.id,
+            locale: sibling.locale,
+        })
+        .collect();
     tx.commit().await.map_err(ApiError::from_db)?;
     let revision = draft.revision.id;
     let mut view = DraftView::shown(draft, published.into(), &access, &content_type)?;
     view.referenced_by = Some(referenced_by);
+    view.localizations = localizations;
     let body = serde_json::to_string(&Data { data: view }).map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, Some(revision), false))
 }
@@ -1422,8 +1739,20 @@ fn after_cursor(path: &CollectionPath, project: Uuid, cursor: &str) -> Result<Uu
         ))
 }
 
-/// A list's page size, title search and creator, checked.
-fn list_query(query: &ListQuery) -> Result<(i64, Option<&str>, Option<Uuid>), ApiError> {
+/// A list's filters, checked.
+struct ListArgs<'a> {
+    /// Page size.
+    limit: i64,
+    /// Title search.
+    search: Option<&'a str>,
+    /// Whose entries were asked for.
+    asked: Option<Uuid>,
+    /// The locale to filter on.
+    locale: Option<&'a str>,
+}
+
+/// A list's page size, title search, creator and locale, checked.
+fn list_query(query: &ListQuery) -> Result<ListArgs<'_>, ApiError> {
     let limit = query.limit.unwrap_or(DEFAULT_PAGE);
     if !(1..=entries::MAX_PAGE).contains(&limit) {
         return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
@@ -1446,7 +1775,17 @@ fn list_query(query: &ListQuery) -> Result<(i64, Option<&str>, Option<Uuid>), Ap
                 .map_err(|_| ApiError::InvalidHeader("created_by must be an identity id"))
         })
         .transpose()?;
-    Ok((limit, search, asked))
+    let locale = query
+        .locale
+        .as_deref()
+        .map(|locale| check_locale(locale).map(|()| locale))
+        .transpose()?;
+    Ok(ListArgs {
+        limit,
+        search,
+        asked,
+        locale,
+    })
 }
 
 /// Whose entries a list may hold.
@@ -1507,7 +1846,12 @@ pub(crate) async fn list(
     Path(path): Path<CollectionPath>,
     Query(query): Query<ListQuery>,
 ) -> Result<Response, ApiError> {
-    let (limit, search, asked) = list_query(&query)?;
+    let ListArgs {
+        limit,
+        search,
+        asked,
+        locale,
+    } = list_query(&query)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_read(&tx, &path.collection)?;
     // An unknown collection is 404, not an empty list.
@@ -1547,10 +1891,17 @@ pub(crate) async fn list(
             return Ok(json(StatusCode::OK, body, None, false));
         }
     };
-    let mut rows: Vec<Summary> =
-        entries::list(&mut tx, &path.collection, before, limit + 1, search, by)
-            .await
-            .map_err(ApiError::from_db)?;
+    let mut rows: Vec<Summary> = entries::list(
+        &mut tx,
+        &path.collection,
+        before,
+        limit + 1,
+        search,
+        by,
+        locale,
+    )
+    .await
+    .map_err(ApiError::from_db)?;
     let (policy, identity) = (tx.policy.clone(), tx.identity);
     tx.commit().await.map_err(ApiError::from_db)?;
     let more = rows.len() > usize::try_from(limit).unwrap_or(usize::MAX);
@@ -1576,6 +1927,7 @@ pub(crate) async fn list(
                     revision_id,
                     generation,
                 }),
+                locale: row.locale,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;

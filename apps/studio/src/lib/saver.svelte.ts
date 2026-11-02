@@ -50,6 +50,10 @@ const RETRY_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 
 export class Saver {
 	status = $state<SaveStatus>('saved');
+	/** The locale the next save carries (D-087): `''` is the project's default. The editor's
+	 *  locale input binds here; a change alone makes the next edit worth saving. */
+	locale = $state('');
+	#savedLocale: string;
 	/** The ETag of the revision the edits build on: the next save's If-Match. */
 	etag = $state('');
 	message = $state('');
@@ -98,6 +102,8 @@ export class Saver {
 		this.etag = loaded.etag;
 		this.#saved = loaded.draft.content;
 		this.#latest = loaded.draft.content;
+		this.locale = loaded.draft.locale ?? '';
+		this.#savedLocale = this.locale;
 	}
 
 	/** Edits kept on this device from an earlier visit. Returns what the editor should show.
@@ -113,7 +119,8 @@ export class Saver {
 			this.#latest = sent.content;
 			this.#newest = content;
 			this.#key = sent.key;
-			this.#keyFor = `${sent.base}\n${canonical(this.definition, sent.content)}`;
+			if (sent.locale !== undefined) this.locale = sent.locale;
+			this.#keyFor = `${sent.base}\n${canonical(this.definition, sent.content)}\n${this.locale}`;
 			// The base's content is unknown here; nothing compares equal to it until the answer.
 			this.#saved = { '\u0000': true };
 			this.message = 'Restored unsaved changes from this device.';
@@ -175,7 +182,7 @@ export class Saver {
 			this.#keep(this.conflict.etag, content);
 			return;
 		}
-		if (!this.#inFlight && this.#sent === null && this.#same(content, this.#saved)) {
+		if (!this.#inFlight && this.#sent === null && this.#same(content, this.#saved) && this.locale === this.#savedLocale) {
 			clearTimeout(this.#timer);
 			forget(this.project, this.entry);
 			this.status = 'saved';
@@ -242,27 +249,33 @@ export class Saver {
 			return;
 		}
 		const content = this.#latest;
-		if (this.#same(content, this.#saved)) {
+		if (this.#same(content, this.#saved) && this.locale === this.#savedLocale) {
 			this.status = 'saved';
 			forget(this.project, this.entry);
 			return;
 		}
-		// The same request (same base, same content) keeps its key, so a retry can be replayed.
-		const fingerprint = `${this.etag}\n${canonical(this.definition, content)}`;
+		// The same request (same base, same content, same locale) keeps its key, so a retry can
+		// be replayed.
+		const fingerprint = `${this.etag}\n${canonical(this.definition, content)}\n${this.locale}`;
 		if (fingerprint !== this.#keyFor) {
 			this.#key = newKey();
 			this.#keyFor = fingerprint;
 		}
 		this.#inFlight = true;
 		if (this.status !== 'retrying') this.status = 'saving';
+		// `?locale=` only rides a save that means it: a tag to set, or an explicit clear of a
+		// tag that was set — never-localized entries send none, so their URLs don't change.
+		const locale = this.locale === '' && this.#savedLocale === '' ? undefined : this.locale;
 		// Kept before it leaves, so a reload can send this exact request again.
-		this.#sent = { base: this.etag, key: this.#key, content };
+		this.#sent = { base: this.etag, key: this.#key, content, locale };
 		this.#keep(this.etag, this.#newest ?? this.#latest);
 		try {
-			const result = await saveEntry(this.project, this.collection, this.entry, content, this.etag, this.#key);
+			const result = await saveEntry(this.project, this.collection, this.entry, content, this.etag, this.#key, locale);
 			this.#sent = null;
 			this.etag = result.etag;
 			this.#saved = result.draft.content;
+			this.#savedLocale = result.draft.locale ?? '';
+			this.locale = this.#savedLocale;
 			this.#retries = 0;
 			this.#notBefore = 0;
 			this.busy = false;
@@ -273,7 +286,7 @@ export class Saver {
 				this.#latest = this.#newest;
 				this.#newest = null;
 			}
-			if (this.#same(this.#latest, this.#saved)) {
+			if (this.#same(this.#latest, this.#saved) && this.locale === this.#savedLocale) {
 				this.status = 'saved';
 				forget(this.project, this.entry);
 			} else {
