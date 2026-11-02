@@ -162,7 +162,9 @@ export default function (data) {
       'If-Match': stale ? '"v99"' : '"v1"', 'Idempotency-Key': key(),
       'X-CSRF-Token': data.session.csrf, Cookie: data.session.cookie, Origin: PUBLIC_URL,
     };
-    const expected = stale ? 'stale_version' : kept === 'full' ? 'collection_not_empty' : kept === 'linked' ? 'still_referenced' : 'collection_has_history';
+    // A schema referrer refuses before the version is even read (D-073's lock order puts it
+    // first), so `linked` says still_referenced however stale the If-Match.
+    const expected = kept === 'linked' ? 'still_referenced' : stale ? 'stale_version' : kept === 'full' ? 'collection_not_empty' : 'collection_has_history';
     const refused = http.del(`${data.types}/${kept}`, null, { headers, redirects: 0, responseCallback: REFUSED, tags: { endpoint: 'refused', name: 'content-types/{slug}' } });
     check(refused, {
       'refused 409': (r) => r.status === 409,
