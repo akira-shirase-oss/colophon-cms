@@ -146,9 +146,10 @@ export type FieldDefinition = {
 	/** `#rrggbb`, lowercase. */
 	| { type: 'color' }
 	/** Step M.2 (D-065): entries of the collection `to`, by id: one, or a list of up to `max`
-	 *  distinct ones. The database keeps them from dangling. */
-	| { type: 'reference'; to: string; many: false }
-	| { type: 'reference'; to: string; many: true; max: number }
+	 *  distinct ones. The database keeps them from dangling. `inverse` (D-085) names a
+	 *  reference field on `to` that points back here: writes to this field mirror into it. */
+	| { type: 'reference'; to: string; many: false; inverse?: string }
+	| { type: 'reference'; to: string; many: true; max: number; inverse?: string }
 	/** Step M.3 (D-066): structures, at most three deep, written in definition order. Nested
 	 *  fields: a group of fields (Strapi's component). */
 	| {

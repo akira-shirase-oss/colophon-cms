@@ -31,7 +31,7 @@ use colophon_db::{
 };
 use colophon_domain::{
     project::Slug,
-    schema::{self, Component, ContentType, Refusal, Successor, Unlisted},
+    schema::{self, Component, ContentType, FieldKind, Refusal, Successor, Unlisted},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
@@ -399,7 +399,65 @@ pub(crate) async fn create(
         ),
         other => ApiError::from_db(other),
     })?;
+    // Inside the write's transaction, so a collection may mirror its own fields.
+    match check_inverses(&mut tx, slug.as_str(), &definition).await {
+        Err(ApiError::Invalid(refusal)) => return Err(within(refusal)),
+        other => other?,
+    }
     finish(tx, CREATE, key, StatusCode::CREATED, version).await
+}
+
+/// A declared `inverse` must name a top-level reference field on the target collection whose
+/// `to` points back at this one (D-085) — the mirror every entry write keeps in sync. A plain
+/// `to` still tolerates a missing collection (D-065); an inverse can't be verified against
+/// one, so it refuses. The target's definition is read expanded, so the mirror may come from a
+/// component.
+async fn check_inverses(
+    tx: &mut ProjectTransaction,
+    slug: &str,
+    next: &ContentType,
+) -> Result<(), ApiError> {
+    for (index, field) in next.fields().iter().enumerate() {
+        let FieldKind::Reference {
+            to,
+            inverse: Some(back),
+            ..
+        } = &field.kind
+        else {
+            continue;
+        };
+        let pointer = format!("/fields/{index}/inverse");
+        let Some(target) = content_types::current(tx, to)
+            .await
+            .map_err(ApiError::from_db)?
+        else {
+            return Err(ApiError::Invalid(Refusal {
+                code: "invalid_inverse",
+                pointer,
+                message: format!(
+                    "`inverse` mirrors onto the `{to}` collection, which doesn't exist"
+                ),
+            }));
+        };
+        let stored: Value = serde_json::from_str(&target.definition).map_err(ApiError::internal)?;
+        let expanded = expand(tx, &stored).await?;
+        let target = ContentType::parse(&expanded).map_err(ApiError::internal)?;
+        let mirrors = target.fields().iter().any(|mirror| {
+            mirror.id == *back
+                && matches!(
+                    &mirror.kind,
+                    FieldKind::Reference { to: mirror_to, .. } if mirror_to == slug
+                )
+        });
+        if !mirrors {
+            return Err(ApiError::Invalid(Refusal {
+                code: "invalid_inverse",
+                pointer,
+                message: format!("`{to}` has no reference field `{back}` back to `{slug}`"),
+            }));
+        }
+    }
+    Ok(())
 }
 
 /// Brings the collection's unique claims in line with a change from unique fields `before` to
@@ -528,7 +586,7 @@ pub(crate) async fn update(
     match previous.successor(&next) {
         Successor::Compatible => {}
         Successor::CheckContent(refusal) => {
-            check_stored(&mut tx, &path.slug, Arc::new(next), refusal).await?;
+            check_stored(&mut tx, &path.slug, Arc::new(next.clone()), refusal).await?;
         }
         Successor::Refused(refusal) => return Err(ApiError::Invalid(refusal)),
     }
@@ -549,6 +607,7 @@ pub(crate) async fn update(
     if before != unique {
         claim_unique(&mut tx, &path.slug, &ids, &before, &unique).await?;
     }
+    check_inverses(&mut tx, &path.slug, &next).await?;
     match content_types::update(
         &mut tx,
         &path.slug,

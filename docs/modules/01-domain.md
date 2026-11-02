@@ -87,6 +87,10 @@ invariant. Production adapters and the simulator both run this code unchanged.
   hold entry ids as canonical lowercase UUIDs, distinct in a list. `Content::references` reports each with its field,
   collection, place and whether the field is a list; whether an id names an entry is the database's to check.
   Pointing a field at another collection is `Refused`.
+- Since D-085 (ported): a top-level `reference` field may name an `inverse` — a field id, validated like one — which the
+  API checks is a reference on `to` that points back here. It serializes after `many`/`max`; it is synchronization
+  metadata, not a shape, so adding, changing or dropping one is always `Compatible`. Only a content type's own fields
+  carry one: `inverse` nested in an object, item, block or component is `invalid_inverse` where it sits.
 - Built in step M.3 (D-066): `object` (nested `fields`), `list` (`of` one kind, never a list or blocks; up to 100) and
   `blocks` (a page builder: up to 20 named kinds of block with their own fields; items carry `_block`, written first).
   Structures nest at most three deep; slugs stay top-level. Validation, the canonical form and the change rules recurse;

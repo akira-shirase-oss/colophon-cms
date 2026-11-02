@@ -570,6 +570,188 @@ fn validate(value: &Value, content_type: &ContentType) -> Result<(Content, [u8; 
     Ok((content, hash))
 }
 
+/// A revision of `content` at `version`, for a create, a save or a mirror write.
+fn new_revision<'a>(
+    content: &'a Content,
+    hash: &'a [u8; 32],
+    version: i32,
+    unique: &'a [String],
+) -> NewRevision<'a> {
+    NewRevision {
+        id: Uuid::now_v7(),
+        content: content.canonical_json(),
+        content_hash: hash,
+        title: content.title(),
+        slug: content.slug(),
+        schema_version: version,
+        references: content.references(),
+        unique,
+    }
+}
+
+/// The ids a top-level reference field holds in a stored document: one string, or a list of
+/// them. Anything else (or a document that isn't one) answers empty.
+fn reference_ids(canonical: Option<&str>, field: &str) -> Vec<String> {
+    let Some(canonical) = canonical else {
+        return Vec::new();
+    };
+    let Ok(document) = serde_json::from_str::<Value>(canonical) else {
+        return Vec::new();
+    };
+    match document.get(field) {
+        Some(Value::String(one)) => vec![one.clone()],
+        Some(Value::Array(list)) => list
+            .iter()
+            .filter_map(|id| id.as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A declared inverse: `to`'s `back` field, which must be a reference pointing at `mine` — the
+/// collection whose field declared it.
+#[derive(Clone, Copy)]
+struct Mirror<'a> {
+    to: &'a str,
+    back: &'a str,
+    mine: &'a str,
+}
+
+/// Adds `entry` to (or removes it from) the `back` field of `other` — one new revision on the
+/// target, inside this transaction (D-085). A `back` that can't take the write — a target that
+/// went away, a field that stopped pointing back, a value the target's type refuses, a save
+/// that lost a race — is skipped rather than sinking the entry write it came from: the forward
+/// reference is the truth; the mirror is kept where it fits. Mirror writes don't recurse.
+async fn write_back(
+    state: &AppState,
+    tx: &mut ProjectTransaction,
+    mirror: Mirror<'_>,
+    other: Uuid,
+    entry: Uuid,
+    add: bool,
+) -> Result<(), ApiError> {
+    let Mirror { to, back, mine } = mirror;
+    let Some(draft) = entries::get(tx, to, other)
+        .await
+        .map_err(ApiError::from_db)?
+    else {
+        return Ok(());
+    };
+    let (b_type, version) = content_type(state, tx, to).await?;
+    let Some(back_field) = b_type.fields().iter().find(|field| field.id == back) else {
+        return Ok(());
+    };
+    let FieldKind::Reference {
+        to: mirror_to,
+        many,
+        ..
+    } = &back_field.kind
+    else {
+        return Ok(());
+    };
+    if mirror_to != mine {
+        return Ok(());
+    }
+    let mut document: Value = serde_json::from_str(&draft.content).map_err(ApiError::internal)?;
+    let id = entry.to_string();
+    if *many {
+        let mut list: Vec<String> = document
+            .get(back)
+            .and_then(Value::as_array)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|value| value.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if add {
+            if list.contains(&id) {
+                return Ok(());
+            }
+            list.push(id);
+        } else {
+            if list.iter().all(|seen| *seen != id) {
+                return Ok(());
+            }
+            list.retain(|seen| *seen != id);
+        }
+        // A `many` field takes one id or more, never `[]`: emptied mirrors drop the key instead.
+        if list.is_empty() {
+            if let Some(object) = document.as_object_mut() {
+                object.remove(back);
+            }
+        } else {
+            document[back] = serde_json::json!(list);
+        }
+    } else if add {
+        if document.get(back).and_then(Value::as_str) == Some(id.as_str()) {
+            return Ok(());
+        }
+        document[back] = Value::String(id);
+    } else {
+        if document.get(back).and_then(Value::as_str) != Some(id.as_str()) {
+            return Ok(());
+        }
+        if let Some(object) = document.as_object_mut() {
+            object.remove(back);
+        }
+    }
+    // Revalidated against the target's own current type: a value it won't take is skipped.
+    let Ok(content) = b_type.validate(&document) else {
+        return Ok(());
+    };
+    let hash = sha256(content.canonical_json().as_bytes());
+    let unique = b_type.unique_fields();
+    let revision = new_revision(&content, &hash, version, &unique);
+    let _ = entries::save(tx, other, draft.revision.id, revision)
+        .await
+        .map_err(ApiError::from_db)?;
+    Ok(())
+}
+
+/// Mirrors `entry`'s `inverse`-declaring reference fields onto their targets (D-085): targets
+/// it gained get `entry` written into the back-field, targets it lost have it removed. `before`
+/// is the outgoing canonical document (`None` on create), `after` the new one (`None` on
+/// delete). Same transaction, so a link and its mirror commit or roll back together.
+async fn sync_inverses(
+    state: &AppState,
+    tx: &mut ProjectTransaction,
+    content_type: &ContentType,
+    collection: &str,
+    entry: Uuid,
+    before: Option<&str>,
+    after: Option<&str>,
+) -> Result<(), ApiError> {
+    for field in content_type.fields() {
+        let FieldKind::Reference {
+            to,
+            inverse: Some(back),
+            ..
+        } = &field.kind
+        else {
+            continue;
+        };
+        let old_ids = reference_ids(before, &field.id);
+        let new_ids = reference_ids(after, &field.id);
+        let mirror = Mirror {
+            to,
+            back,
+            mine: collection,
+        };
+        for other in new_ids.iter().filter(|id| !old_ids.contains(id)) {
+            if let Ok(other) = Uuid::try_parse(other) {
+                write_back(state, tx, mirror, other, entry, true).await?;
+            }
+        }
+        for other in old_ids.iter().filter(|id| !new_ids.contains(id)) {
+            if let Ok(other) = Uuid::try_parse(other) {
+                write_back(state, tx, mirror, other, entry, false).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Records the answer, commits, and only then responds: an acknowledged write is durable.
 async fn finish(
     mut tx: ProjectTransaction,
@@ -632,19 +814,20 @@ pub(crate) async fn create(
         None,
     )
     .await?;
-    let revision = NewRevision {
-        id: Uuid::now_v7(),
-        content: content.canonical_json(),
-        content_hash: &hash,
-        title: content.title(),
-        slug: content.slug(),
-        schema_version: version,
-        references: content.references(),
-        unique: &unique,
-    };
+    let revision = new_revision(&content, &hash, version, &unique);
     let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision)
         .await
         .map_err(ApiError::from_db)?;
+    sync_inverses(
+        &state,
+        &mut tx,
+        &content_type,
+        &path.collection,
+        draft.entry_id,
+        None,
+        Some(&draft.content),
+    )
+    .await?;
     let access = Access::of(&tx.policy, tx.identity, &path.collection, draft.created_by);
     let view = DraftView::shown(draft, Publication::NotLookedUp, &access, &content_type)?;
     finish(tx, CREATE, key, StatusCode::CREATED, view).await
@@ -733,22 +916,25 @@ pub(crate) async fn save(
         Some(entry),
     )
     .await?;
-    let revision = NewRevision {
-        id: Uuid::now_v7(),
-        content: content.canonical_json(),
-        content_hash: &hash,
-        title: content.title(),
-        slug: content.slug(),
-        schema_version: version,
-        references: content.references(),
-        unique: &unique,
-    };
+    let revision = new_revision(&content, &hash, version, &unique);
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.
     match entries::save(&mut tx, entry, expected, revision)
         .await
         .map_err(ApiError::from_db)?
     {
         Saved::Saved(draft) => {
+            // The mirrors move with the diff: `stored` is the outgoing revision's document,
+            // which `expected` named and the save just confirmed was current.
+            sync_inverses(
+                &state,
+                &mut tx,
+                &content_type,
+                &path.collection,
+                draft.entry_id,
+                stored.as_deref(),
+                Some(&draft.content),
+            )
+            .await?;
             let view = DraftView::shown(*draft, Publication::NotLookedUp, &access, &content_type)?;
             finish(tx, SAVE, key, StatusCode::OK, view).await
         }
@@ -836,6 +1022,24 @@ pub(crate) async fn delete(
             Action::ContentDelete,
             "your role can't delete this entry",
         ));
+    }
+    // Its mirrors lose it first: the back-fields drop this entry before the tombstone's
+    // reference check runs, in the same transaction (D-085).
+    if let Some(draft) = entries::get(&mut tx, &path.collection, entry)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        let (definition, _) = content_type(&state, &mut tx, &path.collection).await?;
+        sync_inverses(
+            &state,
+            &mut tx,
+            &definition,
+            &path.collection,
+            entry,
+            Some(&draft.content),
+            None,
+        )
+        .await?;
     }
     // A refusal returns early, dropping the transaction: the claim and the lock roll back.
     match entries::delete(&mut tx, &path.collection, entry, expected)

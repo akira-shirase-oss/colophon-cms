@@ -238,6 +238,30 @@
 						<Input class="h-8 w-20 tabular" type="number" min={1} max={100} aria-label="Most entries in {field.label || 'this field'}" bind:value={def.max} disabled={!editable} />
 					{/if}
 				</fieldset>
+				{#if depth === 0 && self !== ''}
+					{@const backs = (collections.find((item) => item.slug === def.to)?.definition.fields ?? []).filter((other) => other.type === 'reference' && other.to === self)}
+					<label class="grid gap-1.5">
+						<span class="font-medium">Mirrored on {nameOf(def.to)} by</span>
+						<select
+							class={select}
+							value={def.inverse ?? ''}
+							onchange={(event) => {
+								const chosen = event.currentTarget.value;
+								if (chosen === '') delete def.inverse;
+								else def.inverse = chosen;
+							}}
+							disabled={!editable}
+							data-testid="inverse"
+						>
+							<option value="">No field</option>
+							{#each backs as back (back.id)}<option value={back.id}>{back.label}</option>{/each}
+							{#if def.inverse !== undefined && !backs.some((back) => back.id === def.inverse)}
+								<option value={def.inverse}>{def.inverse} (not on {nameOf(def.to)})</option>
+							{/if}
+						</select>
+						<span class="text-xs text-muted-foreground">The field you choose keeps its side of the link itself: a save here writes it there, in the same change. To offer one, add a link back to this type on {nameOf(def.to)} first.</span>
+					</label>
+				{/if}
 			{/if}
 		</div>
 	{:else if def.type === 'object' && def.component !== undefined}
