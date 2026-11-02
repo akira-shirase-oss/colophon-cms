@@ -36,7 +36,7 @@ operation, and the cross-project and identity test families from spec §27 pass.
 
 ## Not its job
 
-- Storing passwords or running MFA. The identity provider does that.
+- Running MFA. The identity provider does that; password accounts keep only an Argon2id hash (D-084).
 - Domain rules such as "an agent cannot approve its own proposal". The domain enforces them using the actor that auth
   supplies.
 - Hostile-tenant open registration (spec §01 non-goal).
@@ -58,6 +58,30 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - The routes live in `colophon-api` (`/auth/login`, `/auth/callback`, `/auth/logout`, `/me`). A sign-in attempt is a
   row keyed by the hash of its `state`, bound to the starting browser by the `colophon_signin` cookie, valid for 10
   minutes and usable once. `return_to` accepts only a path on this site.
+
+### Email and password (D-084, ported from the content-cards line)
+- Beside the provider, an account this Colophon keeps itself: issuer `password`, subject the person's email, so
+  `UNIQUE (issuer, subject)` — one account per normalized email — needs no new machinery. The same identity,
+  session, CSRF, `/me` and logout machinery serves it, so a password account is indistinguishable below the routes.
+- `POST /auth/signup`: the email is trimmed, lowered and checked for `a@b` (≤254 bytes), the password checked for
+  ≥8 characters and ≤512 bytes (bounded so a giant body can't keep Argon2 busy); the hash is made on the blocking
+  pool (Argon2id, PHC string, its parameters inside the stored text) and the identity is created and signed in in
+  one answer (201 + the usual session and CSRF cookies), so an invited person lands able to join. 409
+  `email_taken` for an existing account in any casing.
+- `POST /auth/signin`: 204 with the same cookies. A wrong password and a missing account get the same 400
+  `sign_in_failed` after the same verify work — a parseable dummy hash stands in for a missing account's. The
+  email is normalized the same way before the lookup.
+- Bounded guessing: eight consecutive misses pause the account for fifteen minutes (409 `too_many_attempts`).
+  The row's lock, the verify and the counter all run under `SELECT … FOR UPDATE`, so concurrent guesses serialize;
+  a success resets the counter and the pause. `last_sign_in_at` updates only on a success.
+- Migration 0032 adds `email` (normalized form enforced by CHECK, one partial unique index), `password_hash`
+  (≤255), `failed_sign_ins` and `locked_until`, and grants the application role UPDATE on them. A hash is
+  selected only to verify against — never returned; `/me` doesn't read it.
+- The Studio's welcome page and `/studio/invite` share `AuthForm`: email and password, sign-in or create-account
+  mode, and "Sign in with your organisation" for the provider. Signing up grants nothing — a project still needs
+  an invitation, and only an administrator creates projects.
+- The endpoints are open (a person arrives without a session); they still sit under the `/auth/` per-address
+  rate limit like every management route.
 
 ### Owner bootstrap (spec §04)
 - A one-time, local `colophon admin bootstrap` command binds the first owner to an authenticated issuer and subject.

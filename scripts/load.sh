@@ -50,7 +50,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|deletion|collection-delete|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|deletion|collection-delete|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -70,6 +70,9 @@ if [[ "$scenario" == "steady" || "$scenario" == "stress" ]]; then default_vus=25
 VUS="${VUS:-$default_vus}"
 case "$endpoint" in
   session | projects | setup | delivery | site) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
+  # Every request pays Argon2id on the blocking pool (about 50-100 ms of CPU each): the steady
+  # rate is deliberately low, and the p99 budget is the hashing queue, not the endpoint's work.
+  accounts) RATE="${RATE:-50}" P99_MS="${P99_MS:-500}" ;;
   # Half its requests list entries (a content type lookup too): about 2,000/s at most here, so
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
   cli | members | roles | tokens | schedules | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;

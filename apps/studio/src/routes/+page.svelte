@@ -17,10 +17,11 @@
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
-	import { ApiError, claimSetup, me, signInUrl, signUpUrl } from '#lib/api.ts';
+	import { ApiError, claimSetup, me } from '#lib/api.ts';
 	import { lastProject } from '#lib/lastProject.ts';
 	import MyWork from '#lib/MyWork.svelte';
 	import NewProject from '#lib/NewProject.svelte';
+	import AuthForm from '#lib/shell/AuthForm.svelte';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -83,9 +84,8 @@
 		{/if}
 		<h1 class="text-3xl font-semibold tracking-tight">Welcome to Colophon</h1>
 		<p class="mt-3 text-muted-foreground" data-testid="signed-out">Write, review and publish your website's content, and see what reached your readers.</p>
-		<div class="mt-8 flex flex-wrap justify-center gap-3">
-			<Button href={signInUrl(resolve('/'))} data-sveltekit-reload data-testid="sign-in">Sign in<ArrowRightIcon data-icon="inline-end" /></Button>
-			<Button variant="outline" href={signUpUrl(resolve('/'))} data-sveltekit-reload data-testid="create-account">Create an account</Button>
+		<div class="mt-8 text-left">
+			<AuthForm returnTo={resolve('/')} />
 		</div>
 		<p class="mt-6 text-sm text-muted-foreground">New here? Create an account, then ask the person who runs this Colophon to invite you to a project.</p>
 	</div>

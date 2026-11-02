@@ -99,18 +99,13 @@ async function screen(page: Page, name: string, { words = true }: { words?: bool
 	if (words) expect(await internalTerms(page), `${name}: internal terms`).toEqual([]);
 }
 
-/** Keycloak's sign-up form, filled in for a new person; back in the Studio afterwards. */
-async function signUp(page: Page, first: string, last: string): Promise<string> {
-	const username = `${first.toLowerCase()}-${Date.now().toString(36)}`;
-	await expect(page.locator('#kc-register-form')).toBeVisible();
-	await page.locator('#username').fill(username);
-	await page.locator('#email').fill(`${username}@example.test`);
-	await page.locator('#firstName').fill(first);
-	await page.locator('#lastName').fill(last);
-	await page.locator('#password').fill('a-long-passphrase-1');
-	await page.locator('#password-confirm').fill('a-long-passphrase-1');
-	await page.locator('#kc-form-buttons input[type=submit], #kc-form-buttons button[type=submit]').click();
-	return username;
+/** The Studio's own account form, already in create-account mode: filled in and sent; the
+ *  answer signs the new account in itself (D-084). */
+async function makeAccount(page: Page, name: string): Promise<void> {
+	await page.getByLabel('Your name').fill(name);
+	await page.getByLabel('Email').fill(`${name.split(' ').at(0)?.toLowerCase() ?? 'someone'}-${Date.now().toString(36)}@example.test`);
+	await page.getByLabel('Password').fill('a-long-passphrase-1');
+	await page.getByRole('button', { name: 'Create account and continue' }).click();
 }
 
 async function fresh(browser: Browser): Promise<Page> {
@@ -129,11 +124,10 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await screen(owner, 'welcome');
 	});
 
-	await test.step('they make an account at the identity provider', async () => {
-		await owner.getByTestId('create-account').click();
-		await expect(owner.locator('#kc-register-form')).toBeVisible();
+	await test.step('they make an account right here', async () => {
+		await owner.getByRole('button', { name: 'Create one' }).click();
 		await screen(owner, 'sign-up', { words: false });
-		await signUp(owner, 'Ada', 'Owner');
+		await makeAccount(owner, 'Ada Owner');
 		await expect(owner.getByTestId('setup')).toBeVisible();
 	});
 
@@ -225,8 +219,8 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 	const teammate = await fresh(browser);
 	await test.step('the teammate makes an account first, and learns they need an invitation', async () => {
 		await teammate.goto('/studio/');
-		await teammate.getByTestId('create-account').click();
-		await signUp(teammate, 'Sam', 'Writer');
+		await teammate.getByRole('button', { name: 'Create one' }).click();
+		await makeAccount(teammate, 'Sam Writer');
 		await expect(teammate.getByTestId('not-administrator')).toContainText('invitation link');
 		await screen(teammate, 'not-in-a-project');
 	});

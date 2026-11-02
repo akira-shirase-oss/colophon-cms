@@ -369,10 +369,14 @@ export function signInUrl(returnTo: string): string {
 	return `/auth/login?return_to=${encodeURIComponent(returnTo)}`;
 }
 
-/** Where "Create an account" goes: the identity provider's own sign-up form, then back here
- *  signed in. An account grants nothing by itself (D-043). */
-export function signUpUrl(returnTo: string): string {
-	return `/auth/login?start=create&return_to=${encodeURIComponent(returnTo)}`;
+/** Creates an email-and-password account and starts its session in one step (D-084). */
+export async function signUp(email: string, password: string, display_name?: string): Promise<void> {
+	await send('POST', '/auth/signup', { email, password, ...(display_name ? { display_name } : {}) });
+}
+
+/** Signs in with an email and a password; the session cookie is set by the response itself. */
+export async function signInPassword(email: string, password: string): Promise<void> {
+	await send('POST', '/auth/signin', { email, password });
 }
 
 /** Every request gives up after this long and counts as "no answer": a save is then retried with
