@@ -53,6 +53,7 @@ test('an owner makes a role, chooses what it may do, and someone invited with it
 
 	// Invite someone with it; the invitation names it and says what it's for.
 	await page.goto(`/studio/projects/${project}/members`);
+	await page.getByTestId('invite-member').click();
 	await page.getByLabel('Who is it for?').fill('A copy editor');
 	await page.getByLabel('Role', { exact: true }).selectOption('copy-desk');
 	await expect(page.getByText('Edits articles before they go out.')).toBeVisible();

@@ -14,7 +14,7 @@ this lineage** rather than merge. Port backlog, in intended order (done: 1 typog
 4. ~~mirrored references (a writable inverse field; main lineage has read-only "Linked from")~~
 5. ~~import/export (JSON array and Strapi-entity import, JSONL export)~~
 6. ~~locales and localization groups (deepest port — entry model, lists, API, Studio)~~
-7. Studio polish (invite dialog, neutral Keycloak theme, new-project checklist)
+7. Studio polish (invite dialog, neutral Keycloak theme; the checklist already exists as D-059)
 
 Each port is a `port/<name>` branch merged into `main` when complete, migrations renumber from
 0031, and every port owes the D-018 trio (regression tests, testbed page, load scenario) on the
