@@ -82,3 +82,62 @@ test('a seeded page gains a section through the picker', async ({ page }) => {
 	const draft = (await api(page, 'GET', `${env(project)}/collections/pages/entries/${entry}`)).body?.['data'];
 	expect((draft?.content?.sections as { _block: string }[]).map((item) => item._block)).toEqual(['hero', 'cta', 'features']);
 });
+
+test('the Look tab renders the page and a section click opens its form', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	await page.goto(`/studio/projects/${project}/settings/types`);
+	await page.getByTestId('site-template').click();
+	await page.getByTestId('site-install').click();
+	await page.getByTestId('site-open-home').click();
+
+	// With the second section closed, clicking it in the canvas returns to the form and opens it.
+	const secondToggle = page.getByTestId('section').nth(1).locator('button[aria-expanded]');
+	await secondToggle.click();
+	await expect(secondToggle).toHaveAttribute('aria-expanded', 'false');
+
+	// The canvas is the shared renderer's document over the draft: the seeded hero and call to
+	// action, the theme's stylesheet, the menu's resolved Home link.
+	await page.getByRole('tab', { name: 'Look' }).click();
+	const canvas = page.frameLocator('[data-testid="site-canvas"]');
+	await expect(canvas.locator('h1')).toHaveText('Your site, your way');
+	await expect(canvas.locator('.site-nav a')).toHaveText('Home');
+	await expect(canvas.locator('.site-cta .site-btn')).toHaveText('Read more');
+	await expect(canvas.locator('.site-section')).toHaveCount(2);
+
+	await canvas.locator('.site-cta').click();
+	await expect(page.getByRole('tab', { name: 'Content' })).toHaveAttribute('aria-selected', 'true');
+	await expect(secondToggle).toHaveAttribute('aria-expanded', 'true');
+	await expect(secondToggle).toBeFocused();
+	expect(await violations(page)).toEqual([]);
+});
+
+test('the theme entry shows its design and warns on weak contrast', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	await page.goto(`/studio/projects/${project}/settings/types`);
+	await page.getByTestId('site-template').click();
+	await page.getByTestId('site-install').click();
+	await expect(page.getByTestId('site-open-home')).toBeVisible();
+
+	const theme = ((await api(page, 'GET', `${env(project)}/collections/theme/entries`)).body?.['data'] as { id: string }[])[0];
+	await page.goto(`/studio/projects/${project}/theme/${theme?.id}`);
+
+	// The design sheet is the shared renderer's stylesheet with this draft's variables.
+	await page.getByRole('tab', { name: 'Look' }).click();
+	const sheet = page.frameLocator('[data-testid="theme-canvas"]');
+	await expect(sheet.locator('h1').first()).toHaveText('Heading in the heading font');
+	await expect(sheet.locator('.site-btn').first()).toHaveText('A primary button');
+
+	// A primary that can't carry white text is named, with its ratio.
+	await page.getByRole('tab', { name: 'Content' }).click();
+	await page.getByTestId('group-light').getByLabel('Primary', { exact: true }).fill('#ffffff');
+	await page.getByRole('tab', { name: 'Look' }).click();
+	const warnings = page.getByTestId('contrast-warnings');
+	await expect(warnings).toContainText('buttons and primary sections — 1.00:1');
+	await expect(warnings).toContainText('links and accents — 1.00:1');
+	await expect(warnings).toContainText('#ffffff on #ffffff');
+	// Axe reads a hidden panel out of the tree; on Content the canvas's document is out of scope.
+	await page.getByRole('tab', { name: 'Content' }).click();
+	expect(await violations(page)).toEqual([]);
+});
