@@ -42,6 +42,9 @@
 	let receiptOf = $state('');
 	let receipt = $state('');
 	let delivered = $state('');
+	let restoreOf = $state('');
+	let restoreTitle = $state('');
+	let restored = $state('');
 
 	const api = $derived(`/api/v1/projects/${projectId}/environments/production`);
 
@@ -95,6 +98,21 @@
 			: `HTTP ${response.status}, generation ${response.headers.get('colophon-generation') ?? '?'}: ${titles}`;
 	}
 
+	async function rollback(event: SubmitEvent) {
+		event.preventDefault();
+		const reply = await call('POST', `${api}/releases/${restoreOf.trim()}/rollback`, {
+			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken(), 'Idempotency-Key': crypto.randomUUID() },
+			body: JSON.stringify({ title: restoreTitle })
+		});
+		if (reply.status !== 201) {
+			restored = describe(reply);
+			return;
+		}
+		const made = (reply.body as { data: { id: string; status: { state: string } } }).data;
+		restored = `restore changeset ${made.id} (${made.status.state})`;
+		await load();
+	}
+
 	async function readReceipt(event: SubmitEvent) {
 		event.preventDefault();
 		const reply = await call('GET', `${api}/releases/${receiptOf.trim()}`);
@@ -114,8 +132,10 @@
 <h1>Releases</h1>
 <p class="lede">
 	Publishing through the real API (D-045): commit an approved changeset as the release after a base generation, see a stale base
-	refused, and read <code>/content/v1</code> with no cookie, at the latest release or pinned to an earlier one. Each release has
-	a label and a receipt (D-051): what its destinations did and what its probes saw.
+	refused, and read <code>/content/v1</code> with no cookie, at the latest release or pinned to an earlier one. Rolling back to a
+	release builds an ordinary changeset restoring what that release published — it is reviewed and published like any other, and
+	the generation still moves forward (D-097). Each release has a label and a receipt (D-051): what its destinations did and what
+	its probes saw.
 </p>
 
 {#if signedIn === false}
@@ -162,6 +182,13 @@
 		<button type="submit">Read published articles</button>
 	</form>
 	{#if delivered}<p data-testid="delivered">{delivered}</p>{/if}
+
+	<form onsubmit={rollback}>
+		<label class="field">Roll back to generation <input bind:value={restoreOf} name="restore-of" /></label>
+		<label class="field">Restore changeset title <input bind:value={restoreTitle} name="restore-title" /></label>
+		<button type="submit">Roll back to this release</button>
+	</form>
+	{#if restored}<p data-testid="restored">{restored}</p>{/if}
 
 	<form onsubmit={readReceipt}>
 		<label class="field">Receipt of generation <input bind:value={receiptOf} name="receipt-of" /></label>

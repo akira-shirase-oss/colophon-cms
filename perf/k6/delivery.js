@@ -1,9 +1,11 @@
 // Load scenario for public delivery (step 2.2, D-045). setup() signs in the administrator,
 // creates a project with 20 articles and publishes four releases: all 20, then new revisions of
 // five, then of five more, then takes the last article down (step 3.2, D-049). Every measured
-// request is anonymous (no cookie, no token), as the public reads: 60 in 100 list the latest
+// request is anonymous (no cookie, no token), as the public reads: 50 in 100 list the latest
 // release, 20 list a release pinned at generation 1, 2 or 3 (19 articles each: the one taken down
-// is gone from history too), 10 read one live entry at the latest release, and 10 read the one
+// is gone from history too), 10 read one live entry at the latest release, 10 read one of the
+// five edited articles pinned at generation 1 and must get the revision published then — the
+// 'first' text, not the 'second' the latest release serves (P4, D-097) — and 10 read the one
 // taken down, at the latest release or pinned to 1, and must get 410. Each read runs as
 // colophon_delivery.
 // Same settings as health.js; scripts/load.sh gives this endpoint RATE 2000 and P99_MS 100.
@@ -42,7 +44,7 @@ if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.
 
 const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`] };
 // Reported per kind of request, so a tail can be traced to its cause; only the overall p99 fails a run.
-for (const endpoint of ['latest', 'pinned', 'entry', 'gone']) {
+for (const endpoint of ['latest', 'pinned', 'entry', 'pinned_entry', 'gone']) {
   thresholds[`http_req_duration{endpoint:${endpoint}}`] = ['p(99)<60000'];
 }
 if (__ENV.CACHE !== 'off') {
@@ -112,23 +114,29 @@ export function setup() {
   edit(entries.slice(5, 10), 'third');
   release(entries.slice(5, 10), 2);
   release([], 3, [entries[19]]);
-  return { content: `${BASE_URL}/content/v1/${projectId}/production/articles`, live: entries.slice(0, 19), gone: entries[19] };
+  return { content: `${BASE_URL}/content/v1/${projectId}/production/articles`, live: entries.slice(0, 19), edited: entries.slice(0, 5), gone: entries[19] };
 }
 
 export default function (data) {
   const slot = __ITER % 10;
   const params = (endpoint) => ({ redirects: 0, tags: { endpoint } });
   let res;
-  if (slot < 6) {
+  if (slot < 5) {
     res = http.get(data.content, params('latest'));
     check(res, { 'latest: 19 at generation 4': (r) => r.status === 200 && r.headers['Colophon-Generation'] === '4' && r.json('data').length === 19 });
-  } else if (slot < 8) {
+  } else if (slot < 7) {
     const generation = 1 + (__ITER % 3);
     res = http.get(`${data.content}?generation=${generation}`, params('pinned'));
     check(res, { 'pinned: the generation asked for, without the one taken down': (r) => r.status === 200 && r.headers['Colophon-Generation'] === String(generation) && r.json('data').length === 19 });
-  } else if (slot < 9) {
+  } else if (slot < 8) {
     res = http.get(`${data.content}/${data.live[__ITER % 19]}`, params('entry'));
     check(res, { 'entry 200': (r) => r.status === 200 && r.json('data.published_in') >= 1 });
+  } else if (slot < 9) {
+    res = http.get(`${data.content}/${data.edited[__ITER % 5]}?generation=1`, params('pinned_entry'));
+    check(res, {
+      'pinned entry: generation 1 serves the revision published then': (r) =>
+        r.status === 200 && r.headers['Colophon-Generation'] === '1' && r.json('data.content.body.doc.content')[0].content[0].text === 'first',
+    });
   } else {
     const pinned = __ITER % 20 < 10 ? '' : '?generation=1';
     res = http.get(`${data.content}/${data.gone}${pinned}`, Object.assign(params('gone'), { responseCallback: http.expectedStatuses(410) }));

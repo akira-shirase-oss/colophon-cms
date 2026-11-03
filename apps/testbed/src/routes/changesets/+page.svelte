@@ -20,11 +20,18 @@
 		items: { kind: string; entry_id: string; title: string; edited: boolean }[];
 		reviews: { id: string; decision: string; reviewer_name: string | null; current: boolean }[];
 	}
+	interface Listed {
+		id: string;
+		title: string;
+		status: { state: string };
+	}
 
 	let projects = $state<Project[]>([]);
 	let signedIn = $state<boolean | null>(null);
 	let projectId = $state('');
 	let entries = $state<Summary[]>([]);
+	let listed = $state<Listed[]>([]);
+	let opening = $state('');
 	let picked = $state<string[]>([]);
 	// Entries to take down (D-049). Nothing stops picking one in both lists: the API's answer is the point.
 	let takenDown = $state<string[]>([]);
@@ -54,12 +61,15 @@
 	async function loadEntries() {
 		const reply = await call('GET', `${base}/collections/articles/entries?limit=100`);
 		entries = reply.status === 200 ? (reply.body as { data: Summary[] }).data : [];
+		const sets = await call('GET', `${base}/changesets`);
+		listed = sets.status === 200 ? (sets.body as { data: Listed[] }).data : [];
 		picked = [];
 		takenDown = [];
+		opening = '';
 		open = null;
 	}
 
-	function show(reply: Reply, ok: number, what: string) {
+	async function show(reply: Reply, ok: number, what: string) {
 		if (reply.status === ok) {
 			open = (reply.body as { data: Changeset }).data;
 			hash = open.hash;
@@ -67,6 +77,14 @@
 		} else {
 			message = describe(reply);
 		}
+		const sets = await call('GET', `${base}/changesets`);
+		listed = sets.status === 200 ? (sets.body as { data: Listed[] }).data : listed;
+	}
+
+	// Open one of the project's changesets — one made here earlier, or a restore the Releases page built (D-097).
+	async function openListed() {
+		if (opening === '') return;
+		await show(await call('GET', `${base}/changesets/${opening}`), 200, 'loaded');
 	}
 
 	async function create(event: SubmitEvent) {
@@ -75,12 +93,12 @@
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken(), 'Idempotency-Key': crypto.randomUUID() },
 			body: JSON.stringify({ title, entries: picked, unpublish: takenDown })
 		});
-		show(reply, 201, 'created');
+		await show(reply, 201, 'created');
 	}
 
 	async function reload() {
 		if (open === null) return;
-		show(await call('GET', `${base}/changesets/${open.id}`), 200, 'loaded');
+		await show(await call('GET', `${base}/changesets/${open.id}`), 200, 'loaded');
 	}
 
 	async function act(action: 'submit' | 'refresh' | 'reviews', decision?: string) {
@@ -89,7 +107,7 @@
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken(), 'If-Match': `"${hash}"` },
 			...(decision === undefined ? {} : { body: JSON.stringify({ decision, comment }) })
 		});
-		show(reply, 200, decision ?? action);
+		await show(reply, 200, decision ?? action);
 	}
 
 	onMount(loadProjects);
@@ -110,6 +128,15 @@
 		<select bind:value={projectId} onchange={loadEntries} name="project">
 			{#each projects as project (project.id)}
 				<option value={project.id}>{project.name} ({project.slug})</option>
+			{/each}
+		</select>
+	</label>
+	<label class="field">
+		Open a changeset
+		<select bind:value={opening} onchange={openListed} name="open-changeset">
+			<option value="">—</option>
+			{#each listed as set (set.id)}
+				<option value={set.id}>{set.title} ({set.status.state})</option>
 			{/each}
 		</select>
 	</label>
