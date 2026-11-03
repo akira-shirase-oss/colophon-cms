@@ -124,7 +124,8 @@ colophon/
 ├── packages/
 │   ├── sdk/                    # generated TypeScript client + pinned-read helpers
 │   ├── ui/                     # Material 3 tokens and shared Svelte components (Bits UI)
-│   └── content-renderer/       # Tiptap JSON → safe output, shared by Studio and web
+│   ├── content-renderer/       # Tiptap JSON → safe output, shared by Studio and web
+│   └── site-template/          # the website starter manifest: pages + navigation + theme (W.0)
 ├── migrations/                 # reviewed SQL migrations
 ├── schemas/                    # versioned content-schema definitions and fixtures
 ├── templates/blog/             # blog template manifest, schemas, fixtures

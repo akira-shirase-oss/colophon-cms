@@ -26,5 +26,8 @@
   "imports": {
     "#lib": "./src/lib/index.js",
     "#lib/*": "./src/lib/*"
+  },
+  "dependencies": {
+    "@colophon/site-template": "0.0.0"
   }
 }

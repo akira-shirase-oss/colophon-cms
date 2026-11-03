@@ -17,11 +17,20 @@
 	import { componentsQuery, typesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
+	import SiteTemplateDialog from '#lib/SiteTemplateDialog.svelte';
+	import GlobeIcon from '@lucide/svelte/icons/globe';
+	import { useQueryClient } from '@tanstack/svelte-query';
 
 	const project = $derived(page.params.project ?? '');
 	const types = createQuery(() => typesQuery(project));
 	const components = createQuery(() => componentsQuery(project));
 	const fields = (count: number) => `${count} field${count === 1 ? '' : 's'}`;
+	const queries = useQueryClient();
+	let siteTemplate = $state(false);
+	const installed = () => {
+		void queries.invalidateQueries({ queryKey: ['types', project] });
+		void queries.invalidateQueries({ queryKey: ['components', project] });
+	};
 </script>
 
 <svelte:head><title>Content types · Colophon Studio</title></svelte:head>
@@ -42,6 +51,23 @@
 	</li>
 {/snippet}
 
+{#snippet templateCard()}
+	<li>
+		<button
+			type="button"
+			class="flex h-full w-full items-start gap-3 rounded-xl border border-dashed border-border bg-card/50 p-4 text-left shadow-hairline outline-none hover:border-ring/60 hover:bg-accent focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/25"
+			onclick={() => (siteTemplate = true)}
+			data-testid="site-template"
+		>
+			<span class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background" aria-hidden="true"><GlobeIcon class="size-4" /></span>
+			<span class="grid min-w-0 gap-0.5">
+				<span class="truncate font-medium">A website</span>
+				<span class="text-xs text-muted-foreground">Pages, navigation and a theme, ready to build with</span>
+			</span>
+		</button>
+	</li>
+{/snippet}
+
 <BuilderFrame {project}>
 	<header class="mb-6 space-y-1.5">
 		<h1 class="text-2xl leading-tight font-semibold tracking-tight sm:text-[1.75rem]">Content types</h1>
@@ -55,9 +81,13 @@
 	{:else if types.isPending}
 		<Skeleton class="h-32 w-full rounded-xl" />
 	{:else if types.data.length === 0}
+		<ul class="grid gap-3 sm:grid-cols-2" data-testid="content-types">
+			{@render templateCard()}
+		</ul>
 		<EmptyState icon={ShapesIcon} title="No content types yet" testid="types-empty">Make the first one with New content type, on the left.</EmptyState>
 	{:else}
 		<ul class="grid gap-3 sm:grid-cols-2" data-testid="content-types">
+			{@render templateCard()}
 			{#each types.data as type (type.slug)}
 				{@render card(
 					resolve('/projects/[project]/settings/types/[type]', { project, type: type.slug }),
@@ -84,4 +114,5 @@
 			</ul>
 		{/if}
 	{/if}
+	<SiteTemplateDialog {project} bind:open={siteTemplate} ondone={installed} />
 </BuilderFrame>
