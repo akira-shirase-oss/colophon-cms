@@ -15,6 +15,7 @@
   "dependencies": {
     "@colophon/content-renderer": "0.0.0",
     "@colophon/editor": "0.0.0",
+    "@colophon/site-renderer": "0.0.0",
     "@colophon/site-template": "0.0.0",
     "@colophon/ui": "0.0.0",
     "@tanstack/svelte-query": "6.3.2",

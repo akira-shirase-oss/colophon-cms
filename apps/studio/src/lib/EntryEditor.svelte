@@ -6,7 +6,7 @@
   Technical details with where readers get it and what they get.
 -->
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { asset } from '$app/paths';
 	import type { Editor } from '@tiptap/core';
 	import { createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
@@ -48,6 +48,8 @@
 	import DiffView from './DiffView.svelte';
 	import PublishEntry from './PublishEntry.svelte';
 	import ReaderView from './ReaderView.svelte';
+	import SiteCanvas from './SiteCanvas.svelte';
+	import ThemeLook from './ThemeLook.svelte';
 	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from './queries.ts';
 	import RichTextToolbar from './RichTextToolbar.svelte';
 	import StatusBadge from './shell/StatusBadge.svelte';
@@ -291,7 +293,29 @@
 	// "What readers get": the public read of this entry, in a dialog.
 	let readerView = $state(false);
 
-	let tab = $state<'content' | 'history'>('content');
+	// The site canvas (W.2): pages get a Look tab rendering the draft — sections, menu and theme —
+	// through the shared renderer, and the theme entry a design sheet with its contrast checked.
+	// Clicking a section in a page's canvas opens that section's form.
+	// svelte-ignore state_referenced_locally
+	const sitePage = collection === 'pages' && definition.fields.some((field) => field.id === 'sections' && field.type === 'blocks');
+	// svelte-ignore state_referenced_locally
+	const siteTheme = collection === 'theme' && definition.fields.some((field) => field.id === 'light');
+	/** The content the canvas renders: exactly what a save would send right now. */
+	const canvasContent = $derived(sitePage || siteTheme ? current() : null);
+
+	let tab = $state<'content' | 'visual' | 'history'>('content');
+	const tabs = $derived(sitePage || siteTheme ? [['content', 'Content'], ['visual', 'Look'], ['history', 'History']] as const : [['content', 'Content'], ['history', 'History']] as const);
+	async function editSection(index: number) {
+		tab = 'content';
+		await tick();
+		// The sections list's own items (a nested list's, if a section held one, come under it).
+		const target = document.querySelector<HTMLElement>(`[data-testid="sections-sections"] > [data-testid="section"]:nth-of-type(${index + 1})`);
+		if (target === null) return;
+		const toggle = target.querySelector<HTMLButtonElement>('button[aria-expanded]');
+		if (toggle?.getAttribute('aria-expanded') === 'false') toggle.click();
+		target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		toggle?.focus({ preventScroll: true });
+	}
 
 	// Restoring a version (spec's History screen): its fields become the draft and are saved as a new
 	// version on top of the current one, so nothing in the history is lost and the restore itself can
@@ -440,7 +464,7 @@
 		{/if}
 
 		<div role="tablist" aria-label="Entry" class="mb-6 inline-flex rounded-lg bg-muted p-1">
-			{#each [['content', 'Content'], ['history', 'History']] as const as [value, name] (value)}
+			{#each tabs as [value, name] (value)}
 				<button
 					role="tab"
 					id="tab-{value}"
@@ -451,8 +475,12 @@
 					onclick={() => (tab = value)}
 					onkeydown={(event) => {
 						if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
-							tab = tab === 'content' ? 'history' : 'content';
-							document.getElementById(`tab-${tab}`)?.focus();
+							const at = tabs.findIndex(([v]) => v === tab);
+							const next = tabs[(at + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+							if (next !== undefined) {
+								tab = next[0];
+								document.getElementById(`tab-${tab}`)?.focus();
+							}
 						}
 					}}
 				>
@@ -519,6 +547,16 @@
 				</div>
 			{/each}
 		</div>
+
+		{#if sitePage || siteTheme}
+			<div role="tabpanel" id="panel-visual" aria-labelledby="tab-visual" hidden={tab !== 'visual'}>
+				{#if siteTheme}
+					<ThemeLook content={canvasContent ?? {}} />
+				{:else}
+					<SiteCanvas {project} content={canvasContent ?? {}} onsection={editSection} />
+				{/if}
+			</div>
+		{/if}
 
 		{#if linkedFrom.length > 0}
 			<section class="mt-8" aria-labelledby="linked-from-heading" data-testid="linked-from">

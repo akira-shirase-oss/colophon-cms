@@ -16,6 +16,8 @@ export const RENDERER_VERSION = 1;
 export interface SectionContext {
 	/** The public URL of a media-library asset, for images inside rich text. */
 	assetUrl: (assetId: string) => string;
+	/** Mark every section's root with its index (`data-i`), for the Studio's click-to-edit. */
+	annotate?: boolean;
 }
 
 const DEFAULT_CONTEXT: SectionContext = { assetUrl: (id) => `/assets/${id}` };
@@ -67,70 +69,71 @@ function styleAttributes(block: Block): string {
 	return attrs.length === 0 ? '' : ` ${attrs.join(' ')}`;
 }
 
-const open = (block: Block, name: string): string => `<section class="site-section site-${name}"${styleAttributes(block)}>`;
+const open = (block: Block, name: string, index?: number): string =>
+	`<section class="site-section site-${name}"${index === undefined ? '' : ` data-i="${index}"`}${styleAttributes(block)}>`;
 
-function hero(block: Block): string {
+function hero(block: Block, _ctx: SectionContext, index?: number): string {
 	const heading = requiredText(block, 'heading');
 	const tagline = text(block, 'tagline');
-	return `${open(block, 'hero')}<div class="site-hero-inner">
+	return `${open(block, 'hero', index)}<div class="site-hero-inner">
 <h1>${escapeText(heading)}</h1>
 ${tagline === undefined || tagline === '' ? '' : `<p class="site-tagline">${escapeText(tagline)}</p>\n`}${link(block, 'label', 'url')}
 </div></section>`;
 }
 
-function richText(block: Block, ctx: SectionContext): string {
+function richText(block: Block, ctx: SectionContext, index?: number): string {
 	const content = block['content'];
 	if (content === undefined) throw new UnrenderableSite('content is missing');
 	const body = renderToHtml(content as Parameters<typeof renderToHtml>[0], { assetUrl: ctx.assetUrl });
-	return `${open(block, 'richtext')}<div class="site-prose">\n${body}\n</div></section>`;
+	return `${open(block, 'richtext', index)}<div class="site-prose">\n${body}\n</div></section>`;
 }
 
-function features(block: Block): string {
+function features(block: Block, _ctx: SectionContext, index?: number): string {
 	const heading = text(block, 'heading');
 	const cards = items(block, 'items').map((item) => {
 		const title = requiredText(item, 'title');
 		const body = text(item, 'text');
 		return `<li class="site-card"><h3>${escapeText(title)}</h3>${body === undefined || body === '' ? '' : `\n<p>${escapeText(body)}</p>`}</li>`;
 	});
-	return `${open(block, 'features')}${heading === undefined || heading === '' ? '' : `<h2>${escapeText(heading)}</h2>\n`}
+	return `${open(block, 'features', index)}${heading === undefined || heading === '' ? '' : `<h2>${escapeText(heading)}</h2>\n`}
 <ul class="site-feature-grid">
 ${cards.join('\n')}
 </ul></section>`;
 }
 
-function testimonial(block: Block): string {
+function testimonial(block: Block, _ctx: SectionContext, index?: number): string {
 	const quote = requiredText(block, 'quote');
 	const author = text(block, 'author');
 	const role = text(block, 'role');
 	const byline = [author, role].filter((part) => part !== undefined && part !== '').map((part) => escapeText(part as string)).join(', ');
-	return `${open(block, 'testimonial')}<blockquote>
+	return `${open(block, 'testimonial', index)}<blockquote>
 <p>${escapeText(quote)}</p>
 ${byline === '' ? '' : `<footer>${byline}</footer>\n`}</blockquote></section>`;
 }
 
-function cta(block: Block): string {
+function cta(block: Block, _ctx: SectionContext, index?: number): string {
 	const heading = requiredText(block, 'heading');
 	const body = text(block, 'text');
-	return `${open(block, 'cta')}<div class="site-cta-inner">
+	return `${open(block, 'cta', index)}<div class="site-cta-inner">
 <h2>${escapeText(heading)}</h2>
 ${body === undefined || body === '' ? '' : `<p>${escapeText(body)}</p>\n`}${link(block, 'label', 'url')}
 </div></section>`;
 }
 
-function faq(block: Block): string {
+function faq(block: Block, _ctx: SectionContext, index?: number): string {
 	const heading = text(block, 'heading');
 	const rows = items(block, 'items').map((item) => {
 		const question = requiredText(item, 'question');
 		const answer = requiredText(item, 'answer');
 		return `<div class="site-faq-item"><dt>${escapeText(question)}</dt>\n<dd>${renderMarkdown(answer)}</dd></div>`;
 	});
-	return `${open(block, 'faq')}${heading === undefined || heading === '' ? '' : `<h2>${escapeText(heading)}</h2>\n`}
+	return `${open(block, 'faq', index)}${heading === undefined || heading === '' ? '' : `<h2>${escapeText(heading)}</h2>\n`}
 <dl class="site-faq-list">
 ${rows.join('\n')}
 </dl></section>`;
 }
 
-const KINDS: Record<string, (block: Block, ctx: SectionContext) => string> = {
+const KINDS: Record<string, (block: Block, ctx: SectionContext, index?: number) => string> = {
 	hero,
 	rich_text: richText,
 	features,
@@ -140,15 +143,15 @@ const KINDS: Record<string, (block: Block, ctx: SectionContext) => string> = {
 };
 
 /** One section. `block` is one item of a page's `sections` field — `_block` names its kind. */
-export function renderSection(block: Block, ctx: SectionContext = DEFAULT_CONTEXT): string {
+export function renderSection(block: Block, ctx: SectionContext = DEFAULT_CONTEXT, index?: number): string {
 	const kind = block['_block'];
 	if (typeof kind !== 'string' || !(kind in KINDS)) throw new UnrenderableSite(`a section kind ${JSON.stringify(kind)} is not one the site knows`);
-	return (KINDS[kind] as (block: Block, ctx: SectionContext) => string)(block, ctx);
+	return (KINDS[kind] as (block: Block, ctx: SectionContext, index?: number) => string)(block, ctx, ctx.annotate === true ? index : undefined);
 }
 
 /** A page's `sections` field to HTML, top to bottom. */
 export function renderSections(blocks: unknown, ctx: SectionContext = DEFAULT_CONTEXT): string {
 	if (blocks === undefined || blocks === null) return '';
 	if (!Array.isArray(blocks)) throw new UnrenderableSite('sections is not a list');
-	return blocks.map((block) => renderSection(block as Block, ctx)).join('\n');
+	return blocks.map((block, index) => renderSection(block as Block, ctx, index)).join('\n');
 }
