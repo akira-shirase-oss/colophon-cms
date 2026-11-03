@@ -57,7 +57,7 @@ async fn ready(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid, Uuid) {
     .expect("created");
     let pins = changesets::pins(&mut tx, &[entry]).await.expect("pins");
     let changeset = Uuid::now_v7();
-    changesets::create(&mut tx, changeset, "One", &pins, &[5; 32])
+    changesets::create(&mut tx, changeset, "One", &pins, &[5; 32], None)
         .await
         .expect("created");
     changesets::submit(&mut tx, changeset)
@@ -260,7 +260,7 @@ async fn the_generation_lookup_answers_for_one_project_and_leaves_nothing_behind
 /// A changeset of `pins`, submitted and approved; (changeset, review).
 async fn approved(tx: &mut ProjectTransaction, pins: &[changesets::Pin]) -> (Uuid, Uuid) {
     let changeset = Uuid::now_v7();
-    changesets::create(tx, changeset, "Changes", pins, &[6; 32])
+    changesets::create(tx, changeset, "Changes", pins, &[6; 32], None)
         .await
         .expect("created");
     changesets::submit(tx, changeset).await.expect("submitted");

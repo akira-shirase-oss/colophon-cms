@@ -78,7 +78,7 @@ async fn save(
 async fn publish(tx: &mut ProjectTransaction, entries: &[Uuid]) -> Result<Committed, DbError> {
     let pins = changesets::pins(tx, entries).await?;
     let changeset = Uuid::now_v7();
-    changesets::create(tx, changeset, "Slugs", &pins, &[9; 32]).await?;
+    changesets::create(tx, changeset, "Slugs", &pins, &[9; 32], None).await?;
     changesets::submit(tx, changeset).await?;
     changesets::lock(tx, changeset).await?;
     changesets::review(tx, changeset, &[9; 32], "approve", "").await?;

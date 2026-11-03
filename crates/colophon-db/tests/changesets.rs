@@ -76,7 +76,7 @@ async fn reviews_are_numbered_kept_and_private_to_their_project() {
         .expect("pins");
     assert_eq!(pins.len(), 2, "an unknown entry has no pin");
     let id = Uuid::now_v7();
-    changesets::create(&mut tx, id, "Launch", &pins, &[1; 32])
+    changesets::create(&mut tx, id, "Launch", &pins, &[1; 32], None)
         .await
         .expect("created");
     changesets::submit(&mut tx, id).await.expect("submitted");
@@ -122,7 +122,7 @@ async fn reviews_are_numbered_kept_and_private_to_their_project() {
     // An item can't pin another entry's revision.
     let mut tx = enter(&db.app, alice, project).await;
     let other = Uuid::now_v7();
-    changesets::create(&mut tx, other, "Mixed up", &[], &[2; 32])
+    changesets::create(&mut tx, other, "Mixed up", &[], &[2; 32], None)
         .await
         .expect("created");
     let error = sqlx::query(

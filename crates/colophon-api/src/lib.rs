@@ -235,6 +235,10 @@ fn publishing() -> Router<AppState> {
             get(receipts::get),
         )
         .route(
+            "/api/v1/projects/{project}/environments/{environment}/releases/{generation}/rollback",
+            post(changesets::rollback),
+        )
+        .route(
             "/api/v1/projects/{project}/environments/{environment}/destinations",
             get(destinations::list).post(destinations::create),
         )

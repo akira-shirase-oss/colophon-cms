@@ -133,7 +133,7 @@ async fn save(
 /// A new changeset pinning `pins`, submitted and approved; its id and approval.
 async fn approved(tx: &mut ProjectTransaction, pins: &[changesets::Pin]) -> (Uuid, Uuid) {
     let changeset = Uuid::now_v7();
-    changesets::create(tx, changeset, "Deletion test", pins, &[9; 32])
+    changesets::create(tx, changeset, "Deletion test", pins, &[9; 32], None)
         .await
         .expect("changeset");
     changesets::submit(tx, changeset).await.expect("submit");
@@ -656,7 +656,7 @@ async fn a_deletion_and_a_new_pin_or_publication_never_both_commit() {
             // Read before the deletion commits, as a request already under way would have.
             let pins = changesets::pins(&mut tx, &[target]).await.expect("pins");
             assert_eq!(pins.len(), 1, "the deletion hasn't committed yet");
-            changesets::create(&mut tx, Uuid::now_v7(), "Late", &pins, &[9; 32]).await
+            changesets::create(&mut tx, Uuid::now_v7(), "Late", &pins, &[9; 32], None).await
         })
     };
     until_one_waits(&owner).await;

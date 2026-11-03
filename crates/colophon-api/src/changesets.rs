@@ -66,6 +66,13 @@ pub(crate) struct OnePath {
     changeset: String,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct RollbackPath {
+    project: String,
+    environment: String,
+    generation: i64,
+}
+
 /// `{"title": "Launch posts", "entries": ["…", "…"], "unpublish": ["…"]}`: entries to publish and
 /// entries to take down; either may be left out.
 #[derive(Deserialize)]
@@ -443,14 +450,7 @@ pub(crate) async fn list(
 
 /// A new changeset's title, entries to publish and entries to unpublish, checked for shape.
 fn checked(new: &NewChangeset) -> Result<(&str, Vec<Uuid>, Vec<Uuid>), ApiError> {
-    let title = new.title.trim();
-    if !(1..=200).contains(&title.chars().count()) || title.chars().any(char::is_control) {
-        return Err(ApiError::InvalidField {
-            reason: "invalid_title",
-            pointer: "/title",
-            message: "a title is 1 to 200 characters, without control characters".to_owned(),
-        });
-    }
+    let title = title(&new.title)?;
     let ids = |list: &[String], pointer: &'static str| {
         list.iter()
             .map(|id| Uuid::try_parse(id))
@@ -476,6 +476,19 @@ fn checked(new: &NewChangeset) -> Result<(&str, Vec<Uuid>, Vec<Uuid>), ApiError>
         });
     }
     Ok((title, entries, unpublish))
+}
+
+/// A changeset title: 1 to 200 characters, no control characters.
+fn title(raw: &str) -> Result<&str, ApiError> {
+    let title = raw.trim();
+    if !(1..=200).contains(&title.chars().count()) || title.chars().any(char::is_control) {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_title",
+            pointer: "/title",
+            message: "a title is 1 to 200 characters, without control characters".to_owned(),
+        });
+    }
+    Ok(title)
 }
 
 /// 422 `unknown_entry`: an entry to publish isn't one in this environment (or is deleted).
@@ -545,13 +558,99 @@ pub(crate) async fn create(
     let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
     may_change_entries(&mut tx, &pinned).await?;
     let id = Uuid::now_v7();
-    changesets::create(&mut tx, id, title, &pins, &hash_of(&pins))
+    changesets::create(&mut tx, id, title, &pins, &hash_of(&pins), None)
         .await
         .map_err(|error| match error {
             // Deleted after the pins were read (D-080): as if it had never been there.
             DbError::EntryDeleted { .. } => unknown_entry(),
             other => ApiError::from_db(other),
         })?;
+    let head = changesets::get(&mut tx, id)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or_else(|| ApiError::internal(std::io::Error::other("a changeset vanished")))?;
+    let created = view(&mut tx, head).await?;
+    let text = body(&created)?;
+    idempotency::complete(&mut tx, CREATE, key, StatusCode::CREATED.as_u16(), &text)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(respond(StatusCode::CREATED, text, &created.hash, false))
+}
+
+/// `POST {P}/releases/{generation}/rollback` with `{"title": "…"}`: builds a changeset that
+/// restores the publication set as it was at `generation` — publish pins for what was live then,
+/// unpublish pins for what is live now that wasn't — and leaves it open for the usual review and
+/// publish flow. Restoring the past is a new release, not a step back: the generation moves
+/// forward either way (module 01, D4). A release the pin set wouldn't change is refused.
+pub(crate) async fn rollback(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<RollbackPath>,
+    headers: HeaderMap,
+    body_json: Result<Json<NewChangeset>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let key = idempotency_key(&headers)?;
+    let Json(new) = body_json?;
+    if !new.entries.is_empty() || !new.unpublish.is_empty() {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_field",
+            pointer: "/entries",
+            message: "a rollback takes no entries: it restores what the release published"
+                .to_owned(),
+        });
+    }
+    let title = title(&new.title)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let (_, latest) = releases::generation(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
+    if !(1..latest).contains(&path.generation) {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_generation",
+            pointer: "/generation",
+            message: format!("this environment's releases are generations 1 to {latest}"),
+        });
+    }
+    let request = request_hash(&[CREATE, title, &path.generation.to_string()]);
+    match idempotency::claim(&mut tx, CREATE, key, &request)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Claim::Fresh => {}
+        Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+        Claim::Replay { status, response } => {
+            let status = StatusCode::from_u16(status).map_err(ApiError::internal)?;
+            let hash = serde_json::from_str::<Value>(&response)
+                .ok()
+                .and_then(|body| body["data"]["hash"].as_str().map(str::to_owned))
+                .unwrap_or_default();
+            return Ok(respond(status, response, &hash, true));
+        }
+    }
+    let pins = changesets::rollback_pins(&mut tx, path.generation)
+        .await
+        .map_err(ApiError::from_db)?;
+    if pins.is_empty() {
+        return Err(ApiError::InvalidField {
+            reason: "already_at",
+            pointer: "/generation",
+            message: "this environment already publishes what that release published".to_owned(),
+        });
+    }
+    let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
+    may_change_entries(&mut tx, &pinned).await?;
+    let id = Uuid::now_v7();
+    changesets::create(
+        &mut tx,
+        id,
+        title,
+        &pins,
+        &hash_of(&pins),
+        Some(path.generation),
+    )
+    .await
+    .map_err(ApiError::from_db)?;
     let head = changesets::get(&mut tx, id)
         .await
         .map_err(ApiError::from_db)?
@@ -620,14 +719,22 @@ pub(crate) async fn refresh(
             .map(|item| item.pin.entry_id)
             .collect()
     };
-    let mut pins = changesets::pins(&mut tx, &of_kind(Kind::Publish))
-        .await
-        .map_err(ApiError::from_db)?;
-    pins.extend(
-        changesets::published_pins(&mut tx, &of_kind(Kind::Unpublish))
+    let mut pins = if let Some(generation) = head.rollback {
+        // A rollback changeset refreshes to its release's set, not to the drafts (D-097).
+        changesets::rollback_pins(&mut tx, generation)
             .await
-            .map_err(ApiError::from_db)?,
-    );
+            .map_err(ApiError::from_db)?
+    } else {
+        let mut pins = changesets::pins(&mut tx, &of_kind(Kind::Publish))
+            .await
+            .map_err(ApiError::from_db)?;
+        pins.extend(
+            changesets::published_pins(&mut tx, &of_kind(Kind::Unpublish))
+                .await
+                .map_err(ApiError::from_db)?,
+        );
+        pins
+    };
     // An entry to unpublish that is no longer published keeps its pin and leaves the changeset
     // stale: there's nothing left for it to take down.
     for item in &items {

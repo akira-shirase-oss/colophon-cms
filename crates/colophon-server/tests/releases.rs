@@ -710,3 +710,157 @@ async fn an_entry_says_whether_and_where_it_is_live_and_lists_say_whose() {
         requests.body
     );
 }
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story, told in order: publish, edit, publish, restore, read every generation"
+)]
+async fn a_rollback_restores_the_release_as_a_new_generation() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let editor = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    join(&owner, &editor, &project, "editor").await;
+    let entry = new_article(&editor, &project, "Rollback", "version one").await;
+    let (first, first_hash) = approved(&editor, &owner, &project, &[&entry]).await;
+    let released = publish(&owner, &first, &first_hash, 0, &key()).await;
+    assert_eq!(released.status, StatusCode::CREATED, "{}", released.body);
+    assert_eq!(released.body["data"]["generation"], 1);
+    edit(&editor, &project, &entry, "Rollback", "version two").await;
+    let (second, second_hash) = approved(&editor, &owner, &project, &[&entry]).await;
+    let released = publish(&owner, &second, &second_hash, 1, &key()).await;
+    assert_eq!(released.body["data"]["generation"], 2);
+    let content = format!("/content/v1/{project}/production/articles/{entry}");
+    let (status, body, _) = deliver(&format!("{content}?generation=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body, _) = deliver(&content).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The bad generations and a body carrying entries are refused before anything is built.
+    for generation in ["0", "2", "99"] {
+        let reply = call(
+            &owner,
+            Method::POST,
+            &format!("{}/releases/{generation}/rollback", base(&project)),
+            Some(&json!({"title": "Back"})),
+            &[("idempotency-key", &key())],
+        )
+        .await
+        .expect("request");
+        assert_eq!(
+            reply.body["error"]["details"]["reason"], "invalid_generation",
+            "{generation}: {}",
+            reply.body
+        );
+    }
+    let with_entries = call(
+        &owner,
+        Method::POST,
+        &format!("{}/releases/1/rollback", base(&project)),
+        Some(&json!({"title": "Back", "entries": [entry.clone()]})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        with_entries.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        with_entries.body
+    );
+
+    // The rollback is a changeset like any other: built once, replayed by key, reviewed, published.
+    let rollback_key = key();
+    let created = call(
+        &editor,
+        Method::POST,
+        &format!("{}/releases/1/rollback", base(&project)),
+        Some(&json!({"title": "Back to one"})),
+        &[("idempotency-key", &rollback_key)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    assert_eq!(
+        created.body["data"]["items"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(created.body["data"]["status"]["state"], "open");
+    let path = format!(
+        "{}/changesets/{}",
+        base(&project),
+        created.body["data"]["id"].as_str().expect("an id")
+    );
+    let hash = created.body["data"]["hash"]
+        .as_str()
+        .expect("a hash")
+        .to_owned();
+    let replay = call(
+        &editor,
+        Method::POST,
+        &format!("{}/releases/1/rollback", base(&project)),
+        Some(&json!({"title": "Back to one"})),
+        &[("idempotency-key", &rollback_key)],
+    )
+    .await
+    .expect("request");
+    assert!(replay.replayed());
+    let if_match = format!("\"{hash}\"");
+    let submitted = call(
+        &editor,
+        Method::POST,
+        &format!("{path}/submit"),
+        None,
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(submitted.status, StatusCode::OK, "{}", submitted.body);
+    let approval = call(
+        &owner,
+        Method::POST,
+        &format!("{path}/reviews"),
+        Some(&json!({"decision": "approve"})),
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(approval.body["data"]["status"]["state"], "approved");
+    let released = publish(&owner, &path, &hash, 2, &key()).await;
+    assert_eq!(released.status, StatusCode::CREATED, "{}", released.body);
+    assert_eq!(released.body["data"]["generation"], 3);
+
+    // Generation 3 serves what generation 1 served; the past is still there to read.
+    assert_eq!(read_text(&content, "").await, "version one");
+    assert_eq!(read_text(&content, "?generation=1").await, "version one");
+    assert_eq!(read_text(&content, "?generation=2").await, "version two");
+    assert_eq!(read_text(&content, "?generation=3").await, "version one");
+
+    // Restoring what is already live builds nothing.
+    let again = call(
+        &owner,
+        Method::POST,
+        &format!("{}/releases/1/rollback", base(&project)),
+        Some(&json!({"title": "Again"})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        again.body["error"]["details"]["reason"], "already_at",
+        "{}",
+        again.body
+    );
+}
+
+/// The text a published article's first paragraph reads at `generation`.
+async fn read_text(content: &str, generation: &str) -> String {
+    let (status, body, _) = deliver(&format!("{content}{generation}")).await;
+    assert_eq!(status, StatusCode::OK, "{generation}: {body}");
+    body["data"]["content"]["body"]["doc"]["content"][0]["content"][0]["text"]
+        .as_str()
+        .expect("text")
+        .to_owned()
+}

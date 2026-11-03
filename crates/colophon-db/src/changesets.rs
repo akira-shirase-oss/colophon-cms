@@ -53,6 +53,8 @@ pub struct Head {
     pub submitted_by: Option<Uuid>,
     /// When.
     pub submitted_at: Option<OffsetDateTime>,
+    /// The generation whose publication set it restores, when a rollback built it (D-097).
+    pub rollback: Option<i64>,
     /// When it last changed.
     pub updated_at: OffsetDateTime,
     /// The release it was published as, if it has been (D-045).
@@ -167,23 +169,79 @@ pub async fn published_pins(
     .map_err(DbError::from_query)
 }
 
-/// Stores a new changeset pinning `pins`, with the hash the caller computed from them.
+/// The publication set as it stood at `generation`, as the pins a rollback changeset would carry:
+/// a publish pin for every entry published then (matching the delivery read at that generation,
+/// which leaves out anything since revoked), and an unpublish pin for every entry published now
+/// that wasn't published then. An entry publishing the same revision already is not in the set —
+/// the changeset that follows restores the past as a new release; the generation still moves
+/// forward (module 01, D4; docs/modules/06, "rollback is a new generation").
+pub async fn rollback_pins(
+    tx: &mut ProjectTransaction,
+    generation: i64,
+) -> Result<Vec<Pin>, DbError> {
+    sqlx::query_as!(
+        Pin,
+        r#"WITH at AS (
+               SELECT p.entry_id, p.revision_id
+               FROM publications p
+               WHERE p.project_id = $1 AND p.environment_id = $2
+                 AND p.valid_from <= $3 AND coalesce(p.valid_to, $3 + 1) > $3
+                 AND p.revoked_in IS NULL
+           ), now AS (
+               SELECT p.entry_id, p.revision_id
+               FROM publications p
+               WHERE p.project_id = $1 AND p.environment_id = $2 AND p.valid_to IS NULL
+           )
+           SELECT 'publish' AS "kind!", at.entry_id AS "entry_id!", r.id AS "revision_id!",
+                  r.collection AS "collection!", r.content_hash AS "content_hash!",
+                  r.schema_version AS "schema_version!", v.definition_hash AS "definition_hash!"
+           FROM at
+           JOIN revisions r ON r.project_id = $1 AND r.environment_id = $2
+                           AND r.id = at.revision_id
+           JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id
+                                       AND v.collection = r.collection AND v.version = r.schema_version
+           WHERE NOT EXISTS (
+               SELECT 1 FROM now WHERE now.entry_id = at.entry_id AND now.revision_id = at.revision_id
+           )
+           UNION ALL
+           SELECT 'unpublish', now.entry_id, r.id, r.collection, r.content_hash,
+                  r.schema_version, v.definition_hash
+           FROM now
+           JOIN revisions r ON r.project_id = $1 AND r.environment_id = $2
+                           AND r.id = now.revision_id
+           JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id
+                                       AND v.collection = r.collection AND v.version = r.schema_version
+           WHERE NOT EXISTS (SELECT 1 FROM at WHERE at.entry_id = now.entry_id)"#,
+        tx.project,
+        tx.environment,
+        generation
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// Stores a new changeset pinning `pins`, with the hash the caller computed from them. `rollback`
+/// is the generation whose publication set it restores (D-097), so its publish pins are never
+/// stale: they name older revisions on purpose, and a pinned revision cannot drift.
 pub async fn create(
     tx: &mut ProjectTransaction,
     id: Uuid,
     title: &str,
     pins: &[Pin],
     hash: &[u8; 32],
+    rollback: Option<i64>,
 ) -> Result<(), DbError> {
     sqlx::query!(
-        "INSERT INTO changesets (project_id, environment_id, id, title, hash, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO changesets (project_id, environment_id, id, title, hash, created_by, rollback_generation)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
         tx.project,
         tx.environment,
         id,
         title,
         &hash[..],
-        tx.identity
+        tx.identity,
+        rollback
     )
     .execute(&mut *tx.transaction)
     .await
@@ -208,6 +266,10 @@ pub async fn create(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the row's own fields, grouped where they can be: id, title, hash, who, when"
+)]
 fn head(
     id: Uuid,
     title: String,
@@ -216,6 +278,7 @@ fn head(
     created_at: OffsetDateTime,
     submitted: (Option<Uuid>, Option<OffsetDateTime>),
     changed: (OffsetDateTime, Option<i64>),
+    rollback: Option<i64>,
 ) -> Head {
     Head {
         id,
@@ -225,6 +288,7 @@ fn head(
         created_at,
         submitted_by: submitted.0,
         submitted_at: submitted.1,
+        rollback,
         updated_at: changed.0,
         published: changed.1,
     }
@@ -234,6 +298,7 @@ fn head(
 pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, DbError> {
     let row = sqlx::query!(
         r#"SELECT c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at, c.updated_at,
+                  c.rollback_generation,
                   r.generation AS "published?"
            FROM changesets c
            LEFT JOIN releases r ON r.project_id = c.project_id AND r.environment_id = c.environment_id
@@ -255,6 +320,7 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, 
             row.created_at,
             (row.submitted_by, row.submitted_at),
             (row.updated_at, row.published),
+            row.rollback_generation,
         )
     }))
 }
@@ -263,6 +329,7 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, 
 pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>, DbError> {
     let row = sqlx::query!(
         r#"SELECT c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at, c.updated_at,
+                  c.rollback_generation,
                   r.generation AS "published?"
            FROM changesets c
            LEFT JOIN releases r ON r.project_id = c.project_id AND r.environment_id = c.environment_id
@@ -285,6 +352,7 @@ pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Head>,
             row.created_at,
             (row.submitted_by, row.submitted_at),
             (row.updated_at, row.published),
+            row.rollback_generation,
         )
     }))
 }
@@ -315,7 +383,8 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
     let rows = sqlx::query!(
         r#"SELECT i.kind, i.entry_id, i.revision_id, r.collection, r.content_hash, r.schema_version,
                   v.definition_hash, r.title,
-                  CASE WHEN i.kind = 'publish' THEN e.draft_revision_id
+                  CASE WHEN i.kind = 'publish' AND c.rollback_generation IS NULL THEN e.draft_revision_id
+                       WHEN i.kind = 'publish' THEN i.revision_id
                        ELSE (SELECT p.revision_id FROM publications p
                              WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id
                                AND p.entry_id = i.entry_id AND p.valid_to IS NULL)
@@ -325,6 +394,8 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
                      AND p.entry_id = i.entry_id AND p.valid_to IS NULL) AS published_revision_id,
                   e.created_by AS "created_by?"
          FROM changeset_items i
+         JOIN changesets c ON c.project_id = i.project_id AND c.environment_id = i.environment_id
+                          AND c.id = i.changeset_id
          CROSS JOIN LATERAL (
              SELECT r.collection, r.content_hash, r.schema_version, r.title
              FROM revisions r
@@ -494,7 +565,7 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
         .map_err(DbError::from_query)?;
     let rows = sqlx::query!(
         r#"SELECT c.id, c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at,
-                  c.updated_at, rel.generation AS "published?",
+                  c.updated_at, c.rollback_generation, rel.generation AS "published?",
                   counts.items AS "items!", counts.unpublish AS "unpublish!", counts.stale AS "stale!",
                   latest.id AS "review_id?", latest.reviewer_id AS "reviewer_id?",
                   latest.reviewer_name, latest.decision AS "decision?", latest.seq AS "seq?",
@@ -503,7 +574,8 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
            CROSS JOIN LATERAL (
                SELECT count(*) AS items, count(*) FILTER (WHERE i.kind = 'unpublish') AS unpublish,
                       count(*) FILTER (
-                          WHERE CASE WHEN i.kind = 'publish' THEN e.draft_revision_id <> i.revision_id
+                          WHERE CASE WHEN i.kind = 'publish' AND c.rollback_generation IS NOT NULL THEN false
+                                     WHEN i.kind = 'publish' THEN e.draft_revision_id <> i.revision_id
                                      ELSE NOT EXISTS (
                                          SELECT 1 FROM publications p
                                          WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id
@@ -541,33 +613,18 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
     Ok(rows
         .into_iter()
         .map(|row| {
-            let latest = match (
-                row.review_id,
-                row.reviewer_id,
-                row.decision,
-                row.seq,
-                row.comment,
-                row.reviewed_at,
-            ) {
+            let latest = latest_review(
+                &row.hash,
                 (
-                    Some(id),
-                    Some(reviewer_id),
-                    Some(decision),
-                    Some(seq),
-                    Some(comment),
-                    Some(created_at),
-                ) => Some(Review {
-                    id,
-                    reviewer_id,
-                    reviewer_name: row.reviewer_name,
-                    decision,
-                    changeset_hash: row.hash.clone(),
-                    seq,
-                    comment,
-                    created_at,
-                }),
-                _ => None,
-            };
+                    row.review_id,
+                    row.reviewer_id,
+                    row.reviewer_name,
+                    row.decision,
+                    row.seq,
+                    row.comment,
+                    row.reviewed_at,
+                ),
+            );
             Summary {
                 head: head(
                     row.id,
@@ -577,6 +634,7 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
                     row.created_at,
                     (row.submitted_by, row.submitted_at),
                     (row.updated_at, row.published),
+                    row.rollback_generation,
                 ),
                 items: row.items,
                 unpublish: row.unpublish,
@@ -585,4 +643,44 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
             }
         })
         .collect())
+}
+
+/// The newest review on the changeset's current hash, when the lateral join found every field of one.
+#[expect(
+    clippy::type_complexity,
+    reason = "the query! row's optional fields as the lateral join returns them"
+)]
+fn latest_review(
+    hash: &[u8],
+    parts: (
+        Option<Uuid>,
+        Option<Uuid>,
+        Option<String>,
+        Option<String>,
+        Option<i32>,
+        Option<String>,
+        Option<OffsetDateTime>,
+    ),
+) -> Option<Review> {
+    let (id, reviewer_id, reviewer_name, decision, seq, comment, created_at) = parts;
+    match (id, reviewer_id, decision, seq, comment, created_at) {
+        (
+            Some(id),
+            Some(reviewer_id),
+            Some(decision),
+            Some(seq),
+            Some(comment),
+            Some(created_at),
+        ) => Some(Review {
+            id,
+            reviewer_id,
+            reviewer_name,
+            decision,
+            changeset_hash: hash.to_vec(),
+            seq,
+            comment,
+            created_at,
+        }),
+        _ => None,
+    }
 }

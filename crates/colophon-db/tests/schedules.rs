@@ -73,7 +73,7 @@ async fn ready(db: &TestDb) -> Ready {
     .expect("created");
     let pins = changesets::pins(&mut tx, &[entry]).await.expect("pins");
     let changeset = Uuid::now_v7();
-    changesets::create(&mut tx, changeset, "Spring menu", &pins, &[5; 32])
+    changesets::create(&mut tx, changeset, "Spring menu", &pins, &[5; 32], None)
         .await
         .expect("created");
     changesets::submit(&mut tx, changeset)

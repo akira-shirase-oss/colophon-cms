@@ -84,7 +84,7 @@ async fn release(db: &TestDb, alice: Uuid, project: Uuid, base: i64) {
     .expect("entry");
     let pins = changesets::pins(&mut tx, &[entry]).await.expect("pins");
     let changeset = Uuid::now_v7();
-    changesets::create(&mut tx, changeset, "One", &pins, &[2; 32])
+    changesets::create(&mut tx, changeset, "One", &pins, &[2; 32], None)
         .await
         .expect("changeset");
     changesets::submit(&mut tx, changeset)

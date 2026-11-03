@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at, c.updated_at,\n                  r.generation AS \"published?\"\n           FROM changesets c\n           LEFT JOIN releases r ON r.project_id = c.project_id AND r.environment_id = c.environment_id\n                               AND r.changeset_id = c.id\n           WHERE c.project_id = $1 AND c.environment_id = $2 AND c.id = $3\n           FOR UPDATE OF c",
+  "query": "SELECT c.title, c.hash, c.created_by, c.created_at, c.submitted_by, c.submitted_at, c.updated_at,\n                  c.rollback_generation,\n                  r.generation AS \"published?\"\n           FROM changesets c\n           LEFT JOIN releases r ON r.project_id = c.project_id AND r.environment_id = c.environment_id\n                               AND r.changeset_id = c.id\n           WHERE c.project_id = $1 AND c.environment_id = $2 AND c.id = $3",
   "describe": {
     "columns": [
       {
@@ -82,6 +82,17 @@
       },
       {
         "ordinal": 7,
+        "name": "rollback_generation",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "changesets",
+            "name": "rollback_generation"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
         "name": "published?",
         "type_info": "Int8",
         "origin": {
@@ -107,8 +118,9 @@
       true,
       true,
       false,
-      false
+      true,
+      true
     ]
   },
-  "hash": "68fbc09f7ae8f1710e0027ced555b9e311729d97328b3a110a2bf46841bdff35"
+  "hash": "346f2ef6292f4032f49d9d6bca3560e8ad816c77c9705958df7c61e6886c6055"
 }
