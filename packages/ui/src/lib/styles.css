@@ -273,6 +273,18 @@
 	}
 }
 
+/* Native selects draw the platform's own arrow at the control's edge, outside any padding:
+ * swap it for the neutral chevron and hold room for it. Kept out of a layer so it wins
+ * against padding utilities on the right side. */
+select:not([multiple]) {
+	appearance: none;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 0.625rem center;
+	background-size: 0.875rem;
+	padding-right: 2rem;
+}
+
 @layer components {
 	/* Display type: tight, the way large Inter is meant to be set. */
 	.display-1 {

@@ -78,10 +78,11 @@
 
 	// Page sections: each collapsible; a new one opens.
 	let closed = $state<Record<number, boolean>>({});
-	let adding = $state('');
+	// svelte-ignore state_referenced_locally
+	let adding = $state(field.type === 'blocks' ? (field.blocks[0]?.name ?? '') : '');
 	function addSection() {
 		if (field.type !== 'blocks' || !Array.isArray(value) || full) return;
-		const kind = field.blocks.find((block) => block.name === (adding || field.blocks[0]?.name));
+		const kind = field.blocks.find((block) => block.name === adding) ?? field.blocks[0];
 		if (kind === undefined) return;
 		(value as FormValue[]).push(sectionForm(field, { _block: kind.name }));
 		onchange();
