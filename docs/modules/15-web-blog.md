@@ -32,6 +32,9 @@ A fast, prerendered blog built from a release manifest pinned to one generation:
 - The pinned build and the generation marker.
 - The build-verify-promote adapter.
 - The `/colophon` page.
+- The website-starter build (W.3; D-092): published `pages` at their slugs, `navigation` resolved
+  to page paths, `theme` as the linked `site.css` — one pinned release across every collection,
+  alongside the articles; absent website collections build the blog unchanged.
 
 ## Not its job
 
