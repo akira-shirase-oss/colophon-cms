@@ -10,9 +10,9 @@
 
 mod common;
 
-use common::{Session, app, call, project, sign_in};
+use common::{Session, app, call, join, key, project, sign_in};
 use reqwest::{Method, StatusCode, header};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -218,4 +218,238 @@ async fn bad_uploads_are_refused_before_the_store() {
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+}
+
+/// The environment base of `project` (an id) for types, entries and changesets.
+fn base(project: &str) -> String {
+    format!("/api/v1/projects/{project}/environments/production")
+}
+
+/// A `covers` type with one `photo` asset field, made in `project`.
+async fn covers(session: &Session, project: &str) {
+    let made = call(
+        session,
+        Method::POST,
+        &format!("{}/content-types", base(project)),
+        Some(&json!({
+            "slug": "covers",
+            "definition": {
+                "name": "Covers",
+                "title_field": "title",
+                "fields": [
+                    {"id": "title", "label": "Title", "type": "text", "required": true},
+                    {"id": "photo", "label": "Photo", "type": "asset", "many": false}
+                ]
+            }
+        })),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+}
+
+/// A `covers` entry naming `photo` (an asset id); its entry id.
+async fn cover(session: &Session, project: &str, title: &str, photo: &str) -> String {
+    let reply = call(
+        session,
+        Method::POST,
+        &format!("{}/collections/covers/entries", base(project)),
+        Some(&json!({"title": title, "photo": photo})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.body);
+    reply.body["data"]["id"].as_str().expect("an id").to_owned()
+}
+
+/// A changeset of `entry`, submitted by `editor` and approved by `owner`; its path and hash.
+async fn approved(
+    owner: &Session,
+    editor: &Session,
+    project: &str,
+    entry: &str,
+) -> (String, String) {
+    let created = call(
+        editor,
+        Method::POST,
+        &format!("{}/changesets", base(project)),
+        Some(&json!({"title": "Release", "entries": [entry]})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let path = format!(
+        "{}/changesets/{}",
+        base(project),
+        created.body["data"]["id"].as_str().expect("an id")
+    );
+    let if_match = format!(
+        "\"{}\"",
+        created.body["data"]["hash"].as_str().expect("a hash")
+    );
+    let hash = created.body["data"]["hash"]
+        .as_str()
+        .expect("a hash")
+        .to_owned();
+    let submitted = call(
+        editor,
+        Method::POST,
+        &format!("{path}/submit"),
+        None,
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(submitted.status, StatusCode::OK, "{}", submitted.body);
+    let review = call(
+        owner,
+        Method::POST,
+        &format!("{path}/reviews"),
+        Some(&json!({"decision": "approve"})),
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        review.body["data"]["status"]["state"], "approved",
+        "{}",
+        review.body
+    );
+    (path, hash)
+}
+
+/// `POST {changeset}/publish` on `base`; the reply.
+async fn publish(session: &Session, path: &str, hash: &str, base: i64) -> common::Reply {
+    call(
+        session,
+        Method::POST,
+        &format!("{path}/publish"),
+        Some(&json!({"base_generation": base})),
+        &[
+            ("if-match", &format!("\"{hash}\"")),
+            ("idempotency-key", &key()),
+        ],
+    )
+    .await
+    .expect("request")
+}
+
+/// The media origin path for `asset` in `project`'s production environment.
+fn media(project: &str, asset: &str) -> String {
+    format!("/media/v1/{project}/production/{asset}")
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_release_waits_for_usable_assets_and_the_origin_serves_them() {
+    let _server = common::Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let editor = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    join(&owner, &editor, &project, "editor").await;
+    covers(&owner, &project).await;
+
+    // A draft may name an upload that isn't usable yet; a release may not publish it. The
+    // upload here is a fake: whatever state the publish lands in — still quarantined or
+    // already rejected — it is not usable, so the refusal is not a race.
+    let (status, body) = upload(
+        &editor,
+        &project,
+        b"not an image at all",
+        "fake.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let fake = body["data"]["id"].as_str().expect("id").to_owned();
+    let entry = cover(&editor, &project, "First cover", &fake).await;
+    let (path, hash) = approved(&owner, &editor, &project, &entry).await;
+    let refused = publish(&owner, &path, &hash, 0).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(
+        refused.body["error"]["details"]["reason"], "asset_not_usable",
+        "{}",
+        refused.body
+    );
+
+    // It stays refused once the upload is rejected for good, and the origin has no object.
+    assert_eq!(
+        settled(&owner, &project, &fake, 15).await["state"],
+        "rejected"
+    );
+    let refused = publish(&owner, &path, &hash, 0).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    let response = app()
+        .get(format!("{}{}", common::ORIGIN, media(&project, &fake)))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // A usable upload publishes, and the public origin serves the verified bytes to
+    // anyone, cached forever.
+    let (status, body) = upload(
+        &editor,
+        &project,
+        PNG,
+        "dot.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        settled(&owner, &project, &asset, 15).await["state"],
+        "usable"
+    );
+    let second = cover(&editor, &project, "Second cover", &asset).await;
+    let (path, hash) = approved(&owner, &editor, &project, &second).await;
+    let published = publish(&owner, &path, &hash, 0).await;
+    assert_eq!(published.status, StatusCode::CREATED, "{}", published.body);
+
+    let response = app()
+        .get(format!("{}{}", common::ORIGIN, media(&project, &asset)))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "image/png");
+    assert_eq!(
+        response.headers()["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+    let bytes = response.bytes().await.expect("bytes");
+    assert!(
+        bytes.starts_with(&[137, 80, 78, 71]),
+        "not a PNG: {bytes:?}"
+    );
+
+    // A draft that names an asset that does not exist is refused at save.
+    let missing = Uuid::now_v7().to_string();
+    let reply = call(
+        &editor,
+        Method::POST,
+        &format!("{}/collections/covers/entries", base(&project)),
+        Some(&json!({"title": "Ghost", "photo": missing})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        reply.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        reply.body
+    );
+    assert_eq!(
+        reply.body["error"]["details"]["reason"], "asset_not_found",
+        "{}",
+        reply.body
+    );
 }

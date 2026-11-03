@@ -77,6 +77,14 @@
 					...steps,
 					`${record.state}: ${record.detected_type ?? record.rejected_reason ?? ''}`.trim()
 				];
+				// M.1: the public media origin serves usable objects only.
+				const origin = await fetch(`/server/media/v1/${projectId}/production/${id}`);
+				steps = [
+					...steps,
+					record.state === 'usable'
+						? `served: ${origin.status} ${origin.headers.get('content-type') ?? ''}`.trim()
+						: `served: ${origin.status}`
+				];
 				break;
 			}
 			if (Date.now() > deadline) {

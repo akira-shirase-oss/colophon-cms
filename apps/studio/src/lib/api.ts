@@ -150,6 +150,10 @@ export type FieldDefinition = {
 	 *  reference field on `to` that points back here: writes to this field mirror into it. */
 	| { type: 'reference'; to: string; many: false; inverse?: string }
 	| { type: 'reference'; to: string; many: true; max: number; inverse?: string }
+	/** M.1: an uploaded asset by id — one, or a list of up to `max` distinct ones. A draft may
+	 *  name an upload still in quarantine; a release may not publish one that isn't usable. */
+	| { type: 'asset'; many: false }
+	| { type: 'asset'; many: true; max: number }
 	/** Step M.3 (D-066): structures, at most three deep, written in definition order. Nested
 	 *  fields: a group of fields (Strapi's component). */
 	| {
@@ -199,6 +203,7 @@ export const FIELD_TYPES = [
 	'color',
 	'json',
 	'reference',
+	'asset',
 	'object',
 	'list',
 	'blocks',

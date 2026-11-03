@@ -85,6 +85,7 @@ Evidence: generation marker or response hash, location, time, errors  →  deliv
 | Editor save | Studio → `PUT …/entries/{id}` with `If-Match` → authorize → validate (schema, rich text, references) → one transaction: compare draft pointer, insert revision, move pointer, audit → `200` with the new revision, or `409` with the current one |
 | Publish | Studio/CLI → `POST …/releases/{id}/publish` with an idempotency key → recheck approval, authority and base generation → one transaction (above) → `202 accepted` with an operation ID → the worker delivers → receipts update |
 | Public read | Reader → CDN → `/content/v1/…` → resolve the active generation from Postgres on an origin miss → Redis (keyed by epoch + generation + query) → published projection in Postgres on a miss |
+| Asset read (media M.1) | Reader → CDN → `/media/v1/{project}/{env}/{asset}` → stream `public/{project}/{env}/{asset}` straight from the object store → object existence is proof of verification; the detected `Content-Type` is read from object attributes; `immutable` caching, `nosniff`, ETag — no sign-in, no asset-row read |
 | Pinned read (time travel) | `/content/v1/…?generation=N` → publication-history intervals map each entry to the revision live at N → revocation rules still apply |
 | Preview | Studio issues a 15-minute capability scoped to the exact revision set → separate preview origin validates it on every fetch → `no-store`, `noindex` |
 

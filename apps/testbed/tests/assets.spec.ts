@@ -28,10 +28,12 @@ test('uploads are verified, or rejected, and listed', async ({ page }) => {
 	await expect(page.getByTestId('message')).toHaveText('settled', { timeout: 20_000 });
 	await expect(page.getByTestId('steps')).toContainText('uploaded: 202 quarantined');
 	await expect(page.getByTestId('steps')).toContainText('usable: image/png');
+	await expect(page.getByTestId('steps')).toContainText('served: 200 image/png');
 	await expect(page.getByTestId('assets')).toContainText('dot.png');
 
 	await page.getByTestId('upload-fake').click();
 	await expect(page.getByTestId('message')).toHaveText('settled', { timeout: 20_000 });
 	await expect(page.getByTestId('steps')).toContainText('rejected');
+	await expect(page.getByTestId('steps')).toContainText('served: 404');
 	await expect(page.getByTestId('assets')).toContainText('photo.png');
 });

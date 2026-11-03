@@ -27,7 +27,7 @@ test('a published site builds and promotes atomically', async ({ page }) => {
 	for (const collection of ['pages', 'navigation', 'theme']) {
 		const list = ((await entries(collection)).body?.['data'] ?? []) as { id: string }[];
 		expect(list.length).toBe(1);
-		ids.push(list[0].id);
+		ids.push(list.at(0)?.id ?? '');
 	}
 	const base = `${env(project)}/changesets`;
 	const set = await api(page, 'POST', base, { title: 'First release', entries: ids }, { 'Idempotency-Key': `e2e-set-${Date.now()}` });

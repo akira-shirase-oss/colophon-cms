@@ -656,10 +656,21 @@ impl Worker {
         key: String,
         verified: colophon_media::Verified,
     ) {
+        // The object's own record of what it is: the origin serves the stored type, so a
+        // re-promotion can't drift from what was verified, and nothing reads the row to serve.
+        let mut attributes = object_store::Attributes::new();
+        attributes.insert(
+            object_store::Attribute::ContentType,
+            verified.detected_type.into(),
+        );
         let written = store
-            .put(
+            .put_opts(
                 &object_store::path::Path::from(key.clone()),
                 verified.stripped.clone().into(),
+                object_store::PutOptions {
+                    attributes,
+                    ..object_store::PutOptions::default()
+                },
             )
             .await;
         if let Err(error) = written {

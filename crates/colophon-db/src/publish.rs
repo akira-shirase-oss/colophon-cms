@@ -69,6 +69,18 @@ pub enum Refusal {
     /// It would leave readers a reference to an entry they can't get (D-065). The caller rolls
     /// the transaction back.
     BrokenReference(releases::BrokenReference),
+    /// It would publish content naming an asset readers can't get: still quarantined or
+    /// rejected (media M1). The caller rolls the transaction back.
+    UnusableAsset {
+        /// The entry being published.
+        entry: Uuid,
+        /// The field naming the asset.
+        field: String,
+        /// The asset it names.
+        asset: Uuid,
+        /// The asset's state (`quarantined` or `rejected`).
+        state: String,
+    },
     /// It would publish an entry that has been deleted (D-080): the database refused the
     /// publication. The transaction is aborted: the caller rolls it back.
     EntryDeleted {
@@ -214,6 +226,19 @@ pub async fn publish(
                 return Ok(Err(Refusal::EntryDeleted { entry }));
             }
             Ok(Committed::Broken(broken)) => return Ok(Err(Refusal::BrokenReference(broken))),
+            Ok(Committed::UnusableAsset {
+                entry,
+                field,
+                asset,
+                state,
+            }) => {
+                return Ok(Err(Refusal::UnusableAsset {
+                    entry,
+                    field,
+                    asset,
+                    state,
+                }));
+            }
             Err(error) => return Err(error),
         }
     }

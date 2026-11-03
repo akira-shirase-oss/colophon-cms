@@ -100,6 +100,7 @@ impl Draft {
             slug: self.slug.as_deref(),
             schema_version: 1,
             references: &self.references,
+            assets: &[],
             unique: &self.unique,
         }
     }

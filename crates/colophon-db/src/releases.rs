@@ -74,6 +74,19 @@ pub enum Committed {
     /// The release would leave readers a reference to an entry they can't get (D-065). Nothing
     /// is committed: the caller rolls the transaction back.
     Broken(BrokenReference),
+    /// The release would publish content that names an asset readers can't get: still in
+    /// quarantine, or rejected (media M1). Nothing is committed: the caller rolls the
+    /// transaction back.
+    UnusableAsset {
+        /// The entry being published.
+        entry: Uuid,
+        /// The field naming the asset.
+        field: String,
+        /// The asset it names.
+        asset: Uuid,
+        /// The asset's state (`quarantined` or `rejected`).
+        state: String,
+    },
 }
 
 /// A reference a release would break for readers (D-065).
@@ -204,6 +217,9 @@ pub async fn commit(
     if let Some(broken) = broken_reference(tx, changeset).await? {
         return Ok(Committed::Broken(broken));
     }
+    if let Some(refused) = bad_asset(tx, changeset).await? {
+        return Ok(refused);
+    }
     outbox(tx, bumped.generation, job_lifetime).await?;
     Ok(Committed::Done {
         generation: bumped.generation,
@@ -319,6 +335,41 @@ async fn broken_reference(
                 other: row.other,
             }
         }
+    }))
+}
+
+/// An asset a release would publish that readers can't get (media M1): a revision it commits
+/// names an upload still `quarantined` or already `rejected`. Drafts may hold either — a save
+/// checks only that the upload exists — so the check runs here, where usable is required.
+async fn bad_asset(
+    tx: &mut ProjectTransaction,
+    changeset: Uuid,
+) -> Result<Option<Committed>, DbError> {
+    let row = sqlx::query!(
+        r#"SELECT i.entry_id AS "entry!", r.field AS "field!", r.asset_id AS "asset!",
+                  a.state AS "state!"
+           FROM changeset_items i
+           JOIN asset_references r
+             ON r.project_id = i.project_id AND r.environment_id = i.environment_id
+            AND r.revision_id = i.revision_id
+           JOIN assets a
+             ON a.project_id = r.project_id AND a.environment_id = r.environment_id
+            AND a.id = r.asset_id
+           WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
+             AND i.kind = 'publish' AND a.state <> 'usable'
+           LIMIT 1"#,
+        tx.project,
+        tx.environment,
+        changeset
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(row.map(|row| Committed::UnusableAsset {
+        entry: row.entry,
+        field: row.field,
+        asset: row.asset,
+        state: row.state,
     }))
 }
 

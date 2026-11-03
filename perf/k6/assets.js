@@ -68,8 +68,24 @@ export function setup() {
   const slug = `k6-${Date.now().toString(36)}`;
   const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug, name: 'k6 assets' }), { headers: write });
   if (project.status !== 201) fail(`project: HTTP ${project.status} ${project.body}`);
-  const assets = `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production/assets`;
-  return { session, assets };
+  const id = project.json('data.id');
+  const assets = `${BASE_URL}/api/v1/projects/${id}/environments/production/assets`;
+
+  // One known-usable asset for the public origin to serve: upload, then wait for the
+  // worker to verify it before the run starts.
+  const made = http.post(assets, PNG.buffer, {
+    headers: { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'image/png', 'X-Colophon-File-Name': 'warm.png', 'Idempotency-Key': `k6-warm-${Date.now().toString(36)}` },
+    redirects: 0,
+  });
+  if (made.status !== 202) fail(`warm upload: HTTP ${made.status} ${made.body}`);
+  const mediaId = made.json('data.id');
+  for (let waits = 0; waits < 100; waits += 1) {
+    const one = http.get(`${assets}/${mediaId}`, { headers: { Cookie: session.cookie }, redirects: 0 });
+    if (one.json('data.state') === 'usable') break;
+    if (waits === 99) fail(`warm asset never verified: ${one.body}`);
+  }
+
+  return { session, assets, media: `${BASE_URL}/media/v1/${id}/production`, mediaId };
 }
 
 export default function (data) {
@@ -95,10 +111,10 @@ export default function (data) {
       'upload 202': (r) => r.status === 202,
       'upload lands quarantined': (r) => r.json('data.state') === 'quarantined',
     });
-  } else if (roll < 9) {
+  } else if (roll < 8) {
     const res = http.get(data.assets, Object.assign({ tags: { endpoint: 'list', name: 'assets' } }, read));
     check(res, { 'list 200': (r) => r.status === 200 });
-  } else {
+  } else if (roll === 8) {
     const res = http.get(`${data.assets}?limit=1`, Object.assign({ tags: { endpoint: 'list-one', name: 'assets?limit' } }, read));
     const id = res.json('data.0.id');
     check(res, { 'list-one 200': (r) => r.status === 200 });
@@ -109,5 +125,12 @@ export default function (data) {
         'read settles or waits': (r) => ['quarantined', 'usable', 'rejected'].includes(r.json('data.state')),
       });
     }
+  } else {
+    // M.1: the public origin serves the setup's verified object — no sign-in, no row reads.
+    const object = http.get(`${data.media}/${data.mediaId}`, { tags: { endpoint: 'media', name: 'media/v1/{asset}' }, redirects: 0 });
+    check(object, {
+      'media 200': (r) => r.status === 200,
+      'media immutable': (r) => r.headers['Cache-Control'] === 'public, max-age=31536000, immutable',
+    });
   }
 }

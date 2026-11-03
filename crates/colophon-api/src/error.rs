@@ -527,6 +527,20 @@ impl ApiError {
                 },
                 message: "this names no entry of the collection the field points at".to_owned(),
             }),
+            // 422, at the very place in the content (media M1).
+            DbError::MissingAsset {
+                field,
+                position,
+                many,
+            } => Self::Invalid(colophon_domain::schema::Refusal {
+                code: "asset_not_found",
+                pointer: if many {
+                    format!("/{field}/{position}")
+                } else {
+                    format!("/{field}")
+                },
+                message: "this names no asset of the environment".to_owned(),
+            }),
             other => Self::internal(other),
         }
     }

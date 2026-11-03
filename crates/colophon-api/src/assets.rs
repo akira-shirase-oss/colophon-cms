@@ -77,11 +77,22 @@ pub(crate) async fn upload(
         ))?;
     let intent =
         Intent::new(file_name, declared, body.len() as u64).map_err(|error| field_error(&error))?;
-    // The object lands first: no transaction may span this call, and an object whose record
-    // never commits can only wait in quarantine, where nothing serves it.
+    // Who may upload and what the object's key is are reads: done and closed before the store
+    // sees a byte, so a refused call never leaves an object (and no transaction spans the
+    // write). Keys name the environment by id, as the public key does.
+    let seen = open(&state, caller, &path.project, &path.environment).await?;
+    // Assets belong to the project, not one collection: the whole-project form of the grant.
+    crate::members::require(
+        &seen.policy,
+        colophon_domain::policy::Action::ContentCreate,
+        None,
+        "your role can't add assets to this project",
+    )?;
+    let environment = seen.environment;
+    seen.commit().await.map_err(ApiError::from_db)?;
     let asset = Uuid::now_v7();
     let storage_name = format!("{asset}-{}", &Uuid::now_v7().simple().to_string()[..8]);
-    let quarantine_key = quarantine_key(&path.project, &path.environment, &storage_name);
+    let quarantine_key = quarantine_key(&path.project, &environment.to_string(), &storage_name);
     store
         .put(
             &object_store::path::Path::from(quarantine_key.clone()),
@@ -99,13 +110,6 @@ pub(crate) async fn upload(
         &intent.size.to_string(),
     ]);
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    // Assets belong to the project, not one collection: the whole-project form of the grant.
-    crate::members::require(
-        &tx.policy,
-        colophon_domain::policy::Action::ContentCreate,
-        None,
-        "your role can't add assets to this project",
-    )?;
     match idempotency::claim(&mut tx, UPLOAD, key, &hash)
         .await
         .map_err(ApiError::from_db)?
@@ -172,6 +176,85 @@ pub(crate) async fn list(
         None,
         false,
     ))
+}
+
+/// `GET /media/v1/{project}/{environment}/{asset}`: the asset origin — the verified bytes,
+/// publicly (media M5). A `public/` object exists exactly when the worker verified it, so the
+/// store is the whole authority: no session, no row read, only the environment slug resolved
+/// to the id the key names. The stored `Content-Type` (written at promote) is served back, and
+/// the object is immutable by construction — a changed image is a new asset — so it caches
+/// forever. Quarantined and rejected assets have no `public/` object: they are 404s here, like
+/// everything that never was.
+pub(crate) async fn serve(
+    State(state): State<AppState>,
+    Path(path): Path<OnePath>,
+) -> Result<Response, ApiError> {
+    let services = services(&state)?;
+    let store = services.assets.clone().ok_or(ApiError::Unavailable(
+        "uploads are not configured on this server",
+    ))?;
+    let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
+    let asset = Uuid::try_parse(&path.asset).map_err(|_| ApiError::NotFound)?;
+    let environment =
+        colophon_db::delivery::environment(&services.pool, project, &path.environment)
+            .await
+            .map_err(ApiError::from_db)?
+            .ok_or(ApiError::NotFound)?;
+    let key = colophon_media::public_key(
+        &project.to_string(),
+        &environment.id.to_string(),
+        &asset.to_string(),
+    );
+    let object = store
+        .get(&object_store::path::Path::from(key))
+        .await
+        .map_err(|error| match error {
+            object_store::Error::NotFound { .. } => ApiError::NotFound,
+            other => {
+                tracing::warn!(error = %other, "asset origin read failed");
+                ApiError::Unavailable("the object store is unreachable")
+            }
+        })?;
+    let mut headers = HeaderMap::new();
+    let content_type = object
+        .attributes
+        .get(&object_store::Attribute::ContentType)
+        .map_or_else(
+            || "application/octet-stream".to_owned(),
+            |value| value.as_ref().to_owned(),
+        );
+    headers.insert(
+        header::CONTENT_TYPE,
+        content_type.parse().map_err(ApiError::internal)?,
+    );
+    headers.insert(
+        header::CONTENT_LENGTH,
+        object
+            .meta
+            .size
+            .to_string()
+            .parse()
+            .map_err(ApiError::internal)?,
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        "public, max-age=31536000, immutable"
+            .parse()
+            .map_err(ApiError::internal)?,
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        "nosniff".parse().map_err(ApiError::internal)?,
+    );
+    if let Some(etag) = object.meta.e_tag.as_deref() {
+        headers.insert(header::ETAG, etag.parse().map_err(ApiError::internal)?);
+    }
+    let mut response = Response::builder()
+        .status(StatusCode::OK)
+        .body(axum::body::Body::from_stream(object.into_stream()))
+        .map_err(ApiError::internal)?;
+    response.headers_mut().extend(headers);
+    Ok(response)
 }
 
 /// `GET {P}/assets/{asset}`: one asset, or 404.

@@ -2,7 +2,7 @@
 //! inside a [`ProjectTransaction`], so the caller is a member and row-level security confines
 //! it to the project.
 
-use colophon_domain::schema::ContentReference;
+use colophon_domain::schema::{ContentAsset, ContentReference};
 use sqlx::types::time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -28,6 +28,8 @@ pub struct NewRevision<'a> {
     pub schema_version: i32,
     /// The entries its reference fields name (D-065).
     pub references: &'a [ContentReference],
+    /// The uploads its asset fields name (migration 0036, media M1).
+    pub assets: &'a [ContentAsset],
     /// The ids of its content type's unique fields (D-070): the entry claims the values the
     /// content sets in them. The caller's shared lock on the content type keeps them current.
     pub unique: &'a [String],
@@ -415,6 +417,7 @@ async fn insert_revision(
     .await
     .map_err(DbError::from_write)?;
     insert_references(tx, revision.id, revision.references).await?;
+    insert_assets(tx, revision.id, revision.assets).await?;
     Ok(created_at)
 }
 
@@ -544,6 +547,82 @@ fn missing(reference: &ContentReference) -> DbError {
         position: reference.position,
         many: reference.many,
     }
+}
+
+fn missing_asset(asset: &ContentAsset) -> DbError {
+    DbError::MissingAsset {
+        field: asset.field.clone(),
+        position: asset.position,
+        many: asset.many,
+    }
+}
+
+/// Keeps a new revision's asset references (migration 0036, media M1), as [`insert_references`]
+/// keeps its entries: a precheck names the first id that isn't an asset of this environment for
+/// the refusal, and the foreign key is the rule — a draft may hold a quarantined or rejected
+/// asset, but never one that doesn't exist. No `FOR KEY SHARE` here as on `entries`: the API
+/// role may not update `assets` (state changes are the worker's, migration 0035) so it cannot
+/// take the lock, and it needn't — an upload has no delete path at all until retention (M3),
+/// and `ON DELETE RESTRICT` is the guarantee when one arrives.
+async fn insert_assets(
+    tx: &mut ProjectTransaction,
+    revision: Uuid,
+    assets: &[ContentAsset],
+) -> Result<(), DbError> {
+    if assets.is_empty() {
+        return Ok(());
+    }
+    let mut ids = Vec::with_capacity(assets.len());
+    for asset in assets {
+        let Ok(id) = Uuid::try_parse(&asset.asset) else {
+            return Err(missing_asset(asset));
+        };
+        ids.push(id);
+    }
+    let found = sqlx::query!(
+        "SELECT id FROM assets
+         WHERE project_id = $1 AND environment_id = $2 AND id = ANY($3)",
+        tx.project,
+        tx.environment,
+        &ids
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    for (asset, id) in assets.iter().zip(&ids) {
+        if !found.iter().any(|row| row.id == *id) {
+            return Err(missing_asset(asset));
+        }
+    }
+    let fields: Vec<&str> = assets.iter().map(|a| a.field.as_str()).collect();
+    let positions: Vec<i16> = assets
+        .iter()
+        .map(|a| i16::try_from(a.position).unwrap_or(i16::MAX))
+        .collect();
+    sqlx::query!(
+        "INSERT INTO asset_references
+           (project_id, environment_id, revision_id, field, position, asset_id)
+         SELECT $1, $2, $3, field, position, asset_id
+         FROM unnest($4::text[], $5::int2[], $6::uuid[])
+              AS t (field, position, asset_id)",
+        tx.project,
+        tx.environment,
+        revision,
+        &fields as &[&str],
+        &positions,
+        &ids
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    // An upload deleted between the precheck and the insert fails the foreign key: refused
+    // like any name for an asset that isn't there.
+    .map_err(|error| match error.as_database_error() {
+        Some(db) if db.is_foreign_key_violation() => assets
+            .first()
+            .map_or_else(|| DbError::from_write(error), missing_asset),
+        _ => DbError::from_write(error),
+    })?;
+    Ok(())
 }
 
 /// Another entry of `collection` with `slug`, as its draft's slug or its published one: what a

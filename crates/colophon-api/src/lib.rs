@@ -254,6 +254,10 @@ fn publishing() -> Router<AppState> {
             "/content/v1/{project}/{environment}/{collection}/{entry}",
             get(delivery::get),
         )
+        .route(
+            "/media/v1/{project}/{environment}/{asset}",
+            get(assets::serve),
+        )
 }
 
 async fn fallback() -> ApiError {

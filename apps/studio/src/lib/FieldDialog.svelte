@@ -264,6 +264,26 @@
 				{/if}
 			{/if}
 		</div>
+	{:else if def.type === 'asset'}
+		<div class="grid gap-3 text-sm" data-testid="asset-options">
+			<p class="text-xs text-muted-foreground">An uploaded image, by its id — usable once the upload is verified; a release refuses one that isn't.</p>
+			{#if !isItem}
+				<fieldset class="flex flex-wrap items-center gap-x-4 gap-y-2">
+					<legend class="sr-only">How many</legend>
+					<label class="flex items-center gap-2">
+						<input type="radio" class="size-4 accent-primary" name="many-{place}" checked={!def.many} onchange={() => setMany(def as { many: boolean }, false)} disabled={!editable} />
+						One image
+					</label>
+					<label class="flex items-center gap-2">
+						<input type="radio" class="size-4 accent-primary" name="many-{place}" checked={def.many} onchange={() => setMany(def as { many: boolean }, true)} disabled={!editable} />
+						A list of up to
+					</label>
+					{#if def.many}
+						<Input class="h-8 w-20 tabular" type="number" min={1} max={100} aria-label="Most images in {field.label || 'this field'}" bind:value={def.max} disabled={!editable} />
+					{/if}
+				</fieldset>
+			{/if}
+		</div>
 	{:else if def.type === 'object' && def.component !== undefined}
 		<div class="grid gap-1.5 text-sm" data-testid="component-choice">
 			{#if isNew && !isItem}

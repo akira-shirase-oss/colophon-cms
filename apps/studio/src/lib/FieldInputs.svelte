@@ -330,6 +330,36 @@
 						refusal={refusedPlace(field) === null ? '' : (refused?.message ?? '')}
 						{onchange}
 					/>
+				{:else if field.type === 'asset'}
+					{#if field.many}
+						<Textarea
+							id={input}
+							disabled={locked.includes(field.id)}
+							rows={3}
+							class="font-mono text-xs"
+							spellcheck="false"
+							placeholder="One upload id per line"
+							aria-invalid={problemOf(field) ? true : undefined}
+							aria-describedby={describedBy(input, field)}
+							value={Array.isArray(form[field.id]) ? (form[field.id] as string[]).join('\n') : ''}
+							oninput={(event) => {
+								form[field.id] = event.currentTarget.value.split('\n').map((line) => line.trim()).filter(Boolean);
+								onchange();
+							}}
+						/>
+					{:else}
+						<Input
+							id={input}
+							disabled={locked.includes(field.id)}
+							class="font-mono text-xs"
+							spellcheck="false"
+							placeholder="An upload's id"
+							aria-invalid={problemOf(field) ? true : undefined}
+							aria-describedby={describedBy(input, field)}
+							bind:value={form[field.id] as string}
+							oninput={onchange}
+						/>
+					{/if}
 				{:else if field.type === 'json'}
 					<Textarea
 						id={input}

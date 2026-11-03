@@ -664,6 +664,7 @@ fn new_revision<'a>(
         slug: content.slug(),
         schema_version: version,
         references: content.references(),
+        assets: content.assets(),
         unique,
     }
 }

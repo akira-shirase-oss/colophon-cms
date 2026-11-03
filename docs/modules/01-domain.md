@@ -91,6 +91,11 @@ invariant. Production adapters and the simulator both run this code unchanged.
   API checks is a reference on `to` that points back here. It serializes after `many`/`max`; it is synchronization
   metadata, not a shape, so adding, changing or dropping one is always `Compatible`. Only a content type's own fields
   carry one: `inverse` nested in an object, item, block or component is `invalid_inverse` where it sits.
+- Built in media step M.1 (D-094): `asset` fields (one upload, or `many` with `max` up to 100) hold upload ids as
+  canonical lowercase UUIDs, distinct in a list — a `reference` without `to` or `inverse`, since uploads are not
+  entries of a collection. `Content::assets` reports each with its field, place and whether the field is a list;
+  whether an id names an upload is the database's to check (an entry may draft a quarantined upload; only publishing
+  requires `usable`).
 - Built in step M.3 (D-066): `object` (nested `fields`), `list` (`of` one kind, never a list or blocks; up to 100) and
   `blocks` (a page builder: up to 20 named kinds of block with their own fields; items carry `_block`, written first).
   Structures nest at most three deep; slugs stay top-level. Validation, the canonical form and the change rules recurse;

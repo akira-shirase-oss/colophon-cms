@@ -790,6 +790,15 @@ fn refused(refusal: Refusal) -> ApiError {
             "still_referenced",
             "an entry this changeset takes down is named by a published entry; change or take down that entry first, or in the same changeset",
         ),
+        // Media M1: only a verified asset can reach readers.
+        Refusal::UnusableAsset { ref state, .. } if state == "quarantined" => ApiError::conflict(
+            "asset_not_usable",
+            "an entry in this changeset names an asset that is still being verified; publish when it is usable",
+        ),
+        Refusal::UnusableAsset { .. } => ApiError::conflict(
+            "asset_not_usable",
+            "an entry in this changeset names an asset that was rejected; replace it",
+        ),
         // Only a pin made while the entry was being deleted can get here (D-080).
         Refusal::EntryDeleted { .. } => ApiError::conflict(
             "entry_deleted",
