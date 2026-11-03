@@ -228,6 +228,11 @@ expired-approval scheduling).
   edges chosen explicitly, run as their author by the worker with every publish check, published once or blocked
   with the reason, delayed when late, cancellable.
 - Review stages (Strapi's review workflows) on top of changesets; assignees; comments on fields and entries; tasks.
+  Comments and tasks' backend built in step E1 (D-102, branch `e1-comments-tasks`, migration 0042): comments
+  bind immutable revisions — never moving anchors — verbatim forever with a resolve/reopen pair; tasks carry
+  title, assignee, status and a done pair; both answer the entries' `content.read`/`content.update` with the
+  `own` condition, survive their entry's deletion readable, and write idempotently with audits. E2 builds the
+  review stages, the Studio surface follows.
 - Live presence and collaboration (O-017); duplicate, bulk actions, saved views, the history slider.
 - Live queries, after Convex: the Studio's lists, drafts, changesets and receipts update as PostgreSQL commits, from one
   listener per server fanned out to bounded sessions, every page read at one snapshot (COMPARISON.md).

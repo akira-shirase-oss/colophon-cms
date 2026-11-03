@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n             SELECT FROM revisions\n             WHERE project_id = $1 AND environment_id = $2 AND collection = $3\n               AND entry_id = $4 AND id = $5\n         ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c92c8ca8a956b7d5ef9355cd82a14bc6c33e7f3e4f8e746a2669821f7ebde4bf"
+}

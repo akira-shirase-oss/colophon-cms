@@ -11,6 +11,7 @@ mod auth;
 mod body;
 mod cache;
 mod changesets;
+mod collaboration;
 mod components;
 mod content_types;
 mod delivery;
@@ -138,6 +139,7 @@ pub fn routes(state: AppState) -> Router {
                 .delete(content_types::delete),
         )
         .merge(migrations())
+        .merge(collaboration())
         .merge(collections())
         .route(
             "/api/v1/projects/{project}/environments/{environment}/assets",
@@ -223,6 +225,35 @@ fn collections() -> Router<AppState> {
         .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions/{revision}",
             get(entries::revision),
+        )
+}
+
+/// Comments on an entry's revisions, and the environment's editorial tasks (E1, D-102).
+fn collaboration() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/comments",
+            get(collaboration::comments).post(collaboration::create_comment),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/comments/{comment}",
+            get(collaboration::comment),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/comments/{comment}/resolve",
+            post(collaboration::resolve),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/comments/{comment}/reopen",
+            post(collaboration::reopen),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/tasks",
+            get(collaboration::tasks).post(collaboration::create_task),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/tasks/{task}",
+            get(collaboration::task).patch(collaboration::update_task),
         )
 }
 
