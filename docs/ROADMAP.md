@@ -193,7 +193,11 @@ checked by the database on save and by every release, with "referenced by" (buil
 objects, lists and page-builder blocks, references inside them (built: D-066, migration 0025) · M.4 single types
 (built: D-067, migration 0026), patterns (built: D-069), uniqueness (built: D-070, migration 0027), defaults (built:
 D-071), conditional fields (built: D-072) and shared components (built: D-073, migration 0029) · M.5 migrations with a plan, a dry run and per-entry outcomes; the simulator racing
-schema changes and saves. What is built has its tests, a testbed page (`/modelling`) and a load scenario
+schema changes and saves. M.5a is built (D-100, migration 0040, `{P}/migrations`): a plan is computed under
+the collection's change lock, dry-runs every draft and open publication into per-entry items, is approved and
+applied against its hash, blocks schema writes while it runs, and takes resolutions for entries that need
+input; M.5b — the worker that claims items, interprets the declared operations and lands `done`/`blocked` —
+is the remaining slice, with the simulator's schema/save races. What is built has its tests, a testbed page (`/modelling`) and a load scenario
 (`perf/k6/modelling.js`) whose million-request runs wait for a quiet machine; the Studio's builder and editor cover
 M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 

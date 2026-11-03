@@ -162,7 +162,12 @@ pub async fn update(
     )
     .await
     {
-        Ok(version) => Ok(Updated::Updated(version)),
+        Ok(version) => {
+            // The version open migration plans were computed on is history now; a running
+            // plan's own apply writes its version the same way (D-100).
+            crate::migrations::supersede_open(tx, collection).await?;
+            Ok(Updated::Updated(version))
+        }
         Err(DbError::Conflict) => Ok(Updated::Stale {
             current: expected + 1,
         }),

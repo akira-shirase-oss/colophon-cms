@@ -27,6 +27,7 @@ use colophon_db::{
     components,
     content_types::{self, Claimed, MadeSingle, Removed, Updated, Version},
     idempotency::{self, Claim},
+    migrations,
     scope::ProjectTransaction,
 };
 use colophon_domain::{
@@ -569,6 +570,17 @@ pub(crate) async fn update(
     content_types::lock_for_change(&mut tx, &path.slug)
         .await
         .map_err(ApiError::from_db)?;
+    // A running migration owns the next version (D-100): it rewrites entries against it, so a
+    // different definition must not land meanwhile.
+    if migrations::running_for_collection(&mut tx, &path.slug)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        return Err(ApiError::conflict(
+            "migration_in_progress",
+            "a migration is running for this collection; update it when the run finishes",
+        ));
+    }
     let current = content_types::current(&mut tx, &path.slug)
         .await
         .map_err(ApiError::from_db)?
@@ -709,6 +721,24 @@ pub(crate) async fn delete(
     content_types::lock_for_change(&mut tx, &path.slug)
         .await
         .map_err(ApiError::from_db)?;
+    if migrations::running_for_collection(&mut tx, &path.slug)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        return Err(ApiError::conflict(
+            "migration_in_progress",
+            "a migration is running for this collection; delete it when the run finishes",
+        ));
+    }
+    if migrations::has_plans(&mut tx, &path.slug)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        return Err(ApiError::conflict(
+            "collection_has_plans",
+            "its migration plans name its versions forever, so the collection stays: make a new collection instead",
+        ));
+    }
     let current = content_types::current(&mut tx, &path.slug)
         .await
         .map_err(ApiError::from_db)?

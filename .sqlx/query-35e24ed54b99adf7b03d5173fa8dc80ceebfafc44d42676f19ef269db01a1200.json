@@ -1,0 +1,255 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, collection, base_version, target_version, target_definition,\n                  target_definition_hash, operations::text AS operations, state, plan_hash,\n                  created_by, approved_by, approved_at, expected_items, done_items,\n                  blocked_items, started_at, finished_at, error, created_at, updated_at\n           FROM migration_plans\n           WHERE project_id = $1 AND environment_id = $2\n             AND ($3::text IS NULL OR collection = $3)\n             AND ($4::text IS NULL OR state = $4)\n           ORDER BY id DESC\n           LIMIT $5",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "collection",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "collection"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "base_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "base_version"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "target_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "target_version"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "target_definition",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "target_definition"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "target_definition_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "target_definition_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "operations",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "plan_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "plan_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "approved_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "approved_by"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "approved_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "approved_at"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "expected_items",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "expected_items"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "done_items",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "done_items"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "blocked_items",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "blocked_items"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "started_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "finished_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "finished_at"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "ordinal": 18,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 19,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      null,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "35e24ed54b99adf7b03d5173fa8dc80ceebfafc44d42676f19ef269db01a1200"
+}

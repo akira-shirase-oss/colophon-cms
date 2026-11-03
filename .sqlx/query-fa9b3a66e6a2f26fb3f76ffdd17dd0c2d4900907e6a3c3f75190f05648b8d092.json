@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE migration_items SET outcome = 'resolved', resolution = $5::text::jsonb\n         WHERE project_id = $1 AND environment_id = $2 AND plan_id = $3 AND entry_id = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fa9b3a66e6a2f26fb3f76ffdd17dd0c2d4900907e6a3c3f75190f05648b8d092"
+}

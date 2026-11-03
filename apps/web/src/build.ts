@@ -57,8 +57,11 @@ async function collection<T>(options: BuildOptions, name: string, generation: nu
 	const items: T[] = [];
 	for (let page = 0; page < MAX_PAGES; page += 1) {
 		const query = new URLSearchParams({ limit: '100' });
+		// Pin the release on the first page — but not generation 0, "nothing released yet": the
+		// API only answers that unpinned (`?generation=` takes 1..=latest). Asking plainly serves
+		// the same answer, and a release landing meanwhile still fails the `served` check below.
 		if (cursor !== null) query.set('cursor', cursor);
-		else if (generation !== undefined) query.set('generation', String(generation));
+		else if (generation !== undefined && generation > 0) query.set('generation', String(generation));
 		const response = await get(`${base}?${query}`, { headers: { accept: 'application/json' } });
 		if (!response.ok) throw new BuildFailed(`reading ${name}: HTTP ${response.status}`);
 		const served = Number(response.headers.get('colophon-generation'));

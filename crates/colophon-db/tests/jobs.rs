@@ -222,7 +222,9 @@ async fn a_job_past_its_deadline_fails_and_the_worker_role_sees_no_drafts() {
 
     for statement in [
         "SELECT count(*) FROM revisions",
-        "SELECT count(*) FROM entries",
+        // The worker reads a few entries columns for retention (0039), which makes count(*)
+        // legal; a draft's title is not among them — the worker still sees no drafts.
+        "SELECT draft_title FROM entries",
         "SELECT count(*) FROM memberships",
         "SELECT count(*) FROM sessions",
         "SELECT content FROM publications",

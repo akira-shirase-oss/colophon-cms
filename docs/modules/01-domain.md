@@ -125,6 +125,12 @@ invariant. Production adapters and the simulator both run this code unchanged.
   definition uses; `expand_components` gives each component field, and each marked object, the component's fields
   (`unknown_component`, or, for a stored definition when one component changes, `Unlisted::Keep`). A definition
   that still holds `"type": "component"` is refused (`unexpanded_component`): the server expands first.
+- Since step M.5a (D-100): a change `successor` answers `CheckContent` for, and that stored content fails, no
+  longer ends at `needs_migration` — the API plans it: every draft and open publication is checked against the
+  target (`ContentType::accepts`), each named a plan item `ok` or `needs_input` with its refusal, and a person may
+  store a `resolution` document the target accepts (`ContentType::validate`). The plans, items, approval and
+  apply live in the database (module 02) behind migration routes (module 04); the transform machinery that turns
+  a refusal into `migrates` — declared `operations` — and the worker that drives a run are step M.5b.
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the

@@ -22,6 +22,7 @@ mod fault;
 pub mod health;
 mod members;
 pub mod middleware;
+mod migrations;
 mod projects;
 mod receipts;
 mod rich_text;
@@ -136,6 +137,7 @@ pub fn routes(state: AppState) -> Router {
                 .put(content_types::update)
                 .delete(content_types::delete),
         )
+        .merge(migrations())
         .merge(collections())
         .route(
             "/api/v1/projects/{project}/environments/{environment}/assets",
@@ -155,6 +157,39 @@ pub fn routes(state: AppState) -> Router {
         // Rate limits (D-076): inside the error envelope, before any handler does work.
         .layer(admission)
         .with_state(state)
+}
+
+/// Content schema migrations: plans, their items, and their lifecycle (D-100).
+fn migrations() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/migrations",
+            get(migrations::list).post(migrations::create),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/migrations/{migration}",
+            get(migrations::get),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/migrations/{migration}/items",
+            get(migrations::items),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/migrations/{migration}/items/{entry}",
+            axum::routing::put(migrations::resolve),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/migrations/{migration}/approve",
+            post(migrations::approve),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/migrations/{migration}/apply",
+            post(migrations::apply),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/migrations/{migration}/cancel",
+            post(migrations::cancel),
+        )
 }
 
 /// One collection's entries: pages, drafts, their history, and the JSONL export/import

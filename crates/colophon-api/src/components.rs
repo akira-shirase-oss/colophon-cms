@@ -288,6 +288,16 @@ async fn rewrite_users(
         type_store::lock_for_change(tx, &collection)
             .await
             .map_err(ApiError::from_db)?;
+        // A running migration owns the collection's next version (D-100).
+        if colophon_db::migrations::running_for_collection(tx, &collection)
+            .await
+            .map_err(ApiError::from_db)?
+        {
+            return Err(ApiError::conflict(
+                "migration_in_progress",
+                "a migration is running on a collection that uses this component; update it when the run finishes",
+            ));
+        }
         // Read again under the lock: it may have stopped using the component meanwhile.
         let Some(current) = type_store::current(tx, &collection)
             .await

@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM migration_plans\n               WHERE project_id = $1 AND environment_id = $2 AND collection = $3\n                 AND state = 'running'\n           ) AS \"running!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "running!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "fcf9272a5ea1ae0f14cfed3a058390f5bb3b0800b46887219700b8edcd5dbbe6"
+}

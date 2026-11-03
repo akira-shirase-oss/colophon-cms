@@ -1,0 +1,107 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT i.entry_id, i.expected_revision_id, i.outcome, i.problem::text AS problem,\n                  i.resolution::text AS resolution, i.new_revision_id, i.applied_at,\n                  e.draft_title AS title\n           FROM migration_items i\n           LEFT JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id\n                              AND e.id = i.entry_id\n           WHERE i.project_id = $1 AND i.environment_id = $2 AND i.plan_id = $3\n             AND ($4::text IS NULL OR i.outcome = $4)\n             AND ($5::uuid IS NULL OR i.entry_id > $5)\n           ORDER BY i.entry_id\n           LIMIT $6",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entry_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "migration_items",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "expected_revision_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "migration_items",
+            "name": "expected_revision_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "migration_items",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "problem",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "resolution",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "new_revision_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "migration_items",
+            "name": "new_revision_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "applied_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "migration_items",
+            "name": "applied_at"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "draft_title"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      null,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "655aabdb16bb37d5eb41e8974e0161b90bc6a875dc4956513141a671ed66ea14"
+}
