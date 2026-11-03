@@ -134,6 +134,29 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
 - At execution, authority, approval, revision hashes and dependencies are revalidated. Edited content blocks the release.
 - A missed schedule after downtime is labelled *delayed*, never on time.
 
+### Schema migrations (step M.5b, D-101)
+- `Worker::run_migrations` runs beside the delivery loop, on the worker's pool, every
+  `COLOPHON_WORKER_POLL_MS`: `colophon_db::migrations::running` lists `running` plans across every project
+  (at most 64, inside a `SET LOCAL ROLE colophon_worker` transaction), and each is driven under a
+  `pg_try_advisory_lock` claim on a dedicated connection — at most one worker drives a plan, and a crash
+  frees the claim for the next scan.
+- A drive's first transaction calls migration 0041's `colophon_migration_begin` (`SECURITY DEFINER`, owned
+  by `colophon_migrator`), which stamps the run's `target_version` = base+1 under the collection's change
+  lock, or ends the plan `blocked` (`collection_moved`) when the collection's version left the plan's base.
+  `already` after a crash resumes exactly where it stopped.
+- Items apply one transaction each, batches of 16 re-read fresh so a `resolution` landing mid-run is seen:
+  the expected revision's document — or a `resolved` item's stored resolution — is transformed by
+  `colophon_domain::migrate`'s declared `fill`/`move` operations, validated against the target, and written
+  by `colophon_migration_apply_item`, the same rows a save writes. `draft_moved`, a deleted entry
+  (`skipped`), a missing reference or asset, and transform or validation refusals all land on the item as
+  its outcome with the refusal as its `problem` — the item-level `blocked`.
+- `checkpoint` after each item recomputes `done_items`/`blocked_items` and ends the plan `done` or
+  `blocked`; declared operations that don't parse and `collection_moved` end it `blocked` through
+  `fail_run`. Nothing about a run waits on a person: a `needs_input` item is attempted like the rest, so a
+  run always ends.
+- Proof: F-05b in `tests/faults.rs` (killed after an item's commit; a fresh worker finishes the plan, every
+  item applied once) and the M.5b half of `tests/migrations.rs`.
+
 ### Cancellation and revocation
 - Cancellation stops new attempts. It does not reverse remote side effects that already happened.
 - For safety-critical actions, cancellation and permission revocation are rechecked before each next external attempt.

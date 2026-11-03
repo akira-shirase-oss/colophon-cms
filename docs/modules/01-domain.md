@@ -129,8 +129,14 @@ invariant. Production adapters and the simulator both run this code unchanged.
   longer ends at `needs_migration` — the API plans it: every draft and open publication is checked against the
   target (`ContentType::accepts`), each named a plan item `ok` or `needs_input` with its refusal, and a person may
   store a `resolution` document the target accepts (`ContentType::validate`). The plans, items, approval and
-  apply live in the database (module 02) behind migration routes (module 04); the transform machinery that turns
-  a refusal into `migrates` — declared `operations` — and the worker that drives a run are step M.5b.
+  apply live in the database (module 02) behind migration routes (module 04). Since step M.5b (D-101)
+  `colophon_domain::migrate` is the transform machinery: `parse` takes a plan's declared `operations`
+  (`fill` sets a path, creating the field but never missing parents; `move` relocates a value without
+  overwriting — a missing source is a no-op, an occupied destination refuses, and same-path or descendant
+  moves are rejected at parse, as is any malformed path) into `Op`s in declared order, and `apply` runs them
+  on a document, refusing rather than producing anything it can't justify. The API parses them at plan time
+  and the worker parses them again to drive the run (module 05); a run's transform and target-validation
+  refusals land on the item as `blocked` problems.
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the

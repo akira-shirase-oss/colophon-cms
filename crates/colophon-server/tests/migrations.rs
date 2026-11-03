@@ -379,3 +379,465 @@ async fn a_compatible_change_needs_no_plan() {
     .expect("request");
     assert_eq!(unknown.status, StatusCode::NOT_FOUND, "{}", unknown.body);
 }
+
+// -- the run (M.5b) -----------------------------------------------------------
+//
+// A running plan is picked up by the worker on the same server (the `all` role these servers
+// start as), driven item by item, and lands `done` or `blocked` — the worker polls every 50 ms
+// so the tests don't wait.
+
+/// Workers that look for work often, so the tests don't wait.
+const FAST: [(&str, &str); 1] = [("COLOPHON_WORKER_POLL_MS", "50")];
+
+/// `POST {P}/migrations` declaring `operations`.
+async fn plan_ops(
+    session: &Session,
+    project: &str,
+    definition: &Value,
+    operations: &Value,
+) -> Reply {
+    call(
+        session,
+        Method::POST,
+        &migrations(project),
+        Some(&json!({
+            "collection": "articles",
+            "definition": definition,
+            "operations": operations,
+        })),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request")
+}
+
+/// The entry's draft etag (`"sha256:…"`), for saves that move it.
+async fn entry_etag(session: &Session, project: &str, entry: &str) -> String {
+    let reply = call(
+        session,
+        Method::GET,
+        &format!("{}/{entry}", entries(project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    reply.etag().expect("an ETag")
+}
+
+/// Approves and applies the plan at `path`; its hash.
+async fn apply_plan(session: &Session, path: &str, hash: &str) {
+    let approved = act(session, &format!("{path}/approve"), Some(hash)).await;
+    assert_eq!(approved.status, StatusCode::OK, "{}", approved.body);
+    let applied = act(session, &format!("{path}/apply"), Some(hash)).await;
+    assert_eq!(applied.status, StatusCode::ACCEPTED, "{}", applied.body);
+}
+
+/// Waits for the plan at `path` to settle out of `running`; its `data`.
+async fn settled(session: &Session, path: &str) -> Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        let reply = call(session, Method::GET, path, None, &[])
+            .await
+            .expect("request");
+        assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+        if reply.body["data"]["state"].as_str() != Some("running") {
+            return reply.body["data"].clone();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the plan never settled"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// The plan's items, all of them.
+async fn all_items(session: &Session, path: &str) -> Vec<Value> {
+    let reply = call(session, Method::GET, &format!("{path}/items"), None, &[])
+        .await
+        .expect("request");
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    reply.body["data"].as_array().expect("items").clone()
+}
+
+/// A plan the worker applies to a `done`: declared operations fill the required field the
+/// target adds, so the item the dry run marked `needs_input` is transformed, written at the
+/// run's version, and the collection's type lands there with it.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_plan_with_operations_transforms_and_finishes_done() {
+    let _server = Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let editor = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    join(&owner, &editor, &project, "editor").await;
+    let entry = common::create_article(&owner, &project, "Migrating").await;
+    let (definition, _) = current_type(&owner, &project).await;
+    let target = with_required_subtitle(&definition);
+
+    // The fill operation supplies what the target requires; the dry run still predicts
+    // needs_input — ops run at apply time, not at plan time.
+    let planned = plan_ops(
+        &owner,
+        &project,
+        &target,
+        &json!([{"op": "fill", "path": "subtitle", "value": "the short version"}]),
+    )
+    .await;
+    assert_eq!(planned.status, StatusCode::CREATED, "{}", planned.body);
+    let id = planned.body["data"]["id"].as_str().expect("id").to_owned();
+    let path = format!("{}/{id}", migrations(&project));
+    let hash = planned.body["data"]["hash"]
+        .as_str()
+        .expect("hash")
+        .to_owned();
+    assert_eq!(planned.body["data"]["items"]["blocked"], 1);
+    assert_eq!(planned.body["data"]["republish_required"], false);
+
+    apply_plan(&owner, &path, &hash).await;
+    let plan = settled(&owner, &path).await;
+    assert_eq!(plan["state"], "done", "{plan}");
+    assert_eq!(
+        (
+            plan["items"]["done"].as_i64(),
+            plan["items"]["blocked"].as_i64()
+        ),
+        (Some(1), Some(0)),
+        "{plan}"
+    );
+
+    // The item is applied: a new revision built on the plan-time draft, filled, at the run's
+    // version — and the draft a reader sees is the migrated one.
+    let items = all_items(&editor, &path).await;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["outcome"], "applied", "{}", items[0]);
+    assert!(items[0]["new_revision_id"].is_string());
+    assert_eq!(items[0]["republish_required"], false);
+    let draft = call(
+        &editor,
+        Method::GET,
+        &format!("{}/{entry}", entries(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        draft.body["data"]["content"]["subtitle"],
+        "the short version"
+    );
+
+    // The collection's type moved to the run's version: the definition a PUT now confirms.
+    let (_, version) = current_type(&owner, &project).await;
+    assert_eq!(version, "\"v2\"");
+
+    // And the item the plan predicted is why the plan could be approved at all — a second
+    // drive finds nothing to do: the settled state is the durable one.
+    let again = call(&owner, Method::GET, &path, None, &[])
+        .await
+        .expect("request");
+    assert_eq!(again.body["data"]["state"], "done");
+}
+
+/// An item the dry run already accepts is still written at the run's version — an `ok`
+/// prediction becomes an `applied` item with a revision of its own.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_ok_item_is_applied_and_the_plan_is_done() {
+    let _server = Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    common::create_article(&owner, &project, "Kept").await;
+    // An optional field, added by a plain update, then removed by a plan: stored content
+    // never had it, so every item predicts `ok`.
+    let (definition, version) = current_type(&owner, &project).await;
+    let mut added = definition.clone();
+    added["fields"].as_array_mut().expect("fields").push(json!({
+        "id": "subtitle", "label": "Subtitle", "type": "text",
+        "required": false, "max_chars": 100, "multiline": false
+    }));
+    let updated = call(
+        &owner,
+        Method::PUT,
+        &content_type(&project, "articles"),
+        Some(&added),
+        &[("if-match", &version), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(updated.status, StatusCode::OK, "{}", updated.body);
+    let planned = plan(&owner, &project, &definition, &key()).await;
+    assert_eq!(planned.status, StatusCode::CREATED, "{}", planned.body);
+    let id = planned.body["data"]["id"].as_str().expect("id").to_owned();
+    let path = format!("{}/{id}", migrations(&project));
+    let hash = planned.body["data"]["hash"]
+        .as_str()
+        .expect("hash")
+        .to_owned();
+    let items = all_items(&owner, &path).await;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["outcome"], "ok", "{}", items[0]);
+
+    apply_plan(&owner, &path, &hash).await;
+    let plan = settled(&owner, &path).await;
+    assert_eq!(plan["state"], "done", "{plan}");
+    assert_eq!(
+        plan["target_version"].as_i64(),
+        plan["base_version"].as_i64().map(|base| base + 1)
+    );
+    let items = all_items(&owner, &path).await;
+    assert_eq!(items[0]["outcome"], "applied", "{}", items[0]);
+    assert!(items[0]["new_revision_id"].is_string());
+}
+
+/// A `resolved` item applies the document a person stored, not a transformed one.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_resolved_item_is_applied_and_the_plan_is_done() {
+    let _server = Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let entry = common::create_article(&owner, &project, "Needs words").await;
+    let (definition, _) = current_type(&owner, &project).await;
+    let target = with_required_subtitle(&definition);
+    let planned = plan(&owner, &project, &target, &key()).await;
+    assert_eq!(planned.status, StatusCode::CREATED, "{}", planned.body);
+    let id = planned.body["data"]["id"].as_str().expect("id").to_owned();
+    let path = format!("{}/{id}", migrations(&project));
+    let hash = planned.body["data"]["hash"]
+        .as_str()
+        .expect("hash")
+        .to_owned();
+    let resolved = call(
+        &owner,
+        Method::PUT,
+        &format!("{path}/items/{entry}"),
+        Some(&json!({
+            "resolution": {
+                "title": "Needs words",
+                "subtitle": "resolved by a person",
+                "body": {"schema": "colophon/rich-text", "version": 1, "doc": {"type": "doc",
+                    "content": [{"type": "paragraph", "content": [{"type": "text", "text": "text"}]}]}}
+            }
+        })),
+        &[("if-match", &format!("\"{hash}\"")), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(resolved.status, StatusCode::OK, "{}", resolved.body);
+
+    apply_plan(&owner, &path, &hash).await;
+    let plan = settled(&owner, &path).await;
+    assert_eq!(plan["state"], "done", "{plan}");
+    let items = all_items(&owner, &path).await;
+    assert_eq!(items[0]["outcome"], "applied");
+    let draft = call(
+        &owner,
+        Method::GET,
+        &format!("{}/{entry}", entries(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        draft.body["data"]["content"]["subtitle"],
+        "resolved by a person"
+    );
+}
+
+/// A draft saved after the plan was made is not overwritten: the item refuses `draft_moved`
+/// and the run ends `blocked`, the way the plan's expected revisions promised.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_draft_that_moved_blocks_the_item_and_the_run() {
+    let _server = Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let editor = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    join(&owner, &editor, &project, "editor").await;
+    let entry = common::create_article(&owner, &project, "First draft").await;
+    let (definition, _) = current_type(&owner, &project).await;
+    let target = with_required_subtitle(&definition);
+    let planned = plan_ops(
+        &owner,
+        &project,
+        &target,
+        &json!([{"op": "fill", "path": "subtitle", "value": "x"}]),
+    )
+    .await;
+    assert_eq!(planned.status, StatusCode::CREATED, "{}", planned.body);
+    let id = planned.body["data"]["id"].as_str().expect("id").to_owned();
+    let path = format!("{}/{id}", migrations(&project));
+    let hash = planned.body["data"]["hash"]
+        .as_str()
+        .expect("hash")
+        .to_owned();
+    let approved = act(&owner, &format!("{path}/approve"), Some(&hash)).await;
+    assert_eq!(approved.status, StatusCode::OK, "{}", approved.body);
+
+    // A save wins the race to apply: the draft is no longer the revision the plan expected.
+    let etag = entry_etag(&editor, &project, &entry).await;
+    let saved = call(
+        &editor,
+        Method::PUT,
+        &format!("{}/{entry}", entries(&project)),
+        Some(&article("Second draft", "moved")),
+        &[("if-match", &etag), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+
+    let applied = act(&owner, &format!("{path}/apply"), Some(&hash)).await;
+    assert_eq!(applied.status, StatusCode::ACCEPTED, "{}", applied.body);
+    let plan = settled(&owner, &path).await;
+    assert_eq!(plan["state"], "blocked", "{plan}");
+    let items = all_items(&owner, &path).await;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["outcome"], "blocked", "{}", items[0]);
+    assert_eq!(items[0]["problem"]["reason"], "draft_moved");
+    // The editor's save stands: the run wrote nothing over it.
+    let draft = call(
+        &editor,
+        Method::GET,
+        &format!("{}/{entry}", entries(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(draft.body["data"]["content"]["title"], "Second draft");
+}
+
+/// An entry deleted after the plan was made can't be migrated: the item ends `skipped` and
+/// the plan still reaches `done`.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_deleted_entry_is_skipped_and_the_plan_is_done() {
+    let _server = Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let entry = common::create_article(&owner, &project, "Going away").await;
+    let (definition, _) = current_type(&owner, &project).await;
+    let target = with_required_subtitle(&definition);
+    let planned = plan_ops(
+        &owner,
+        &project,
+        &target,
+        &json!([{"op": "fill", "path": "subtitle", "value": "x"}]),
+    )
+    .await;
+    assert_eq!(planned.status, StatusCode::CREATED, "{}", planned.body);
+    let id = planned.body["data"]["id"].as_str().expect("id").to_owned();
+    let path = format!("{}/{id}", migrations(&project));
+    let hash = planned.body["data"]["hash"]
+        .as_str()
+        .expect("hash")
+        .to_owned();
+    let approved = act(&owner, &format!("{path}/approve"), Some(&hash)).await;
+    assert_eq!(approved.status, StatusCode::OK, "{}", approved.body);
+
+    let path_entry = format!("{}/{entry}", entries(&project));
+    let etag = entry_etag(&owner, &project, &entry).await;
+    let deleted = call(
+        &owner,
+        Method::DELETE,
+        &path_entry,
+        None,
+        &[("if-match", &etag), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(deleted.status, StatusCode::OK, "{}", deleted.body);
+
+    let applied = act(&owner, &format!("{path}/apply"), Some(&hash)).await;
+    assert_eq!(applied.status, StatusCode::ACCEPTED, "{}", applied.body);
+    let plan = settled(&owner, &path).await;
+    assert_eq!(plan["state"], "done", "{plan}");
+    let items = all_items(&owner, &path).await;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["outcome"], "skipped", "{}", items[0]);
+}
+
+/// A publication pins the revision it published: after the run moves the draft to the new
+/// version, the entry's item and plan say `republish_required` until someone publishes the
+/// migrated draft.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_applied_entry_needs_republishing_until_it_is_published() {
+    let _server = Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    // The article is published before the migration: its open publication pins the old
+    // version's revision.
+    let generation = common::publish_article(&owner, &project, "Pinned").await;
+    let (definition, _) = current_type(&owner, &project).await;
+    let target = with_required_subtitle(&definition);
+    let planned = plan_ops(
+        &owner,
+        &project,
+        &target,
+        &json!([{"op": "fill", "path": "subtitle", "value": "republic"}]),
+    )
+    .await;
+    assert_eq!(planned.status, StatusCode::CREATED, "{}", planned.body);
+    let id = planned.body["data"]["id"].as_str().expect("id").to_owned();
+    let path = format!("{}/{id}", migrations(&project));
+    let hash = planned.body["data"]["hash"]
+        .as_str()
+        .expect("hash")
+        .to_owned();
+
+    apply_plan(&owner, &path, &hash).await;
+    let plan = settled(&owner, &path).await;
+    assert_eq!(plan["state"], "done", "{plan}");
+    assert_eq!(plan["republish_required"], true, "{plan}");
+    let items = all_items(&owner, &path).await;
+    assert_eq!(items[0]["republish_required"], true, "{}", items[0]);
+
+    // Publishing the migrated draft pins its revision at the run's version: nothing is left
+    // to republish, on the item or the plan.
+    let entry = items[0]["entry_id"].as_str().expect("entry").to_owned();
+    let next = common::release(
+        &owner,
+        &project,
+        &json!({"title": "Again", "entries": [entry]}),
+    )
+    .await;
+    assert!(next > generation);
+    let items = all_items(&owner, &path).await;
+    assert_eq!(items[0]["republish_required"], false, "{}", items[0]);
+    let plan = call(&owner, Method::GET, &path, None, &[])
+        .await
+        .expect("request");
+    assert_eq!(plan.body["data"]["republish_required"], false);
+}
+
+/// Declared operations that aren't operations are refused at plan time — the plan's hash is
+/// bound to operations it can run (D-101).
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn malformed_operations_are_refused_at_plan_time() {
+    let _server = Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let (definition, _) = current_type(&owner, &project).await;
+    let target = with_required_subtitle(&definition);
+    for operations in [
+        json!({"not": "a list"}),
+        json!([{"op": "delete", "path": "title"}]),
+        json!([{"op": "fill", "path": "not a path", "value": 1}]),
+        json!([{"op": "move", "from": "a", "to": "a"}]),
+    ] {
+        let refused = plan_ops(&owner, &project, &target, &operations).await;
+        assert_eq!(
+            refused.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{operations}: {}",
+            refused.body
+        );
+    }
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT i.entry_id, i.expected_revision_id, i.outcome, i.problem::text AS problem,\n                  i.resolution::text AS resolution, i.new_revision_id, i.applied_at,\n                  e.draft_title AS title\n           FROM migration_items i\n           LEFT JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id\n                              AND e.id = i.entry_id\n           WHERE i.project_id = $1 AND i.environment_id = $2 AND i.plan_id = $3 AND i.entry_id = $4",
+  "query": "SELECT i.entry_id, i.expected_revision_id, i.outcome, i.problem::text AS problem,\n                  i.resolution::text AS resolution, i.new_revision_id, i.applied_at,\n                  e.draft_title AS \"title?\",\n                  (i.outcome = 'applied' AND EXISTS (\n                      SELECT 1 FROM publications p\n                      JOIN revisions r ON r.project_id = p.project_id\n                                      AND r.environment_id = p.environment_id\n                                      AND r.entry_id = p.entry_id AND r.id = p.revision_id\n                      JOIN migration_plans mp ON mp.project_id = i.project_id\n                                             AND mp.environment_id = i.environment_id\n                                             AND mp.id = i.plan_id\n                      WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id\n                        AND p.entry_id = i.entry_id AND p.valid_to IS NULL\n                        AND r.schema_version < mp.target_version\n                  )) AS \"republish_required!\"\n           FROM migration_items i\n           LEFT JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id\n                              AND e.id = i.entry_id\n           WHERE i.project_id = $1 AND i.environment_id = $2 AND i.plan_id = $3 AND i.entry_id = $4",
   "describe": {
     "columns": [
       {
@@ -72,7 +72,7 @@
       },
       {
         "ordinal": 7,
-        "name": "title",
+        "name": "title?",
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -80,6 +80,12 @@
             "name": "draft_title"
           }
         }
+      },
+      {
+        "ordinal": 8,
+        "name": "republish_required!",
+        "type_info": "Bool",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -98,8 +104,9 @@
       null,
       true,
       true,
-      true
+      true,
+      null
     ]
   },
-  "hash": "2ebe2e43e1e6aa14ba1d3dc9e034e50d7cfe111fae0e31f74fd9e760251d7988"
+  "hash": "587d8cd8fcf8a588d005c828d57fc4c8d9957cafc3e991824c8e6fb8ece3c0f3"
 }

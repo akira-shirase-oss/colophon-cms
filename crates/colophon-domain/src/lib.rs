@@ -14,6 +14,7 @@ pub mod cache;
 pub mod changeset;
 pub mod destination;
 pub mod job;
+pub mod migrate;
 pub mod policy;
 pub mod project;
 pub mod receipt;

@@ -43,6 +43,7 @@ use colophon_db::{
     scope::ProjectTransaction,
 };
 use colophon_domain::{
+    migrate,
     project::Slug,
     schema::{ContentType, Refusal, Successor},
 };
@@ -183,6 +184,9 @@ pub(crate) struct PlanView {
     state: String,
     hash: String,
     items: ItemsCount,
+    /// Whether any applied item still serves an open publication pinned before the run's
+    /// target version — those entries need a publish before their public copy is current.
+    republish_required: bool,
     created_by: Uuid,
     approved_by: Option<Uuid>,
     approved_at: Option<String>,
@@ -208,6 +212,9 @@ pub(crate) struct ItemView {
     resolution: Option<Box<RawValue>>,
     new_revision_id: Option<Uuid>,
     applied_at: Option<String>,
+    /// Whether an open publication of this entry still pins a revision from before the run's
+    /// target version — `true` once applied until someone publishes the migrated draft.
+    republish_required: bool,
 }
 
 /// A resolved item, with the plan's hash the resolution was bound to.
@@ -246,7 +253,7 @@ fn summary(plan: Plan) -> Result<SummaryView, ApiError> {
     })
 }
 
-fn view(plan: Plan) -> Result<PlanView, ApiError> {
+fn view(plan: Plan, republish_required: bool) -> Result<PlanView, ApiError> {
     let items = counts(&plan);
     Ok(PlanView {
         id: plan.id,
@@ -264,6 +271,7 @@ fn view(plan: Plan) -> Result<PlanView, ApiError> {
         state: plan.state,
         hash: content_hash(&plan.plan_hash),
         items,
+        republish_required,
         created_by: plan.created_by,
         approved_by: plan.approved_by,
         approved_at: plan.approved_at.map(rfc3339).transpose()?,
@@ -293,6 +301,7 @@ fn item_view(item: Item) -> Result<ItemView, ApiError> {
             .map_err(ApiError::internal)?,
         new_revision_id: item.new_revision_id,
         applied_at: item.applied_at.map(rfc3339).transpose()?,
+        republish_required: item.republish_required,
     })
 }
 
@@ -415,6 +424,34 @@ fn no_migration_needed() -> ApiError {
     }
 }
 
+/// `operations` as the worker will read it: what the plan declares must be operations it can
+/// run — parsed the way the worker parses them, so nothing gets approved that can only block
+/// later (D-101).
+fn checked_operations(body: &NewPlanBody) -> Result<Option<String>, ApiError> {
+    let operations = body
+        .operations
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(ApiError::internal)?;
+    if operations.as_deref().is_some_and(|text| text.len() > 65536) {
+        return Err(ApiError::InvalidField {
+            reason: "operations_too_large",
+            pointer: "/operations",
+            message: "the plan's operations are at most 65,536 bytes".to_owned(),
+        });
+    }
+    if let Some(ops) = body.operations.as_ref()
+        && let Err(refusal) = migrate::parse(ops)
+    {
+        return Err(ApiError::Invalid(Refusal {
+            pointer: format!("/operations{}", refusal.pointer),
+            ..refusal
+        }));
+    }
+    Ok(operations)
+}
+
 /// `POST {P}/migrations`.
 pub(crate) async fn create(
     State(state): State<AppState>,
@@ -430,19 +467,7 @@ pub(crate) async fn create(
         pointer: "/collection",
         message: error.to_string(),
     })?;
-    let operations = new
-        .operations
-        .as_ref()
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(ApiError::internal)?;
-    if operations.as_deref().is_some_and(|text| text.len() > 65536) {
-        return Err(ApiError::InvalidField {
-            reason: "operations_too_large",
-            pointer: "/operations",
-            message: "the plan's operations are at most 65,536 bytes".to_owned(),
-        });
-    }
+    let operations = checked_operations(&new)?;
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_change(&tx, collection.as_str())?;
     let expanded = expand(&mut tx, &new.definition).await.map_err(|error| {
@@ -515,8 +540,11 @@ pub(crate) async fn create(
     )
     .await
     .map_err(ApiError::from_db)?;
+    let republish = migrations::republish_required(&mut tx, plan.id)
+        .await
+        .map_err(ApiError::from_db)?;
     let body = serde_json::to_string(&Data {
-        data: view(plan.clone())?,
+        data: view(plan.clone(), republish)?,
     })
     .map_err(ApiError::internal)?;
     finish(tx, PLAN, key, StatusCode::CREATED, &plan, body).await
@@ -577,8 +605,14 @@ pub(crate) async fn get(
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
+    let republish = migrations::republish_required(&mut tx, id)
+        .await
+        .map_err(ApiError::from_db)?;
     let hash = content_hash(&plan.plan_hash);
-    let body = serde_json::to_string(&Data { data: view(plan)? }).map_err(ApiError::internal)?;
+    let body = serde_json::to_string(&Data {
+        data: view(plan, republish)?,
+    })
+    .map_err(ApiError::internal)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(respond(StatusCode::OK, body, &hash, false))
 }
@@ -684,8 +718,11 @@ pub(crate) async fn approve(
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
+    let republish = migrations::republish_required(&mut tx, plan.id)
+        .await
+        .map_err(ApiError::from_db)?;
     let body = serde_json::to_string(&Data {
-        data: view(plan.clone())?,
+        data: view(plan.clone(), republish)?,
     })
     .map_err(ApiError::internal)?;
     finish(tx, APPROVE, key, StatusCode::OK, &plan, body).await
@@ -853,8 +890,11 @@ pub(crate) async fn cancel(
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
+    let republish = migrations::republish_required(&mut tx, plan.id)
+        .await
+        .map_err(ApiError::from_db)?;
     let body = serde_json::to_string(&Data {
-        data: view(plan.clone())?,
+        data: view(plan.clone(), republish)?,
     })
     .map_err(ApiError::internal)?;
     finish(tx, CANCEL, key, StatusCode::OK, &plan, body).await

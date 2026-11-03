@@ -37,7 +37,8 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 
-pub use sqlx::postgres::PgPool;
+pub use sqlx::postgres::{PgConnection, PgPool};
+pub use sqlx::{Postgres, Transaction};
 
 /// The schema migrations, embedded at compile time from `migrations/`.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");

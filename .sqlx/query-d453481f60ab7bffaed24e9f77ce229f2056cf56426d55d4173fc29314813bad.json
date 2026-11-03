@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pg_advisory_unlock(hashtext($1), hashtext($2)) AS \"released!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "released!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d453481f60ab7bffaed24e9f77ce229f2056cf56426d55d4173fc29314813bad"
+}

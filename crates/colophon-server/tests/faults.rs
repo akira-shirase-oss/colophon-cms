@@ -291,3 +291,120 @@ async fn a_worker_killed_after_announcing_is_followed_by_one_with_the_same_key()
         "with the same key, so the destination can drop it"
     );
 }
+
+/// A worker killed mid-run has already committed each applied item, so the next worker claims
+/// the plan, asks every item what it is, applies what is still pending and finishes the run:
+/// F-05b for migrations (M.5b). Nothing an item wrote is done twice.
+#[tokio::test]
+#[ignore = "needs the stack, migrations and --features fault-injection"]
+async fn a_migration_worker_killed_mid_run_resumes_and_finishes_the_plan() {
+    let owner;
+    let path;
+    {
+        let mut server = Server::start_with(&[
+            ("COLOPHON_FAULT", "migration:after-item"),
+            ("COLOPHON_WORKER_POLL_MS", "50"),
+        ])
+        .await;
+        owner = sign_in("dev-owner").await;
+        let project = project(&owner).await;
+        for title in ["One", "Two", "Three"] {
+            common::create_article(&owner, &project, title).await;
+        }
+        // A plan that fills a new required field, approved and applied.
+        let types = call(
+            &owner,
+            Method::GET,
+            &format!("/api/v1/projects/{project}/environments/production/content-types/articles"),
+            None,
+            &[],
+        )
+        .await
+        .expect("request");
+        let mut target = types.body["data"]["definition"].clone();
+        target["fields"].as_array_mut().expect("fields").push(
+            serde_json::json!({"id": "subtitle", "label": "Subtitle", "type": "text",
+                "required": true, "max_chars": 100, "multiline": false}),
+        );
+        let planned = call(
+            &owner,
+            Method::POST,
+            &format!("/api/v1/projects/{project}/environments/production/migrations"),
+            Some(&serde_json::json!({
+                "collection": "articles",
+                "definition": target,
+                "operations": [{"op": "fill", "path": "subtitle", "value": "x"}],
+            })),
+            &[("idempotency-key", &key())],
+        )
+        .await
+        .expect("request");
+        assert_eq!(planned.status, StatusCode::CREATED, "{}", planned.body);
+        let id = planned.body["data"]["id"].as_str().expect("id").to_owned();
+        let hash = planned.body["data"]["hash"]
+            .as_str()
+            .expect("hash")
+            .to_owned();
+        let plan_path =
+            format!("/api/v1/projects/{project}/environments/production/migrations/{id}");
+        let etag = format!("\"{hash}\"");
+        for action in ["approve", "apply"] {
+            let reply = call(
+                &owner,
+                Method::POST,
+                &format!("{plan_path}/{action}"),
+                None,
+                &[("if-match", &etag), ("idempotency-key", &key())],
+            )
+            .await
+            .expect("request");
+            assert!(
+                matches!(reply.status, StatusCode::OK | StatusCode::ACCEPTED),
+                "{action}: {}",
+                reply.body
+            );
+        }
+        // The worker claims the plan, applies the first item, and exits at the fault: the
+        // item's commit went in before the crash.
+        assert_eq!(
+            server.exit_code().await,
+            Some(FAULT_EXIT),
+            "the worker stopped mid-run"
+        );
+        path = plan_path;
+    }
+
+    let _server = Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "50")]).await;
+    // The resumed drive finishes the plan: every item applied exactly once.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let plan = loop {
+        let reply = call(&owner, Method::GET, &path, None, &[])
+            .await
+            .expect("request");
+        if reply.body["data"]["state"].as_str() != Some("running") {
+            break reply.body["data"].clone();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the plan never settled"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    assert_eq!(plan["state"], "done", "{plan}");
+    assert_eq!(
+        (
+            plan["items"]["done"].as_i64(),
+            plan["items"]["blocked"].as_i64()
+        ),
+        (Some(3), Some(0)),
+        "{plan}"
+    );
+    let items = call(&owner, Method::GET, &format!("{path}/items"), None, &[])
+        .await
+        .expect("request");
+    let items = items.body["data"].as_array().expect("items");
+    for item in items {
+        assert_eq!(item["outcome"], "applied", "{item}");
+        assert!(item["new_revision_id"].is_string(), "{item}");
+    }
+}

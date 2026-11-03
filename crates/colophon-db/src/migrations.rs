@@ -23,7 +23,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use colophon_domain::schema::{ContentType, Successor};
-use sqlx::types::time::OffsetDateTime;
+use sqlx::{Acquire, PgConnection, PgPool, Postgres, Transaction, types::time::OffsetDateTime};
 use uuid::Uuid;
 
 use crate::{DbError, content_types, scope::ProjectTransaction};
@@ -102,6 +102,10 @@ pub struct Item {
     /// The entry's draft title, for lists; `None` once the entry is deleted (the item stays:
     /// the plan named it).
     pub title: Option<String>,
+    /// Whether an open publication of the entry still pins a revision written before the
+    /// run's target version: it does, once the item is applied, until someone publishes the
+    /// migrated draft. Answered live, so a publish between the plan and now reads right.
+    pub republish_required: bool,
 }
 
 /// A plan to store; the API supplies what it computed (the hash and the parsed target).
@@ -387,7 +391,19 @@ pub async fn items(
         Item,
         r#"SELECT i.entry_id, i.expected_revision_id, i.outcome, i.problem::text AS problem,
                   i.resolution::text AS resolution, i.new_revision_id, i.applied_at,
-                  e.draft_title AS title
+                  e.draft_title AS "title?",
+                  (i.outcome = 'applied' AND EXISTS (
+                      SELECT 1 FROM publications p
+                      JOIN revisions r ON r.project_id = p.project_id
+                                      AND r.environment_id = p.environment_id
+                                      AND r.entry_id = p.entry_id AND r.id = p.revision_id
+                      JOIN migration_plans mp ON mp.project_id = i.project_id
+                                             AND mp.environment_id = i.environment_id
+                                             AND mp.id = i.plan_id
+                      WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id
+                        AND p.entry_id = i.entry_id AND p.valid_to IS NULL
+                        AND r.schema_version < mp.target_version
+                  )) AS "republish_required!"
            FROM migration_items i
            LEFT JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
                               AND e.id = i.entry_id
@@ -418,7 +434,19 @@ pub async fn item(
         Item,
         r#"SELECT i.entry_id, i.expected_revision_id, i.outcome, i.problem::text AS problem,
                   i.resolution::text AS resolution, i.new_revision_id, i.applied_at,
-                  e.draft_title AS title
+                  e.draft_title AS "title?",
+                  (i.outcome = 'applied' AND EXISTS (
+                      SELECT 1 FROM publications p
+                      JOIN revisions r ON r.project_id = p.project_id
+                                      AND r.environment_id = p.environment_id
+                                      AND r.entry_id = p.entry_id AND r.id = p.revision_id
+                      JOIN migration_plans mp ON mp.project_id = i.project_id
+                                             AND mp.environment_id = i.environment_id
+                                             AND mp.id = i.plan_id
+                      WHERE p.project_id = i.project_id AND p.environment_id = i.environment_id
+                        AND p.entry_id = i.entry_id AND p.valid_to IS NULL
+                        AND r.schema_version < mp.target_version
+                  )) AS "republish_required!"
            FROM migration_items i
            LEFT JOIN entries e ON e.project_id = i.project_id AND e.environment_id = i.environment_id
                               AND e.id = i.entry_id
@@ -569,6 +597,35 @@ pub async fn resolve_item(
     Ok(Resolved::Done(item))
 }
 
+/// Whether any applied item of `plan` still has an open publication pinned to a revision
+/// written before the run's target version — the plan-level form of each item's
+/// `republish_required`, answered live so a publish between the run and now reads right.
+/// `false` while `target_version` is unset (nothing applied yet).
+pub async fn republish_required(tx: &mut ProjectTransaction, plan: Uuid) -> Result<bool, DbError> {
+    sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+               SELECT 1 FROM migration_items i
+               JOIN publications p ON p.project_id = i.project_id
+                                  AND p.environment_id = i.environment_id
+                                  AND p.entry_id = i.entry_id AND p.valid_to IS NULL
+               JOIN revisions r ON r.project_id = p.project_id
+                               AND r.environment_id = p.environment_id
+                               AND r.entry_id = p.entry_id AND r.id = p.revision_id
+               JOIN migration_plans mp ON mp.project_id = i.project_id
+                                      AND mp.environment_id = i.environment_id
+                                      AND mp.id = i.plan_id
+               WHERE i.project_id = $1 AND i.environment_id = $2 AND i.plan_id = $3
+                 AND i.outcome = 'applied' AND r.schema_version < mp.target_version
+           ) AS "required!""#,
+        tx.project,
+        tx.environment,
+        plan
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
 /// Whether `collection` has any plan, in any state: plans name its versions forever, so it
 /// can't be deleted — the foreign key is the backstop; this gives the honest refusal.
 pub async fn has_plans(tx: &mut ProjectTransaction, collection: &str) -> Result<bool, DbError> {
@@ -604,6 +661,451 @@ pub async fn running_for_collection(
         collection
     )
     .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+// -- the run (M.5b) ------------------------------------------------------------
+//
+// A worker drives a `running` plan to `done` or `blocked` (docs/modules/05-worker.md). It
+// connects as `colophon_worker`, finds running plans across every project with [`running`],
+// and claims one with a session advisory lock on its own connection ([`claim_plan`]): at most
+// one worker drives a plan, and a crash frees it for the next scan. Every transaction of the
+// drive comes from [`worker_on`] on that same connection, so the claim is held throughout.
+//
+// What a run writes and the worker's own grants can't reach — the plan's content-type version
+// and the per-entry revision write — is migration 0041's pair of SECURITY DEFINER functions,
+// owned by `colophon_migrator`. They run in the caller's transaction, so every check they make
+// (the collection's change lock, the entry's draft pointer) is under the locks the same
+// transaction holds and can't drift between checking and writing.
+
+/// The most running plans one scan returns.
+pub const MAX_RUNNING: i64 = 64;
+/// The most items one batch of a run applies.
+pub const RUN_BATCH: i64 = 16;
+
+/// A running plan, as the worker's scan sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningPlan {
+    /// The project.
+    pub project: Uuid,
+    /// The environment.
+    pub environment: Uuid,
+    /// The plan.
+    pub id: Uuid,
+    /// Its collection.
+    pub collection: String,
+    /// The canonical target definition, for the parse that validates every rewritten document.
+    pub target_definition: String,
+    /// Its declared operations, as JSON text; `None` when there are none.
+    pub operations: Option<String>,
+}
+
+/// A plan's state and counters as a checkpoint leaves them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunState {
+    /// `running`, or `done`/`blocked` once the run ended (a stale claim can read any terminal
+    /// state — `superseded`, `cancelled` — and the driver should stop).
+    pub state: String,
+    /// Items applied or skipped.
+    pub done: i64,
+    /// Items still blocking: `needs_input` or `blocked`.
+    pub blocked: i64,
+    /// Why a blocked plan stopped; `None` while it runs.
+    pub error: Option<String>,
+}
+
+/// An item a run may apply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunItem {
+    /// The entry.
+    pub entry: Uuid,
+    /// Its draft at plan time: [`apply_item`] rewrites it or refuses `draft_moved`.
+    pub expected_revision: Uuid,
+    /// `ok`, `migrates`, `needs_input` or `resolved` — the rest are terminal.
+    pub outcome: String,
+    /// The replacement document a person stored, for `resolved`.
+    pub resolution: Option<String>,
+}
+
+/// What [`begin`] reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Begun {
+    /// `begun`, `already` (a resumed drive's version is stamped), `moved` (the collection's
+    /// version left the plan's base), `not_running`, or `missing`.
+    pub outcome: String,
+    /// The run's target version once it exists.
+    pub target_version: Option<i32>,
+}
+
+/// A transformed document ready to write, as [`apply_item`] passes it to migration 0041's
+/// function: the canonical JSON text plus the metadata the caller computed from it, as
+/// `entries::NewRevision` carries them for a save.
+#[derive(Debug)]
+pub struct Applied<'a> {
+    /// The new revision's id.
+    pub revision: Uuid,
+    /// Its canonical JSON.
+    pub content: &'a str,
+    /// The content's SHA-256.
+    pub content_hash: &'a [u8; 32],
+    /// Its title.
+    pub title: &'a str,
+    /// Its slug, when the type has a slug field.
+    pub slug: Option<&'a str>,
+    /// Its reference rows as a JSON array of `{"field","position","collection","entry"}`.
+    pub references: serde_json::Value,
+    /// Its asset rows as a JSON array of `{"field","position","asset"}`.
+    pub assets: serde_json::Value,
+    /// The target definition's unique fields: which draft claims the write replaces.
+    pub unique: &'a [String],
+}
+
+/// The running plans across every project, at most [`MAX_RUNNING`] in arbitrary order — the
+/// worker's scan, as it finds due schedules. As `colophon_worker`: the login role's own
+/// policies show a plan only inside its project.
+pub async fn running(pool: &PgPool) -> Result<Vec<RunningPlan>, DbError> {
+    let mut tx = pool.begin().await.map_err(DbError::from_query)?;
+    sqlx::query("SET LOCAL ROLE colophon_worker")
+        .execute(&mut *tx)
+        .await
+        .map_err(DbError::from_query)?;
+    let plans = sqlx::query_as!(
+        RunningPlan,
+        r#"SELECT project_id AS project, environment_id AS environment, id, collection,
+                  target_definition, operations::text AS operations
+           FROM migration_plans WHERE state = 'running' ORDER BY id LIMIT $1"#,
+        MAX_RUNNING
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?;
+    drop(tx);
+    Ok(plans)
+}
+
+/// Claims `plan` for the session on `conn`: a `pg_try_advisory_lock` on a key unique to the
+/// plan, held until [`release_plan`] or the connection drops — so one worker drives it, and a
+/// crash frees it. The lock is a session lock, not a transaction's: it outlives each batch's
+/// commit. `false` when another worker holds it.
+pub async fn claim_plan(
+    conn: &mut PgConnection,
+    project: Uuid,
+    environment: Uuid,
+    plan: Uuid,
+) -> Result<bool, DbError> {
+    sqlx::query_scalar!(
+        r#"SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS "claimed!""#,
+        format!("{project}/{environment}"),
+        format!("migration {plan}")
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// Releases the claim [`claim_plan`] made; a dropped connection does it anyway.
+pub async fn release_plan(
+    conn: &mut PgConnection,
+    project: Uuid,
+    environment: Uuid,
+    plan: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query_scalar!(
+        r#"SELECT pg_advisory_unlock(hashtext($1), hashtext($2)) AS "released!""#,
+        format!("{project}/{environment}"),
+        format!("migration {plan}")
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(())
+}
+
+/// A transaction for a run, on the connection that holds the claim — as `colophon_worker`
+/// for its duration, so the run's reads and writes get the worker's grants and policies, not
+/// the login role's project-scoped ones.
+pub async fn worker_on(conn: &mut PgConnection) -> Result<Transaction<'_, Postgres>, DbError> {
+    let mut tx = Acquire::begin(&mut *conn)
+        .await
+        .map_err(DbError::from_query)?;
+    sqlx::query("SET LOCAL ROLE colophon_worker")
+        .execute(&mut *tx)
+        .await
+        .map_err(DbError::from_query)?;
+    Ok(tx)
+}
+
+/// The drive's first step, migration 0041's `colophon_migration_begin`: under the plan's lock
+/// and the collection's change lock it writes the run's target version (the approver's
+/// definition at base+1, as a type update writes it) and points the plan at it. `already`
+/// when a previous drive stamped it — the resume after a crash — `moved` when the collection's
+/// version left the plan's base, `not_running` or `missing` otherwise.
+pub async fn begin(
+    tx: &mut Transaction<'_, Postgres>,
+    project: Uuid,
+    environment: Uuid,
+    plan: Uuid,
+) -> Result<Begun, DbError> {
+    sqlx::query_as!(
+        Begun,
+        r#"SELECT outcome AS "outcome!", target_version
+         FROM colophon_migration_begin($1, $2, $3)"#,
+        project,
+        environment,
+        plan
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// The items still to apply (`ok`, `migrates`, `needs_input` or `resolved`), in entry order
+/// after `after`, at most `limit` — `needs_input` is attempted too: the declared operations
+/// may supply what the dry run found missing, and an apply that still can't reaches `blocked`
+/// itself. A fresh read each batch, so a resolution that landed mid-run or an item blocked
+/// since is seen.
+pub async fn pending_items(
+    tx: &mut Transaction<'_, Postgres>,
+    project: Uuid,
+    environment: Uuid,
+    plan: Uuid,
+    after: Uuid,
+    limit: i64,
+) -> Result<Vec<RunItem>, DbError> {
+    sqlx::query_as!(
+        RunItem,
+        r#"SELECT entry_id AS entry, expected_revision_id AS expected_revision, outcome,
+                  resolution::text AS resolution
+           FROM migration_items
+           WHERE project_id = $1 AND environment_id = $2 AND plan_id = $3
+             AND outcome IN ('ok', 'migrates', 'needs_input', 'resolved') AND entry_id > $4
+           ORDER BY entry_id
+           LIMIT $5"#,
+        project,
+        environment,
+        plan,
+        after,
+        limit
+    )
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// One item's state, to confirm a blocked write is what it says.
+pub async fn item_for_run(
+    tx: &mut Transaction<'_, Postgres>,
+    project: Uuid,
+    environment: Uuid,
+    plan: Uuid,
+    entry: Uuid,
+) -> Result<Option<RunItem>, DbError> {
+    sqlx::query_as!(
+        RunItem,
+        r#"SELECT entry_id AS entry, expected_revision_id AS expected_revision, outcome,
+                  resolution::text AS resolution
+           FROM migration_items
+           WHERE project_id = $1 AND environment_id = $2 AND plan_id = $3 AND entry_id = $4"#,
+        project,
+        environment,
+        plan,
+        entry
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// The expected revision's document, the one the transform rewrites; `None` when the revision
+/// isn't there (the entry was deleted — [`apply_item`] answers `skipped` for it).
+pub async fn expected_content(
+    tx: &mut Transaction<'_, Postgres>,
+    project: Uuid,
+    environment: Uuid,
+    entry: Uuid,
+    revision: Uuid,
+) -> Result<Option<String>, DbError> {
+    sqlx::query_scalar!(
+        "SELECT content FROM revisions
+         WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3 AND id = $4",
+        project,
+        environment,
+        entry,
+        revision
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// One item's write, migration 0041's `colophon_migration_apply_item`: locks plan, item and
+/// entry in that order, refuses `draft_moved` when a save won the entry first, `skipped` when
+/// it was deleted, names a reference or asset that isn't there, and otherwise writes the
+/// revision — references, assets, unique claims and the draft pointer — and marks the item
+/// `applied` with it, all in the caller's transaction. The returned outcome is also written
+/// on the item when it isn't `applied`.
+pub async fn apply_item(
+    tx: &mut Transaction<'_, Postgres>,
+    project: Uuid,
+    environment: Uuid,
+    plan: Uuid,
+    entry: Uuid,
+    expected: Uuid,
+    applied: &Applied<'_>,
+) -> Result<String, DbError> {
+    sqlx::query_scalar!(
+        r#"SELECT outcome AS "outcome!" FROM colophon_migration_apply_item(
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13)"#,
+        project,
+        environment,
+        plan,
+        entry,
+        expected,
+        applied.revision,
+        applied.content,
+        &applied.content_hash[..],
+        applied.title,
+        applied.slug,
+        applied.references,
+        applied.assets,
+        applied.unique as &[String]
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_write)
+}
+
+/// Marks one item's outcome and problem, for the endings only the worker can write —
+/// `blocked` with a refusal-shaped `problem` (`{"reason","pointer","message"}`) when the
+/// stored document can't reach the target even with its operations.
+pub async fn mark_item(
+    tx: &mut Transaction<'_, Postgres>,
+    project: Uuid,
+    environment: Uuid,
+    plan: Uuid,
+    entry: Uuid,
+    outcome: &str,
+    problem: Option<serde_json::Value>,
+) -> Result<(), DbError> {
+    sqlx::query!(
+        "UPDATE migration_items SET outcome = $5, problem = $6
+         WHERE project_id = $1 AND environment_id = $2 AND plan_id = $3 AND entry_id = $4",
+        project,
+        environment,
+        plan,
+        entry,
+        outcome,
+        problem
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
+}
+
+/// Ends the run `blocked` with `error`, for what no item can be blamed on: declared
+/// operations that don't parse, or [`begin`] reporting `moved` — the collection's version
+/// left the plan's base, so the run can't write what was approved. `None` when the plan
+/// already left `running` (the row a person sees is whoever ended it first).
+pub async fn fail_run(
+    tx: &mut Transaction<'_, Postgres>,
+    project: Uuid,
+    environment: Uuid,
+    plan: Uuid,
+    error: &str,
+) -> Result<Option<RunState>, DbError> {
+    sqlx::query_as!(
+        RunState,
+        r#"UPDATE migration_plans p
+              SET state = 'blocked', error = $4, finished_at = now(), updated_at = now()
+            WHERE p.project_id = $1 AND p.environment_id = $2 AND p.id = $3
+              AND p.state = 'running'
+            RETURNING p.state, p.done_items AS done, p.blocked_items AS blocked, p.error"#,
+        project,
+        environment,
+        plan,
+        error
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// The run's checkpoint, after every batch: recomputes the plan's counters and, when nothing
+/// is left to apply, ends it — `done` when every named entry reached a terminal outcome, or
+/// `blocked` once an apply refused (with the first blocker's reason in `error`). A
+/// `needs_input` item keeps the run open: it is still pending, attempted like the rest.
+/// `None` when the plan is gone or already left `running`.
+pub async fn checkpoint(
+    tx: &mut Transaction<'_, Postgres>,
+    project: Uuid,
+    environment: Uuid,
+    plan: Uuid,
+) -> Result<Option<RunState>, DbError> {
+    sqlx::query_as!(
+        RunState,
+        r#"UPDATE migration_plans p
+              SET done_items = (SELECT count(*) FROM migration_items i
+                                WHERE i.project_id = p.project_id
+                                  AND i.environment_id = p.environment_id
+                                  AND i.plan_id = p.id
+                                  AND i.outcome IN ('applied', 'skipped')),
+                  blocked_items = (SELECT count(*) FROM migration_items i
+                                   WHERE i.project_id = p.project_id
+                                     AND i.environment_id = p.environment_id
+                                     AND i.plan_id = p.id
+                                     AND i.outcome IN ('needs_input', 'blocked')),
+                  state = CASE
+                      WHEN EXISTS (SELECT 1 FROM migration_items i
+                                   WHERE i.project_id = p.project_id
+                                     AND i.environment_id = p.environment_id
+                                     AND i.plan_id = p.id
+                                     AND i.outcome = 'blocked')
+                          THEN 'blocked'
+                      WHEN NOT EXISTS (SELECT 1 FROM migration_items i
+                                       WHERE i.project_id = p.project_id
+                                         AND i.environment_id = p.environment_id
+                                         AND i.plan_id = p.id
+                                         AND i.outcome IN ('ok', 'migrates', 'needs_input', 'resolved'))
+                          THEN 'done'
+                      ELSE p.state END,
+                  finished_at = CASE
+                      WHEN EXISTS (SELECT 1 FROM migration_items i
+                                   WHERE i.project_id = p.project_id
+                                     AND i.environment_id = p.environment_id
+                                     AND i.plan_id = p.id
+                                     AND i.outcome = 'blocked')
+                        OR NOT EXISTS (SELECT 1 FROM migration_items i
+                                       WHERE i.project_id = p.project_id
+                                         AND i.environment_id = p.environment_id
+                                         AND i.plan_id = p.id
+                                         AND i.outcome IN ('ok', 'migrates', 'needs_input', 'resolved'))
+                          THEN now()
+                      ELSE p.finished_at END,
+                  error = CASE
+                      WHEN EXISTS (SELECT 1 FROM migration_items i
+                                   WHERE i.project_id = p.project_id
+                                     AND i.environment_id = p.environment_id
+                                     AND i.plan_id = p.id
+                                     AND i.outcome = 'blocked')
+                          THEN (SELECT coalesce(i.problem->>'reason', 'blocked')
+                                FROM migration_items i
+                                WHERE i.project_id = p.project_id
+                                  AND i.environment_id = p.environment_id
+                                  AND i.plan_id = p.id
+                                  AND i.outcome = 'blocked'
+                                ORDER BY i.entry_id LIMIT 1)
+                      ELSE p.error END,
+                  updated_at = now()
+            WHERE p.project_id = $1 AND p.environment_id = $2 AND p.id = $3
+              AND p.state = 'running'
+            RETURNING p.state, p.done_items AS done, p.blocked_items AS blocked, p.error"#,
+        project,
+        environment,
+        plan
+    )
+    .fetch_optional(&mut **tx)
     .await
     .map_err(DbError::from_query)
 }

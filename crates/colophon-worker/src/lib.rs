@@ -22,7 +22,7 @@ use colophon_db::{
 use colophon_domain::{
     cache,
     job::{self, Next, Outcome},
-    receipt,
+    migrate, receipt, schema,
 };
 use object_store::ObjectStoreExt;
 use serde_json::json;
@@ -78,6 +78,26 @@ enum Work {
     Post(Message),
     /// Looks for the release (a probe).
     Probe,
+}
+
+/// What one item's write means for the run driving it.
+enum Drive {
+    /// Apply the next item.
+    Continue,
+    /// Stop driving the plan: it ended, or what failed ends every write after this too.
+    Stop,
+}
+
+/// Where an item's write starts from, as [`Worker::document_for`] resolves it.
+enum ItemDoc {
+    /// The resolution or the expected revision's document — transform and validate it.
+    Write(serde_json::Value),
+    /// Stored content that doesn't parse: corrupt, not a planning fault, but the item still
+    /// can't proceed — block it with this refusal.
+    Block(schema::Refusal),
+    /// The entry is gone (its foreign keys say a live item's revision can't be): the apply
+    /// answers `skipped` without reading the document it was passed.
+    Gone,
 }
 
 /// The most of a probe's answer it reads, for the marker and the hash.
@@ -159,6 +179,10 @@ impl Worker {
         if self.settings.assets.is_some() {
             let worker = Arc::clone(&self);
             tracker.spawn(worker.run_assets(cancel.clone(), tracker.clone()));
+        }
+        {
+            let worker = Arc::clone(&self);
+            tracker.spawn(worker.run_migrations(cancel.clone()));
         }
         let mut last_expiry: Option<std::time::Instant> = None;
         loop {
@@ -508,6 +532,532 @@ impl Worker {
                 retry_after_ms: None,
             },
         }
+    }
+
+    /// The migration loop (M.5b, docs/modules/05-worker.md): finds `running` plans across
+    /// every project and drives each to `done` or `blocked`, one plan at a time — a run is
+    /// serial by design, under a session advisory lock on its own connection so at most one
+    /// worker drives it, and a crash frees the claim for the next scan. Everything the run
+    /// writes is durable in the item's own transaction, so a resumed drive asks every item
+    /// what it already knows and skips what finished.
+    pub async fn run_migrations(self: Arc<Self>, cancel: CancellationToken) {
+        loop {
+            let plans = match colophon_db::migrations::running(&self.pool).await {
+                Ok(plans) => plans,
+                Err(error) => {
+                    tracing::warn!(error = %error, "scanning migration plans failed; trying again");
+                    Vec::new()
+                }
+            };
+            let mut drove = false;
+            for plan in plans {
+                if cancel.is_cancelled() {
+                    break;
+                }
+                drove = self.drive_plan(&plan, &cancel).await || drove;
+            }
+            if !drove {
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = tokio::time::sleep(self.settings.poll) => {}
+                }
+            }
+        }
+        tracing::info!("migration worker stopped");
+    }
+
+    /// Claims `plan` on its own connection — the session lock lives on it for the whole drive —
+    /// and drives it. `true` when it did work (so the scan loops without sleeping when plans
+    /// keep arriving).
+    async fn drive_plan(
+        &self,
+        plan: &colophon_db::migrations::RunningPlan,
+        cancel: &CancellationToken,
+    ) -> bool {
+        let mut conn = match self.pool.acquire().await {
+            Ok(conn) => conn,
+            Err(error) => {
+                tracing::warn!(error = %error, "a connection for the migration drive failed");
+                return false;
+            }
+        };
+        let claimed =
+            colophon_db::migrations::claim_plan(&mut conn, plan.project, plan.environment, plan.id)
+                .await;
+        match claimed {
+            Ok(true) => {}
+            Ok(false) => return false,
+            Err(error) => {
+                tracing::warn!(plan = %plan.id, error = %error, "claiming the plan failed");
+                return false;
+            }
+        }
+        self.drive(&mut conn, plan, cancel).await;
+        // The claim is released rather than trusted to the drop, so its connection can go back
+        // to the pool clean; a drop would free it anyway on a crash.
+        if let Err(error) = colophon_db::migrations::release_plan(
+            &mut conn,
+            plan.project,
+            plan.environment,
+            plan.id,
+        )
+        .await
+        {
+            tracing::warn!(plan = %plan.id, error = %error, "releasing the plan failed");
+        }
+        true
+    }
+
+    /// One plan's run: parse the target and operations once, stamp the run's target version
+    /// ([`colophon_db::migrations::begin`]), then apply items one transaction each until
+    /// nothing pending remains — [`colophon_db::migrations::checkpoint`] writes `done` or
+    /// `blocked` — or the claim is cancelled, which just leaves the run for the next scan.
+    async fn drive(
+        &self,
+        conn: &mut colophon_db::PgConnection,
+        plan: &colophon_db::migrations::RunningPlan,
+        cancel: &CancellationToken,
+    ) {
+        use colophon_db::migrations as runs;
+        let parsed = || -> Result<(schema::ContentType, Vec<migrate::Op>), String> {
+            let definition: serde_json::Value = serde_json::from_str(&plan.target_definition)
+                .map_err(|_| "corrupt_plan".to_owned())?;
+            let target =
+                schema::ContentType::parse(&definition).map_err(|_| "corrupt_plan".to_owned())?;
+            let operations = match &plan.operations {
+                Some(text) => {
+                    let value: serde_json::Value =
+                        serde_json::from_str(text).map_err(|_| "invalid_operations".to_owned())?;
+                    migrate::parse(&value).map_err(|_| "invalid_operations".to_owned())?
+                }
+                None => Vec::new(),
+            };
+            Ok((target, operations))
+        };
+        let (target, ops) = match parsed() {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                self.fail_run(conn, plan, &error).await;
+                return;
+            }
+        };
+        let Some(target_version) = self.begin_run(conn, plan).await else {
+            return;
+        };
+        tracing::info!(plan = %plan.id, collection = %plan.collection, target_version, "migration run begun");
+        let mut after = uuid::Uuid::nil();
+        loop {
+            let items = {
+                let mut tx = match runs::worker_on(conn).await {
+                    Ok(tx) => tx,
+                    Err(error) => {
+                        tracing::warn!(plan = %plan.id, error = %error, "reading the run failed");
+                        return;
+                    }
+                };
+                match runs::pending_items(
+                    &mut tx,
+                    plan.project,
+                    plan.environment,
+                    plan.id,
+                    after,
+                    runs::RUN_BATCH,
+                )
+                .await
+                {
+                    Ok(items) => items,
+                    Err(error) => {
+                        tracing::warn!(plan = %plan.id, error = %error, "reading the run's items failed");
+                        return;
+                    }
+                }
+            };
+            if items.is_empty() {
+                // Nothing left to apply: the checkpoint turns the plan `done`, or `blocked`
+                // over the items still waiting on a person or a refused write.
+                self.checkpoint(conn, plan).await;
+                return;
+            }
+            for item in items {
+                if cancel.is_cancelled() {
+                    return;
+                }
+                after = item.entry;
+                match self.apply_one(conn, plan, &target, &ops, &item).await {
+                    Drive::Continue => {}
+                    Drive::Stop => return,
+                }
+            }
+        }
+    }
+
+    /// The drive's first transaction: [`colophon_db::migrations::begin`] locks the plan and
+    /// the collection's change lock and stamps the run's target version. Its version when the
+    /// run may drive; `None` when it shouldn't — `moved` ends it `blocked`, `not_running` and
+    /// `missing` mean whoever it was ended it first, and a failed write just leaves it for
+    /// the next scan.
+    async fn begin_run(
+        &self,
+        conn: &mut colophon_db::PgConnection,
+        plan: &colophon_db::migrations::RunningPlan,
+    ) -> Option<i32> {
+        use colophon_db::migrations as runs;
+        let mut tx = match runs::worker_on(conn).await {
+            Ok(tx) => tx,
+            Err(error) => {
+                tracing::warn!(plan = %plan.id, error = %error, "opening the run failed");
+                return None;
+            }
+        };
+        let begun = match runs::begin(&mut tx, plan.project, plan.environment, plan.id).await {
+            Ok(begun) => begun,
+            Err(error) => {
+                tracing::warn!(plan = %plan.id, error = %error, "beginning the run failed");
+                return None;
+            }
+        };
+        match begun.outcome.as_str() {
+            "begun" | "already" => {
+                let version = begun.target_version;
+                if let Err(error) = tx.commit().await {
+                    tracing::warn!(plan = %plan.id, error = %error, "committing the run's version failed");
+                    return None;
+                }
+                // `already` without a version is corrupt; `begun` always carries one.
+                version
+            }
+            "moved" => {
+                if let Err(error) = tx.commit().await {
+                    tracing::warn!(plan = %plan.id, error = %error, "closing the begin failed");
+                }
+                self.fail_run(conn, plan, "collection_moved").await;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Ends a run no item can be blamed for: bad operations, a moved collection. [`fail_run`]
+    /// writes `blocked` with the reason; losing the write just leaves it running for the next
+    /// drive to hit the same wall.
+    async fn fail_run(
+        &self,
+        conn: &mut colophon_db::PgConnection,
+        plan: &colophon_db::migrations::RunningPlan,
+        error: &str,
+    ) {
+        use colophon_db::migrations as runs;
+        let mut tx = match runs::worker_on(conn).await {
+            Ok(tx) => tx,
+            Err(db_error) => {
+                tracing::warn!(plan = %plan.id, error = %db_error, "opening the failed run's write failed");
+                return;
+            }
+        };
+        match runs::fail_run(&mut tx, plan.project, plan.environment, plan.id, error).await {
+            Ok(Some(state)) => {
+                tracing::info!(plan = %plan.id, state = %state.state, error = %error, "migration run ended");
+            }
+            Ok(None) => {}
+            Err(db_error) => {
+                tracing::warn!(plan = %plan.id, error = %db_error, "marking the run blocked failed");
+            }
+        }
+        if let Err(db_error) = tx.commit().await {
+            tracing::warn!(plan = %plan.id, error = %db_error, "committing the run's end failed");
+        }
+    }
+
+    /// The run's counters and, when nothing applies any more, its end.
+    async fn checkpoint(
+        &self,
+        conn: &mut colophon_db::PgConnection,
+        plan: &colophon_db::migrations::RunningPlan,
+    ) {
+        use colophon_db::migrations as runs;
+        let mut tx = match runs::worker_on(conn).await {
+            Ok(tx) => tx,
+            Err(error) => {
+                tracing::warn!(plan = %plan.id, error = %error, "opening the checkpoint failed");
+                return;
+            }
+        };
+        match runs::checkpoint(&mut tx, plan.project, plan.environment, plan.id).await {
+            Ok(Some(state)) => {
+                if state.state != "running" {
+                    tracing::info!(
+                        plan = %plan.id,
+                        state = %state.state,
+                        done = state.done,
+                        blocked = state.blocked,
+                        error = ?state.error,
+                        "migration run ended"
+                    );
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(plan = %plan.id, error = %error, "the run's checkpoint failed");
+            }
+        }
+        if let Err(error) = tx.commit().await {
+            tracing::warn!(plan = %plan.id, error = %error, "committing the checkpoint failed");
+        }
+    }
+
+    /// One item, one transaction: re-read its outcome, build the document the apply writes —
+    /// a person's resolution, or the expected revision transformed by the plan's operations —
+    /// validate it against the target, and let migration 0041's apply lock the entry and
+    /// decide. A refused transform or an apply-time error marks the item `blocked` with the
+    /// refusal as its problem; the checkpoint that ends the same transaction ends the plan
+    /// with it.
+    async fn apply_one(
+        &self,
+        conn: &mut colophon_db::PgConnection,
+        plan: &colophon_db::migrations::RunningPlan,
+        target: &schema::ContentType,
+        ops: &[migrate::Op],
+        item: &colophon_db::migrations::RunItem,
+    ) -> Drive {
+        use colophon_db::migrations as runs;
+        let mut tx = match runs::worker_on(conn).await {
+            Ok(tx) => tx,
+            Err(error) => {
+                tracing::warn!(plan = %plan.id, error = %error, "opening an item's write failed");
+                return Drive::Stop;
+            }
+        };
+        // What the item is now: it may have been resolved or blocked since the batch read.
+        let fresh =
+            match runs::item_for_run(&mut tx, plan.project, plan.environment, plan.id, item.entry)
+                .await
+            {
+                Ok(Some(fresh)) => fresh,
+                Ok(None) => return Drive::Stop,
+                Err(error) => {
+                    tracing::warn!(plan = %plan.id, error = %error, "re-reading an item failed");
+                    return Drive::Stop;
+                }
+            };
+        if !matches!(
+            fresh.outcome.as_str(),
+            "ok" | "migrates" | "needs_input" | "resolved"
+        ) {
+            return Drive::Continue;
+        }
+        let document = match self.document_for(&mut tx, plan, &fresh).await {
+            Ok(ItemDoc::Write(document)) => document,
+            Ok(ItemDoc::Block(refusal)) => {
+                return self.block_item(tx, plan, fresh.entry, &refusal).await;
+            }
+            Ok(ItemDoc::Gone) => serde_json::Value::Object(serde_json::Map::new()),
+            Err(()) => return Drive::Stop,
+        };
+        let document = if fresh.outcome == "resolved" {
+            document
+        } else {
+            match migrate::apply(&document, ops) {
+                Ok(document) => document,
+                Err(refusal) => {
+                    return self.block_item(tx, plan, fresh.entry, &refusal).await;
+                }
+            }
+        };
+        let content = match target.validate(&document) {
+            Ok(content) => content,
+            Err(refusal) => {
+                return self.block_item(tx, plan, fresh.entry, &refusal).await;
+            }
+        };
+        let unique_fields = target.unique_fields();
+        let hash = sha256(content.canonical_json().as_bytes());
+        let applied = applied_for(&content, &hash, &unique_fields);
+        let outcome = runs::apply_item(
+            &mut tx,
+            plan.project,
+            plan.environment,
+            plan.id,
+            fresh.entry,
+            fresh.expected_revision,
+            &applied,
+        )
+        .await;
+        let state = match outcome {
+            // `not_running` or `missing` — the plan ended under the claim; stop asking.
+            Ok(outcome) if outcome == "not_running" || outcome == "missing" => {
+                return Drive::Stop;
+            }
+            // `applied`, `skipped`, or a refusal the function itself recorded on the item
+            // (`draft_moved`, `missing_reference`, `missing_asset`): commit it all.
+            Ok(_) => runs::checkpoint(&mut tx, plan.project, plan.environment, plan.id).await,
+            Err(error) => {
+                // The transaction is dead with the function's own marks; a fresh one says why
+                // the item can't proceed — the refusal shape a `needs_input` item already
+                // uses, so a person reads one kind of problem.
+                let reason = match &error {
+                    colophon_db::DbError::SlugTaken => "slug_conflict",
+                    colophon_db::DbError::ValueTaken => "value_conflict",
+                    colophon_db::DbError::EntryDeleted { .. } => "missing_reference",
+                    _ => "write_failed",
+                };
+                drop(tx);
+                return self.block_item_fresh(conn, plan, fresh.entry, reason).await;
+            }
+        };
+        let done = match state {
+            Ok(Some(state)) => state.state != "running",
+            Ok(None) => true,
+            Err(error) => {
+                tracing::warn!(plan = %plan.id, error = %error, "the item's checkpoint failed");
+                false
+            }
+        };
+        if let Err(error) = tx.commit().await {
+            tracing::warn!(plan = %plan.id, error = %error, "committing an item failed");
+            return Drive::Stop;
+        }
+        // A crash here is the resume case: the item's outcome is committed, so the next drive
+        // asks it and moves on (the fault tests prove it).
+        fault::point("migration:after-item");
+        if done { Drive::Stop } else { Drive::Continue }
+    }
+
+    /// The document an item's write starts from, inside the transaction the caller opened. A
+    /// `resolved` item's resolution is the document itself; anything else is the expected
+    /// revision's stored document, to be transformed by the declared operations.
+    async fn document_for(
+        &self,
+        tx: &mut colophon_db::Transaction<'_, colophon_db::Postgres>,
+        plan: &colophon_db::migrations::RunningPlan,
+        item: &colophon_db::migrations::RunItem,
+    ) -> Result<ItemDoc, ()> {
+        use colophon_db::migrations as runs;
+        let text: Option<String> = if item.outcome == "resolved" {
+            item.resolution.clone()
+        } else {
+            match runs::expected_content(
+                tx,
+                plan.project,
+                plan.environment,
+                item.entry,
+                item.expected_revision,
+            )
+            .await
+            {
+                Ok(text) => text,
+                Err(error) => {
+                    tracing::warn!(plan = %plan.id, error = %error, "reading a revision failed");
+                    return Err(());
+                }
+            }
+        };
+        Ok(match text {
+            None => ItemDoc::Gone,
+            Some(text) => match serde_json::from_str(&text) {
+                Ok(document) => ItemDoc::Write(document),
+                Err(_) => ItemDoc::Block(schema::Refusal {
+                    code: "invalid_document",
+                    pointer: String::new(),
+                    message: "the item's stored document does not parse".to_owned(),
+                }),
+            },
+        })
+    }
+
+    /// Marks the item `blocked` with a refusal as its problem, in the transaction the caller
+    /// made — the transform and validation refusals, where the caller's reads are still live —
+    /// then the run's checkpoint, which ends the plan over it. Takes the transaction: it
+    /// commits it.
+    async fn block_item(
+        &self,
+        mut tx: colophon_db::Transaction<'_, colophon_db::Postgres>,
+        plan: &colophon_db::migrations::RunningPlan,
+        entry: uuid::Uuid,
+        refusal: &schema::Refusal,
+    ) -> Drive {
+        use colophon_db::migrations as runs;
+        let problem = json!({
+            "reason": refusal.code,
+            "pointer": refusal.pointer,
+            "message": refusal.message,
+        });
+        if let Err(error) = runs::mark_item(
+            &mut tx,
+            plan.project,
+            plan.environment,
+            plan.id,
+            entry,
+            "blocked",
+            Some(problem),
+        )
+        .await
+        {
+            tracing::warn!(plan = %plan.id, error = %error, "marking an item blocked failed");
+            return Drive::Stop;
+        }
+        let done = match runs::checkpoint(&mut tx, plan.project, plan.environment, plan.id).await {
+            Ok(Some(state)) => state.state != "running",
+            Ok(None) => true,
+            Err(error) => {
+                tracing::warn!(plan = %plan.id, error = %error, "the block's checkpoint failed");
+                false
+            }
+        };
+        if let Err(error) = tx.commit().await {
+            tracing::warn!(plan = %plan.id, error = %error, "committing the block failed");
+            return Drive::Stop;
+        }
+        if done { Drive::Stop } else { Drive::Continue }
+    }
+
+    /// Marks the item `blocked` in a fresh transaction — the one its write died in is gone —
+    /// with `reason` as the problem. Then the plan's checkpoint, which ends the run over it.
+    async fn block_item_fresh(
+        &self,
+        conn: &mut colophon_db::PgConnection,
+        plan: &colophon_db::migrations::RunningPlan,
+        entry: uuid::Uuid,
+        reason: &str,
+    ) -> Drive {
+        use colophon_db::migrations as runs;
+        let mut tx = match runs::worker_on(conn).await {
+            Ok(tx) => tx,
+            Err(error) => {
+                tracing::warn!(plan = %plan.id, error = %error, "opening the block failed");
+                return Drive::Stop;
+            }
+        };
+        let problem = json!({
+            "reason": reason,
+            "pointer": "",
+            "message": match reason {
+                "slug_conflict" => "the rewritten slug collides with another entry's; fix it and plan again",
+                "value_conflict" => "a rewritten unique value collides with another entry's; fix it and plan again",
+                "missing_reference" => "a reference names an entry that is not there; fix it and plan again",
+                _ => "the revision write failed; plan again",
+            },
+        });
+        if let Err(error) = runs::mark_item(
+            &mut tx,
+            plan.project,
+            plan.environment,
+            plan.id,
+            entry,
+            "blocked",
+            Some(problem),
+        )
+        .await
+        {
+            tracing::warn!(plan = %plan.id, error = %error, "marking an item blocked failed");
+        }
+        if let Err(error) = runs::checkpoint(&mut tx, plan.project, plan.environment, plan.id).await
+        {
+            tracing::warn!(plan = %plan.id, error = %error, "the block's checkpoint failed");
+        }
+        if let Err(error) = tx.commit().await {
+            tracing::warn!(plan = %plan.id, error = %error, "committing the block failed");
+        }
+        Drive::Stop
     }
 
     /// The asset-jobs loop (07-media): same claim discipline as the delivery loop, on the image
@@ -900,6 +1450,49 @@ impl Worker {
 /// At most this much of an error's text reaches a job's `last_error`.
 fn trim(error: &str) -> String {
     error.chars().take(500).collect()
+}
+
+/// A validated document as [`colophon_db::migrations::apply_item`] writes it: the canonical
+/// text and hash plus the metadata — title, slug, reference and asset rows — the caller
+/// computed from it, as `entries::NewRevision` carries them for a save.
+fn applied_for<'a>(
+    content: &'a schema::Content,
+    hash: &'a [u8; 32],
+    unique: &'a [String],
+) -> colophon_db::migrations::Applied<'a> {
+    let references = content
+        .references()
+        .iter()
+        .map(|reference| {
+            json!({
+                "field": reference.field,
+                "position": reference.position,
+                "collection": reference.collection,
+                "entry": reference.entry,
+            })
+        })
+        .collect();
+    let assets = content
+        .assets()
+        .iter()
+        .map(|asset| {
+            json!({
+                "field": asset.field,
+                "position": asset.position,
+                "asset": asset.asset,
+            })
+        })
+        .collect();
+    colophon_db::migrations::Applied {
+        revision: uuid::Uuid::now_v7(),
+        content: content.canonical_json(),
+        content_hash: hash,
+        title: content.title(),
+        slug: content.slug(),
+        references: serde_json::Value::Array(references),
+        assets: serde_json::Value::Array(assets),
+        unique,
+    }
 }
 
 /// The SHA-256 of `bytes`: what a probe's evidence records of the answer it read.

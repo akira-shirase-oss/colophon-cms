@@ -196,8 +196,11 @@ D-071), conditional fields (built: D-072) and shared components (built: D-073, m
 schema changes and saves. M.5a is built (D-100, migration 0040, `{P}/migrations`): a plan is computed under
 the collection's change lock, dry-runs every draft and open publication into per-entry items, is approved and
 applied against its hash, blocks schema writes while it runs, and takes resolutions for entries that need
-input; M.5b — the worker that claims items, interprets the declared operations and lands `done`/`blocked` —
-is the remaining slice, with the simulator's schema/save races. What is built has its tests, a testbed page (`/modelling`) and a load scenario
+input; M.5b is built too (D-101, migration 0041): the worker drives a `running` plan under an advisory-lock
+claim, `fill`/`move` operations transform or a stored `resolution` replaces each item, per-item outcomes
+commit durably (crash-resumable; F-05b proves it), and the plan ends `done` or `blocked` with
+`republish_required` pinning open publications to republish. Remaining for M.5: the Studio, testbed and k6
+surfaces (M.5c) and the simulator's schema/save races. What is built has its tests, a testbed page (`/modelling`) and a load scenario
 (`perf/k6/modelling.js`) whose million-request runs wait for a quiet machine; the Studio's builder and editor cover
 M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 
