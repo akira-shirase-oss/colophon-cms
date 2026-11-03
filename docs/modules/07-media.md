@@ -108,7 +108,7 @@ release still references. Proven by L14, malicious-upload fixtures and X10.
 
 ## Build order
 
-1. **P4:** intents, quarantine, verification, ~~the Studio media picker~~ (done, D-095), derivatives, references (done, D-094).
+1. **P4:** intents, quarantine, verification, ~~the Studio media picker~~ (done, D-095), ~~derivatives~~ (done, D-096), ~~references~~ (done, D-094).
 2. **P6:** expiry, retention and staged deletion jobs.
 
 ## Open decisions

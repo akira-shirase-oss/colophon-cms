@@ -26,6 +26,15 @@ const PNG: &[u8] = &[
     1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ];
 
+/// A real 400×4 PNG (99 bytes): wider than `w320` but not `w1280`, so exactly one rendition.
+const WIDE_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 1, 144, 0, 0, 0, 4, 8, 2,
+    0, 0, 0, 47, 93, 254, 122, 0, 0, 0, 42, 73, 68, 65, 84, 120, 156, 237, 206, 65, 9, 0, 48, 12,
+    4, 176, 74, 159, 243, 206, 194, 253, 142, 66, 32, 2, 50, 243, 22, 224, 134, 254, 0, 32, 212,
+    31, 0, 132, 250, 3, 128, 204, 7, 24, 121, 90, 72, 220, 227, 41, 34, 0, 0, 0, 0, 73, 69, 78, 68,
+    174, 66, 96, 130,
+];
+
 /// The assets path of `project`'s production environment.
 fn assets(project: &str) -> String {
     format!("/api/v1/projects/{project}/environments/production/assets")
@@ -452,4 +461,59 @@ async fn a_release_waits_for_usable_assets_and_the_origin_serves_them() {
         "{}",
         reply.body
     );
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn renditions_are_served_under_their_names() {
+    let _server = common::Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+
+    // A 400px-wide upload: `w320` exists, `w1280` doesn't (nothing upscales).
+    let (status, body) = upload(
+        &owner,
+        &project,
+        WIDE_PNG,
+        "wide.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    let settled = settled(&owner, &project, &asset, 15).await;
+    assert_eq!(settled["state"], "usable", "{settled}");
+    assert_eq!(settled["derivatives"], json!(["w320"]), "{settled}");
+
+    // The original, its rendition, and nothing else answers.
+    for path in [
+        media(&project, &asset),
+        format!("{}/w320", media(&project, &asset)),
+    ] {
+        let response = app()
+            .get(format!("{}{}", common::ORIGIN, path))
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert_eq!(response.headers()["content-type"], "image/png");
+        assert_eq!(
+            response.headers()["cache-control"],
+            "public, max-age=31536000, immutable"
+        );
+    }
+    for name in ["w1280", "nope", "W320", "../../quarantine"] {
+        let response = app()
+            .get(format!(
+                "{}{}/{}",
+                common::ORIGIN,
+                media(&project, &asset),
+                name
+            ))
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{name}");
+    }
 }

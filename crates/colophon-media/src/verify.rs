@@ -16,6 +16,24 @@ const MAX_PIXELS: u64 = 25_000_000;
 /// The most memory one decode may allocate, in bytes.
 const MAX_ALLOC: usize = 256 * 1024 * 1024;
 
+/// The fixed rendition set (M.3, D-096): a thumbnail and a full-width preview. A rendition
+/// exists only when the source is wider — nothing upscales, and a small upload's page uses the
+/// original.
+const RENDITIONS: [(&str, u32); 2] = [("w320", 320), ("w1280", 1280)];
+
+/// One resized variant, re-encoded in the upload's own format.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rendition {
+    /// Its name in `public/…/{asset}/{name}` and `assets.derivatives`.
+    pub name: &'static str,
+    /// Re-encoded bytes, metadata-free like the original's.
+    pub bytes: Vec<u8>,
+    /// The resized width.
+    pub width: u32,
+    /// The resized height.
+    pub height: u32,
+}
+
 /// What verification proved about the upload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verified {
@@ -29,6 +47,8 @@ pub struct Verified {
     pub stripped: Vec<u8>,
     /// `stripped`'s digest: what the asset record and any future comparison pin.
     pub sha256: [u8; 32],
+    /// The renditions the source warranted (see `RENDITIONS`).
+    pub renditions: Vec<Rendition>,
 }
 
 /// Why the bytes were refused. Every variant words a reason safe to show the uploader.
@@ -105,12 +125,38 @@ pub fn verify_image(bytes: &[u8]) -> Result<Verified, Reject> {
     let stripped = stripped.into_inner();
     let mut sha256 = [0_u8; 32];
     sha256.copy_from_slice(&Sha256::digest(&stripped));
+    // Renditions from the already-proven decode: downscale only, same format, same bounds.
+    let mut renditions = Vec::new();
+    for (name, target) in RENDITIONS {
+        if decoded.width() <= target {
+            continue;
+        }
+        let resized = decoded.resize(target, u32::MAX, image::imageops::FilterType::Triangle);
+        let mut bytes = Cursor::new(Vec::new());
+        match format {
+            ImageFormat::Jpeg => resized
+                .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+                    &mut bytes, 85,
+                ))
+                .map_err(|_| Reject::Encode)?,
+            _ => resized
+                .write_to(&mut bytes, format)
+                .map_err(|_| Reject::Encode)?,
+        }
+        renditions.push(Rendition {
+            name,
+            bytes: bytes.into_inner(),
+            width: resized.width(),
+            height: resized.height(),
+        });
+    }
     Ok(Verified {
         detected_type,
         width: decoded.width(),
         height: decoded.height(),
         stripped,
         sha256,
+        renditions,
     })
 }
 

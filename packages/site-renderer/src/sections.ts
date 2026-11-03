@@ -72,10 +72,19 @@ function styleAttributes(block: Block): string {
 const open = (block: Block, name: string, index?: number): string =>
 	`<section class="site-section site-${name}"${index === undefined ? '' : ` data-i="${index}"`}${styleAttributes(block)}>`;
 
-function hero(block: Block, _ctx: SectionContext, index?: number): string {
+/** An image field's stored value: an upload's id, or none. A non-string is the build's to fail. */
+const image = (block: Block, ctx: SectionContext): string => {
+	const id = block['image'];
+	if (id === undefined || id === null || id === '') return '';
+	if (typeof id !== 'string') throw new UnrenderableSite('image is not an upload');
+	const alt = text(block, 'alt') ?? '';
+	return `<img class="site-image" src="${escapeAttribute(ctx.assetUrl(id))}" alt="${escapeAttribute(alt)}">`;
+};
+
+function hero(block: Block, ctx: SectionContext, index?: number): string {
 	const heading = requiredText(block, 'heading');
 	const tagline = text(block, 'tagline');
-	return `${open(block, 'hero', index)}<div class="site-hero-inner">
+	return `${open(block, 'hero', index)}${image(block, ctx)}<div class="site-hero-inner">
 <h1>${escapeText(heading)}</h1>
 ${tagline === undefined || tagline === '' ? '' : `<p class="site-tagline">${escapeText(tagline)}</p>\n`}${link(block, 'label', 'url')}
 </div></section>`;

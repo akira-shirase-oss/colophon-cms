@@ -112,6 +112,8 @@ export const SECTION_KINDS: BlockKindDef[] = [
 		fields: [
 			text('heading', 'Heading', true, 120),
 			multiline('tagline', 'Tagline', false, 280),
+			{ id: 'image', label: 'Image', required: false, type: 'asset', many: false },
+			text('alt', 'Image description', false, 200),
 			text('label', 'Button label', false, 40),
 			{ id: 'url', label: 'Button link', required: false, type: 'url' },
 			style()

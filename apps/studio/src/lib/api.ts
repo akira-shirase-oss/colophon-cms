@@ -639,6 +639,7 @@ export interface Asset {
 	width: number | null;
 	height: number | null;
 	rejected_reason: string | null;
+	derivatives: string[];
 	created_at: string;
 }
 

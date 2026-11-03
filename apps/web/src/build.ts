@@ -106,7 +106,9 @@ export async function build(options: BuildOptions): Promise<Built> {
 	// /colophon/, an article's — fails the whole build, like two articles at one address.
 	let siteMap: Map<string, string>;
 	try {
-		siteMap = siteFiles(release, site.items, navigation.items[0], theme.items[0]);
+		siteMap = siteFiles(release, site.items, navigation.items[0], theme.items[0], {
+			assetUrl: (id) => `/media/v1/${options.project}/${options.environment}/${encodeURIComponent(id)}`
+		});
 	} catch (error) {
 		throw new BuildFailed(error instanceof Error ? error.message : String(error));
 	}

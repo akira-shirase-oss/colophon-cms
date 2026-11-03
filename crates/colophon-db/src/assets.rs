@@ -32,6 +32,8 @@ pub struct Asset {
     pub height: Option<i32>,
     /// Why it was rejected, if it was.
     pub rejected_reason: Option<String>,
+    /// Rendition names the worker wrote beside the original (M.3).
+    pub derivatives: Vec<String>,
     /// When it was uploaded.
     pub created_at: OffsetDateTime,
 }
@@ -88,7 +90,7 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Asset>, DbError> {
     sqlx::query_as!(
         Asset,
         "SELECT id, state, file_name, declared_type, detected_type, size_bytes, width, height,
-                rejected_reason, created_at
+                rejected_reason, derivatives, created_at
          FROM assets
          WHERE project_id = $1 AND environment_id = $2
          ORDER BY created_at DESC, id DESC
@@ -106,7 +108,7 @@ pub async fn get(tx: &mut ProjectTransaction, asset: Uuid) -> Result<Option<Asse
     sqlx::query_as!(
         Asset,
         "SELECT id, state, file_name, declared_type, detected_type, size_bytes, width, height,
-                rejected_reason, created_at
+                rejected_reason, derivatives, created_at
          FROM assets
          WHERE project_id = $1 AND environment_id = $2 AND id = $3",
         tx.project,
@@ -210,6 +212,8 @@ pub enum Outcome {
         sha256: Vec<u8>,
         /// Where the stripped object lives.
         public_key: String,
+        /// Rendition names the worker wrote beside the original (M.3).
+        derivatives: Vec<String>,
     },
     /// It was refused: the reason, safe to show the uploader.
     Rejected {
@@ -262,10 +266,11 @@ pub async fn finish(
             height,
             sha256,
             public_key,
+            derivatives,
         } => {
             sqlx::query!(
                 "UPDATE assets SET state = 'usable', detected_type = $4, width = $5, height = $6,
-                                   sha256 = $7, public_key = $8, verified_at = now()
+                                   sha256 = $7, public_key = $8, derivatives = $9, verified_at = now()
                  WHERE project_id = $1 AND environment_id = $2 AND id = $3",
                 job.project_id,
                 job.environment_id,
@@ -274,7 +279,8 @@ pub async fn finish(
                 width,
                 height,
                 sha256,
-                public_key
+                public_key,
+                derivatives as &[String]
             )
             .execute(&mut *transaction)
             .await

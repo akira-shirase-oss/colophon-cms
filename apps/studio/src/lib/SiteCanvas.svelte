@@ -8,7 +8,7 @@
 	import { createQuery } from '@tanstack/svelte-query';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { pageHtml, renderNav, renderSections, SITE_CSS, siteCss, type NavItem, type ThemeContent } from '@colophon/site-renderer';
-	import { type Content, getEntry, listEntries } from './api.ts';
+	import { type Content, assetUrl, getEntry, listEntries } from './api.ts';
 
 	let {
 		project,
@@ -75,7 +75,7 @@
 					...(description === undefined ? {} : { description }),
 					head: `<style>${SITE_CSS}${siteCss(themeContent)}</style>\n`,
 					nav: renderNav(links),
-					body: renderSections(draft['sections'], { assetUrl: (id) => `/assets/${id}`, annotate: true })
+					body: renderSections(draft['sections'], { assetUrl: (id) => assetUrl(project, id), annotate: true })
 				});
 				problem = '';
 			} catch (error) {

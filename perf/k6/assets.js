@@ -50,6 +50,14 @@ const PNG = new Uint8Array([
   1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
 ]);
 const FAKE = new TextEncoder().encode('<html><body>not an image</body></html>');
+// A 400×4 PNG: wider than w320, so the worker writes one rendition for the media arm to read.
+const WIDE = new Uint8Array([
+  137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 1, 144, 0, 0, 0, 4, 8, 2,
+  0, 0, 0, 47, 93, 254, 122, 0, 0, 0, 42, 73, 68, 65, 84, 120, 156, 237, 206, 65, 9, 0, 48, 12,
+  4, 176, 74, 159, 243, 206, 194, 253, 142, 66, 32, 2, 50, 243, 22, 224, 134, 254, 0, 32, 212,
+  31, 0, 132, 250, 3, 128, 204, 7, 24, 121, 90, 72, 220, 227, 41, 34, 0, 0, 0, 0, 73, 69, 78,
+  68, 174, 66, 96, 130,
+]);
 
 function key() {
   return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -73,7 +81,7 @@ export function setup() {
 
   // One known-usable asset for the public origin to serve: upload, then wait for the
   // worker to verify it before the run starts.
-  const made = http.post(assets, PNG.buffer, {
+  const made = http.post(assets, WIDE.buffer, {
     headers: { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'image/png', 'X-Colophon-File-Name': 'warm.png', 'Idempotency-Key': `k6-warm-${Date.now().toString(36)}` },
     redirects: 0,
   });
@@ -126,8 +134,10 @@ export default function (data) {
       });
     }
   } else {
-    // M.1: the public origin serves the setup's verified object — no sign-in, no row reads.
-    const object = http.get(`${data.media}/${data.mediaId}`, { tags: { endpoint: 'media', name: 'media/v1/{asset}' }, redirects: 0 });
+    // M.1/M.3: the public origin serves the setup's verified object — the original half the
+    // time, its w320 rendition the other half — no sign-in, no row reads.
+    const at = __ITER % 2 === 0 ? `${data.media}/${data.mediaId}` : `${data.media}/${data.mediaId}/w320`;
+    const object = http.get(at, { tags: { endpoint: 'media', name: 'media/v1/{asset}' }, redirects: 0 });
     check(object, {
       'media 200': (r) => r.status === 200,
       'media immutable': (r) => r.headers['Cache-Control'] === 'public, max-age=31536000, immutable',

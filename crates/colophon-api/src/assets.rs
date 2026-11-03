@@ -47,6 +47,15 @@ pub(crate) struct OnePath {
     asset: String,
 }
 
+/// A rendition's path: the asset's, plus the rendition name the worker wrote.
+#[derive(Deserialize)]
+pub(crate) struct RenditionPath {
+    project: String,
+    environment: String,
+    asset: String,
+    name: String,
+}
+
 /// `POST {P}/assets`: the upload's bytes as the body, its name and claimed type in headers.
 /// Answers `202` with the quarantined asset; the verify job decides what it becomes.
 pub(crate) async fn upload(
@@ -189,22 +198,63 @@ pub(crate) async fn serve(
     State(state): State<AppState>,
     Path(path): Path<OnePath>,
 ) -> Result<Response, ApiError> {
-    let services = services(&state)?;
+    stream(&state, path.project, path.environment, path.asset, None).await
+}
+
+/// `GET /media/v1/{project}/{environment}/{asset}/{name}`: a rendition — the same store-read as
+/// the original, under the name the worker wrote (`w320`, `w1280`). Any other name 404s because
+/// no object answers it.
+pub(crate) async fn serve_rendition(
+    State(state): State<AppState>,
+    Path(path): Path<RenditionPath>,
+) -> Result<Response, ApiError> {
+    stream(
+        &state,
+        path.project,
+        path.environment,
+        path.asset,
+        Some(path.name),
+    )
+    .await
+}
+
+/// The origin's one read: the `public/` object the key names, streamed with its stored type and
+/// an immutable cache (the bytes under an id never change).
+async fn stream(
+    state: &AppState,
+    project: String,
+    environment: String,
+    asset: String,
+    name: Option<String>,
+) -> Result<Response, ApiError> {
+    let services = services(state)?;
     let store = services.assets.clone().ok_or(ApiError::Unavailable(
         "uploads are not configured on this server",
     ))?;
-    let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
-    let asset = Uuid::try_parse(&path.asset).map_err(|_| ApiError::NotFound)?;
-    let environment =
-        colophon_db::delivery::environment(&services.pool, project, &path.environment)
-            .await
-            .map_err(ApiError::from_db)?
-            .ok_or(ApiError::NotFound)?;
-    let key = colophon_media::public_key(
+    let project = Uuid::try_parse(&project).map_err(|_| ApiError::NotFound)?;
+    let asset = Uuid::try_parse(&asset).map_err(|_| ApiError::NotFound)?;
+    // A rendition name is lowercase letters and digits only — anything else can never name an
+    // object the worker wrote.
+    if name.as_ref().is_some_and(|name| {
+        name.len() > 16
+            || !name
+                .chars()
+                .all(|letter| letter.is_ascii_lowercase() || letter.is_ascii_digit())
+    }) {
+        return Err(ApiError::NotFound);
+    }
+    let environment = colophon_db::delivery::environment(&services.pool, project, &environment)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    let mut key = colophon_media::public_key(
         &project.to_string(),
         &environment.id.to_string(),
         &asset.to_string(),
     );
+    if let Some(name) = name {
+        key = format!("{key}/{name}");
+    }
     let object = store
         .get(&object_store::path::Path::from(key))
         .await
@@ -315,6 +365,7 @@ fn view(asset: &assets::Asset) -> serde_json::Value {
         "width": asset.width,
         "height": asset.height,
         "rejected_reason": asset.rejected_reason,
+        "derivatives": asset.derivatives,
         "created_at": asset
             .created_at
             .format(&time::format_description::well_known::Rfc3339)

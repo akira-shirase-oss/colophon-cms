@@ -668,7 +668,7 @@ impl Worker {
                 &object_store::path::Path::from(key.clone()),
                 verified.stripped.clone().into(),
                 object_store::PutOptions {
-                    attributes,
+                    attributes: attributes.clone(),
                     ..object_store::PutOptions::default()
                 },
             )
@@ -677,6 +677,29 @@ impl Worker {
             self.retry_asset(job, attempts, &trim(&error.to_string()))
                 .await;
             return;
+        }
+        // The renditions beside it: `public/…/{asset}/{name}`, each tagged with the same
+        // detected type. A refused write retries the whole job — the row commits only when
+        // every object the origin may name has landed.
+        let mut names = Vec::new();
+        for rendition in &verified.renditions {
+            let at = format!("{key}/{}", rendition.name);
+            let written = store
+                .put_opts(
+                    &object_store::path::Path::from(at),
+                    rendition.bytes.clone().into(),
+                    object_store::PutOptions {
+                        attributes: attributes.clone(),
+                        ..object_store::PutOptions::default()
+                    },
+                )
+                .await;
+            if let Err(error) = written {
+                self.retry_asset(job, attempts, &trim(&error.to_string()))
+                    .await;
+                return;
+            }
+            names.push(rendition.name.to_owned());
         }
         self.finish_asset(
             job,
@@ -689,6 +712,7 @@ impl Worker {
                 height: i32::try_from(verified.height).unwrap_or(i32::MAX),
                 sha256: verified.sha256.to_vec(),
                 public_key: key,
+                derivatives: names,
             },
         )
         .await;

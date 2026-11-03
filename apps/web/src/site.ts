@@ -8,7 +8,7 @@
 // as before. Pages but no theme keep the starter's palette — the same one the canvas shows until
 // a theme is saved — so the site and its preview can't disagree about a default.
 
-import { renderNav, renderSections, siteCss, pageHtml, type NavItem, type ThemeContent } from '@colophon/site-renderer';
+import { renderNav, renderSections, siteCss, pageHtml, type NavItem, type SectionContext, type ThemeContent } from '@colophon/site-renderer';
 import { THEME_SEED } from '@colophon/site-template';
 
 import { marker, type Release } from './pages.ts';
@@ -47,12 +47,14 @@ function menu(navigation: Entry | undefined, pages: Entry[]): NavItem[] {
 	return links;
 }
 
+const DEFAULT_CTX: SectionContext = { assetUrl: (id) => `/media/v1/${id}` };
+
 function head(release: Release): string {
 	return `${marker(release.generation)}\n<link rel="stylesheet" href="/site.css">\n`;
 }
 
 /** One page's document: its sections through the shared renderer, its title and description. */
-function pageDocument(release: Release, page: Entry, nav: string): string {
+function pageDocument(release: Release, page: Entry, nav: string, ctx: SectionContext): string {
 	const seo = page.content['seo'] as { description?: unknown } | undefined;
 	const description = typeof seo?.description === 'string' ? seo.description : undefined;
 	return pageHtml({
@@ -60,7 +62,7 @@ function pageDocument(release: Release, page: Entry, nav: string): string {
 		...(description === undefined ? {} : { description }),
 		head: head(release),
 		nav,
-		body: renderSections(page.content['sections'])
+		body: renderSections(page.content['sections'], ctx)
 	});
 }
 
@@ -81,7 +83,7 @@ function homePage(navigation: Entry | undefined, pages: Entry[]): Entry {
  * chosen home page again at `/`, the theme as `/site.css`, and a 404 wearing the same nav.
  * Throws whatever the renderer throws — a page that can't be read fails the build whole.
  */
-export function siteFiles(release: Release, pages: Entry[], navigation: Entry | undefined, theme: Entry | undefined): Map<string, string> {
+export function siteFiles(release: Release, pages: Entry[], navigation: Entry | undefined, theme: Entry | undefined, ctx?: SectionContext): Map<string, string> {
 	const files = new Map<string, string>();
 	if (pages.length === 0) return files;
 
@@ -91,9 +93,9 @@ export function siteFiles(release: Release, pages: Entry[], navigation: Entry | 
 		const path = `${pagePath(page)}index.html`;
 		// Two pages at one address would hide one of them (or cover a fixed page): fail whole.
 		if (files.has(path)) throw new Error(`two pages would be served at ${path}`);
-		files.set(path, pageDocument(release, page, nav));
+		files.set(path, pageDocument(release, page, nav, ctx ?? DEFAULT_CTX));
 	}
-	const home = pageDocument(release, homePage(navigation, pages), nav);
+	const home = pageDocument(release, homePage(navigation, pages), nav, ctx ?? DEFAULT_CTX);
 	files.set('/index.html', home);
 	const missing: Entry = {
 		id: '404',
@@ -101,6 +103,6 @@ export function siteFiles(release: Release, pages: Entry[], navigation: Entry | 
 		content: { title: 'Not found', sections: [{ _block: 'hero', heading: 'Not found', tagline: 'Nothing is published at this address.' }] },
 		published_in: release.generation
 	};
-	files.set('/404.html', pageDocument(release, missing, nav));
+	files.set('/404.html', pageDocument(release, missing, nav, ctx ?? DEFAULT_CTX));
 	return files;
 }

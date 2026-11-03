@@ -36,4 +36,9 @@ test('uploads are verified, or rejected, and listed', async ({ page }) => {
 	await expect(page.getByTestId('steps')).toContainText('rejected');
 	await expect(page.getByTestId('steps')).toContainText('served: 404');
 	await expect(page.getByTestId('assets')).toContainText('photo.png');
+
+	// M.3: a wide upload earns a w320 rendition, served under its own name.
+	await page.getByTestId('upload-wide').click();
+	await expect(page.getByTestId('message')).toHaveText('settled', { timeout: 20_000 });
+	await expect(page.getByTestId('steps')).toContainText('rendition w320: 200 image/png');
 });

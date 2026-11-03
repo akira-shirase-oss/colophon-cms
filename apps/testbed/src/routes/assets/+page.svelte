@@ -16,6 +16,7 @@
 		width: number | null;
 		height: number | null;
 		rejected_reason: string | null;
+		derivatives: string[];
 	}
 
 	// The suite's real 1x1 PNG, as bytes.
@@ -23,6 +24,14 @@
 		137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0,
 		0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 0, 3, 1,
 		1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130
+	]);
+	// A 400×4 PNG: wider than `w320`, so the worker writes one rendition.
+	const WIDE = new Uint8Array([
+		137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 1, 144, 0, 0, 0, 4, 8, 2,
+		0, 0, 0, 47, 93, 254, 122, 0, 0, 0, 42, 73, 68, 65, 84, 120, 156, 237, 206, 65, 9, 0, 48, 12,
+		4, 176, 74, 159, 243, 206, 194, 253, 142, 66, 32, 2, 50, 243, 22, 224, 134, 254, 0, 32, 212,
+		31, 0, 132, 250, 3, 128, 204, 7, 24, 121, 90, 72, 220, 227, 41, 34, 0, 0, 0, 0, 73, 69, 78,
+		68, 174, 66, 96, 130
 	]);
 	const FAKE = new TextEncoder().encode('<html><body>not an image</body></html>');
 
@@ -85,6 +94,11 @@
 						? `served: ${origin.status} ${origin.headers.get('content-type') ?? ''}`.trim()
 						: `served: ${origin.status}`
 				];
+				// M.3: each recorded rendition answers under its own name.
+				for (const name of record.derivatives ?? []) {
+					const rendition = await fetch(`/server/media/v1/${projectId}/production/${id}/${name}`);
+					steps = [...steps, `rendition ${name}: ${rendition.status} ${rendition.headers.get('content-type') ?? ''}`.trim()];
+				}
 				break;
 			}
 			if (Date.now() > deadline) {
@@ -124,6 +138,7 @@
 		</select>
 	</label>
 	<button data-testid="upload-real" onclick={() => upload(PNG, 'dot.png')} disabled={!projectId}>Upload a real PNG</button>
+	<button data-testid="upload-wide" onclick={() => upload(WIDE, 'wide.png')} disabled={!projectId}>Upload a wide PNG</button>
 	<button data-testid="upload-fake" onclick={() => upload(FAKE, 'photo.png')} disabled={!projectId}>Upload a fake PNG</button>
 	<p data-testid="message">{message}</p>
 	<ol data-testid="steps">

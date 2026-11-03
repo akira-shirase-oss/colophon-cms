@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, state, file_name, declared_type, detected_type, size_bytes, width, height,\n                rejected_reason, created_at\n         FROM assets\n         WHERE project_id = $1 AND environment_id = $2\n         ORDER BY created_at DESC, id DESC\n         LIMIT 100",
+  "query": "SELECT id, state, file_name, declared_type, detected_type, size_bytes, width, height,\n                rejected_reason, derivatives, created_at\n         FROM assets\n         WHERE project_id = $1 AND environment_id = $2\n         ORDER BY created_at DESC, id DESC\n         LIMIT 100",
   "describe": {
     "columns": [
       {
@@ -104,6 +104,17 @@
       },
       {
         "ordinal": 9,
+        "name": "derivatives",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "derivatives"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -130,8 +141,9 @@
       true,
       true,
       true,
+      false,
       false
     ]
   },
-  "hash": "c7ee5260dbd3cce174d9ed3cd4fe97661b41fda62cb1c4d2231d7090ee8978c7"
+  "hash": "d34ed1ad06ea0bae9e334c56d5996c8b11a78de3a6fca1d6ceeef7e1225a9cc3"
 }
