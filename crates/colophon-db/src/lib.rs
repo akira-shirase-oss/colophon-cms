@@ -10,6 +10,7 @@ pub mod administrators;
 pub mod assets;
 pub mod audit;
 pub mod changesets;
+pub mod collaboration;
 pub mod components;
 pub mod content_types;
 pub mod delivery;
@@ -165,7 +166,9 @@ impl DbError {
                 }
             }
             _ => match deleted_entry(&error) {
-                Some(("changeset_items" | "publications", entry)) => Self::EntryDeleted { entry },
+                Some(("changeset_items" | "publications" | "comments" | "tasks", entry)) => {
+                    Self::EntryDeleted { entry }
+                }
                 _ => Self::from_query(error),
             },
         }
