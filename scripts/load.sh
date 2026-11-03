@@ -55,7 +55,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|site-starter|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|site-starter|assets|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -100,6 +100,9 @@ case "$endpoint" in
   # An iteration is a create and a collection delete, sometimes a replay, or one refused delete
   # or a list: about 2.2 requests each, and a delete scans the other types' reference fields.
   collection-delete) RATE="${RATE:-100}" P99_MS="${P99_MS:-250}" ;;
+  # An upload's write is a body-bound check, an S3 PUT and two inserts — transfer's arm: an
+  # external call on every write, so half the entries rate and the editorial write budget.
+  assets) RATE="${RATE:-250}" P99_MS="${P99_MS:-700}" ;;
   studio) RATE="${RATE:-5000}" P99_MS="${P99_MS:-25}" ;;
   # RATE counts publishes here, five requests each, and every request writes and commits: on the
   # reference laptop that tops out around 500 to 700 requests a second, so the steady rate is 40

@@ -5,6 +5,7 @@
 //! Design: `docs/modules/04-api.md`.
 
 pub mod admission;
+mod assets;
 mod audit;
 mod auth;
 mod body;
@@ -136,6 +137,14 @@ pub fn routes(state: AppState) -> Router {
                 .delete(content_types::delete),
         )
         .merge(collections())
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/assets",
+            get(assets::list).post(assets::upload),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/assets/{asset}",
+            get(assets::get),
+        )
         .route("/api/v1/rich-text/validate", post(rich_text::validate))
         .merge(publishing())
         .fallback(fallback)

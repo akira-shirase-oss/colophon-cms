@@ -84,6 +84,24 @@ pub struct OidcSettings {
     pub client_secret: Secret,
 }
 
+/// The S3-compatible object store for uploads (Garage locally, a managed bucket live; D-016).
+/// Only the S3 API is spoken, so the store can be swapped.
+#[derive(Debug, Clone)]
+pub struct S3Settings {
+    /// `COLOPHON_S3_ENDPOINT`: the API's URL, e.g. `http://127.0.0.1:53900`.
+    pub endpoint: String,
+    /// `COLOPHON_S3_REGION`, default `garage`.
+    pub region: String,
+    /// `COLOPHON_S3_BUCKET`.
+    pub bucket: String,
+    /// `COLOPHON_S3_ACCESS_KEY`.
+    pub access_key: String,
+    /// `COLOPHON_S3_SECRET_KEY`.
+    pub secret_key: Secret,
+    /// Plain HTTP rather than HTTPS: only for a loopback endpoint (the local stack's Garage).
+    pub allow_http: bool,
+}
+
 /// The development realm's public client secret (deploy/keycloak). Refused off loopback.
 const DEV_CLIENT_SECRET: &str = "colophon-dev-client-secret";
 
@@ -105,7 +123,8 @@ pub struct Config {
     pub log_filter: String,
     /// `COLOPHON_REQUEST_TIMEOUT_MS`, default 10 s.
     pub request_timeout: Duration,
-    /// `COLOPHON_MAX_BODY_BYTES`, default 1 MiB.
+    /// `COLOPHON_MAX_BODY_BYTES`, default 21 MiB: JSON requests stay small, but the upload
+    /// endpoint legitimately carries a 20 MiB image (its own intent check bounds it tighter).
     pub max_body_bytes: usize,
     /// `COLOPHON_DB_MAX_CONNECTIONS`, default 16.
     pub db_max_connections: u32,
@@ -123,6 +142,9 @@ pub struct Config {
     pub public_origin: String,
     /// Sign-in; `None` when the three `COLOPHON_OIDC_*` settings are absent.
     pub oidc: Option<OidcSettings>,
+    /// The object store uploads are quarantined in and served from (07-media); `None` when the
+    /// `COLOPHON_S3_*` settings are absent.
+    pub s3: Option<S3Settings>,
     /// More origins allowed to send cookie-authenticated writes (`COLOPHON_TRUSTED_ORIGINS`,
     /// comma-separated), after the public origin.
     pub extra_trusted_origins: Vec<String>,
@@ -319,6 +341,66 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         (public_origin, extra_trusted_origins, oidc)
     }
 
+    /// The upload store's settings; all five `COLOPHON_S3_*` values or none, and plain HTTP only
+    /// when the endpoint is loopback (a public store over plain HTTP would leak uploads and keys).
+    fn s3(&mut self) -> Option<S3Settings> {
+        let endpoint = self.raw("COLOPHON_S3_ENDPOINT");
+        let bucket = self.raw("COLOPHON_S3_BUCKET");
+        let access_key = self.raw("COLOPHON_S3_ACCESS_KEY");
+        let secret_key = self.secret("COLOPHON_S3_SECRET_KEY", false);
+        let any =
+            endpoint.is_some() || bucket.is_some() || access_key.is_some() || secret_key.is_some();
+        let (Some(endpoint), Some(bucket), Some(access_key), Some(secret_key)) =
+            (endpoint, bucket, access_key, secret_key)
+        else {
+            if any {
+                self.problems.push(
+                    "COLOPHON_S3_ENDPOINT, COLOPHON_S3_BUCKET, COLOPHON_S3_ACCESS_KEY and \
+                     COLOPHON_S3_SECRET_KEY go together: set all four or none"
+                        .to_owned(),
+                );
+            }
+            return None;
+        };
+        let mut allow_http = false;
+        match url::Url::parse(&endpoint) {
+            Err(_) => self
+                .problems
+                .push(format!("COLOPHON_S3_ENDPOINT: cannot parse {endpoint:?}")),
+            Ok(parsed) if parsed.scheme() == "http" => {
+                allow_http = parsed.host_str().is_some_and(|host| {
+                    host == "localhost"
+                        || host.ends_with(".localhost")
+                        || host
+                            .parse::<std::net::IpAddr>()
+                            .is_ok_and(|ip| ip.is_loopback())
+                });
+                if !allow_http {
+                    self.problems.push(
+                        "COLOPHON_S3_ENDPOINT may be plain HTTP only for a loopback address"
+                            .to_owned(),
+                    );
+                }
+            }
+            Ok(parsed) if parsed.scheme() != "https" => self.problems.push(format!(
+                "COLOPHON_S3_ENDPOINT: unsupported scheme {:?}",
+                parsed.scheme()
+            )),
+            _ => {}
+        }
+        let region = self
+            .raw("COLOPHON_S3_REGION")
+            .unwrap_or_else(|| "garage".to_owned());
+        Some(S3Settings {
+            endpoint,
+            region,
+            bucket,
+            access_key,
+            secret_key,
+            allow_http,
+        })
+    }
+
     /// A secret: the value is never echoed, not even in problems.
     fn secret(&mut self, key: &str, required: bool) -> Option<Secret> {
         let value = self.raw(key);
@@ -356,13 +438,14 @@ impl Config {
         let log_format = env.parse("COLOPHON_LOG_FORMAT", LogFormat::Json);
         let log_filter = env.raw("COLOPHON_LOG").unwrap_or_else(|| "info".to_owned());
         let request_timeout = env.millis("COLOPHON_REQUEST_TIMEOUT_MS", 10_000, 100..=120_000);
-        let max_body_bytes = env.ranged("COLOPHON_MAX_BODY_BYTES", MIB, KIB..=16 * MIB);
+        let max_body_bytes = env.ranged("COLOPHON_MAX_BODY_BYTES", 21 * MIB, KIB..=64 * MIB);
         let db_max_connections = env.ranged("COLOPHON_DB_MAX_CONNECTIONS", 16, 1..=1_000);
         let probe_interval = env.millis("COLOPHON_PROBE_INTERVAL_MS", 2_000, 100..=60_000);
         let probe_timeout = env.millis("COLOPHON_PROBE_TIMEOUT_MS", 1_000, 50..=30_000);
         let drain_delay = env.millis("COLOPHON_DRAIN_DELAY_MS", 5_000, 0..=60_000);
         let shutdown_grace = env.millis("COLOPHON_SHUTDOWN_GRACE_MS", 25_000, 1_000..=600_000);
         let (public_origin, extra_trusted_origins, oidc) = env.sign_in(listen_addr);
+        let s3 = env.s3();
         let studio_dir = env.raw("COLOPHON_STUDIO_DIR").map(std::path::PathBuf::from);
         let worker_poll = env.millis("COLOPHON_WORKER_POLL_MS", 500, 10..=60_000);
         let worker_lease = env.millis("COLOPHON_WORKER_LEASE_MS", 30_000, 1_000..=600_000);
@@ -424,6 +507,7 @@ impl Config {
                 shutdown_grace,
                 public_origin,
                 oidc,
+                s3,
                 extra_trusted_origins,
                 studio_dir,
                 worker_poll,
@@ -463,7 +547,7 @@ mod tests {
         let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
         assert_eq!(config.listen_addr.to_string(), "127.0.0.1:58000");
         assert_eq!(config.request_timeout, Duration::from_secs(10));
-        assert_eq!(config.max_body_bytes, MIB);
+        assert_eq!(config.max_body_bytes, 21 * MIB);
         assert_eq!(config.probe_interval, Duration::from_secs(2));
         assert!(config.cache_url.is_none());
         assert_eq!(config.log_format, LogFormat::Json);
@@ -563,6 +647,40 @@ mod tests {
             !format!("{config:?}").contains("s3cret-value"),
             "the secret is redacted"
         );
+    }
+
+    #[test]
+    fn the_upload_store_is_all_or_none_and_https_only_off_loopback() {
+        // Unset: no store, no problem.
+        let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
+        assert!(config.s3.is_none());
+        // One without the rest: a problem, still no store.
+        let error = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_S3_BUCKET", "colophon-dev"),
+        ])
+        .expect_err("a lone bucket");
+        assert!(
+            error
+                .to_string()
+                .contains("go together: set all four or none")
+        );
+        // Plain HTTP off loopback is refused; on loopback it is the local stack's Garage.
+        let base = [
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_S3_BUCKET", "colophon-dev"),
+            ("COLOPHON_S3_ACCESS_KEY", "GK-test"),
+            ("COLOPHON_S3_SECRET_KEY", "s3cret"),
+        ];
+        let mut public = Vec::from(base);
+        public.push(("COLOPHON_S3_ENDPOINT", "http://s3.example.test"));
+        let error = load(&public).expect_err("plain http off loopback");
+        assert!(error.to_string().contains("loopback"));
+        let mut local = Vec::from(base);
+        local.push(("COLOPHON_S3_ENDPOINT", "http://127.0.0.1:53900"));
+        let config = load(&local).expect("loopback http");
+        assert!(config.s3.as_ref().is_some_and(|s3| s3.allow_http));
+        assert!(!format!("{config:?}").contains("s3cret"));
     }
 
     #[test]

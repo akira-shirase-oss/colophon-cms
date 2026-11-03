@@ -23,6 +23,7 @@ use colophon_domain::{
     job::{self, Next, Outcome},
     receipt,
 };
+use object_store::ObjectStoreExt;
 use serde_json::json;
 use time::OffsetDateTime;
 use tokio::sync::Semaphore;
@@ -50,7 +51,13 @@ pub struct Settings {
     /// Where it runs, as probes report it (`COLOPHON_WORKER_LOCATION`); it only runs probes pinned
     /// to this location, or to none.
     pub location: String,
+    /// The object store uploads wait in (07-media); `None` means no asset jobs exist to claim.
+    pub assets: Option<colophon_media::Shared>,
 }
+
+/// The most image verifications in flight at once (07-media: four image workers), on their own
+/// semaphore so media load can never take a delivery slot (L14).
+const IMAGE_SLOTS: usize = 4;
 
 // The worker gets its own small database pool (colophon-server's COLOPHON_WORKER_DB_CONNECTIONS),
 // so delivering announcements can never starve editors' requests of connections.
@@ -94,6 +101,7 @@ pub struct Worker {
     http: reqwest::Client,
     settings: Settings,
     slots: Arc<Semaphore>,
+    image_slots: Arc<Semaphore>,
 }
 
 /// Any random 64 bits, for jitter: a fresh UUID v7's random part.
@@ -137,6 +145,7 @@ impl Worker {
             http,
             settings,
             slots,
+            image_slots: Arc::new(Semaphore::new(IMAGE_SLOTS)),
         })
     }
 
@@ -146,6 +155,10 @@ impl Worker {
     pub async fn run(self: Arc<Self>, cancel: CancellationToken) {
         let tracker = TaskTracker::new();
         tracing::info!(owner = %self.settings.owner, "worker started");
+        if self.settings.assets.is_some() {
+            let worker = Arc::clone(&self);
+            tracker.spawn(worker.run_assets(cancel.clone(), tracker.clone()));
+        }
         let mut last_expiry: Option<std::time::Instant> = None;
         loop {
             if last_expiry.is_none_or(|at| at.elapsed() >= EXPIRY_INTERVAL) {
@@ -156,6 +169,10 @@ impl Worker {
                     Err(error) => {
                         tracing::warn!(error = %error, "expiring jobs failed; trying again later");
                     }
+                }
+                match colophon_db::assets::expire(&self.pool).await {
+                    Ok(0) | Err(_) => {}
+                    Ok(expired) => tracing::info!(expired, "asset jobs ran out of time"),
                 }
             }
             let first = tokio::select! {
@@ -491,6 +508,253 @@ impl Worker {
             },
         }
     }
+
+    /// The asset-jobs loop (07-media): same claim discipline as the delivery loop, on the image
+    /// pool's own semaphore so decodes can never take a delivery slot (L14). Runs only when the
+    /// worker was built with an object store.
+    async fn run_assets(self: Arc<Self>, cancel: CancellationToken, tracker: TaskTracker) {
+        loop {
+            let first = tokio::select! {
+                () = cancel.cancelled() => break,
+                permit = Arc::clone(&self.image_slots).acquire_owned() => match permit {
+                    Ok(permit) => permit,
+                    Err(_closed) => break,
+                },
+            };
+            let free = 1 + self.image_slots.available_permits();
+            let asked_at = std::time::Instant::now();
+            let claimed = match colophon_db::assets::claim(
+                &self.pool,
+                &self.settings.owner,
+                self.settings.lease,
+                i64::try_from(free).unwrap_or(1),
+            )
+            .await
+            {
+                Ok(claimed) => claimed,
+                Err(error) => {
+                    tracing::warn!(error = %error, "claiming asset jobs failed; trying again");
+                    Vec::new()
+                }
+            };
+            if claimed.is_empty() {
+                drop(first);
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = tokio::time::sleep(self.settings.poll) => {}
+                }
+                continue;
+            }
+            let mut permit = Some(first);
+            for job in claimed {
+                let held = match permit.take() {
+                    Some(held) => held,
+                    None => match Arc::clone(&self.image_slots).acquire_owned().await {
+                        Ok(held) => held,
+                        Err(_closed) => break,
+                    },
+                };
+                let worker = Arc::clone(&self);
+                tracker.spawn(async move {
+                    worker.attempt_asset(job, asked_at).await;
+                    drop(held);
+                });
+            }
+        }
+        tracing::info!("asset worker stopped");
+    }
+
+    /// One verify attempt: fetch the quarantined object, prove it, move it to its public key and
+    /// record both outcomes — the asset's new state and the job's — in one transaction.
+    async fn attempt_asset(&self, job: colophon_db::assets::Claimed, asked_at: std::time::Instant) {
+        let attempts = u32::try_from(job.attempts).unwrap_or(u32::MAX);
+        // A claim almost out of lease gets no attempt: it is claimed again when the lease lapses.
+        if asked_at.elapsed() + self.settings.attempt >= self.settings.lease {
+            return;
+        }
+        let Some(store) = self.settings.assets.clone() else {
+            return;
+        };
+        let budget = self.settings.attempt.saturating_sub(asked_at.elapsed());
+        let Some(bytes) = self.quarantined(&job, attempts, &store, budget).await else {
+            return;
+        };
+        // The decode is CPU-bound and its own worst case is bounded (20 MiB in, strict limits
+        // out); it runs on a blocking thread so a pathological file never stalls this worker.
+        let checked =
+            tokio::task::spawn_blocking(move || colophon_media::verify_image(&bytes)).await;
+        let key = colophon_media::public_key(
+            &job.project_id.to_string(),
+            &job.environment_id.to_string(),
+            &job.asset_id.to_string(),
+        );
+        match checked {
+            Ok(Ok(verified)) => {
+                self.promote(&job, attempts, &store, key, verified).await;
+            }
+            Ok(Err(reason)) => {
+                self.finish_asset(
+                    &job,
+                    attempts,
+                    "succeeded",
+                    None,
+                    &colophon_db::assets::Outcome::Rejected {
+                        reason: reason.to_string(),
+                    },
+                )
+                .await;
+            }
+            Err(join) => {
+                self.retry_asset(&job, attempts, &trim(&join.to_string()))
+                    .await;
+            }
+        }
+    }
+
+    /// The quarantined object's bytes, or `None` after recording why the job retries.
+    async fn quarantined(
+        &self,
+        job: &colophon_db::assets::Claimed,
+        attempts: u32,
+        store: &colophon_media::Shared,
+        budget: Duration,
+    ) -> Option<bytes::Bytes> {
+        let quarantine = object_store::path::Path::from(job.quarantine_key.clone());
+        let object = match tokio::time::timeout(budget, store.get(&quarantine)).await {
+            Err(_) => {
+                self.retry_asset(job, attempts, "reading the object timed out")
+                    .await;
+                return None;
+            }
+            Ok(Err(object_store::Error::NotFound { .. })) => {
+                self.retry_asset(job, attempts, "the upload's object is missing")
+                    .await;
+                return None;
+            }
+            Ok(Err(error)) => {
+                self.retry_asset(job, attempts, &trim(&error.to_string()))
+                    .await;
+                return None;
+            }
+            Ok(Ok(object)) => object,
+        };
+        let Ok(Ok(bytes)) = tokio::time::timeout(budget, object.bytes()).await else {
+            self.retry_asset(job, attempts, "reading the object timed out")
+                .await;
+            return None;
+        };
+        Some(bytes)
+    }
+
+    /// A verified image: the stripped bytes to the public key, then usable — or a retry when the
+    /// store refuses the promotion write.
+    async fn promote(
+        &self,
+        job: &colophon_db::assets::Claimed,
+        attempts: u32,
+        store: &colophon_media::Shared,
+        key: String,
+        verified: colophon_media::Verified,
+    ) {
+        let written = store
+            .put(
+                &object_store::path::Path::from(key.clone()),
+                verified.stripped.clone().into(),
+            )
+            .await;
+        if let Err(error) = written {
+            self.retry_asset(job, attempts, &trim(&error.to_string()))
+                .await;
+            return;
+        }
+        self.finish_asset(
+            job,
+            attempts,
+            "succeeded",
+            None,
+            &colophon_db::assets::Outcome::Usable {
+                detected_type: verified.detected_type,
+                width: i32::try_from(verified.width).unwrap_or(i32::MAX),
+                height: i32::try_from(verified.height).unwrap_or(i32::MAX),
+                sha256: verified.sha256.to_vec(),
+                public_key: key,
+            },
+        )
+        .await;
+    }
+
+    /// A transient failure: the job tries again, the asset stays quarantined.
+    async fn retry_asset(&self, job: &colophon_db::assets::Claimed, attempts: u32, reason: &str) {
+        self.finish_asset(
+            job,
+            attempts,
+            "retrying",
+            Some(reason),
+            &colophon_db::assets::Outcome::Missing,
+        )
+        .await;
+    }
+
+    /// Records an asset attempt's end; a lost lease writes nothing (the job was claimed again).
+    async fn finish_asset(
+        &self,
+        job: &colophon_db::assets::Claimed,
+        attempts: u32,
+        status: &str,
+        error: Option<&str>,
+        outcome: &colophon_db::assets::Outcome,
+    ) {
+        // A retryable failure schedules the next attempt; a job that has run out of attempts or
+        // out of lifetime is recorded `failed` instead.
+        let (status, next_attempt_at) = if status == "retrying" {
+            let outcome = job::Outcome::Retryable {
+                reason: error.unwrap_or("trying again").to_owned(),
+                retry_after_ms: None,
+            };
+            match job::after_attempt(
+                &outcome,
+                attempts,
+                millis(OffsetDateTime::now_utc()),
+                millis(job.deadline_at),
+                entropy(),
+            ) {
+                job::Next::Retry { after_ms } => (
+                    "retrying",
+                    Some(
+                        OffsetDateTime::now_utc()
+                            + time::Duration::milliseconds(
+                                i64::try_from(after_ms).unwrap_or(i64::MAX),
+                            ),
+                    ),
+                ),
+                _ => ("failed", None),
+            }
+        } else {
+            (status, None)
+        };
+        match colophon_db::assets::finish(
+            &self.pool,
+            job,
+            &self.settings.owner,
+            status,
+            next_attempt_at,
+            error,
+            outcome,
+        )
+        .await
+        {
+            Ok(true) => {}
+            Ok(false) => tracing::debug!(job = %job.id, "asset lease was already gone"),
+            Err(db_error) => {
+                tracing::warn!(job = %job.id, error = %db_error, "recording the asset attempt failed; the lease will run out");
+            }
+        }
+    }
+}
+
+/// At most this much of an error's text reaches a job's `last_error`.
+fn trim(error: &str) -> String {
+    error.chars().take(500).collect()
 }
 
 /// The SHA-256 of `bytes`: what a probe's evidence records of the answer it read.

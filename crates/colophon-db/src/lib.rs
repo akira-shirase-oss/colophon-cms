@@ -7,6 +7,7 @@
 
 pub mod access;
 pub mod administrators;
+pub mod assets;
 pub mod audit;
 pub mod changesets;
 pub mod components;

@@ -18,10 +18,12 @@ base64.workspace = true
 colophon-auth.workspace = true
 colophon-db.workspace = true
 colophon-domain.workspace = true
+colophon-media.workspace = true
 # The build stamp `/version` reports; the server binary makes it (D-062).
 colophon-version.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
+object_store.workspace = true
 redis.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }

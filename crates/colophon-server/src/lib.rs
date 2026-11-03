@@ -47,6 +47,7 @@ fn start_worker(
         slots: config.worker_slots,
         allow_private: config.listen_addr.ip().is_loopback(),
         location: config.worker_location.clone(),
+        assets: asset_store(config)?,
     };
     // Its own pool: deliveries can never take the connections editors' requests need.
     let worker_pool = colophon_db::connect_lazy(
@@ -114,6 +115,24 @@ fn delivery_cache(config: &Config) -> anyhow::Result<colophon_api::DeliveryCache
             .context("configuring the delivery cache"),
         None => Ok(colophon_api::DeliveryCache::disabled()),
     }
+}
+
+/// The uploads' object store (07-media): the S3 endpoint in `COLOPHON_S3_*`, or `None` — uploads
+/// then answer "not configured" and the worker has no asset jobs to run.
+fn asset_store(config: &Config) -> anyhow::Result<Option<colophon_media::Shared>> {
+    let Some(settings) = &config.s3 else {
+        return Ok(None);
+    };
+    let store = object_store::aws::AmazonS3Builder::new()
+        .with_endpoint(&settings.endpoint)
+        .with_region(&settings.region)
+        .with_bucket_name(&settings.bucket)
+        .with_access_key_id(&settings.access_key)
+        .with_secret_access_key(settings.secret_key.expose())
+        .with_allow_http(settings.allow_http)
+        .build()
+        .context("configuring the object store")?;
+    Ok(Some(std::sync::Arc::new(store)))
 }
 
 /// The OpenID Connect client, when sign-in is configured.
@@ -190,6 +209,7 @@ pub async fn run(
         allow_private_destinations: config.listen_addr.ip().is_loopback(),
         cache: delivery_cache(&config)?,
         content_types: colophon_api::ContentTypeCache::new(),
+        assets: asset_store(&config)?,
     };
     let admission = colophon_api::admission::Admission::new(
         config.admission.clone(),

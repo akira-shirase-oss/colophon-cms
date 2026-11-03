@@ -19,6 +19,7 @@
 		{ href: resolve('/inverses'), label: 'Mirrored references' },
 		{ href: resolve('/locales'), label: 'Locales' },
 		{ href: resolve('/site'), label: 'Website starter' },
+		{ href: resolve('/assets'), label: 'Assets' },
 		{ href: resolve('/transfer'), label: 'Import & export' },
 		{ href: resolve('/device'), label: 'Device sign-in' },
 		{ href: resolve('/members'), label: 'Members' },

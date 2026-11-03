@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE asset_jobs SET status = $6, lease_owner = NULL, lease_expires_at = NULL,\n                              next_attempt_at = coalesce($7, next_attempt_at), last_error = $8,\n                              updated_at = now(),\n                              finished_at = CASE WHEN $6 IN ('succeeded', 'failed', 'superseded') THEN now() END\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3\n           AND status = 'running' AND lease_owner = $4 AND lease_generation = $5",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int4",
+        "Text",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "10e87acf3d0591ad8b49401aeca022760f598cb1f665ba0659b7fb8756edc59b"
+}

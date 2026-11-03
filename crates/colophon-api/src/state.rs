@@ -44,6 +44,9 @@ pub struct Services {
     pub cache: DeliveryCache,
     /// Parsed content types by their definition's hash (D-078).
     pub content_types: ContentTypeCache,
+    /// The object store uploads are quarantined in and served from (07-media); `None` without
+    /// `COLOPHON_S3_*`, and upload endpoints say so.
+    pub assets: Option<colophon_media::Shared>,
 }
 
 /// The router's state. Cloning is two reference-count increments and a copy.

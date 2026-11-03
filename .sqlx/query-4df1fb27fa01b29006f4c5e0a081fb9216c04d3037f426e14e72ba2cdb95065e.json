@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE asset_jobs SET status = 'failed', last_error = 'ran out of time',\n                              lease_owner = NULL, lease_expires_at = NULL,\n                              updated_at = now(), finished_at = now()\n         WHERE deadline_at <= now() AND status IN ('pending', 'retrying', 'running')\n           AND (status <> 'running' OR lease_expires_at < now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "4df1fb27fa01b29006f4c5e0a081fb9216c04d3037f426e14e72ba2cdb95065e"
+}

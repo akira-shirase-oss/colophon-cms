@@ -1,0 +1,113 @@
+// Load scenario for uploads (M.0): the asset lifecycle's front half. setup() signs in and makes
+// a project; each iteration uploads a real or a fake PNG into quarantine (the object's write to
+// the store plus the asset and job rows in one transaction), lists the environment's assets, or
+// reads one back. Verification runs off the request path on the worker's image pool, so the
+// measured latency is the upload's own: body bounds, the S3 PUT, and the insert.
+// RATE counts iterations here (about 1.5 requests each); scripts/load.sh gives this endpoint
+// RATE 250 and P99_MS 700 — the same arm as the other external-call writes.
+
+import http from 'k6/http';
+import { check, fail } from 'k6';
+import { parseHTML } from 'k6/html';
+
+const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
+const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
+const SCENARIO = __ENV.SCENARIO || 'throughput';
+const TOTAL = parseInt(__ENV.TOTAL || '1000000', 10);
+const VUS = parseInt(__ENV.VUS || '64', 10);
+const RATE = parseInt(__ENV.RATE || '250', 10);
+const DURATION = __ENV.DURATION || '60s';
+const P99_MS = parseFloat(__ENV.P99_MS || '700');
+
+function durationSeconds(text) {
+  const match = /^(\d+)(s|m)$/.exec(text);
+  if (!match) throw new Error(`DURATION must look like 60s or 5m, got ${text}`);
+  return parseInt(match[1], 10) * (match[2] === 'm' ? 60 : 1);
+}
+
+const scenarios = {
+  throughput: { executor: 'shared-iterations', vus: VUS, iterations: TOTAL, maxDuration: '40m' },
+  steady: { executor: 'constant-arrival-rate', rate: RATE, timeUnit: '1s', duration: DURATION, preAllocatedVUs: VUS, maxVUs: VUS * 2 },
+};
+if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.keys(scenarios).join(', ')}`);
+
+const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`] };
+if (SCENARIO === 'steady') {
+  thresholds.dropped_iterations = [`count<=${Math.floor(RATE * durationSeconds(DURATION) * 0.0001)}`];
+}
+
+export const options = {
+  scenarios: { [SCENARIO]: scenarios[SCENARIO] },
+  thresholds,
+  summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)', 'max'],
+  setupTimeout: '120s',
+};
+
+// The suite's real 1x1 PNG and a fake that carries its name.
+const PNG = new Uint8Array([
+  137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0,
+  0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 0, 0, 3, 1,
+  1, 0, 201, 254, 146, 239, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+]);
+const FAKE = new TextEncoder().encode('<html><body>not an image</body></html>');
+
+function key() {
+  return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function setup() {
+  const loginPage = http.get(`${PUBLIC_URL}/auth/login?return_to=/me`);
+  const action = parseHTML(loginPage.body).find('#kc-form-login').attr('action');
+  if (!action) fail('no Keycloak login form');
+  const me = http.post(action.replace(/&amp;/g, '&'), { username: 'dev-owner', password: 'colophon-dev' });
+  if (me.status !== 200) fail(`sign-in failed: HTTP ${me.status}`);
+  const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
+  const session = { cookie: `colophon_session=${jar.colophon_session[0]}`, csrf: jar.colophon_csrf[0] };
+
+  const write = { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
+  const slug = `k6-${Date.now().toString(36)}`;
+  const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug, name: 'k6 assets' }), { headers: write });
+  if (project.status !== 201) fail(`project: HTTP ${project.status} ${project.body}`);
+  const assets = `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production/assets`;
+  return { session, assets };
+}
+
+export default function (data) {
+  const read = { headers: { Cookie: data.session.cookie }, redirects: 0 };
+  const roll = __ITER % 10;
+  if (roll < 5) {
+    // Half the uploads are real, one in ten a fake the verifier will reject.
+    const fake = __ITER % 50 === 49;
+    const body = fake ? FAKE : PNG;
+    const res = http.post(data.assets, body.buffer, {
+      headers: {
+        Cookie: data.session.cookie,
+        'X-CSRF-Token': data.session.csrf,
+        Origin: PUBLIC_URL,
+        'Content-Type': 'image/png',
+        'X-Colophon-File-Name': fake ? 'photo.png' : 'dot.png',
+        'Idempotency-Key': key(),
+      },
+      redirects: 0,
+      tags: { endpoint: 'upload', name: 'assets' },
+    });
+    check(res, {
+      'upload 202': (r) => r.status === 202,
+      'upload lands quarantined': (r) => r.json('data.state') === 'quarantined',
+    });
+  } else if (roll < 9) {
+    const res = http.get(data.assets, Object.assign({ tags: { endpoint: 'list', name: 'assets' } }, read));
+    check(res, { 'list 200': (r) => r.status === 200 });
+  } else {
+    const res = http.get(`${data.assets}?limit=1`, Object.assign({ tags: { endpoint: 'list-one', name: 'assets?limit' } }, read));
+    const id = res.json('data.0.id');
+    check(res, { 'list-one 200': (r) => r.status === 200 });
+    if (typeof id === 'string') {
+      const one = http.get(`${data.assets}/${id}`, Object.assign({ tags: { endpoint: 'read', name: 'assets/{asset}' } }, read));
+      check(one, {
+        'read 200': (r) => r.status === 200,
+        'read settles or waits': (r) => ['quarantined', 'usable', 'rejected'].includes(r.json('data.state')),
+      });
+    }
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH due AS (\n             SELECT j.project_id, j.environment_id, j.id\n             FROM asset_jobs j\n             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())\n                    OR (j.status = 'running' AND j.lease_expires_at < now()))\n               AND j.deadline_at > now()\n             ORDER BY j.next_attempt_at\n             LIMIT $3\n             FOR UPDATE OF j SKIP LOCKED\n         )\n         UPDATE asset_jobs j SET status = 'running', lease_owner = $1,\n                            lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),\n                            lease_generation = j.lease_generation + 1, attempts = j.attempts + 1,\n                            updated_at = now()\n         FROM due, assets a\n         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id\n           AND a.project_id = j.project_id AND a.environment_id = j.environment_id AND a.id = j.asset_id\n         RETURNING j.project_id, j.environment_id, j.id, j.asset_id, a.quarantine_key,\n                   a.declared_type, j.idempotency_key, j.attempts, j.lease_generation, j.deadline_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "project_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "asset_jobs",
+            "name": "project_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "environment_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "asset_jobs",
+            "name": "environment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "asset_jobs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "asset_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "asset_jobs",
+            "name": "asset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "quarantine_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "quarantine_key"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "declared_type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "declared_type"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "idempotency_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "asset_jobs",
+            "name": "idempotency_key"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "asset_jobs",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "lease_generation",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "asset_jobs",
+            "name": "lease_generation"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "deadline_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "asset_jobs",
+            "name": "deadline_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f3929bd8e551a19525a4610b6ff978237362f05ed440159f422ba91038cb0c91"
+}

@@ -65,9 +65,14 @@ impl Server {
     /// sharing its database and Valkey. Sign-in needs [`PORT`]'s registered origin.
     pub(crate) async fn start_on(port: u16, extra: &[(&str, &str)]) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_colophon-server"));
+        // The server logs on stdout: COLOPHON_TEST_VERBOSE keeps it for a debugging run.
+        let log = match std::env::var_os("COLOPHON_TEST_VERBOSE") {
+            Some(_) => Stdio::inherit(),
+            None => Stdio::null(),
+        };
         command
             .env_clear()
-            .stdout(Stdio::null())
+            .stdout(log)
             .stderr(Stdio::inherit())
             .envs(local_env());
         command
