@@ -6,7 +6,9 @@
 //! [`mark_deleting`] rechecks under the row lock who still names the asset — a live draft or
 //! any publication at all, which pins it forever (D-098) — before a byte is removed outside
 //! any transaction, and [`finish`] lands the asset's new state and the job's outcome together
-//! — a lease that expired writes neither.
+//! — a lease that expired writes neither. The retention sweep's `expire` jobs ride the same
+//! attempt: [`enqueue_expired`] commits the intents and [`mark_deleting`] makes the same
+//! verdict for them (D-099).
 
 use std::time::Duration;
 
@@ -352,16 +354,21 @@ pub enum Deletion {
     Gone,
     /// A live draft or a publication still names it: the job fails, the asset stays.
     StillReferenced,
-    /// A state a delete may not act on (`quarantined`): the job fails, the asset stays.
+    /// A state the job's kind may not act on: a `delete` meets `quarantined` (the request
+    /// refuses it too, `asset_quarantined`). An `expire` is never held — an abandoned
+    /// quarantine is exactly what it collects (D-099).
     Held,
 }
 
-/// The delete attempt's first half (media M3, D-098): locks the asset FOR UPDATE — the lock
-/// new references (`asset_references_asset_live`) and publications
-/// (`publications_asset_live`) wait on for the same row — then rechecks, with everything
-/// committed before the lock was granted visible, that nothing still names it, and marks it
-/// `deleting`. `Removing` hands the attempt every object key to remove, all outside any
-/// transaction; [`finish`] with [`Outcome::Deleted`] is the second half once they are gone.
+/// The delete attempt's first half (media M3, D-098) — and the expire job's, which is the
+/// same attempt (D-099): locks the asset FOR UPDATE — the lock new references
+/// (`asset_references_asset_live`) and publications (`publications_asset_live`) wait on for
+/// the same row — then rechecks, with everything committed before the lock was granted
+/// visible, that nothing still names it, and marks it `deleting`. `Removing` hands the
+/// attempt every object key to remove, all outside any transaction; [`finish`] with
+/// [`Outcome::Deleted`] is the second half once they are gone. The only difference a job's
+/// kind makes: `quarantined` holds a `delete` (verification may still land it `usable`)
+/// while an `expire` rechecks and collects it like any other settled state.
 pub async fn mark_deleting(pool: &PgPool, job: &Claimed) -> Result<Deletion, DbError> {
     let mut transaction = worker(pool).await?;
     let row = sqlx::query!(
@@ -388,10 +395,14 @@ pub async fn mark_deleting(pool: &PgPool, job: &Claimed) -> Result<Deletion, DbE
             derivatives: row.derivatives,
             quarantine_key: row.quarantine_key,
         },
-        "quarantined" => Deletion::Held,
+        // An upload still waiting on its verdict is held against a delete — the request
+        // refuses it too — but not against an expire: an abandoned quarantine is exactly
+        // what the sweep collects, and the recheck below pins it like any other state.
+        "quarantined" if job.kind != "expire" => Deletion::Held,
         _ => {
-            // usable or rejected: nothing may still name it — a live entry's draft revision,
-            // or any publication's (closed or not: publications pin forever).
+            // usable or rejected, or quarantined under an expire: nothing may still name it
+            // — a live entry's draft revision, or any publication's (closed or not:
+            // publications pin forever).
             let referenced = sqlx::query_scalar!(
                 r#"SELECT EXISTS (
                        SELECT 1 FROM asset_references r
@@ -583,4 +594,77 @@ pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
     .map_err(DbError::from_query)?;
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(expired.rows_affected())
+}
+
+/// The retention sweep's first half (media retention, spec §18, D-099): one `expire` job for
+/// every asset that has been collectable longer than `older_than` — `quarantined`, `rejected`
+/// or `usable`, and in every case only while nothing names it: the delete request's keep-rule
+/// applied to all three, so a draft naming even a rejected upload still pins it (M3), and a
+/// stuck referrer never earns a failing job a pass. At most `limit` a pass, oldest first.
+/// `expire` reuses the delete attempt end to end; [`mark_deleting`] rechecks the same
+/// keep-rule under the row lock, so a name committed between this statement and the claim
+/// fails the job and never loses an object. An asset already mid-job of any kind is left to
+/// it: what is running decides what it becomes. Two passes racing the same asset can both
+/// enqueue; the second job finds `deleted` and finishes having removed nothing.
+pub async fn enqueue_expired(
+    pool: &PgPool,
+    older_than: OffsetDateTime,
+    deadline_at: OffsetDateTime,
+    limit: i64,
+) -> Result<u64, DbError> {
+    let mut transaction = worker(pool).await?;
+    let enqueued = sqlx::query!(
+        "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind,
+                                 idempotency_key, deadline_at)
+         SELECT a.project_id, a.environment_id, gen_random_uuid(), a.id, 'expire',
+                'expire:' || a.id::text || ':' || gen_random_uuid()::text, $2
+         FROM assets a
+         WHERE a.created_at < $1 AND a.state IN ('quarantined', 'usable', 'rejected')
+           AND NOT EXISTS (
+               SELECT 1 FROM asset_references r
+               JOIN entries e
+                 ON e.project_id = r.project_id AND e.environment_id = r.environment_id
+                AND e.draft_revision_id = r.revision_id AND e.deleted_at IS NULL
+               WHERE r.project_id = a.project_id AND r.environment_id = a.environment_id
+                 AND r.asset_id = a.id)
+           AND NOT EXISTS (
+               SELECT 1 FROM asset_references r
+               JOIN publications p
+                 ON p.project_id = r.project_id AND p.environment_id = r.environment_id
+                AND p.revision_id = r.revision_id
+               WHERE r.project_id = a.project_id AND r.environment_id = a.environment_id
+                 AND r.asset_id = a.id)
+           AND NOT EXISTS (
+               SELECT 1 FROM asset_jobs j
+               WHERE j.project_id = a.project_id AND j.environment_id = a.environment_id
+                 AND j.asset_id = a.id
+                 AND j.status IN ('pending', 'running', 'retrying'))
+         ORDER BY a.created_at
+         LIMIT $3",
+        older_than,
+        deadline_at,
+        limit
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(enqueued.rows_affected())
+}
+
+/// Of `keys`, the ones a `quarantined` asset still holds as its `quarantine_key`: the only
+/// objects the orphan sweep keeps (a verified or rejected asset's leftover is dead weight,
+/// and a `deleting` one is already being removed, idempotently — D-099).
+pub async fn quarantined_keys(pool: &PgPool, keys: &[String]) -> Result<Vec<String>, DbError> {
+    let mut transaction = worker(pool).await?;
+    let held = sqlx::query_scalar!(
+        "SELECT quarantine_key FROM assets
+         WHERE quarantine_key = ANY($1) AND state = 'quarantined'",
+        keys
+    )
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(held)
 }

@@ -12,10 +12,12 @@
 	import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
 	import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
 	import ImageIcon from '@lucide/svelte/icons/image';
+	import TrashIcon from '@lucide/svelte/icons/trash-2';
 	import XIcon from '@lucide/svelte/icons/x';
 	import { createQueries, createQuery } from '@tanstack/svelte-query';
+	import * as AlertDialog from '@colophon/ui/ui/alert-dialog';
 	import { Button } from '@colophon/ui/ui/button';
-	import { ApiError, assetUrl, getAsset, listAssets, uploadAsset, type Asset, type FieldDefinition } from './api.ts';
+	import { ApiError, assetUrl, deleteAsset, getAsset, listAssets, newKey, uploadAsset, type Asset, type FieldDefinition } from './api.ts';
 
 	let {
 		project,
@@ -64,6 +66,55 @@
 	let fileInput = $state<HTMLInputElement>();
 	let uploading = $state('');
 	let problem = $state('');
+
+	// Deleting from the library: a confirmed 202 is requested, not gone — the row shows
+	// Deleting…, then Deleted, until the list no longer names it. A refusal's message, with
+	// who still names it, shows where upload problems do.
+	let confirming = $state<Asset | null>(null);
+	let deleting = $state(false);
+
+	/** How an upload's record shows beside its name. */
+	function stateText(state: string): string {
+		switch (state) {
+			case 'rejected':
+				return 'Rejected';
+			case 'deleting':
+				return 'Deleting…';
+			case 'deleted':
+				return 'Deleted';
+			default:
+				return 'Checking…';
+		}
+	}
+
+	/** Whether a library row may still be picked: gone or on its way out can't. */
+	const pickable = (asset: Asset) => asset.state !== 'deleting' && asset.state !== 'deleted';
+
+	/** Asks for `confirming`'s asset to go, then refreshes the library to show its state. */
+	async function remove() {
+		const asset = confirming;
+		if (asset === null || deleting) return;
+		problem = '';
+		deleting = true;
+		try {
+			await deleteAsset(project, asset.id, newKey());
+			confirming = null;
+			await library.refetch();
+		} catch (error) {
+			confirming = null;
+			problem =
+				error instanceof ApiError
+					? error.details?.referenced_by !== undefined && error.details.referenced_by.length > 0
+						? `${error.message} (${error.details.referenced_by
+								.slice(0, 3)
+								.map((referrer) => referrer.collection)
+								.join(', ')}${error.details.referenced_by.length > 3 ? ', …' : ''})`
+						: error.message
+					: `Couldn't delete “${asset.file_name}”.`;
+		} finally {
+			deleting = false;
+		}
+	}
 
 	/** Sends the picked file into quarantine and waits for the worker's verdict; a usable
 	 *  result is chosen at once. */
@@ -126,7 +177,7 @@
 					{/if}
 					<span class="min-w-0 flex-1 truncate" data-user-content>{label(item.asset, item.failed)}</span>
 					{#if item.asset && item.asset.state !== 'usable'}
-						<span class="text-xs text-muted-foreground">{item.asset.state === 'rejected' ? 'Rejected' : 'Checking…'}</span>
+						<span class="text-xs text-muted-foreground">{stateText(item.asset.state)}</span>
 					{/if}
 					{#if refusedAt === index}<span class="text-xs text-destructive" title={refusal}>Not found</span>{/if}
 					{#if field.many && !disabled}
@@ -187,11 +238,11 @@
 						{:else}
 							<ul class="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="Uploads">
 								{#each visible as asset (asset.id)}
-									<li>
+									<li class="group relative">
 										<button
 											type="button"
-											class="w-full overflow-hidden rounded-lg border text-left outline-none hover:border-primary focus-visible:border-primary disabled:opacity-60 {chosen.includes(asset.id) ? 'border-primary' : 'border-border'}"
-											disabled={chosen.includes(asset.id)}
+											class="w-full overflow-hidden rounded-lg border text-left outline-none enabled:hover:border-primary focus-visible:border-primary disabled:opacity-60 {chosen.includes(asset.id) ? 'border-primary' : 'border-border'}"
+											disabled={chosen.includes(asset.id) || !pickable(asset)}
 											onclick={() => choose(asset.id)}
 											data-testid="asset-option"
 											data-state={asset.state}
@@ -200,11 +251,22 @@
 												<img src={assetUrl(project, asset.id)} alt="" class="aspect-video w-full bg-muted object-cover" />
 											{:else}
 												<div class="flex aspect-video w-full items-center justify-center bg-muted text-xs text-muted-foreground">
-													{asset.state === 'rejected' ? 'Rejected' : 'Checking…'}
+													{stateText(asset.state)}
 												</div>
 											{/if}
 											<span class="block truncate px-2 py-1.5 text-xs" data-user-content>{asset.file_name}</span>
 										</button>
+										{#if asset.state === 'usable' || asset.state === 'rejected'}
+											<button
+												type="button"
+												class="absolute end-1 top-1 rounded-md bg-card/90 p-1 text-muted-foreground opacity-0 outline-none transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+												aria-label="Delete {asset.file_name}"
+												onclick={() => (confirming = asset)}
+												data-testid="asset-delete"
+											>
+												<TrashIcon class="size-3.5" />
+											</button>
+										{/if}
 									</li>
 								{/each}
 							</ul>
@@ -215,3 +277,21 @@
 		{/if}
 	{/if}
 </div>
+
+<AlertDialog.Root open={confirming !== null} onOpenChange={(next) => !next && (confirming = null)}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>Delete {confirming?.file_name ?? 'this upload'}?</AlertDialog.Title>
+			<AlertDialog.Description>
+				The file and its renditions go for good. If an entry or a release still names it, the
+				server refuses instead — take it out of those first.
+			</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel disabled={deleting}>Keep it</AlertDialog.Cancel>
+			<AlertDialog.Action variant="destructive" disabled={deleting} onclick={remove}>
+				{deleting ? 'Deleting…' : 'Delete it'}
+			</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>

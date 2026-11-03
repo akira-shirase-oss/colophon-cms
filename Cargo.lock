@@ -590,6 +590,7 @@ dependencies = [
  "colophon-db",
  "colophon-domain",
  "colophon-media",
+ "futures-util",
  "object_store",
  "reqwest",
  "serde_json",

@@ -203,7 +203,9 @@ M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 
 - `domain`/`delivery`: rollback as a new generation, release history queries, revocation through historical URLs.
 - `studio`: release slider, history and compare, restore as a new revision, media picker.
-- `media`: upload intents, quarantine, signature and decoder checks, derivatives, reference tracking, cleanup.
+- `media`: upload intents, quarantine, signature and decoder checks, derivatives, reference tracking, cleanup —
+  built through staged deletion with tombstones and the retention sweep (D-098, D-099); the CDN purge path for
+  deleted bytes is the remaining gap.
 - Preview capabilities on a separate origin; sitemaps and feeds from one generation; scheduled publishing with time
   zones and daylight-saving handling.
 

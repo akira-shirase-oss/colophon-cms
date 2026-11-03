@@ -10,6 +10,7 @@
 
 mod fault;
 pub mod guard;
+pub mod retention;
 pub mod schedules;
 
 use std::{sync::Arc, time::Duration};
@@ -565,8 +566,9 @@ impl Worker {
     }
 
     /// One asset attempt, by kind: `verify` proves the quarantined object and promotes it;
-    /// `delete` removes everything the asset ever wrote (media M3, D-098). A kind this worker
-    /// doesn't know fails outright — it would never succeed.
+    /// `delete` and the sweep's `expire` remove everything the asset ever wrote through the
+    /// same attempt (media M3, D-098, D-099). A kind this worker doesn't know fails outright —
+    /// it would never succeed.
     async fn attempt_asset(&self, job: colophon_db::assets::Claimed, asked_at: std::time::Instant) {
         let attempts = u32::try_from(job.attempts).unwrap_or(u32::MAX);
         // A claim almost out of lease gets no attempt: it is claimed again when the lease lapses.
@@ -578,7 +580,7 @@ impl Worker {
         };
         match job.kind.as_str() {
             "verify" => self.verify(&job, attempts, &store, asked_at).await,
-            "delete" => self.remove(&job, attempts, &store, asked_at).await,
+            "delete" | "expire" => self.remove(&job, attempts, &store, asked_at).await,
             other => {
                 tracing::warn!(job = %job.id, kind = %other, "an asset job kind this worker doesn't do");
                 self.finish_asset(

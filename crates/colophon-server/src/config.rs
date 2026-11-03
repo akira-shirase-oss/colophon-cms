@@ -168,6 +168,12 @@ pub struct Config {
     /// run (D-051). `COLOPHON_WORKER_LOCATION`: 1 to 63 lowercase letters, digits and dashes,
     /// default `local`.
     pub worker_location: String,
+    /// How old an unreferenced upload must be before the retention sweep expires it (07-media,
+    /// spec §18's 24 hours; D-099). `COLOPHON_ASSET_EXPIRY_MS`, default `86_400_000`.
+    pub asset_expiry: Duration,
+    /// How often the retention sweep looks for collectable assets and orphaned quarantine
+    /// objects (D-099). `COLOPHON_ASSET_SWEEP_MS`, default `300_000` (five minutes).
+    pub asset_sweep: Duration,
     /// Rate limits (D-076): `COLOPHON_RATE_LIMIT_PER_ADDRESS` (default `300/600`, requests a
     /// second and burst, or `off`), `COLOPHON_RATE_LIMIT_PER_CREDENTIAL` (default `150/300`),
     /// `COLOPHON_RATE_LIMIT_DELIVERY` (public delivery per address, default `1000/2000`), and
@@ -468,6 +474,10 @@ impl Config {
                     .to_owned(),
             );
         }
+        // A year of headroom over the spec's 24 h; the sweep itself can run as often as the
+        // tests need and as rarely as an hourly pass.
+        let asset_expiry = env.millis("COLOPHON_ASSET_EXPIRY_MS", 86_400_000, 1..=31_536_000_000);
+        let asset_sweep = env.millis("COLOPHON_ASSET_SWEEP_MS", 300_000, 50..=3_600_000);
 
         if probe_timeout >= probe_interval {
             env.problems.push(
@@ -516,6 +526,8 @@ impl Config {
                 worker_attempt,
                 worker_db_connections,
                 worker_location,
+                asset_expiry,
+                asset_sweep,
                 admission,
             })
         } else {

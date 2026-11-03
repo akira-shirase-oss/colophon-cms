@@ -39,6 +39,7 @@
 	let signedIn = $state<boolean | null>(null);
 	let projectId = $state('');
 	let message = $state('');
+	let removed = $state('');
 	let steps = $state<string[]>([]);
 	let assets = $state<Asset[]>([]);
 
@@ -111,6 +112,36 @@
 		message = 'settled';
 	}
 
+	/** DELETE the asset: 202 is requested, not gone — poll until the `deleted` tombstone. A
+	 *  refusal (still named somewhere, still quarantined, already gone) shows its reason. */
+	async function remove(asset: Asset) {
+		removed = '';
+		const reply = await call('DELETE', `${env}/assets/${asset.id}`, {
+			headers: { 'X-CSRF-Token': csrfToken(), 'Idempotency-Key': crypto.randomUUID() }
+		});
+		if (reply.status !== 202) {
+			removed = `delete ${asset.file_name}: ${describe(reply)}`;
+			return;
+		}
+		steps = [...steps, `delete ${asset.file_name}: ${reply.status} requested`];
+		const deadline = Date.now() + 15_000;
+		for (;;) {
+			const check = await call('GET', `${env}/assets/${asset.id}`);
+			const state = (check.body as { data?: Asset })?.data?.state;
+			if (state === 'deleted') {
+				steps = [...steps, 'deleted: the tombstone stays'];
+				removed = `${asset.file_name}: deleted`;
+				break;
+			}
+			if (Date.now() > deadline) {
+				removed = `delete ${asset.file_name}: never reached deleted`;
+				break;
+			}
+			await new Promise((wait) => setTimeout(wait, 200));
+		}
+		await list();
+	}
+
 	async function list() {
 		const reply = await call('GET', `${env}/assets`);
 		if (reply.status !== 200) {
@@ -124,7 +155,8 @@
 </script>
 
 <h1>Assets</h1>
-<p>Uploads land in quarantine; the worker's signature check and bounded decode move each to <code>usable</code> or <code>rejected</code>.</p>
+<p>Uploads land in quarantine; the worker's signature check and bounded decode move each to <code>usable</code> or <code>rejected</code>.
+A delete is staged: 202 means the job is queued, and the row stays as a <code>deleted</code> tombstone (D-098).</p>
 
 {#if signedIn === false}
 	<p data-testid="signed-out">Sign in first (the Session page).</p>
@@ -141,6 +173,7 @@
 	<button data-testid="upload-wide" onclick={() => upload(WIDE, 'wide.png')} disabled={!projectId}>Upload a wide PNG</button>
 	<button data-testid="upload-fake" onclick={() => upload(FAKE, 'photo.png')} disabled={!projectId}>Upload a fake PNG</button>
 	<p data-testid="message">{message}</p>
+	{#if removed}<p data-testid="removed">{removed}</p>{/if}
 	<ol data-testid="steps">
 		{#each steps as step, at (at)}
 			<li>{step}</li>
@@ -148,16 +181,21 @@
 	</ol>
 	<table data-testid="assets">
 		<thead>
-			<tr><th>Name</th><th>State</th><th>Detected</th><th>Size</th><th>Reason</th></tr>
+			<tr><th>Name</th><th>State</th><th>Detected</th><th>Size</th><th>Reason</th><th></th></tr>
 		</thead>
 		<tbody>
 			{#each assets as asset (asset.id)}
-				<tr>
+				<tr data-asset={asset.id}>
 					<td>{asset.file_name}</td>
 					<td>{asset.state}</td>
 					<td>{asset.detected_type ?? '—'}</td>
 					<td>{asset.width ?? '—'}×{asset.height ?? '—'}</td>
 					<td>{asset.rejected_reason ?? '—'}</td>
+					<td>
+						{#if asset.state === 'usable' || asset.state === 'rejected'}
+							<button data-testid="asset-delete" onclick={() => remove(asset)}>Delete</button>
+						{/if}
+					</td>
 				</tr>
 			{/each}
 		</tbody>

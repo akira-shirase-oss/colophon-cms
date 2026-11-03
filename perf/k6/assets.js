@@ -1,13 +1,14 @@
-// Load scenario for uploads (M.0): the asset lifecycle's front half. setup() signs in and makes
-// a project; each iteration uploads a real or a fake PNG into quarantine (the object's write to
-// the store plus the asset and job rows in one transaction), lists the environment's assets, or
-// reads one back. Verification runs off the request path on the worker's image pool, so the
-// measured latency is the upload's own: body bounds, the S3 PUT, and the insert.
-// RATE counts iterations here (about 1.5 requests each); scripts/load.sh gives this endpoint
-// RATE 250 and P99_MS 700 — the same arm as the other external-call writes.
+// Load scenario for uploads and deletes (M.0, D-098): the asset lifecycle both ways. setup()
+// signs in, makes a project and verifies one warm asset; each iteration uploads a real or a
+// fake PNG into quarantine (the object's write to the store plus the asset and job rows in one
+// transaction), lists the environment's assets, reads one back, or runs the delete arm — upload,
+// wait for the worker's verdict, then DELETE, where 202 is requested, not gone. Verification
+// and removal run off the request path, so the measured latency is the request's own.
+// RATE counts iterations here (about 1.5 requests each, the delete arm more); scripts/load.sh
+// gives this endpoint RATE 250 and P99_MS 700 — the same arm as the other external-call writes.
 
 import http from 'k6/http';
-import { check, fail } from 'k6';
+import { check, fail, sleep } from 'k6';
 import { parseHTML } from 'k6/html';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
@@ -98,27 +99,53 @@ export function setup() {
 
 export default function (data) {
   const read = { headers: { Cookie: data.session.cookie }, redirects: 0 };
+  const write = (fileName) => ({
+    headers: {
+      Cookie: data.session.cookie,
+      'X-CSRF-Token': data.session.csrf,
+      Origin: PUBLIC_URL,
+      'Content-Type': 'image/png',
+      'X-Colophon-File-Name': fileName,
+      'Idempotency-Key': key(),
+    },
+    redirects: 0,
+  });
   const roll = __ITER % 10;
-  if (roll < 5) {
+  if (roll < 4) {
     // Half the uploads are real, one in ten a fake the verifier will reject.
     const fake = __ITER % 50 === 49;
     const body = fake ? FAKE : PNG;
-    const res = http.post(data.assets, body.buffer, {
-      headers: {
-        Cookie: data.session.cookie,
-        'X-CSRF-Token': data.session.csrf,
-        Origin: PUBLIC_URL,
-        'Content-Type': 'image/png',
-        'X-Colophon-File-Name': fake ? 'photo.png' : 'dot.png',
-        'Idempotency-Key': key(),
-      },
-      redirects: 0,
-      tags: { endpoint: 'upload', name: 'assets' },
-    });
+    const res = http.post(data.assets, body.buffer, Object.assign({ tags: { endpoint: 'upload', name: 'assets' } }, write(fake ? 'photo.png' : 'dot.png')));
     check(res, {
       'upload 202': (r) => r.status === 202,
       'upload lands quarantined': (r) => r.json('data.state') === 'quarantined',
     });
+  } else if (roll === 4) {
+    // D-098: an unreferenced upload asked to go — 202 means the delete job is queued, not that
+    // the object is gone. A delete can't touch quarantine, so the upload's verdict comes first.
+    const made = http.post(data.assets, PNG.buffer, Object.assign({ tags: { endpoint: 'delete-upload', name: 'assets' } }, write('going.png')));
+    check(made, { 'delete upload 202': (r) => r.status === 202 });
+    const id = made.json('data.id');
+    if (typeof id === 'string') {
+      for (let waits = 0; waits < 100; waits += 1) {
+        const one = http.get(`${data.assets}/${id}`, Object.assign({ tags: { endpoint: 'delete-wait', name: 'assets/{asset}' } }, read));
+        if (one.json('data.state') !== 'quarantined') break;
+        sleep(0.05);
+      }
+      const gone = http.del(`${data.assets}/${id}`, null, Object.assign({ tags: { endpoint: 'delete', name: 'assets/{asset}' } }, {
+        headers: {
+          Cookie: data.session.cookie,
+          'X-CSRF-Token': data.session.csrf,
+          Origin: PUBLIC_URL,
+          'Idempotency-Key': key(),
+        },
+        redirects: 0,
+      }));
+      check(gone, {
+        'delete 202': (r) => r.status === 202,
+        'delete names the asset': (r) => r.json('data.id') === id,
+      });
+    }
   } else if (roll < 8) {
     const res = http.get(data.assets, Object.assign({ tags: { endpoint: 'list', name: 'assets' } }, read));
     check(res, { 'list 200': (r) => r.status === 200 });

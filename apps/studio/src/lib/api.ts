@@ -374,6 +374,9 @@ export interface Details {
 	/** For a refused component change (D-073): the content type that couldn't take it; `reason`
 	 *  and `entries` are that type's. */
 	content_type?: string;
+	/** For a refused deletion (409 `still_referenced`, D-080): who still names it, in
+	 *  collections the caller reads. */
+	referenced_by?: AssetReference[];
 }
 
 /** The session's CSRF token, which every cookie-authenticated write echoes. */
@@ -628,10 +631,11 @@ export async function createEntry(project: string, collection: string, content: 
 }
 
 /** An upload's record (M.0, D-093): `usable` once the worker has proved its bytes; `rejected`
- *  carries its reason. */
+ *  carries its reason; `deleting` and `deleted` are a delete or expire job's work (D-098,
+ *  D-099) — the row stays as a tombstone. */
 export interface Asset {
 	id: string;
-	state: 'quarantined' | 'usable' | 'rejected' | string;
+	state: 'quarantined' | 'usable' | 'rejected' | 'deleting' | 'deleted' | string;
 	file_name: string;
 	declared_type: string;
 	detected_type: string | null;
@@ -659,6 +663,32 @@ export async function getAsset(project: string, asset: string): Promise<Asset> {
  *  forever, 404 for anything not usable yet. */
 export function assetUrl(project: string, asset: string): string {
 	return `/media/v1/${project}/production/${asset}`;
+}
+
+/** An entry still naming the asset — through a live draft, or any publication of it, which
+ *  pins it forever (D-098): what must let go before a delete is accepted. */
+export interface AssetReference {
+	entry_id: string;
+	collection: string;
+	field: string;
+	in_draft: boolean;
+	published: boolean;
+}
+
+/** The entries still naming the asset (D-098). */
+export async function listAssetReferences(project: string, asset: string): Promise<AssetReference[]> {
+	return ((await (await send('GET', `${assetsPath(project)}/${asset}/references`)).json()) as {
+		data: AssetReference[];
+	}).data;
+}
+
+/** Asks for the asset to go (D-098): accepted means requested, not gone — the delete job lands
+ *  `deleting`, then the `deleted` tombstone. Refused with `still_referenced` while anything
+ *  names it; a quarantined upload is refused too. */
+export async function deleteAsset(project: string, asset: string, key: string): Promise<Asset> {
+	return ((await (await send('DELETE', `${assetsPath(project)}/${asset}`, undefined, {
+		'Idempotency-Key': key
+	})).json()) as { data: Asset }).data;
 }
 
 /** Uploads `file` into quarantine (M.0). `send` can't carry it because the body is the file,

@@ -860,3 +860,241 @@ async fn a_quarantined_asset_cannot_be_deleted() {
         refused.body
     );
 }
+
+/// The retention sweep's own knobs: a pass every 50 ms, collectable after the spec's 24 h —
+/// the tests backdate what must be old, so the default expiry still applies.
+const SWEEP: [(&str, &str); 2] = [
+    ("COLOPHON_WORKER_POLL_MS", "50"),
+    ("COLOPHON_ASSET_SWEEP_MS", "50"),
+];
+
+/// Records `asset`'s upload two days ago, so the 24-hour expiry applies to it now.
+async fn age_asset(database: &sqlx::PgPool, project: &str, asset: &str) {
+    sqlx::query(
+        "UPDATE assets SET created_at = now() - interval '2 days',
+                           verified_at = COALESCE(verified_at, now() - interval '2 days')
+         WHERE project_id = $1::uuid AND id = $2::uuid",
+    )
+    .bind(project)
+    .bind(asset)
+    .execute(database)
+    .await
+    .expect("age the asset");
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_old_unreferenced_asset_expires_and_its_objects_go() {
+    let _server = common::Server::start_with(&SWEEP).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+
+    let (status, body) = upload(
+        &owner,
+        &project,
+        PNG,
+        "old.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        settled(&owner, &project, &asset, 15).await["state"],
+        "usable"
+    );
+    assert_eq!(media_status(&media(&project, &asset)).await, StatusCode::OK);
+
+    // Nothing ever names it: two days on, the sweep expires it through the same attempt a
+    // delete request would ride — the tombstone lands, the object goes.
+    let database = common::owner_database().await;
+    age_asset(&database, &project, &asset).await;
+    let tombstone = reached(&owner, &project, &asset, "deleted", 15).await;
+    assert_eq!(tombstone["state"], "deleted", "{tombstone}");
+    assert_eq!(
+        media_status(&media(&project, &asset)).await,
+        StatusCode::NOT_FOUND
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_referenced_asset_survives_the_sweep() {
+    let _server = common::Server::start_with(&SWEEP).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    covers(&owner, &project).await;
+
+    let (status, body) = upload(
+        &owner,
+        &project,
+        PNG,
+        "kept.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        settled(&owner, &project, &asset, 15).await["state"],
+        "usable"
+    );
+    let _entry = cover(&owner, &project, "Keeping cover", &asset).await;
+
+    // Two days old but named by a live draft: however often the sweep passes, it never earns
+    // an expire job — a live draft pins the asset like a delete request's keep-rule (D-099).
+    let database = common::owner_database().await;
+    age_asset(&database, &project, &asset).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let reply = call(
+        &owner,
+        Method::GET,
+        &format!("{}/{asset}", assets(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(reply.body["data"]["state"], "usable", "{}", reply.body);
+    let jobs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM asset_jobs
+         WHERE project_id = $1::uuid AND asset_id = $2::uuid AND kind = 'expire'",
+    )
+    .bind(&project)
+    .bind(&asset)
+    .fetch_one(&database)
+    .await
+    .expect("expire jobs");
+    assert_eq!(jobs, 0, "a named asset must not earn an expire job");
+    database.close().await;
+}
+
+/// The local stack's object store, for objects a test writes or looks for directly.
+fn store() -> object_store::aws::AmazonS3 {
+    let env = common::local_env();
+    let value = |name: &str| {
+        env.iter()
+            .find_map(|(key, value)| (key == name).then(|| value.clone()))
+            .expect(name)
+    };
+    object_store::aws::AmazonS3Builder::new()
+        .with_endpoint(value("COLOPHON_S3_ENDPOINT"))
+        .with_region(value("COLOPHON_S3_REGION"))
+        .with_bucket_name(value("COLOPHON_S3_BUCKET"))
+        .with_access_key_id(value("COLOPHON_S3_ACCESS_KEY"))
+        .with_secret_access_key(value("COLOPHON_S3_SECRET_KEY"))
+        .with_allow_http(true)
+        .build()
+        .expect("object store")
+}
+
+/// Waits up to `seconds` for `path` to leave the store.
+async fn object_gone(store: &object_store::aws::AmazonS3, path: &str, seconds: u64) {
+    use object_store::ObjectStoreExt;
+    let path = object_store::path::Path::from(path);
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    loop {
+        match store.head(&path).await {
+            Err(object_store::Error::NotFound { .. }) => return,
+            other => {
+                assert!(other.is_ok(), "head of {path}: {other:?}");
+                assert!(Instant::now() < deadline, "{path} was never removed");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_orphaned_quarantine_object_is_swept() {
+    // A two-second expiry, so an object written by hand is old moments later; the check
+    // against `assets.quarantine_key` uses the object key, so no upload is needed. The keys
+    // sort first — "0000" is below every real quarantine name (uuid v7s lead with "01...") —
+    // because a pass lists at most 500 objects from the prefix's start, and the shared
+    // bucket may hold a backlog the first passes still drain.
+    use object_store::ObjectStoreExt;
+    let _server = common::Server::start_with(&[
+        ("COLOPHON_WORKER_POLL_MS", "50"),
+        ("COLOPHON_ASSET_SWEEP_MS", "50"),
+        ("COLOPHON_ASSET_EXPIRY_MS", "2000"),
+    ])
+    .await;
+    let _owner = sign_in("dev-owner").await;
+    let store = store();
+
+    let orphan =
+        object_store::path::Path::from(format!("quarantine/0000/production/{}", Uuid::now_v7()));
+    store
+        .put(&orphan, PNG.into())
+        .await
+        .expect("write the orphan");
+    tokio::time::sleep(Duration::from_millis(2300)).await;
+    object_gone(&store, orphan.as_ref(), 15).await;
+
+    // An object younger than the expiry is never touched, whatever names nothing names it.
+    let young =
+        object_store::path::Path::from(format!("quarantine/0000/production/{}", Uuid::now_v7()));
+    store
+        .put(&young, PNG.into())
+        .await
+        .expect("write the young object");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    store.head(&young).await.expect("the young object stays");
+    store.delete(&young).await.expect("cleanup");
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_quarantined_asset_whose_object_is_gone_still_expires() {
+    let _server = common::Server::start_with(&SWEEP).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+
+    // A real upload first, to stand the row beside: same project, environment and uploader.
+    let (status, body) = upload(
+        &owner,
+        &project,
+        PNG,
+        "seed.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let seed = body["data"]["id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        settled(&owner, &project, &seed, 15).await["state"],
+        "usable"
+    );
+
+    // A row exactly like an upload whose object was lost before verification: quarantined,
+    // two days old, naming a quarantine key nothing ever wrote. No delete request may touch
+    // a quarantined asset, but expiry can — and a missing object is not a reason to stay.
+    let database = common::owner_database().await;
+    let ghost: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO assets (project_id, environment_id, id, state, file_name, declared_type,
+                             size_bytes, quarantine_key, created_by, created_at)
+         SELECT project_id, environment_id, gen_random_uuid(), 'quarantined', 'ghost.png',
+                'image/png', 69, $2, created_by, now() - interval '2 days'
+         FROM assets WHERE project_id = $1::uuid AND id = $3::uuid
+         LIMIT 1
+         RETURNING id",
+    )
+    .bind(&project)
+    .bind(format!(
+        "quarantine/{project}/production/{}",
+        Uuid::now_v7()
+    ))
+    .bind(&seed)
+    .fetch_one(&database)
+    .await
+    .expect("the ghost asset");
+    database.close().await;
+
+    let tombstone = reached(&owner, &project, &ghost.to_string(), "deleted", 15).await;
+    assert_eq!(tombstone["state"], "deleted", "{tombstone}");
+}

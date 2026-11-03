@@ -70,7 +70,9 @@ release still references. Proven by L14, malicious-upload fixtures and X10.
 - The worker's delete attempt locks the asset `FOR UPDATE`, rechecks the same keep-rule under the lock (the verdict that counts), marks `deleting`, removes every object it ever wrote — public key, each rendition under it, the quarantine object — outside any transaction, then lands `deleted`. Object removals are idempotent; a crash mid-list retries the job.
 - The states: `quarantined` → `usable`/`rejected`, or → `deleting` → `deleted`. Asset rows are never removed; `deleted` rows still list and read, `ON DELETE RESTRICT` on the references is the backstop (D-098).
 - The races close in the database, not in reads: `asset_references_asset_live` (migration 0039) takes `FOR KEY SHARE` on the named asset and refuses `deleting`/`deleted` assets and pending `delete`/`expire` jobs as `asset_not_found`; `publications_asset_live` takes the same lock on every asset a publication's revision names, so a publish can never commit against an in-flight delete.
-- An unreferenced upload can expire after 24 hours (retention step 2; the `expire` job kind and the `assets_collectable` index already exist for it).
+- The retention sweep (D-099) runs beside the worker wherever a store is configured: every `COLOPHON_ASSET_SWEEP_MS` (default 300_000 — five minutes) it enqueues an `expire` job for every asset collectable for longer than `COLOPHON_ASSET_EXPIRY_MS` (default 86_400_000 — spec §18's 24 hours) — `quarantined`, `rejected` and `usable` alike, but in every state only while nothing names it: the delete request's keep-rule applied at sweep time, so even a draft naming a rejected upload still pins it (M3). A pass enqueues at most 200 jobs, oldest first over the `assets_collectable` index, and skips an asset already mid-job; what a pass leaves, the next collects.
+- `expire` rides the delete attempt end to end — `mark_deleting` rechecks the same keep-rule under the row lock, so a name committed between the sweep's read and the claim fails the job, never loses an object; the only difference a kind makes is that `quarantined` holds a `delete` but not an `expire` — an abandoned quarantine is exactly what the sweep collects, missing object and all.
+- Orphaned quarantine objects: the same pass lists at most 500 objects under `quarantine/` and removes each whose `last_modified` is older than the expiry and which no `quarantined` asset's `quarantine_key` still names — so leftovers of verified, rejected and deleting uploads go too, not only objects no row ever recorded. An object younger than the expiry is never touched, which is what protects an upload still mid-verify.
 - Deletion is staged and audited — and there is **no CDN purge path yet**: the origin answers `Cache-Control: public, max-age=31536000, immutable`, so a deleted asset's bytes may linger in CDN edges and browser caches past deletion (D-098's accepted gap; media purge comes with the retention milestone's later slice).
 
 ## Invariants
@@ -113,7 +115,7 @@ release still references. Proven by L14, malicious-upload fixtures and X10.
 ## Build order
 
 1. **P4:** intents, quarantine, verification, ~~the Studio media picker~~ (done, D-095), ~~derivatives~~ (done, D-096), ~~references~~ (done, D-094).
-2. **P6:** ~~staged deletion: the `delete` request, job and tombstone states, the reference/publication race triggers~~ (backend done, D-098); expiry and the orphan sweep next, then the Studio delete affordance, the testbed page and the k6 arm.
+2. **P6:** ~~staged deletion: the `delete` request, job and tombstone states, the reference/publication race triggers~~ (done, D-098); ~~expiry, the orphan sweep, the Studio delete affordance, the testbed page and the k6 delete arm~~ (done, D-099). Still open: the CDN purge path the deleted bytes need (the D-098 gap).
 
 ## Open decisions
 

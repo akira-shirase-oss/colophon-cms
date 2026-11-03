@@ -26,8 +26,9 @@ use shutdown::ShutdownTiming;
 const CLEANUP_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Starts the worker for the worker and all roles (D-046): it claims delivery jobs from the same
-/// database, and runs schedules as they fall due (D-060), until `cancel` fires. Private destinations are only reachable from a development
-/// server bound to loopback.
+/// database, runs schedules as they fall due (D-060), and, with an object store, sweeps expired
+/// assets and orphaned quarantine objects (D-099), until `cancel` fires. Private destinations
+/// are only reachable from a development server bound to loopback.
 fn start_worker(
     config: &Config,
     cancel: &CancellationToken,
@@ -39,6 +40,7 @@ fn start_worker(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
+    let assets = asset_store(config)?;
     let settings = colophon_worker::Settings {
         owner: format!("colophon-{}-{started}", std::process::id()),
         poll: config.worker_poll,
@@ -47,7 +49,7 @@ fn start_worker(
         slots: config.worker_slots,
         allow_private: config.listen_addr.ip().is_loopback(),
         location: config.worker_location.clone(),
-        assets: asset_store(config)?,
+        assets: assets.clone(),
     };
     // Its own pool: deliveries can never take the connections editors' requests need.
     let worker_pool = colophon_db::connect_lazy(
@@ -60,12 +62,31 @@ fn start_worker(
     .context("configuring the worker's database pool")?;
     let worker = colophon_worker::Worker::new(worker_pool.clone(), settings)
         .context("starting the worker")?;
-    // Schedules (D-060) run beside the deliveries, on the same pool and poll.
+    // Schedules (D-060) run beside the deliveries, on the same pool and poll; the retention
+    // sweep (D-099) beside both, only where there is a store to keep.
     let scheduler =
         colophon_worker::schedules::Scheduler::new(worker_pool.clone(), config.worker_poll);
+    let sweeper = assets.map(|store| {
+        colophon_worker::retention::Sweeper::new(
+            worker_pool.clone(),
+            store,
+            config.asset_sweep,
+            config.asset_expiry,
+        )
+    });
     let cancel = cancel.clone();
     Ok(Some(tokio::spawn(async move {
-        tokio::join!(Arc::new(worker).run(cancel.clone()), scheduler.run(cancel));
+        let sweep_cancel = cancel.clone();
+        let sweep = async move {
+            if let Some(sweeper) = sweeper {
+                sweeper.run(sweep_cancel).await;
+            }
+        };
+        tokio::join!(
+            Arc::new(worker).run(cancel.clone()),
+            scheduler.run(cancel.clone()),
+            sweep
+        );
         worker_pool.close().await;
     })))
 }
