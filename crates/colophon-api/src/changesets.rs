@@ -911,6 +911,14 @@ fn refused(refusal: Refusal) -> ApiError {
             "entry_deleted",
             "an entry in this changeset has been deleted; make a new changeset without it",
         ),
+        // A rollback can pin a revision a later type change left behind (D-055, D-097).
+        Refusal::Outdated {
+            entry,
+            title,
+            reason,
+            pointer,
+            message,
+        } => ApiError::revision_outdated(entry, title, reason, pointer, message),
     }
 }
 

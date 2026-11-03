@@ -35,7 +35,9 @@
 	const releases = createQuery(() => releasesQuery(project));
 	const fixes = $derived(may(mine.data, 'destinations.manage'));
 	// Restoring is a changeset like any other: it goes through review, never around it (D-097).
-	const restores = $derived(may(mine.data, 'content.update') && generation < (releases.data?.generation ?? 0));
+	const latest = $derived(releases.data?.generation ?? 0);
+	const restores = $derived(may(mine.data, 'content.update') && generation < latest);
+	const at = (n: number) => resolve('/projects/[project]/releases/[generation]', { project, generation: String(n) });
 	let rolling = $state(false);
 	let rollError = $state<string | null>(null);
 	async function rollback() {
@@ -88,6 +90,24 @@
 
 	{#if rollError}
 		<p class="mb-8 rounded-lg border border-attention/40 bg-attention-soft/60 px-4 py-3 text-sm text-attention-ink" data-testid="rollback-error">{rollError}</p>
+	{/if}
+
+	{#if latest > 1}
+		<div class="mb-8 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-3" data-testid="release-slider">
+			<Button variant="ghost" size="sm" href={generation > 1 ? at(generation - 1) : undefined} disabled={generation <= 1} aria-label="Older release">← Older</Button>
+			<input
+				type="range"
+				min="1"
+				max={latest}
+				value={generation}
+				aria-label="Release"
+				class="min-w-0 flex-1 accent-foreground"
+				onchange={(event) => goto(at(Number(event.currentTarget.value)))}
+				data-testid="slider"
+			/>
+			<span class="shrink-0 text-sm text-muted-foreground">Release <strong class="font-medium text-foreground">{generation}</strong> of {latest}</span>
+			<Button variant="ghost" size="sm" href={generation < latest ? at(generation + 1) : undefined} disabled={generation >= latest} aria-label="Newer release">Newer →</Button>
+		</div>
 	{/if}
 
 	<div class="mb-8 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-4">

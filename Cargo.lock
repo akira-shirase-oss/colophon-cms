@@ -496,6 +496,7 @@ dependencies = [
  "aws-lc-rs",
  "colophon-domain",
  "colophon-sim",
+ "serde_json",
  "sqlx",
  "thiserror",
  "time",

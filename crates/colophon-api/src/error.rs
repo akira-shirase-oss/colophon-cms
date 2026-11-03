@@ -577,6 +577,34 @@ impl ApiError {
         }))
     }
 
+    /// 409 `revision_outdated`: a pinned revision predates its collection's version and no
+    /// longer fits the definition in force (D-055; a rollback pins history on purpose, D-097).
+    pub fn revision_outdated(
+        entry: Uuid,
+        title: String,
+        reason: &'static str,
+        pointer: String,
+        message: String,
+    ) -> Self {
+        Self::Taken(Box::new(InTheWay {
+            reason: "revision_outdated",
+            pointer: String::new(),
+            message: "an entry in this changeset pins a revision that no longer fits its content type; edit it, then try again".to_owned(),
+            entries: vec![EntryInTheWay {
+                entry,
+                title,
+                state: "pinned",
+                problem: Some(Problem {
+                    reason,
+                    pointer,
+                    message,
+                }),
+            }],
+            total: None,
+            content_type: None,
+        }))
+    }
+
     /// HTTP status for this error. Total over the variants, so every new variant must choose.
     pub fn status(&self) -> StatusCode {
         match self {

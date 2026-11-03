@@ -221,6 +221,50 @@ pub async fn rollback_pins(
     .map_err(DbError::from_query)
 }
 
+/// A pinned `publish` revision written before its collection's current version, with the
+/// definition in force: a type change can move on after the revision's publication closed, so
+/// publish checks it again (D-055). A rollback pins history on purpose (D-097), which is how
+/// such a pin usually gets here.
+pub struct OutdatedPin {
+    /// The entry the revision belongs to.
+    pub entry_id: Uuid,
+    /// The pinned revision's title.
+    pub title: String,
+    /// The pinned revision's stored content.
+    pub content: String,
+    /// The collection's definition now.
+    pub definition: String,
+}
+
+/// The `publish` pins of `id` whose revisions predate their collection's current version.
+/// Called under `content_types::lock_for_write`, so the versions it reads cannot move.
+pub async fn outdated_pins(
+    tx: &mut ProjectTransaction,
+    id: Uuid,
+) -> Result<Vec<OutdatedPin>, DbError> {
+    sqlx::query_as!(
+        OutdatedPin,
+        r#"SELECT i.entry_id AS "entry_id!", r.title AS "title!", r.content AS "content!",
+                  cur.definition AS "definition!"
+           FROM changeset_items i
+           JOIN revisions r ON r.project_id = i.project_id AND r.environment_id = i.environment_id
+                           AND r.id = i.revision_id
+           JOIN (SELECT DISTINCT ON (collection) collection, version, definition
+                 FROM content_type_versions
+                 WHERE project_id = $1 AND environment_id = $2
+                 ORDER BY collection, version DESC) cur
+             ON cur.collection = r.collection AND cur.version > r.schema_version
+           WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3
+             AND i.kind = 'publish'"#,
+        tx.project,
+        tx.environment,
+        id
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
 /// Stores a new changeset pinning `pins`, with the hash the caller computed from them. `rollback`
 /// is the generation whose publication set it restores (D-097), so its publish pins are never
 /// stale: they name older revisions on purpose, and a pinned revision cannot drift.

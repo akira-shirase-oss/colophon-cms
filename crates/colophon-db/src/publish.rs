@@ -6,6 +6,7 @@
 use colophon_domain::{
     changeset::{self, Decision, Facts, Status},
     policy::Action,
+    schema::ContentType,
 };
 use sqlx::types::time::OffsetDateTime;
 use uuid::Uuid;
@@ -87,6 +88,21 @@ pub enum Refusal {
         /// The entry, as the database reported it.
         entry: Option<Uuid>,
     },
+    /// It would publish a revision written under an older definition that no longer fits the
+    /// one in force: a type change can move on after the revision's publication closed, and a
+    /// rollback pins such history on purpose (D-055, D-097).
+    Outdated {
+        /// The entry the revision belongs to.
+        entry: Uuid,
+        /// The pinned revision's title.
+        title: String,
+        /// The domain refusal's code.
+        reason: &'static str,
+        /// The field that fails.
+        pointer: String,
+        /// What fails.
+        message: String,
+    },
 }
 
 /// Whether a project needs someone other than the submitter to approve (D-044). Projects can't
@@ -143,6 +159,30 @@ fn hex(bytes: &[u8]) -> String {
 /// How many times a release on [`Base::Latest`] retries when another release commits first.
 const LATEST_ATTEMPTS: usize = 3;
 
+/// The first pinned revision of `changeset` that predates its collection's version and no
+/// longer fits the definition in force, as an [`Refusal::Outdated`].
+async fn outdated(
+    tx: &mut ProjectTransaction,
+    changeset: Uuid,
+) -> Result<Option<Refusal>, DbError> {
+    for pin in changesets::outdated_pins(tx, changeset).await? {
+        let definition: serde_json::Value = serde_json::from_str(&pin.definition)
+            .map_err(|_| DbError::Corrupt("a stored definition is not JSON"))?;
+        let current = ContentType::parse(&definition)
+            .map_err(|_| DbError::Corrupt("a stored definition no longer parses"))?;
+        if let Err(problem) = current.accepts(&pin.content) {
+            return Ok(Some(Refusal::Outdated {
+                entry: pin.entry_id,
+                title: pin.title,
+                reason: problem.code,
+                pointer: problem.pointer,
+                message: problem.message,
+            }));
+        }
+    }
+    Ok(None)
+}
+
 /// Publishes changeset `id` if it is still at `expected` (when given), approved at `now`, and the
 /// transaction's role may publish everything in it. Locks the changeset, then its collections'
 /// content-type locks in order (no content type changes under it, D-055), checks, and commits.
@@ -169,6 +209,12 @@ pub async fn publish(
         .all(|collection| tx.policy.allows(Action::ContentPublish, Some(collection)))
     {
         return Ok(Err(Refusal::NotPermitted));
+    }
+    // A pin made before its collection's current version must still fit the definition in
+    // force, under the locks above: drafts are checked when a type changes, but closed
+    // publications are not, and a rollback can pin one (D-055, D-097).
+    if let Some(refused) = outdated(tx, head.id).await? {
+        return Ok(Err(refused));
     }
     let items = changesets::items(tx, head.id).await?;
     let reviews = changesets::reviews(tx, head.id, Some(&head.hash)).await?;
