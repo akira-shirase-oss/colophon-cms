@@ -52,6 +52,12 @@ test('the website starter installs, seeds and reruns harmlessly', async ({ page 
 	// Opening again says there's nothing left to add.
 	await page.getByTestId('site-open-home').click();
 	await expect(page).toHaveURL(new RegExp(`/pages/${home?.id}$`));
+
+	// The editor lays each field out in a column — label and hints above the control.
+	const titleBox = (await page.getByLabel('Title', { exact: true }).boundingBox()) ?? { y: 0 };
+	const labelBox = (await page.locator('label[for$="-title"]').boundingBox()) ?? { y: 1 };
+	expect(labelBox.y).toBeLessThan(titleBox.y);
+
 	await page.goto(`/studio/projects/${project}/settings/types`);
 	await page.getByTestId('site-template').click();
 	await expect(page.getByTestId('site-installed')).toBeVisible();

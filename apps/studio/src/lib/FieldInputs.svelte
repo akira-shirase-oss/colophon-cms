@@ -1,8 +1,8 @@
 <!--
   Inputs for a content type's plain fields (everything but rich text, which has its own
-  editor), each with a visible label, its help text, and what is wrong with it, if anything. In
-  the editor each field is a row: label left, field right, a dotted rule under; `stacked` puts the
-  label above, for dialogs. Since D-064: native inputs for email, web address, date, time and
+  editor), each with a visible label, its help text, and what is wrong with it, if anything. Each
+  field is a column — label, help and hint above the control — the editor's ruled with a dotted
+  line under, `stacked` without, for dialogs. Since D-064: native inputs for email, web address, date, time and
   colour, a counted textarea for markdown, and a monospaced one for JSON. The checks here mirror
   the server's (lib/content.ts); the server still decides, and a refusal it names a field for is
   shown under that field.
@@ -123,7 +123,7 @@
 		<div
 			class={stacked
 				? 'grid gap-1.5'
-				: 'rule-dotted grid gap-x-10 gap-y-2 py-5 first:pt-1 sm:grid-cols-[minmax(0,13rem)_minmax(0,1fr)]'}
+				: 'rule-dotted grid gap-y-2 py-5 first:pt-1'}
 		>
 			{#if structure(field) || field.type === 'rich_text'}
 				<!-- A structure has no one input to label: its name heads it, and it groups its own. -->
@@ -151,7 +151,7 @@
 					{/if}
 				</div>
 			{:else if field.type === 'boolean'}
-				<span class="text-sm font-medium" class:sr-only={stacked} aria-hidden="true">{field.label}</span>
+				<span class="sr-only text-sm font-medium" aria-hidden="true">{field.label}</span>
 				<label for={input} class="flex items-center gap-2.5 text-sm">
 					<input id={input} disabled={locked.includes(field.id)} type="checkbox" class="size-4 accent-primary" bind:checked={form[field.id] as boolean} {onchange} />
 					{field.label}
