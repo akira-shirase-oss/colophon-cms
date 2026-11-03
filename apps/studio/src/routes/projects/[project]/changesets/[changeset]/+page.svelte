@@ -173,6 +173,9 @@
 		{#snippet meta()}
 			<span data-testid="changeset-status" data-state={shown.status.state} class="inline-flex flex-wrap items-center gap-2">
 				<ChangesetBadge state={shown.status.state} />
+				{#if shown.rollback_generation != null}
+					<span>restores <a class="underline underline-offset-2" href={resolve('/projects/[project]/releases/[generation]', { project, generation: String(shown.rollback_generation) })} data-testid="restores-link">release {shown.rollback_generation}</a></span>
+				{/if}
 				{#if shown.status.state === 'approved'}
 					<span>by {shown.status.by}</span>
 					{#if shown.status.self_review}<Badge variant="attention" data-testid="self-review">approved their own request</Badge>{/if}

@@ -1002,6 +1002,8 @@ export interface Changeset {
 	submitted_by: string | null;
 	submitted_at: string | null;
 	updated_at: string;
+	/** The release it restores, when a rollback built it (D-097). */
+	rollback_generation: number | null;
 	items: ChangesetItem[];
 	reviews: ChangesetReview[];
 }
@@ -1019,6 +1021,8 @@ export interface ChangesetSummary {
 	unpublish: number;
 	submitted_at: string | null;
 	updated_at: string;
+	/** The release it restores, when a rollback built it (D-097). */
+	rollback_generation: number | null;
 }
 
 const changesets = (project: string) => `${base(project)}/changesets`;
