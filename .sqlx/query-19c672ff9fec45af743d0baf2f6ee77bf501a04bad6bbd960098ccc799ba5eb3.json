@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n                       SELECT 1 FROM asset_references r\n                       WHERE r.project_id = $1 AND r.environment_id = $2 AND r.asset_id = $3\n                         AND (EXISTS (SELECT 1 FROM entries e\n                                      WHERE e.project_id = r.project_id\n                                        AND e.environment_id = r.environment_id\n                                        AND e.draft_revision_id = r.revision_id\n                                        AND e.deleted_at IS NULL)\n                              OR EXISTS (SELECT 1 FROM publications p\n                                         WHERE p.project_id = r.project_id\n                                           AND p.environment_id = r.environment_id\n                                           AND p.revision_id = r.revision_id))\n                   ) AS \"referenced!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "referenced!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "19c672ff9fec45af743d0baf2f6ee77bf501a04bad6bbd960098ccc799ba5eb3"
+}

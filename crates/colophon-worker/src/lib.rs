@@ -564,8 +564,9 @@ impl Worker {
         tracing::info!("asset worker stopped");
     }
 
-    /// One verify attempt: fetch the quarantined object, prove it, move it to its public key and
-    /// record both outcomes — the asset's new state and the job's — in one transaction.
+    /// One asset attempt, by kind: `verify` proves the quarantined object and promotes it;
+    /// `delete` removes everything the asset ever wrote (media M3, D-098). A kind this worker
+    /// doesn't know fails outright — it would never succeed.
     async fn attempt_asset(&self, job: colophon_db::assets::Claimed, asked_at: std::time::Instant) {
         let attempts = u32::try_from(job.attempts).unwrap_or(u32::MAX);
         // A claim almost out of lease gets no attempt: it is claimed again when the lease lapses.
@@ -575,8 +576,34 @@ impl Worker {
         let Some(store) = self.settings.assets.clone() else {
             return;
         };
+        match job.kind.as_str() {
+            "verify" => self.verify(&job, attempts, &store, asked_at).await,
+            "delete" => self.remove(&job, attempts, &store, asked_at).await,
+            other => {
+                tracing::warn!(job = %job.id, kind = %other, "an asset job kind this worker doesn't do");
+                self.finish_asset(
+                    &job,
+                    attempts,
+                    "failed",
+                    Some("an asset job kind this worker doesn't do"),
+                    &colophon_db::assets::Outcome::Missing,
+                )
+                .await;
+            }
+        }
+    }
+
+    /// One verify attempt: fetch the quarantined object, prove it, move it to its public key and
+    /// record both outcomes — the asset's new state and the job's — in one transaction.
+    async fn verify(
+        &self,
+        job: &colophon_db::assets::Claimed,
+        attempts: u32,
+        store: &colophon_media::Shared,
+        asked_at: std::time::Instant,
+    ) {
         let budget = self.settings.attempt.saturating_sub(asked_at.elapsed());
-        let Some(bytes) = self.quarantined(&job, attempts, &store, budget).await else {
+        let Some(bytes) = self.quarantined(job, attempts, store, budget).await else {
             return;
         };
         // The decode is CPU-bound and its own worst case is bounded (20 MiB in, strict limits
@@ -590,11 +617,11 @@ impl Worker {
         );
         match checked {
             Ok(Ok(verified)) => {
-                self.promote(&job, attempts, &store, key, verified).await;
+                self.promote(job, attempts, store, key, verified).await;
             }
             Ok(Err(reason)) => {
                 self.finish_asset(
-                    &job,
+                    job,
                     attempts,
                     "succeeded",
                     None,
@@ -605,10 +632,91 @@ impl Worker {
                 .await;
             }
             Err(join) => {
-                self.retry_asset(&job, attempts, &trim(&join.to_string()))
+                self.retry_asset(job, attempts, &trim(&join.to_string()))
                     .await;
             }
         }
+    }
+
+    /// One delete attempt (media M3, D-098): `mark_deleting` locks the asset and rechecks who
+    /// still names it — the verdict that counts — then every object it ever wrote is removed
+    /// outside any transaction. The removals are idempotent, so a crash or a second delete job
+    /// just re-deletes what is already gone, and a store that refuses one retries the job.
+    async fn remove(
+        &self,
+        job: &colophon_db::assets::Claimed,
+        attempts: u32,
+        store: &colophon_media::Shared,
+        asked_at: std::time::Instant,
+    ) {
+        use colophon_db::assets::{Deletion, Outcome};
+        let keys = match colophon_db::assets::mark_deleting(&self.pool, job).await {
+            // The lease runs out and the job is claimed again.
+            Err(error) => {
+                tracing::warn!(job = %job.id, error = %error, "the deletion's recheck failed");
+                return;
+            }
+            Ok(Deletion::Gone) => {
+                self.finish_asset(job, attempts, "succeeded", None, &Outcome::Deleted)
+                    .await;
+                return;
+            }
+            Ok(Deletion::StillReferenced) => {
+                self.finish_asset(
+                    job,
+                    attempts,
+                    "failed",
+                    Some("still referenced"),
+                    &Outcome::StillReferenced,
+                )
+                .await;
+                return;
+            }
+            Ok(Deletion::Held) => {
+                self.finish_asset(
+                    job,
+                    attempts,
+                    "failed",
+                    Some("not in a state a delete may act on"),
+                    &Outcome::StillReferenced,
+                )
+                .await;
+                return;
+            }
+            Ok(Deletion::Removing {
+                public_key,
+                derivatives,
+                quarantine_key,
+            }) => {
+                let mut keys = Vec::with_capacity(derivatives.len() + 2);
+                if let Some(public) = public_key {
+                    keys.push(public.clone());
+                    keys.extend(derivatives.iter().map(|name| format!("{public}/{name}")));
+                }
+                keys.push(quarantine_key);
+                keys
+            }
+        };
+        let budget = self.settings.attempt.saturating_sub(asked_at.elapsed());
+        for key in keys {
+            match tokio::time::timeout(budget, store.delete(&object_store::path::Path::from(key)))
+                .await
+            {
+                Ok(Ok(()) | Err(object_store::Error::NotFound { .. })) => {}
+                Ok(Err(error)) => {
+                    self.retry_asset(job, attempts, &trim(&error.to_string()))
+                        .await;
+                    return;
+                }
+                Err(_) => {
+                    self.retry_asset(job, attempts, "removing the objects timed out")
+                        .await;
+                    return;
+                }
+            }
+        }
+        self.finish_asset(job, attempts, "succeeded", None, &Outcome::Deleted)
+            .await;
     }
 
     /// The quarantined object's bytes, or `None` after recording why the job retries.

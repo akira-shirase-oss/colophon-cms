@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT state, public_key, quarantine_key, derivatives\n         FROM assets\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3\n         FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "public_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "public_key"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "quarantine_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "quarantine_key"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "derivatives",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "derivatives"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "a572e6d4afb692033817e28fed89dce8c8c8a4f10495e33a417340af81def0e8"
+}

@@ -1,8 +1,12 @@
-//! Assets and their verify jobs (docs/modules/07-media.md). The API inserts an asset row and its
-//! job in the upload's transaction, so a recorded upload always has its check enqueued; workers
-//! claim jobs as `colophon_worker` under the same lease discipline as delivery jobs (D-046), and
-//! [`finish`] lands the asset's new state and the job's outcome together — a lease that expired
-//! writes neither.
+//! Assets and their jobs (docs/modules/07-media.md). The API inserts an asset row and its
+//! verify job in the upload's transaction, so a recorded upload always has its check enqueued,
+//! and a delete request's transaction holds only the job row and the audit event — 202 means
+//! requested, not gone. Workers claim jobs as `colophon_worker` under the same lease discipline
+//! as delivery jobs (D-046): a verify attempt lands `usable`/`rejected`, a delete attempt's
+//! [`mark_deleting`] rechecks under the row lock who still names the asset — a live draft or
+//! any publication at all, which pins it forever (D-098) — before a byte is removed outside
+//! any transaction, and [`finish`] lands the asset's new state and the job's outcome together
+//! — a lease that expired writes neither.
 
 use std::time::Duration;
 
@@ -120,6 +124,133 @@ pub async fn get(tx: &mut ProjectTransaction, asset: Uuid) -> Result<Option<Asse
     .map_err(DbError::from_query)
 }
 
+/// An entry that still names the asset, as the deletion's keep-check counts it (media M3,
+/// D-098): through a live draft's revision, or through any publication of it — a publication
+/// pins its assets forever, closed or not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetReferrer {
+    /// The entry.
+    pub entry_id: Uuid,
+    /// Its collection.
+    pub collection: String,
+    /// The field naming the asset.
+    pub field: String,
+    /// Its draft names the asset.
+    pub in_draft: bool,
+    /// A publication of it names the asset — any one: published history counts too.
+    pub published: bool,
+}
+
+/// At most this many referrers a list names.
+pub const MAX_REFERRERS: i64 = 100;
+
+/// The entries that still name `asset`: what blocks its deletion, and who the references
+/// endpoint and the `still_referenced` refusal list. The same rule as the worker's recheck
+/// inside [`mark_deleting`], without the lock — a request-time answer, not the authority.
+pub async fn references(
+    tx: &mut ProjectTransaction,
+    asset: Uuid,
+) -> Result<Vec<AssetReferrer>, DbError> {
+    let rows = sqlx::query!(
+        r#"SELECT entry_id AS "entry_id!", collection AS "collection!", field AS "field!",
+                  bool_or(draft) AS "in_draft!", bool_or(live) AS "published!"
+           FROM (
+               SELECT e.id AS entry_id, e.collection, r.field, true AS draft, false AS live
+               FROM asset_references r
+               JOIN entries e
+                 ON e.project_id = r.project_id AND e.environment_id = r.environment_id
+                AND e.draft_revision_id = r.revision_id AND e.deleted_at IS NULL
+               WHERE r.project_id = $1 AND r.environment_id = $2 AND r.asset_id = $3
+               UNION ALL
+               SELECT p.entry_id, p.collection, r.field, false, true
+               FROM asset_references r
+               JOIN publications p
+                 ON p.project_id = r.project_id AND p.environment_id = r.environment_id
+                AND p.revision_id = r.revision_id
+               WHERE r.project_id = $1 AND r.environment_id = $2 AND r.asset_id = $3
+           ) named
+           GROUP BY entry_id, collection, field
+           ORDER BY collection, entry_id, field
+           LIMIT $4"#,
+        tx.project,
+        tx.environment,
+        asset,
+        MAX_REFERRERS
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| AssetReferrer {
+            entry_id: row.entry_id,
+            collection: row.collection,
+            field: row.field,
+            in_draft: row.in_draft,
+            published: row.published,
+        })
+        .collect())
+}
+
+/// What asking to delete an asset found; nothing is written unless it is [`DeleteAsked::Queued`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeleteAsked {
+    /// No such asset in this environment.
+    Unknown,
+    /// `quarantined`: the verify job may still land it `usable`, so deleting it now would leave
+    /// a job whose outcome nobody asked for. Refused — the request may be repeated once settled.
+    Quarantined,
+    /// `deleting` or `deleted` already: nothing left to ask for.
+    Gone,
+    /// A live draft or a publication still names it, so its objects stay.
+    Referenced(Vec<AssetReferrer>),
+    /// The delete job is queued; the asset as found, for the audit event and the answer.
+    Queued {
+        /// The asset as the request found it.
+        asset: Asset,
+    },
+}
+
+/// Records the delete request: `job` as an `asset_jobs` row of kind `delete` under
+/// `idempotency_key` (the request's, namespaced so it can't meet an upload's job key), its
+/// deadline the same lifetime a verify gets. The request-time checks ride along — an asset
+/// that isn't there, still in quarantine, already going, or still named gets its verdict and
+/// no job; the check that counts is the worker's, under the row lock in [`mark_deleting`].
+pub async fn request_delete(
+    tx: &mut ProjectTransaction,
+    asset: Uuid,
+    job: Uuid,
+    idempotency_key: &str,
+    deadline_at: OffsetDateTime,
+) -> Result<DeleteAsked, DbError> {
+    let Some(found) = get(tx, asset).await? else {
+        return Ok(DeleteAsked::Unknown);
+    };
+    match found.state.as_str() {
+        "quarantined" => return Ok(DeleteAsked::Quarantined),
+        "deleting" | "deleted" => return Ok(DeleteAsked::Gone),
+        _ => {}
+    }
+    let referrers = references(tx, asset).await?;
+    if !referrers.is_empty() {
+        return Ok(DeleteAsked::Referenced(referrers));
+    }
+    sqlx::query!(
+        "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind, idempotency_key, deadline_at)
+         VALUES ($1, $2, $3, $4, 'delete', $5, $6)",
+        tx.project,
+        tx.environment,
+        job,
+        asset,
+        format!("delete:{idempotency_key}"),
+        deadline_at
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(DeleteAsked::Queued { asset: found })
+}
+
 /// A worker's transaction: as `colophon_worker`, for its duration.
 async fn worker(pool: &PgPool) -> Result<Transaction<'static, Postgres>, DbError> {
     let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
@@ -139,10 +270,16 @@ pub struct Claimed {
     pub environment_id: Uuid,
     /// Its id.
     pub id: Uuid,
-    /// The asset it verifies.
+    /// What it is for: `verify`, `delete`, `expire`.
+    pub kind: String,
+    /// The asset it works on.
     pub asset_id: Uuid,
     /// Where the upload waits in the object store.
     pub quarantine_key: String,
+    /// Where the verified object is served from, once verification lands it.
+    pub public_key: Option<String>,
+    /// The rendition names written beside the public key (`{public_key}/{name}`).
+    pub derivatives: Vec<String>,
     /// Its declared type and byte count, for the record.
     pub declared_type: String,
     /// The key every attempt sends.
@@ -184,8 +321,9 @@ pub async fn claim(
          FROM due, assets a
          WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id
            AND a.project_id = j.project_id AND a.environment_id = j.environment_id AND a.id = j.asset_id
-         RETURNING j.project_id, j.environment_id, j.id, j.asset_id, a.quarantine_key,
-                   a.declared_type, j.idempotency_key, j.attempts, j.lease_generation, j.deadline_at",
+         RETURNING j.project_id, j.environment_id, j.id, j.kind, j.asset_id, a.quarantine_key,
+                   a.public_key, a.derivatives, a.declared_type, j.idempotency_key, j.attempts,
+                   j.lease_generation, j.deadline_at",
         owner,
         lease_ms,
         limit
@@ -197,7 +335,111 @@ pub async fn claim(
     Ok(claimed)
 }
 
-/// What the verify attempt proved about the asset; written with the job's finish or not at all.
+/// What a delete attempt decided under the asset's row lock (media M3, D-098).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Deletion {
+    /// `deleting` now — or an earlier attempt marked it and died mid-objects, so its list is
+    /// handed out again for the idempotent removals to repeat.
+    Removing {
+        /// The public object, if verification landed one.
+        public_key: Option<String>,
+        /// The rendition names written beside it (`{public_key}/{name}`).
+        derivatives: Vec<String>,
+        /// The quarantine object it started as.
+        quarantine_key: String,
+    },
+    /// `deleted` already: a replayed attempt has nothing left to do.
+    Gone,
+    /// A live draft or a publication still names it: the job fails, the asset stays.
+    StillReferenced,
+    /// A state a delete may not act on (`quarantined`): the job fails, the asset stays.
+    Held,
+}
+
+/// The delete attempt's first half (media M3, D-098): locks the asset FOR UPDATE — the lock
+/// new references (`asset_references_asset_live`) and publications
+/// (`publications_asset_live`) wait on for the same row — then rechecks, with everything
+/// committed before the lock was granted visible, that nothing still names it, and marks it
+/// `deleting`. `Removing` hands the attempt every object key to remove, all outside any
+/// transaction; [`finish`] with [`Outcome::Deleted`] is the second half once they are gone.
+pub async fn mark_deleting(pool: &PgPool, job: &Claimed) -> Result<Deletion, DbError> {
+    let mut transaction = worker(pool).await?;
+    let row = sqlx::query!(
+        "SELECT state, public_key, quarantine_key, derivatives
+         FROM assets
+         WHERE project_id = $1 AND environment_id = $2 AND id = $3
+         FOR UPDATE",
+        job.project_id,
+        job.environment_id,
+        job.asset_id
+    )
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    let Some(row) = row else {
+        // The asset's own foreign key keeps a job from outliving it; unreachable in practice.
+        transaction.commit().await.map_err(DbError::from_query)?;
+        return Ok(Deletion::Gone);
+    };
+    let decided = match row.state.as_str() {
+        "deleted" => Deletion::Gone,
+        "deleting" => Deletion::Removing {
+            public_key: row.public_key,
+            derivatives: row.derivatives,
+            quarantine_key: row.quarantine_key,
+        },
+        "quarantined" => Deletion::Held,
+        _ => {
+            // usable or rejected: nothing may still name it — a live entry's draft revision,
+            // or any publication's (closed or not: publications pin forever).
+            let referenced = sqlx::query_scalar!(
+                r#"SELECT EXISTS (
+                       SELECT 1 FROM asset_references r
+                       WHERE r.project_id = $1 AND r.environment_id = $2 AND r.asset_id = $3
+                         AND (EXISTS (SELECT 1 FROM entries e
+                                      WHERE e.project_id = r.project_id
+                                        AND e.environment_id = r.environment_id
+                                        AND e.draft_revision_id = r.revision_id
+                                        AND e.deleted_at IS NULL)
+                              OR EXISTS (SELECT 1 FROM publications p
+                                         WHERE p.project_id = r.project_id
+                                           AND p.environment_id = r.environment_id
+                                           AND p.revision_id = r.revision_id))
+                   ) AS "referenced!""#,
+                job.project_id,
+                job.environment_id,
+                job.asset_id
+            )
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(DbError::from_query)?;
+            if referenced {
+                Deletion::StillReferenced
+            } else {
+                sqlx::query!(
+                    "UPDATE assets SET state = 'deleting'
+                     WHERE project_id = $1 AND environment_id = $2 AND id = $3",
+                    job.project_id,
+                    job.environment_id,
+                    job.asset_id
+                )
+                .execute(&mut *transaction)
+                .await
+                .map_err(DbError::from_write)?;
+                Deletion::Removing {
+                    public_key: row.public_key,
+                    derivatives: row.derivatives,
+                    quarantine_key: row.quarantine_key,
+                }
+            }
+        }
+    };
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(decided)
+}
+
+/// What the attempt proved about the asset, or decided for it; written with the job's finish
+/// or not at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// It verifies: the detected type, dimensions, the stripped object's digest and public key.
@@ -222,6 +464,11 @@ pub enum Outcome {
     },
     /// The upload's object never landed: quarantine stayed empty. Transient — the job retries.
     Missing,
+    /// A delete's objects are gone: the asset becomes `deleted`, its last state.
+    Deleted,
+    /// A delete's recheck found it still named, or a state no delete may act on: the asset
+    /// stays exactly as it is (the job records the verdict and fails).
+    StillReferenced,
 }
 
 /// How the attempt ended, recorded with the asset's new state in one transaction; false when
@@ -260,6 +507,8 @@ pub async fn finish(
         return Ok(false);
     }
     match outcome {
+        // A verify verdict lands only while the asset still waits for one: it must never
+        // resurrect an asset a delete already moved through `deleting` into `deleted`.
         Outcome::Usable {
             detected_type,
             width,
@@ -271,7 +520,7 @@ pub async fn finish(
             sqlx::query!(
                 "UPDATE assets SET state = 'usable', detected_type = $4, width = $5, height = $6,
                                    sha256 = $7, public_key = $8, derivatives = $9, verified_at = now()
-                 WHERE project_id = $1 AND environment_id = $2 AND id = $3",
+                 WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND state = 'quarantined'",
                 job.project_id,
                 job.environment_id,
                 job.asset_id,
@@ -289,7 +538,7 @@ pub async fn finish(
         Outcome::Rejected { reason } => {
             sqlx::query!(
                 "UPDATE assets SET state = 'rejected', rejected_reason = $4, verified_at = now()
-                 WHERE project_id = $1 AND environment_id = $2 AND id = $3",
+                 WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND state = 'quarantined'",
                 job.project_id,
                 job.environment_id,
                 job.asset_id,
@@ -299,7 +548,21 @@ pub async fn finish(
             .await
             .map_err(DbError::from_write)?;
         }
-        Outcome::Missing => {}
+        // `deleting` only ever reaches `deleted`: a claimed-again job or a crash between the
+        // stages can't flip it back.
+        Outcome::Deleted => {
+            sqlx::query!(
+                "UPDATE assets SET state = 'deleted'
+                 WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND state = 'deleting'",
+                job.project_id,
+                job.environment_id,
+                job.asset_id
+            )
+            .execute(&mut *transaction)
+            .await
+            .map_err(DbError::from_write)?;
+        }
+        Outcome::Missing | Outcome::StillReferenced => {}
     }
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(true)

@@ -20,17 +20,21 @@ use serde_json::json;
 use uuid::Uuid;
 
 use colophon_db::{assets, idempotency};
+use colophon_domain::policy::{Action, Policy};
 use colophon_media::{Intent, IntentError, quarantine_key};
 
 use crate::{
     ApiError,
     entries::{idempotency_key, json, open, request_hash},
+    error::StillNeeded,
     session::{SignedIn, services},
     state::AppState,
 };
 
 /// Uploads are claimed under this operation.
 const UPLOAD: &str = "asset.upload";
+/// Deletion requests under this one.
+const DELETE: &str = "asset.delete";
 
 /// The environment segment of an asset path.
 #[derive(Deserialize)]
@@ -327,6 +331,163 @@ pub(crate) async fn get(
         None,
         false,
     ))
+}
+
+/// `GET {P}/assets/{asset}/references`: the entries still naming it — through a live draft, or
+/// through any publication of them, which pins it forever (media M3, D-098). What would have
+/// to let go before `DELETE` accepts it.
+pub(crate) async fn references(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<OnePath>,
+) -> Result<Response, ApiError> {
+    let asset = Uuid::try_parse(&path.asset).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_read(&tx)?;
+    assets::get(&mut tx, asset)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    let referrers = assets::references(&mut tx, asset)
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        // Only referrers in collections the role reads, as a refusal's `referenced_by` (D-065).
+        .filter(|referrer| {
+            tx.policy
+                .fields(Action::ContentRead, &referrer.collection, false)
+                .is_some()
+        })
+        .map(|referrer| {
+            json!({
+                "entry_id": referrer.entry_id,
+                "collection": referrer.collection,
+                "field": referrer.field,
+                "in_draft": referrer.in_draft,
+                "published": referrer.published,
+            })
+        })
+        .collect::<Vec<_>>();
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(json(
+        StatusCode::OK,
+        serde_json::to_string(&json!({"data": referrers})).map_err(ApiError::internal)?,
+        None,
+        false,
+    ))
+}
+
+/// `DELETE {P}/assets/{asset}`: asks for the asset to go, `Idempotency-Key` required like
+/// every write. `202` means requested, not gone (truthful states): the transaction commits
+/// only the `delete` job and the audit event, and the worker removes the objects and lands
+/// `deleted` — a live draft or any publication that still names it refuses the request
+/// (`still_referenced`, the entry deletion's shape), and the worker rechecks that same rule
+/// under the row lock before a byte is removed (media M3, D-098).
+pub(crate) async fn delete(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<OnePath>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let key = idempotency_key(&headers)?;
+    let asset = Uuid::try_parse(&path.asset).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // Assets belong to the project, not one collection: the whole-project form of the grant,
+    // mirroring upload's ContentCreate.
+    crate::members::require(
+        &tx.policy,
+        Action::ContentDelete,
+        None,
+        "your role can't delete assets in this project",
+    )?;
+    // Claimed before the checks: a retry after a lost answer replays the recorded 202 rather
+    // than meeting the now-`deleted` asset's `already_deleted`.
+    let request = request_hash(&[DELETE, &asset.to_string()]);
+    match idempotency::claim(&mut tx, DELETE, key, &request)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        idempotency::Claim::Fresh => {}
+        idempotency::Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+        idempotency::Claim::Replay { status, response } => {
+            return Ok(json(
+                StatusCode::from_u16(status).map_err(ApiError::internal)?,
+                response,
+                None,
+                true,
+            ));
+        }
+    }
+    let job = Uuid::now_v7();
+    let deadline = time::OffsetDateTime::now_utc()
+        + time::Duration::seconds(colophon_domain::job::LIFETIME_SECS);
+    match assets::request_delete(&mut tx, asset, job, key, deadline)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        assets::DeleteAsked::Unknown => Err(ApiError::NotFound),
+        assets::DeleteAsked::Quarantined => Err(ApiError::conflict(
+            "asset_quarantined",
+            "this asset is still being verified; wait for it to settle, then delete it",
+        )),
+        assets::DeleteAsked::Gone => Err(ApiError::conflict(
+            "already_deleted",
+            "this asset is already deleted or on its way out",
+        )),
+        assets::DeleteAsked::Referenced(referrers) => Err(still_referenced(&tx.policy, referrers)),
+        assets::DeleteAsked::Queued { asset: found } => {
+            let detail = json!({
+                "file_name": found.file_name,
+                "declared_type": found.declared_type,
+                "size_bytes": found.size_bytes,
+            })
+            .to_string();
+            colophon_db::audit::record_in(
+                &mut tx.transaction,
+                tx.project,
+                tx.identity,
+                "asset.deleted",
+                &asset.to_string(),
+                &detail,
+            )
+            .await
+            .map_err(ApiError::from_db)?;
+            let body = serde_json::to_string(&json!({"data": view(&found)}))
+                .map_err(ApiError::internal)?;
+            idempotency::complete(&mut tx, DELETE, key, StatusCode::ACCEPTED.as_u16(), &body)
+                .await
+                .map_err(ApiError::from_db)?;
+            tx.commit().await.map_err(ApiError::from_db)?;
+            Ok(json(StatusCode::ACCEPTED, body, None, false))
+        }
+    }
+}
+
+/// A refused deletion, as the entry deletion's answer shapes it (D-080): who still names the
+/// asset, in collections the caller reads.
+fn still_referenced(policy: &Policy, referrers: Vec<assets::AssetReferrer>) -> ApiError {
+    let referenced_by = referrers
+        .into_iter()
+        .filter(|referrer| {
+            policy
+                .fields(Action::ContentRead, &referrer.collection, false)
+                .is_some()
+        })
+        .map(|referrer| crate::error::Referrer {
+            entry_id: referrer.entry_id,
+            collection: referrer.collection,
+            field: referrer.field,
+            in_draft: referrer.in_draft,
+            published: referrer.published,
+        })
+        .collect();
+    ApiError::StillNeeded(Box::new(StillNeeded {
+        reason: "still_referenced",
+        message: "entries still name this asset: remove it from them first, then delete it"
+            .to_owned(),
+        referenced_by,
+        changesets: Vec::new(),
+    }))
 }
 
 /// The read side's permission: project-wide `ContentRead`, matching upload's `ContentCreate`.

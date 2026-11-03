@@ -902,6 +902,12 @@ fn refused(refusal: Refusal) -> ApiError {
             "asset_not_usable",
             "an entry in this changeset names an asset that is still being verified; publish when it is usable",
         ),
+        Refusal::UnusableAsset { ref state, .. } if state == "deleting" || state == "deleted" => {
+            ApiError::conflict(
+                "asset_not_usable",
+                "an entry in this changeset names an asset that was deleted; replace it",
+            )
+        }
         Refusal::UnusableAsset { .. } => ApiError::conflict(
             "asset_not_usable",
             "an entry in this changeset names an asset that was rejected; replace it",

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE assets SET state = 'rejected', rejected_reason = $4, verified_at = now()\n                 WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND state = 'quarantined'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "defac4862ab143c33ab8aea556626353936381d308381cc83047866cbaabbb62"
+}

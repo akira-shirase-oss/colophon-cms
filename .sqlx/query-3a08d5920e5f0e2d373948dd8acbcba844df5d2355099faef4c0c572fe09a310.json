@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE assets SET state = 'usable', detected_type = $4, width = $5, height = $6,\n                                   sha256 = $7, public_key = $8, derivatives = $9, verified_at = now()\n                 WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND state = 'quarantined'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int4",
+        "Int4",
+        "Bytea",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3a08d5920e5f0e2d373948dd8acbcba844df5d2355099faef4c0c572fe09a310"
+}

@@ -64,10 +64,14 @@ release still references. Proven by L14, malicious-upload fixtures and X10.
 - Image alt text is required by the blog schema for accessibility and SEO.
 
 ### References and lifecycle
-- References from drafts and retained releases are tracked before garbage collection.
-- Published revisions pin the assets they need.
-- An unreferenced upload can expire after 24 hours.
-- Deletion is staged and audited, with object-store and CDN outcomes visible.
+- `asset_references` records every asset a revision names, exactly like `revision_references` records entries.
+- An asset is collectable only when nothing names it: no live entry's `draft_revision_id` (`deleted_at IS NULL`), and **no `publications` row at all** — publications pin their assets forever, open or closed (D-098).
+- `DELETE {P}/assets/{asset}` (`Idempotency-Key`, `asset.delete`, `ContentDelete` project-wide) refuses `quarantined` uploads (`asset_quarantined`), answers `already_deleted` for `deleting`/`deleted`, and `still_referenced` for anything still named; otherwise it commits a `delete` job plus an `asset.deleted` audit event — **202 means requested, not gone**.
+- The worker's delete attempt locks the asset `FOR UPDATE`, rechecks the same keep-rule under the lock (the verdict that counts), marks `deleting`, removes every object it ever wrote — public key, each rendition under it, the quarantine object — outside any transaction, then lands `deleted`. Object removals are idempotent; a crash mid-list retries the job.
+- The states: `quarantined` → `usable`/`rejected`, or → `deleting` → `deleted`. Asset rows are never removed; `deleted` rows still list and read, `ON DELETE RESTRICT` on the references is the backstop (D-098).
+- The races close in the database, not in reads: `asset_references_asset_live` (migration 0039) takes `FOR KEY SHARE` on the named asset and refuses `deleting`/`deleted` assets and pending `delete`/`expire` jobs as `asset_not_found`; `publications_asset_live` takes the same lock on every asset a publication's revision names, so a publish can never commit against an in-flight delete.
+- An unreferenced upload can expire after 24 hours (retention step 2; the `expire` job kind and the `assets_collectable` index already exist for it).
+- Deletion is staged and audited — and there is **no CDN purge path yet**: the origin answers `Cache-Control: public, max-age=31536000, immutable`, so a deleted asset's bytes may linger in CDN edges and browser caches past deletion (D-098's accepted gap; media purge comes with the retention milestone's later slice).
 
 ## Invariants
 
@@ -109,7 +113,7 @@ release still references. Proven by L14, malicious-upload fixtures and X10.
 ## Build order
 
 1. **P4:** intents, quarantine, verification, ~~the Studio media picker~~ (done, D-095), ~~derivatives~~ (done, D-096), ~~references~~ (done, D-094).
-2. **P6:** expiry, retention and staged deletion jobs.
+2. **P6:** ~~staged deletion: the `delete` request, job and tombstone states, the reference/publication race triggers~~ (backend done, D-098); expiry and the orphan sweep next, then the Studio delete affordance, the testbed page and the k6 arm.
 
 ## Open decisions
 

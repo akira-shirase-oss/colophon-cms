@@ -562,8 +562,9 @@ fn missing_asset(asset: &ContentAsset) -> DbError {
 /// the refusal, and the foreign key is the rule — a draft may hold a quarantined or rejected
 /// asset, but never one that doesn't exist. No `FOR KEY SHARE` here as on `entries`: the API
 /// role may not update `assets` (state changes are the worker's, migration 0035) so it cannot
-/// take the lock, and it needn't — an upload has no delete path at all until retention (M3),
-/// and `ON DELETE RESTRICT` is the guarantee when one arrives.
+/// take the lock itself — migration 0039's `asset_references_asset_live` trigger takes it for
+/// it instead, refusing a name for an asset that is `deleting`, `deleted` or on a delete job's
+/// way the same way `ON DELETE RESTRICT` would.
 async fn insert_assets(
     tx: &mut ProjectTransaction,
     revision: Uuid,
@@ -614,13 +615,23 @@ async fn insert_assets(
     )
     .execute(&mut *tx.transaction)
     .await
-    // An upload deleted between the precheck and the insert fails the foreign key: refused
-    // like any name for an asset that isn't there.
-    .map_err(|error| match error.as_database_error() {
-        Some(db) if db.is_foreign_key_violation() => assets
-            .first()
+    // An upload deleted between the precheck and the insert fails the foreign key, as does
+    // one whose deletion is committed or on the way (migration 0039's trigger): refused like
+    // any name for an asset that isn't there, at the place that names it.
+    .map_err(|error| match crate::deleted_asset(&error) {
+        Some(gone) => assets
+            .iter()
+            .zip(&ids)
+            .find(|(_, id)| **id == gone)
+            .map(|(asset, _)| asset)
+            .or_else(|| assets.first())
             .map_or_else(|| DbError::from_write(error), missing_asset),
-        _ => DbError::from_write(error),
+        None => match error.as_database_error() {
+            Some(db) if db.is_foreign_key_violation() => assets
+                .first()
+                .map_or_else(|| DbError::from_write(error), missing_asset),
+            _ => DbError::from_write(error),
+        },
     })?;
     Ok(())
 }

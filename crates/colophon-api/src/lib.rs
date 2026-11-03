@@ -143,7 +143,11 @@ pub fn routes(state: AppState) -> Router {
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/assets/{asset}",
-            get(assets::get),
+            get(assets::get).delete(assets::delete),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/assets/{asset}/references",
+            get(assets::references),
         )
         .route("/api/v1/rich-text/validate", post(rich_text::validate))
         .merge(publishing())

@@ -187,6 +187,23 @@ pub(crate) fn deleted_entry(error: &sqlx::Error) -> Option<(&str, Option<uuid::U
     Some((table, entry))
 }
 
+/// The asset a violation of migration 0039's `<table>_asset_live` rule names: a new reference
+/// to an asset that is `deleting` or `deleted` — or has a delete or expire job on the way —
+/// answered like a name for an asset that isn't there.
+pub(crate) fn deleted_asset(error: &sqlx::Error) -> Option<uuid::Uuid> {
+    let sqlx::Error::Database(database) = error else {
+        return None;
+    };
+    if !database.is_foreign_key_violation() {
+        return None;
+    }
+    database.constraint()?.strip_suffix("_asset_live")?;
+    database
+        .try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+        .and_then(|postgres| postgres.detail())
+        .and_then(|detail| uuid::Uuid::try_parse(detail).ok())
+}
+
 /// Builds the pool without connecting. Connections open on first use, so the server starts
 /// (and reports "not ready") while the database is down, instead of failing to start.
 pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError> {

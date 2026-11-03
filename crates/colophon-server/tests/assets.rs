@@ -94,6 +94,54 @@ async fn settled(session: &Session, project: &str, id: &str, seconds: u64) -> Va
     }
 }
 
+/// Waits up to `seconds` for the asset to reach `state`; its final record.
+async fn reached(session: &Session, project: &str, id: &str, state: &str, seconds: u64) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    loop {
+        let reply = call(
+            session,
+            Method::GET,
+            &format!("{}/{id}", assets(project)),
+            None,
+            &[],
+        )
+        .await
+        .expect("request");
+        if reply.body["data"]["state"].as_str() == Some(state) {
+            return reply.body["data"].clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "asset {id} never reached {state}: {}",
+            reply.body
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// `DELETE {assets}/{id}` under `key`; the reply.
+async fn delete_asset(session: &Session, project: &str, id: &str, key: &str) -> common::Reply {
+    call(
+        session,
+        Method::DELETE,
+        &format!("{}/{id}", assets(project)),
+        None,
+        &[("idempotency-key", key)],
+    )
+    .await
+    .expect("request")
+}
+
+/// The media origin's status for `path`, following nothing.
+async fn media_status(path: &str) -> StatusCode {
+    app()
+        .get(format!("{}{}", common::ORIGIN, path))
+        .send()
+        .await
+        .expect("request")
+        .status()
+}
+
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
 async fn a_valid_upload_is_verified_and_becomes_usable() {
@@ -516,4 +564,299 @@ async fn renditions_are_served_under_their_names() {
             .expect("request");
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{name}");
     }
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_usable_asset_is_deleted_and_its_objects_go() {
+    let _server = common::Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+
+    // A 400px-wide upload, so a rendition exists beside the original.
+    let (status, body) = upload(
+        &owner,
+        &project,
+        WIDE_PNG,
+        "wide.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        settled(&owner, &project, &asset, 15).await["state"],
+        "usable"
+    );
+    for path in [
+        media(&project, &asset),
+        format!("{}/w320", media(&project, &asset)),
+    ] {
+        assert_eq!(media_status(&path).await, StatusCode::OK, "{path}");
+    }
+    covers(&owner, &project).await;
+
+    // 202 is "requested", not gone: the delete job decides the asset from here.
+    let deleted = delete_asset(&owner, &project, &asset, &key()).await;
+    assert_eq!(deleted.status, StatusCode::ACCEPTED, "{}", deleted.body);
+    assert_eq!(deleted.body["data"]["id"], asset);
+
+    // From the moment the request commits nothing new may name it — the pending job, then the
+    // tombstone, refuse it alike, so this is not a race against the worker: a save that comes
+    // in now answers `asset_not_found`, like an id that never was.
+    let late = call(
+        &owner,
+        Method::POST,
+        &format!("{}/collections/covers/entries", base(&project)),
+        Some(&json!({"title": "Late", "photo": asset})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        late.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        late.body
+    );
+    assert_eq!(
+        late.body["error"]["details"]["reason"], "asset_not_found",
+        "{}",
+        late.body
+    );
+
+    // The tombstone lands: the row stays and still reads, its objects are gone.
+    let tombstone = reached(&owner, &project, &asset, "deleted", 15).await;
+    assert_eq!(tombstone["state"], "deleted", "{tombstone}");
+    for path in [
+        media(&project, &asset),
+        format!("{}/w320", media(&project, &asset)),
+    ] {
+        assert_eq!(media_status(&path).await, StatusCode::NOT_FOUND, "{path}");
+    }
+
+    // Gone means gone: another request under a new key gets `already_deleted`.
+    let again = delete_asset(&owner, &project, &asset, &key()).await;
+    assert_eq!(again.status, StatusCode::CONFLICT, "{}", again.body);
+    assert_eq!(
+        again.body["error"]["details"]["reason"], "already_deleted",
+        "{}",
+        again.body
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_asset_a_draft_names_cannot_be_deleted() {
+    let _server = common::Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    covers(&owner, &project).await;
+
+    let (status, body) = upload(
+        &owner,
+        &project,
+        PNG,
+        "dot.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        settled(&owner, &project, &asset, 15).await["state"],
+        "usable"
+    );
+    let entry = cover(&owner, &project, "First cover", &asset).await;
+
+    let refused = delete_asset(&owner, &project, &asset, &key()).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(
+        refused.body["error"]["details"]["reason"], "still_referenced",
+        "{}",
+        refused.body
+    );
+    let referrers = refused.body["error"]["details"]["referenced_by"]
+        .as_array()
+        .expect("referenced_by");
+    assert!(
+        referrers.iter().any(|referrer| {
+            referrer["entry_id"].as_str() == Some(entry.as_str())
+                && referrer["in_draft"].as_bool() == Some(true)
+        }),
+        "{referrers:?}"
+    );
+
+    // The references endpoint names the same hold-up.
+    let listed = call(
+        &owner,
+        Method::GET,
+        &format!("{}/{asset}/references", assets(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+    let data = listed.body["data"].as_array().expect("data");
+    assert!(
+        data.iter().any(|referrer| {
+            referrer["entry_id"].as_str() == Some(entry.as_str())
+                && referrer["field"].as_str() == Some("photo")
+                && referrer["in_draft"].as_bool() == Some(true)
+                && referrer["published"].as_bool() == Some(false)
+        }),
+        "{data:?}"
+    );
+
+    // And nothing was touched: it is still there, still usable.
+    let reply = call(
+        &owner,
+        Method::GET,
+        &format!("{}/{asset}", assets(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(reply.body["data"]["state"], "usable", "{}", reply.body);
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn an_asset_a_publication_names_cannot_be_deleted() {
+    let _server = common::Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let editor = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    join(&owner, &editor, &project, "editor").await;
+    covers(&owner, &project).await;
+
+    let (status, body) = upload(
+        &editor,
+        &project,
+        PNG,
+        "dot.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        settled(&owner, &project, &asset, 15).await["state"],
+        "usable"
+    );
+    let entry = cover(&editor, &project, "Published cover", &asset).await;
+    let (path, hash) = approved(&owner, &editor, &project, &entry).await;
+    let published = publish(&owner, &path, &hash, 0).await;
+    assert_eq!(published.status, StatusCode::CREATED, "{}", published.body);
+
+    // A publication pins its assets forever — history included (D-098).
+    let refused = delete_asset(&owner, &project, &asset, &key()).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(
+        refused.body["error"]["details"]["reason"], "still_referenced",
+        "{}",
+        refused.body
+    );
+    let referrers = refused.body["error"]["details"]["referenced_by"]
+        .as_array()
+        .expect("referenced_by");
+    assert!(
+        referrers.iter().any(|referrer| {
+            referrer["entry_id"].as_str() == Some(entry.as_str())
+                && referrer["published"].as_bool() == Some(true)
+        }),
+        "{referrers:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_replayed_delete_returns_the_recorded_answer() {
+    let _server = common::Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+
+    let (status, body) = upload(
+        &owner,
+        &project,
+        PNG,
+        "dot.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        settled(&owner, &project, &asset, 15).await["state"],
+        "usable"
+    );
+
+    let key = key();
+    let first = delete_asset(&owner, &project, &asset, &key).await;
+    assert_eq!(first.status, StatusCode::ACCEPTED, "{}", first.body);
+    let replay = delete_asset(&owner, &project, &asset, &key).await;
+    assert_eq!(replay.status, StatusCode::ACCEPTED, "{}", replay.body);
+    assert!(replay.replayed(), "expected an idempotent replay");
+    assert_eq!(replay.body, first.body);
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_quarantined_asset_cannot_be_deleted() {
+    // No worker in this server: the upload waits in quarantine forever, so the state the
+    // refusal meets is deterministic (elsewhere it would be a coin toss against verification).
+    let _server =
+        common::Server::start_with(&[("COLOPHON_ROLE", "api"), ("COLOPHON_WORKER_POLL_MS", "50")])
+            .await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+
+    let (status, body) = upload(
+        &owner,
+        &project,
+        PNG,
+        "dot.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    let reply = call(
+        &owner,
+        Method::GET,
+        &format!("{}/{asset}", assets(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(reply.body["data"]["state"], "quarantined", "{}", reply.body);
+
+    // A delete is a write like any other: no Idempotency-Key, no request.
+    let no_key = call(
+        &owner,
+        Method::DELETE,
+        &format!("{}/{asset}", assets(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(no_key.status, StatusCode::PRECONDITION_REQUIRED);
+
+    // Verification may still land it usable, so deleting it is refused, not queued.
+    let refused = delete_asset(&owner, &project, &asset, &key()).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(
+        refused.body["error"]["details"]["reason"], "asset_quarantined",
+        "{}",
+        refused.body
+    );
 }

@@ -7,7 +7,9 @@ pub const MAX_BYTES: u64 = 20 * 1024 * 1024;
 /// bytes really are; a declaration outside this list is refused before the object exists.
 pub const DECLARED_TYPES: [&str; 3] = ["image/png", "image/jpeg", "image/webp"];
 
-/// Where an asset stands: quarantined while the worker decides, then exactly one end state.
+/// Where an asset stands: quarantined while the worker decides, then exactly one end state —
+/// `usable`, `rejected`, or, after a delete request, `deleted` by way of `deleting` (media M3,
+/// D-098).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     /// Uploaded; the verify job is due or running. Never referenced by published content.
@@ -16,6 +18,10 @@ pub enum State {
     Usable,
     /// Refused by verification; `rejected_reason` says why in words safe to show.
     Rejected,
+    /// A delete job committed its mark and is removing the objects outside any transaction.
+    Deleting,
+    /// Every object is gone. The row is a tombstone: it is never removed and never serves.
+    Deleted,
 }
 
 /// A checked upload intent: a name to show, a type the client claims, a size it promises.
