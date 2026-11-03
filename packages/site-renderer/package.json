@@ -1,0 +1,22 @@
+{
+  "name": "@colophon/site-renderer",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Turns a website-starter page's sections and theme entry into safe HTML and CSS, identically in the Studio's visual builder, the testbed and the static site build.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@colophon/content-renderer": "0.0.0",
+    "@colophon/editor": "0.0.0"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

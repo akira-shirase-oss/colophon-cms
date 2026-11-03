@@ -41,6 +41,15 @@ test('the website starter installs once and reruns harmlessly', async ({ page })
 	await expect(page.getByTestId('nav-item')).toHaveText(`Home → ${homeId}`);
 	await expect(page.getByTestId('palette')).toHaveText('primary #6d28d9, text #18181b, radius-md 8px');
 
+	// The shared renderer (W.1) emits the site over the real entries: Home's sections, the menu's
+	// resolved link, the theme as the stylesheet.
+	await page.getByTestId('preview').click();
+	const site = page.frameLocator('[data-testid="rendered"]');
+	await expect(site.locator('h1')).toHaveText('Your site, your way');
+	await expect(site.locator('.site-nav a')).toHaveText('Home');
+	await expect(site.locator('.site-nav a')).toHaveAttribute('href', '/home');
+	await expect(site.locator('.site-cta .site-btn')).toHaveText('Read more');
+
 	// A second run keeps everything it finds.
 	await page.getByTestId('install').click();
 	await expect(page.getByTestId('message')).toHaveText('installed');

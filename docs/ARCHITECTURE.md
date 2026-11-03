@@ -125,6 +125,7 @@ colophon/
 │   ├── sdk/                    # generated TypeScript client + pinned-read helpers
 │   ├── ui/                     # Material 3 tokens and shared Svelte components (Bits UI)
 │   ├── content-renderer/       # Tiptap JSON → safe output, shared by Studio and web
+│   ├── site-renderer/          # site JSON → CSP-safe HTML: sections, nav, theme → CSS vars (W.1)
 │   └── site-template/          # the website starter manifest: pages + navigation + theme (W.0)
 ├── migrations/                 # reviewed SQL migrations
 ├── schemas/                    # versioned content-schema definitions and fixtures

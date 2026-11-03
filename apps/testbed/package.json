@@ -28,6 +28,7 @@
     "#lib/*": "./src/lib/*"
   },
   "dependencies": {
+    "@colophon/site-renderer": "0.0.0",
     "@colophon/site-template": "0.0.0"
   }
 }
