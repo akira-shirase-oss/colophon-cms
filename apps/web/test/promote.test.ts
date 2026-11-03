@@ -5,12 +5,12 @@ import { describe, expect, test } from 'vitest';
 
 import { build } from '../src/build.ts';
 import { VerifyFailed, live, liveDir, promote } from '../src/promote.ts';
-import { api, item } from './colophon.ts';
+import { articles, item } from './colophon.ts';
 
 const releases = new Map([1, 2, 3, 4, 5].map((generation) => [generation, [item(`a${generation}`, `Article ${generation}`, generation)]]));
 
 async function built(root: string, generation: number) {
-	return build({ api: 'http://colophon.test', project: 'p', environment: 'production', generation, root, fetch: api(releases).fetch });
+	return build({ api: 'http://colophon.test', project: 'p', environment: 'production', generation, root, fetch: articles(releases).fetch });
 }
 
 describe('promotion', () => {

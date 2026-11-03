@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 
 import { live } from '../src/promote.ts';
 import { Runner } from '../src/runner.ts';
-import { api, item } from './colophon.ts';
+import { articles, item } from './colophon.ts';
 
 const servers: Array<{ close: () => void }> = [];
 afterEach(() => {
@@ -16,7 +16,7 @@ afterEach(() => {
 
 async function start(releases: Map<number, ReturnType<typeof item>[]>) {
 	const root = await mkdtemp(join(tmpdir(), 'site-'));
-	const runner = new Runner({ api: 'http://colophon.test', project: 'p', environment: 'production', root, fetch: api(releases).fetch });
+	const runner = new Runner({ api: 'http://colophon.test', project: 'p', environment: 'production', root, fetch: articles(releases).fetch });
 	const server = createServer((request, response) => void runner.handle(request, response));
 	await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
 	servers.push(server);

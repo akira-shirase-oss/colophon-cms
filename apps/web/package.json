@@ -10,7 +10,9 @@
     "runner": "node src/runner.ts"
   },
   "dependencies": {
-    "@colophon/content-renderer": "0.0.0"
+    "@colophon/content-renderer": "0.0.0",
+    "@colophon/site-renderer": "0.0.0",
+    "@colophon/site-template": "0.0.0"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
