@@ -18,6 +18,7 @@
 		{ href: resolve('/modelling'), label: 'Content modelling' },
 		{ href: resolve('/inverses'), label: 'Mirrored references' },
 		{ href: resolve('/locales'), label: 'Locales' },
+		{ href: resolve('/site'), label: 'Website starter' },
 		{ href: resolve('/transfer'), label: 'Import & export' },
 		{ href: resolve('/device'), label: 'Device sign-in' },
 		{ href: resolve('/members'), label: 'Members' },

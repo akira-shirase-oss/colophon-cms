@@ -55,7 +55,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|site-starter|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -81,7 +81,7 @@ case "$endpoint" in
   # Half its requests list entries (a content type lookup too): about 2,000/s at most here, so
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
   cli | members | roles | tokens | schedules | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
-  entries | content-types | modelling) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
+  entries | content-types | modelling | site-starter) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
   # A move writes three revisions in one transaction (the post's, and a mirror into each
   # writer): half of entries' steady rate, and the p99 threshold is END_GOAL's editorial
   # write budget — a smoke run on the reference laptop sat at p99 ~580 ms.
