@@ -788,11 +788,24 @@ async fn a_rollback_restores_the_release_as_a_new_generation() {
         Some(1)
     );
     assert_eq!(created.body["data"]["status"]["state"], "open");
-    let path = format!(
-        "{}/changesets/{}",
-        base(&project),
-        created.body["data"]["id"].as_str().expect("an id")
-    );
+    // A restore says which release it restores, in its view and the list's.
+    let changeset = created.body["data"]["id"].as_str().expect("an id");
+    assert_eq!(created.body["data"]["rollback_generation"], 1);
+    let listed = call(
+        &owner,
+        Method::GET,
+        &format!("{}/changesets", base(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    let row = listed.body["data"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == changeset))
+        .expect("the restore in the list");
+    assert_eq!(row["rollback_generation"], 1, "{}", listed.body);
+    let path = format!("{}/changesets/{}", base(&project), changeset);
     let hash = created.body["data"]["hash"]
         .as_str()
         .expect("a hash")

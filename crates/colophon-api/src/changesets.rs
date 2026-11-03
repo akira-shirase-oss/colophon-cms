@@ -220,6 +220,8 @@ pub(crate) struct ChangesetView {
     submitted_by: Option<Uuid>,
     submitted_at: Option<String>,
     updated_at: String,
+    /// The release its publication set restores, when a rollback built it (D-097).
+    rollback_generation: Option<i64>,
     items: Vec<ItemView>,
     reviews: Vec<ReviewView>,
 }
@@ -239,6 +241,8 @@ pub(crate) struct SummaryView {
     submitted_by: Option<Uuid>,
     submitted_at: Option<String>,
     updated_at: String,
+    /// The release it restores, when a rollback built it (D-097).
+    rollback_generation: Option<i64>,
 }
 
 /// The domain's decision for `head`, from its reviews on its current hash (newest first).
@@ -285,6 +289,7 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
         submitted_by: head.submitted_by,
         submitted_at: head.submitted_at.map(rfc3339).transpose()?,
         updated_at: rfc3339(head.updated_at)?,
+        rollback_generation: head.rollback,
         items: items
             .into_iter()
             .map(|item| ItemView {
@@ -439,6 +444,7 @@ pub(crate) async fn list(
                 submitted_by: row.head.submitted_by,
                 submitted_at: row.head.submitted_at.map(rfc3339).transpose()?,
                 updated_at: rfc3339(row.head.updated_at)?,
+                rollback_generation: row.head.rollback,
             })
         })
         .collect::<Result<_, ApiError>>()?;
