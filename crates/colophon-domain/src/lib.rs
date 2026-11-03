@@ -8,7 +8,8 @@
 //! Design: `docs/modules/01-domain.md`. So far: the rich-text validator ([`rich_text`]),
 //! project fields ([`project`]), content types, which validate entries' content ([`schema`]),
 //! who may do what ([`policy`]), changesets and their review ([`changeset`]), releases
-//! ([`release`]), delivery jobs ([`job`]) and where they may go ([`destination`]).
+//! ([`release`]), delivery jobs ([`job`]), where they may go ([`destination`]) and the
+//! bounded query language ([`query`]).
 
 pub mod cache;
 pub mod changeset;
@@ -17,6 +18,7 @@ pub mod job;
 pub mod migrate;
 pub mod policy;
 pub mod project;
+pub mod query;
 pub mod receipt;
 pub mod release;
 pub mod rich_text;

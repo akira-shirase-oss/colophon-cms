@@ -17,6 +17,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 regex.workspace = true
 url.workspace = true
+# SHA-256 over a query's canonical form is its cache key (D-029, D-103): pure Rust, no I/O.
+sha2.workspace = true
 
 [dev-dependencies]
 # Keeps fixture key order when re-serializing a fixture to compare it with the canonical form.
