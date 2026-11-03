@@ -1014,6 +1014,16 @@ export async function createChangeset(
 	return ((await (await send('POST', changesets(project), body, { 'Idempotency-Key': key })).json()) as { data: Changeset }).data;
 }
 
+/** Builds a changeset that restores what `generation` published — publish pins for what was live
+ *  then, unpublish pins for what is live now and wasn't (D-097). It is a changeset like any other
+ *  from here: submitted, reviewed on its hash, published on a base generation. Refused with
+ *  `invalid_generation`, `already_at`, or 422 if a body carries entries. */
+export async function rollbackRelease(project: string, generation: number, title: string, key: string): Promise<Changeset> {
+	const body = { title };
+	return ((await (await send('POST', `${base(project)}/releases/${generation}/rollback`, body, { 'Idempotency-Key': key })).json()) as { data: Changeset })
+		.data;
+}
+
 /** Submits, refreshes or reviews the changeset whose hash the caller saw; a changed hash is refused
  *  with reason `stale_changeset`. */
 export async function changesetAction(
