@@ -136,6 +136,7 @@ export function formValue(field: FieldDefinition, value: unknown): FormValue {
 		case 'json':
 			return value === undefined ? '' : prettyJson(value);
 		case 'reference':
+		case 'asset':
 			if (field.many) return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
 			return typeof value === 'string' ? value : '';
 		// Structures hold their fields' form values, recursively.
@@ -210,7 +211,7 @@ export function storedValue(field: FieldDefinition, form: FormValue | undefined)
 	}
 	if (field.type === 'boolean') return form === true;
 	// An empty list is left out, as the server asks ("leave it out instead").
-	if (field.type === 'reference' && field.many) return Array.isArray(form) && form.length > 0 ? [...form] : undefined;
+	if ((field.type === 'reference' || field.type === 'asset') && field.many) return Array.isArray(form) && form.length > 0 ? [...form] : undefined;
 	if (typeof form === 'number') return Number.isFinite(form) ? form : undefined;
 	const text = typeof form === 'string' ? form : '';
 	if (text === '') return field.required ? (field.type === 'text' ? '' : undefined) : undefined;
@@ -287,9 +288,10 @@ export function isTime(text: string): boolean {
  * (or is empty: a missing required value is the server's to say). The server still decides.
  */
 export function fieldProblem(field: FieldDefinition, form: FormValue | undefined): string {
-	if (field.type === 'reference' && field.many && Array.isArray(form)) {
-		if (form.length > field.max) return `${field.label} names at most ${field.max} entries.`;
-		if (new Set(form).size !== form.length) return `${field.label} names an entry twice.`;
+	if ((field.type === 'reference' || field.type === 'asset') && field.many && Array.isArray(form)) {
+		const them = field.type === 'asset' ? 'uploads' : 'entries';
+		if (form.length > field.max) return `${field.label} names at most ${field.max} ${them}.`;
+		if (new Set(form).size !== form.length) return `${field.label} names ${field.type === 'asset' ? 'an upload' : 'an entry'} twice.`;
 		return '';
 	}
 	const text = typeof form === 'string' ? form : '';

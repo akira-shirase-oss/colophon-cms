@@ -627,6 +627,78 @@ export async function createEntry(project: string, collection: string, content: 
 	return loaded(await send('POST', entries(project, collection), content, { 'Idempotency-Key': key }));
 }
 
+/** An upload's record (M.0, D-093): `usable` once the worker has proved its bytes; `rejected`
+ *  carries its reason. */
+export interface Asset {
+	id: string;
+	state: 'quarantined' | 'usable' | 'rejected' | string;
+	file_name: string;
+	declared_type: string;
+	detected_type: string | null;
+	size_bytes: number;
+	width: number | null;
+	height: number | null;
+	rejected_reason: string | null;
+	created_at: string;
+}
+
+const assetsPath = (project: string) => `${base(project)}/assets`;
+
+/** The project's uploads, newest first. */
+export async function listAssets(project: string): Promise<Asset[]> {
+	return ((await (await send('GET', assetsPath(project))).json()) as { data: Asset[] }).data;
+}
+
+/** One upload's record — polled until it leaves `quarantined`. */
+export async function getAsset(project: string, asset: string): Promise<Asset> {
+	return ((await (await send('GET', `${assetsPath(project)}/${asset}`)).json()) as { data: Asset }).data;
+}
+
+/** The public media origin's path for a verified upload (D-094): served to anyone, cached
+ *  forever, 404 for anything not usable yet. */
+export function assetUrl(project: string, asset: string): string {
+	return `/media/v1/${project}/production/${asset}`;
+}
+
+/** Uploads `file` into quarantine (M.0). `send` can't carry it because the body is the file,
+ *  not a JSON document — same shape as `importEntries`. */
+export async function uploadAsset(project: string, file: File): Promise<Asset> {
+	let response: Response;
+	try {
+		response = await fetch(assetsPath(project), {
+			method: 'POST',
+			cache: 'no-store',
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+			headers: {
+				'Content-Type': file.type || 'application/octet-stream',
+				'X-CSRF-Token': csrfToken(),
+				'X-Colophon-File-Name': file.name,
+				'Idempotency-Key': newKey()
+			},
+			body: file
+		});
+	} catch {
+		throw new ApiError('retry', 'no answer from the server');
+	}
+	if (response.ok) {
+		return ((await response.json()) as { data: Asset }).data;
+	}
+	const envelope = ((await response.json().catch(() => ({}))) as Envelope).error;
+	const message = envelope?.message ?? `HTTP ${response.status}`;
+	const details = envelope?.details ?? null;
+	const reason = details?.reason ?? null;
+	switch (true) {
+		case response.status === 401:
+			throw new ApiError('signed-out', message, 401);
+		case response.status === 404:
+			throw new ApiError('not-found', message, 404);
+		case response.status >= 500 || response.status === 429:
+			throw new ApiError('retry', message, response.status, reason);
+		default:
+			throw new ApiError('refused', message, response.status, reason, null, details);
+	}
+}
+
 /** The URL that downloads a collection's drafts as JSONL — one entry's content per line (D-086). */
 export function exportUrl(project: string, collection: string): string {
 	return `${base(project)}/collections/${collection}/export`;

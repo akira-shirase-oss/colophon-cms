@@ -15,7 +15,7 @@ function localEnv(): Record<string, string> {
 	const env: Record<string, string> = {};
 	const database = process.env['COLOPHON_TEST_DATABASE'];
 	for (const line of readFileSync(`${repo}deploy/local.env`, 'utf8').split('\n')) {
-		const match = /^([A-Z_]+)=(.*)$/.exec(line.trim());
+		const match = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
 		if (match?.[1] === undefined || match[2] === undefined) continue;
 		const named = database !== undefined && match[1].endsWith('DATABASE_URL') && match[2].endsWith('/colophon');
 		env[match[1]] = named ? `${match[2].slice(0, -'colophon'.length)}${database}` : match[2];
