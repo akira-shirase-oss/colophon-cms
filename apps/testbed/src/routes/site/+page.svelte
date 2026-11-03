@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { HOME_PAGE, navigationSeed, SITE_COMPONENTS, SITE_TYPES, THEME_SEED } from '@colophon/site-template';
+	import { pageHtml, renderNav, renderSections, siteCss, type NavItem, type ThemeContent } from '@colophon/site-renderer';
 	import { call, csrfToken, detailsOf, envelopeOf, listProjects, type Reply } from '#lib/api.ts';
 
 	interface Project {
@@ -17,6 +18,7 @@
 	let homeId = $state('');
 	let navItem = $state('');
 	let palette = $state('');
+	let preview = $state('');
 
 	const env = $derived(`/api/v1/projects/${projectId}/environments/production`);
 
@@ -136,6 +138,59 @@
 		}
 	}
 
+	/** The shared renderer over the real entries: Home's sections, the nav's resolved links, the
+	 *  theme as the stylesheet — the document the build will emit, in an iframe. */
+	async function renderPreview() {
+		preview = '';
+		if (homeId === '') {
+			message = 'render: install first';
+			return;
+		}
+		const home = await call('GET', `${env}/collections/pages/entries/${homeId}`);
+		if (home.status !== 200) {
+			message = `render: ${describe(home)}`;
+			return;
+		}
+		const content = (home.body as { data: { content: Record<string, unknown> } }).data.content;
+
+		const nav = await entries('navigation');
+		const navEntry = (nav.body as { data: { id: string }[] }).data?.[0];
+		let links: NavItem[] = [];
+		if (navEntry !== undefined) {
+			const draft = await call('GET', `${env}/collections/navigation/entries/${navEntry.id}`);
+			const items = ((draft.body as { data: { content: { items?: { label?: string; page?: string; url?: string }[] } } }).data.content.items ?? []);
+			links = [];
+			for (const item of items) {
+				let href = item.url;
+				if (href === undefined && item.page !== undefined) {
+					// The entries list carries no content, so a page link's slug means one draft read.
+					const linked = await call('GET', `${env}/collections/pages/entries/${item.page}`);
+					const slug = (linked.body as { data: { content: { slug?: string } } }).data.content.slug;
+					href = slug === undefined ? `/${item.page}` : `/${slug}`;
+				}
+				if (item.label !== undefined && href !== undefined) links = [...links, { label: item.label, href }];
+			}
+		}
+
+		const theme = await entries('theme');
+		const themeEntry = (theme.body as { data: { id: string }[] }).data?.[0];
+		let css = '';
+		if (themeEntry !== undefined) {
+			const draft = await call('GET', `${env}/collections/theme/entries/${themeEntry.id}`);
+			const themeContent = (draft.body as { data: { content?: ThemeContent } }).data.content;
+			if (themeContent !== undefined) css = siteCss(themeContent);
+		}
+
+		const description = (content['seo'] as { description?: string } | undefined)?.description;
+		preview = pageHtml({
+			title: String(content['title'] ?? 'Home'),
+			...(description === undefined ? {} : { description }),
+			head: `<style>${css}</style>\n`,
+			nav: renderNav(links),
+			body: renderSections(content['sections'])
+		});
+	}
+
 	onMount(loadProjects);
 </script>
 
@@ -166,9 +221,14 @@
 				{#each steps as step (step)}<li>{step}</li>{/each}
 			</ol>
 		{/if}
-		{#if homeId}<p>Home: <code data-testid="home-id">{homeId}</code></p>{/if}
+		{#if homeId}
+			<p>Home: <code data-testid="home-id">{homeId}</code> — <button type="button" onclick={renderPreview} data-testid="preview">Render the site</button></p>
+		{/if}
 		{#if navItem}<p>Menu: <span data-testid="nav-item">{navItem}</span></p>{/if}
 		{#if palette}<p>Palette: <span data-testid="palette">{palette}</span></p>{/if}
+		{#if preview}
+			<iframe title="The site as the renderer emits it" srcdoc={preview} data-testid="rendered" class="frame"></iframe>
+		{/if}
 	</section>
 {/if}
 
@@ -190,5 +250,12 @@
 	select {
 		font: inherit;
 		padding: 0.4rem 0.5rem;
+	}
+	.frame {
+		width: 100%;
+		max-width: 46rem;
+		height: 30rem;
+		border: 1px solid var(--border, #ddd);
+		border-radius: 0.5rem;
 	}
 </style>
