@@ -36,6 +36,7 @@
 		getRevision,
 		listRevisions,
 		type Loaded,
+		mayOn,
 		type Referrer,
 		signInUrl,
 		type Summary
@@ -45,6 +46,7 @@
 	import { compare, readable } from './diff.ts';
 	import { prettyJson } from './json.ts';
 	import { plainError } from './errors.ts';
+	import CommentsPanel from './CommentsPanel.svelte';
 	import DiffView from './DiffView.svelte';
 	import PublishEntry from './PublishEntry.svelte';
 	import ReaderView from './ReaderView.svelte';
@@ -303,8 +305,17 @@
 	/** The content the canvas renders: exactly what a save would send right now. */
 	const canvasContent = $derived(sitePage || siteTheme ? current() : null);
 
-	let tab = $state<'content' | 'visual' | 'history'>('content');
-	const tabs = $derived(sitePage || siteTheme ? [['content', 'Content'], ['visual', 'Look'], ['history', 'History']] as const : [['content', 'Content'], ['history', 'History']] as const);
+	let tab = $state<'content' | 'visual' | 'comments' | 'history'>('content');
+	const tabs = $derived(
+		sitePage || siteTheme
+			? ([['content', 'Content'], ['visual', 'Look'], ['comments', 'Comments'], ['history', 'History']] as const)
+			: ([['content', 'Content'], ['comments', 'Comments'], ['history', 'History']] as const)
+	);
+	// Writing and answering comments asks for `content.update` on this entry (E1); reading asks
+	// for `content.read`, which the route's own read already proved.
+	const commentWrite = $derived(mayOn(mine.data, 'content.update', collection, who.data != null && latest.created_by === who.data.id));
+	/** Open comments, for a count beside the tab; the panel reports it as its list lands. */
+	let commentCount = $state(0);
 	async function editSection(index: number) {
 		tab = 'content';
 		await tick();
@@ -484,7 +495,7 @@
 						}
 					}}
 				>
-					{name}{#if value === 'history' && revisions.data}<span class="ml-1.5 text-xs text-muted-foreground tabular">{revisions.data.length}</span>{/if}
+					{name}{#if value === 'history' && revisions.data}<span class="ml-1.5 text-xs text-muted-foreground tabular">{revisions.data.length}</span>{/if}{#if value === 'comments' && commentCount > 0}<span class="ml-1.5 text-xs text-muted-foreground tabular">{commentCount}</span>{/if}
 				</button>
 			{/each}
 		</div>
@@ -591,6 +602,12 @@
 				</ul>
 			</section>
 		{/if}
+
+		<div role="tabpanel" id="panel-comments" aria-labelledby="tab-comments" hidden={tab !== 'comments'}>
+			<!-- Comments (E1, D-102): each one binds the version on screen — the draft's current
+			     version — so what was said stays bound to exactly what its author saw. -->
+			<CommentsPanel {project} {collection} {entry} revision={latest.revision.id} canWrite={commentWrite} oncount={(open) => (commentCount = open)} />
+		</div>
 
 		<div role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== 'history'}>
 			{#if revisions.data}

@@ -73,7 +73,12 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   the playground's formatting toolbar, shows save status and live state beside the fields, and compares any revision
   with the draft. A changeset shows, for every item, what changes for readers: a word-level comparison from the live
   revision to the pinned one (new entries are all additions; unpublishing shows what goes). Destinations moved to
-  `…/settings` (since D-081, `…/settings/connections`).
+  `…/settings` (since D-081, `…/settings/connections`). Since step E1 (D-102): the editor's Comments tab writes a
+  comment bound to the version on screen, answers or reopens each on its etag (a moved answer refetches first), and
+  on a deleted entry keeps the comments while the composer closes with why; and `…/tasks` lists the project's
+  tasks by status and who they're waiting on, makes one on an entry with an optional version or publish request,
+  and edits title, status and who it's waiting on — Unassigned sent as `assignee: null`, never an omitted field.
+  Test: `tests/server/collaboration.spec.ts`.
 - Finishing the Studio (branch `studio/dashboard`, 2026-10-27), slice by slice:
   - **Sign out from any screen** (`shell/AccountMenu.svelte`, in the project shell's header and the plain frame's):
     who is signed in, *Your work and projects*, *About Colophon* (which version this is, below), and *Sign out*, which calls `POST /auth/logout` and only then
@@ -512,7 +517,9 @@ and unpublish from a list, and duplicate.
 Needs a backend route first (each M unless said): deleting content types and components; renaming or
 removing a project; changing or removing a website connection (only on and off today); rotating a token; seeing and
 ending one's sessions; defaults and conditions inside structures; geopoint fields. Later milestones (L): media
-library (P4), localization, comments and tasks, presence, visual preview (E), query filters and webhooks by event (D).
+library (P4), localization, presence, visual preview (E), query filters and webhooks by event (D). Comments and
+tasks are built (step E1, D-102): the editor's Comments tab and the project Tasks page cover what the API offers —
+review stages on top of changesets remain for E2.
 
 ## Open decisions
 
