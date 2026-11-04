@@ -434,10 +434,20 @@ commands stream one envelope per item on `--jsonl` following `next_cursor` withi
 `colophon mcp` links the `colophon-mcp` library into the binary: same configuration, protocol, eighteen safe
 tools and refusal boundary, proved end to end in `tests/cli.rs` including a live `initialize`/`tools/list`
 session and a 403 arriving `missing_permission`-whole on stdout) ·
+L08's load evidence (built: D-120 — `perf/k6/noisy-agent.js`, one run in two sequential
+phases: editorial traffic alone, then the same traffic at the same rate beside a
+60-a-minute token attempting ~600/s and an editor in a second project, every request
+tagged by arm so `handleSummary()` computes the spec's 2x-p95 comparison from the numbers
+the run just measured into the stored `l08` object, which `scripts/load.sh` carries into
+the result file and fails the run on; the stored run
+`perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json` shows the agent
+99.7% refused with `Retry-After`, editorial p95 x1.83 of its baseline and project-B's
+x1.86 of its own) ·
 not built: remote MCP with its
 authorization, provider `tokens`/`cost` budgets, `content import` and
-`export`, L08's load evidence. The proof gate is not met — X12's resume proof is in
-`tests/bulk.rs`, the eval gate's stored run is `perf/results/2026-11-04T141109.623685Z-evals.json`, and L08 remains.
+`export`. The proof gate is met — X12's resume proof is in
+`tests/bulk.rs`, the eval gate's stored run is `perf/results/2026-11-04T141109.623685Z-evals.json`, and
+L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json`.
 
 ## P6: Operate it (≈ spec M5)
 

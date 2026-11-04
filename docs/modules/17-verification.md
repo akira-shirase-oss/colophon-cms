@@ -96,7 +96,7 @@ crashed clients, and `crates/colophon-db/tests/differential.rs` checks its model
 | L05 | Mixed reads, writes and publishing | Each operation class meets its target; content stays consistent |
 | L06 | Spike from 1× to 5× load for 2 min | Controlled 429/503, bounded queues; back to baseline within 2 min after load ends |
 | L07 | 24-hour soak at 50% baseline mixed load | Correct final state; quotas and retention enforced; memory, WAL and disk growth explained |
-| L08 | One noisy agent plus active editors | Agent throttled; editorial p95 ≤ 2× mixed-workload baseline; no cross-project starvation |
+| L08 | One noisy agent plus active editors | Agent throttled; editorial p95 ≤ 2× mixed-workload baseline; no cross-project starvation. `perf/k6/noisy-agent.js` (two phases in one run; the summary's `l08` object holds both arms' numbers and the computed verdict), stored run `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json` |
 | L09 | 10,000-record draft import | Resumable chunks, per-item outcomes, stable memory; no accidental publication |
 | L10 | CDN warm traffic + repeated publishes | Per-region latency and observed generation; detect stale refills and mixed-release pages |
 | L11 | Cache unavailable for 5 min | Rate-limited fallback, no lost accepted work, bounded origin pressure, correct recovery |
