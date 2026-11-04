@@ -9,18 +9,21 @@
 //! with a [`Refusal`] and a JSON Pointer like the definition's own. The canonical form
 //! and [`Query::query_hash`] then name the exact query: a cache key, the shape a cursor
 //! is bound to. [`Query::order`] is the ordering a page runs under, the entry's id last
-//! as the tie-break, so equal sort values still give every page boundary one place.
+//! as the tie-break, so equal sort values still give every page boundary one place —
+//! and one [`Position`] names that place, which [`Query::cursor`] seals into a token
+//! bound to the query hash itself and [`Query::after_cursor`] reads back.
 //!
 //! Everything is bounded: at most [`MAX_FILTERS`] filters, [`MAX_SORT_KEYS`] sort keys,
 //! [`MAX_IN_VALUES`] values to an `in`, a page of [`MAX_LIMIT`] entries and an expansion
 //! depth of [`MAX_DEPTH`] (the spec's relation-expansion bound).
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::{
     rich_text::{json::write_string, pointer::Pointer},
-    schema::{ContentType, Field, FieldKind, MAX_FIELDS, Refusal},
+    schema::{ContentType, Field, FieldKind, MAX_FIELDS, Refusal, check_number, write_number},
 };
 
 /// The most filters one query may hold.
@@ -35,6 +38,11 @@ pub const DEFAULT_LIMIT: u16 = 20;
 pub const MAX_LIMIT: u16 = 100;
 /// The deepest references expand: the spec's relation-expansion bound.
 pub const MAX_DEPTH: u8 = 2;
+/// The most bytes a cursor's payload decodes to, like every other bound here.
+pub const MAX_CURSOR_BYTES: usize = 8 * 1024;
+/// The most base64url characters a token under [`MAX_CURSOR_BYTES`] can need —
+/// checked before decoding, so an oversized token never allocates.
+const MAX_CURSOR_CHARS: usize = (MAX_CURSOR_BYTES / 3 + 1) * 4;
 
 /// How a filter compares the field's stored values with the document's `value`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +127,23 @@ pub enum OrderKey {
     /// The entry's id: the tie-break every query ends on, so equal sort values still
     /// give every page boundary one place.
     EntryId,
+}
+
+/// One place in a query's ordering ([`Query::order`]): the boundary one page ends on
+/// and the next begins after.
+///
+/// One canonical-JSON value per order key, in order: a `Field` key holds the entry's
+/// stored value for the field in its canonical spelling — `null` allowed and
+/// significant, since an entry that doesn't set the field sorts by `null`; `EntryId`
+/// holds the entry's id as a JSON string. [`Query::cursor`] seals a `Position` into a
+/// cursor bound to the query's hash; [`Query::after_cursor`] reads one back. The
+/// values are kept as canonical-JSON literals, the same spelling [`Filter::value`]
+/// and stored content use, so the SQL layer can compare them verbatim.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Position {
+    /// The values, parallel to the query's `order()`: a JSON scalar or `null` for a
+    /// `Field` key, a non-empty JSON string for `EntryId`.
+    pub values: Vec<String>,
 }
 
 /// A validated query: filters, sort, page size, field selection and expansion depth,
@@ -291,6 +316,131 @@ impl Query {
             text.push(char::from(HEX[usize::from(byte & 0xf)]));
         }
         text
+    }
+
+    /// Seals `position` into a cursor: `v1:<query hash>:<position>` as base64url —
+    /// `v1:` the format's version, the hash this query's canonical form, the position
+    /// a canonical JSON array. A cursor binds one query — its filters, sort, limit,
+    /// fields and depth, hence one ordering — running under one collection: the hash
+    /// names the query document, and the collection is fixed by where the cursor is
+    /// offered (the document doesn't name one). The SQL layer turns the position
+    /// back into a `WHERE (k1, k2, …) > (v1, v2, …)` tuple compare in the order's
+    /// own directions.
+    ///
+    /// `position` must fit `order()`: one value per key — a JSON scalar or `null`
+    /// for a `Field` key, a non-empty JSON string for `EntryId` — else
+    /// `position_mismatch`. Each value is written canonically into the token, so a
+    /// different spelling of the same value mints the same cursor.
+    pub fn cursor(&self, position: &Position) -> Result<String, Refusal> {
+        let root = Pointer::new();
+        let order = self.order();
+        if position.values.len() != order.len() {
+            return Err(refused(
+                "position_mismatch",
+                &root,
+                format!("a position names {} values, one per order key", order.len()),
+            ));
+        }
+        let mut values = Vec::with_capacity(order.len());
+        for ((key, _), value) in order.iter().zip(&position.values) {
+            let parsed: Value = serde_json::from_str(value).map_err(|_| {
+                refused(
+                    "position_mismatch",
+                    &root,
+                    "a position's values are JSON literals",
+                )
+            })?;
+            values.push(position_literal(key, &parsed, &root)?);
+        }
+        let payload = format!("v1:{}:[{}]", self.query_hash_hex(), values.join(","));
+        if payload.len() > MAX_CURSOR_BYTES {
+            return Err(refused(
+                "too_large",
+                &root,
+                format!(
+                    "a cursor decodes to at most {} KiB",
+                    MAX_CURSOR_BYTES / 1024
+                ),
+            ));
+        }
+        Ok(URL_SAFE_NO_PAD.encode(payload))
+    }
+
+    /// Reads back the position `token` seals, refusing what doesn't parse
+    /// (`invalid_cursor`), what isn't this query's own — another version or another
+    /// query's hash (`foreign_cursor`: "this cursor is not valid for this query"),
+    /// or a position that doesn't fit `order()` (`position_mismatch`). Oversized
+    /// tokens are refused before decoding (`too_large`).
+    pub fn after_cursor(&self, token: &str) -> Result<Position, Refusal> {
+        let root = Pointer::new();
+        let malformed = || {
+            refused(
+                "invalid_cursor",
+                &root,
+                "a cursor is `v1:<query>:<position>` as base64url",
+            )
+        };
+        if token.len() > MAX_CURSOR_CHARS {
+            return Err(refused(
+                "too_large",
+                &root,
+                format!(
+                    "a cursor decodes to at most {} KiB",
+                    MAX_CURSOR_BYTES / 1024
+                ),
+            ));
+        }
+        let bytes = URL_SAFE_NO_PAD.decode(token).map_err(|_| malformed())?;
+        if bytes.len() > MAX_CURSOR_BYTES {
+            return Err(refused(
+                "too_large",
+                &root,
+                format!(
+                    "a cursor decodes to at most {} KiB",
+                    MAX_CURSOR_BYTES / 1024
+                ),
+            ));
+        }
+        let text = String::from_utf8(bytes).map_err(|_| malformed())?;
+        let Some(rest) = text.strip_prefix("v1:") else {
+            return Err(if other_version(&text) {
+                refused(
+                    "foreign_cursor",
+                    &root,
+                    "this cursor is not valid for this query",
+                )
+            } else {
+                malformed()
+            });
+        };
+        let (hash, body) = rest.split_once(':').ok_or_else(malformed)?;
+        if hash != self.query_hash_hex() {
+            return Err(refused(
+                "foreign_cursor",
+                &root,
+                "this cursor is not valid for this query",
+            ));
+        }
+        let parsed: Vec<Value> = serde_json::from_str(body).map_err(|_| {
+            refused(
+                "invalid_cursor",
+                &root,
+                "a cursor's position is a JSON array of values",
+            )
+        })?;
+        let order = self.order();
+        if parsed.len() != order.len() {
+            return Err(refused(
+                "position_mismatch",
+                &root,
+                format!("a position names {} values, one per order key", order.len()),
+            ));
+        }
+        let mut values = Vec::with_capacity(order.len());
+        for ((key, _), value) in order.iter().zip(&parsed) {
+            values.push(position_literal(key, value, &root)?);
+        }
+        Ok(Position { values })
     }
 }
 
@@ -728,6 +878,69 @@ fn write_sort(out: &mut String, key: &Sort) {
     out.push('}');
 }
 
+/// One position value for its order key, in canonical JSON: the `EntryId` key takes
+/// the id as a non-empty JSON string, a `Field` key a scalar or `null` — every shape
+/// a stored value can take, no other. Whether the literal is one the field accepts is
+/// the field's own check, done where the definition is at hand.
+fn position_literal(key: &OrderKey, value: &Value, pointer: &Pointer) -> Result<String, Refusal> {
+    if let OrderKey::EntryId = key {
+        let id = value.as_str().filter(|id| !id.is_empty()).ok_or_else(|| {
+            refused(
+                "position_mismatch",
+                pointer,
+                "the entry id's position is a non-empty JSON string",
+            )
+        })?;
+        let mut out = String::with_capacity(id.len() + 2);
+        write_string(&mut out, id);
+        return Ok(out);
+    }
+    Ok(match value {
+        Value::Null => "null".to_owned(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::String(text) => {
+            let mut out = String::with_capacity(text.len() + 2);
+            write_string(&mut out, text);
+            out
+        }
+        Value::Number(number) => {
+            let mismatch = || {
+                refused(
+                    "position_mismatch",
+                    pointer,
+                    "a position's numbers are safe integers or six-place decimals",
+                )
+            };
+            let float = number.as_f64().ok_or_else(mismatch)?;
+            let integer = number.is_i64() || number.is_u64() || float.fract() == 0.0;
+            check_number(float, integer).map_err(|_| mismatch())?;
+            let mut out = String::new();
+            write_number(&mut out, float, integer);
+            out
+        }
+        Value::Array(_) | Value::Object(_) => {
+            return Err(refused(
+                "position_mismatch",
+                pointer,
+                "a field's position is a JSON scalar or `null`",
+            ));
+        }
+    })
+}
+
+/// Whether `text` has a cursor's shape but another version's name (`v2:`, `v17:`) —
+/// a cursor from another line is foreign, not malformed.
+fn other_version(text: &str) -> bool {
+    match text.split_once(':') {
+        Some((tag, _)) => {
+            tag.len() > 1
+                && tag.starts_with('v')
+                && tag[1..].bytes().all(|byte| byte.is_ascii_digit())
+        }
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -780,6 +993,23 @@ mod tests {
     fn refusal_of(value: &Value) -> (&'static str, String) {
         let refusal = checked(value).expect_err("refused");
         (refusal.code, refusal.pointer)
+    }
+
+    /// A position of canonical literals, as a page boundary hands one.
+    fn boundary(values: &[&str]) -> Position {
+        Position {
+            values: values.iter().map(|value| (*value).to_owned()).collect(),
+        }
+    }
+
+    /// The refusal `token` gets from `query`'s `after_cursor`, as its code.
+    fn cursor_refusal(query: &Query, token: &str) -> &'static str {
+        query.after_cursor(token).expect_err("refused").code
+    }
+
+    /// The refusal `position` gets from `query`'s `cursor`, as its code.
+    fn mint_refusal(query: &Query, position: &Position) -> &'static str {
+        query.cursor(position).expect_err("refused").code
     }
 
     #[test]
@@ -1444,5 +1674,236 @@ mod tests {
         ] {
             assert_eq!(field(extra.clone()), Ok(()), "{extra}");
         }
+    }
+
+    #[test]
+    fn a_cursor_seals_a_position_and_reads_it_back() {
+        let query =
+            checked(&json!({"sort": [{"field": "publish_at", "dir": "desc"}]})).expect("valid");
+        let id = format!("\"{ENTRY}\"");
+        let position = boundary(&["\"2026-10-25T14:30:00Z\"", &id]);
+        let token = query.cursor(&position).expect("a position that fits");
+        // The token is `v1:` + the query's hash + the position array, as base64url.
+        let decoded =
+            String::from_utf8(URL_SAFE_NO_PAD.decode(&token).expect("base64url")).expect("UTF-8");
+        let (version, rest) = decoded.split_once(':').expect("the v1 prefix");
+        assert_eq!(version, "v1");
+        let (hash, body) = rest.split_once(':').expect("the hash");
+        assert_eq!(hash, query.query_hash_hex());
+        assert_eq!(
+            body,
+            "[\"2026-10-25T14:30:00Z\",\"123e4567-e89b-12d3-a456-426614174000\"]"
+        );
+        // And the position reads back exactly.
+        assert_eq!(
+            query.after_cursor(&token).expect("its own cursor"),
+            position
+        );
+    }
+
+    #[test]
+    fn a_cursor_holds_nulls_and_every_scalar_shape() {
+        let query = checked(&json!({"sort": [
+            {"field": "publish_at", "dir": "desc"},
+            {"field": "rating"},
+            {"field": "headline"},
+            {"field": "featured"}
+        ]}))
+        .expect("valid");
+        // Four declared keys plus the entry id: a `null` where the entry doesn't
+        // set the field, a number, a string, a boolean, the id.
+        let id = format!("\"{ENTRY}\"");
+        let position = boundary(&["null", "4", "\"a title\"", "false", &id]);
+        let token = query.cursor(&position).expect("a position that fits");
+        assert_eq!(
+            query.after_cursor(&token).expect("its own cursor"),
+            position
+        );
+    }
+
+    #[test]
+    fn a_position_is_written_canonically_into_the_token() {
+        let query = checked(&json!({"sort": [{"field": "rating"}]})).expect("valid");
+        // `4.50` is not the canonical spelling of 4.5; the token holds `4.5`.
+        let token = query
+            .cursor(&boundary(&["4.50", "\"x\""]))
+            .expect("a position that fits");
+        let decoded =
+            String::from_utf8(URL_SAFE_NO_PAD.decode(&token).expect("base64url")).expect("UTF-8");
+        assert!(decoded.ends_with(":[4.5,\"x\"]"), "{decoded}");
+        assert_eq!(
+            query.after_cursor(&token).expect("its own cursor").values,
+            vec!["4.5".to_owned(), "\"x\"".to_owned()]
+        );
+    }
+
+    #[test]
+    fn another_query_refuses_the_cursor() {
+        let query =
+            checked(&json!({"sort": [{"field": "publish_at", "dir": "desc"}]})).expect("valid");
+        let token = query
+            .cursor(&boundary(&["\"2026-10-25T14:30:00Z\"", "\"x\""]))
+            .expect("a position that fits");
+        // A different document hashes differently — the cursor is not its own.
+        for document in [
+            json!({"sort": [{"field": "publish_at", "dir": "desc"}], "limit": 21}),
+            json!({"sort": [{"field": "rating", "dir": "desc"}]}),
+            json!({
+                "filters": [{"field": "featured", "op": "eq", "value": true}],
+                "sort": [{"field": "publish_at", "dir": "desc"}]
+            }),
+            json!({}),
+        ] {
+            let other = checked(&document).expect("valid");
+            let refusal = other.after_cursor(&token).expect_err("refused");
+            assert_eq!(refusal.code, "foreign_cursor", "{document}");
+            assert_eq!(refusal.message, "this cursor is not valid for this query");
+        }
+    }
+
+    #[test]
+    fn a_sort_direction_is_part_of_the_binding() {
+        let desc =
+            checked(&json!({"sort": [{"field": "publish_at", "dir": "desc"}]})).expect("valid");
+        let asc =
+            checked(&json!({"sort": [{"field": "publish_at", "dir": "asc"}]})).expect("valid");
+        // The direction is in the order and the canonical form: the same sort key
+        // another way down is another query, and its cursors are its own.
+        assert_ne!(desc.order(), asc.order());
+        let token = desc
+            .cursor(&boundary(&["\"2026-10-25T14:30:00Z\"", "\"x\""]))
+            .expect("a position that fits");
+        assert_eq!(cursor_refusal(&asc, &token), "foreign_cursor");
+    }
+
+    #[test]
+    fn malformed_and_foreign_cursors_are_refused() {
+        let query =
+            checked(&json!({"sort": [{"field": "publish_at", "dir": "desc"}]})).expect("valid");
+        let hash = query.query_hash_hex();
+        let token = |text: String| URL_SAFE_NO_PAD.encode(text);
+        let cases: [(String, &'static str); 13] = [
+            ("not base64 !".to_owned(), "invalid_cursor"),
+            (String::new(), "invalid_cursor"),
+            (token("hello".to_owned()), "invalid_cursor"),
+            (token("v1:twoparts".to_owned()), "invalid_cursor"),
+            (token("v1x:abc:[]".to_owned()), "invalid_cursor"),
+            (token(format!("v1:{hash}")), "invalid_cursor"),
+            (token(format!("v1:{hash}:{{}}")), "invalid_cursor"),
+            (token(format!("v1:{hash}:trailing")), "invalid_cursor"),
+            // Another version's line, and a different hash, are foreign.
+            (token("v2:abc:[]".to_owned()), "foreign_cursor"),
+            (token("v0:x:y".to_owned()), "foreign_cursor"),
+            (token(format!("v1:{}:[]", "0".repeat(64))), "foreign_cursor"),
+            // Truncated and padded tokens don't decode.
+            (
+                token(format!("v1:{hash}:[\"x\"]"))[..8].to_owned(),
+                "invalid_cursor",
+            ),
+            (format!("{}=", token("v1:a:b".to_owned())), "invalid_cursor"),
+        ];
+        for (cursor, code) in cases {
+            assert_eq!(cursor_refusal(&query, &cursor), code, "{cursor}");
+        }
+    }
+
+    #[test]
+    fn a_position_that_fails_its_shape_is_refused() {
+        let query =
+            checked(&json!({"sort": [{"field": "publish_at", "dir": "desc"}]})).expect("valid");
+        // Arity: the order holds the field and the entry id — no more, no fewer.
+        for position in [
+            boundary(&[]),
+            boundary(&["\"2026-10-25T14:30:00Z\""]),
+            boundary(&["\"2026-10-25T14:30:00Z\"", "\"x\"", "0"]),
+        ] {
+            assert_eq!(
+                mint_refusal(&query, &position),
+                "position_mismatch",
+                "{position:?}"
+            );
+        }
+        // Shape: the entry id is a non-empty string; a field's value a scalar or
+        // `null`, and only a number a field could hold.
+        for position in [
+            boundary(&["\"2026-10-25T14:30:00Z\"", "7"]),
+            boundary(&["\"2026-10-25T14:30:00Z\"", "\"\""]),
+            boundary(&["\"2026-10-25T14:30:00Z\"", "null"]),
+            boundary(&["{\"at\": 1}", "\"x\""]),
+            boundary(&["[1, 2]", "\"x\""]),
+            boundary(&["not json", "\"x\""]),
+            boundary(&["1e30", "\"x\""]),
+            boundary(&["0.0000001", "\"x\""]),
+        ] {
+            assert_eq!(
+                mint_refusal(&query, &position),
+                "position_mismatch",
+                "{position:?}"
+            );
+        }
+        // A hash-matching token hand-built to the same shapes is refused on decode.
+        let hash = query.query_hash_hex();
+        for body in [
+            "[]",
+            "[null]",
+            "[\"x\", null]",
+            "[\"x\", \"x\", 0]",
+            "[[1], \"x\"]",
+            "[{\"a\":1}, \"x\"]",
+            "[1e30, \"x\"]",
+        ] {
+            let token = URL_SAFE_NO_PAD.encode(format!("v1:{hash}:{body}"));
+            assert_eq!(
+                cursor_refusal(&query, &token),
+                "position_mismatch",
+                "{body}"
+            );
+        }
+        // And what isn't an array of values at all is malformed.
+        for body in ["1", "\"x\"", "{}", "null", "[1,2"] {
+            let token = URL_SAFE_NO_PAD.encode(format!("v1:{hash}:{body}"));
+            assert_eq!(cursor_refusal(&query, &token), "invalid_cursor", "{body}");
+        }
+    }
+
+    #[test]
+    fn an_oversized_cursor_is_refused_before_it_is_read() {
+        let query = checked(&json!({})).expect("valid");
+        // One byte over the bound still decodes, then is refused.
+        let inside = format!(
+            "v1:{}:[\"{}\"]",
+            query.query_hash_hex(),
+            "x".repeat(MAX_CURSOR_BYTES - 71)
+        );
+        assert_eq!(inside.len(), MAX_CURSOR_BYTES + 1);
+        let token = URL_SAFE_NO_PAD.encode(&inside);
+        assert_eq!(
+            cursor_refusal(&query, &token),
+            "too_large",
+            "a decoded payload past the bound"
+        );
+        // An absurdly long token is refused before decoding at all.
+        let huge = "A".repeat(MAX_CURSOR_CHARS + 1);
+        assert_eq!(cursor_refusal(&query, &huge), "too_large");
+        // And minting never makes a token the bound would refuse.
+        let big = format!("\"{}\"", "x".repeat(MAX_CURSOR_BYTES));
+        assert_eq!(mint_refusal(&query, &boundary(&[&big])), "too_large");
+    }
+
+    #[test]
+    fn two_queries_on_one_collection_mint_different_cursors() {
+        let by_date =
+            checked(&json!({"sort": [{"field": "publish_at", "dir": "desc"}]})).expect("valid");
+        let by_rating =
+            checked(&json!({"sort": [{"field": "rating", "dir": "desc"}]})).expect("valid");
+        let date_cursor = by_date
+            .cursor(&boundary(&["\"2026-10-25T14:30:00Z\"", "\"x\""]))
+            .expect("a position that fits");
+        let rating_cursor = by_rating
+            .cursor(&boundary(&["4", "\"x\""]))
+            .expect("a position that fits");
+        assert_ne!(date_cursor, rating_cursor);
+        assert_eq!(cursor_refusal(&by_rating, &date_cursor), "foreign_cursor");
+        assert_eq!(cursor_refusal(&by_date, &rating_cursor), "foreign_cursor");
     }
 }
