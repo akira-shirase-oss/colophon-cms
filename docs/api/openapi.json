@@ -906,6 +906,59 @@
         },
         "type": "object"
       },
+      "GraphQLRequest": {
+        "additionalProperties": false,
+        "description": "GraphQL over the query language (DX.10, D-115): a document at most 8 KiB; the schema is generated per collection, so introspection names it. `entries(where, orderBy, first, after)` runs the canonical document and `entry(id)` one draft; mutations stay REST.",
+        "properties": {
+          "operationName": {
+            "description": "which operation runs, when the document names several",
+            "type": "string"
+          },
+          "query": {
+            "description": "the GraphQL document; `query` is required, `mutation` and `subscription` are refused",
+            "type": "string"
+          },
+          "variables": {
+            "description": "variable values, an object",
+            "type": "object"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "GraphQLResponse": {
+        "description": "GraphQL's own `{\"data\": …, \"errors\": […]}` — a refusal surfaces as an error on the field that ran, `extensions.code`/`extensions.pointer` carrying the query language's `code` and JSON Pointer (D-115)",
+        "properties": {
+          "data": {
+            "description": "`entries` (a `{T}Connection`: `nodes`, `pageInfo {endCursor, hasNextPage}`, `applied {query, queryHash}`) and `entry` results",
+            "type": "object"
+          },
+          "errors": {
+            "items": {
+              "properties": {
+                "extensions": {
+                  "description": "`code` and `pointer`, the refusal's own",
+                  "type": "object"
+                },
+                "locations": {
+                  "type": "array"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "ImportBody": {
         "description": "one JSON object per line, one JSON array of the same objects, or a Strapi API response's `{\"data\": […], \"meta\": {…}}`. Each item is a native content document, a Strapi entity (`{\"type\": \"api::…\", \"data\": {…}}`, `{\"version\":…,\"data\":{…}}`, `{id, attributes}` or a flat `documentId`/`id` document) or a Sanity document (`_id`, `_type`). At most 512 items."
       },
@@ -8249,6 +8302,138 @@
           }
         ],
         "summary": "Every draft's canonical content as JSON Lines",
+        "tags": [
+          "entries"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/graphql": {
+      "post": {
+        "operationId": "queryEntriesGraphQL",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the collection's slug",
+            "in": "path",
+            "name": "collection",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphQLRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphQLResponse"
+                }
+              }
+            },
+            "description": "the document's `data`, with `errors[].extensions` carrying the query language's `code`/`pointer` on a refusal"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`too_large, wrong_type` — the `query` string over 8 KiB, or `variables` not an object"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          },
+          {
+            "apiToken": []
+          }
+        ],
+        "summary": "GraphQL over the same read `entries/query` runs (read-only)",
         "tags": [
           "entries"
         ]

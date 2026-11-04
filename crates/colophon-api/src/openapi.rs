@@ -25,8 +25,8 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     AppState, BuildInfo, assets, audit, auth, changesets, collaboration, components, content_types,
-    delivery, destinations, device, entries, health, members, migrations, projects, receipts,
-    rich_text, roles, schedules, setup, tokens, version,
+    delivery, destinations, device, entries, graphql, health, members, migrations, projects,
+    receipts, rich_text, roles, schedules, setup, tokens, version,
 };
 
 /// A verb Colophon's routes use. Naming them in a small enum keeps the table total: the
@@ -1753,6 +1753,35 @@ pub(crate) static TABLE: &[Route] = &[
                         "the cursor is not this query's",
                     ),
                     refusal(422, "invalid_*", "the query document refused"),
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        (C, "/graphql"),
+        &[op(
+            Verb::Post,
+            |f| on(f, graphql::graphql),
+            OpDoc {
+                id: "queryEntriesGraphQL",
+                summary: "GraphQL over the same read `entries/query` runs (read-only)",
+                tag: "entries",
+                security: Security::Any,
+                body: Some(json("GraphQLRequest")),
+                ok: ok(
+                    200,
+                    Shape::It("GraphQLResponse"),
+                    "the document's `data`, with `errors[].extensions` carrying the query language's `code`/`pointer` on a refusal",
+                ),
+                extra: &[
+                    NOT_FOUND,
+                    FORBIDDEN,
+                    refusal(
+                        422,
+                        "too_large, wrong_type",
+                        "the `query` string over 8 KiB, or `variables` not an object",
+                    ),
                 ],
                 ..MIN
             },
@@ -4307,6 +4336,36 @@ fn entry_parts() -> Value {
             "properties": {
                 "query": { "$ref": "#/components/schemas/QueryDocument", "description": "the canonical document" },
                 "query_hash": { "type": "string", "description": "`sha256:<hex>` of it" },
+            },
+        },
+        "GraphQLRequest": {
+            "type": "object",
+            "required": ["query"],
+            "description": "GraphQL over the query language (DX.10, D-115): a document at most 8 KiB; the schema is generated per collection, so introspection names it. `entries(where, orderBy, first, after)` runs the canonical document and `entry(id)` one draft; mutations stay REST.",
+            "properties": {
+                "query": { "type": "string", "description": "the GraphQL document; `query` is required, `mutation` and `subscription` are refused" },
+                "operationName": { "type": "string", "description": "which operation runs, when the document names several" },
+                "variables": { "type": "object", "description": "variable values, an object" },
+            },
+            "additionalProperties": false,
+        },
+        "GraphQLResponse": {
+            "type": "object",
+            "description": "GraphQL's own `{\"data\": …, \"errors\": […]}` — a refusal surfaces as an error on the field that ran, `extensions.code`/`extensions.pointer` carrying the query language's `code` and JSON Pointer (D-115)",
+            "properties": {
+                "data": { "type": "object", "description": "`entries` (a `{T}Connection`: `nodes`, `pageInfo {endCursor, hasNextPage}`, `applied {query, queryHash}`) and `entry` results" },
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "message": { "type": "string" },
+                            "locations": { "type": "array" },
+                            "path": { "type": "array" },
+                            "extensions": { "type": "object", "description": "`code` and `pointer`, the refusal's own" },
+                        },
+                    },
+                },
             },
         },
     })

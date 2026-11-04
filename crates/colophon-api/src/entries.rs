@@ -76,9 +76,9 @@ const IMPORT_MAX_ITEMS: usize = 512;
 /// The path of the collection routes.
 #[derive(Deserialize)]
 pub(crate) struct CollectionPath {
-    project: String,
-    environment: String,
-    collection: String,
+    pub(crate) project: String,
+    pub(crate) environment: String,
+    pub(crate) collection: String,
 }
 
 /// The path of the single-entry routes.
@@ -628,10 +628,9 @@ fn may_name(
         .is_some_and(|fields| fields.includes(content_type.title_field()))
 }
 
-/// Refuses unless the caller's role may read entries of `collection` (D-058).
 /// Refuses unless the caller's role may read some entries of `collection`: anyone's, or at least
 /// their own.
-fn may_read(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError> {
+pub(crate) fn may_read(tx: &ProjectTransaction, collection: &str) -> Result<(), ApiError> {
     let some = [false, true].into_iter().any(|own| {
         tx.policy
             .fields(Action::ContentRead, collection, own)
@@ -2361,56 +2360,28 @@ struct QueriedView {
 }
 
 impl QueriedView {
-    /// `content`/`hidden_fields` are what [`QueriedView::shown`] computed — possibly
-    /// already expanded ([`crate::populate::expand_document`]) for `depth` ≥ 1.
-    fn of(
-        draft: Draft,
-        published: Option<(Uuid, i64)>,
-        access: &Access,
-        content_type: &ContentType,
-        content: String,
-        hidden_fields: Vec<String>,
-    ) -> Result<Self, ApiError> {
-        let read = access.read.as_ref().ok_or(ApiError::NotFound)?;
-        let mut revision = draft.revision;
-        if !read.includes(content_type.title_field()) {
+    /// The view of one [`QueryRow`] — `title_visible` blanking the title where the role
+    /// can't read the field it comes from, as a draft's own read does.
+    fn row(row: QueryRow) -> Result<Self, ApiError> {
+        let mut revision = row.draft.revision;
+        if !row.title_visible {
             revision.title = String::new();
         }
         Ok(Self {
-            id: draft.entry_id,
-            collection: draft.collection,
-            created_at: rfc3339(draft.created_at)?,
-            created_by: draft.created_by,
-            updated_at: rfc3339(draft.updated_at)?,
+            id: row.draft.entry_id,
+            collection: row.draft.collection,
+            created_at: rfc3339(row.draft.created_at)?,
+            created_by: row.draft.created_by,
+            updated_at: rfc3339(row.draft.updated_at)?,
             revision: RevisionView::new(revision)?,
-            content: RawValue::from_string(content).map_err(ApiError::internal)?,
-            hidden_fields,
-            published: published.map(|(revision_id, generation)| LiveView {
+            content: RawValue::from_string(row.content).map_err(ApiError::internal)?,
+            hidden_fields: row.hidden_fields,
+            published: row.live.map(|(revision_id, generation)| LiveView {
                 revision_id,
                 generation,
             }),
-            locale: draft.locale,
+            locale: row.draft.locale,
         })
-    }
-
-    /// The row's content as the caller may see it — `draft.content` narrowed to the
-    /// role's read fields, then to the query's `fields` selection — and which of the
-    /// content type's fields the role hid. Expansion collects its ids from this: a
-    /// reference the role can't read, or the selection dropped, resolves nothing.
-    fn shown(
-        draft: &Draft,
-        access: &Access,
-        content_type: &ContentType,
-        keep: Option<&[String]>,
-    ) -> Result<(String, Vec<String>), ApiError> {
-        let read = access.read.as_ref().ok_or(ApiError::NotFound)?;
-        let (content, hidden_fields) =
-            visibility::project(draft.content.clone(), read, &field_ids(content_type))?;
-        let content = match keep {
-            Some(keep) => narrow(&content, keep)?,
-            None => content,
-        };
-        Ok((content, hidden_fields))
     }
 }
 
@@ -2454,6 +2425,128 @@ impl AppliedQuery {
     }
 }
 
+/// One row a query answer holds, staged inside its transaction: narrowed to the role
+/// and the `fields` selection, then expanded for `depth` ([`run_query`]). The REST
+/// handler renders it a [`QueriedView`]; GraphQL a node (`crate::graphql`).
+pub(crate) struct QueryRow {
+    /// The entry's draft and its entry row.
+    pub(crate) draft: Draft,
+    /// What readers get now, when published: `(revision id, generation)`.
+    pub(crate) live: Option<(Uuid, i64)>,
+    /// Whether the caller's role reads the title field on this row — `false` blanks it.
+    pub(crate) title_visible: bool,
+    /// The stored canonical JSON, narrowed twice — to what the role may read, then to
+    /// the `fields` selection — then populated.
+    pub(crate) content: String,
+    /// The content type's fields the role can't read.
+    pub(crate) hidden_fields: Vec<String>,
+}
+
+/// What a query run answers: the validated document, its page's rows and the cursor
+/// the next page begins after.
+pub(crate) struct QueryRows {
+    /// The validated document the run applied.
+    pub(crate) language: Document,
+    /// The page's rows.
+    pub(crate) rows: Vec<QueryRow>,
+    /// Where the next page begins; `None` on the last.
+    pub(crate) next_cursor: Option<String>,
+}
+
+/// The pipeline `POST …/entries/query` and `POST …/graphql`'s `entries` share (DX.3,
+/// DX.10): `document` validated against `content_type` (D-103), refused where a filter
+/// or sort names a field the role can't read on every row the page could hold (D-109),
+/// paged under `by`, then each row narrowed and — `depth` above 0 — populated inside
+/// the same transaction, so every level's targets read one snapshot (D-107). The
+/// caller opens and commits `tx`.
+pub(crate) async fn run_query(
+    state: &AppState,
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    content_type: &ContentType,
+    document: &Value,
+    cursor: Option<&str>,
+) -> Result<QueryRows, ApiError> {
+    let language = Document::validate(content_type, document).map_err(ApiError::Invalid)?;
+    let after = cursor
+        .map(|token| language.after_cursor(token))
+        .transpose()
+        .map_err(ApiError::Invalid)?;
+    let by = match whose(&tx.policy, tx.identity, collection, None, false, None)? {
+        Whose::Anyone => None,
+        Whose::Only(creator) => Some(creator),
+        Whose::Nobody => {
+            return Ok(QueryRows {
+                language,
+                rows: Vec::new(),
+                next_cursor: None,
+            });
+        }
+    };
+    // A filter or a sort key reads a field's stored values on every row the page could
+    // hold — result presence and order would reveal them, so the query is refused where
+    // it names one the role can't read on all of them (D-109). Scoped to the caller's
+    // own entries, that's the own-set (a field readable there only stays legal); on
+    // mixed rows it's the anyone-set, where an `own`-only field would discriminate.
+    visibility::refuse_unreadable(
+        document,
+        tx.policy
+            .fields(
+                Action::ContentRead,
+                collection,
+                by.is_some_and(|creator| creator == tx.identity),
+            )
+            .as_ref(),
+    )?;
+    let found = db_query::page(tx, collection, content_type, &language, after.as_ref(), by)
+        .await
+        .map_err(|error| match error {
+            db_query::Error::Cursor(refusal) => ApiError::Invalid(refusal),
+            db_query::Error::Db(error) => ApiError::from_db(error),
+        })?;
+    // Stage each row's shown content, collecting the ids `depth` expands — still inside
+    // the page's own transaction, so every level's targets read the same snapshot.
+    let depth = language.depth();
+    let keep = language.fields();
+    let mut wanted = BTreeSet::new();
+    let mut rows = Vec::with_capacity(found.rows.len());
+    for (draft, live) in found.rows {
+        let access = Access::of(&tx.policy, tx.identity, collection, draft.created_by);
+        let read = access.read.as_ref().ok_or(ApiError::NotFound)?;
+        // The row's content as the caller may see it — `draft.content` narrowed to the
+        // role's read fields, then to the query's `fields` selection — and which of the
+        // content type's fields the role hid. Expansion collects its ids from this: a
+        // reference the role can't read, or the selection dropped, resolves nothing.
+        let (content, hidden_fields) =
+            visibility::project(draft.content.clone(), read, &field_ids(content_type))?;
+        let content = match keep {
+            Some(keep) => narrow(&content, keep)?,
+            None => content,
+        };
+        if depth > 0 {
+            crate::populate::collect_wanted(content_type, &content, &mut wanted)?;
+        }
+        rows.push(QueryRow {
+            title_visible: read.includes(content_type.title_field()),
+            draft,
+            live,
+            content,
+            hidden_fields,
+        });
+    }
+    if depth > 0 && !wanted.is_empty() {
+        let resolved = crate::populate::resolve_drafts(state, tx, &wanted, depth).await?;
+        for row in &mut rows {
+            row.content = crate::populate::expand_document(content_type, &row.content, &resolved)?;
+        }
+    }
+    Ok(QueryRows {
+        language,
+        rows,
+        next_cursor: found.next_cursor,
+    })
+}
+
 /// `POST {P}/collections/{collection}/entries/query?cursor=` — the query language (D-103,
 /// step DX.3): the document in the body, validated against the collection's content type;
 /// the page boundary in `?cursor=`, outside the document the validator checks.
@@ -2469,87 +2562,28 @@ pub(crate) async fn query(
     may_read(&tx, &path.collection)?;
     // An unknown collection is 404, like an empty list's.
     let (content_type, _) = content_type(&state, &mut tx, &path.collection).await?;
-    let language = Document::validate(&content_type, &document).map_err(ApiError::Invalid)?;
-    let after = parameters
-        .cursor
-        .as_deref()
-        .map(|token| language.after_cursor(token))
-        .transpose()
-        .map_err(ApiError::Invalid)?;
-    let applied = || AppliedQuery::of(&language);
-    let by = match whose(&tx.policy, tx.identity, &path.collection, None, false, None)? {
-        Whose::Anyone => None,
-        Whose::Only(creator) => Some(creator),
-        Whose::Nobody => {
-            tx.commit().await.map_err(ApiError::from_db)?;
-            let body = serde_json::to_string(&QueryPage {
-                data: Vec::new(),
-                next_cursor: None,
-                applied: applied()?,
-            })
-            .map_err(ApiError::internal)?;
-            return Ok(json(StatusCode::OK, body, None, false));
-        }
-    };
-    // A filter or a sort key reads a field's stored values on every row the page could
-    // hold — result presence and order would reveal them, so the query is refused where
-    // it names one the role can't read on all of them (D-109). Scoped to the caller's
-    // own entries, that's the own-set (a field readable there only stays legal); on
-    // mixed rows it's the anyone-set, where an `own`-only field would discriminate.
-    visibility::refuse_unreadable(
-        &document,
-        tx.policy
-            .fields(
-                Action::ContentRead,
-                &path.collection,
-                by.is_some_and(|creator| creator == tx.identity),
-            )
-            .as_ref(),
-    )?;
-    let found = db_query::page(
+    let QueryRows {
+        language,
+        rows,
+        next_cursor,
+    } = run_query(
+        &state,
         &mut tx,
         &path.collection,
         &content_type,
-        &language,
-        after.as_ref(),
-        by,
+        &document,
+        parameters.cursor.as_deref(),
     )
-    .await
-    .map_err(|error| match error {
-        db_query::Error::Cursor(refusal) => ApiError::Invalid(refusal),
-        db_query::Error::Db(error) => ApiError::from_db(error),
-    })?;
-    // Stage each row's shown content, collecting the ids `depth` expands — still inside
-    // the page's own transaction, so every level's targets read the same snapshot.
-    let depth = language.depth();
-    let keep = language.fields();
-    let mut wanted = BTreeSet::new();
-    let mut staged = Vec::with_capacity(found.rows.len());
-    for (draft, live) in found.rows {
-        let access = Access::of(&tx.policy, tx.identity, &path.collection, draft.created_by);
-        let (content, hidden_fields) = QueriedView::shown(&draft, &access, &content_type, keep)?;
-        if depth > 0 {
-            crate::populate::collect_wanted(&content_type, &content, &mut wanted)?;
-        }
-        staged.push((draft, live, access, content, hidden_fields));
-    }
-    let resolved = if depth == 0 || wanted.is_empty() {
-        crate::populate::Resolved::default()
-    } else {
-        crate::populate::resolve_drafts(&state, &mut tx, &wanted, depth).await?
-    };
+    .await?;
     tx.commit().await.map_err(ApiError::from_db)?;
-    let data = staged
+    let data = rows
         .into_iter()
-        .map(|(draft, live, access, content, hidden_fields)| {
-            let content = crate::populate::expand_document(&content_type, &content, &resolved)?;
-            QueriedView::of(draft, live, &access, &content_type, content, hidden_fields)
-        })
+        .map(QueriedView::row)
         .collect::<Result<Vec<_>, ApiError>>()?;
     let body = serde_json::to_string(&QueryPage {
         data,
-        next_cursor: found.next_cursor,
-        applied: applied()?,
+        next_cursor,
+        applied: AppliedQuery::of(&language)?,
     })
     .map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, None, false))

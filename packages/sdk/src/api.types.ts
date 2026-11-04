@@ -454,6 +454,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/graphql": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** GraphQL over the same read `entries/query` runs (read-only) */
+        post: operations["queryEntriesGraphQL"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/import": {
         parameters: {
             query?: never;
@@ -1694,6 +1711,27 @@ export interface components {
             /** Format: uuid */
             id?: string;
             subject?: string;
+        };
+        /** @description GraphQL over the query language (DX.10, D-115): a document at most 8 KiB; the schema is generated per collection, so introspection names it. `entries(where, orderBy, first, after)` runs the canonical document and `entry(id)` one draft; mutations stay REST. */
+        GraphQLRequest: {
+            /** @description which operation runs, when the document names several */
+            operationName?: string;
+            /** @description the GraphQL document; `query` is required, `mutation` and `subscription` are refused */
+            query: string;
+            /** @description variable values, an object */
+            variables?: Record<string, unknown>;
+        };
+        /** @description GraphQL's own `{"data": …, "errors": […]}` — a refusal surfaces as an error on the field that ran, `extensions.code`/`extensions.pointer` carrying the query language's `code` and JSON Pointer (D-115) */
+        GraphQLResponse: {
+            /** @description `entries` (a `{T}Connection`: `nodes`, `pageInfo {endCursor, hasNextPage}`, `applied {query, queryHash}`) and `entry` results */
+            data?: Record<string, unknown>;
+            errors?: {
+                /** @description `code` and `pointer`, the refusal's own */
+                extensions?: Record<string, unknown>;
+                locations?: unknown[];
+                message?: string;
+                path?: unknown[];
+            }[];
         };
         /** @description one JSON object per line, one JSON array of the same objects, or a Strapi API response's `{"data": […], "meta": {…}}`. Each item is a native content document, a Strapi entity (`{"type": "api::…", "data": {…}}`, `{"version":…,"data":{…}}`, `{id, attributes}` or a flat `documentId`/`id` document) or a Sanity document (`_id`, `_type`). At most 512 items. */
         ImportBody: unknown;
@@ -5376,6 +5414,91 @@ export interface operations {
             };
             /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    queryEntriesGraphQL: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the collection's slug */
+                collection: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphQLRequest"];
+            };
+        };
+        responses: {
+            /** @description the document's `data`, with `errors[].extensions` carrying the query language's `code`/`pointer` on a refusal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphQLResponse"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `too_large, wrong_type` — the `query` string over 8 KiB, or `variables` not an object */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

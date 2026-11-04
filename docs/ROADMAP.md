@@ -288,7 +288,13 @@ reported as delayed, never on time; locale variants publish independently; comme
   drift-checked the same way, plus a hand-written `Client` (typed methods over the core surface, the error
   envelope parsed into `ApiError`, `If-Match`/`Idempotency-Key` required by the types, bounded reads,
   generation-pinned delivery via `atGeneration`); no second auth surface — a credential is attached, never
-  minted. GraphQL stays to come.
+  minted. GraphQL is built (DX.10, D-115): `POST {P}/collections/{collection}/graphql` builds an `async-graphql`
+  dynamic schema per request from the project's content types — `entries(where, orderBy, first, after)` and
+  `entry(id)`, a node type per collection the role may read — and every call's arguments and selection compile
+  to the same canonical document `entries/query` runs, validated and executed by the shared `run_query`
+  pipeline in one transaction (`applied.query`/`queryHash` byte-equal to REST's echo), refusals surfacing as
+  GraphQL errors carrying the document's own `code`/`pointer` in `extensions`. Read-only: mutations stay REST,
+  delivery stays `/content/v1`.
 - Webhooks by event (entry, release, media, schema), import from Strapi and Sanity exports with a dry run, export.
   Import parity is built (DX.9, D-114): `POST …/collections/{collection}/import` reads native JSONL and JSON
   arrays, marked Strapi envelopes, Strapi v4 `{id, attributes}` and v5 `documentId` documents, and Sanity NDJSON —

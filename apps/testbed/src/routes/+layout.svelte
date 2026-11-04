@@ -22,6 +22,7 @@
 		{ href: resolve('/site'), label: 'Website starter' },
 		{ href: resolve('/assets'), label: 'Assets' },
 		{ href: resolve('/transfer'), label: 'Import & export' },
+		{ href: resolve('/graphql'), label: 'GraphQL' },
 		{ href: resolve('/device'), label: 'Device sign-in' },
 		{ href: resolve('/members'), label: 'Members' },
 		{ href: resolve('/roles'), label: 'Roles' },
