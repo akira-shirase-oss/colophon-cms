@@ -279,7 +279,12 @@ Built in step 1.7 (D-042), for people:
   `documents_per_day`, `max_concurrent_jobs` and `requests_per_minute` ceilings — NULL per field
   means unconstrained, no row means the quota layer does not exist. The accepting transaction
   counts against `budget_reservations` under the limits row's lock and refuses `budget_exceeded`
-  (403) before any work starts ([automation](09-automation.md), "Budgets"). Limits and the usage
+  (403) before any work starts ([automation](09-automation.md), "Budgets"). `requests_per_minute`
+  is enforced at request time instead (D-118): the token check's locked row hands the ceiling to
+  the transaction, and the admission limiter's rolling window — one GCRA cell per token, counted
+  in Valkey with the same per-process fallback the rate limits have — answers 429 `rate_limited`
+  with `Retry-After` before handler work begins. The audit log hears an episode once, as
+  `token.rate_limited`. Limits and the usage
   read-back live only on the people-facing token routes — set at creation or replaced/removed by
   `PATCH /api/v1/projects/{project}/tokens/{token}`, read with usage on `GET` of the same path —
   so a token can neither see nor change its own bounds, and every change is `token.limits_changed`

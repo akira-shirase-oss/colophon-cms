@@ -158,11 +158,12 @@ CLI can show from it what a role or token can do.
 
 **Not built yet (P5):**
 - Remote MCP: Streamable HTTP with the 2025-11-25 authorization requirements and audience validation.
-- Service-account quotas beyond R.4's tokens: the `requests`-kind quota consumer and provider `tokens`/`cost`
-  budgets (the substrate itself is built, D-113).
+- Service-account quotas beyond R.4's tokens: provider `tokens`/`cost` budgets (the substrate itself
+  is built, D-113; the request-quota consumer landed with D-118).
 - `validate_changeset` and `job_status` (releases and receipts are `list_releases`/`get_release`), and unpublish
   requests.
-- L08 (a noisy agent beside editors).
+- L08's load evidence (a noisy agent beside editors): the quota that throttles the agent is built
+  (D-118); the measured latency isolation under load is still owed.
 - A `colophon mcp` subcommand in the CLI, and environments other than `production`.
 - Testbed and k6 coverage for the MCP server itself: it adds no API route, and the routes it calls keep their own.
 
@@ -184,8 +185,8 @@ CLI can show from it what a role or token can do.
 boundary, not in a cache or a worker's memory.
 
 - `api_token_limits` holds a token's ceilings — `documents_per_day` (1…1,000,000),
-  `max_concurrent_jobs` (1…64) and `requests_per_minute` (1…100,000, stored for the hard quota slot;
-  nothing consumes it yet). NULL is unconstrained per dimension; no row means the quota layer does
+  `max_concurrent_jobs` (1…64) and `requests_per_minute` (1…100,000, enforced at request time by
+  D-118's quota, below). NULL is unconstrained per dimension; no row means the quota layer does
   not exist for that credential — a person is never limited this way.
 - `budget_reservations` is the ledger: `held` while work is in flight, `settled` with what the
   outcome consumed in the same commit, `released` when the work can never happen, `uncertain` when
@@ -201,7 +202,16 @@ boundary, not in a cache or a worker's memory.
 - Limits and usage are managed and read only on the people-facing token routes
   (`POST`/`PATCH`/`GET {P}/tokens/{token}`); the exhaustion refusal is 403 `budget_exceeded`, a
   hard quota distinct from the GCRA limiter's `rate_limited`.
-- Provider `tokens`/`cost` kinds and the `requests` consumer are reserved in the schema for the
+- `requests_per_minute` is the exception that proves the rule about where counting lives
+  (D-118): reserving a request per request would cost a write per request, so the ceiling rides
+  the admission limiter instead — a GCRA cell keyed `colophon:quota:{project}:{token}`, the
+  ceiling read from the same locked token row authentication already takes, checked where the
+  token's scoped transaction opens, before handler work. Over it: 429 `rate_limited` with
+  `Retry-After`; the audit log hears the episode's first refusal once as `token.rate_limited`;
+  `usage.requests_last_minute` reads the live window back. Valkey's answer is the shared
+  limiter's own — a local per-process count while it is away, never a refusal for its absence —
+  and a member session carries no token scope, so the check does not exist for people.
+- Provider `tokens`/`cost` kinds are reserved in the schema for the
   slices that need them; D-113 records the model.
 
 ### Optional AI writing assistant (off by default)

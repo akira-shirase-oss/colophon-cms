@@ -410,8 +410,7 @@ allowance and writes `held` or refuses `budget_exceeded` (403); documents reserv
 with the outcome, superseded pending jobs' reservations release with the supersede, and the worker's sweep closes
 reservations whose outcomes are on record and flags stale held rows `uncertain` as `budget.discrepancy` audit
 events; limits and usage are managed and read only on the people-facing `POST`/`PATCH`/`GET …/tokens/{token}`
-routes; `requests_per_minute` is stored for the hard quota slot but not yet consumed; covered by
-`colophon-db`'s and `colophon-server`'s `tests/budgets.rs`) ·
+routes; `requests_per_minute` is consumed at request time by D-118's quota); ·
 bulk manifests and jobs (built: P5.3, D-116, migration 0046 — `{P}/bulk` keyed chunks of exact entry ids and
 base revisions, at most 100 items and 1 MiB a chunk, executed one transaction per item by the worker as the
 original submitter: outcomes `applied`/`conflict`/`refused`/`skipped`, a resumable `v1:`-sealed item cursor,
@@ -423,9 +422,15 @@ plus the token-privilege and MCP refusal surfaces, every call classified `refuse
 against typed-refusal oracles and owner-read end state, `COLOPHON_EVAL_TRIALS` repetitions and the
 `UNAUTHORIZED: 0` gate; `scripts/check.sh` runs it at three trials, `COLOPHON_EVAL_RESULTS` stores the
 artifact) ·
+the request-time quota (built: D-118 — `requests_per_minute` consumed as a rolling window in the
+admission limiter, keyed `colophon:quota:{project}:{token}`, checked where the token's scoped
+transaction opens: 429 `rate_limited` with `Retry-After`, `token.rate_limited` audited once per
+throttle episode, members untouched, Valkey-outage semantics the shared limiter's own,
+`COLOPHON_QUOTA_WINDOW_MS` shortening the window for tests; covered by `tests/quotas.rs` and
+`perf/k6/quotas.js`) ·
 not built: remote MCP with its
-authorization, the `requests`-kind quota consumer and provider `tokens`/`cost` budgets, the CLI's full JSON
-contract and a `colophon mcp` subcommand, L08. The proof gate is not met — X12's resume proof is in
+authorization, provider `tokens`/`cost` budgets, the CLI's full JSON
+contract and a `colophon mcp` subcommand, L08's load evidence. The proof gate is not met — X12's resume proof is in
 `tests/bulk.rs`, the eval gate wants a stored green run, and L08 remains.
 
 ## P6: Operate it (≈ spec M5)

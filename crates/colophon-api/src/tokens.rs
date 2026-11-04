@@ -44,7 +44,7 @@ pub(crate) struct LimitsBody {
     /// Delivery jobs held at once.
     #[serde(default)]
     max_concurrent_jobs: Option<i64>,
-    /// Management requests per minute (stored; nothing consumes it yet).
+    /// Management requests per rolling minute, throttled with 429 over it (D-118).
     #[serde(default)]
     requests_per_minute: Option<i64>,
 }
@@ -176,14 +176,16 @@ pub(crate) struct TokenView {
     secret: Option<String>,
 }
 
-/// What the token holds or spent now (migration 0045), as `budget_reservations` counts it.
+/// What the token holds or spent now: `budget_reservations`'s counts, and the limiter's own
+/// window for requests (D-118).
 #[derive(Serialize)]
 pub(crate) struct UsageView {
     /// Documents written in the last day (settled, held and uncertain reservations).
     documents_last_day: i64,
     /// Jobs reservations still open (held or uncertain).
     jobs_open: i64,
-    /// Management requests in the last minute (recorded; always 0 until consumed).
+    /// Management requests in the current rolling minute (0 without the ceiling, or when
+    /// the count isn't reachable — never an overstatement).
     requests_last_minute: i64,
 }
 
@@ -258,6 +260,28 @@ async fn may_manage(tx: &mut colophon_db::scope::MemberTransaction) -> Result<Po
     Ok(fresh)
 }
 
+/// `budget_reservations`'s counts for the token, with `requests_last_minute` from the
+/// limiter's own window when the token has the ceiling and the count is reachable (D-118):
+/// the ledger records no requests — admission's counter does — so the ledger's number only
+/// stands in for an unreachable one, and is 0 either way.
+async fn usage(
+    state: &AppState,
+    tx: &mut colophon_db::scope::MemberTransaction,
+    token: &StoredToken,
+) -> Result<colophon_db::budgets::Usage, ApiError> {
+    let mut usage = colophon_db::budgets::usage(tx, token.identity_id)
+        .await
+        .map_err(ApiError::from_db)?;
+    if let (Some(admission), Some(rpm)) = (
+        &state.admission,
+        token.limits.and_then(|limits| limits.requests_per_minute),
+    ) && let Some(spent) = admission.quota_spent(tx.project, token.id, rpm).await
+    {
+        usage.requests_last_minute = spent;
+    }
+    Ok(usage)
+}
+
 /// `GET /api/v1/projects/{project}/tokens`.
 pub(crate) async fn list(
     State(state): State<AppState>,
@@ -291,9 +315,7 @@ pub(crate) async fn get(
     let Some(token) = tokens::get(&mut tx, id).await.map_err(ApiError::from_db)? else {
         return Err(ApiError::NotFound);
     };
-    let usage = colophon_db::budgets::usage(&mut tx, token.identity_id)
-        .await
-        .map_err(ApiError::from_db)?;
+    let usage = usage(&state, &mut tx, &token).await?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(Json(Data {
         data: TokenView::new(token, None, Some(usage))?,
@@ -360,9 +382,7 @@ pub(crate) async fn update(
         )
         .await?;
     }
-    let usage = colophon_db::budgets::usage(&mut tx, token.identity_id)
-        .await
-        .map_err(ApiError::from_db)?;
+    let usage = usage(&state, &mut tx, &token).await?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(Json(Data {
         data: TokenView::new(token, None, Some(usage))?,

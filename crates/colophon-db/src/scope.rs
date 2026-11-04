@@ -52,6 +52,20 @@ pub struct ProjectTransaction {
     pub role: String,
     /// What that role may do (D-058).
     pub policy: Policy,
+    /// The API token this transaction runs as, when it does (D-118); `None` for a person.
+    pub token: Option<TokenScope>,
+}
+
+/// The API token a transaction runs as (D-118): what the request-time quota needs — the
+/// token's id, for the audit log to name, and its `requests_per_minute` ceiling, read with the
+/// same `FOR SHARE` row the token check already took, so the limit costs nothing extra.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenScope {
+    /// The token's id.
+    pub id: Uuid,
+    /// Its `api_token_limits.requests_per_minute`; `None` — no limits row, or the field
+    /// NULL — is unconstrained at the request-quota layer.
+    pub requests_per_minute: Option<i64>,
 }
 
 impl ProjectTransaction {
@@ -104,6 +118,8 @@ pub struct MemberTransaction {
     pub role: String,
     /// What that role may do (D-058).
     pub policy: Policy,
+    /// The API token this transaction runs as, when it does (D-118); `None` for a person.
+    pub token: Option<TokenScope>,
 }
 
 impl MemberTransaction {
@@ -177,14 +193,17 @@ pub async fn begin_as_member(
         project,
         role,
         policy,
+        token: None,
     }))
 }
 
 /// Begins a transaction as the API token that acts as `identity`, in `project` (step R.4,
 /// D-063): checks, inside the project's context, that the token belongs to the project and is
-/// neither revoked nor expired, and reads its permissions. The check holds a share lock on the
-/// token's row until the transaction ends, so revoking the token waits for this request, and no
-/// request runs under a token once its revocation has committed. `None` if any check fails.
+/// neither revoked nor expired, and reads its permissions — and, with the same row, its
+/// `requests_per_minute` ceiling for the request-time quota (D-118). The check holds a share
+/// lock on the token's row until the transaction ends, so revoking the token waits for this
+/// request, and no request runs under a token once its revocation has committed. `None` if any
+/// check fails.
 pub async fn begin_as_token(
     pool: &PgPool,
     identity: Uuid,
@@ -198,10 +217,14 @@ pub async fn begin_as_token(
         },
     )
     .await?;
-    let token = sqlx::query_scalar!(
-        "SELECT id FROM api_tokens
-         WHERE project_id = $1 AND identity_id = $2 AND revoked_at IS NULL AND expires_at > now()
-         FOR SHARE",
+    let token = sqlx::query!(
+        "SELECT t.id, l.requests_per_minute
+         FROM api_tokens t
+         LEFT JOIN api_token_limits l
+                ON l.project_id = t.project_id AND l.token_id = t.id
+         WHERE t.project_id = $1 AND t.identity_id = $2
+           AND t.revoked_at IS NULL AND t.expires_at > now()
+         FOR SHARE OF t",
         project,
         identity
     )
@@ -211,6 +234,10 @@ pub async fn begin_as_token(
     // Returning drops the transaction, which rolls it back.
     let Some(token) = token else {
         return Ok(None);
+    };
+    let scope = TokenScope {
+        id: token.id,
+        requests_per_minute: token.requests_per_minute,
     };
     let permissions = sqlx::query!(
         r#"SELECT coalesce(array_agg(action ORDER BY action, subject), '{}') AS "actions!",
@@ -222,7 +249,7 @@ pub async fn begin_as_token(
            FROM api_token_permissions
            WHERE project_id = $1 AND token_id = $2"#,
         project,
-        token
+        token.id
     )
     .fetch_one(&mut *transaction)
     .await
@@ -239,6 +266,7 @@ pub async fn begin_as_token(
         project,
         role: TOKEN_ROLE.to_owned(),
         policy,
+        token: Some(scope),
     }))
 }
 
@@ -280,6 +308,7 @@ async fn in_environment(
         environment,
         role: member.role,
         policy: member.policy,
+        token: member.token,
     }))
 }
 
@@ -352,6 +381,7 @@ pub async fn begin_in_environment(
         environment,
         role: member.role,
         policy: member.policy,
+        token: member.token,
     }))
 }
 
@@ -383,5 +413,6 @@ pub async fn begin_in_environment_as_token(
         environment,
         role: member.role,
         policy: member.policy,
+        token: member.token,
     }))
 }

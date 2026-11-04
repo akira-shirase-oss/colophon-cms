@@ -51,3 +51,25 @@ test('make a token, use its secret, refuse a people-only token, revoke it, read 
 	await expect(log.nth(1)).toHaveAttribute('data-action', 'token.created');
 	await expect(log.nth(0)).toContainText('by a person');
 });
+
+test('a token over its requests-per-minute ceiling is refused, and the log records it once', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	await page.goto('/tokens');
+	await page.getByLabel('Project').selectOption(projectId);
+
+	await page.getByLabel('Requests per minute (optional)').fill('1');
+	await page.getByRole('button', { name: 'Create' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created read-only token');
+
+	// One request a minute: the dozen reads get one in, then the quota refuses every next one.
+	await page.getByRole('button', { name: 'Keep using it' }).click();
+	await expect(page.getByTestId('used')).toHaveText('1×200 then 429 rate_limited (rate_limited)');
+
+	// One throttling episode, one event: the repeated refusals inside it are not logged again.
+	const log = page.getByTestId('audit').locator('li');
+	await expect(log.nth(0)).toHaveAttribute('data-action', 'token.rate_limited');
+	await expect(log.nth(0)).toContainText('by a token');
+	await expect(log.nth(1)).toHaveAttribute('data-action', 'token.created');
+	await expect(log.filter({ hasText: 'token.rate_limited' })).toHaveCount(1);
+});

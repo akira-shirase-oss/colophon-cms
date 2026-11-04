@@ -112,6 +112,36 @@ impl Drop for Server {
     }
 }
 
+/// Stops a stack service and starts it again when dropped, whatever the test did.
+pub(crate) struct Stopped(&'static str);
+
+impl Stopped {
+    fn compose(args: &[&str]) {
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
+        let status = Command::new("docker")
+            .args(["compose", "-f"])
+            .arg(file)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("docker compose runs");
+        assert!(status.success(), "docker compose {args:?} failed");
+    }
+
+    /// `docker compose stop <service>`; the service comes back on drop.
+    pub(crate) fn new(service: &'static str) -> Self {
+        Self::compose(&["stop", service]);
+        Self(service)
+    }
+}
+
+impl Drop for Stopped {
+    fn drop(&mut self) {
+        Self::compose(&["start", self.0]);
+    }
+}
+
 /// `deploy/local.env`, the single source of the local settings, as `(key, value)` pairs. With
 /// `COLOPHON_TEST_DATABASE` set to a database name, the server uses that database on the stack's
 /// Postgres instead of `colophon`: a branch with newer migrations is tested without migrating the

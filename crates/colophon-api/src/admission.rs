@@ -1,5 +1,6 @@
 //! Admission: rate limits per client address and per credential, shared by every server through
-//! Valkey (milestone S, D-076).
+//! Valkey (milestone S, D-076); and, on the same machinery, the per-token request quota a
+//! `requests_per_minute` ceiling asks for (D-118).
 //!
 //! Each limit is a generic cell rate algorithm (GCRA): a key's "theoretical arrival time" moves
 //! one interval (a second over the rate) per admitted request, and a request is admitted while
@@ -14,13 +15,21 @@
 //! delivery (`/content/`) per client address at its own rate. Health, version and the Studio's
 //! files don't count. The client address is the connection's peer, or, when the peer is a trusted
 //! proxy, the nearest address in `X-Forwarded-For` that isn't one.
+//!
+//! Beside those, the token quota (`colophon:quota:` keys): an API token's own
+//! `requests_per_minute`, checked where its scoped transaction opens — the ceiling comes from
+//! Postgres, the only authority for it, while the rolling count lives here like any other
+//! cell's. It is a per-credential limit too, but its rate is the token's, configured by the
+//! project, not the operator's floor the shaping limits keep.
 
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex, PoisonError},
-    time::Instant,
+    time::{Duration, Instant},
 };
+
+use uuid::Uuid;
 
 use axum::{
     extract::{ConnectInfo, Request, State},
@@ -83,6 +92,35 @@ impl Rate {
     /// How far ahead of now a key's arrival time may be: the burst less one interval.
     fn tolerance_us(self) -> u64 {
         self.interval_us() * u64::from(self.burst.saturating_sub(1))
+    }
+
+    /// This rate as the cell the counter speaks.
+    fn cell(self) -> Cell {
+        Cell {
+            interval_us: self.interval_us(),
+            tolerance_us: self.tolerance_us(),
+        }
+    }
+}
+
+/// One GCRA cell: a sustained rate (one request every `interval_us`) and how far ahead of now
+/// its arrival time may sit before the request waits (`tolerance_us`, always one burst less
+/// one interval).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Cell {
+    interval_us: u64,
+    tolerance_us: u64,
+}
+
+/// `requests` per `window_ms`, as a cell (D-118): the whole window's allowance may arrive at
+/// once — the burst is the window's worth — then one request every `window/requests`. A
+/// rolling window, so a boundary never serves two windows' worth the way a fixed one does.
+fn quota_cell(requests: i64, window_ms: u64) -> Cell {
+    let requests = u64::try_from(requests).unwrap_or(1).max(1);
+    let interval_us = (window_ms.saturating_mul(1_000) / requests).max(1);
+    Cell {
+        interval_us,
+        tolerance_us: interval_us.saturating_mul(requests.saturating_sub(1)),
     }
 }
 
@@ -148,6 +186,10 @@ pub struct AdmissionSettings {
     pub delivery_per_address: Option<Rate>,
     /// Proxies whose `X-Forwarded-For` says who the client is.
     pub trusted_proxies: Vec<IpPrefix>,
+    /// The quota's window in milliseconds (D-118): `requests_per_minute` is checked against
+    /// this span — the minute it names, 60,000, unless a test shortens it
+    /// (`COLOPHON_QUOTA_WINDOW_MS`). `0` means the minute.
+    pub quota_window_ms: u64,
 }
 
 /// What a request is, for the limits.
@@ -198,6 +240,16 @@ end
 return 0
 ";
 
+/// How far ahead of now one key's arrival sits, on Valkey's clock (microseconds): what a
+/// token's window currently spends, for its view's request usage (D-118). No cell is 0.
+const AHEAD: &str = r"
+local time = redis.call('TIME')
+local now = tonumber(time[1]) * 1000000 + tonumber(time[2])
+local arrival = tonumber(redis.call('GET', KEYS[1])) or now
+if arrival < now then arrival = now end
+return arrival - now
+";
+
 /// This process's own copy of the limits, for while Valkey is away.
 struct Local {
     epoch: Instant,
@@ -206,7 +258,7 @@ struct Local {
 
 impl Local {
     /// GCRA at `now` (microseconds since `epoch`): the wait, or `None` after moving every key.
-    fn check(&mut self, now: u64, keys: &[(String, Rate)]) -> Option<u64> {
+    fn check(&mut self, now: u64, keys: &[(String, Cell)]) -> Option<u64> {
         if self.arrivals.len() >= MAX_LOCAL_KEYS {
             self.arrivals.retain(|_, arrival| *arrival > now);
             if self.arrivals.len() >= MAX_LOCAL_KEYS {
@@ -215,13 +267,13 @@ impl Local {
         }
         let mut wait = 0;
         let mut next = Vec::with_capacity(keys.len());
-        for (key, rate) in keys {
+        for (key, cell) in keys {
             let arrival = self.arrivals.get(key).copied().unwrap_or(now).max(now);
-            let allowed_at = arrival.saturating_sub(rate.tolerance_us());
+            let allowed_at = arrival.saturating_sub(cell.tolerance_us);
             if allowed_at > now {
                 wait = wait.max(allowed_at - now);
             }
-            next.push(arrival + rate.interval_us());
+            next.push(arrival + cell.interval_us);
         }
         if wait > 0 {
             return Some(wait);
@@ -231,6 +283,13 @@ impl Local {
         }
         None
     }
+
+    /// How far ahead of `now` `key`'s arrival sits, for the usage a token view shows.
+    fn ahead(&self, now: u64, key: &str) -> Option<u64> {
+        self.arrivals
+            .get(key)
+            .map(|arrival| arrival.saturating_sub(now))
+    }
 }
 
 /// The limits and where they are counted.
@@ -238,6 +297,11 @@ pub struct Admission {
     settings: AdmissionSettings,
     valkey: Valkey,
     local: Mutex<Local>,
+    /// The quota window, milliseconds (`0` in the settings means the minute).
+    quota_window_ms: u64,
+    /// Tokens this process knows are throttled, until when: the transition the audit log
+    /// records once an episode (D-118). Bounded the way [`Local`]'s arrivals are.
+    throttled: Mutex<HashMap<Uuid, Instant>>,
 }
 
 impl std::fmt::Debug for Admission {
@@ -261,6 +325,10 @@ impl Admission {
             Some(url) => Valkey::new(url).ok_or(InvalidValkeyUrl)?,
             None => Valkey::disabled(),
         };
+        let quota_window_ms = match settings.quota_window_ms {
+            0 => 60_000,
+            window => window,
+        };
         Ok(Self {
             settings,
             valkey,
@@ -268,6 +336,8 @@ impl Admission {
                 epoch: Instant::now(),
                 arrivals: HashMap::new(),
             }),
+            quota_window_ms,
+            throttled: Mutex::new(HashMap::new()),
         })
     }
 
@@ -304,27 +374,27 @@ impl Admission {
         Some(client)
     }
 
-    /// The limits a request counts against, as Valkey keys with their rates.
-    fn keys(&self, class: Class, peer: Option<IpAddr>, headers: &HeaderMap) -> Vec<(String, Rate)> {
+    /// The limits a request counts against, as Valkey keys with their cells.
+    fn keys(&self, class: Class, peer: Option<IpAddr>, headers: &HeaderMap) -> Vec<(String, Cell)> {
         let mut keys = Vec::with_capacity(2);
         let (prefix, per_address) = match class {
             Class::Management => ("m", self.settings.per_address),
             Class::Delivery => ("d", self.settings.delivery_per_address),
         };
         if let (Some(rate), Some(client)) = (per_address, self.client(peer, headers)) {
-            keys.push((format!("colophon:rl:{prefix}:a:{client}"), rate));
+            keys.push((format!("colophon:rl:{prefix}:a:{client}"), rate.cell()));
         }
         if class == Class::Management
             && let (Some(rate), Some(credential)) =
                 (self.settings.per_credential, credential(headers))
         {
-            keys.push((format!("colophon:rl:m:c:{credential}"), rate));
+            keys.push((format!("colophon:rl:m:c:{credential}"), rate.cell()));
         }
         keys
     }
 
     /// The wait a request must take, in microseconds, or `None` if it is admitted.
-    async fn check(&self, keys: &[(String, Rate)]) -> Option<u64> {
+    async fn check(&self, keys: &[(String, Cell)]) -> Option<u64> {
         if keys.is_empty() {
             return None;
         }
@@ -337,15 +407,15 @@ impl Admission {
     }
 
     /// [`Self::check`] in Valkey; `None` if Valkey isn't there to ask.
-    async fn shared(&self, keys: &[(String, Rate)]) -> Option<Option<u64>> {
+    async fn shared(&self, keys: &[(String, Cell)]) -> Option<Option<u64>> {
         let mut connection = self.valkey.connection().await?;
         let mut command = redis::cmd("EVAL");
         command.arg(SCRIPT).arg(keys.len());
         for (key, _) in keys {
             command.arg(key);
         }
-        for (_, rate) in keys {
-            command.arg(rate.interval_us()).arg(rate.tolerance_us());
+        for (_, cell) in keys {
+            command.arg(cell.interval_us).arg(cell.tolerance_us);
         }
         if let Ok(Ok(wait)) =
             tokio::time::timeout(DEADLINE, command.query_async::<u64>(&mut connection)).await
@@ -355,6 +425,102 @@ impl Admission {
             self.valkey.fail();
             None
         }
+    }
+
+    /// A token's own request ceiling (D-118): `rpm` requests a window — `rpm` at once, then
+    /// one every `window/rpm` — in a cell keyed by project and token (`colophon:quota:`), on
+    /// the same machinery and the same fallback as the shaping limits. `None`: admitted.
+    pub(crate) async fn quota(&self, project: Uuid, token: Uuid, rpm: i64) -> Option<Throttle> {
+        let keys = [(
+            quota_key(project, token),
+            quota_cell(rpm, self.quota_window_ms),
+        )];
+        let wait_us = self.check(&keys).await?;
+        Some(Throttle {
+            wait_us,
+            transition: self.mark_throttled(token, wait_us),
+        })
+    }
+
+    /// What a token's window currently spends, in requests: the cell's lead over now, in
+    /// `rpm` units, for the token view's `usage.requests_last_minute`. `None`: the count
+    /// isn't reachable — no cell in Valkey when it's there, none here when it isn't — and
+    /// the view then keeps the ledger's 0.
+    pub(crate) async fn quota_spent(&self, project: Uuid, token: Uuid, rpm: i64) -> Option<i64> {
+        let ahead = self.ahead(&quota_key(project, token)).await?;
+        let cell = quota_cell(rpm, self.quota_window_ms);
+        let spent = i64::try_from(ahead.div_ceil(cell.interval_us)).unwrap_or(i64::MAX);
+        Some(spent.min(rpm))
+    }
+
+    /// How far ahead of now `key`'s cell sits, in microseconds.
+    async fn ahead(&self, key: &str) -> Option<u64> {
+        let mut connection = self.valkey.connection().await;
+        if let Some(connection) = connection.as_mut() {
+            let reply = tokio::time::timeout(
+                DEADLINE,
+                redis::cmd("EVAL")
+                    .arg(AHEAD)
+                    .arg(1)
+                    .arg(key)
+                    .query_async::<u64>(connection),
+            )
+            .await;
+            return if let Ok(Ok(ahead)) = reply {
+                Some(ahead)
+            } else {
+                self.valkey.fail();
+                None
+            };
+        }
+        let local = self.local.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = u64::try_from(local.epoch.elapsed().as_micros()).unwrap_or(u64::MAX);
+        local.ahead(now, key)
+    }
+
+    /// Whether this refusal starts a throttle episode (`true`) or continues one the marker
+    /// already covers: each wait moves the marker out, so a token that stays refused keeps
+    /// one entry — and the audit log hears the transition once, never per call (D-118).
+    /// Bounded like [`Local`]'s arrivals.
+    fn mark_throttled(&self, token: Uuid, wait_us: u64) -> bool {
+        let mut throttled = self
+            .throttled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let now = Instant::now();
+        if throttled.len() >= MAX_LOCAL_KEYS {
+            throttled.retain(|_, until| *until > now);
+            if throttled.len() >= MAX_LOCAL_KEYS {
+                throttled.clear();
+            }
+        }
+        let known = throttled.get(&token).is_some_and(|until| *until > now);
+        throttled.insert(token, now + Duration::from_micros(wait_us));
+        !known
+    }
+}
+
+/// The `colophon:quota:` key a token's window lives under (D-118).
+fn quota_key(project: Uuid, token: Uuid) -> String {
+    format!("colophon:quota:{project}:{token}")
+}
+
+/// A token over its own quota: what its 429 carries (D-118).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Throttle {
+    /// Microseconds until a request would be admitted; the `Retry-After` basis.
+    pub(crate) wait_us: u64,
+    /// This refusal begins a throttle episode: worth a `token.rate_limited` audit event;
+    /// while the episode lasts, refusals stay quiet.
+    pub(crate) transition: bool,
+}
+
+impl Throttle {
+    /// `wait_us` in whole seconds, rounded up — what `Retry-After` says, at least one.
+    pub(crate) fn retry_after(self) -> u32 {
+        u32::try_from(self.wait_us.div_ceil(1_000_000))
+            .unwrap_or(u32::MAX)
+            .max(1)
     }
 }
 
@@ -432,7 +598,7 @@ mod tests {
             epoch: Instant::now(),
             arrivals: HashMap::new(),
         };
-        let keys = [("k".to_owned(), rate(10, 3))];
+        let keys = [("k".to_owned(), rate(10, 3).cell())];
         // Three at once, then the fourth waits one interval (100 ms).
         for _ in 0..3 {
             assert_eq!(local.check(0, &keys), None);
@@ -457,8 +623,8 @@ mod tests {
             epoch: Instant::now(),
             arrivals: HashMap::new(),
         };
-        let tight = ("tight".to_owned(), rate(1, 1));
-        let loose = ("loose".to_owned(), rate(1, 2));
+        let tight = ("tight".to_owned(), rate(1, 1).cell());
+        let loose = ("loose".to_owned(), rate(1, 2).cell());
         assert_eq!(local.check(0, &[tight.clone(), loose.clone()]), None);
         assert!(local.check(0, &[tight, loose.clone()]).is_some());
         assert_eq!(
@@ -476,7 +642,10 @@ mod tests {
             arrivals: HashMap::new(),
         };
         for n in 0..(MAX_LOCAL_KEYS + 10) {
-            assert_eq!(local.check(0, &[(format!("k{n}"), rate(1, 1))]), None);
+            assert_eq!(
+                local.check(0, &[(format!("k{n}"), rate(1, 1).cell())]),
+                None
+            );
         }
         assert!(local.arrivals.len() <= MAX_LOCAL_KEYS);
     }
@@ -549,6 +718,7 @@ mod tests {
                 per_credential: Some(rate(5, 5)),
                 delivery_per_address: Some(rate(100, 100)),
                 trusted_proxies: Vec::new(),
+                quota_window_ms: 0,
             },
             None,
         )
@@ -566,7 +736,10 @@ mod tests {
         let delivery = admission.keys(Class::Delivery, peer, &headers);
         assert_eq!(
             delivery,
-            [("colophon:rl:d:a:127.0.0.1".to_owned(), rate(100, 100))]
+            [(
+                "colophon:rl:d:a:127.0.0.1".to_owned(),
+                rate(100, 100).cell()
+            )]
         );
         headers.insert(
             header::AUTHORIZATION,
@@ -580,5 +753,53 @@ mod tests {
         assert_eq!(Class::of("/readyz"), None);
         assert_eq!(Class::of("/studio/_app/x.js"), None);
         assert_eq!(Class::of("/auth/login"), Some(Class::Management));
+    }
+
+    #[test]
+    fn a_quota_is_a_rolling_window_not_a_fixed_one() {
+        let mut local = Local {
+            epoch: Instant::now(),
+            arrivals: HashMap::new(),
+        };
+        // 5 per 2 seconds: 400_000 µs between requests, a burst of the whole window's five.
+        let keys = [("q".to_owned(), quota_cell(5, 2_000))];
+        for _ in 0..5 {
+            assert_eq!(local.check(0, &keys), None);
+        }
+        assert_eq!(local.check(0, &keys), Some(400_000));
+        // Unlike a fixed window, nothing resets at an edge: half the window later only the
+        // rate's earnings are back (two intervals elapsed), then the next wait is the third.
+        assert_eq!(local.check(1_000_000, &keys), None);
+        assert_eq!(local.check(1_000_000, &keys), None);
+        assert_eq!(local.check(1_000_000, &keys), Some(200_000));
+    }
+
+    #[test]
+    fn quota_cells_floor_at_one_request_and_survive_huge_limits() {
+        let single = quota_cell(1, 60_000);
+        assert_eq!(
+            (single.interval_us, single.tolerance_us),
+            (60_000_000, 0),
+            "one a minute admits one a minute"
+        );
+        // The column's maximum: interval and tolerance stay finite.
+        let biggest = quota_cell(100_000, 60_000);
+        assert!(biggest.interval_us >= 1);
+        assert_eq!(biggest.tolerance_us, biggest.interval_us * 99_999);
+    }
+
+    #[test]
+    fn a_throttle_episode_is_marked_once() {
+        let admission = Admission::new(AdmissionSettings::default(), None).expect("no URL");
+        let token = Uuid::now_v7();
+        assert!(admission.mark_throttled(token, 1_000_000));
+        assert!(
+            !admission.mark_throttled(token, 1_000_000),
+            "still refused, still one event"
+        );
+        let other = Uuid::now_v7();
+        assert!(admission.mark_throttled(other, 1_000_000));
+        // A wait already behind us holds nothing: the marker lapses and the next episode tells.
+        assert!(admission.mark_throttled(Uuid::now_v7(), 0));
     }
 }
