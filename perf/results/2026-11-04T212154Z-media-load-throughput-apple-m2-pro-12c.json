@@ -1,0 +1,86 @@
+{
+  "scenario": "throughput",
+  "endpoint": "media-load",
+  "date": "2026-11-04T21:21:54Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 1000000,
+    "vus": 64
+  },
+  "requests": 3296,
+  "rps": 52,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 13.581,
+    "p50": 6.434,
+    "p90": 28.208,
+    "p95": 39.21,
+    "p99": 148.64,
+    "p999": 203.625,
+    "max": 256.398
+  },
+  "database_transactions_during_run": 7997,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 13,
+    "server_rss_kb": {
+      "first": 27264,
+      "last": 184416,
+      "max": 304624
+    },
+    "server_cpu_percent": {
+      "avg": 5.1,
+      "max": 10.6
+    },
+    "postgres_connections": {
+      "last": 25,
+      "max": 25
+    }
+  },
+  "l14": {
+    "held": true,
+    "spec": "L14: large media/decoder workload — worker limits hold; content editing stays responsive",
+    "gate": "media-phase editorial p95 <300 ms (the draft-write budget; the baseline ratio is evidence, not the gate); ~11.0 MB uploads verified by the worker and served; fakes rejected; 21 MB and wrong-type uploads refused at the door",
+    "upload_bytes": 11525178,
+    "editorial": {
+      "media_phase_p95_ms": 41.60239999999999,
+      "media_over_baseline": 3.8376296624279918,
+      "baseline_p95_ms": 10.840649999999995
+    },
+    "uploads": 48,
+    "outcomes": {
+      "media_reads": 72,
+      "verified_and_served": 36,
+      "fakes_rejected": 12,
+      "oversized_refused_at_door": 4,
+      "wrong_type_refused_at_door": 4
+    },
+    "errors": 0,
+    "gates": {
+      "wrong_type_refused": true,
+      "media_served": true,
+      "no_errors": true,
+      "editorial_held": true,
+      "big_files_verified": true,
+      "fakes_rejected": true,
+      "oversized_refused": true
+    }
+  }
+}

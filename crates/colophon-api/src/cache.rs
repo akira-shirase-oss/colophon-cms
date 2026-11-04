@@ -15,6 +15,7 @@ use std::{
     collections::HashMap,
     future::Future,
     sync::{Arc, Mutex, PoisonError},
+    time::Duration,
 };
 
 use tokio::sync::OnceCell;
@@ -22,10 +23,10 @@ use tokio::sync::OnceCell;
 use crate::valkey::{DEADLINE, Valkey};
 
 /// How long a cached answer lives, before jitter (module 06: 300 seconds with jitter).
-const TTL_SECS: u64 = 300;
+const TTL: Duration = Duration::from_secs(300);
 /// Up to this much is added to each entry's lifetime, so entries made together don't expire
 /// together.
-const JITTER_SECS: u64 = 60;
+const JITTER: Duration = Duration::from_secs(60);
 /// Larger answers are served but not cached, so a few huge pages can't evict everything else.
 const MAX_CACHED_BYTES: usize = 1 << 20;
 
@@ -110,6 +111,10 @@ pub struct DeliveryCache {
     /// Valkey, when configured; a call that fails or is slow falls back to Postgres.
     valkey: Valkey,
     flights: Mutex<HashMap<String, Flight>>,
+    /// How long a stored answer lives.
+    ttl: Duration,
+    /// Up to this much extra each store draws, so entries made together don't expire together.
+    jitter: Duration,
 }
 
 impl std::fmt::Debug for DeliveryCache {
@@ -131,6 +136,8 @@ impl DeliveryCache {
         Self {
             valkey: Valkey::disabled(),
             flights: Mutex::new(HashMap::new()),
+            ttl: TTL,
+            jitter: JITTER,
         }
     }
 
@@ -140,6 +147,17 @@ impl DeliveryCache {
             valkey: Valkey::new(url).ok_or(InvalidCacheUrl)?,
             ..Self::disabled()
         })
+    }
+
+    /// Entry lifetimes other than the defaults (`COLOPHON_CACHE_TTL_MS` and
+    /// `COLOPHON_CACHE_JITTER_MS`): production keeps the defaults; a load run shortens them so
+    /// expiries actually land inside its window (L04's stampede). A zero jitter makes every
+    /// entry live exactly `ttl`, which the run's expiry arithmetic relies on.
+    #[must_use]
+    pub fn with_lifetime(mut self, ttl: Duration, jitter: Duration) -> Self {
+        self.ttl = ttl;
+        self.jitter = jitter;
+        self
     }
 
     /// The cached answer for `key`, if the cache has one and answers in time; and whether the
@@ -172,13 +190,16 @@ impl DeliveryCache {
         let Some(mut connection) = self.valkey.connection().await else {
             return;
         };
-        let lifetime = TTL_SECS + jitter % (JITTER_SECS + 1);
+        // `PX`, not `EX`: the configured lifetimes are milliseconds (COLOPHON_CACHE_TTL_MS),
+        // and a whole-second store would silently round a 1,500-ms TTL down to one.
+        let lifetime = u64::try_from(self.ttl.as_millis().max(1)).unwrap_or(u64::MAX)
+            + jitter % (u64::try_from(self.jitter.as_millis()).unwrap_or(u64::MAX) + 1);
         let stored = tokio::time::timeout(
             DEADLINE,
             redis::cmd("SET")
                 .arg(key)
                 .arg(value.encode())
-                .arg("EX")
+                .arg("PX")
                 .arg(lifetime)
                 .query_async::<()>(&mut connection),
         )

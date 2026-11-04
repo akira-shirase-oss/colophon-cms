@@ -1,0 +1,136 @@
+{
+  "scenario": "throughput",
+  "endpoint": "cdn-warm",
+  "date": "2026-11-04T21:14:54Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 1000000,
+    "vus": 64
+  },
+  "requests": 27052,
+  "rps": 888,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 2.339,
+    "p50": 1.802,
+    "p90": 3.182,
+    "p95": 4.54,
+    "p99": 12.397,
+    "p999": 29.902,
+    "max": 217.995
+  },
+  "database_transactions_during_run": 27427,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 6,
+    "server_rss_kb": {
+      "first": 27168,
+      "last": 40016,
+      "max": 40016
+    },
+    "server_cpu_percent": {
+      "avg": 15.7,
+      "max": 20.8
+    },
+    "postgres_connections": {
+      "last": 29,
+      "max": 29
+    }
+  },
+  "l10": {
+    "gate": "each named region's p99 <400 ms, hit+coalesced share >90% over fills every publish caused; zero stale refills or torn pages; releases landed the whole run",
+    "publishes_landed": 5,
+    "hit_share": 0,
+    "stale_refills": 0,
+    "torn_pages": 0,
+    "errors": 0,
+    "held": false,
+    "spec": "L10: CDN warm traffic + repeated publishes — per-region latency and observed generation; detect stale refills and mixed-release pages",
+    "regions_simulated": [
+      "edge_iad",
+      "edge_lhr",
+      "edge_sin"
+    ],
+    "served": {
+      "hit": 0,
+      "miss": 0,
+      "coalesced": 0,
+      "bypass": 0
+    },
+    "regions": {
+      "edge_iad": {
+        "requests": 9001,
+        "latency_ms": {
+          "p50": 1.8,
+          "p95": 4.422,
+          "p99": 11.771
+        },
+        "generation_observed_max": null,
+        "served": {
+          "hit": 0,
+          "miss": 0,
+          "coalesced": 0,
+          "bypass": 0
+        },
+        "hit_share": 0
+      },
+      "edge_lhr": {
+        "served": {
+          "miss": 0,
+          "coalesced": 0,
+          "bypass": 0,
+          "hit": 0
+        },
+        "hit_share": 0,
+        "requests": 9000,
+        "latency_ms": {
+          "p50": 1.802,
+          "p95": 4.479999999999992,
+          "p99": 11.567079999999999
+        },
+        "generation_observed_max": null
+      },
+      "edge_sin": {
+        "requests": 9001,
+        "latency_ms": {
+          "p50": 1.8,
+          "p95": 4.42,
+          "p99": 12
+        },
+        "generation_observed_max": null,
+        "served": {
+          "bypass": 0,
+          "hit": 0,
+          "miss": 0,
+          "coalesced": 0
+        },
+        "hit_share": 0
+      }
+    },
+    "gates": {
+      "no_stale_refills": true,
+      "no_torn_pages": true,
+      "publishes_landed": true,
+      "no_errors": true,
+      "each_region_within_gate": false,
+      "warm_share": false
+    }
+  }
+}

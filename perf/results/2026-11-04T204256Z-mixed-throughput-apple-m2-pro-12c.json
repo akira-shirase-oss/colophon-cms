@@ -1,0 +1,105 @@
+{
+  "scenario": "throughput",
+  "endpoint": "mixed",
+  "date": "2026-11-04T20:42:56Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 1000000,
+    "vus": 64
+  },
+  "requests": 3338,
+  "rps": 72,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 4.102,
+    "p50": 2.384,
+    "p90": 8.69,
+    "p95": 12.426,
+    "p99": 20.618,
+    "p999": 30.678,
+    "max": 394.633
+  },
+  "database_transactions_during_run": 4976,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 9,
+    "server_rss_kb": {
+      "first": 27296,
+      "last": 34368,
+      "max": 34368
+    },
+    "server_cpu_percent": {
+      "avg": 3,
+      "max": 4.8
+    },
+    "postgres_connections": {
+      "last": 19,
+      "max": 19
+    }
+  },
+  "l05": {
+    "served": {
+      "hit": 2654,
+      "miss": 46,
+      "coalesced": 0,
+      "bypass": 1
+    },
+    "gates": {
+      "no_torn_pages": true,
+      "no_errors": true,
+      "reads_held": true,
+      "writes_held": true,
+      "publishes_held": true,
+      "no_stale_refills": true
+    },
+    "held": true,
+    "spec": "L05: mixed reads, writes and publishing — each operation class meets its target; content stays consistent",
+    "gate": "read arm p99 <350 ms (warm gate), write arm p95 <700 ms, publish requests p99 <700 ms — all with reads, saves, read-backs and publishes actually counted; zero stale refills, torn pages or errors",
+    "requests": {
+      "publish_conflicts_retried": 0,
+      "reads": 2701,
+      "saves": 271,
+      "write_backs": 271,
+      "publishes": 8
+    },
+    "latency_ms": {
+      "read": {
+        "p50": 2.162,
+        "p95": 5.023,
+        "p99": 6.839
+      },
+      "write": {
+        "p50": 8.5825,
+        "p95": 20.2232,
+        "p99": 28.14953
+      },
+      "publish": {
+        "p50": 9.443000000000001,
+        "p95": 18.451749999999997,
+        "p99": 22.268949999999997
+      }
+    },
+    "consistency": {
+      "stale_refills": 0,
+      "torn_pages": 0,
+      "errors": 0
+    }
+  }
+}

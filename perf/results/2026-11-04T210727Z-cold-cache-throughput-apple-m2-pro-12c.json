@@ -1,0 +1,94 @@
+{
+  "scenario": "throughput",
+  "endpoint": "cold-cache",
+  "date": "2026-11-04T21:07:27Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 20000,
+    "vus": 64
+  },
+  "requests": 20095,
+  "rps": 816,
+  "failed": 0,
+  "checks_failed": 213,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 64.371,
+    "p50": 58.683,
+    "p90": 70.072,
+    "p95": 81.692,
+    "p99": 106.65,
+    "p999": 728.472,
+    "max": 781.326
+  },
+  "database_transactions_during_run": 60514,
+  "server_warnings": 0,
+  "thresholds_passed": false,
+  "resources": {
+    "samples": 5,
+    "server_rss_kb": {
+      "first": 27360,
+      "last": 29488,
+      "max": 38384
+    },
+    "server_cpu_percent": {
+      "avg": 39.3,
+      "max": 65.9
+    },
+    "postgres_connections": {
+      "last": 29,
+      "max": 29
+    }
+  },
+  "l03": {
+    "gate": "every request a unique key: all cold reads 'miss', all empty reads 'bypass', zero hit/coalesced/errors; cold arm p95 <300 ms, p99 <750 ms; db transactions per request sit beside this in the result",
+    "served": {
+      "hit": 0,
+      "miss": 15819,
+      "coalesced": 0,
+      "bypass": 4181
+    },
+    "errors": 213,
+    "gates": {
+      "every_bypass_read_uncached": false,
+      "nothing_served_from_cache": true,
+      "no_errors": false,
+      "cold_p95": true,
+      "cold_p99": true,
+      "every_cold_read_a_fill": false
+    },
+    "spec": "L03: cold cache / 100% unique keys — cold-origin gate (p95 <=300 ms, p99 <=750 ms), bounded pools, no unbounded database queue",
+    "corpus_entries": 2048,
+    "reads": {
+      "cold_fills": 16032,
+      "uncached_fills": 3968
+    },
+    "latency_ms": {
+      "cold": {
+        "p99": 104.52018,
+        "max": 781.326,
+        "p50": 58.977,
+        "p95": 82.32569999999998
+      },
+      "all": {
+        "p95": 81.6916,
+        "p99": 106.64967999999999
+      }
+    },
+    "held": false
+  }
+}

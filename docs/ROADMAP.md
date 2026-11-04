@@ -492,11 +492,19 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   inject real faults through the receiver's `/control` (container pauses on Postgres/Valkey, a SIGKILLed and
   respawned worker, a 503-ing purge sink with `Retry-After`, a frozen site generation) while traffic arms measure
   baseline/margin/outage/recovery windows; each exported summary carries its `l11`/`l12`/`l13` verdict, gated by
-  `scripts/load.sh`, with stored evidence under `perf/results/`. Also in: F10's schema halves and F12's delivery
-  half on the real stack (D-129) — concurrent schema edits from one base make one winner and one `stale_version`,
-  a schema change racing an entry write resolves to exactly one committed side, a schema `PUT` killed at its commit
-  boundary rolls back or replays (`content_type.update:*` fault points), and a delivery repeated by crash/resume,
-  refusal or attempt timeout keeps one idempotency key, so a deduplicating destination applies exactly one effect.
+  `scripts/load.sh`, with stored evidence under `perf/results/`. The L01–L06, L09, L10 and L14 cases joined them
+  (D-128) — `perf/k6/{smoke,warm-baseline,cold-cache,stampede,mixed,spike,import-scale,cdn-warm,media-load}.js`,
+  each `handleSummary()` computing its `lNN` verdict that `scripts/load.sh` extracts and gates on generically,
+  the delivery cache's TTL/jitter configurable (`COLOPHON_CACHE_TTL_MS`/`COLOPHON_CACHE_JITTER_MS`, production
+  defaults unchanged) so L04's expiries land inside the run, and every result now carrying resource samples
+  (RSS/CPU/Postgres connections) and `database_transactions_during_run`; stored HELD evidence under
+  `perf/results/` for all nine. Still owed here: L07's genuine 24-hour soak and L02's full 30-minute run
+  (the stored pass is 90 s), then the benchmark report and the complete matrix. Also in: F10's schema halves and
+  F12's delivery half on the real stack (D-129) — concurrent schema edits from one base make one winner and one
+  `stale_version`, a schema change racing an entry write resolves to exactly one committed side, a schema `PUT`
+  killed at its commit boundary rolls back or replays (`content_type.update:*` fault points), and a delivery
+  repeated by crash/resume, refusal or attempt timeout keeps one idempotency key, so a deduplicating destination
+  applies exactly one effect.
 - `docs`: complete guides; every example runs in CI.
 - `oss`: release process, SBOM, signed artifacts, security policy.
 - Usability test with five editors; one independent install.

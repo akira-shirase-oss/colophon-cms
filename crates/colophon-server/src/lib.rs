@@ -156,10 +156,13 @@ async fn stop_events(cancel: &CancellationToken, task: Option<tokio::task::JoinH
     }
 }
 
-/// The public delivery cache (D-048): Valkey at `COLOPHON_CACHE_URL`, or none.
+/// The public delivery cache (D-048): Valkey at `COLOPHON_CACHE_URL`, or none. The entry
+/// lifetimes come from `COLOPHON_CACHE_TTL_MS`/`COLOPHON_CACHE_JITTER_MS` — the production
+/// defaults unless a load run shortens them to watch expiries (L04, D-128).
 fn delivery_cache(config: &Config) -> anyhow::Result<colophon_api::DeliveryCache> {
     match &config.cache_url {
         Some(url) => colophon_api::DeliveryCache::new(url.expose())
+            .map(|cache| cache.with_lifetime(config.cache_ttl, config.cache_jitter))
             .map_err(|error| anyhow::anyhow!(error))
             .context("configuring the delivery cache"),
         None => Ok(colophon_api::DeliveryCache::disabled()),

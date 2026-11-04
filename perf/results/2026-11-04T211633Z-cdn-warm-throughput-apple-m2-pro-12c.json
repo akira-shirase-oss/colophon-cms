@@ -1,0 +1,136 @@
+{
+  "scenario": "throughput",
+  "endpoint": "cdn-warm",
+  "date": "2026-11-04T21:16:33Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 1000000,
+    "vus": 64
+  },
+  "requests": 27060,
+  "rps": 886,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 2.205,
+    "p50": 1.684,
+    "p90": 2.856,
+    "p95": 3.897,
+    "p99": 8.489,
+    "p999": 54.518,
+    "max": 210.244
+  },
+  "database_transactions_during_run": 27386,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 6,
+    "server_rss_kb": {
+      "first": 27424,
+      "last": 29232,
+      "max": 38640
+    },
+    "server_cpu_percent": {
+      "avg": 14.4,
+      "max": 20.4
+    },
+    "postgres_connections": {
+      "last": 29,
+      "max": 29
+    }
+  },
+  "l10": {
+    "regions_simulated": [
+      "edge_iad",
+      "edge_lhr",
+      "edge_sin"
+    ],
+    "served": {
+      "hit": 26705,
+      "miss": 64,
+      "coalesced": 233,
+      "bypass": 1
+    },
+    "hit_share": 0.9975928600525867,
+    "stale_refills": 0,
+    "torn_pages": 0,
+    "regions": {
+      "edge_iad": {
+        "requests": 9001,
+        "latency_ms": {
+          "p99": 7.718,
+          "p50": 1.684,
+          "p95": 3.806
+        },
+        "generation_observed_max": 7,
+        "served": {
+          "coalesced": 74,
+          "bypass": 0,
+          "hit": 8902,
+          "miss": 25
+        },
+        "hit_share": 0.9972225308299077
+      },
+      "edge_lhr": {
+        "latency_ms": {
+          "p50": 1.681,
+          "p95": 3.834,
+          "p99": 7.742
+        },
+        "generation_observed_max": 7,
+        "served": {
+          "hit": 8901,
+          "miss": 17,
+          "coalesced": 82,
+          "bypass": 1
+        },
+        "hit_share": 0.9980002221975336,
+        "requests": 9001
+      },
+      "edge_sin": {
+        "requests": 9001,
+        "latency_ms": {
+          "p50": 1.682,
+          "p95": 3.825,
+          "p99": 7.657
+        },
+        "generation_observed_max": 7,
+        "served": {
+          "hit": 8902,
+          "miss": 22,
+          "coalesced": 77,
+          "bypass": 0
+        },
+        "hit_share": 0.9975558271303189
+      }
+    },
+    "gates": {
+      "warm_share": true,
+      "no_stale_refills": true,
+      "no_torn_pages": true,
+      "publishes_landed": true,
+      "no_errors": true,
+      "each_region_within_gate": true
+    },
+    "held": true,
+    "spec": "L10: CDN warm traffic + repeated publishes — per-region latency and observed generation; detect stale refills and mixed-release pages",
+    "gate": "each named region's p99 <400 ms, hit+coalesced share >90% over fills every publish caused; zero stale refills or torn pages; releases landed the whole run",
+    "publishes_landed": 6,
+    "errors": 0
+  }
+}

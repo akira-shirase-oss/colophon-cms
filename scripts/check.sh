@@ -108,6 +108,18 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     PATH="$PATH:$HOME/.local/bin" DURATION=10s P99_MS=500 KEEP=0 scripts/load.sh cache-down throughput
     PATH="$PATH:$HOME/.local/bin" DURATION=10s P99_MS=500 KEEP=0 scripts/load.sh postgres-trouble throughput
     PATH="$PATH:$HOME/.local/bin" DURATION=10s P99_MS=500 KEEP=0 scripts/load.sh purge-trouble throughput
+    # The load-matrix evidence runs (D-128): their arms are time-boxed or job-sized, so
+    # DURATION, SPIKE_SECONDS, PUBLISH_SECONDS, CORPUS and TOTAL_RECORDS — not TOTAL —
+    # shape their smokes. import-scale and media-load also run reduced corpora.
+    PATH="$PATH:$HOME/.local/bin" DURATION=10s P99_MS=700 KEEP=0 scripts/load.sh smoke throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=50000 P99_MS=350 KEEP=0 scripts/load.sh warm-baseline throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=5000 CORPUS=512 P99_MS=750 KEEP=0 scripts/load.sh cold-cache throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=15s P99_MS=250 KEEP=0 scripts/load.sh stampede throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=15s RATE=50 PUBLISH_SECONDS=5 P99_MS=700 KEEP=0 scripts/load.sh mixed throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=8s RATE=300 SPIKE_SECONDS=10 P99_MS=250 KEEP=0 scripts/load.sh spike throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL_RECORDS=1024 P99_MS=15000 KEEP=0 scripts/load.sh import-scale throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=10s RATE=300 PUBLISH_SECONDS=5 P99_MS=400 KEEP=0 scripts/load.sh cdn-warm throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=10s MEDIA_VUS=2 P99_MS=700 KEEP=0 scripts/load.sh media-load throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh entries throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh content-types throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh modelling throughput

@@ -1,0 +1,94 @@
+{
+  "scenario": "throughput",
+  "endpoint": "cold-cache",
+  "date": "2026-11-04T21:06:06Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 30000,
+    "vus": 64
+  },
+  "requests": 30095,
+  "rps": 1028,
+  "failed": 0,
+  "checks_failed": 12,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 54.074,
+    "p50": 53.436,
+    "p90": 59.935,
+    "p95": 62.413,
+    "p99": 69.015,
+    "p999": 74.863,
+    "max": 492.964
+  },
+  "database_transactions_during_run": 89859,
+  "server_warnings": 0,
+  "thresholds_passed": false,
+  "resources": {
+    "samples": 7,
+    "server_rss_kb": {
+      "first": 27088,
+      "last": 38544,
+      "max": 38544
+    },
+    "server_cpu_percent": {
+      "avg": 46,
+      "max": 68.2
+    },
+    "postgres_connections": {
+      "last": 28,
+      "max": 28
+    }
+  },
+  "l03": {
+    "errors": 12,
+    "gates": {
+      "cold_p99": true,
+      "every_cold_read_a_fill": false,
+      "every_bypass_read_uncached": false,
+      "nothing_served_from_cache": true,
+      "no_errors": false,
+      "cold_p95": true
+    },
+    "held": false,
+    "spec": "L03: cold cache / 100% unique keys — cold-origin gate (p95 <=300 ms, p99 <=750 ms), bounded pools, no unbounded database queue",
+    "gate": "every request a unique key: all cold reads 'miss', all empty reads 'bypass', zero hit/coalesced/errors; cold arm p95 <300 ms, p99 <750 ms; db transactions per request sit beside this in the result",
+    "corpus_entries": 2048,
+    "latency_ms": {
+      "all": {
+        "p95": 62.413,
+        "p99": 69.01513999999999
+      },
+      "cold": {
+        "max": 79.138,
+        "p50": 53.737,
+        "p95": 62.675599999999996,
+        "p99": 69.01162
+      }
+    },
+    "reads": {
+      "cold_fills": 24035,
+      "uncached_fills": 5965
+    },
+    "served": {
+      "hit": 0,
+      "miss": 24023,
+      "coalesced": 0,
+      "bypass": 5977
+    }
+  }
+}

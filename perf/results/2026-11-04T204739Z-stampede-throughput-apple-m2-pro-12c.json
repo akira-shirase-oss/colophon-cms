@@ -1,0 +1,84 @@
+{
+  "scenario": "throughput",
+  "endpoint": "stampede",
+  "date": "2026-11-04T20:47:39Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 1000000,
+    "vus": 64
+  },
+  "requests": 22106,
+  "rps": 292,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 41.247,
+    "p50": 38.704,
+    "p90": 60.615,
+    "p95": 77.139,
+    "p99": 108.148,
+    "p999": 129.511,
+    "max": 855.386
+  },
+  "database_transactions_during_run": 23466,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 15,
+    "server_rss_kb": {
+      "first": 27328,
+      "last": 31920,
+      "max": 43184
+    },
+    "server_cpu_percent": {
+      "avg": 6.9,
+      "max": 33.9
+    },
+    "postgres_connections": {
+      "last": 31,
+      "max": 31
+    }
+  },
+  "l04": {
+    "round_ms": 4000,
+    "churn_generations": 7,
+    "served": {
+      "hit": 20328,
+      "miss": 50,
+      "coalesced": 1673,
+      "bypass": 0
+    },
+    "crossed_reads": 0,
+    "errors": 0,
+    "held": true,
+    "spec": "L04: hot-key stampede — 1,000 callers at expiry; bounded regeneration and coalescing; no permission-crossing reuse",
+    "gate": "fills <= expiries-per-key x keys + churn-generation fills (84 this run); coalesced > 0; zero stale, crossed, bypass or errors",
+    "burst_callers": 1000,
+    "fill_bound": 84,
+    "stale_reads": 0,
+    "gates": {
+      "bounded_regeneration": true,
+      "coalescing_seen": true,
+      "no_stale_refills": true,
+      "no_permission_crossing": true,
+      "no_uncached_fills": true,
+      "no_errors": true
+    },
+    "cache_ttl_ms": 4000
+  }
+}

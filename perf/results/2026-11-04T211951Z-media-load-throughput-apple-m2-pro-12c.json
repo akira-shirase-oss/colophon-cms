@@ -1,0 +1,86 @@
+{
+  "scenario": "throughput",
+  "endpoint": "media-load",
+  "date": "2026-11-04T21:19:51Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 1000000,
+    "vus": 64
+  },
+  "requests": 3310,
+  "rps": 52,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 12.393,
+    "p50": 5.687,
+    "p90": 26.767,
+    "p95": 34.321,
+    "p99": 147.985,
+    "p999": 179.687,
+    "max": 308.233
+  },
+  "database_transactions_during_run": 8048,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 13,
+    "server_rss_kb": {
+      "first": 27280,
+      "last": 133376,
+      "max": 304768
+    },
+    "server_cpu_percent": {
+      "avg": 4.1,
+      "max": 16.0
+    },
+    "postgres_connections": {
+      "last": 25,
+      "max": 25
+    }
+  },
+  "l14": {
+    "upload_bytes": 11525178,
+    "uploads": 50,
+    "errors": 0,
+    "gates": {
+      "editorial_held": false,
+      "big_files_verified": true,
+      "fakes_rejected": true,
+      "oversized_refused": true,
+      "wrong_type_refused": true,
+      "media_served": true,
+      "no_errors": true
+    },
+    "spec": "L14: large media/decoder workload — worker limits hold; content editing stays responsive",
+    "outcomes": {
+      "fakes_rejected": 12,
+      "oversized_refused_at_door": 6,
+      "wrong_type_refused_at_door": 6,
+      "media_reads": 76,
+      "verified_and_served": 38
+    },
+    "editorial": {
+      "baseline_p95_ms": 8.734,
+      "media_phase_p95_ms": 36.478,
+      "media_over_baseline": 4.176551408289444
+    },
+    "held": false,
+    "gate": "media-phase editorial p95 <= 2x baseline +2 ms; ~11.0 MB uploads verified by the worker and served; fakes rejected; 21 MB and wrong-type uploads refused at the door"
+  }
+}

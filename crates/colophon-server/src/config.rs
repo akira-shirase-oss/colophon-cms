@@ -117,6 +117,13 @@ pub struct Config {
     /// Redis-protocol cache URL. `COLOPHON_CACHE_URL`, optional: without it, readiness reports
     /// the cache as `not_configured`.
     pub cache_url: Option<Secret>,
+    /// A cached delivery answer's lifetime (`COLOPHON_CACHE_TTL_MS`, default five minutes) and
+    /// the bound on the jitter added to each entry (`COLOPHON_CACHE_JITTER_MS`, default one
+    /// minute; `0` makes every entry live exactly the TTL — what a stampede load run needs for
+    /// its expiries to be deterministic, L04).
+    pub cache_ttl: Duration,
+    /// See `cache_ttl`.
+    pub cache_jitter: Duration,
     /// `COLOPHON_LOG_FORMAT`: `json` (default) or `pretty`.
     pub log_format: LogFormat,
     /// `EnvFilter` directives. `COLOPHON_LOG`, default `info`.
@@ -433,6 +440,34 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         }
     }
 
+    /// The delivery probe's cadence and deadline; `from_lookup` refuses a timeout at or over
+    /// the interval.
+    fn probe(&mut self) -> (Duration, Duration) {
+        (
+            self.millis("COLOPHON_PROBE_INTERVAL_MS", 2_000, 100..=60_000),
+            self.millis("COLOPHON_PROBE_TIMEOUT_MS", 1_000, 50..=30_000),
+        )
+    }
+
+    /// The post-listen drain delay and the shutdown grace; `from_lookup` refuses a delay at
+    /// or over the grace.
+    fn drain(&mut self) -> (Duration, Duration) {
+        (
+            self.millis("COLOPHON_DRAIN_DELAY_MS", 5_000, 0..=60_000),
+            self.millis("COLOPHON_SHUTDOWN_GRACE_MS", 25_000, 1_000..=600_000),
+        )
+    }
+
+    /// A cached delivery answer's TTL and jitter bound. A one-second TTL floor keeps `EX`
+    /// valid; the hour ceiling is far past module 06's five minutes. Zero jitter is allowed —
+    /// a stampede run's expiries must be exact (L04).
+    fn cache_lifetimes(&mut self) -> (Duration, Duration) {
+        (
+            self.millis("COLOPHON_CACHE_TTL_MS", 300_000, 1_000..=3_600_000),
+            self.millis("COLOPHON_CACHE_JITTER_MS", 60_000, 0..=600_000),
+        )
+    }
+
     /// The live-hint stream bounds (D-108); `COLOPHON_EVENTS_REVALIDATE_MS` of `0` turns the
     /// membership re-check off.
     fn events(&mut self) -> colophon_api::events::EventLimits {
@@ -492,15 +527,14 @@ impl Config {
         );
         let database_url = env.secret("COLOPHON_DATABASE_URL", true);
         let cache_url = env.secret("COLOPHON_CACHE_URL", false);
+        let (cache_ttl, cache_jitter) = env.cache_lifetimes();
         let log_format = env.parse("COLOPHON_LOG_FORMAT", LogFormat::Json);
         let log_filter = env.raw("COLOPHON_LOG").unwrap_or_else(|| "info".to_owned());
         let request_timeout = env.millis("COLOPHON_REQUEST_TIMEOUT_MS", 10_000, 100..=120_000);
         let max_body_bytes = env.ranged("COLOPHON_MAX_BODY_BYTES", 21 * MIB, KIB..=64 * MIB);
         let db_max_connections = env.ranged("COLOPHON_DB_MAX_CONNECTIONS", 16, 1..=1_000);
-        let probe_interval = env.millis("COLOPHON_PROBE_INTERVAL_MS", 2_000, 100..=60_000);
-        let probe_timeout = env.millis("COLOPHON_PROBE_TIMEOUT_MS", 1_000, 50..=30_000);
-        let drain_delay = env.millis("COLOPHON_DRAIN_DELAY_MS", 5_000, 0..=60_000);
-        let shutdown_grace = env.millis("COLOPHON_SHUTDOWN_GRACE_MS", 25_000, 1_000..=600_000);
+        let (probe_interval, probe_timeout) = env.probe();
+        let (drain_delay, shutdown_grace) = env.drain();
         let (public_origin, extra_trusted_origins, oidc) = env.sign_in(listen_addr);
         let s3 = env.s3();
         let studio_dir = env.raw("COLOPHON_STUDIO_DIR").map(std::path::PathBuf::from);
@@ -526,7 +560,6 @@ impl Config {
         let asset_sweep = env.millis("COLOPHON_ASSET_SWEEP_MS", 300_000, 50..=3_600_000);
         let events = env.events();
         let mcp = env.mcp();
-
         if probe_timeout >= probe_interval {
             env.problems.push(
                 "COLOPHON_PROBE_TIMEOUT_MS must be shorter than COLOPHON_PROBE_INTERVAL_MS"
@@ -545,7 +578,6 @@ impl Config {
                     .to_owned(),
             );
         }
-
         if let Some(database_url) = database_url
             && env.problems.is_empty()
         {
@@ -554,6 +586,8 @@ impl Config {
                 listen_addr,
                 database_url,
                 cache_url,
+                cache_ttl,
+                cache_jitter,
                 log_format,
                 log_filter,
                 request_timeout,
@@ -612,8 +646,33 @@ mod tests {
         assert_eq!(config.max_body_bytes, 21 * MIB);
         assert_eq!(config.probe_interval, Duration::from_secs(2));
         assert!(config.cache_url.is_none());
+        assert_eq!(config.cache_ttl, Duration::from_secs(300));
+        assert_eq!(config.cache_jitter, Duration::from_secs(60));
         assert_eq!(config.log_format, LogFormat::Json);
         assert_eq!(config.worker_location, "local");
+    }
+
+    #[test]
+    fn cache_lifetimes_parse_and_floor() {
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_CACHE_TTL_MS", "4000"),
+            ("COLOPHON_CACHE_JITTER_MS", "0"),
+        ])
+        .expect("a stampede run's lifetimes");
+        assert_eq!(config.cache_ttl, Duration::from_secs(4));
+        assert_eq!(config.cache_jitter, Duration::ZERO);
+        for (key, value) in [
+            ("COLOPHON_CACHE_TTL_MS", "500"),
+            ("COLOPHON_CACHE_TTL_MS", "x"),
+        ] {
+            let error = load(&[("COLOPHON_DATABASE_URL", DB), (key, value)])
+                .expect_err("below the floor or not a number");
+            assert!(
+                error.to_string().contains(key),
+                "{key} missing from: {error}"
+            );
+        }
     }
 
     #[test]

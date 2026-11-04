@@ -46,6 +46,23 @@
 # gets a short COLOPHON_EVENTS_LIFETIME_MS so a hold is seconds, not 30 minutes; D-108),
 # delivery (anonymous /content/v1 reads, latest and pinned), publishing (whole publishes, five
 # requests each, with the worker announcing every release to a local receiver; needs node),
+# the load-matrix evidence runs (D-128): smoke (L01: one signed-in user's whole walk — reads,
+# saves, revision reads, publishes and the release IDs they land — at a one's pace, every
+# answer checked), warm-baseline (L02: the spec's 300/s warm read mix for DURATION — 30 min —
+# with cache hits, per-window p99 and the server's RSS/pool samples), cold-cache (L03: 100% of
+# reads on unique cache keys — every answer a Postgres fill, none cached — at the cold gate),
+# stampede (L04: synchronized bursts of 1,000 callers landing on two projects' hot keys at
+# their expiry — the server runs COLOPHON_CACHE_TTL_MS=4000/JITTER_MS=0 so expiries are exact;
+# bounded fills, coalesced waiters, no permission-crossing), mixed (L05: reads, If-Match
+# writes and publishes at once, each class against its own spec budget), spike (L06: delivery
+# reads at 1x, then 5x for SPIKE_SECONDS with the delivery limiter set real — controlled
+# 429s, then back to baseline), import-scale (L09: ~10,000 drafts through 512-item import
+# chunks, then same-key replay, fresh-key upsert, export count and a still-unpublished
+# delivery check), cdn-warm (L10: three named regions at ~2,000/s of warm reads while a
+# publisher lands releases — per-region TTFB, hit share, observed-generation lag, stale and
+# torn checks), media-load (L14: editorial traffic alone, then plus ~11.5 MB synthesized
+# PNG uploads, oversized refusals and fake images the worker must reject — editing p95 must
+# hold near its own baseline),
 # the dependency-failure evidence runs (D-127; each pauses a real stack container or kills a
 # real process mid-run through the receiver's /control endpoint — run them SERIALLY, never
 # beside anything else on the shared stack): cache-down (L11: delivery reads and light
@@ -85,7 +102,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|cache-down|postgres-trouble|purge-trouble|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -170,6 +187,28 @@ case "$endpoint" in
   # L13 (D-127): RATE counts publishes (five requests each) through a failing purge
   # sink — publishing's editorial write budget for the p99 gate.
   purge-trouble) RATE="${RATE:-8}" P99_MS="${P99_MS:-700}" ;;
+  # L01 (D-128): RATE is unused — one user walks at a one's pace for DURATION.
+  smoke) RATE="${RATE:-1}" P99_MS="${P99_MS:-700}" ;;
+  # L02 (D-128): the spec's warm-origin gate — 300/s, p99 350 ms.
+  warm-baseline) RATE="${RATE:-300}" P99_MS="${P99_MS:-350}" ;;
+  # L03 (D-128): the spec's cold/cache-bypass gate — 100/s, p99 750 ms; every read a
+  # Postgres fill, so its p99 is slower than a warm run's by design.
+  cold-cache) RATE="${RATE:-100}" P99_MS="${P99_MS:-750}" ;;
+  # L04 (D-128): the bursts self-schedule — RATE is only the small warm arm.
+  stampede) RATE="${RATE:-10}" P99_MS="${P99_MS:-250}" ;;
+  # L05 (D-128): RATE is the read arm; writes and publishes are scaled from it.
+  mixed) RATE="${RATE:-100}" P99_MS="${P99_MS:-700}" ;;
+  # L06 (D-128): RATE is the baseline; the spike is 5x. Its p99 binds the calm phases —
+  # the spike's own answers are allowed to be refusals, counted by the run.
+  spike) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
+  # L09 (D-128): RATE counts 512-item import chunks — a chunk is a transaction of 512
+  # revision writes, so a handful a second and a commit-scale p99.
+  import-scale) RATE="${RATE:-3}" P99_MS="${P99_MS:-15000}" ;;
+  # L10 (D-128): the spec's warm-CDN gate — 2,000/s over three regions, p99 400 ms.
+  cdn-warm) RATE="${RATE:-2000}" P99_MS="${P99_MS:-400}" ;;
+  # L14 (D-128): RATE is the editorial arm; ~1.5 uploads/s of multi-megabyte images join
+  # it in the second phase. The editorial write budget is the p99 gate.
+  media-load) RATE="${RATE:-50}" P99_MS="${P99_MS:-700}" ;;
   *) RATE="${RATE:-20000}" P99_MS="${P99_MS:-25}" ;;
 esac
 base_url="http://127.0.0.1:$port"
@@ -189,6 +228,7 @@ server_pid=""
 worker_pid=""
 receiver_pid=""
 site_pid=""
+sampler_pid=""
 site_port="${SITE_PORT:-58097}"
 receiver_port="${RECEIVER_PORT:-58096}"
 # A port that already has a listener means a stale process from an earlier run: the
@@ -206,6 +246,7 @@ refuse_squatter() {
 }
 # shellcheck disable=SC2329 # invoked by the EXIT trap below
 cleanup() {
+  if [[ -n "$sampler_pid" ]]; then kill "$sampler_pid" 2>/dev/null || true; fi
   if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
     kill -TERM "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
@@ -314,6 +355,13 @@ else
     # manager's raised limit, so the measured server gets one too — the run measures the
     # endpoint, not macOS's default.
     ulimit -n "${COLOPHON_LOAD_MAXFILES:-16384}" 2>/dev/null || true
+    # The spike scenario needs the limiter real: production's per-address delivery ceiling
+    # (1000 a second, a 2000 burst — D-076), not the million the other runs lift it to. At
+    # 5x the baseline the cell must refuse — controlled 429s are what L06 is measuring.
+    # Set before the generic ceiling below, whose `:-` then leaves it alone.
+    if [[ "$endpoint" == "spike" ]]; then
+      export COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000/2000}"
+    fi
     # One machine sends every request: rate limits (D-076) that never refuse, so each request
     # still pays for its check and the run measures it.
     export COLOPHON_RATE_LIMIT_PER_ADDRESS="${COLOPHON_RATE_LIMIT_PER_ADDRESS:-1000000/1000000}" \
@@ -323,6 +371,12 @@ else
     # The live scenario's subscribers hold each stream to its clean end: a 15-second lifetime
     # keeps a hold in seconds (the 30-minute default is past the client's 90-second timeout).
     if [[ "$endpoint" == "live" ]]; then export COLOPHON_EVENTS_LIFETIME_MS="${COLOPHON_EVENTS_LIFETIME_MS:-15000}"; fi
+    # The stampede scenario's expiries must be deterministic: a four-second TTL with no
+    # jitter makes every entry die exactly at a burst boundary (L04, D-128). Production's
+    # five minutes plus a minute's jitter stays the default everywhere else.
+    if [[ "$endpoint" == "stampede" ]]; then
+      export COLOPHON_CACHE_TTL_MS="${COLOPHON_CACHE_TTL_MS:-4000}" COLOPHON_CACHE_JITTER_MS="${COLOPHON_CACHE_JITTER_MS:-0}"
+    fi
     # postgres-trouble runs the API and the outbox apart, so the scenario's worker kill
     # doesn't take the API down with it (L12, D-127).
     if [[ "$endpoint" == "postgres-trouble" ]]; then export COLOPHON_ROLE=api; fi
@@ -362,6 +416,28 @@ db_transactions() {
 }
 sleep 1.5 # let Postgres publish its statistics
 tx_before=$(db_transactions)
+
+# Server-resource samples for the runs whose gate names them (L02's "hits, pools, CPU, RSS",
+# and the cases whose pass text mentions memory or bounded pressure): the server's RSS and
+# CPU from ps, and the connections Postgres sees this database hold — what the API's pool
+# plus a migrator connection amount to. SAMPLE_SECONDS apart; recorded into the result's
+# `resources`. One server, so skipped under CLUSTER=1 (the numbers would name nothing).
+case "$endpoint" in
+  warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load)
+    if [[ "$cluster" != "1" ]]; then
+      (
+        while :; do
+          read -r rss cpu < <(ps -o rss=,%cpu= -p "$server_pid" 2>/dev/null | awk '{print $1, $2}')
+          conns=$(docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -XAtqc \
+            "select count(*) from pg_stat_activity where datname = '$database'" 2>/dev/null || echo "")
+          printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "${rss:-}" "${cpu:-}" "${conns:-}" >>"$work/resources.tsv"
+          sleep "${SAMPLE_SECONDS:-5}"
+        done
+      ) &
+      sampler_pid=$!
+    fi
+    ;;
+esac
 
 # Stress (milestone S, D-077): the steady scenario at rising rates on one server (or the
 # cluster), until a step breaks its own thresholds. Each step runs STEP_SECONDS (default 20) at
@@ -493,6 +569,12 @@ k6_status=0
   -e P99_MS="$P99_MS" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
   "perf/k6/$endpoint.js" || k6_status=$?
 
+if [[ -n "$sampler_pid" ]]; then
+  kill "$sampler_pid" 2>/dev/null || true
+  wait "$sampler_pid" 2>/dev/null || true
+  sampler_pid=""
+fi
+
 # A scenario that drove a real outage must have healed it — but even a crashed run
 # doesn't get to leave the stack dead for the checks below.
 if [[ "$endpoint" == "cache-down" || "$endpoint" == "postgres-trouble" ]]; then
@@ -570,12 +652,30 @@ shape=""
 [[ "$cluster" == "1" ]] && shape="-cluster$(echo "$topology" | jq -r '"\(.servers)s\(.workers)w"')"
 stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# The resource samples the flagged runs took while k6 ran: first/last/max RSS, average and
+# peak CPU, and the Postgres-side connection count — L02's "pools, CPU, RSS" and the
+# memory-shaped gates' evidence, beside the request numbers.
+resources=null
+if [[ -s "$work/resources.tsv" ]]; then
+  resources=$(jq -Rsc '
+    [split("\n")[] | select(length > 0) | split("\t")
+     | {t: .[0], rss_kb: (.[1] | tonumber? // null), cpu: (.[2] | tonumber? // null),
+        conns: (.[3] | tonumber? // null)} | select(.rss_kb != null)]
+    | {samples: length,
+       server_rss_kb: {first: (first.rss_kb), last: (last.rss_kb), max: ([.[].rss_kb] | max)},
+       server_cpu_percent: {avg: (([.[].cpu] | add / length) * 10 | round / 10),
+                            max: ([.[].cpu] | max)},
+       postgres_connections: {last: (last.conns),
+                              max: ([.[].conns | select(. != null)] | max // null)}}' \
+    "$work/resources.tsv")
+fi
+
 record=$(jq -c \
   --arg scenario "$scenario" --arg endpoint "$endpoint" --arg stamp "$stamp" --arg commit "$commit" --argjson dirty "$dirty" \
   --arg cpu "$cpu" --argjson cores "$cores" --argjson memory_gb "$memory_gb" --arg machine "$machine" \
   --arg os "$(uname -s) $(uname -r)" --arg k6 "$("$k6" version | awk '{print $2}')" \
   --argjson tx "$(( tx_after - tx_before ))" --argjson warnings "$server_warnings" \
-  --argjson k6_status "$k6_status" --argjson topology "$topology" \
+  --argjson k6_status "$k6_status" --argjson topology "$topology" --argjson resources "$resources" \
   --arg total "${TOTAL:-1000000}" --arg vus "$VUS" --arg rate "$RATE" --arg duration "${DURATION:-60s}" \
   '{
     scenario: $scenario, endpoint: $endpoint, date: $stamp, commit: $commit, dirty: $dirty,
@@ -597,10 +697,12 @@ record=$(jq -c \
     database_transactions_during_run: $tx,
     server_warnings: $warnings,
     thresholds_passed: ($k6_status == 0)
-  } + (if .l08 then {l08: .l08} else {} end)
-    + (if .l11 then {l11: .l11} else {} end)
-    + (if .l12 then {l12: .l12} else {} end)
-    + (if .l13 then {l13: .l13} else {} end)' "$work/summary.json")
+  } + (if $resources then {resources: $resources} else {} end)
+    # Every `lNN` object a scenario computed lands in the record — the gate loop below
+    # fails the run on any whose `held` is false (a new case self-registers: name the
+    # object after its spec ID and it is stored and gated like the rest).
+    + (reduce (to_entries[] | select(.key | test("^l[0-9]{2}$"))) as $e
+       ({}; . + {($e.key): $e.value}))' "$work/summary.json")
 
 echo "$record" | jq .
 
@@ -630,8 +732,9 @@ fi
 # The lXX gates are comparisons only the run can compute (perf/k6/noisy-agent.js measures
 # both phases; the dependency-failure scenarios measure their own outage windows): each
 # exported summary's object carries the numbers and the verdict — a run whose `held`
-# is false fails here, the numbers beside it in the result file.
-for gate in l08 l11 l12 l13; do
+# is false fails here, the numbers beside it in the result file. The keys are discovered,
+# not listed: a scenario that exports an `lNN` verdict is gated by it.
+for gate in $(jq -r 'keys_unsorted[] | select(test("^l[0-9]{2}$"))' "$work/summary.json"); do
   # `// empty` would swallow a held:false (jq's // treats false like null) — read it raw:
   # the gate must fire on a computed false and stay quiet when the key is absent.
   if [[ "$(jq -r ".$gate.held" "$work/summary.json")" == "false" ]]; then
