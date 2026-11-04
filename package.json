@@ -1,7 +1,7 @@
 {
   "name": "colophon",
   "private": true,
-  "description": "Colophon CMS: the JavaScript workspace (testbed now; the Studio, UI kit and SDK later).",
+  "description": "Colophon CMS: the JavaScript workspace (the Studio, the testbed, the UI kit, the renderers and the TypeScript SDK).",
   "workspaces": [
     "packages/*",
     "!packages/cli-npm",

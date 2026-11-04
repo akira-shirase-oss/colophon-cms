@@ -283,7 +283,12 @@ reported as delayed, never on time; locale variants publish independently; comme
 - GraphQL over the same queries and permissions; the TypeScript SDK with generated types. The `OpenAPI` 3.1
   document for REST is built (DX.7, D-110): emitted from the one route table the router is built from, served
   at `GET /openapi.json` unauthenticated with `ETag`/304, committed byte-for-byte as `docs/api/openapi.json`
-  (80 paths, 104 operations, 110 schemas); client generation from it is the SDK slice's.
+  (80 paths, 104 operations, 110 schemas). The TypeScript SDK is built (DX.8, D-112): `@colophon-cms/sdk` in
+  `packages/sdk` — `src/api.types.ts` generated from the committed document by `openapi-typescript` and
+  drift-checked the same way, plus a hand-written `Client` (typed methods over the core surface, the error
+  envelope parsed into `ApiError`, `If-Match`/`Idempotency-Key` required by the types, bounded reads,
+  generation-pinned delivery via `atGeneration`); no second auth surface — a credential is attached, never
+  minted. GraphQL stays to come.
 - Webhooks by event (entry, release, media, schema), import from Strapi and Sanity exports with a dry run, export.
 - Extension points instead of plugins (D-057): custom field types as data, Studio panels in sandboxed iframes.
 
