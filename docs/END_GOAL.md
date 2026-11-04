@@ -16,7 +16,8 @@ v0.1 is done when every box below is checked with stored evidence (commit, comma
       broken invariant is caught (the simulator is shown to have teeth).
 - [ ] All fault cases F01–F14 and load cases L01–L14 pass (L15 is commerce, parked), as defined in
       [verification](modules/17-verification.md).
-- [ ] A benchmark report on the reference profile is committed with commands, dataset seed and raw results.
+- [x] A benchmark report on the reference profile is committed with commands, dataset seed and raw results:
+      [BENCHMARKS.md](BENCHMARKS.md), over the stored runs in `perf/results/`.
 - [x] A backup-and-restore drill onto clean infrastructure is documented, including a new recovery epoch and the
       deletion ledger replay — `scripts/restore.sh drill`, evidenced by
       `perf/results/2026-11-04T194355Z-restore-drill-apple-m2-pro-12c.json` (D-125 capture, D-126 restore).
