@@ -218,7 +218,7 @@ CLI can show from it what a role or token can do.
 | ID | Invariant |
 |---|---|
 | AU1 | Tool metadata never grants permission; every call passes the same policy as a human request. |
-| AU2 | An agent can never approve its own proposal. |
+| AU2 | An agent can never approve its own proposal — enforced by the API, which refuses any token's approval of a token-submitted changeset (403 `agent_self_review`, D-111); tools that don't offer approval are only the convenience on top. |
 | AU3 | Budgets are reserved in Postgres before dispatch; no work starts without a reservation. |
 | AU4 | Model output executes only as a validated typed action, rechecked at execution time. |
 | AU5 | Bulk outcomes are per item; nothing claims global atomicity. |

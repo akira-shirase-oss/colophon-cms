@@ -53,7 +53,7 @@ use crate::{
     ApiError, AppState,
     entries::{content_hash, idempotency_key, json, open, request_hash, rfc3339, sha256},
     members::require,
-    session::SignedIn,
+    session::{Credential, SignedIn},
     shape::{Data, Page},
 };
 
@@ -901,7 +901,9 @@ pub(crate) async fn refresh(
 }
 
 /// `POST {P}/changesets/{changeset}/reviews`: approves or asks for changes to the exact hash in
-/// `If-Match`.
+/// `If-Match`. An API token may ask for changes like anyone with `content.review`, but it may
+/// never approve a changeset an API token submitted — that would greenlight a proposal with no
+/// person in the loop (D-111).
 pub(crate) async fn review(
     State(state): State<AppState>,
     caller: SignedIn,
@@ -938,6 +940,22 @@ pub(crate) async fn review(
         return Err(ApiError::conflict(
             "not_submitted",
             "this changeset hasn't been submitted for review yet",
+        ));
+    }
+    // D-111: a token approving any token's proposal is the same personless greenlight — minting
+    // a second token is free, so the check is token-ness on both sides, not identity equality.
+    // Only approvals are refused; a token may still ask for changes, and may approve a person's
+    // changeset when its grant says so.
+    if decision == Decision::Approve
+        && caller.credential == Credential::ApiToken
+        && let Some(submitter) = head.submitted_by
+        && changesets::is_token_identity(&mut tx, submitter)
+            .await
+            .map_err(ApiError::from_db)?
+    {
+        return Err(ApiError::forbidden(
+            "agent_self_review",
+            "an API token can't approve a changeset an API token submitted; it needs a person's approval",
         ));
     }
     let edited = changesets::items(&mut tx, head.id)

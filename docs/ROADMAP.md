@@ -379,6 +379,11 @@ edit resumes without duplicates or overwrites); L08 (a noisy agent is throttled;
 content, releases, migration plans, comments and tasks; write drafts from the revision read, comments and tasks,
 make a publish request and ask for its review; nothing approves, publishes, resolves, reassigns or drives a
 migration — D-106; tool discovery follows the token's permissions; unit tests and a stack test over stdio) ·
+the first piece of the enforcement itself (built: D-111 — `POST {P}/changesets/{id}/reviews` refuses
+`agent_self_review` whenever an API token would approve a changeset a token submitted, on the implicit review and
+every named stage alike, so no credential can greenlight a proposal with no person in the loop; a token may still
+ask for changes, approve a person's changeset under `content.review`, and publish a person-approved changeset under
+`content.publish`; covered by `tests/tokens.rs`) ·
 not built: remote MCP with its
 authorization, service-account quotas and budgets, bulk manifests and jobs (X12), the CLI's full JSON contract and a
 `colophon mcp` subcommand, the evaluation suite, L08. The proof gate is not met.

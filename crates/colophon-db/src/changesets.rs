@@ -556,6 +556,23 @@ pub async fn submit(tx: &mut ProjectTransaction, id: Uuid) -> Result<(), DbError
     Ok(())
 }
 
+/// Whether `identity` is an API token's own (D-111), read where the caller already looks —
+/// inside a transaction holding [`lock`], so the answer can't move under the check it feeds.
+pub async fn is_token_identity(
+    tx: &mut ProjectTransaction,
+    identity: Uuid,
+) -> Result<bool, DbError> {
+    sqlx::query_scalar!(
+        r#"SELECT issuer = $2 AS "token!" FROM identities WHERE id = $1"#,
+        identity,
+        crate::tokens::IDENTITY_ISSUER
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map(|issuer| issuer.unwrap_or(false))
+    .map_err(DbError::from_query)
+}
+
 /// Records the transaction's identity's decision on the changeset with `hash`, as its next
 /// decision in sequence — `stage` names the review stage it decides for, `None` the implicit
 /// review (D-104). The caller holds [`lock`] and has checked that `hash` is current.

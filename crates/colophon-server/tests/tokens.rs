@@ -36,10 +36,24 @@ async fn send(
 
 /// A request made with an API token's secret, as a script would send it.
 async fn as_token(secret: &str, method: Method, path: &str, body: Option<&Value>) -> Reply {
+    as_token_with(secret, method, path, body, &[]).await
+}
+
+/// [`as_token`] with extra headers, such as the `If-Match` a review or publish asks for.
+async fn as_token_with(
+    secret: &str,
+    method: Method,
+    path: &str,
+    body: Option<&Value>,
+    extra: &[(&str, &str)],
+) -> Reply {
     let mut request = app()
         .request(method, format!("{ORIGIN}{path}"))
         .header(header::AUTHORIZATION, format!("Bearer {secret}"))
         .header("idempotency-key", key());
+    for (name, value) in extra {
+        request = request.header(*name, *value);
+    }
     if let Some(body) = body {
         request = request.json(body);
     }
@@ -67,6 +81,44 @@ async fn make(session: &Session, project: &str, body: &Value) -> (String, Value)
 
 fn reason(reply: &Reply) -> &Value {
     &reply.body["error"]["details"]["reason"]
+}
+
+/// `POST {changeset}/{action}` as `session`, `If-Match` naming the hash they saw.
+async fn act(session: &Session, path: &str, hash: &str, body: Option<&Value>) -> Reply {
+    call(
+        session,
+        Method::POST,
+        path,
+        body,
+        &[("if-match", &format!("\"{hash}\""))],
+    )
+    .await
+    .expect("request")
+}
+
+/// [`act`] as the API token `secret`.
+async fn act_as(secret: &str, path: &str, hash: &str, body: Option<&Value>) -> Reply {
+    as_token_with(
+        secret,
+        Method::POST,
+        path,
+        body,
+        &[("if-match", &format!("\"{hash}\""))],
+    )
+    .await
+}
+
+fn state(reply: &Reply) -> &str {
+    reply.body["data"]["status"]["state"]
+        .as_str()
+        .unwrap_or("?")
+}
+
+fn hash(reply: &Reply) -> String {
+    reply.body["data"]["hash"]
+        .as_str()
+        .expect("a hash")
+        .to_owned()
 }
 
 #[tokio::test]
@@ -456,4 +508,238 @@ async fn every_change_to_access_is_in_the_audit_log_which_only_owners_read() {
     )
     .await;
     assert_eq!(only.body["data"].as_array().map(Vec::len), Some(1));
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the whole rule, in order: same token, another token, the person, a stage"
+)]
+async fn a_token_can_never_approve_a_token_submitted_changeset() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let base = format!("/api/v1/projects/{project}/environments/production");
+    let sets = format!("{base}/changesets");
+
+    // Two tokens that may draft, review and publish: as powerful as a token can be (D-063).
+    let (agent, _) = make(
+        &owner,
+        &project,
+        &json!({"name": "Writer", "kind": "full-access", "expires_in_days": 1}),
+    )
+    .await;
+    let (second, _) = make(
+        &owner,
+        &project,
+        &json!({"name": "Approver", "kind": "full-access", "expires_in_days": 1}),
+    )
+    .await;
+
+    // The token drafts an entry, pins it in a changeset and submits it: `submitted_by` is the
+    // token's own identity.
+    let drafted = as_token(
+        &agent,
+        Method::POST,
+        &entries(&project),
+        Some(&article("Written by the agent", "x")),
+    )
+    .await;
+    assert_eq!(drafted.status, StatusCode::CREATED, "{}", drafted.body);
+    let entry = drafted.body["data"]["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let created = as_token(
+        &agent,
+        Method::POST,
+        &sets,
+        Some(&json!({"title": "The agent's proposal", "entries": [entry]})),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let path = format!(
+        "{sets}/{}",
+        created.body["data"]["id"].as_str().expect("an id")
+    );
+    let pinned = hash(&created);
+    let submitted = act_as(&agent, &format!("{path}/submit"), &pinned, None).await;
+    assert_eq!(state(&submitted), "awaiting_review", "{}", submitted.body);
+
+    // Approving it would be submit → approve → publish by one credential with no person in the
+    // loop: the refusal is typed, and it is a 403 — the permission exists, the rule forbids it.
+    let own = act_as(
+        &agent,
+        &format!("{path}/reviews"),
+        &pinned,
+        Some(&json!({"decision": "approve"})),
+    )
+    .await;
+    assert_eq!(
+        (own.status, reason(&own)),
+        (StatusCode::FORBIDDEN, &json!("agent_self_review")),
+        "{}",
+        own.body
+    );
+
+    // A second token is refused exactly the same way: minting another credential is free, so
+    // the check is token-ness on both sides, not identity equality (D-111).
+    let other = act_as(
+        &second,
+        &format!("{path}/reviews"),
+        &pinned,
+        Some(&json!({"decision": "approve"})),
+    )
+    .await;
+    assert_eq!(
+        (other.status, reason(&other)),
+        (StatusCode::FORBIDDEN, &json!("agent_self_review")),
+        "{}",
+        other.body
+    );
+
+    // What a token may still do: ask for changes — a review that keeps it a proposal.
+    let asked = act_as(
+        &second,
+        &format!("{path}/reviews"),
+        &pinned,
+        Some(&json!({"decision": "request_changes", "comment": "Needs a person's eyes"})),
+    )
+    .await;
+    assert_eq!(state(&asked), "changes_requested", "{}", asked.body);
+
+    // A person approves the token's proposal — the loop has a person in it — and then the token
+    // may publish it: autonomous publishing is the explicit grant it already holds.
+    let approved = act(
+        &owner,
+        &format!("{path}/reviews"),
+        &pinned,
+        Some(&json!({"decision": "approve"})),
+    )
+    .await;
+    assert_eq!(state(&approved), "approved", "{}", approved.body);
+    let releases = send(&owner, Method::GET, &format!("{base}/releases"), None, &[]).await;
+    let current: i64 = releases
+        .headers
+        .get("colophon-generation")
+        .and_then(|value| value.to_str().ok()?.parse().ok())
+        .expect("a generation");
+    let published = as_token_with(
+        &agent,
+        Method::POST,
+        &format!("{path}/publish"),
+        Some(&json!({"base_generation": current})),
+        &[("if-match", &format!("\"{pinned}\""))],
+    )
+    .await;
+    assert_eq!(
+        published.status,
+        StatusCode::CREATED,
+        "a person approved it, so the token's publish grant applies: {}",
+        published.body
+    );
+
+    // The rule is one-sided: a token may approve a person's changeset under the same
+    // `content.review` grant, because the person is already in the loop.
+    let theirs = common::create_article(&owner, &project, "The owner's piece").await;
+    let set = call(
+        &owner,
+        Method::POST,
+        &sets,
+        Some(&json!({"title": "The owner's proposal", "entries": [theirs]})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(set.status, StatusCode::CREATED, "{}", set.body);
+    let own_path = format!("{sets}/{}", set.body["data"]["id"].as_str().expect("an id"));
+    let own_hash = hash(&set);
+    act(&owner, &format!("{own_path}/submit"), &own_hash, None).await;
+    let by_token = act_as(
+        &second,
+        &format!("{own_path}/reviews"),
+        &own_hash,
+        Some(&json!({"decision": "approve"})),
+    )
+    .await;
+    assert_eq!(
+        state(&by_token),
+        "approved",
+        "a token may approve what a person submitted: {}",
+        by_token.body
+    );
+
+    // With stages configured the rule is the same, stage by stage: the token's named approval
+    // on a token's changeset is refused, the person's lands.
+    let shown = send(
+        &owner,
+        Method::GET,
+        &format!("{base}/review-stages"),
+        None,
+        &[],
+    )
+    .await;
+    let staged = send(
+        &owner,
+        Method::PUT,
+        &format!("{base}/review-stages"),
+        Some(&json!({"stages": [{"key": "qa", "name": "QA"}]})),
+        &[
+            ("if-match", &shown.etag().expect("an ETag")),
+            ("idempotency-key", &key()),
+        ],
+    )
+    .await;
+    assert_eq!(staged.status, StatusCode::OK, "{}", staged.body);
+    let more = as_token(
+        &agent,
+        Method::POST,
+        &entries(&project),
+        Some(&article("Staged work", "x")),
+    )
+    .await;
+    let staged_set = as_token(
+        &agent,
+        Method::POST,
+        &sets,
+        Some(&json!({
+            "title": "Staged proposal",
+            "entries": [more.body["data"]["id"].as_str().expect("an id")]
+        })),
+    )
+    .await;
+    assert_eq!(
+        staged_set.status,
+        StatusCode::CREATED,
+        "{}",
+        staged_set.body
+    );
+    let stage_path = format!(
+        "{sets}/{}",
+        staged_set.body["data"]["id"].as_str().expect("an id")
+    );
+    let stage_hash = hash(&staged_set);
+    act_as(&agent, &format!("{stage_path}/submit"), &stage_hash, None).await;
+    let at_stage = act_as(
+        &agent,
+        &format!("{stage_path}/reviews"),
+        &stage_hash,
+        Some(&json!({"decision": "approve", "stage": "qa"})),
+    )
+    .await;
+    assert_eq!(
+        (at_stage.status, reason(&at_stage)),
+        (StatusCode::FORBIDDEN, &json!("agent_self_review")),
+        "a named stage changes nothing: {}",
+        at_stage.body
+    );
+    let by_person = act(
+        &owner,
+        &format!("{stage_path}/reviews"),
+        &stage_hash,
+        Some(&json!({"decision": "approve", "stage": "qa"})),
+    )
+    .await;
+    assert_eq!(state(&by_person), "approved", "{}", by_person.body);
 }

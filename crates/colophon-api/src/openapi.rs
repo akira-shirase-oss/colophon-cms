@@ -2252,6 +2252,11 @@ pub(crate) static TABLE: &[Route] = &[
                 extra: &[
                     NOT_FOUND,
                     refusal(
+                        403,
+                        "missing_permission, agent_self_review",
+                        "the role can't review it, or a token tried to approve a token's changeset",
+                    ),
+                    refusal(
                         409,
                         "stale_changeset",
                         "the changeset moved; the `ETag` names it now",

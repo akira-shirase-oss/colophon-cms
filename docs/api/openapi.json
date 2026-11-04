@@ -5180,6 +5180,16 @@
             },
             "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission, agent_self_review` — the role can't review it, or a token tried to approve a token's changeset"
+          },
           "404": {
             "content": {
               "application/json": {
