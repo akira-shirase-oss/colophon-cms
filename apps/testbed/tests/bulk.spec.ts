@@ -40,7 +40,7 @@ async function draft(page: Page, projectId: string, title: string): Promise<{ id
 }
 
 test('a sealed bulk job runs its items and the page reports them', async ({ page }) => {
-	await signIn(page);
+	await signIn(page, 'dev-owner');
 	const projectId = await newProject(page);
 	const first = await draft(page, projectId, 'bulk one');
 	const second = await draft(page, projectId, 'bulk two');
