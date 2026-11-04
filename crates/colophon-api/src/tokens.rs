@@ -47,6 +47,14 @@ pub(crate) struct LimitsBody {
     /// Management requests per rolling minute, throttled with 429 over it (D-118).
     #[serde(default)]
     requests_per_minute: Option<i64>,
+    /// Provider tokens per rolling day (D-122): the assistant's calls, as the provider bills
+    /// them.
+    #[serde(default)]
+    tokens_per_day: Option<i64>,
+    /// Provider cost per rolling day in micros of the accounting unit — the unit's
+    /// millionths, a fixed-point integer, never a float (D-122).
+    #[serde(default)]
+    cost_per_day_micros: Option<i64>,
 }
 
 impl LimitsBody {
@@ -56,6 +64,8 @@ impl LimitsBody {
             documents_per_day: self.documents_per_day,
             max_concurrent_jobs: self.max_concurrent_jobs,
             requests_per_minute: self.requests_per_minute,
+            tokens_per_day: self.tokens_per_day,
+            cost_per_day_micros: self.cost_per_day_micros,
         }
         .check()
         .map_err(|error| match error {
@@ -64,14 +74,18 @@ impl LimitsBody {
                 pointer: match field {
                     "documents_per_day" => "/limits/documents_per_day",
                     "max_concurrent_jobs" => "/limits/max_concurrent_jobs",
-                    _ => "/limits/requests_per_minute",
+                    "requests_per_minute" => "/limits/requests_per_minute",
+                    "tokens_per_day" => "/limits/tokens_per_day",
+                    _ => "/limits/cost_per_day_micros",
                 },
                 message: format!(
                     "a token's {field} is between 1 and {}",
                     match field {
                         "documents_per_day" => budget::MAX_DOCUMENTS_PER_DAY,
                         "max_concurrent_jobs" => budget::MAX_CONCURRENT_JOBS,
-                        _ => budget::MAX_REQUESTS_PER_MINUTE,
+                        "requests_per_minute" => budget::MAX_REQUESTS_PER_MINUTE,
+                        "tokens_per_day" => budget::MAX_TOKENS_PER_DAY,
+                        _ => budget::MAX_COST_PER_DAY_MICROS,
                     }
                 ),
             },
@@ -187,6 +201,12 @@ pub(crate) struct UsageView {
     /// Management requests in the current rolling minute (0 without the ceiling, or when
     /// the count isn't reachable — never an overstatement).
     requests_last_minute: i64,
+    /// Provider tokens in the last day: settled outcomes at what they consumed, open
+    /// reservations at their allowance (D-122).
+    tokens_last_day: i64,
+    /// Provider cost in the last day, in micros of the accounting unit — settled outcomes at
+    /// what they consumed, open reservations at their allowance (D-122).
+    cost_last_day: i64,
 }
 
 impl TokenView {
@@ -222,11 +242,15 @@ impl TokenView {
                 documents_per_day: limits.documents_per_day,
                 max_concurrent_jobs: limits.max_concurrent_jobs,
                 requests_per_minute: limits.requests_per_minute,
+                tokens_per_day: limits.tokens_per_day,
+                cost_per_day_micros: limits.cost_per_day_micros,
             }),
             usage: usage.map(|usage| UsageView {
                 documents_last_day: usage.documents_last_day,
                 jobs_open: usage.jobs_open,
                 requests_last_minute: usage.requests_last_minute,
+                tokens_last_day: usage.tokens_last_day,
+                cost_last_day: usage.cost_last_day,
             }),
             secret,
         })
@@ -244,6 +268,8 @@ fn recorded(token: &StoredToken) -> serde_json::Value {
             "documents_per_day": limits.documents_per_day,
             "max_concurrent_jobs": limits.max_concurrent_jobs,
             "requests_per_minute": limits.requests_per_minute,
+            "tokens_per_day": limits.tokens_per_day,
+            "cost_per_day_micros": limits.cost_per_day_micros,
         })),
     })
 }
@@ -371,11 +397,15 @@ pub(crate) async fn update(
                         "documents_per_day": limits.documents_per_day,
                         "max_concurrent_jobs": limits.max_concurrent_jobs,
                         "requests_per_minute": limits.requests_per_minute,
+                        "tokens_per_day": limits.tokens_per_day,
+                        "cost_per_day_micros": limits.cost_per_day_micros,
                     })),
                     "after": token.limits.map(|limits| json!({
                         "documents_per_day": limits.documents_per_day,
                         "max_concurrent_jobs": limits.max_concurrent_jobs,
                         "requests_per_minute": limits.requests_per_minute,
+                        "tokens_per_day": limits.tokens_per_day,
+                        "cost_per_day_micros": limits.cost_per_day_micros,
                     })),
                 }
             }),

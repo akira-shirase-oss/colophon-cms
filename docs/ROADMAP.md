@@ -451,6 +451,15 @@ expiry; a tool's call is dispatched in-process through the server's own router u
 dispatch is never authorization and the D-106 boundary is unchanged, proved in `tests/mcp.rs` by the
 lifecycle, the credential refusals, the transport's `Origin`/`Accept`/protocol-version door checks and
 byte-identical parity with stdio) ·
+provider `tokens`/`cost` budgets (built: D-122, migration 0047 — `api_token_limits` gains
+`tokens_per_day` (1…1,000,000,000) and `cost_per_day_micros` (1…100,000,000,000 micros of the
+accounting unit, a fixed-point integer), `Kind::Tokens`/`Cost` wire to their columns, and
+`reserve` admits under the ceiling or refuses `budget_exceeded` with the day counted as
+`coalesce(settled, reserved)` — open reservations at their allowance, settled outcomes at what
+they consumed; the ceilings ride the same `POST`/`PATCH`/`GET …/tokens/{token}` surface and the
+usage read gains `tokens_last_day`/`cost_last_day`; covered by `tests/budgets.rs` in
+`colophon-db` and `colophon-server`; what still waits on the assistant is a call site that
+reserves them) ·
 the CLI's import and export (built: D-123 — `content import` sends the file the API accepts verbatim,
 checked only the way the API will read it (every JSONL line or array element parses, the file isn't
 empty, at most 512 items, a `--file` within the largest request body); `--dry-run` plans each item and
@@ -458,7 +467,7 @@ sends no key, an applied import sends one `cli-<uuid>` or `--idempotency-key`'s;
 streams `GET …/export` a line at a time — the file itself on text, one envelope a document on `--jsonl`,
 the bounded `{"collection", "entries"}` on `--json`, no `--cursor` since the endpoint doesn't page;
 proved end to end in `tests/cli.rs`, the file checks unit-tested in `src/content.rs`) ·
-not built: provider `tokens`/`cost` budgets. The proof gate is met — X12's resume proof is in
+not built: nothing — the milestone is closed, the optional assistant aside. The proof gate is met — X12's resume proof is in
 `tests/bulk.rs`, the eval gate's stored run is `perf/results/2026-11-04T141109.623685Z-evals.json`, and
 L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json`.
 

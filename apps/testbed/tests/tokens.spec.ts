@@ -52,6 +52,23 @@ test('make a token, use its secret, refuse a people-only token, revoke it, read 
 	await expect(log.nth(0)).toContainText('by a person');
 });
 
+test('a token created with provider ceilings shows them in the list', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	await page.goto('/tokens');
+	await page.getByLabel('Project').selectOption(projectId);
+
+	await page.getByLabel('Provider tokens per day (optional)').fill('4000');
+	await page.getByLabel('Provider cost per day, micros (optional)').fill('2500000');
+	await page.getByRole('button', { name: 'Create' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created read-only token');
+
+	// The ceilings came back on the token's view, next to its name.
+	const limits = page.getByTestId('tokens').locator('li').first().getByTestId('token-limits');
+	await expect(limits).toContainText('tokens_per_day=4000');
+	await expect(limits).toContainText('cost_per_day_micros=2500000');
+});
+
 test('a token over its requests-per-minute ceiling is refused, and the log records it once', async ({ page }) => {
 	await signIn(page, 'dev-owner');
 	const projectId = await newProject(page);

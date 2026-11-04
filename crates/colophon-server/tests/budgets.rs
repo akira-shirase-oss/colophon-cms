@@ -84,13 +84,15 @@ async fn limits_are_set_read_changed_and_audited_for_people_only() {
     let owner = sign_in("dev-owner").await;
     let project = project(&owner).await;
 
-    // Limits travel with the creation body and come back in the view.
+    // Limits travel with the creation body and come back in the view, provider ceilings
+    // included (D-122).
     let (secret, view) = make(
         &owner,
         &project,
         &json!({
             "name": "Budgeted", "kind": "full-access", "expires_in_days": 30,
-            "limits": {"documents_per_day": 5, "max_concurrent_jobs": 2}
+            "limits": {"documents_per_day": 5, "max_concurrent_jobs": 2,
+                       "tokens_per_day": 4000, "cost_per_day_micros": 2_500_000}
         }),
     )
     .await;
@@ -99,9 +101,17 @@ async fn limits_are_set_read_changed_and_audited_for_people_only() {
         (
             &view["limits"]["documents_per_day"],
             &view["limits"]["max_concurrent_jobs"],
-            view["limits"].get("requests_per_minute")
+            view["limits"].get("requests_per_minute"),
+            &view["limits"]["tokens_per_day"],
+            &view["limits"]["cost_per_day_micros"]
         ),
-        (&json!(5), &json!(2), Some(&Value::Null)),
+        (
+            &json!(5),
+            &json!(2),
+            Some(&Value::Null),
+            &json!(4000),
+            &json!(2_500_000)
+        ),
         "{view}"
     );
 
@@ -113,9 +123,11 @@ async fn limits_are_set_read_changed_and_audited_for_people_only() {
         (
             &read.body["data"]["usage"]["documents_last_day"],
             &read.body["data"]["usage"]["jobs_open"],
-            &read.body["data"]["usage"]["requests_last_minute"]
+            &read.body["data"]["usage"]["requests_last_minute"],
+            &read.body["data"]["usage"]["tokens_last_day"],
+            &read.body["data"]["usage"]["cost_last_day"]
         ),
-        (&json!(0), &json!(0), &json!(0))
+        (&json!(0), &json!(0), &json!(0), &json!(0), &json!(0))
     );
     let list = send(&owner, Method::GET, &tokens(&project), None).await;
     assert!(
@@ -164,6 +176,11 @@ async fn limits_are_set_read_changed_and_audited_for_people_only() {
     for (limits, why) in [
         (json!({"documents_per_day": 0}), "invalid_limit"),
         (json!({"max_concurrent_jobs": 65}), "invalid_limit"),
+        (
+            json!({"tokens_per_day": 1_000_000_001_i64}),
+            "invalid_limit",
+        ),
+        (json!({"cost_per_day_micros": 0}), "invalid_limit"),
         (json!({}), "limits_empty"),
     ] {
         let patched = send(

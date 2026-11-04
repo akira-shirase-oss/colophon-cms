@@ -51,6 +51,12 @@ pub struct Usage {
     /// ledger (D-118), so this stays 0 unless a reservation records one; the token view
     /// overlays the limiter's own window.
     pub requests_last_minute: i64,
+    /// Provider tokens in the last day: what settled outcomes consumed, and the conservative
+    /// allowance of what is still open.
+    pub tokens_last_day: i64,
+    /// Provider cost in the last day, in micros of the accounting unit — settled outcomes at
+    /// what they consumed, open reservations at their allowance.
+    pub cost_last_day: i64,
 }
 
 /// The counts, in one read. Under the limits lock inside [`reserve`] this is the number the
@@ -66,7 +72,13 @@ async fn used(
                   coalesce(sum(reserved) FILTER (WHERE kind = 'jobs'
                         AND state IN ('held', 'uncertain')), 0)::bigint AS "jobs!",
                   coalesce(sum(reserved) FILTER (WHERE kind = 'requests' AND state <> 'released'
-                        AND created_at > now() - interval '1 minute'), 0)::bigint AS "requests!"
+                        AND created_at > now() - interval '1 minute'), 0)::bigint AS "requests!",
+                  coalesce(sum(coalesce(settled, reserved)) FILTER (WHERE kind = 'tokens'
+                        AND state <> 'released'
+                        AND created_at > now() - interval '1 day'), 0)::bigint AS "tokens!",
+                  coalesce(sum(coalesce(settled, reserved)) FILTER (WHERE kind = 'cost'
+                        AND state <> 'released'
+                        AND created_at > now() - interval '1 day'), 0)::bigint AS "cost!"
            FROM budget_reservations
            WHERE project_id = $1 AND principal_id = $2"#,
         project,
@@ -79,6 +91,8 @@ async fn used(
         documents_last_day: row.documents,
         jobs_open: row.jobs,
         requests_last_minute: row.requests,
+        tokens_last_day: row.tokens,
+        cost_last_day: row.cost,
     })
 }
 
@@ -92,7 +106,8 @@ pub async fn usage(tx: &mut MemberTransaction, principal: Uuid) -> Result<Usage,
 /// limits — is the unconstrained case: nothing is counted, nothing is written.
 async fn lock_limits(tx: &mut ProjectTransaction) -> Result<Option<Limits>, DbError> {
     let row = sqlx::query!(
-        "SELECT l.documents_per_day, l.max_concurrent_jobs, l.requests_per_minute
+        "SELECT l.documents_per_day, l.max_concurrent_jobs, l.requests_per_minute,
+                l.tokens_per_day, l.cost_per_day_micros
          FROM api_tokens t
          JOIN api_token_limits l ON l.project_id = t.project_id AND l.token_id = t.id
          WHERE t.project_id = $1 AND t.identity_id = $2
@@ -107,6 +122,8 @@ async fn lock_limits(tx: &mut ProjectTransaction) -> Result<Option<Limits>, DbEr
         documents_per_day: row.documents_per_day,
         max_concurrent_jobs: row.max_concurrent_jobs,
         requests_per_minute: row.requests_per_minute,
+        tokens_per_day: row.tokens_per_day,
+        cost_per_day_micros: row.cost_per_day_micros,
     }))
 }
 
@@ -127,7 +144,8 @@ pub async fn reserve(
         Kind::Documents => used.documents_last_day,
         Kind::Jobs => used.jobs_open,
         Kind::Requests => used.requests_last_minute,
-        Kind::Tokens | Kind::Cost => 0,
+        Kind::Tokens => used.tokens_last_day,
+        Kind::Cost => used.cost_last_day,
     };
     let limit = limits.ceiling(kind);
     if !budget::fits(have, amount, limit) {
@@ -584,16 +602,20 @@ pub async fn set_limits(
 ) -> Result<(), DbError> {
     sqlx::query!(
         "INSERT INTO api_token_limits (project_id, token_id, documents_per_day, max_concurrent_jobs,
-                                       requests_per_minute, updated_by, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, now())
+                                       requests_per_minute, tokens_per_day, cost_per_day_micros,
+                                       updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
          ON CONFLICT (project_id, token_id) DO UPDATE
          SET documents_per_day = $3, max_concurrent_jobs = $4, requests_per_minute = $5,
-             updated_by = $6, updated_at = now()",
+             tokens_per_day = $6, cost_per_day_micros = $7,
+             updated_by = $8, updated_at = now()",
         tx.project,
         token,
         limits.documents_per_day,
         limits.max_concurrent_jobs,
         limits.requests_per_minute,
+        limits.tokens_per_day,
+        limits.cost_per_day_micros,
         tx.identity
     )
     .execute(&mut *tx.transaction)

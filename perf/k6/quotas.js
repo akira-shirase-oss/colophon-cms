@@ -1,6 +1,7 @@
 // Load scenario for the request quota (D-118): a token's `requests_per_minute` checked in the
 // admission limiter where its scoped transaction opens. setup() signs the owner in through
-// Keycloak, makes a project and two read-only tokens: `bounded`, ceiling 100,000 a minute —
+// Keycloak, makes a project and two read-only tokens: `bounded`, ceiling 100,000 a minute and
+// provider `tokens`/`cost` ceilings (D-122) the scenario only stores —
 // the arm asks for a fifth of the run's requests, under the ceiling on any machine this runs
 // on, so its requests prove a token inside its budget keeps its shape and its latency — and
 // `throttled`, ceiling 2 a minute with the whole burst spent in setup(), so every measured
@@ -88,9 +89,11 @@ export function setup() {
   if (project.status !== 201) fail(`project: HTTP ${project.status}`);
   const base = `${BASE_URL}/api/v1/projects/${project.json('data.id')}`;
   const entries = `${base}/environments/production/collections/articles/entries`;
+  // Provider ceilings too (D-122): the run writes and reads the wider limits row, and the
+  // admission check proves ceilings it doesn't consume cost nothing.
   const bounded = token(owner, base, {
     name: 'Under quota', kind: 'read-only', expires_in_days: 1,
-    limits: { requests_per_minute: 100000 },
+    limits: { requests_per_minute: 100000, tokens_per_day: 1000000, cost_per_day_micros: 50000000 },
   });
   const throttled = token(owner, base, {
     name: 'Over quota', kind: 'read-only', expires_in_days: 1,

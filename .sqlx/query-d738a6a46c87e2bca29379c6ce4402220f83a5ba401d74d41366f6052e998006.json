@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT l.documents_per_day, l.max_concurrent_jobs, l.requests_per_minute\n         FROM api_tokens t\n         JOIN api_token_limits l ON l.project_id = t.project_id AND l.token_id = t.id\n         WHERE t.project_id = $1 AND t.identity_id = $2\n         FOR UPDATE OF l",
+  "query": "SELECT l.documents_per_day, l.max_concurrent_jobs, l.requests_per_minute,\n                l.tokens_per_day, l.cost_per_day_micros\n         FROM api_tokens t\n         JOIN api_token_limits l ON l.project_id = t.project_id AND l.token_id = t.id\n         WHERE t.project_id = $1 AND t.identity_id = $2\n         FOR UPDATE OF l",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,28 @@
             "name": "requests_per_minute"
           }
         }
+      },
+      {
+        "ordinal": 3,
+        "name": "tokens_per_day",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "api_token_limits",
+            "name": "tokens_per_day"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "cost_per_day_micros",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "api_token_limits",
+            "name": "cost_per_day_micros"
+          }
+        }
       }
     ],
     "parameters": {
@@ -46,8 +68,10 @@
     "nullable": [
       true,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "1c61607365c768ace670dd65af7b248c3461bd2451b6dc9785c126abb44a0da6"
+  "hash": "d738a6a46c87e2bca29379c6ce4402220f83a5ba401d74d41366f6052e998006"
 }

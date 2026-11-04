@@ -4210,6 +4210,8 @@ fn membership() -> Value {
                 "documents_per_day": { "type": ["integer", "null"], "minimum": 1, "maximum": 1_000_000, "description": "entry writes per rolling day" },
                 "max_concurrent_jobs": { "type": ["integer", "null"], "minimum": 1, "maximum": 64, "description": "delivery jobs held at once" },
                 "requests_per_minute": { "type": ["integer", "null"], "minimum": 1, "maximum": 100_000, "description": "management requests per rolling minute; over it, 429 `rate_limited` with `Retry-After` (D-118)" },
+                "tokens_per_day": { "type": ["integer", "null"], "minimum": 1, "maximum": 1_000_000_000, "description": "provider tokens per rolling day (D-122)" },
+                "cost_per_day_micros": { "type": ["integer", "null"], "minimum": 1, "maximum": 100_000_000_000i64, "description": "provider cost per rolling day, in micros of the accounting unit — the unit's millionths, a fixed-point integer (D-122)" },
             },
         },
         "TokenUsage": {
@@ -4218,6 +4220,8 @@ fn membership() -> Value {
                 "documents_last_day": { "type": "integer" },
                 "jobs_open": { "type": "integer" },
                 "requests_last_minute": { "type": "integer", "description": "the limiter's current rolling window (D-118); 0 without the ceiling or when unreachable" },
+                "tokens_last_day": { "type": "integer", "description": "provider tokens in the last day; settled outcomes at what they consumed, open reservations at their allowance" },
+                "cost_last_day": { "type": "integer", "description": "provider cost in the last day, in micros of the accounting unit" },
             },
         },
         "PatchToken": {

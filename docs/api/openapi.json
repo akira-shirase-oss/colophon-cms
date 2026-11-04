@@ -3340,6 +3340,15 @@
       },
       "TokenLimits": {
         "properties": {
+          "cost_per_day_micros": {
+            "description": "provider cost per rolling day, in micros of the accounting unit — the unit's millionths, a fixed-point integer (D-122)",
+            "maximum": 100000000000,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "documents_per_day": {
             "description": "entry writes per rolling day",
             "maximum": 1000000,
@@ -3366,12 +3375,25 @@
               "integer",
               "null"
             ]
+          },
+          "tokens_per_day": {
+            "description": "provider tokens per rolling day (D-122)",
+            "maximum": 1000000000,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "type": "object"
       },
       "TokenUsage": {
         "properties": {
+          "cost_last_day": {
+            "description": "provider cost in the last day, in micros of the accounting unit",
+            "type": "integer"
+          },
           "documents_last_day": {
             "type": "integer"
           },
@@ -3380,6 +3402,10 @@
           },
           "requests_last_minute": {
             "description": "the limiter's current rolling window (D-118); 0 without the ceiling or when unreachable",
+            "type": "integer"
+          },
+          "tokens_last_day": {
+            "description": "provider tokens in the last day; settled outcomes at what they consumed, open reservations at their allowance",
             "type": "integer"
           }
         },

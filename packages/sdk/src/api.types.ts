@@ -700,6 +700,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/environments/{environment}/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** One JSON-RPC message on the remote-MCP session (D-121) */
+        post: operations["mcpPost"];
+        /** End the remote-MCP session early */
+        delete: operations["mcpDelete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/environments/{environment}/migrations": {
         parameters: {
             query?: never;
@@ -1970,6 +1988,36 @@ export interface components {
             id?: string;
             locale?: string | null;
         };
+        /** @description one JSON-RPC 2.0 message under MCP protocol 2025-11-25: a request, a notification or a response — never a batch */
+        McpMessage: {
+            /** @description `{code, message, data?}`, on a client's own refusal */
+            error?: Record<string, unknown>;
+            /** @description a string or number on requests and their responses; absent on notifications */
+            id?: unknown;
+            /** @enum {string} */
+            jsonrpc: "2.0";
+            /** @description `initialize`, `ping`, `tools/list`, `tools/call`, or a `notifications/*` notification */
+            method?: string;
+            params?: Record<string, unknown>;
+            /** @description the answer, on a client's own response */
+            result?: unknown;
+        };
+        /** @description one JSON-RPC 2.0 response message: `result` on success or `error` on failure, never both */
+        McpResponse: {
+            error?: {
+                /** @description JSON-RPC's own, plus -32001 API-unavailable, -32002 not-initialized, -32800 cancelled */
+                code?: number;
+                /** @description the API's error code, status and request id when it refused */
+                data?: unknown;
+                message?: string;
+            };
+            /** @description the request's id, echoed */
+            id: unknown;
+            /** @enum {string} */
+            jsonrpc: "2.0";
+            /** @description the handshake on `initialize`, `{}` on `ping`, `{tools}` on `tools/list`, and `{content, structuredContent, isError}` on `tools/call` — `isError` carries the API's own refusal */
+            result?: unknown;
+        };
         Me: {
             administrator: boolean;
             display_name?: string | null;
@@ -2551,18 +2599,26 @@ export interface components {
             updated_at?: string;
         };
         TokenLimits: {
+            /** @description provider cost per rolling day, in micros of the accounting unit — the unit's millionths, a fixed-point integer (D-122) */
+            cost_per_day_micros?: number | null;
             /** @description entry writes per rolling day */
             documents_per_day?: number | null;
             /** @description delivery jobs held at once */
             max_concurrent_jobs?: number | null;
             /** @description management requests per rolling minute; over it, 429 `rate_limited` with `Retry-After` (D-118) */
             requests_per_minute?: number | null;
+            /** @description provider tokens per rolling day (D-122) */
+            tokens_per_day?: number | null;
         };
         TokenUsage: {
+            /** @description provider cost in the last day, in micros of the accounting unit */
+            cost_last_day?: number;
             documents_last_day?: number;
             jobs_open?: number;
             /** @description the limiter's current rolling window (D-118); 0 without the ceiling or when unreachable */
             requests_last_minute?: number;
+            /** @description provider tokens in the last day; settled outcomes at what they consumed, open reservations at their allowance */
+            tokens_last_day?: number;
         };
         TokenView: {
             /** Format: date-time */
@@ -7460,6 +7516,195 @@ export interface operations {
                 };
             };
             /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    mcpPost: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the session `initialize` minted; required on every message after it */
+                "mcp-session-id"?: string;
+                /** @description `2025-11-25`; required once a session exists */
+                "mcp-protocol-version"?: string;
+                /** @description when present it must be an origin this server trusts, exactly — the transport's DNS-rebinding check */
+                origin?: string;
+            };
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpMessage"];
+            };
+        };
+        responses: {
+            /** @description the request's own JSON-RPC response; `Mcp-Session-Id` rides on the `initialize` answer only */
+            200: {
+                headers: {
+                    "Mcp-Session-Id"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpResponse"];
+                };
+            };
+            /** @description a notification or a stray response — accepted, nothing to answer */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `bad_request` — not acceptable JSON-RPC, or `MCP-Protocol-Version`/`Accept` failed the transport's checks */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `api_token_required` — a person's credential — a browser session or a personal access token; agents sign in as project API tokens; `origin_not_allowed` — an `Origin` this server does not trust */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such session — or one another token holds, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — the token's session cap is full; `Retry-After`; over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — the project's or the server's session cap is full */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    mcpDelete: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description the session to end */
+                "mcp-session-id": string;
+                /** @description `2025-11-25` */
+                "mcp-protocol-version": string;
+            };
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the session ended; its in-flight requests answer `request cancelled` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `bad_request` — the `Mcp-Session-Id` or `MCP-Protocol-Version` header is missing or wrong */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `api_token_required` — a person's credential — a browser session or a personal access token; agents sign in as project API tokens; `origin_not_allowed` — an `Origin` this server does not trust */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such session — or one another token holds, which looks the same */
             404: {
                 headers: {
                     [name: string]: unknown;
