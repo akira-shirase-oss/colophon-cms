@@ -481,6 +481,15 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
 - `docs`: complete guides; every example runs in CI.
 - `oss`: release process, SBOM, signed artifacts, security policy.
 - Usability test with five editors; one independent install.
+- built: backups' capture half (D-125) — `archive_mode=on`, `wal_level=replica`, `archive_timeout=60s`, WAL segments
+  into the `postgres-wal-archive` volume through `deploy/postgres/archive-wal.sh` (the local stand-in for object
+  storage; the stock image has no S3 tooling), `scripts/backup.sh` capturing the cluster by `pg_basebackup` as the
+  REPLICATION-only `colophon_backup` role, gpg-symmetric encryption from a passphrase file, `manifest.json` recording
+  commit/Postgres/migrations/key-reference/ledger mark, and `verify` re-running `pg_verifybackup` on the decrypted
+  bytes — the drill's stored run is `perf/results/2026-11-04T173702Z-backup-drill-apple-m2-pro-12c.json` (capture
+  252 s, verify 138 s) ·
+  not built: the restore procedure itself (new epoch, ledger replay, reconciliation), scheduling, retention jobs,
+  asset versioning, upgrade runbook, observability, the drills and installs of the proof gate.
 
 **Proof gate:** F09–F14, L05–L13, the 24-hour soak, a restore drill on clean infrastructure, the usability gate, one
 independent install. **v0.1 release.**

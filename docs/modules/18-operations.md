@@ -113,15 +113,33 @@ on clean infrastructure and an independent install, so operations are a module w
   with a visible dropped-record counter. Host and container logs are capped separately.
 - **Never logged:** draft text, model prompts, customer addresses or credentials (spec §27).
 
-### Backups (spec §32)
-- Encrypted daily base backups plus continuous PostgreSQL WAL archiving (point-in-time recovery).
+### Backups (spec §32; capture and archiving built in P6, D-125)
+- WAL archiving is live on the local stack: `archive_mode=on`, `wal_level=replica`, `archive_timeout=60s` (an idle
+  database still switches within the minute, so the 15-minute recovery-point objective holds), through
+  `deploy/postgres/archive-wal.sh` into the named `postgres-wal-archive` volume — the local stand-in for object
+  storage, since the stock Postgres image ships no S3 tooling; production points the same `archive_command` contract
+  at a bucket. `deploy/postgres/restore-wal.sh` is its `restore_command`. `scripts/stack.sh check` proves a switched
+  segment lands. O5: nothing anywhere deletes archived WAL; retention is a documented future job, and the runbook
+  says so.
+- `scripts/backup.sh` captures encrypted base backups: `pg_basebackup` in-cluster as the `colophon_backup` role
+  (REPLICATION, no table rights — backup credentials separate from application credentials), `-X stream` for the
+  WAL a consistent start needs, `pg_verifybackup` against PostgreSQL's own `backup_manifest` at capture and again on
+  decrypted bytes in `verify`. Output: `backups/<UTC-stamp>/{base.tar.gz.gpg,manifest.json}`, gpg-symmetric because
+  `age` is not installed locally (age identity file when it is); the passphrase comes only from a file or
+  `COLOPHON_BACKUP_PASSPHRASE_FILE`, never a flag.
+- The manifest (`format: 1`) records the checkout's commit, Postgres and pg_basebackup versions, non-system schemas,
+  the applied `_sqlx_migrations`, the key reference (never the key), database and cluster sizes, the WAL archive
+  state, and `deletion_ledger` — `null` until the ledger slice lands, `{"present":true,"rows":N}` after.
 - Targets: a 15-minute recovery-point objective and a one-hour recovery-time objective on the reference profile. Both
-  require demonstrated restore drills; a SQL dump alone is not this strategy.
-- Object-store assets are versioned.
-- A consistent backup manifest records schemas, migrations, encryption-key references and the deletion ledger.
-- Backup credentials are separate from application credentials. The cache does not need restoring for correctness.
+  require demonstrated restore drills; a SQL dump alone is not this strategy. The first dated drill artifact is
+  `perf/results/2026-11-04T173702Z-backup-drill-apple-m2-pro-12c.json` (capture 252 s, verify 138 s, 2.2 GB encrypted
+  from a 12.4 GB dev cluster — laptop numbers about the reference profile, not a capacity promise).
+- **Still owed:** scheduling (daily is a target, nothing runs it yet), object-store asset versioning (D-016's Garage
+  lacks bucket versioning; production decides), a documented retention job, and the restore procedure below — the
+  drill verifies capture and integrity only, never claiming the backup restores. The cache does not need restoring
+  for correctness: no backup includes it.
 
-### Restore procedure (spec §33; F13, F14)
+### Restore procedure (spec §33; F13, F14) — owed, next P6 slice
 1. Restore onto clean infrastructure with outbound integrations disabled.
 2. Verify schema, assets and permissions.
 3. Register a **new recovery epoch** before serving.

@@ -13,6 +13,23 @@ services:
   # The only source of truth.
   postgres:
     image: postgres:18.6-trixie@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+    # WAL archiving for point-in-time recovery (D-125): every completed segment is copied by
+    # deploy/postgres/archive-wal.sh into the postgres-wal-archive volume, and
+    # archive_timeout forces a switch within a minute so an idle database still meets the
+    # 15-minute recovery-point objective. The image has no S3 tooling, so the volume is the
+    # local stand-in for the object storage the same command would write in production.
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=60s
+      - -c
+      - archive_command=/etc/colophon/postgres/archive-wal.sh %p %f
+      - -c
+      - restore_command=/etc/colophon/postgres/restore-wal.sh %f %p
     environment:
       POSTGRES_USER: colophon
       POSTGRES_PASSWORD: colophon-dev
@@ -23,6 +40,13 @@ services:
       # PostgreSQL 18 images keep their data in a versioned directory under
       # /var/lib/postgresql, so the volume is mounted there, not at .../data.
       - postgres:/var/lib/postgresql
+      # The WAL archive (O5: never deleted to free disk space; stack.sh reset removes it only
+      # as part of throwing the whole stack away).
+      - postgres-wal-archive:/wal-archive
+      # The archiver scripts live in deploy/postgres next to roles.sql. A directory mount, not
+      # single files: a single-file bind mount follows the file's original inode, so edits
+      # would silently stop reaching the container (see the garage note below).
+      - ./postgres:/etc/colophon/postgres:ro
     healthcheck:
       test: ["CMD", "pg_isready", "--host=127.0.0.1", "--username=colophon", "--dbname=colophon"]
       interval: 10s
@@ -121,4 +145,5 @@ services:
 
 volumes:
   postgres:
+  postgres-wal-archive:
   garage:

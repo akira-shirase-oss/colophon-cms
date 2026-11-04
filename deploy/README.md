@@ -44,6 +44,12 @@ public delivery switches to, and `colophon_worker` (step 2.3, [D-046](../docs/DE
 switches to. A stack started before those steps needs `scripts/stack.sh up` once more to create them; the script is
 safe to rerun.
 
+Postgres archives every completed WAL segment into the `postgres-wal-archive` volume
+(`archive_timeout=60s`; `postgres/archive-wal.sh` is the `archive_command`) for point-in-time
+recovery, and `colophon_backup` — a `REPLICATION` login with no table rights — is the credential
+`scripts/backup.sh` uses for encrypted base backups. See [runbooks/backup.md](runbooks/backup.md)
+([D-125](../docs/DECISIONS.md)).
+
 If a port clashes with something else on your machine, move it: `COLOPHON_PG_PORT`, `COLOPHON_VALKEY_PORT`,
 `COLOPHON_S3_PORT`, `COLOPHON_S3_ADMIN_PORT`, `COLOPHON_KEYCLOAK_PORT`. The bind address is deliberately not a setting.
 
@@ -67,7 +73,7 @@ something:
 
 | Service | Must work | Must refuse |
 |---|---|---|
-| PostgreSQL | speaks the PostgreSQL protocol on the published port; major version 18; data checksums on; a write reads back | a wrong password |
+| PostgreSQL | speaks the PostgreSQL protocol on the published port; major version 18; data checksums on; a write reads back; WAL archiving is on and a switched segment lands in the archive volume | a wrong password |
 | Valkey | a value with an expiry reads back; memory capped at 128 MiB with LRU eviction; no snapshots and no append-only file | any command before the password |
 | Garage | cluster healthy; the bucket exists; an object stores, reads back byte for byte, deletes, and is gone | an anonymous read; a wrong secret; an upload whose bytes don't match its SHA-256 |
 | Keycloak | the realm's issuer is stable; a full Authorization Code + PKCE sign-in returns an ID token for the right user with our nonce | a code used twice; a code without its PKCE verifier; a wrong password; a sign-in without PKCE; an unregistered redirect URI; the password grant |
