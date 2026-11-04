@@ -171,6 +171,173 @@ async fn a_token_writes_until_its_documents_limit_then_is_refused() {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story, told in order: admit, settle below the estimate, release, refuse"
+)]
+async fn provider_budgets_admit_settle_release_and_refuse() {
+    let db = TestDb::new().await;
+    let (alice, project) = project(&db).await;
+    let (_, identity) = limited_token(
+        &db.app,
+        alice,
+        project,
+        [11; 32],
+        &Limits {
+            tokens_per_day: Some(1_000),
+            cost_per_day_micros: Some(500_000),
+            ..Limits::default()
+        },
+    )
+    .await;
+
+    // Under the tokens ceiling: 400 reserved and held; the day count is the allowance.
+    let mut tx = as_token(&db.app, identity, project).await;
+    let first = budgets::reserve(&mut tx, Kind::Tokens, 400)
+        .await
+        .expect("under the ceiling")
+        .expect("a held row's id");
+    tx.commit().await.expect("commit");
+    let mut tx = as_member(&db.app, alice, project).await;
+    let usage = budgets::usage(&mut tx, identity).await.expect("usage");
+    assert_eq!(usage.tokens_last_day, 400, "the held allowance counts");
+    tx.commit().await.expect("commit");
+
+    // The outcome settles what the provider actually billed — less than the allowance — and
+    // the day count drops to the truth: 250 spent, 750 of headroom back.
+    let mut tx = as_token(&db.app, identity, project).await;
+    budgets::settle(&mut tx, Some(first), 250)
+        .await
+        .expect("settled");
+    let second = budgets::reserve(&mut tx, Kind::Tokens, 700)
+        .await
+        .expect("250 + 700 fits under 1,000")
+        .expect("held");
+    budgets::settle(&mut tx, Some(second), 700)
+        .await
+        .expect("settled");
+    let error = budgets::reserve(&mut tx, Kind::Tokens, 51)
+        .await
+        .expect_err("950 spent, 51 over the ceiling");
+    assert!(refused(&error, Kind::Tokens), "{error:?}");
+    let third = budgets::reserve(&mut tx, Kind::Tokens, 50)
+        .await
+        .expect("exactly the ceiling fits")
+        .expect("held");
+    tx.commit().await.expect("commit");
+
+    // A released reservation never happened: its allowance is free again. The cost ceiling
+    // refuses what the freed amount would have overflowed, and a settle below the estimate
+    // leaves room for the rest.
+    let mut tx = as_token(&db.app, identity, project).await;
+    let cost = budgets::reserve(&mut tx, Kind::Cost, 300_000)
+        .await
+        .expect("cost under its ceiling")
+        .expect("held");
+    budgets::release(&mut tx, cost).await.expect("released");
+    let cost = budgets::reserve(&mut tx, Kind::Cost, 500_000)
+        .await
+        .expect("the released allowance was freed")
+        .expect("held");
+    budgets::settle(&mut tx, Some(cost), 400_000)
+        .await
+        .expect("billed less than the estimate");
+    let error = budgets::reserve(&mut tx, Kind::Cost, 100_001)
+        .await
+        .expect_err("400,000 spent, 100,001 over the ceiling");
+    assert!(refused(&error, Kind::Cost), "{error:?}");
+    budgets::reserve(&mut tx, Kind::Cost, 100_000)
+        .await
+        .expect("exactly the ceiling fits");
+    tx.commit().await.expect("commit");
+
+    // The ledger reads both kinds back, settled at what the outcomes consumed; the tokens
+    // reservation still held counts its allowance, not a made-up outcome.
+    let mut tx = as_member(&db.app, alice, project).await;
+    let ledger = budgets::of_principal(&mut tx, identity)
+        .await
+        .expect("reservations");
+    let by_kind = |kind: &str| -> Vec<_> { ledger.iter().filter(|row| row.kind == kind).collect() };
+    assert_eq!(by_kind("tokens").len(), 3, "{ledger:?}");
+    assert_eq!(by_kind("cost").len(), 3, "{ledger:?}");
+    assert!(
+        by_kind("tokens")
+            .iter()
+            .any(|row| row.id == third && row.state == "held"),
+        "the third tokens reservation is still in flight"
+    );
+    let usage = budgets::usage(&mut tx, identity).await.expect("usage");
+    assert_eq!(
+        (usage.tokens_last_day, usage.cost_last_day),
+        (1_000, 500_000),
+        "settled at the truth, held at the allowance, released at nothing: {usage:?}"
+    );
+    drop(tx);
+
+    // A token whose limits row names only another dimension still holds provider
+    // reservations — at any size — and a token with no limits row leaves none at all.
+    let (_, documents_only) = limited_token(
+        &db.app,
+        alice,
+        project,
+        [12; 32],
+        &Limits {
+            documents_per_day: Some(5),
+            ..Limits::default()
+        },
+    )
+    .await;
+    let mut tx = as_token(&db.app, documents_only, project).await;
+    budgets::reserve(&mut tx, Kind::Tokens, i64::MAX / 2)
+        .await
+        .expect("no provider ceiling is unconstrained")
+        .expect("a row: a limits row exists, so the ledger still records");
+    tx.commit().await.expect("commit");
+
+    let policy = TokenKind::FullAccess
+        .policy(Vec::new())
+        .expect("full access");
+    let mut tx = as_member(&db.app, alice, project).await;
+    let token = NewToken {
+        id: Uuid::now_v7(),
+        identity_id: Uuid::now_v7(),
+        name: "No ceilings",
+        description: "",
+        kind: TokenKind::FullAccess,
+        policy: &policy,
+        hash: [13; 32],
+        expires_at: OffsetDateTime::now_utc() + time::Duration::days(30),
+        limits: None,
+    };
+    let Created::Done(stored) = tokens::create(&mut tx, &token).await.expect("create") else {
+        panic!("a token with room was refused");
+    };
+    tx.commit().await.expect("commit");
+    let mut tx = as_token(&db.app, stored.identity_id, project).await;
+    for kind in [Kind::Tokens, Kind::Cost] {
+        assert!(
+            matches!(
+                budgets::reserve(&mut tx, kind, i64::MAX / 2).await,
+                Ok(None)
+            ),
+            "no limits row: {kind} is unbounded and leaves no row"
+        );
+    }
+    tx.commit().await.expect("commit");
+    let mut tx = as_member(&db.app, alice, project).await;
+    assert!(
+        budgets::of_principal(&mut tx, stored.identity_id)
+            .await
+            .expect("reservations")
+            .is_empty(),
+        "an unconstrained token wrote ledger rows"
+    );
+    drop(tx);
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn two_racing_writes_of_one_token_cant_both_fit() {
     let db = TestDb::new().await;
     let (alice, project) = project(&db).await;

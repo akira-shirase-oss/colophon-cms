@@ -171,6 +171,8 @@ async fn read(tx: &mut MemberTransaction, id: Option<Uuid>) -> Result<Vec<Stored
                   l.documents_per_day AS "documents_per_day?",
                   l.max_concurrent_jobs AS "max_concurrent_jobs?",
                   l.requests_per_minute AS "requests_per_minute?",
+                  l.tokens_per_day AS "tokens_per_day?",
+                  l.cost_per_day_micros AS "cost_per_day_micros?",
                   coalesce(p.actions, '{}') AS "actions!",
                   coalesce(p.subjects, '{}') AS "subjects!",
                   coalesce(p.fields, '{}') AS "fields!: Vec<Option<String>>",
@@ -221,6 +223,8 @@ async fn read(tx: &mut MemberTransaction, id: Option<Uuid>) -> Result<Vec<Stored
                     documents_per_day: row.documents_per_day,
                     max_concurrent_jobs: row.max_concurrent_jobs,
                     requests_per_minute: row.requests_per_minute,
+                    tokens_per_day: row.tokens_per_day,
+                    cost_per_day_micros: row.cost_per_day_micros,
                 }),
             })
         })

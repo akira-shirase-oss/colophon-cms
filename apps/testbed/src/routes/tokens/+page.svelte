@@ -14,6 +14,7 @@
 		kind: string;
 		state: string;
 		permissions: { action: string; subject: string }[];
+		limits?: Record<string, number | null> | null;
 		secret?: string;
 	}
 	interface Event {
@@ -34,6 +35,8 @@
 	let permissions = $state('[{"action": "content.read", "subject": "articles"}]');
 	let days = $state('30');
 	let rpm = $state('');
+	let tokensDay = $state('');
+	let costDay = $state('');
 	let secret = $state('');
 	let tokenId = $state('');
 	let used = $state('');
@@ -78,7 +81,11 @@
 
 	async function create() {
 		let body: Record<string, unknown> = { name, kind, expires_in_days: Number(days) };
-		if (rpm.trim() !== '') body.limits = { requests_per_minute: Number(rpm) };
+		const limits: Record<string, number> = {};
+		if (rpm.trim() !== '') limits.requests_per_minute = Number(rpm);
+		if (tokensDay.trim() !== '') limits.tokens_per_day = Number(tokensDay);
+		if (costDay.trim() !== '') limits.cost_per_day_micros = Number(costDay);
+		if (Object.keys(limits).length > 0) body.limits = limits;
 		if (kind === 'custom') {
 			try {
 				body = { ...body, permissions: JSON.parse(permissions) as unknown };
@@ -138,8 +145,8 @@
 <p class="lede">
 	A project's API tokens and its audit log, through the real API (step R.4, D-063): make a read-only, full-access or custom token
 	(its secret is shown once), use the secret alone to read the project's articles, give it a requests-per-minute ceiling and
-	keep using it until the request quota (D-118) refuses it, revoke it, and read back every change to roles, members,
-	invitations and tokens.
+	keep using it until the request quota (D-118) refuses it, give it provider token and cost ceilings (D-122), revoke it,
+	and read back every change to roles, members, invitations and tokens.
 </p>
 
 {#if signedIn === false}
@@ -160,6 +167,13 @@
 				{#each tokens as token (token.id)}
 					<li data-id={token.id} data-state={token.state}>
 						{token.name}: {token.kind}, {token.state}{token.secret ? ' (secret listed!)' : ''}
+						{#if token.limits}
+							<span data-testid="token-limits">
+								{#each Object.entries(token.limits) as [field, ceiling] (field)}
+									{#if ceiling !== null}{field}={ceiling} {/if}
+								{/each}
+							</span>
+						{/if}
 					</li>
 				{/each}
 			</ul>
@@ -180,6 +194,8 @@
 				<label class="field">Permissions for custom (JSON) <textarea bind:value={permissions} name="permissions" rows="3"></textarea></label>
 				<label class="field">Expires in days <input bind:value={days} name="days" inputmode="numeric" /></label>
 				<label class="field">Requests per minute (optional) <input bind:value={rpm} name="rpm" inputmode="numeric" placeholder="no ceiling" /></label>
+				<label class="field">Provider tokens per day (optional) <input bind:value={tokensDay} name="tokens_day" inputmode="numeric" placeholder="no ceiling" /></label>
+				<label class="field">Provider cost per day, micros (optional) <input bind:value={costDay} name="cost_day" inputmode="numeric" placeholder="no ceiling" /></label>
 				<p><button type="button" onclick={create}>Create</button></p>
 			</form>
 			{#if secret}

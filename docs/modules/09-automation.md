@@ -202,8 +202,9 @@ answers and refusal bytes identical on both transports.
   in memory, as D-108's streams do: no migration, no persistence to lose sync with Postgres.
 
 **Not built yet (P5):**
-- Service-account quotas beyond R.4's tokens: provider `tokens`/`cost` budgets (the substrate itself
-  is built, D-113; the request-quota consumer landed with D-118).
+- The consumer of the provider `tokens`/`cost` ceilings: the optional assistant's calls would
+  reserve them, and no call site does yet (the ceilings themselves are built, D-122; the
+  substrate is D-113's and the request-quota consumer is D-118's).
 - `validate_changeset` and `job_status` (releases and receipts are `list_releases`/`get_release`), and unpublish
   requests.
 - Environments other than `production` over stdio (remote serves the `{environment}` its path names).
@@ -224,13 +225,17 @@ answers and refusal bytes identical on both transports.
 - A provider timeout preserves the uncertainty (it may still incur cost).
 - Estimated cost is never presented as the final invoice.
 
-**Built (P5.2, D-113, migration 0045):** the substrate those bullets name, enforced at the PostgreSQL
-boundary, not in a cache or a worker's memory.
+**Built (P5.2, D-113, migration 0045; the provider ceilings, D-122, migration 0047):** the
+substrate those bullets name, enforced at the PostgreSQL boundary, not in a cache or a worker's
+memory.
 
 - `api_token_limits` holds a token's ceilings — `documents_per_day` (1…1,000,000),
-  `max_concurrent_jobs` (1…64) and `requests_per_minute` (1…100,000, enforced at request time by
-  D-118's quota, below). NULL is unconstrained per dimension; no row means the quota layer does
-  not exist for that credential — a person is never limited this way.
+  `max_concurrent_jobs` (1…64), `requests_per_minute` (1…100,000, enforced at request time by
+  D-118's quota, below), `tokens_per_day` (1…1,000,000,000 provider tokens) and
+  `cost_per_day_micros` (1…100,000,000,000 micros of the accounting unit — the unit's
+  millionths, a fixed-point integer, never a float; D-122, migration 0047). NULL is
+  unconstrained per dimension; no row means the quota layer does not exist for that credential
+  — a person is never limited this way.
 - `budget_reservations` is the ledger: `held` while work is in flight, `settled` with what the
   outcome consumed in the same commit, `released` when the work can never happen, `uncertain` when
   the reconciler finds a held row that outlived what could still be running — retained, still
@@ -238,6 +243,9 @@ boundary, not in a cache or a worker's memory.
 - `colophon_domain::budget` is the pure half (kinds, states, limits checks, `close_for`);
   `colophon_db::budgets` stores and locks: `reserve` locks the limits row `FOR UPDATE`, counts
   the principal's open and spent allowance — `released` alone frees — and inserts or refuses.
+  The provider kinds count what is open at its allowance and what settled at what the outcome
+  consumed (`coalesce(settled, reserved)`): a call that reserved 1,000 tokens and billed 250
+  returns the rest of its headroom (D-122).
 - Enforcement points today: `entries::create`/`save`/`create_localization` reserve a document each
   (an import item is a create); `releases::outbox` reserves one `jobs` slot per dispatch job and
   releases superseded jobs' reservations; `jobs::finish` closes the slot with the outcome. The
@@ -256,8 +264,10 @@ boundary, not in a cache or a worker's memory.
   and a member session carries no token scope, so the check does not exist for people. The
   measured isolation is L08's (D-120): `perf/k6/noisy-agent.js` runs the noisy agent beside
   active editors — and an editor in a second project — and stores the verdict with the run.
-- Provider `tokens`/`cost` kinds are reserved in the schema for the
-  slices that need them; D-113 records the model.
+- Provider `tokens`/`cost` are ceilinged like the other kinds (D-122): `reserve` admits under
+  the column's bound or refuses `budget_exceeded`, and `usage.tokens_last_day` /
+  `cost_last_day` read the day back on the single-token answer. What still waits on the
+  assistant is a call site that reserves them — the ceiling and the ledger are ready for it.
 
 ### Optional AI writing assistant (off by default)
 - **Actions:** suggest a title, improve selected text, draft from a brief, or create a proposed locale revision with

@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(sum(reserved) FILTER (WHERE kind = 'documents' AND state <> 'released'\n                        AND created_at > now() - interval '1 day'), 0)::bigint AS \"documents!\",\n                  coalesce(sum(reserved) FILTER (WHERE kind = 'jobs'\n                        AND state IN ('held', 'uncertain')), 0)::bigint AS \"jobs!\",\n                  coalesce(sum(reserved) FILTER (WHERE kind = 'requests' AND state <> 'released'\n                        AND created_at > now() - interval '1 minute'), 0)::bigint AS \"requests!\",\n                  coalesce(sum(coalesce(settled, reserved)) FILTER (WHERE kind = 'tokens'\n                        AND state <> 'released'\n                        AND created_at > now() - interval '1 day'), 0)::bigint AS \"tokens!\",\n                  coalesce(sum(coalesce(settled, reserved)) FILTER (WHERE kind = 'cost'\n                        AND state <> 'released'\n                        AND created_at > now() - interval '1 day'), 0)::bigint AS \"cost!\"\n           FROM budget_reservations\n           WHERE project_id = $1 AND principal_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "documents!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "jobs!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "requests!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "tokens!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "cost!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "5aae6b00ad36153071c0fec56526dc9a2aff1fbaf2ea176bfce9b6dd927238a6"
+}

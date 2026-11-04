@@ -451,7 +451,16 @@ expiry; a tool's call is dispatched in-process through the server's own router u
 dispatch is never authorization and the D-106 boundary is unchanged, proved in `tests/mcp.rs` by the
 lifecycle, the credential refusals, the transport's `Origin`/`Accept`/protocol-version door checks and
 byte-identical parity with stdio) ·
-not built: provider `tokens`/`cost` budgets, `content import` and
+provider `tokens`/`cost` budgets (built: D-122, migration 0047 — `api_token_limits` gains
+`tokens_per_day` (1…1,000,000,000) and `cost_per_day_micros` (1…100,000,000,000 micros of the
+accounting unit, a fixed-point integer), `Kind::Tokens`/`Cost` wire to their columns, and
+`reserve` admits under the ceiling or refuses `budget_exceeded` with the day counted as
+`coalesce(settled, reserved)` — open reservations at their allowance, settled outcomes at what
+they consumed; the ceilings ride the same `POST`/`PATCH`/`GET …/tokens/{token}` surface and the
+usage read gains `tokens_last_day`/`cost_last_day`; covered by `tests/budgets.rs` in
+`colophon-db` and `colophon-server`; what still waits on the assistant is a call site that
+reserves them) ·
+not built: `content import` and
 `export`. The proof gate is met — X12's resume proof is in
 `tests/bulk.rs`, the eval gate's stored run is `perf/results/2026-11-04T141109.623685Z-evals.json`, and
 L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json`.

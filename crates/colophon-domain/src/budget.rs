@@ -13,8 +13,7 @@
 
 use crate::job::Status;
 
-/// What a reservation bounds: the dimensions `api_token_limits` names, plus the provider
-/// budgets the optional assistant would hold.
+/// What a reservation bounds: the dimensions `api_token_limits` names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     /// Entry writes: creates, saves, localizations, imported items and the mirror writes their
@@ -22,11 +21,14 @@ pub enum Kind {
     Documents,
     /// Delivery jobs in flight: one reservation per job a publish dispatches.
     Jobs,
-    /// Management requests: stored for the hard quota slot; nothing consumes it yet (D-113).
+    /// Management requests: stored for the hard quota slot; the request-time quota consumes it
+    /// in the limiter, not this ledger (D-118).
     Requests,
-    /// Provider tokens, for the optional assistant (reserved for later work).
+    /// Provider tokens, for the optional assistant: prompt and completion tokens, counted as
+    /// the provider bills them (§547).
     Tokens,
-    /// Provider cost, for the optional assistant (reserved for later work).
+    /// Provider cost, for the optional assistant: micros of the accounting unit, as
+    /// [`Limits::cost_per_day_micros`] names them (§547).
     Cost,
 }
 
@@ -109,6 +111,11 @@ pub const MAX_DOCUMENTS_PER_DAY: i64 = 1_000_000;
 pub const MAX_CONCURRENT_JOBS: i64 = 64;
 /// The most `requests_per_minute` may be (also the database's CHECK bound).
 pub const MAX_REQUESTS_PER_MINUTE: i64 = 100_000;
+/// The most a `tokens_per_day` limit may be (also the database's CHECK bound).
+pub const MAX_TOKENS_PER_DAY: i64 = 1_000_000_000;
+/// The most a `cost_per_day_micros` limit may be — 100,000 accounting units a day (also the
+/// database's CHECK bound).
+pub const MAX_COST_PER_DAY_MICROS: i64 = 100_000_000_000;
 
 /// Why a proposed limits row was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +136,14 @@ pub struct Limits {
     /// Management requests per rolling minute; the request-time quota throttles over it
     /// (D-118), outside this ledger.
     pub requests_per_minute: Option<i64>,
+    /// Provider tokens per rolling day (§547): the assistant's prompt and completion tokens,
+    /// counted as the provider bills them.
+    pub tokens_per_day: Option<i64>,
+    /// Provider cost per rolling day, in micros of the accounting unit — the unit's
+    /// millionths (1/1,000,000; USD micros for a dollar-denominated provider), a fixed-point
+    /// integer so a ceiling is never a float. A reservation takes the conservative estimate;
+    /// the outcome settles what the provider actually billed.
+    pub cost_per_day_micros: Option<i64>,
 }
 
 impl Limits {
@@ -150,6 +165,12 @@ impl Limits {
                 "requests_per_minute",
                 MAX_REQUESTS_PER_MINUTE,
             ),
+            (self.tokens_per_day, "tokens_per_day", MAX_TOKENS_PER_DAY),
+            (
+                self.cost_per_day_micros,
+                "cost_per_day_micros",
+                MAX_COST_PER_DAY_MICROS,
+            ),
         ] {
             if let Some(value) = value
                 && !(1..=max).contains(&value)
@@ -169,8 +190,8 @@ impl Limits {
             Kind::Documents => self.documents_per_day,
             Kind::Jobs => self.max_concurrent_jobs,
             Kind::Requests => self.requests_per_minute,
-            // No column bounds these yet: a limits row alone can't constrain provider budgets.
-            Kind::Tokens | Kind::Cost => None,
+            Kind::Tokens => self.tokens_per_day,
+            Kind::Cost => self.cost_per_day_micros,
         }
     }
 }
@@ -238,6 +259,8 @@ mod tests {
             documents_per_day: Some(100),
             max_concurrent_jobs: Some(2),
             requests_per_minute: None,
+            tokens_per_day: Some(50_000),
+            cost_per_day_micros: None,
         };
         assert_eq!(valid.check(), Ok(valid));
         for (field, limits) in [
@@ -283,6 +306,34 @@ mod tests {
                     ..Limits::default()
                 },
             ),
+            (
+                "tokens_per_day",
+                Limits {
+                    tokens_per_day: Some(0),
+                    ..Limits::default()
+                },
+            ),
+            (
+                "tokens_per_day",
+                Limits {
+                    tokens_per_day: Some(MAX_TOKENS_PER_DAY + 1),
+                    ..Limits::default()
+                },
+            ),
+            (
+                "cost_per_day_micros",
+                Limits {
+                    cost_per_day_micros: Some(0),
+                    ..Limits::default()
+                },
+            ),
+            (
+                "cost_per_day_micros",
+                Limits {
+                    cost_per_day_micros: Some(MAX_COST_PER_DAY_MICROS + 1),
+                    ..Limits::default()
+                },
+            ),
         ] {
             assert_eq!(limits.check(), Err(LimitError::Range(field)));
         }
@@ -304,12 +355,18 @@ mod tests {
             documents_per_day: Some(10),
             max_concurrent_jobs: None,
             requests_per_minute: Some(60),
+            tokens_per_day: Some(4_000),
+            cost_per_day_micros: Some(2_500_000),
         };
         assert_eq!(limits.ceiling(Kind::Documents), Some(10));
         assert_eq!(limits.ceiling(Kind::Jobs), None);
         assert_eq!(limits.ceiling(Kind::Requests), Some(60));
-        assert_eq!(limits.ceiling(Kind::Tokens), None);
-        assert_eq!(limits.ceiling(Kind::Cost), None);
+        assert_eq!(limits.ceiling(Kind::Tokens), Some(4_000));
+        assert_eq!(limits.ceiling(Kind::Cost), Some(2_500_000));
+        let none = Limits::default();
+        for kind in Kind::ALL {
+            assert_eq!(none.ceiling(kind), None, "no fields: {kind}");
+        }
     }
 
     #[test]
