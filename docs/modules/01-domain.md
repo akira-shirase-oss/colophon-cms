@@ -171,6 +171,18 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - Locale fallback is an explicit project policy, none by default. A fallback resolves only to published revisions and
   labels the resolved locale.
 
+### Transfer — import mapping
+- Built in step DX.9 (D-114): `colophon_domain::transfer::map` turns one imported item into the entry document it
+  stores, by shape: a native document — the export's own JSONL line — passes through; a marked envelope
+  (`{"type": "api::…", "data": {…}}`, `{"version": N, "data": {…}}`, or a Strapi response's
+  `{"data": […], "meta": {…}}`) unwraps to its `data`; a Strapi v4 `{id, attributes}` maps its attributes; a v5
+  flat document's `documentId`/`document_id`, and a Sanity document's `_id`/`_type`/`_createdAt`/`_rev`/`_updatedAt`,
+  are the source id and source type rather than content. A `{"_ref": …}`, `{"data": {"id": …}}` or
+  `{"documentId": …}` reference value normalizes to the stored id. Source metadata consumed but not stored is
+  named, sorted, in `unmapped`; keys the content type never declared stay in the document for schema validation to
+  refuse by name — a declared field literally called `id` stays content. The API side checks `_type` against the
+  target collection, checks a Strapi `locale` is a tag, adopts or follows a UUID source id, and writes.
+
 ### The query language (spec §07, §10)
 - A query is one JSON document sent in a `POST` body, like a definition or a changeset — never a spray of URL
   parameters: one parser, one canonical form, one hash. The shape is

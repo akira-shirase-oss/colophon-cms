@@ -123,6 +123,8 @@ enum Kind {
     Uuid,
     /// A non-negative integer.
     Int,
+    /// `true` or `false`.
+    Bool,
     /// An opaque cursor a previous page handed back.
     Cursor,
 }
@@ -200,6 +202,9 @@ struct OpDoc {
     headers: &'static [Param],
     body: Option<Body>,
     ok: Res,
+    /// A second success the operation also answers — a query flag's other shape, like an
+    /// import dry run's plan (D-114).
+    also: Option<Res>,
     extra: &'static [Refusal],
 }
 
@@ -257,6 +262,24 @@ const IDEMPOTENCY: Param = header(
     "idempotency-key",
     Kind::Str,
     "16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment",
+);
+
+/// A header that is only sometimes required — its note says when (import's `?dry_run=true`
+/// takes no key, D-114).
+const fn header_maybe(name: &'static str, kind: Kind, note: &'static str) -> Param {
+    Param {
+        name,
+        kind,
+        required: false,
+        note,
+    }
+}
+
+/// `Idempotency-Key` on the import: required for an applied import, unneeded on a dry run.
+const IDEMPOTENCY_MAYBE: Param = header_maybe(
+    "idempotency-key",
+    Kind::Str,
+    "16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment; required unless `?dry_run=true`, which plans without one",
 );
 
 const fn refusal(status: u16, codes: &'static str, note: &'static str) -> Refusal {
@@ -378,6 +401,7 @@ const MIN: OpDoc = OpDoc {
         media: "",
         note: "",
     },
+    also: None,
     extra: &[],
 };
 
@@ -1654,6 +1678,7 @@ pub(crate) static TABLE: &[Route] = &[
                         BAD_MATCH,
                         REUSED_KEY,
                     ],
+                    also: None,
                 },
             ),
         ],
@@ -1730,30 +1755,48 @@ pub(crate) static TABLE: &[Route] = &[
             |f| on(f, entries::import),
             OpDoc {
                 id: "importEntries",
-                summary: "Import entries: JSON Lines, a JSON array, or a Strapi export entity",
+                summary: "Import entries: native JSONL, or Strapi and Sanity documents",
                 tag: "entries",
                 security: Security::Any,
-                headers: &[IDEMPOTENCY],
+                query: &[
+                    query(
+                        "dry_run",
+                        Kind::Bool,
+                        "set `true` to run every item and roll back — the 200 plan names each `would_create`, `would_update`, `skipped` or `invalid` item; a plan is a prediction, not a reservation, and needs no `Idempotency-Key`",
+                    ),
+                    query(
+                        "type",
+                        Kind::Str,
+                        "the Sanity `_type` to take from a mixed file; documents of other types are `skipped`, reported",
+                    ),
+                ],
+                headers: &[IDEMPOTENCY_MAYBE],
                 body: Some(Body {
                     schema: "ImportBody",
                     media: &["application/jsonlines", "application/json"],
-                    note: "one object per line, or one array; lands in one transaction or not at all",
+                    note: "one object per line, one array, or a Strapi `{\"data\": […], \"meta\": {…}}`; lands in one transaction or not at all",
                 }),
                 ok: created("ImportedView"),
+                also: Some(Res {
+                    status: 200,
+                    shape: Shape::Data("ImportPlanView"),
+                    headers: &[],
+                    media: "",
+                    note: "the dry run's per-item plan; nothing was written",
+                }),
                 extra: &[
                     NOT_FOUND,
                     refusal(403, "missing_permission, fields_not_writable", ""),
                     refusal(409, "single_exists", "a single type already has its entry"),
                     refusal(
                         422,
-                        "too_many_items, invalid_*, slug_taken, value_taken",
+                        "too_many_items, type_mismatch, invalid_*, slug_taken, value_taken",
                         "the file refused, with the failing item's index",
                     ),
                     P428,
                     BAD_MATCH,
                     REUSED_KEY,
                 ],
-                ..MIN
             },
         )],
     ),
@@ -1806,6 +1849,7 @@ pub(crate) static TABLE: &[Route] = &[
                         BAD_MATCH,
                         REUSED_KEY,
                     ],
+                    also: None,
                 },
             ),
             op(
@@ -3010,23 +3054,25 @@ fn operation(route: &Route, op: &Op) -> Value {
     }
 
     let mut responses = Map::new();
-    let mut success = json!({ "description": doc.ok.note });
-    if doc.ok.note.is_empty() {
-        success["description"] = Value::String(match doc.ok.status {
-            201 => "created".to_owned(),
-            202 => "accepted".to_owned(),
-            204 => "done".to_owned(),
-            302 => "redirect".to_owned(),
-            _ => "ok".to_owned(),
-        });
+    for res in [Some(&doc.ok), doc.also.as_ref()].into_iter().flatten() {
+        let mut success = json!({ "description": res.note });
+        if res.note.is_empty() {
+            success["description"] = Value::String(match res.status {
+                201 => "created".to_owned(),
+                202 => "accepted".to_owned(),
+                204 => "done".to_owned(),
+                302 => "redirect".to_owned(),
+                _ => "ok".to_owned(),
+            });
+        }
+        if let Some(content) = content(res) {
+            success["content"] = content;
+        }
+        if !res.headers.is_empty() {
+            success["headers"] = response_headers(res.headers);
+        }
+        responses.insert(res.status.to_string(), success);
     }
-    if let Some(content) = content(&doc.ok) {
-        success["content"] = content;
-    }
-    if !doc.ok.headers.is_empty() {
-        success["headers"] = response_headers(doc.ok.headers);
-    }
-    responses.insert(doc.ok.status.to_string(), success);
 
     // The refusals this operation declares, merged into one response per status.
     let mut by_status: Vec<(u16, Vec<&'static Refusal>)> = Vec::new();
@@ -3169,6 +3215,7 @@ fn parameter(name: &str, kind: Kind, location: &str, required: bool, note: &str)
         Kind::Str | Kind::Cursor => json!({ "type": "string" }),
         Kind::Uuid => json!({ "type": "string", "format": "uuid" }),
         Kind::Int => json!({ "type": "integer", "minimum": 0 }),
+        Kind::Bool => json!({ "type": "boolean" }),
     };
     json!({
         "name": name,
@@ -4014,11 +4061,46 @@ fn entry_parts() -> Value {
             "description": "the bounded query document (DX.1, D-103): `filters` (field, operator, value — only indexes the type declares), `sort`, `fields` (a selection that can only narrow), `limit`, `depth` (reference population levels). The canonical form hashes to `query_hash`.",
         },
         "ImportBody": {
-            "description": "one JSON object per line, or one JSON array of the same objects, each an entry's content; a Strapi export entity `{\"type\": \"api::…\", \"data\": {…}}` or `{\"version\":…,\"data\":{…}}` marker hands validation its `data`",
+            "description": "one JSON object per line, one JSON array of the same objects, or a Strapi API response's `{\"data\": […], \"meta\": {…}}`. Each item is a native content document, a Strapi entity (`{\"type\": \"api::…\", \"data\": {…}}`, `{\"version\":…,\"data\":{…}}`, `{id, attributes}` or a flat `documentId`/`id` document) or a Sanity document (`_id`, `_type`). At most 512 items.",
         },
         "ImportedView": {
             "type": "object",
-            "properties": { "imported": { "type": "integer" } },
+            "properties": {
+                "imported": { "type": "integer", "description": "items that created or updated an entry (`skipped` doesn't count)" },
+                "outcomes": { "type": "array", "items": { "$ref": "#/components/schemas/ImportOutcome" } },
+            },
+        },
+        "ImportPlanView": {
+            "type": "object",
+            "description": "what `?dry_run=true` answers: the plan, nothing written. A prediction, not a reservation — applying re-checks every item",
+            "properties": {
+                "dry_run": { "type": "boolean", "enum": [true] },
+                "outcomes": { "type": "array", "items": { "$ref": "#/components/schemas/ImportOutcome" } },
+            },
+        },
+        "ImportOutcome": {
+            "type": "object",
+            "description": "one item's place in the report",
+            "properties": {
+                "item": { "type": "string", "description": "its pointer: `/line/3` for JSONL, `/2` for a JSON array, `/data/0` for a wrapped list" },
+                "status": { "type": "string", "enum": ["created", "updated", "skipped", "would_create", "would_update", "invalid"], "description": "`would_*` and `invalid` only in a plan" },
+                "entry": { "type": "string", "format": "uuid", "description": "the entry the item writes or named" },
+                "source": { "type": "string", "description": "the source's own id: a Sanity `_id`, a Strapi `id`/`documentId`" },
+                "unmapped": { "type": "array", "items": { "type": "string" }, "description": "source keys set aside rather than imported" },
+                "refusal": { "$ref": "#/components/schemas/ItemRefusal" },
+                "reason": { "type": "string", "description": "why a `skipped` item was skipped" },
+            },
+            "required": ["item", "status"],
+        },
+        "ItemRefusal": {
+            "type": "object",
+            "description": "the code, pointer and message an `invalid` item fails with when applied",
+            "properties": {
+                "code": { "type": "string" },
+                "pointer": { "type": "string" },
+                "message": { "type": "string" },
+            },
+            "required": ["code", "pointer", "message"],
         },
         "JsonLines": {
             "type": "string",
@@ -4693,7 +4775,7 @@ mod tests {
         for (name, kind) in path_params(path) {
             let value = match kind {
                 Kind::Uuid => "00000000-0000-0000-0000-000000000000",
-                Kind::Int | Kind::Cursor | Kind::Str => "x",
+                Kind::Int | Kind::Bool | Kind::Cursor | Kind::Str => "x",
             };
             concrete = concrete.replace(&format!("{{{name}}}"), value);
         }

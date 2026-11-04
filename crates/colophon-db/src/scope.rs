@@ -7,7 +7,7 @@
 //! can't leak into the next request that borrows the same pooled connection.
 
 use colophon_domain::policy::{Action, Condition, Permission, Policy, Subject};
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{AssertSqlSafe, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::DbError;
@@ -59,6 +59,36 @@ impl ProjectTransaction {
     pub async fn commit(self) -> Result<(), DbError> {
         self.transaction.commit().await.map_err(DbError::from_query)
     }
+}
+
+/// A named savepoint inside `tx`, so a failing step rolls back to it without losing the
+/// transaction's earlier work (an import dry-run's per-item isolation, D-114). `name` is a
+/// call-site literal: savepoint names can't be bound parameters, which is what the
+/// `AssertSqlSafe` wrap records — there is nothing else to inject.
+pub async fn savepoint(tx: &mut ProjectTransaction, name: &'static str) -> Result<(), DbError> {
+    sqlx::query(AssertSqlSafe(format!("SAVEPOINT {name}")))
+        .execute(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_write)?;
+    Ok(())
+}
+
+/// Releases `name`: the work since [`savepoint`] is part of the transaction now.
+pub async fn release(tx: &mut ProjectTransaction, name: &'static str) -> Result<(), DbError> {
+    sqlx::query(AssertSqlSafe(format!("RELEASE SAVEPOINT {name}")))
+        .execute(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_write)?;
+    Ok(())
+}
+
+/// Undoes everything since `name` and leaves the transaction usable.
+pub async fn rollback_to(tx: &mut ProjectTransaction, name: &'static str) -> Result<(), DbError> {
+    sqlx::query(AssertSqlSafe(format!("ROLLBACK TO SAVEPOINT {name}")))
+        .execute(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_write)?;
+    Ok(())
 }
 
 /// A transaction inside a project the caller belongs to, without an environment: for

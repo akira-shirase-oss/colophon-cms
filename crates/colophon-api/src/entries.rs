@@ -13,8 +13,9 @@
 //!   (`If-Match` and `Idempotency-Key` required; D-080);
 //! - `GET  {P}/collections/{collection}/entries/{entry}/revisions`: history, newest first;
 //! - `GET  {P}/collections/{collection}/export`: every draft as a JSONL line (D-086);
-//! - `POST {P}/collections/{collection}/import`: JSONL or a JSON array of entries back, in one
-//!   transaction (`Idempotency-Key` required; D-086).
+//! - `POST {P}/collections/{collection}/import`: JSONL, a JSON array, or a Strapi
+//!   `{"data": […], "meta": {…}}` of native, Strapi or Sanity items back, in one
+//!   transaction (`Idempotency-Key` required; `?dry_run=true` plans instead; D-086, D-114).
 //!
 //! A project the caller isn't in, an environment, collection or entry that doesn't exist: all
 //! answer 404 alike. A draft's `ETag` names its revision; a save whose `If-Match` names an older
@@ -41,6 +42,7 @@ use colophon_domain::{
     policy::{Action, Fields, Policy},
     query::Query as Document,
     schema::{Content, ContentType, FieldKind, Refusal},
+    transfer,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
@@ -284,6 +286,17 @@ pub(crate) struct CursorQuery {
 #[derive(Deserialize)]
 pub(crate) struct LocaleQuery {
     locale: Option<String>,
+}
+
+/// An import's query (D-114).
+#[derive(Deserialize)]
+pub(crate) struct ImportQuery {
+    /// `?dry_run=true`: run every item through the real pipeline inside the transaction, roll
+    /// it back, and answer the per-item plan. No `Idempotency-Key` — a plan is not a write.
+    dry_run: Option<bool>,
+    /// `?type=<name>`: the Sanity `_type` to take from a file that mixes them; documents of
+    /// other types are reported `skipped` rather than refused.
+    r#type: Option<String>,
 }
 
 /// A locale label is a BCP-47 tag: `en`, `en-US`, `pt-BR` — a language subtag of two or three
@@ -1000,36 +1013,55 @@ pub(crate) async fn export(
     Ok(response)
 }
 
-/// `POST {P}/collections/{collection}/import`: one JSON object per line, or one JSON array
-/// of the same objects, each an entry's content — and a Strapi export entity
-/// (`{"type":"api::…","data":{…}}`) or a `{"version":…,"data":{…}}` marker hands validation
-/// its `data` (D-086). The file lands in one transaction or nothing does (`Idempotency-Key`
-/// required; at most `IMPORT_MAX_ITEMS` items). References resolve against entries that
-/// already exist, including earlier items, and mirrors update as on any create (D-085).
+/// `POST {P}/collections/{collection}/import`: one JSON object per line, one JSON array of
+/// the same objects, or a Strapi API response's `{"data": […], "meta": {…}}` (D-086, D-114).
+/// Each item maps through `colophon_domain::transfer`: a native document as written, a Strapi
+/// entity (`{"type":"api::…","data":{…}}`, `{"version":…,"data":{…}}`, `{id, attributes}` or a
+/// flat `documentId`/`id` document) or a Sanity document (`_id`, `_type`). The source's own id
+/// (`source`), `_type` and bookkeeping keys the mapping set aside (`unmapped`) come back in
+/// the per-item report — nothing is dropped silently, and a key the definition doesn't
+/// declare is refused by name. A source id that is a UUID and names a live entry of the
+/// collection *updates* that entry's draft — a save, under `content.update`'s rules — rather
+/// than creating; one that names nothing is adopted as the new entry's id, so a re-imported
+/// file meets its own rows instead of duplicating them. A Strapi `locale` becomes the new
+/// entry's tag (D-087), shape-checked first. The file lands in one transaction or nothing
+/// does (`Idempotency-Key` required; at most `IMPORT_MAX_ITEMS` items). References resolve
+/// against entries that already exist, including earlier items, and mirrors update as on any
+/// create (D-085).
+///
+/// `?dry_run=true` runs the same items through the same transaction, then rolls it back: the
+/// per-item report says `would_create`, `would_update`, `skipped`, or `invalid` with the
+/// refusal the item would fail with — and nothing, not even an idempotency record, is
+/// written. A plan is a prediction, not a reservation, like a migration plan's (D-100):
+/// applying re-checks every item. `?type=` names the Sanity `_type` to take from a file that
+/// mixes types; documents of other types are `skipped`, reported. Without it a document's
+/// `_type` must name this collection, else the item is `type_mismatch`.
 pub(crate) async fn import(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<CollectionPath>,
+    Query(query): Query<ImportQuery>,
     headers: HeaderMap,
     body: String,
 ) -> Result<Response, ApiError> {
-    let key = idempotency_key(&headers)?;
+    let dry_run = query.dry_run == Some(true);
+    let source_type = query.r#type.as_deref().filter(|kind| !kind.is_empty());
+    // A plan is not an operation: nothing is recorded, so there is no key to claim.
+    let key = if dry_run {
+        None
+    } else {
+        Some(idempotency_key(&headers)?)
+    };
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
-    // Imported entries are their importer's own, like a create's are its creator's.
-    let create = tx
-        .policy
-        .fields(Action::ContentCreate, &path.collection, true)
-        .ok_or(ApiError::missing(
-            Action::ContentCreate,
-            "your role can't create entries here",
-        ))?;
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
     let (content_type, version) = content_type(&state, &mut tx, &path.collection).await?;
-    let request = request_hash(&[IMPORT, &path.collection, &body]);
-    if let Some(replay) = claim(&mut tx, IMPORT, key, &request).await? {
-        return Ok(replay);
+    if let Some(key) = key {
+        let request = request_hash(&[IMPORT, &path.collection, source_type.unwrap_or(""), &body]);
+        if let Some(replay) = claim(&mut tx, IMPORT, key, &request).await? {
+            return Ok(replay);
+        }
     }
     let ImportItems {
         items,
@@ -1042,64 +1074,54 @@ pub(crate) async fn import(
             message: format!("an import is at most {IMPORT_MAX_ITEMS} items"),
         }));
     }
-    // A single type holds one entry: refuse the file before writing any of it.
-    if content_type.single()
-        && (items.len() > 1
-            || !entries::list(&mut tx, &path.collection, None, 1, None, None, None)
-                .await
-                .map_err(ApiError::from_db)?
-                .is_empty())
-    {
+    // A single type's file holds one item: two of them can't both be its one entry.
+    if content_type.single() && items.len() > 1 {
         return Err(ApiError::conflict(
             "single_exists",
-            "this collection is a single type and already has its entry; edit that one",
+            "this collection is a single type and takes one item",
         ));
     }
+    let target = ImportScope {
+        state: &state,
+        collection: &path.collection,
+        content_type: &content_type,
+        version,
+        source_type,
+    };
+    let mut outcomes = Vec::with_capacity(items.len());
     for (index, value) in items.iter().enumerate() {
         let at = at_index(index);
-        // Left-out fields get the type's defaults, like a create (D-071).
-        let (value, defaulted) = content_type.with_defaults(entity(value));
-        let (content, hash) =
-            validate(&value, &content_type).map_err(|error| on_index(error, &at))?;
-        visibility::only_permitted_fields(content.canonical_json(), &create, &defaulted)
-            .map_err(|error| on_index(error, &at))?;
-        slug_free(&mut tx, &path.collection, &content_type, &content, None)
-            .await
-            .map_err(|error| on_index(error, &at))?;
-        let unique = content_type.unique_fields();
-        unique_free(
-            &mut tx,
-            &path.collection,
-            &content_type,
-            &unique,
-            &content,
-            None,
-        )
-        .await
-        .map_err(|error| on_index(error, &at))?;
-        let draft = entries::create(
-            &mut tx,
-            Uuid::now_v7(),
-            &path.collection,
-            new_revision(&content, &hash, version, &unique),
-            // An imported entry lands unlocalized; its locale is set on it afterwards.
-            None,
-        )
-        .await
-        .map_err(|error| on_index(ApiError::from_db(error), &at))?;
-        sync_inverses(
-            &state,
-            &mut tx,
-            &content_type,
-            &path.collection,
-            draft.entry_id,
-            None,
-            Some(&draft.content),
-        )
-        .await?;
+        let outcome = if dry_run {
+            planned(&target, &mut tx, value, &at).await?
+        } else {
+            let plan = import_one(&target, &mut tx, value)
+                .await
+                .map_err(|error| on_index(error, &at))?;
+            outcome(&at, plan, false)
+        };
+        outcomes.push(outcome);
     }
+    if dry_run {
+        // The transaction drops uncommitted: the plan wrote nothing that stays.
+        drop(tx);
+        let body = serde_json::to_string(&Data {
+            data: serde_json::json!({ "dry_run": true, "outcomes": outcomes }),
+        })
+        .map_err(ApiError::internal)?;
+        return Ok(json(StatusCode::OK, body, None, false));
+    }
+    let Some(key) = key else {
+        // The dry run returned above; an applied import always holds a claimed key.
+        return Err(ApiError::internal(std::io::Error::other(
+            "an applied import without an idempotency key",
+        )));
+    };
+    let imported = outcomes
+        .iter()
+        .filter(|outcome| outcome.status != "skipped")
+        .count();
     let body = serde_json::to_string(&Data {
-        data: serde_json::json!({ "imported": items.len() }),
+        data: serde_json::json!({ "imported": imported, "outcomes": outcomes }),
     })
     .map_err(ApiError::internal)?;
     idempotency::complete(&mut tx, IMPORT, key, StatusCode::CREATED.as_u16(), &body)
@@ -1107,6 +1129,51 @@ pub(crate) async fn import(
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(json(StatusCode::CREATED, body, None, false))
+}
+
+/// What an import's items share: where they land and the definition that validates them.
+struct ImportScope<'a> {
+    state: &'a AppState,
+    collection: &'a str,
+    content_type: &'a ContentType,
+    version: i32,
+    /// The Sanity `_type` `?type=` asks for, when it does.
+    source_type: Option<&'a str>,
+}
+
+/// One dry-run item's verdict row. The item runs inside a savepoint: its writes feed the
+/// items after it, exactly as a real run, but a refusal — or a statement error — is rolled
+/// back to leave the transaction usable, so every item's verdict is reported.
+async fn planned(
+    target: &ImportScope<'_>,
+    tx: &mut ProjectTransaction,
+    item: &Value,
+    at: &str,
+) -> Result<ImportOutcome, ApiError> {
+    scope::savepoint(tx, "import_item")
+        .await
+        .map_err(ApiError::from_db)?;
+    match import_one(target, tx, item).await {
+        Ok(plan) => {
+            scope::release(tx, "import_item")
+                .await
+                .map_err(ApiError::from_db)?;
+            Ok(outcome(at, plan, true))
+        }
+        Err(error) => {
+            let error = on_index(error, at);
+            match verdict(&error) {
+                Some(refusal) => {
+                    scope::rollback_to(tx, "import_item")
+                        .await
+                        .map_err(ApiError::from_db)?;
+                    Ok(refused(at, refusal))
+                }
+                // Not the item's verdict but the run's own failure: stop here.
+                None => Err(error),
+            }
+        }
+    }
 }
 
 /// `POST {P}/collections/{collection}/entries/{entry}/localizations?locale=` (D-087): a
@@ -1265,7 +1332,9 @@ struct ImportItems {
     at: fn(usize) -> String,
 }
 
-/// One JSON object per line, or one JSON array of the same objects (`[{...},{...}]`).
+/// One JSON object per line, one JSON array of the same objects (`[{...},{...}]`), or a
+/// Strapi API response's envelope — an object whose `data` is the item list beside a `meta`
+/// pagination block (D-114).
 fn import_items(body: &str) -> Result<ImportItems, ApiError> {
     let trimmed = body.trim();
     if trimmed.starts_with('[') {
@@ -1279,6 +1348,18 @@ fn import_items(body: &str) -> Result<ImportItems, ApiError> {
         return Ok(ImportItems {
             items,
             at: |index| format!("/{index}"),
+        });
+    }
+    // An object body is only an envelope when `meta` sits beside the `data` list: a lone
+    // `{"data": […]}` can as well be a native document's own field.
+    if trimmed.starts_with('{')
+        && let Ok(value) = serde_json::from_str::<Value>(trimmed)
+        && let Some(items) = value.get("data").and_then(Value::as_array)
+        && value.get("meta").is_some()
+    {
+        return Ok(ImportItems {
+            items: items.clone(),
+            at: |index| format!("/data/{index}"),
         });
     }
     let items = trimmed
@@ -1302,22 +1383,327 @@ fn import_items(body: &str) -> Result<ImportItems, ApiError> {
     })
 }
 
-/// A Strapi export entity — `{"type":"api::x.x","data":{…}}` — or a `{"version":2,"data":{…}}`
-/// marker: the payload sits under `data`, so unwrap it. Content that merely has fields named
-/// `type` or `data` is left alone: only a `::`-marked type or an explicit `version` counts.
-fn entity(value: &Value) -> &Value {
-    let Some(object) = value.as_object() else {
-        return value;
+/// One item's place in the report (D-114).
+#[derive(Serialize)]
+struct ImportOutcome {
+    /// Its pointer: `/line/3` for JSONL, `/2` for a JSON array, `/data/0` for a wrapped list.
+    item: String,
+    /// `created`, `updated` or `skipped` once applied; `would_create`, `would_update`,
+    /// `skipped` or `invalid` in a plan.
+    status: &'static str,
+    /// The entry the item writes or named, where there is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entry: Option<Uuid>,
+    /// The source's own id for the item (a Sanity `_id`, a Strapi `id`/`documentId`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    /// Source keys the mapping set aside rather than imported.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unmapped: Vec<String>,
+    /// Why an `invalid` item was refused — what it would fail with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refusal: Option<ItemRefusal>,
+    /// Why a `skipped` item was skipped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+/// A refusal in a report row: the code, pointer and message the item fails with when applied.
+#[derive(Serialize)]
+struct ItemRefusal {
+    code: &'static str,
+    pointer: String,
+    message: String,
+}
+
+/// One item's effect inside the transaction, as it lands or as a dry run plans it.
+struct ItemPlan {
+    /// `created`, `updated` or `skipped`.
+    status: &'static str,
+    /// The entry written or named.
+    entry: Option<Uuid>,
+    /// The source's own id the item carried.
+    source: Option<String>,
+    /// Source keys the mapping set aside.
+    unmapped: Vec<String>,
+    /// For `skipped`: why.
+    reason: Option<String>,
+}
+
+/// `item` mapped, gated and written into `target`'s collection: the import's whole per-item
+/// pipeline, run by the real import (its `Err` aborts the file) and by the dry run (its `Err`
+/// is one row's verdict).
+async fn import_one(
+    target: &ImportScope<'_>,
+    tx: &mut ProjectTransaction,
+    item: &Value,
+) -> Result<ItemPlan, ApiError> {
+    let mapped = transfer::map(item, target.content_type).map_err(ApiError::Invalid)?;
+    let mut plan = ItemPlan {
+        status: "created",
+        entry: None,
+        source: mapped.source.clone(),
+        unmapped: mapped.unmapped.clone(),
+        reason: None,
     };
-    let Some(data) = object.get("data") else {
-        return value;
+    // A `_type` decides whether the document belongs here at all: `?type=` names the one to
+    // take from a mixed file and others are skipped; without it the document's `_type` must
+    // name this collection.
+    if let Some(kind) = mapped.kind.as_deref() {
+        match target.source_type {
+            Some(want) if kind != want => {
+                plan.status = "skipped";
+                plan.reason = Some(format!(
+                    "its `_type` is `{kind}`, not `{want}`, which `?type=` asked for"
+                ));
+                return Ok(plan);
+            }
+            None if kind != target.collection => {
+                return Err(ApiError::Invalid(Refusal {
+                    code: "type_mismatch",
+                    pointer: "/_type".to_owned(),
+                    message: format!(
+                        "this document's `_type` is `{kind}`, not `{collection}`; import it \
+                         into its own collection, or name the `_type` to take with `?type=`",
+                        collection = target.collection
+                    ),
+                }));
+            }
+            _ => {}
+        }
+    }
+    // A source id that is a UUID names an entry: one that exists here is updated, one that
+    // doesn't is adopted as the new entry's id. Anything else is only reported.
+    let adopted = mapped
+        .source
+        .as_deref()
+        .and_then(|source| Uuid::try_parse(source).ok());
+    let existing = match adopted {
+        Some(id) => entries::get(tx, target.collection, id)
+            .await
+            .map_err(ApiError::from_db)?,
+        None => None,
     };
-    let marked = object
-        .get("type")
-        .and_then(Value::as_str)
-        .is_some_and(|kind| kind.contains("::"))
-        || object.contains_key("version");
-    if marked { data } else { value }
+    match existing {
+        // An update is a save onto the named draft — the save's field rules apply (D-058).
+        Some(draft) => {
+            // An update keeps the entry's own locale; the source's is reported, not applied.
+            if mapped.locale.is_some() {
+                plan.unmapped.push("locale".to_owned());
+            }
+            plan.status = "updated";
+            plan.entry = Some(import_update(target, tx, draft, &mapped).await?);
+        }
+        None => {
+            plan.entry = Some(import_create(target, tx, &mapped, adopted).await?);
+        }
+    }
+    Ok(plan)
+}
+
+/// The item as a new entry: a create, under `content.create`'s field rules, adopting `id`
+/// when the source's own id is a UUID that names nothing here.
+async fn import_create(
+    target: &ImportScope<'_>,
+    tx: &mut ProjectTransaction,
+    mapped: &transfer::Mapped,
+    id: Option<Uuid>,
+) -> Result<Uuid, ApiError> {
+    // Imported entries are their importer's own, like a create's are its creator's.
+    let create = tx
+        .policy
+        .fields(Action::ContentCreate, target.collection, true)
+        .ok_or(ApiError::missing(
+            Action::ContentCreate,
+            "your role can't create entries here",
+        ))?;
+    // A Strapi `locale` maps to the entry's tag (D-087), shape-checked before it writes.
+    if let Some(locale) = mapped.locale.as_deref() {
+        check_locale(locale)?;
+    }
+    // A single type holds one entry: a create into an occupied one is refused — an update of
+    // that entry, by its id, is how it changes.
+    if target.content_type.single()
+        && !entries::list(tx, target.collection, None, 1, None, None, None)
+            .await
+            .map_err(ApiError::from_db)?
+            .is_empty()
+    {
+        return Err(ApiError::conflict(
+            "single_exists",
+            "this collection is a single type and already has its entry; update that one by its id",
+        ));
+    }
+    // Left-out fields get the type's defaults, like a create (D-071).
+    let (value, defaulted) = target.content_type.with_defaults(&mapped.document);
+    let (content, hash) = validate(&value, target.content_type)?;
+    visibility::only_permitted_fields(content.canonical_json(), &create, &defaulted)?;
+    slug_free(tx, target.collection, target.content_type, &content, None).await?;
+    let unique = target.content_type.unique_fields();
+    unique_free(
+        tx,
+        target.collection,
+        target.content_type,
+        &unique,
+        &content,
+        None,
+    )
+    .await?;
+    let draft = entries::create(
+        tx,
+        id.unwrap_or_else(Uuid::now_v7),
+        target.collection,
+        new_revision(&content, &hash, target.version, &unique),
+        mapped.locale.as_deref(),
+    )
+    .await
+    .map_err(ApiError::from_db)?;
+    sync_inverses(
+        target.state,
+        tx,
+        target.content_type,
+        target.collection,
+        draft.entry_id,
+        None,
+        Some(&draft.content),
+    )
+    .await?;
+    Ok(draft.entry_id)
+}
+
+/// The item as a save onto the draft its source id named: `If-Match` is the draft's own
+/// revision, since the import holds the entry's row for the whole file.
+async fn import_update(
+    target: &ImportScope<'_>,
+    tx: &mut ProjectTransaction,
+    draft: Draft,
+    mapped: &transfer::Mapped,
+) -> Result<Uuid, ApiError> {
+    // What this caller may do with this entry, by whose it is (D-058, step R.3): one it can't
+    // read is not found, as if it didn't exist.
+    let access = Access::of(&tx.policy, tx.identity, target.collection, draft.created_by);
+    let read = access.read.clone().ok_or(ApiError::NotFound)?;
+    let update = access.update.clone().ok_or(ApiError::missing(
+        Action::ContentUpdate,
+        "your role can't change this entry",
+    ))?;
+    let value = visibility::restore_hidden(mapped.document.clone(), &draft.content, &read)?;
+    let (content, hash) = validate(&value, target.content_type)?;
+    visibility::only_permitted_changes(content.canonical_json(), &draft.content, &update)?;
+    slug_free(
+        tx,
+        target.collection,
+        target.content_type,
+        &content,
+        Some(draft.entry_id),
+    )
+    .await?;
+    let unique = target.content_type.unique_fields();
+    unique_free(
+        tx,
+        target.collection,
+        target.content_type,
+        &unique,
+        &content,
+        Some(draft.entry_id),
+    )
+    .await?;
+    let expected = draft.revision.id;
+    let stored = draft.content.clone();
+    match entries::save(
+        tx,
+        draft.entry_id,
+        expected,
+        new_revision(&content, &hash, target.version, &unique),
+    )
+    .await
+    .map_err(ApiError::from_db)?
+    {
+        Saved::Saved(saved) => {
+            sync_inverses(
+                target.state,
+                tx,
+                target.content_type,
+                target.collection,
+                draft.entry_id,
+                Some(&stored),
+                Some(&saved.content),
+            )
+            .await?;
+            Ok(draft.entry_id)
+        }
+        Saved::Stale { current } => Err(ApiError::StaleRevision { current }),
+        Saved::NotFound => Err(ApiError::NotFound),
+    }
+}
+
+/// Whether `error` is *the item's* verdict — a refusal naming it — rather than the run's own
+/// failure, which aborts the report. A dry run reports the former and stops on the latter.
+fn verdict(error: &ApiError) -> Option<ItemRefusal> {
+    let (code, pointer, message) = match error {
+        ApiError::Invalid(refusal) => (
+            refusal.code,
+            refusal.pointer.clone(),
+            refusal.message.clone(),
+        ),
+        ApiError::InvalidRichText(rejection) => (
+            rejection.code.as_str(),
+            rejection.pointer.clone(),
+            rejection.to_string(),
+        ),
+        ApiError::InvalidField {
+            reason,
+            pointer,
+            message,
+        } => (*reason, (*pointer).to_owned(), message.clone()),
+        ApiError::Taken(in_the_way) => (
+            in_the_way.reason,
+            in_the_way.pointer.clone(),
+            in_the_way.message.clone(),
+        ),
+        ApiError::Conflict { reason, message }
+        | ApiError::Forbidden {
+            reason, message, ..
+        } => (*reason, String::new(), (*message).to_owned()),
+        ApiError::NotFound => ("not_found", String::new(), error.to_string()),
+        ApiError::StaleRevision { .. } => ("stale_revision", String::new(), error.to_string()),
+        _ => return None,
+    };
+    Some(ItemRefusal {
+        code,
+        pointer,
+        message,
+    })
+}
+
+/// `plan` as a report row: a dry run's statuses say what would happen rather than what did.
+fn outcome(at: &str, plan: ItemPlan, dry_run: bool) -> ImportOutcome {
+    ImportOutcome {
+        item: at.to_owned(),
+        status: match (plan.status, dry_run) {
+            ("created", true) => "would_create",
+            ("updated", true) => "would_update",
+            (status, _) => status,
+        },
+        entry: plan.entry,
+        source: plan.source,
+        unmapped: plan.unmapped,
+        refusal: None,
+        reason: plan.reason,
+    }
+}
+
+/// An item's refusal as a report row: `invalid`, with what it would fail with.
+fn refused(at: &str, refusal: ItemRefusal) -> ImportOutcome {
+    ImportOutcome {
+        item: at.to_owned(),
+        status: "invalid",
+        entry: None,
+        source: None,
+        unmapped: Vec::new(),
+        refusal: Some(refusal),
+        reason: None,
+    }
 }
 
 /// Prefixes a refusal's pointer with its import item — `/line/3` for JSONL, `/2` for a JSON
@@ -2344,15 +2730,59 @@ mod tests {
     }
 
     #[test]
-    fn a_strapi_entity_unwraps_to_its_data_and_plain_content_passes_through() {
-        let bare = serde_json::json!({"title": "Hi", "data": "a field literally called data"});
-        assert_eq!(entity(&bare), &bare);
-        let strapi = serde_json::json!({"type": "api::article.article", "data": {"title": "Hi"}});
-        assert_eq!(entity(&strapi), &serde_json::json!({"title": "Hi"}));
-        let marker = serde_json::json!({"version": 2, "data": {"title": "Hi"}});
-        assert_eq!(entity(&marker), &serde_json::json!({"title": "Hi"}));
-        // A `type` that isn't a Strapi namespace doesn't mark anything.
-        let unmarked = serde_json::json!({"type": "note", "data": {"title": "Hi"}});
-        assert_eq!(entity(&unmarked), &unmarked);
+    fn a_wrapped_data_list_needs_meta_to_be_an_envelope() {
+        let wrapped = r#"{"data": [{"title": "A"}, {"title": "B"}], "meta": {"pagination": {}}}"#;
+        let items = import_items(wrapped).expect("an envelope");
+        assert_eq!(items.items.len(), 2);
+        assert_eq!((items.at)(1), "/data/1");
+        // Without `meta`, `{"data": […]}` is a native document's own field: one JSONL line.
+        let bare = r#"{"data": [1, 2]}"#;
+        let items = import_items(bare).expect("one item");
+        assert_eq!(items.items.len(), 1);
+        assert_eq!((items.at)(0), "/line/1");
+    }
+
+    #[test]
+    fn a_dry_run_says_would_where_an_apply_says_did() {
+        let plan = ItemPlan {
+            status: "created",
+            entry: Some(Uuid::now_v7()),
+            source: Some("42".to_owned()),
+            unmapped: vec!["createdAt".to_owned()],
+            reason: None,
+        };
+        assert_eq!(outcome("/line/1", plan, true).status, "would_create");
+        let plan = ItemPlan {
+            status: "updated",
+            entry: Some(Uuid::now_v7()),
+            source: None,
+            unmapped: Vec::new(),
+            reason: None,
+        };
+        assert_eq!(outcome("/line/1", plan, true).status, "would_update");
+        let plan = ItemPlan {
+            status: "skipped",
+            entry: None,
+            source: None,
+            unmapped: Vec::new(),
+            reason: Some("wrong _type".to_owned()),
+        };
+        assert_eq!(outcome("/line/1", plan, true).status, "skipped");
+    }
+
+    #[test]
+    fn a_refusal_is_a_verdict_and_a_crash_is_not() {
+        let refused_error = ApiError::Invalid(Refusal {
+            code: "unknown_field",
+            pointer: "/line/2/extra".to_owned(),
+            message: "no field named that".to_owned(),
+        });
+        let found = verdict(&refused_error).expect("a verdict");
+        assert_eq!(
+            (found.code, found.pointer.as_str()),
+            ("unknown_field", "/line/2/extra")
+        );
+        assert!(verdict(&ApiError::Busy).is_none());
+        assert!(verdict(&ApiError::Unauthorized).is_none());
     }
 }

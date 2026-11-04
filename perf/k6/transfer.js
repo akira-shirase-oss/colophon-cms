@@ -1,8 +1,11 @@
-// Load scenario for collection transfer (D-086): each VU owns a notes collection it seeds
-// by import, then every iteration either exports the collection's drafts as JSONL (90%:
-// one read of every draft revision's content, up to the 10,000-entry cap) or imports a
-// three-line JSONL file (10%, up to ten imports: one transaction validating and writing
-// three revisions). Requests are named by route, so k6 keeps one series per route.
+// Load scenario for collection transfer (D-086, D-114): each VU owns a notes collection it
+// seeds by import, then every iteration either exports the collection's drafts as JSONL
+// (90%: one read of every draft revision's content, up to the 10,000-entry cap), imports a
+// three-line JSONL file (5%, up to ten imports: one transaction validating and writing
+// three revisions), or plans an import with ?dry_run=true (5%: the same pipeline rolled
+// back, answering per-item outcomes — no key, no writes; a plan costs about an import, so
+// the write-class share stays one in ten). Requests are named by route, so k6 keeps one
+// series per route.
 // scripts/load.sh gives this endpoint RATE 250 and P99_MS 700 (END_GOAL's editorial write
 // budget: an import is several revision writes, not one).
 
@@ -92,7 +95,7 @@ let imports = 0; // how many of this VU's ten imports have run
 
 export default function (data) {
   const collection = data.vus[(__VU - 1) % data.vus.length];
-  if (imports < 10 && __ITER % 10 === 0) {
+  if (imports < 10 && __ITER % 20 === 0) {
     const file = `{"title":"Batch ${imports}","note":"k6"}\n{"type":"api::note.note","data":{"title":"Strapi ${imports}"}}\n{"title":"Array ${imports}","note":"three"}\n`;
     const res = http.post(`${collection}/import`, file, {
       headers: { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/jsonlines', 'Idempotency-Key': key() },
@@ -100,6 +103,21 @@ export default function (data) {
       tags: { endpoint: 'import', name: 'import' },
     });
     if (check(res, { 'import 201': (r) => r.status === 201, 'imports the file': (r) => r.json('data.imported') === 3 })) imports++;
+  } else if (__ITER % 20 === 1) {
+    // D-114: the same file planned with `?dry_run=true` — the real pipeline rolled back,
+    // answering each item's verdict; no Idempotency-Key, nothing written.
+    const slug = collection.split('/').pop(); // `_type` must name this collection or the item is refused
+    const plan = `{"title":"Plan ${__ITER}","note":"k6"}\n{"type":"api::note.note","data":{"title":"Strapi ${__ITER}"}}\n{"_id":"d${__ITER}","_type":"${slug}","_rev":"r1","title":"Sanity ${__ITER}"}\n`;
+    const res = http.post(`${collection}/import?dry_run=true`, plan, {
+      headers: { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/jsonlines' },
+      redirects: 0,
+      tags: { endpoint: 'plan', name: 'plan' },
+    });
+    check(res, {
+      'plan 200': (r) => r.status === 200,
+      'plan answers three items': (r) => r.json('data.outcomes').length === 3,
+      'plan verdicts': (r) => r.json('data.outcomes.0.status') === 'would_create' && r.json('data.outcomes.1.status') === 'would_create' && r.json('data.outcomes.2.status') === 'would_create',
+    });
   } else {
     const res = http.get(`${collection}/export`, {
       headers: { Cookie: data.session.cookie },

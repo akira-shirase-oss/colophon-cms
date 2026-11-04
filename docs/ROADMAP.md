@@ -290,6 +290,14 @@ reported as delayed, never on time; locale variants publish independently; comme
   generation-pinned delivery via `atGeneration`); no second auth surface — a credential is attached, never
   minted. GraphQL stays to come.
 - Webhooks by event (entry, release, media, schema), import from Strapi and Sanity exports with a dry run, export.
+  Import parity is built (DX.9, D-114): `POST …/collections/{collection}/import` reads native JSONL and JSON
+  arrays, marked Strapi envelopes, Strapi v4 `{id, attributes}` and v5 `documentId` documents, and Sanity NDJSON —
+  `colophon_domain::transfer::map` normalizes each against the declared fields — and `?dry_run=true` plans the
+  same pipeline under savepoints in a transaction that never commits, so the plan writes nothing, needs no
+  `Idempotency-Key`, and answers a per-item outcome (`created`/`updated`/`skipped`, or `would_create`/
+  `would_update`/`skipped`/`invalid`, with `source`, `unmapped` metadata and refusals pointer-prefixed by the
+  item's place). `?type=` filters a mixed Sanity export; a source UUID updates a live entry's draft or names a new
+  one's id. Still bounded at 512 and one transaction; resumable staging is P5's. Webhooks stay to come.
 - Extension points instead of plugins (D-057): custom field types as data, Studio panels in sandboxed iframes.
 
 **Proof gate:** every query is permission-filtered (no field or entry leaks across roles); GraphQL and REST answer the

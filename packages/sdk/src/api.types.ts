@@ -463,7 +463,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Import entries: JSON Lines, a JSON array, or a Strapi export entity */
+        /** Import entries: native JSONL, or Strapi and Sanity documents */
         post: operations["importEntries"];
         delete?: never;
         options?: never;
@@ -1695,10 +1695,40 @@ export interface components {
             id?: string;
             subject?: string;
         };
-        /** @description one JSON object per line, or one JSON array of the same objects, each an entry's content; a Strapi export entity `{"type": "api::…", "data": {…}}` or `{"version":…,"data":{…}}` marker hands validation its `data` */
+        /** @description one JSON object per line, one JSON array of the same objects, or a Strapi API response's `{"data": […], "meta": {…}}`. Each item is a native content document, a Strapi entity (`{"type": "api::…", "data": {…}}`, `{"version":…,"data":{…}}`, `{id, attributes}` or a flat `documentId`/`id` document) or a Sanity document (`_id`, `_type`). At most 512 items. */
         ImportBody: unknown;
+        /** @description one item's place in the report */
+        ImportOutcome: {
+            /**
+             * Format: uuid
+             * @description the entry the item writes or named
+             */
+            entry?: string;
+            /** @description its pointer: `/line/3` for JSONL, `/2` for a JSON array, `/data/0` for a wrapped list */
+            item: string;
+            /** @description why a `skipped` item was skipped */
+            reason?: string;
+            refusal?: components["schemas"]["ItemRefusal"];
+            /** @description the source's own id: a Sanity `_id`, a Strapi `id`/`documentId` */
+            source?: string;
+            /**
+             * @description `would_*` and `invalid` only in a plan
+             * @enum {string}
+             */
+            status: "created" | "updated" | "skipped" | "would_create" | "would_update" | "invalid";
+            /** @description source keys set aside rather than imported */
+            unmapped?: string[];
+        };
+        /** @description what `?dry_run=true` answers: the plan, nothing written. A prediction, not a reservation — applying re-checks every item */
+        ImportPlanView: {
+            /** @enum {boolean} */
+            dry_run?: true;
+            outcomes?: components["schemas"]["ImportOutcome"][];
+        };
         ImportedView: {
+            /** @description items that created or updated an entry (`skipped` doesn't count) */
             imported?: number;
+            outcomes?: components["schemas"]["ImportOutcome"][];
         };
         Installation: {
             has_administrator: boolean;
@@ -1717,6 +1747,12 @@ export interface components {
             /** @description the usable URL; only in the create answer */
             link?: string;
             role: string;
+        };
+        /** @description the code, pointer and message an `invalid` item fails with when applied */
+        ItemRefusal: {
+            code: string;
+            message: string;
+            pointer: string;
         };
         ItemsCount: {
             blocked?: number;
@@ -3710,6 +3746,15 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description `missing_permission, agent_self_review` — the role can't review it, or a token tried to approve a token's changeset */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
             404: {
                 headers: {
@@ -5360,10 +5405,15 @@ export interface operations {
     };
     importEntries: {
         parameters: {
-            query?: never;
-            header: {
-                /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
-                "idempotency-key": string;
+            query?: {
+                /** @description set `true` to run every item and roll back — the 200 plan names each `would_create`, `would_update`, `skipped` or `invalid` item; a plan is a prediction, not a reservation, and needs no `Idempotency-Key` */
+                dry_run?: boolean;
+                /** @description the Sanity `_type` to take from a mixed file; documents of other types are `skipped`, reported */
+                type?: string;
+            };
+            header?: {
+                /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment; required unless `?dry_run=true`, which plans without one */
+                "idempotency-key"?: string;
             };
             path: {
                 /** @description the project's id */
@@ -5375,7 +5425,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        /** @description one object per line, or one array; lands in one transaction or not at all */
+        /** @description one object per line, one array, or a Strapi `{"data": […], "meta": {…}}`; lands in one transaction or not at all */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ImportBody"];
@@ -5383,6 +5433,17 @@ export interface operations {
             };
         };
         responses: {
+            /** @description the dry run's per-item plan; nothing was written */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["ImportPlanView"];
+                    };
+                };
+            };
             /** @description created */
             201: {
                 headers: {
@@ -5439,7 +5500,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `too_many_items, invalid_*, slug_taken, value_taken` — the file refused, with the failing item's index */
+            /** @description `too_many_items, type_mismatch, invalid_*, slug_taken, value_taken` — the file refused, with the failing item's index */
             422: {
                 headers: {
                     [name: string]: unknown;
