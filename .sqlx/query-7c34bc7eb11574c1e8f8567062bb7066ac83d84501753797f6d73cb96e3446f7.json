@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH source AS (\n             SELECT key, entry, revision, input\n             FROM unnest($4::text[], $5::uuid[], $6::uuid[], $7::jsonb[])\n                  AS s (key, entry, revision, input)\n         ), landed AS (\n             INSERT INTO bulk_items (project_id, environment_id, job_id, key, entry_id,\n                                     expected_revision_id, input)\n             SELECT $1, $2, $3, key, entry, revision, input FROM source\n             ON CONFLICT (project_id, environment_id, job_id, key) DO NOTHING\n             RETURNING key\n         )\n         SELECT s.key, (l.key IS NOT NULL) AS \"landed!\" FROM source s\n         LEFT JOIN landed l ON l.key = s.key",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "landed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "TextArray",
+        "UuidArray",
+        "UuidArray",
+        "JsonbArray"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "7c34bc7eb11574c1e8f8567062bb7066ac83d84501753797f6d73cb96e3446f7"
+}

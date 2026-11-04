@@ -33,6 +33,15 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 /// How often the worker fails jobs that ran out of time.
 const EXPIRY_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Bulk jobs one worker may drive at once — the spec's "two AI jobs" (§33, D-116).
+const BULK_SLOTS: usize = 2;
+/// Bulk items read per batch; each still commits in its own transaction.
+const BULK_BATCH: i64 = 16;
+/// Running bulk jobs scanned per pass.
+const BULK_SCAN: i64 = 32;
+/// How long a scan with drives in flight waits before looking again.
+const BULK_RESPAWN: Duration = Duration::from_millis(250);
+
 /// How the worker runs.
 #[derive(Debug, Clone)]
 pub struct Settings {
@@ -88,6 +97,21 @@ enum Drive {
     Stop,
 }
 
+/// What a bulk item's write made (D-116): a new revision's id for `applied`, or the
+/// terminal outcome and its problem document.
+enum BulkWrite {
+    /// It applied; the new revision's id, when the write makes one (a delete makes none).
+    Applied(Option<uuid::Uuid>),
+    /// It ended `conflict`, `refused` or `skipped`, with the problem to record.
+    Out(&'static str, serde_json::Value),
+}
+
+/// An item's `problem` document — `{"reason","pointer","message"}` — from a refusal, as
+/// the API reports one.
+fn problem(refusal: &colophon_domain::schema::Refusal) -> serde_json::Value {
+    json!({"reason": refusal.code, "pointer": refusal.pointer, "message": refusal.message})
+}
+
 /// Where an item's write starts from, as [`Worker::document_for`] resolves it.
 enum ItemDoc {
     /// The resolution or the expected revision's document — transform and validate it.
@@ -123,6 +147,8 @@ pub struct Worker {
     settings: Settings,
     slots: Arc<Semaphore>,
     image_slots: Arc<Semaphore>,
+    /// At most [`BULK_SLOTS`] bulk jobs drive at once (D-116).
+    bulk_slots: Arc<Semaphore>,
 }
 
 /// Any random 64 bits, for jitter: a fresh UUID v7's random part.
@@ -167,12 +193,14 @@ impl Worker {
             settings,
             slots,
             image_slots: Arc::new(Semaphore::new(IMAGE_SLOTS)),
+            bulk_slots: Arc::new(Semaphore::new(BULK_SLOTS)),
         })
     }
 
     /// Claims and runs due jobs until `cancel` fires, then lets attempts in flight finish. It
     /// claims as soon as a slot is free and only sleeps when it found nothing to do, so a backlog
     /// drains at the speed of the destinations, not of the polling interval.
+    #[allow(clippy::too_many_lines, reason = "one spawn per driver family")]
     pub async fn run(self: Arc<Self>, cancel: CancellationToken) {
         let tracker = TaskTracker::new();
         tracing::info!(owner = %self.settings.owner, "worker started");
@@ -183,6 +211,10 @@ impl Worker {
         {
             let worker = Arc::clone(&self);
             tracker.spawn(worker.run_migrations(cancel.clone()));
+        }
+        {
+            let worker = Arc::clone(&self);
+            tracker.spawn(worker.run_bulk(cancel.clone()));
         }
         let mut last_expiry: Option<std::time::Instant> = None;
         loop {
@@ -828,6 +860,714 @@ impl Worker {
         }
         if let Err(error) = tx.commit().await {
             tracing::warn!(plan = %plan.id, error = %error, "committing the checkpoint failed");
+        }
+    }
+
+    /// Bulk work, beside [`run_migrations`] (P5, D-116): a scan finds `running` jobs, each is
+    /// claimed under a session advisory lock on its own connection, and its items run one
+    /// transaction each — opened **as the submitter**, so a revoked token or a demoted member
+    /// stops the run honestly instead of borrowing the worker's power. Everything the drive
+    /// writes is durable in the item's own transaction, so a resumed drive asks every item
+    /// what it already knows and skips what finished. At most [`BULK_SLOTS`] jobs drive at
+    /// once — the spec's two AI jobs.
+    pub async fn run_bulk(self: Arc<Self>, cancel: CancellationToken) {
+        use colophon_db::bulk;
+        let tracker = TaskTracker::new();
+        loop {
+            let jobs = match bulk::running(&self.pool, BULK_SCAN).await {
+                Ok(jobs) => jobs,
+                Err(error) => {
+                    tracing::warn!(error = %error, "scanning bulk jobs failed; trying again");
+                    Vec::new()
+                }
+            };
+            let mut spawned = false;
+            for (project, environment, job) in jobs {
+                if cancel.is_cancelled() {
+                    break;
+                }
+                let Ok(permit) = Arc::clone(&self.bulk_slots).try_acquire_owned() else {
+                    break;
+                };
+                let worker = Arc::clone(&self);
+                let cancelled = cancel.clone();
+                tracker.spawn(async move {
+                    let _permit = permit;
+                    worker
+                        .drive_bulk(project, environment, job, &cancelled)
+                        .await;
+                });
+                spawned = true;
+            }
+            if spawned {
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = tokio::time::sleep(BULK_RESPAWN) => {}
+                }
+            } else {
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = tokio::time::sleep(self.settings.poll) => {}
+                }
+            }
+        }
+        tracker.close();
+        tracker.wait().await;
+        tracing::info!("bulk worker stopped");
+    }
+
+    /// Claims `job` on its own connection — the session lock lives on it for the whole
+    /// drive — and drives its items, checkpointed per batch, until nothing pending remains
+    /// ([`colophon_db::bulk::checkpoint`] writes `done` or `blocked`) or the claim is
+    /// cancelled, which just leaves the run for the next scan.
+    async fn drive_bulk(
+        &self,
+        project: uuid::Uuid,
+        environment: uuid::Uuid,
+        job: uuid::Uuid,
+        cancel: &CancellationToken,
+    ) {
+        use colophon_db::bulk;
+        let mut conn = match self.pool.acquire().await {
+            Ok(conn) => conn,
+            Err(error) => {
+                tracing::warn!(error = %error, "a connection for the bulk drive failed");
+                return;
+            }
+        };
+        match bulk::claim(&mut conn, project, environment, job).await {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                tracing::warn!(job = %job, error = %error, "claiming the bulk job failed");
+                return;
+            }
+        }
+        let job = {
+            match bulk::read_job(&mut conn, project, environment, job).await {
+                Ok(Some(job)) if job.state == "running" => job,
+                _ => {
+                    let _dropped = bulk::release(&mut conn, project, environment, job).await;
+                    return;
+                }
+            }
+        };
+        let Some(collection) = job.collection().map(str::to_owned) else {
+            self.fail_bulk(&job).await;
+            let _dropped = bulk::release(&mut conn, project, environment, job.id).await;
+            return;
+        };
+        tracing::info!(job = %job.id, collection = %collection, "bulk run begun");
+        loop {
+            if cancel.is_cancelled() {
+                break;
+            }
+            let items = match bulk::due_items(&self.pool, project, environment, job.id, BULK_BATCH)
+                .await
+            {
+                Ok(items) => items,
+                Err(error) => {
+                    tracing::warn!(job = %job.id, error = %error, "reading the run's items failed");
+                    break;
+                }
+            };
+            if items.is_empty() {
+                // Nothing pending — a resumed run can reach this straight away when the
+                // crash landed after the last item's commit but before its checkpoint.
+                match bulk::checkpoint(&self.pool, project, environment, job.id).await {
+                    Ok(true) => tracing::info!(job = %job.id, "bulk run ended"),
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::warn!(job = %job.id, error = %error, "the run's checkpoint failed");
+                    }
+                }
+                break;
+            }
+            let mut stopped = false;
+            for item in items {
+                if cancel.is_cancelled() {
+                    stopped = true;
+                    break;
+                }
+                if matches!(
+                    self.apply_bulk_item(&job, &collection, &item).await,
+                    Drive::Stop
+                ) {
+                    stopped = true;
+                    break;
+                }
+            }
+            // The batch's checkpoint recomputes counters and, when nothing pending remains,
+            // ends the job — and closes its budget reservations in the same commit (D-116).
+            match bulk::checkpoint(&self.pool, project, environment, job.id).await {
+                Ok(true) => {
+                    tracing::info!(job = %job.id, "bulk run ended");
+                    break;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(job = %job.id, error = %error, "the run's checkpoint failed");
+                }
+            }
+            if stopped {
+                break;
+            }
+        }
+        if let Err(error) = bulk::release(&mut conn, project, environment, job.id).await {
+            tracing::warn!(job = %job.id, error = %error, "releasing the bulk job failed");
+        }
+    }
+
+    /// One bulk item, one transaction — opened **as the job's submitter**: a token
+    /// principal through [`colophon_db::scope::begin_in_environment_as_token`] (a revoked
+    /// token answers `None`), a member through `begin_in_environment` (a removed member
+    /// the same). Inside it: the item is re-read under its lock, the job's state is
+    /// checked, the submitter's permission is re-checked against the *current* policy, the
+    /// entry is locked, the base revision is compared, and the write, the item's outcome
+    /// and the budget settlement commit together — [`fault::point`] "bulk:after-item"
+    /// marks the resume line a crash test kills on.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "each refusal is its own checked step"
+    )]
+    async fn apply_bulk_item(
+        &self,
+        job: &colophon_db::bulk::Job,
+        collection: &str,
+        item: &colophon_db::bulk::Item,
+    ) -> Drive {
+        use colophon_db::{bulk, scope};
+        let (project, environment) = (job.project, job.environment);
+        let opened = match job.principal.as_str() {
+            "token" => {
+                scope::begin_in_environment_as_token(
+                    &self.pool,
+                    job.created_by,
+                    project,
+                    environment,
+                )
+                .await
+            }
+            _ => {
+                scope::begin_in_environment(&self.pool, job.created_by, project, environment).await
+            }
+        };
+        let mut tx = match opened {
+            Ok(Some(tx)) => tx,
+            // The submitter can no longer act: the token was revoked or the member left
+            // the project. The item is refused by name — honest, and what the next ones
+            // will hit too (D-116).
+            Ok(None) => {
+                return self
+                    .mark_bulk_item(
+                        job,
+                        &item.key,
+                        "refused",
+                        json!({"reason": "submitter_lost_access", "pointer": "",
+                               "message": "the submitter can no longer act in this project"}),
+                        None,
+                    )
+                    .await;
+            }
+            Err(error) => {
+                tracing::warn!(job = %job.id, error = %error, "opening an item's write failed");
+                return Drive::Stop;
+            }
+        };
+        // What the item is now: another drive can't hold the claim, but a cancel may have
+        // skipped it since the batch read.
+        let fresh = match bulk::lock_item(&mut tx, job.id, &item.key).await {
+            Ok(Some(fresh)) => fresh,
+            Ok(None) => return Drive::Continue,
+            Err(error) => {
+                tracing::warn!(job = %job.id, error = %error, "re-reading an item failed");
+                return Drive::Stop;
+            }
+        };
+        if fresh.outcome != "pending" {
+            return Drive::Continue;
+        }
+        // The job itself: cancelled underneath the claim means stop, not more writes.
+        match bulk::get(&mut tx, job.id).await {
+            Ok(Some(current)) if current.state == "running" => {}
+            Ok(_) => return Drive::Stop,
+            Err(error) => {
+                tracing::warn!(job = %job.id, error = %error, "re-reading the job failed");
+                return Drive::Stop;
+            }
+        }
+        let op = match colophon_domain::bulk::parse(&fresh.input) {
+            Ok(op) => op,
+            Err(refusal) => {
+                return self
+                    .finish_bulk_item(tx, job, &fresh, "refused", problem(&refusal), None)
+                    .await;
+            }
+        };
+        // Lock the entry and read what it is now — the collection check and the base
+        // revision run on this, not on the batch's read.
+        let entry = match colophon_db::bulk::lock_entry(&mut tx, fresh.entry_id).await {
+            Ok(entry) => entry,
+            Err(error) => {
+                tracing::warn!(job = %job.id, error = %error, "locking an entry failed");
+                return Drive::Stop;
+            }
+        };
+        let Some(entry) = entry else {
+            return self
+                .finish_bulk_item(
+                    tx,
+                    job,
+                    &fresh,
+                    "skipped",
+                    json!({"reason": "entry_gone", "pointer": "",
+                           "message": "the entry isn't in this environment any more"}),
+                    None,
+                )
+                .await;
+        };
+        if entry.gone {
+            return self
+                .finish_bulk_item(
+                    tx,
+                    job,
+                    &fresh,
+                    "skipped",
+                    json!({"reason": "entry_deleted", "pointer": "",
+                           "message": "the entry was deleted since the manifest was accepted"}),
+                    None,
+                )
+                .await;
+        }
+        if entry.collection != collection {
+            return self
+                .finish_bulk_item(
+                    tx,
+                    job,
+                    &fresh,
+                    "skipped",
+                    json!({"reason": "collection_mismatch", "pointer": "",
+                           "message": "the entry isn't of the job's collection"}),
+                    None,
+                )
+                .await;
+        }
+        // Execution-time permission: the submitter's role *now*, not at submit (D-116) —
+        // a demotion degrades the run honestly.
+        let own = entry.created_by == tx.identity;
+        let action = if op.is_delete() {
+            colophon_domain::policy::Action::ContentDelete
+        } else {
+            colophon_domain::policy::Action::ContentUpdate
+        };
+        let permitted = tx.policy.fields(action, collection, own);
+        if permitted.is_none() {
+            return self
+                .finish_bulk_item(
+                    tx,
+                    job,
+                    &fresh,
+                    "refused",
+                    json!({"reason": "missing_permission", "pointer": "",
+                           "message": "your role can't run this operation on this entry"}),
+                    None,
+                )
+                .await;
+        }
+        if entry.draft_revision_id != fresh.expected_revision_id {
+            return self
+                .finish_bulk_item(
+                    tx,
+                    job,
+                    &fresh,
+                    "conflict",
+                    json!({"reason": "revision_moved", "pointer": "",
+                           "message": "the draft moved since the manifest was accepted",
+                           "current": entry.draft_revision_id}),
+                    None,
+                )
+                .await;
+        }
+        let outcome = if op.is_delete() {
+            match colophon_db::entries::delete(
+                &mut tx,
+                collection,
+                fresh.entry_id,
+                fresh.expected_revision_id,
+            )
+            .await
+            {
+                Ok(colophon_db::entries::Deleted::Deleted { .. }) => BulkWrite::Applied(None),
+                Ok(colophon_db::entries::Deleted::Stale { current }) => BulkWrite::Out(
+                    "conflict",
+                    json!({"reason": "revision_moved", "pointer": "",
+                        "message": "the draft moved since the manifest was accepted", "current": current}),
+                ),
+                Ok(colophon_db::entries::Deleted::NotFound) => BulkWrite::Out(
+                    "skipped",
+                    json!({"reason": "entry_deleted", "pointer": "",
+                        "message": "the entry was deleted since the manifest was accepted"}),
+                ),
+                Ok(colophon_db::entries::Deleted::Published) => BulkWrite::Out(
+                    "refused",
+                    json!({"reason": "entry_published", "pointer": "",
+                        "message": "the entry is published; unpublish it before a bulk delete"}),
+                ),
+                Ok(colophon_db::entries::Deleted::Referenced(_)) => BulkWrite::Out(
+                    "refused",
+                    json!({"reason": "still_referenced", "pointer": "",
+                        "message": "another entry or a publication still references it"}),
+                ),
+                Ok(colophon_db::entries::Deleted::InChangeset(_)) => BulkWrite::Out(
+                    "refused",
+                    json!({"reason": "entry_in_changeset", "pointer": "",
+                        "message": "an open changeset still pins the entry"}),
+                ),
+                Err(error) => {
+                    tracing::warn!(job = %job.id, error = %error, "an item's delete failed");
+                    return Drive::Stop;
+                }
+            }
+        } else {
+            match self
+                .bulk_write(&mut tx, job, collection, &fresh, &op, own)
+                .await
+            {
+                Ok(write) => write,
+                Err(()) => return Drive::Stop,
+            }
+        };
+        match outcome {
+            BulkWrite::Applied(new_revision) => {
+                if let Err(error) =
+                    colophon_db::budgets::settle_bulk_document(&mut tx.transaction, project, job.id)
+                        .await
+                {
+                    tracing::warn!(job = %job.id, error = %error, "settling an item's budget failed");
+                    return Drive::Stop;
+                }
+                self.finish_bulk_item(
+                    tx,
+                    job,
+                    &fresh,
+                    "applied",
+                    serde_json::Value::Null,
+                    new_revision,
+                )
+                .await
+            }
+            BulkWrite::Out(outcome, problem) => {
+                if let Err(error) = colophon_db::budgets::release_bulk_document(
+                    &mut tx.transaction,
+                    project,
+                    job.id,
+                )
+                .await
+                {
+                    tracing::warn!(job = %job.id, error = %error, "releasing an item's budget failed");
+                    return Drive::Stop;
+                }
+                self.finish_bulk_item(tx, job, &fresh, outcome, problem, None)
+                    .await
+            }
+        }
+    }
+
+    /// The document a write op produces and its revision write, inside the item's
+    /// transaction: `update` takes the manifest's document, `set`/`move` transform the
+    /// stored one; then the same hidden-field restore, field-permission check and content
+    /// type validation a save runs — the write itself is `entries::save_covered`, the
+    /// save's own mechanics with the document already covered by the job's reservation.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "each validation layer is its own checked step"
+    )]
+    async fn bulk_write(
+        &self,
+        tx: &mut colophon_db::scope::ProjectTransaction,
+        job: &colophon_db::bulk::Job,
+        collection: &str,
+        item: &colophon_db::bulk::Item,
+        op: &colophon_domain::bulk::Op,
+        own: bool,
+    ) -> Result<BulkWrite, ()> {
+        use colophon_domain::policy;
+        // The stored document is the base for transforms and the field rules — the draft
+        // points at `expected` (checked above), so that revision's content is what `set`
+        // and `move` transform and what `update` is compared to.
+        let stored = match colophon_db::entries::revision(
+            tx,
+            collection,
+            item.entry_id,
+            item.expected_revision_id,
+        )
+        .await
+        {
+            Ok(Some((_, content))) => content,
+            Ok(None) => {
+                return Ok(BulkWrite::Out(
+                    "conflict",
+                    json!({"reason": "revision_gone", "pointer": "",
+                           "message": "the base revision isn't readable any more"}),
+                ));
+            }
+            Err(error) => {
+                tracing::warn!(job = %job.id, error = %error, "reading a base revision failed");
+                return Err(());
+            }
+        };
+        let Ok(document) = serde_json::from_str::<serde_json::Value>(&stored) else {
+            tracing::warn!(job = %job.id, "a stored document isn't JSON");
+            return Err(());
+        };
+        let candidate = match colophon_domain::bulk::apply(op, &document) {
+            Ok(candidate) => candidate,
+            Err(refusal) => {
+                return Ok(BulkWrite::Out("refused", problem(&refusal)));
+            }
+        };
+        let read = tx
+            .policy
+            .fields(
+                colophon_domain::policy::Action::ContentRead,
+                collection,
+                own,
+            )
+            .unwrap_or(colophon_domain::policy::Fields::All);
+        let candidate = match policy::restore_hidden(candidate, &stored, &read) {
+            Ok(candidate) => candidate,
+            Err(refusal) => {
+                return Ok(BulkWrite::Out("refused", problem(&refusal)));
+            }
+        };
+        // The collection's current definition: the write is validated against the version
+        // that is current when it commits, under the type's shared lock — as saves do.
+        if let Err(error) = colophon_db::content_types::lock_for_write(tx, collection).await {
+            tracing::warn!(job = %job.id, error = %error, "locking the content type failed");
+            return Err(());
+        }
+        let version = match colophon_db::content_types::current(tx, collection).await {
+            Ok(Some(version)) => version,
+            Ok(None) => {
+                return Ok(BulkWrite::Out(
+                    "skipped",
+                    json!({"reason": "collection_gone", "pointer": "",
+                           "message": "the collection isn't here any more"}),
+                ));
+            }
+            Err(error) => {
+                tracing::warn!(job = %job.id, error = %error, "reading the content type failed");
+                return Err(());
+            }
+        };
+        let Ok(definition) = serde_json::from_str::<serde_json::Value>(&version.definition) else {
+            tracing::warn!(job = %job.id, "a stored definition isn't JSON");
+            return Err(());
+        };
+        let Ok(content_type) = colophon_domain::schema::ContentType::parse(&definition) else {
+            tracing::warn!(job = %job.id, "a stored definition doesn't parse");
+            return Err(());
+        };
+        let content = match content_type.validate(&candidate) {
+            Ok(content) => content,
+            Err(refusal) => {
+                return Ok(BulkWrite::Out("refused", problem(&refusal)));
+            }
+        };
+        let update = tx
+            .policy
+            .fields(
+                colophon_domain::policy::Action::ContentUpdate,
+                collection,
+                own,
+            )
+            .unwrap_or(colophon_domain::policy::Fields::All);
+        if let Err(refusal) =
+            policy::only_permitted_changes(content.canonical_json(), &stored, &update)
+        {
+            return Ok(BulkWrite::Out("refused", problem(&refusal)));
+        }
+        let unique_fields = content_type.unique_fields();
+        let hash = sha256(content.canonical_json().as_bytes());
+        let revision = colophon_db::entries::NewRevision {
+            id: uuid::Uuid::now_v7(),
+            content: content.canonical_json(),
+            content_hash: &hash,
+            title: content.title(),
+            slug: content.slug(),
+            schema_version: version.version,
+            references: content.references(),
+            assets: content.assets(),
+            unique: &unique_fields,
+        };
+        match colophon_db::entries::save_covered(
+            tx,
+            item.entry_id,
+            item.expected_revision_id,
+            revision,
+        )
+        .await
+        {
+            Ok(colophon_db::entries::Saved::Saved(draft)) => {
+                Ok(BulkWrite::Applied(Some(draft.revision.id)))
+            }
+            Ok(colophon_db::entries::Saved::Stale { current }) => Ok(BulkWrite::Out(
+                "conflict",
+                json!({"reason": "revision_moved", "pointer": "",
+                       "message": "the draft moved since the manifest was accepted",
+                       "current": current}),
+            )),
+            Ok(colophon_db::entries::Saved::NotFound) => Ok(BulkWrite::Out(
+                "skipped",
+                json!({"reason": "entry_gone", "pointer": "",
+                       "message": "the entry isn't in this environment any more"}),
+            )),
+            Err(error) => {
+                let (reason, pointer, message) = match &error {
+                    colophon_db::DbError::SlugTaken => (
+                        "slug_conflict",
+                        "/slug".to_owned(),
+                        "the slug is taken".to_owned(),
+                    ),
+                    colophon_db::DbError::ValueTaken => (
+                        "value_conflict",
+                        String::new(),
+                        "a unique value is taken".to_owned(),
+                    ),
+                    colophon_db::DbError::MissingReference { field, .. } => (
+                        "missing_reference",
+                        format!("/{field}"),
+                        "a reference names no entry".to_owned(),
+                    ),
+                    colophon_db::DbError::EntryDeleted { .. } => (
+                        "missing_reference",
+                        String::new(),
+                        "a reference names no entry".to_owned(),
+                    ),
+                    colophon_db::DbError::MissingAsset { .. } => (
+                        "missing_asset",
+                        String::new(),
+                        "an asset field names no asset".to_owned(),
+                    ),
+                    _ => {
+                        tracing::warn!(job = %job.id, error = %error, "an item's write failed");
+                        return Err(());
+                    }
+                };
+                Ok(BulkWrite::Out(
+                    "refused",
+                    json!({"reason": reason, "pointer": pointer, "message": message}),
+                ))
+            }
+        }
+    }
+
+    /// Ends an item inside its own transaction and commits it — the outcome (and for an
+    /// applied write, the revision it made and the settled budget) land together. A crash
+    /// before the commit rolls everything back; [`fault::point`] after it marks where a
+    /// crash leaves a committed outcome to be skipped on the resume.
+    async fn finish_bulk_item(
+        &self,
+        mut tx: colophon_db::scope::ProjectTransaction,
+        job: &colophon_db::bulk::Job,
+        item: &colophon_db::bulk::Item,
+        outcome: &str,
+        problem: serde_json::Value,
+        new_revision: Option<uuid::Uuid>,
+    ) -> Drive {
+        use colophon_db::bulk;
+        let problem = if problem.is_null() {
+            None
+        } else {
+            Some(problem)
+        };
+        if let Err(error) = bulk::mark(
+            &mut tx.transaction,
+            job.project,
+            job.environment,
+            job.id,
+            &item.key,
+            outcome,
+            problem.as_ref(),
+            new_revision,
+        )
+        .await
+        {
+            tracing::warn!(job = %job.id, error = %error, "writing an item's outcome failed");
+            return Drive::Stop;
+        }
+        if let Err(error) = tx.transaction.commit().await {
+            tracing::warn!(job = %job.id, error = %error, "committing an item failed");
+            return Drive::Stop;
+        }
+        // A crash here is the resume case: the item's outcome is committed, so the next
+        // drive asks it and moves on (the fault tests prove it).
+        fault::point("bulk:after-item");
+        Drive::Continue
+    }
+
+    /// Marks an item when no submitter transaction could open (the token was revoked, the
+    /// member left): a `colophon_worker` write, one commit, and the item's held document
+    /// released — the same shape as a refused item.
+    async fn mark_bulk_item(
+        &self,
+        job: &colophon_db::bulk::Job,
+        key: &str,
+        outcome: &str,
+        problem: serde_json::Value,
+        new_revision: Option<uuid::Uuid>,
+    ) -> Drive {
+        use colophon_db::bulk;
+        let mut conn = match self.pool.acquire().await {
+            Ok(conn) => conn,
+            Err(error) => {
+                tracing::warn!(job = %job.id, error = %error, "a connection for a mark failed");
+                return Drive::Stop;
+            }
+        };
+        let mut tx = match colophon_db::migrations::worker_on(&mut conn).await {
+            Ok(tx) => tx,
+            Err(error) => {
+                tracing::warn!(job = %job.id, error = %error, "opening a mark failed");
+                return Drive::Stop;
+            }
+        };
+        let wrote = async {
+            bulk::mark(
+                &mut tx,
+                job.project,
+                job.environment,
+                job.id,
+                key,
+                outcome,
+                Some(&problem),
+                new_revision,
+            )
+            .await?;
+            colophon_db::budgets::release_bulk_document(&mut tx, job.project, job.id).await
+        };
+        match wrote.await {
+            Ok(()) => {
+                if let Err(error) = tx.commit().await {
+                    tracing::warn!(job = %job.id, error = %error, "committing a mark failed");
+                    return Drive::Stop;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(job = %job.id, error = %error, "marking an item failed");
+                return Drive::Stop;
+            }
+        }
+        Drive::Continue
+    }
+
+    /// Ends a job whose operation document can't be read: `blocked` with the reason —
+    /// losing the write just leaves it running for the next drive to hit the same wall.
+    async fn fail_bulk(&self, job: &colophon_db::bulk::Job) {
+        if let Err(error) =
+            colophon_db::bulk::mark_corrupt(&self.pool, job.project, job.environment, job.id).await
+        {
+            tracing::warn!(job = %job.id, error = %error, "marking the job blocked failed");
         }
     }
 

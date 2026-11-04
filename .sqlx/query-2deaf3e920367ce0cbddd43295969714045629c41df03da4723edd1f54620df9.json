@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bulk_jobs SET manifest_hash = $4, updated_at = now()\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2deaf3e920367ce0cbddd43295969714045629c41df03da4723edd1f54620df9"
+}

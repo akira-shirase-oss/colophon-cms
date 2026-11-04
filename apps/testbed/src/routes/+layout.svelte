@@ -17,6 +17,7 @@
 		{ href: resolve('/content-types'), label: 'Content types' },
 		{ href: resolve('/modelling'), label: 'Content modelling' },
 		{ href: resolve('/migrations'), label: 'Migrations' },
+		{ href: resolve('/bulk'), label: 'Bulk' },
 		{ href: resolve('/inverses'), label: 'Mirrored references' },
 		{ href: resolve('/locales'), label: 'Locales' },
 		{ href: resolve('/site'), label: 'Website starter' },

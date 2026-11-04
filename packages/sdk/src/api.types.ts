@@ -143,6 +143,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/environments/{environment}/bulk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The environment's bulk jobs, newest first */
+        get: operations["listBulkJobs"];
+        put?: never;
+        /** Submit a manifest of exact entries and base revisions (a chunk is at most 100 items and 1 MiB) */
+        post: operations["submitBulkJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/environments/{environment}/bulk/{job}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One bulk job, `ETag`'d with its manifest hash */
+        get: operations["getBulkJob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/environments/{environment}/bulk/{job}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel an open job; pending items skip, reservations release */
+        post: operations["cancelBulkJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/environments/{environment}/bulk/{job}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A job's items in key order — the resumable cursor */
+        get: operations["listBulkItems"];
+        put?: never;
+        /** Append the next chunk while the job is `accepting` */
+        post: operations["appendBulkItems"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/environments/{environment}/changesets": {
         parameters: {
             query?: never;
@@ -1021,14 +1091,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** One project API token, its limits and its usage */
+        get: operations["getToken"];
         put?: never;
         post?: never;
         /** Revoke a project API token — the exact kill switch */
         delete: operations["revokeToken"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Replace (`{"limits": {…}}`) or remove (`null`) a token's budget limits */
+        patch: operations["updateToken"];
         trace?: never;
     };
     "/api/v1/rich-text/validate": {
@@ -1399,6 +1471,10 @@ export interface components {
             kind?: "person" | "token";
             name?: string | null;
         };
+        AppendBulkItems: {
+            items: components["schemas"]["BulkItemInput"][];
+            seal?: boolean;
+        };
         AppliedQuery: {
             /** @description the canonical document */
             query?: components["schemas"]["QueryDocument"];
@@ -1430,6 +1506,66 @@ export interface components {
             /** @enum {string} */
             state?: "quarantined" | "live" | "rejected" | "deleted";
             width?: number | null;
+        };
+        BulkAppendView: {
+            appended?: number;
+            duplicates?: string[];
+            job?: components["schemas"]["BulkJobView"];
+            sealed?: boolean;
+        };
+        BulkItemInput: {
+            /** Format: uuid */
+            entry: string;
+            /**
+             * Format: uuid
+             * @description the base revision the write is bound to
+             */
+            expected_revision: string;
+            /** @description the client's stable name for the item within the job (1–256 characters) */
+            key: string;
+            /** @description `{"op": "update", "content": {…}}`, `{"op": "set", "path", "value"}`, `{"op": "move", "from", "to"}` or `{"op": "delete"}` */
+            op: Record<string, unknown>;
+        };
+        BulkItemView: {
+            /** Format: date-time */
+            applied_at?: string | null;
+            /** Format: uuid */
+            entry_id?: string;
+            /** Format: uuid */
+            expected_revision_id?: string;
+            input?: Record<string, unknown>;
+            key?: string;
+            /** Format: uuid */
+            new_revision_id?: string | null;
+            /** @enum {string} */
+            outcome?: "pending" | "applied" | "conflict" | "refused" | "skipped";
+            /** @description why the item didn't apply, as a refusal reports it */
+            problem?: Record<string, unknown> | null;
+        };
+        BulkJobView: {
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: uuid */
+            created_by?: string;
+            error?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+            /** @description `sha256:<hex>` — the job's `ETag` */
+            hash?: string;
+            /** Format: uuid */
+            id?: string;
+            items?: components["schemas"]["ItemsCount"];
+            /** @enum {string} */
+            kind?: "entries";
+            operation?: Record<string, unknown>;
+            /** @enum {string} */
+            principal?: "member" | "token";
+            /** Format: date-time */
+            started_at?: string | null;
+            /** @enum {string} */
+            state?: "accepting" | "running" | "done" | "blocked" | "cancelled";
+            /** Format: date-time */
+            updated_at?: string;
         };
         ChangesetItemView: {
             collection?: string;
@@ -1862,6 +1998,12 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
+        NewBulkJob: {
+            collection: string;
+            items: components["schemas"]["BulkItemInput"][];
+            /** @description close the manifest at once and start the run */
+            seal?: boolean;
+        };
         NewChangeset: {
             entries?: string[];
             title: string;
@@ -1964,6 +2106,8 @@ export interface components {
             expires_in_days: number;
             /** @enum {string} */
             kind: "read-only" | "full-access" | "custom";
+            /** @description budget ceilings (D-113); absent means unconstrained */
+            limits?: components["schemas"]["TokenLimits"];
             name: string;
             /** @description `custom` only */
             permissions?: components["schemas"]["PermissionBody"][];
@@ -1995,6 +2139,10 @@ export interface components {
             /** Format: email */
             email: string;
             password: string;
+        };
+        PatchToken: {
+            /** @description the token's ceilings; `null` removes them */
+            limits: components["schemas"]["TokenLimits"] | null;
         };
         PendingChangeset: {
             /** Format: uuid */
@@ -2364,6 +2512,19 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
+        TokenLimits: {
+            /** @description entry writes per rolling day */
+            documents_per_day?: number | null;
+            /** @description delivery jobs held at once */
+            max_concurrent_jobs?: number | null;
+            /** @description management requests per minute (stored; not consumed yet) */
+            requests_per_minute?: number | null;
+        };
+        TokenUsage: {
+            documents_last_day?: number;
+            jobs_open?: number;
+            requests_last_minute?: number;
+        };
         TokenView: {
             /** Format: date-time */
             created_at?: string;
@@ -2379,6 +2540,8 @@ export interface components {
             kind?: "read-only" | "full-access" | "custom";
             /** Format: date-time */
             last_used_at?: string | null;
+            /** @description budget ceilings; `null` is unconstrained at the quota layer */
+            limits?: components["schemas"]["TokenLimits"] | null;
             name?: string;
             permissions?: components["schemas"]["PermissionView"][];
             /** Format: date-time */
@@ -2387,6 +2550,8 @@ export interface components {
             secret?: string;
             /** @enum {string} */
             state?: "active" | "expired" | "revoked";
+            /** @description what it holds or spent; only on the single-token answer */
+            usage?: components["schemas"]["TokenUsage"];
         };
         /** @description a content type definition: `kind` (`collection` or `single`), `title` field name, `fields` (each with its `type` and options), `locales` policy. Rust revalidates every mutation against it; its canonical form hashes to `definition_hash`. */
         TypeDefinition: Record<string, unknown>;
@@ -3249,6 +3414,521 @@ export interface operations {
             };
         };
     };
+    listBulkJobs: {
+        parameters: {
+            query?: {
+                /** @description `accepting`, `running`, `done`, `blocked`, `cancelled` */
+                state?: string;
+                /** @description the `next_cursor` a previous page answered */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["BulkJobView"][];
+                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    submitBulkJob: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
+                "idempotency-key": string;
+            };
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewBulkJob"];
+            };
+        };
+        responses: {
+            /** @description `ETag: "sha256:<manifest hash>"` — what `If-Match` binds */
+            202: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["BulkJobView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission, budget_exceeded` — a permission the manifest asks for isn't the caller's, or a budget refuses */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_*, chunk_too_large, manifest_empty` — a manifest item wouldn't validate */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getBulkJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the path parameter */
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["BulkJobView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    cancelBulkJob: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
+                "idempotency-key": string;
+            };
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the path parameter */
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["BulkJobView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `job_finished` — the job is already finished; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listBulkItems: {
+        parameters: {
+            query?: {
+                /** @description `pending`, `applied`, `conflict`, `refused`, `skipped` */
+                outcome?: string;
+                /** @description continue past this item */
+                after?: string;
+                /** @description page size: 1–100, default 20 */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the path parameter */
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["BulkItemView"][];
+                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    appendBulkItems: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description the resource's `ETag`, exactly as a response carried it */
+                "if-match": string;
+                /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
+                "idempotency-key": string;
+            };
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the path parameter */
+                job: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppendBulkItems"];
+            };
+        };
+        responses: {
+            /** @description the job after the chunk; `duplicates` names keys that landed already */
+            202: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["BulkAppendView"];
+                    };
+                };
+            };
+            /** @description `bad_request` — a malformed `If-Match` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission, budget_exceeded` — a permission the chunk asks for isn't the caller's, or a budget refuses */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `job_moved` — the manifest changed; the `ETag` names it now; `job_not_accepting` — the manifest is closed; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_*, chunk_too_large, manifest_too_large` — the chunk wouldn't validate */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `precondition_required` — a required `If-Match` or `Idempotency-Key` is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listChangesets: {
         parameters: {
             query?: never;
@@ -3534,6 +4214,15 @@ export interface operations {
             };
             /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `budget_exceeded` — a token's `max_concurrent_jobs` budget refused the release's dispatch */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4158,7 +4847,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `missing_permission, fields_not_writable` */
+            /** @description `missing_permission, fields_not_writable, budget_exceeded` — the role, or a token's `documents_per_day` budget, refused it */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -4441,6 +5130,15 @@ export interface operations {
             };
             /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission, fields_not_writable, budget_exceeded` — the role, or a token's `documents_per_day` budget, refused it */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5120,6 +5818,15 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description `budget_exceeded` — a token's `documents_per_day` budget refused it */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
             404: {
                 headers: {
@@ -5473,7 +6180,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `missing_permission, fields_not_writable` */
+            /** @description `missing_permission, fields_not_writable, budget_exceeded` — the role, or a token's `documents_per_day` budget, refused it */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -9328,6 +10035,78 @@ export interface operations {
             };
         };
     };
+    getToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the token's id */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["TokenView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     revokeToken: {
         parameters: {
             query?: never;
@@ -9373,6 +10152,91 @@ export interface operations {
             };
             /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the token's id */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchToken"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["TokenView"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_limit, limits_empty, nothing_to_change` — the fields refused */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
