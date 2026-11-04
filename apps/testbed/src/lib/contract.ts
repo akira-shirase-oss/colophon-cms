@@ -135,6 +135,24 @@ export const checks: Check[] = [
 		}
 	},
 	{
+		id: 'collaboration-gated',
+		title: 'Comments and tasks answer with the envelope',
+		proves: 'The E1 routes exist and never answer bare: anonymous callers get 401 unauthorized, a signed-in caller with an unseen project 404 not_found — never route_not_found.',
+		async run() {
+			const problems: string[] = [];
+			const project = '00000000-0000-7000-8000-000000000000';
+			const base = `/api/v1/projects/${project}/environments/production`;
+			let last: Reply | null = null;
+			for (const path of [`${base}/collections/articles/entries/${project}/comments`, `${base}/tasks`]) {
+				const reply = await call('GET', path);
+				last = reply;
+				const expected = reply.status === 401 ? envelopeProblems(reply, 401, 'unauthorized') : envelopeProblems(reply, 404, 'not_found');
+				problems.push(...expected.map((problem) => `${path.slice(base.length)}: ${problem}`));
+			}
+			return outcome(last ?? { status: 0, headers: new Headers(), body: null, text: '', requestId: null, ms: 0 }, problems);
+		}
+	},
+	{
 		id: 'hostile-id',
 		title: 'A hostile request id is replaced',
 		proves: 'An over-long id is discarded and replaced with a fresh UUIDv7, so it never reaches the logs.',

@@ -4,12 +4,15 @@
 import {
 	getProject,
 	listChangesets,
+	listComments,
 	listComponents,
 	listContentTypes,
 	listDestinations,
+	listMembers,
 	listMigrations,
 	listReleases,
 	listRoles,
+	listTasks,
 	me,
 	searchEntries
 } from './api.ts';
@@ -28,6 +31,20 @@ export const entriesQuery = (project: string, collection: string, q = '') => ({
 	queryKey: ['entries', project, collection, q.trim()],
 	queryFn: () => searchEntries(project, collection, q)
 });
+
+/** The project's members, for assignee pickers and naming people (E1); the same key the Members
+ *  page uses, so one fetch serves both and its invalidation refreshes both. */
+export const membersQuery = (project: string) => ({ queryKey: ['members', project], queryFn: () => listMembers(project) });
+/** An entry's comments (E1): `state` narrows to the open or the resolved ones. */
+export const commentsQuery = (project: string, collection: string, entry: string, state?: 'open' | 'resolved') => ({
+	queryKey: ['comments', project, collection, entry, state ?? ''],
+	queryFn: () => listComments(project, collection, entry, state === undefined ? {} : { state })
+});
+/** The environment's tasks (E1), filtered the way the API filters them. */
+export const tasksQuery = (
+	project: string,
+	filter: { entry?: string; collection?: string; assignee?: string; status?: 'open' | 'done' | 'cancelled' } = {}
+) => ({ queryKey: ['tasks', project, filter], queryFn: () => listTasks(project, filter) });
 
 /** "12" or, when there are more than a page, "100+". */
 export const count = (page: { data: unknown[]; next_cursor: string | null }) =>

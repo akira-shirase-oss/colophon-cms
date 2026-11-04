@@ -8,6 +8,7 @@
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
+	import ListTodoIcon from '@lucide/svelte/icons/list-todo';
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
 	import RouteIcon from '@lucide/svelte/icons/route';
 	import SearchIcon from '@lucide/svelte/icons/search';
@@ -70,6 +71,7 @@
 		'/projects/[project]/releases/[generation]': 'Releases',
 		'/projects/[project]/migrations': 'Migrations',
 		'/projects/[project]/migrations/[migration]': 'Migrations',
+		'/projects/[project]/tasks': 'Tasks',
 		'/projects/[project]/members': 'Members',
 		'/projects/[project]/settings': 'Settings',
 		'/projects/[project]/settings/types': 'Content types',
@@ -234,6 +236,19 @@
 							{#if type.definition.single !== true}<CollectionCount {project} collection={type.slug} />{/if}
 						</Sidebar.MenuItem>
 					{/each}
+				</Sidebar.Menu>
+			</Sidebar.Group>
+
+			<Sidebar.Group>
+				<Sidebar.GroupLabel>Work</Sidebar.GroupLabel>
+				<Sidebar.Menu>
+					<Sidebar.MenuItem>
+						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/tasks')} tooltipContent="Tasks">
+							{#snippet child({ props })}
+								<a href={resolve('/projects/[project]/tasks', { project })} data-testid="tasks-link" {...props}><ListTodoIcon /><span>Tasks</span></a>
+							{/snippet}
+						</Sidebar.MenuButton>
+					</Sidebar.MenuItem>
 				</Sidebar.Menu>
 			</Sidebar.Group>
 

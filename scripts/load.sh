@@ -28,6 +28,8 @@
 # /me), changesets (reading, listing, reviewing and creating changesets),
 # migrations (plan lists and reads, item pages, and planning the same required-field change again:
 # a locked dry run of the collection's drafts that supersedes its open plans; D-100),
+# collaboration (comment lists and writes on an entry's revision, resolves and reopens on
+# comment etags, and task creates and updates on task etags; D-102),
 # delivery (anonymous /content/v1 reads, latest and pinned), publishing (whole publishes, five
 # requests each, with the worker announcing every release to a local receiver; needs node),
 # studio (the Studio's static files; builds the Studio first) or site (the reference site's pages,
@@ -57,7 +59,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|site-starter|assets|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|collaboration|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|site-starter|assets|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -82,7 +84,7 @@ case "$endpoint" in
   accounts) RATE="${RATE:-50}" P99_MS="${P99_MS:-500}" ;;
   # Half its requests list entries (a content type lookup too): about 2,000/s at most here, so
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
-  cli | members | roles | tokens | schedules | changesets) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
+  cli | members | roles | tokens | schedules | changesets | collaboration) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
   # One request in ten plans a migration: a change-locked dry run of the collection's drafts
   # plus a plan and item insert and a supersede — a heavier write than a changeset's, so half
   # of entries' steady rate and its p99 budget.

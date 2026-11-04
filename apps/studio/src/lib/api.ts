@@ -1534,3 +1534,153 @@ export async function applyMigration(project: string, id: string, hash: string, 
 export async function cancelMigration(project: string, id: string, key: string): Promise<MigrationPlan> {
 	return ((await (await send('POST', `${migrations(project)}/${id}/cancel`, undefined, { 'Idempotency-Key': key })).json()) as { data: MigrationPlan }).data;
 }
+
+// ---- Collaboration: comments on an entry's revisions, and editorial tasks (step E1, D-102). ----
+
+/** A comment on one immutable version of an entry (E1, D-102): written once and kept verbatim
+ *  forever — never edited, never deleted — so what it says about stays exactly what its author
+ *  saw. A resolved pair answers it; a deleted entry's comments stay readable. */
+export interface EntryComment {
+	id: string;
+	entry_id: string;
+	collection: string;
+	revision_id: string;
+	/** Where in the content it points, as a field path; `null` for the version as a whole. */
+	field: string | null;
+	/** What the author wrote, verbatim. Render it as text, never markup. */
+	body: string;
+	author_id: string;
+	resolved_by: string | null;
+	resolved_at: string | null;
+	created_at: string;
+	/** What `If-Match` binds: the hash of the resolution pair (`sha256:…`). */
+	etag: string;
+}
+
+/** An editorial task on an entry (E1, D-102): what has to be done, who it's waiting on, and where
+ *  it stands — optionally bound to one version of the entry or to a publish request. */
+export interface EditorialTask {
+	id: string;
+	entry_id: string;
+	collection: string;
+	revision_id: string | null;
+	changeset_id: string | null;
+	title: string;
+	assignee_id: string | null;
+	status: 'open' | 'done' | 'cancelled' | (string & {});
+	created_by: string;
+	done_by: string | null;
+	done_at: string | null;
+	created_at: string;
+	updated_at: string;
+	/** What `If-Match` binds: the hash of everything an update may change (`sha256:…`). */
+	etag: string;
+}
+
+/** What of a task a `PATCH` changes. Each field present changes and each absent field stays —
+ *  except `assignee`, where `null` is a real value meaning nobody, so leave the key out (or set it
+ *  `undefined`) to keep the current assignee and pass `null` to unassign. */
+export interface TaskUpdate {
+	title?: string;
+	assignee?: string | null;
+	status?: 'open' | 'done' | 'cancelled';
+}
+
+const commentsPath = (project: string, collection: string, entry: string) => `${entries(project, collection)}/${entry}/comments`;
+
+/** The entry's comments, newest first, `state` narrowing to the open or the answered ones. Needs
+ *  `content.read` on the entry; a deleted entry's comments stay readable. */
+export async function listComments(
+	project: string,
+	collection: string,
+	entry: string,
+	options: { revision?: string; state?: 'open' | 'resolved'; limit?: number } = {}
+): Promise<Page<EntryComment>> {
+	const query = new URLSearchParams({ limit: String(options.limit ?? 100) });
+	if (options.revision !== undefined) query.set('revision', options.revision);
+	if (options.state !== undefined) query.set('state', options.state);
+	return (await (await send('GET', `${commentsPath(project, collection, entry)}?${query}`)).json()) as Page<EntryComment>;
+}
+
+/** Writes a comment bound to `comment.revision` — the version on screen. Needs `content.update` on
+ *  the entry; refused `revision_not_found` when it isn't this entry's, `invalid_field_path`,
+ *  `empty_body` or `body_too_long`, and not-found when the entry is gone or unseen. */
+export async function createComment(
+	project: string,
+	collection: string,
+	entry: string,
+	comment: { revision: string; field?: string; body: string },
+	key: string
+): Promise<EntryComment> {
+	return (
+		(await (await send('POST', commentsPath(project, collection, entry), comment, { 'Idempotency-Key': key })).json()) as {
+			data: EntryComment;
+		}
+	).data;
+}
+
+/** Resolves (`resolved` true) or reopens (false) the comment as it stood when `etag` was read;
+ *  refused `comment_moved` when it changed meanwhile, `already_resolved`/`already_open` on a no-op. */
+export async function setCommentResolution(
+	project: string,
+	collection: string,
+	entry: string,
+	comment: string,
+	etag: string,
+	resolved: boolean,
+	key: string
+): Promise<EntryComment> {
+	const action = resolved ? 'resolve' : 'reopen';
+	return (
+		(await (
+			await send('POST', `${commentsPath(project, collection, entry)}/${comment}/${action}`, undefined, {
+				'If-Match': `"${etag}"`,
+				'Idempotency-Key': key
+			})
+		).json()) as { data: EntryComment }
+	).data;
+}
+
+const tasksPath = (project: string) => `${base(project)}/tasks`;
+
+/** The environment's tasks, newest first — only those on entries the role may read (the `own`
+ *  condition included). `assignee` filters by `me`, `none`, or an identity id. */
+export async function listTasks(
+	project: string,
+	filter: { entry?: string; collection?: string; assignee?: string; status?: 'open' | 'done' | 'cancelled'; limit?: number } = {}
+): Promise<Page<EditorialTask>> {
+	const query = new URLSearchParams({ limit: String(filter.limit ?? 100) });
+	if (filter.entry !== undefined) query.set('entry', filter.entry);
+	if (filter.collection !== undefined) query.set('collection', filter.collection);
+	if (filter.assignee !== undefined) query.set('assignee', filter.assignee);
+	if (filter.status !== undefined) query.set('status', filter.status);
+	return (await (await send('GET', `${tasksPath(project)}?${query}`)).json()) as Page<EditorialTask>;
+}
+
+/** One task, fresh — its `etag` names the state an update's `If-Match` binds. */
+export async function getTask(project: string, task: string): Promise<EditorialTask> {
+	return ((await (await send('GET', `${tasksPath(project)}/${task}`)).json()) as { data: EditorialTask }).data;
+}
+
+/** Creates a task on `task.entry`; needs `content.update` on that entry, and refused not-found for
+ *  an entry the role can't see. `revision` and `changeset` optionally name the exact version or
+ *  publish request the task is about (`revision_not_found`/`changeset_not_found`);
+ *  `assignee_not_member` for someone outside the project. */
+export async function createTask(
+	project: string,
+	task: { entry: string; title: string; revision?: string; changeset?: string; assignee?: string },
+	key: string
+): Promise<EditorialTask> {
+	return ((await (await send('POST', tasksPath(project), task, { 'Idempotency-Key': key })).json()) as { data: EditorialTask }).data;
+}
+
+/** Changes the task as it stood when `etag` was read; refused `task_moved` when it changed
+ *  meanwhile and `nothing_to_change` with no fields. `update.assignee` `null` unassigns; leaving
+ *  `done` clears the done pair, entering it records who and when. */
+export async function updateTask(project: string, task: string, etag: string, update: TaskUpdate, key: string): Promise<EditorialTask> {
+	return (
+		(await (await send('PATCH', `${tasksPath(project)}/${task}`, update, { 'If-Match': `"${etag}"`, 'Idempotency-Key': key })).json()) as {
+			data: EditorialTask;
+		}
+	).data;
+}
