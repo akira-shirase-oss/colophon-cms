@@ -144,7 +144,12 @@ on clean infrastructure and an independent install, so operations are a module w
 2. Verify schema, assets and permissions.
 3. Register a **new recovery epoch** before serving.
 4. Reapply the off-host **deletion ledger**. If the required ledger interval can't be reconstructed, public serving
-   stays blocked.
+   stays blocked. Built in P6 (migration 0048, D-124): `admin ledger export` copies the append-only
+   `deletion_ledger` as a watermarked JSONL snapshot to a file or the `COLOPHON_S3_*` object store — run from the
+   backup schedule, its `high_water` marking the newest deletion the file covers — and `admin ledger replay`
+   (`colophon_db::ledger::replay`) reapplies the interval onto the restored database, idempotently, exiting
+   blocked while any row can't replay. The restore procedure that orders this with the new epoch and the
+   manifest check is still ahead.
 5. Reconcile external effects (CDN, site deployments, webhooks) before replaying any outbox work.
 6. Explicitly enable current jobs.
 

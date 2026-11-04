@@ -261,7 +261,19 @@ pub async fn remove(tx: &mut ProjectTransaction, collection: &str) -> Result<Rem
     .execute(&mut *tx.transaction)
     .await
     {
-        Ok(done) if done.rows_affected() > 0 => Ok(Removed::Removed),
+        Ok(done) if done.rows_affected() > 0 => {
+            // The collection is gone outright; the deletion ledger's row (migration 0048,
+            // D-124) is what a restored backup is cleaned with.
+            crate::ledger::record_in(
+                &mut tx.transaction,
+                crate::ledger::Kind::Collection,
+                tx.project,
+                Some(tx.environment),
+                &serde_json::json!({"collection": collection}).to_string(),
+            )
+            .await?;
+            Ok(Removed::Removed)
+        }
         Ok(_) => Ok(Removed::NotFound),
         Err(sqlx::Error::Database(database)) if database.is_foreign_key_violation() => {
             Ok(Removed::HasHistory)

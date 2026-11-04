@@ -15,7 +15,8 @@ colophon-domain.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
-time.workspace = true
+# The ledger export writes `deleted_at` as RFC 3339 and the replay parses it back.
+time = { workspace = true, features = ["formatting", "parsing"] }
 tokio.workspace = true
 uuid.workspace = true
 

@@ -476,7 +476,11 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
 **Goal:** someone other than the maintainer can install, upgrade, back up, restore and diagnose Colophon.
 
 - `operations`: encrypted base backups and WAL archiving, the restore procedure (new epoch, deletion ledger replay,
-  reconciliation before dispatch), the upgrade runbook, budgets, runbooks, observability.
+  reconciliation before dispatch), the upgrade runbook, budgets, runbooks, observability. Built so far: the
+  deletion ledger itself (D-124 — append-only `deletion_ledger` written inside every governed delete's transaction;
+  `admin ledger export`/`replay` as the off-host copy and the restore primitive; stack-proven in
+  `colophon-db/tests/ledger.rs`). Still ahead: the backups, the restore procedure that drives the replay, and the
+  rest.
 - `verification`: the full fault and load matrix, a 24-hour soak, the benchmark report, the requirements matrix.
 - `docs`: complete guides; every example runs in CI.
 - `oss`: release process, SBOM, signed artifacts, security policy.
