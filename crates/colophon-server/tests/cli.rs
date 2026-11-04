@@ -352,3 +352,235 @@ async fn the_cli_signs_in_through_the_browser_and_creates_the_same_records() {
     assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
     let _cleanup = std::fs::remove_dir_all(&config);
 }
+
+/// Every new command family has help text (the CLI parity slice, docs/modules/08-cli.md).
+#[tokio::test]
+#[ignore = "needs the colophon binary"]
+async fn the_new_commands_all_have_help_text() {
+    let config = std::env::temp_dir().join(format!("colophon-cli-{}", uuid::Uuid::now_v7()));
+    for command in [
+        ["content", "query"],
+        ["release", "list"],
+        ["release", "show"],
+        ["migration", "list"],
+        ["migration", "show"],
+        ["migration", "items"],
+        ["migration", "plan"],
+        ["migration", "approve"],
+        ["migration", "apply"],
+        ["migration", "cancel"],
+        ["migration", "resolve"],
+        ["comment", "list"],
+        ["comment", "create"],
+        ["task", "list"],
+        ["task", "show"],
+        ["task", "create"],
+        ["task", "update"],
+    ] {
+        let mut args = command.to_vec();
+        args.push("--help");
+        let help = colophon(&config, &args);
+        assert_eq!(
+            help.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&help.stderr)
+        );
+        let text = String::from_utf8_lossy(&help.stdout);
+        assert!(text.contains("Usage:"), "{args:?}: {text}");
+    }
+}
+
+/// A real `content query` round trip: posts created through the CLI are found by a filtered,
+/// sorted query document the same CLI posts, and `next_cursor` pages like the API's own
+/// (docs/modules/08-cli.md).
+#[tokio::test]
+#[ignore = "needs the stack, migrations and the colophon binary"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one session, told in order: type, three posts, two pages, the refusals"
+)]
+async fn content_query_runs_a_document_against_the_cli_s_own_entries() {
+    let _server = Server::start().await;
+    let editor = sign_in("dev-owner").await;
+    let slug = unique_slug();
+    let created = call(
+        &editor,
+        Method::POST,
+        "/api/v1/projects",
+        Some(&json!({"slug": slug, "name": "Query project"})),
+        &[],
+    )
+    .await
+    .expect("request");
+    let project = created.body["data"]["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    // A collection with an indexed field to filter and sort on, made through the API.
+    let posts = call(
+        &editor,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/environments/production/content-types"),
+        Some(&json!({
+            "slug": "posts",
+            "definition": {
+                "name": "Posts",
+                "title_field": "headline",
+                "fields": [
+                    {"id": "headline", "label": "Headline", "type": "text", "required": true, "index": true},
+                    {"id": "rating", "label": "Rating", "type": "number", "integer": true, "min": 0, "max": 5, "index": true}
+                ]
+            }
+        })),
+        &[("idempotency-key", "cli-query-type-1")],
+    )
+    .await
+    .expect("request");
+    assert_eq!(posts.status, StatusCode::CREATED, "{}", posts.body);
+
+    let config = std::env::temp_dir().join(format!("colophon-cli-{}", uuid::Uuid::now_v7()));
+    let output = login(&config, &editor).await;
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for (headline, rating) in [("Alpha news", 5), ("Beta guide", 3), ("Gamma news", 4)] {
+        let made = colophon(
+            &config,
+            &[
+                "content",
+                "create",
+                "posts",
+                "--project",
+                &slug,
+                "--data",
+                &json!({"headline": headline, "rating": rating}).to_string(),
+                "--json",
+            ],
+        );
+        assert_eq!(
+            made.status.code(),
+            Some(0),
+            "{headline}: {}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+    }
+
+    // A filtered, sorted document: rating at least 4, highest first, one per page.
+    let document = json!({
+        "filters": [{"field": "rating", "op": "gte", "value": 4}],
+        "sort": [{"field": "rating", "dir": "desc"}],
+        "limit": 1
+    });
+    let first = colophon(
+        &config,
+        &[
+            "content",
+            "query",
+            "posts",
+            "--project",
+            &slug,
+            "--data",
+            &document.to_string(),
+            "--json",
+        ],
+    );
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let page = json_out(&first);
+    assert_eq!(page["command"], "content query");
+    assert_eq!(page["collection"], "posts");
+    let entries = page["entries"].as_array().expect("a page");
+    assert_eq!(entries.len(), 1, "{page}");
+    assert_eq!(
+        entries[0]["revision"]["title"].as_str(),
+        Some("Alpha news"),
+        "the 5 first, descending"
+    );
+    assert!(
+        page["applied"]["query_hash"]
+            .as_str()
+            .is_some_and(|hash| hash.starts_with("sha256:")),
+        "the canonical query is echoed with its hash: {page}"
+    );
+    let cursor = page["next_cursor"]
+        .as_str()
+        .expect("a page boundary")
+        .to_owned();
+
+    // The next page, through --cursor: the query hash binds it to the same document.
+    let second = colophon(
+        &config,
+        &[
+            "content",
+            "query",
+            "posts",
+            "--project",
+            &slug,
+            "--data",
+            &document.to_string(),
+            "--cursor",
+            &cursor,
+            "--json",
+        ],
+    );
+    assert_eq!(
+        second.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let page = json_out(&second);
+    let entries = page["entries"].as_array().expect("a page");
+    assert_eq!(entries.len(), 1, "{page}");
+    assert_eq!(entries[0]["revision"]["title"].as_str(), Some("Gamma news"));
+
+    // A cursor of one query refuses against another — the API's own check, exit 2.
+    let mismatched = colophon(
+        &config,
+        &[
+            "content",
+            "query",
+            "posts",
+            "--project",
+            &slug,
+            "--data",
+            r#"{"limit": 1}"#,
+            "--cursor",
+            &cursor,
+        ],
+    );
+    assert_eq!(
+        mismatched.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&mismatched.stderr)
+    );
+
+    // --limit is sugar for the document's; it refuses a document that sets one already.
+    let doubled = colophon(
+        &config,
+        &[
+            "content",
+            "query",
+            "posts",
+            "--project",
+            &slug,
+            "--data",
+            &document.to_string(),
+            "--limit",
+            "2",
+        ],
+    );
+    assert_eq!(doubled.status.code(), Some(2), "limit is said once");
+
+    let _cleanup = std::fs::remove_dir_all(&config);
+}

@@ -75,6 +75,28 @@ colophon export --env production --out export-directory
   COLLECTION --project ID|SLUG (--data JSON | --file PATH) [--idempotency-key KEY]` and `colophon content list
   COLLECTION --project … [--limit N]`. `--profile` holds the server; `--project` stands in for profile defaults until
   profiles carry a project.
+- Built in the parity slice (D-106): the same API surface the Studio and the MCP server can reach, as one command
+  per route family. Every command takes `--project ID|SLUG`, `--env NAME` (default `production`) and `--profile`;
+  every list takes `--cursor` and most take `--limit`; every write takes `--idempotency-key` (a generated
+  `cli-<uuid>` when omitted) and `--json` prints one versioned result.
+  - `content query COLLECTION (--data JSON | --file PATH) [--cursor CURSOR] [--limit N]` posts a DX.3 query
+    document to `…/entries/query`. `--limit` fills the document's `limit` — a document that already sets one is
+    refused (exit 2), as is a non-object document when `--limit` must be injected. The result carries `entries`,
+    `next_cursor` and `applied` — the canonical query and its `query_hash`, so a script can record exactly what
+    ran; the API's cursor stays bound to that hash, so a mismatched pair is refused, not silently re-queried.
+  - `release list [--cursor]` and `release show GENERATION` read publication history and a release's receipt:
+    what was probed, where, and what each probe answered.
+  - `migration list [--collection C] [--state S]`, `migration show PLAN`, `migration items PLAN [--outcome O]
+    [--cursor] [--limit N]` read plans and their items; `migration plan COLLECTION (--data JSON | --file PATH)
+    [--operations PATH]` computes one (`schema.change` required, `Idempotency-Key`); `migration approve|apply
+    PLAN --if-match HASH`, `migration cancel PLAN` and `migration resolve PLAN ENTRY (--data JSON | --file PATH)
+    --if-match HASH` drive a plan as the signed-in member. These are deliberately CLI-only: a credentialed
+    person drives a schema change, an agent never does (D-106).
+  - `comment list COLLECTION ENTRY [--revision R] [--state open|resolved]`, `comment create COLLECTION ENTRY
+    --revision R [--field F] --body TEXT` and `task list [--entry E|--collection C|--assignee me|none|ID
+    --status S]`, `task show TASK`, `task create --entry E --title T [--revision R] [--changeset C] [--assignee
+    ID]`, `task update TASK --if-match HASH [--title T] [--assignee ID|--unassign] [--status S]` cover E1's
+    collaboration. `task show` prints the ETag `task update` binds with `--if-match`; `--unassign` sends `null`.
 - `module enable` from spec §11 is dropped, because v0.1 has no optional modules.
 - `colophon dev` may orchestrate local dependencies but must never discover or use production credentials silently.
 

@@ -1,11 +1,12 @@
-//! `colophon content create` and `colophon content list` (docs/modules/08-cli.md): the same API
-//! the Studio uses, so the CLI creates exactly the same records.
+//! `colophon content …` (docs/modules/08-cli.md): the same API the Studio uses, so the CLI
+//! creates exactly the same records.
 //!
-//! `create` sends one `Idempotency-Key` per logical operation and reuses it when a request gets
-//! no answer, so a retry can never create a second entry. If every attempt fails, the key is
-//! printed: running the command again with `--idempotency-key` is just as safe.
+//! Writes send one `Idempotency-Key` per logical operation and reuse it when a request gets
+//! no answer, so a retry can never create a second entry (`scope::send_write`). If every
+//! attempt fails, the key is printed: running the command again with `--idempotency-key` is
+//! just as safe.
 
-use std::{path::Path, time::Duration};
+use std::path::Path;
 
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -13,57 +14,25 @@ use serde_json::{Value, json};
 use crate::{
     Exit,
     client::{Client, Failure},
-    credentials,
+    scope::{self, Scope},
 };
-
-/// Attempts at a create before giving up (the first plus retries), and the waits between.
-const BACKOFF: [Duration; 3] = [
-    Duration::from_secs(1),
-    Duration::from_secs(2),
-    Duration::from_secs(4),
-];
 
 /// Where an entry lives.
 pub(crate) struct Place<'a> {
-    pub(crate) profile: &'a str,
-    pub(crate) project: &'a str,
-    pub(crate) environment: &'a str,
+    pub(crate) scope: Scope<'a>,
     pub(crate) collection: &'a str,
 }
 
 /// The signed-in client and the project's id (`--project` may be an id or a slug).
 async fn open(place: &Place<'_>) -> Result<(Client, String), Failure> {
-    let saved = credentials::profile(place.profile).await?;
-    let client = Client::new(&saved.server, Some(saved.token))?;
-    client.check_server().await?;
-    let projects = client
-        .send(Method::GET, "/api/v1/projects", None, &[])
-        .await?
-        .body;
-    let id = projects["data"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|project| project["id"] == place.project || project["slug"] == place.project)
-        .and_then(|project| project["id"].as_str())
-        .ok_or_else(|| {
-            Failure::new(
-                Exit::Denied,
-                format!("no project {:?} that you're a member of", place.project),
-            )
-        })?
-        .to_owned();
-    Ok((client, id))
+    scope::open(&place.scope).await
 }
 
 fn entries(project: &str, place: &Place<'_>) -> String {
-    format!(
-        "/api/v1/projects/{project}/environments/{}/collections/{}/entries",
-        place.environment, place.collection
-    )
+    scope::entries_path(project, &place.scope, place.collection)
 }
 
-/// The content to create: `--data` as JSON, or `--file`.
+/// The JSON a flag names: `--data` as JSON, or `--file`.
 pub(crate) async fn content(data: Option<&str>, file: Option<&Path>) -> Result<Value, Failure> {
     let text = match (data, file) {
         (Some(data), None) => data.to_owned(),
@@ -76,12 +45,12 @@ pub(crate) async fn content(data: Option<&str>, file: Option<&Path>) -> Result<V
         _ => {
             return Err(Failure::new(
                 Exit::Usage,
-                "give the content with exactly one of --data or --file",
+                "give the document with exactly one of --data or --file",
             ));
         }
     };
     serde_json::from_str(&text)
-        .map_err(|error| Failure::new(Exit::Usage, format!("the content is not JSON: {error}")))
+        .map_err(|error| Failure::new(Exit::Usage, format!("the document is not JSON: {error}")))
 }
 
 /// Runs `colophon content create`.
@@ -92,40 +61,15 @@ pub(crate) async fn create(
     json: bool,
 ) -> Result<(), Failure> {
     let (client, project) = open(place).await?;
-    let key = key.map_or_else(
-        || format!("cli-{}", uuid::Uuid::now_v7().simple()),
-        str::to_owned,
-    );
-    let path = entries(&project, place);
-    let mut attempt = 0;
-    let reply = loop {
-        match client
-            .send(
-                Method::POST,
-                &path,
-                Some(content),
-                &[("idempotency-key", &key)],
-            )
-            .await
-        {
-            Ok(reply) => break reply,
-            Err(failure) if failure.exit == Exit::Unavailable && attempt < BACKOFF.len() => {
-                eprintln!("{}; retrying with the same key", failure.message);
-                tokio::time::sleep(BACKOFF[attempt]).await;
-                attempt += 1;
-            }
-            Err(failure) if failure.exit == Exit::Unavailable => {
-                return Err(Failure::new(
-                    Exit::Unavailable,
-                    format!(
-                        "{}. Nothing was created twice; to try again safely, add --idempotency-key {key}",
-                        failure.message
-                    ),
-                ));
-            }
-            Err(failure) => return Err(failure),
-        }
-    };
+    let key = key.map_or_else(scope::new_key, str::to_owned);
+    let reply = scope::send_write(
+        &client,
+        Method::POST,
+        &entries(&project, place),
+        Some(content),
+        &[("idempotency-key", &key)],
+    )
+    .await?;
     let replayed = reply
         .headers
         .get("idempotent-replayed")
@@ -194,6 +138,71 @@ pub(crate) async fn list(place: &Place<'_>, limit: u8, json: bool) -> Result<(),
                 row["updated_at"].as_str().unwrap_or(""),
                 row["revision"]["title"].as_str().unwrap_or("")
             );
+        }
+    }
+    Ok(())
+}
+
+/// Runs `colophon content query`: posts a query document and gets one page of entries back,
+/// with the canonical query and its hash the server actually ran (`applied`), so scripts can
+/// pin exactly the page they got.
+pub(crate) async fn query(
+    place: &Place<'_>,
+    document: &Value,
+    cursor: Option<&str>,
+    limit: Option<u8>,
+    json: bool,
+) -> Result<(), Failure> {
+    let mut document = document.clone();
+    if let Some(limit) = limit {
+        let object = document
+            .as_object_mut()
+            .ok_or_else(|| Failure::new(Exit::Usage, "the query document must be a JSON object"))?;
+        if object.contains_key("limit") {
+            return Err(Failure::new(
+                Exit::Usage,
+                "the document already sets a limit; keep it there or drop --limit",
+            ));
+        }
+        object.insert("limit".to_owned(), json!(limit));
+    }
+    let cursor = cursor.map(scope::cursor).transpose()?;
+    let (client, project) = open(place).await?;
+    let mut path = format!("{}/query", entries(&project, place));
+    if let Some(cursor) = cursor {
+        path.push_str("?cursor=");
+        path.push_str(cursor);
+    }
+    let reply = client
+        .send(Method::POST, &path, Some(&document), &[])
+        .await?
+        .body;
+    let rows = reply["data"].as_array().cloned().unwrap_or_default();
+    if json {
+        println!(
+            "{}",
+            json!({
+                "version": 1, "command": "content query",
+                "collection": place.collection,
+                "entries": rows,
+                "next_cursor": reply["next_cursor"],
+                "applied": reply["applied"],
+            })
+        );
+    } else {
+        for row in &rows {
+            println!(
+                "{}  {}  {}",
+                row["id"].as_str().unwrap_or("?"),
+                row["updated_at"].as_str().unwrap_or(""),
+                row["revision"]["title"].as_str().unwrap_or("")
+            );
+        }
+        if rows.is_empty() {
+            println!("No entries matched.");
+        }
+        if let Some(cursor) = reply["next_cursor"].as_str() {
+            eprintln!("More entries: pass --cursor {cursor}");
         }
     }
     Ok(())

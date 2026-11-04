@@ -35,16 +35,26 @@ const ORIGIN: &str = match option_env!("COLOPHON_TEST_ORIGIN") {
     None => "http://localhost:58092",
 };
 
-/// The eight tools, in the order `tools/list` gives them.
-const ALL_TOOLS: [&str; 8] = [
+/// The eighteen tools, in the order `tools/list` gives them.
+const ALL_TOOLS: [&str; 18] = [
     "list_content_types",
     "list_entries",
     "get_entry",
+    "query_entries",
     "create_draft",
     "update_draft",
     "create_publish_request",
     "request_review",
     "get_publish_request",
+    "list_releases",
+    "get_release",
+    "list_migrations",
+    "get_migration",
+    "list_migration_items",
+    "list_comments",
+    "create_comment",
+    "list_tasks",
+    "create_task",
 ];
 
 fn port() -> u16 {
@@ -501,6 +511,10 @@ async fn propose(mcp: &mut Mcp, entry: &str) -> Value {
 
 #[tokio::test]
 #[ignore = "needs the local stack and colophon-server; see the module docs"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one session, told in order: draft, stale save, retry, query, comment, task, reads, review"
+)]
 async fn a_custom_token_drafts_and_asks_for_review_and_nothing_more() {
     let (_server, owner, project) = setup().await;
     let permissions: Vec<Value> = ["content.read", "content.create", "content.update"]
@@ -525,6 +539,80 @@ async fn a_custom_token_drafts_and_asks_for_review_and_nothing_more() {
         .await;
     let found = &ok(&listed)["entries"];
     assert_eq!(found.as_array().map(Vec::len), Some(1), "{found}");
+    // A query document answers one page with the canonical query and its hash (D-103).
+    let asked = mcp
+        .call(
+            "query_entries",
+            json!({"collection": "articles", "query": {"fields": ["title"], "limit": 5}}),
+        )
+        .await;
+    let page = ok(&asked);
+    assert_eq!(page["entries"].as_array().map(Vec::len), Some(2), "{page}");
+    assert!(
+        page["applied"]["query_hash"]
+            .as_str()
+            .is_some_and(|hash| hash.starts_with("sha256:")),
+        "{page}"
+    );
+    assert!(
+        page["entries"]
+            .as_array()
+            .expect("a page")
+            .iter()
+            .all(|entry| entry["content"]
+                .as_object()
+                .is_some_and(|content| content.keys().all(|field| field == "title"))),
+        "fields narrows, never widens: {page}"
+    );
+    // A comment is a proposal on the revision read (D-102); it lists and stays open.
+    let commented = mcp
+        .call(
+            "create_comment",
+            json!({"collection": "articles", "entry": entry.as_str(), "revision": revision.as_str(), "field": "body", "body": "The second paragraph could be tighter."}),
+        )
+        .await;
+    let comment = ok(&commented)["comment"].clone();
+    assert_eq!(comment["revision_id"].as_str(), Some(revision.as_str()));
+    assert_eq!(comment["resolved_at"], Value::Null);
+    assert_eq!(ok(&commented)["replayed"], false);
+    let comments = mcp
+        .call(
+            "list_comments",
+            json!({"collection": "articles", "entry": entry.as_str()}),
+        )
+        .await;
+    let listed_comments = ok(&comments)["comments"]
+        .as_array()
+        .cloned()
+        .expect("a page");
+    assert_eq!(listed_comments.len(), 1, "{comments}");
+    assert_eq!(listed_comments[0]["id"], comment["id"]);
+    // A task asks a person for something; it lists as open.
+    let tasked = mcp
+        .call(
+            "create_task",
+            json!({"entry": entry.as_str(), "title": "Check the agent's draft", "revision": revision.as_str()}),
+        )
+        .await;
+    let task = ok(&tasked)["task"].clone();
+    assert_eq!(task["status"], "open");
+    assert_eq!(task["entry_id"], entry.as_str());
+    let tasks = mcp
+        .call(
+            "list_tasks",
+            json!({"entry": entry.as_str(), "status": "open"}),
+        )
+        .await;
+    assert_eq!(
+        ok(&tasks)["tasks"].as_array().map(Vec::len),
+        Some(1),
+        "{tasks}"
+    );
+    // Reads that need no write permission: releases and migration plans (none yet).
+    let releases = mcp.call("list_releases", json!({})).await;
+    assert_eq!(ok(&releases)["releases"], json!([]));
+    let migrations = mcp.call("list_migrations", json!({})).await;
+    assert_eq!(ok(&migrations)["migrations"], json!([]));
     let request = propose(&mut mcp, &entry).await;
     assert_eq!(request["status"]["state"], "awaiting_review");
     assert_eq!(
@@ -573,7 +661,15 @@ async fn a_read_only_token_is_offered_no_writes_and_the_api_refuses_them() {
             "list_content_types",
             "list_entries",
             "get_entry",
-            "get_publish_request"
+            "query_entries",
+            "get_publish_request",
+            "list_releases",
+            "get_release",
+            "list_migrations",
+            "get_migration",
+            "list_migration_items",
+            "list_comments",
+            "list_tasks"
         ]
     );
     let read = mcp
@@ -636,7 +732,7 @@ async fn no_tool_approves_or_publishes_even_for_a_full_access_token() {
     assert_eq!(
         mcp.tools().await,
         ALL_TOOLS,
-        "the same eight tools, whatever the token may do"
+        "the same eighteen tools, whatever the token may do"
     );
     for name in [
         "approve",
@@ -652,6 +748,14 @@ async fn no_tool_approves_or_publishes_even_for_a_full_access_token() {
         "manage_roles",
         "create_token",
         "add_member",
+        "resolve_comment",
+        "reopen_comment",
+        "update_task",
+        "plan_migration",
+        "approve_migration",
+        "apply_migration",
+        "cancel_migration",
+        "resolve_migration",
     ] {
         let response = mcp
             .request("tools/call", json!({"name": name, "arguments": {}}))
