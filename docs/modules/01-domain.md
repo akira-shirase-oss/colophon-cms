@@ -209,8 +209,21 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - Built in step DX.4 (D-103, D-105): the published perspective. `colophon_db::query::published_page` runs the
   same `Query` and `Position` over `publications` — the interval open at a generation, never revoked — and
   `POST /content/v1/{project}/{environment}/{collection}/query` serves it to anyone, echoing `applied` and
-  keying the delivery cache on the query's own hash (docs/modules/06-delivery.md). `depth` validates and
-  echoes but does not apply: references stay ids until DX.5 populates them.
+  keying the delivery cache on the query's own hash (docs/modules/06-delivery.md).
+- Built in step DX.5 (D-103, D-107): `depth` applies. `colophon_domain::populate` is the pure half —
+  `collect_ids` names the entries a document's top-level single `reference` fields point at, `expand`
+  rewrites each resolved one to its bounded object
+  `{"id", "collection", "revision_id", "title", "content", "hidden_fields"?}` — one call, one level, so a
+  cycle of references can only run to `MAX_DEPTH`. The applied half is `colophon_api::populate`: level by
+  level, one batched `ANY` read per level and never one per row or field — the draft perspective resolves
+  current drafts inside the page's own transaction and shows of each target only what the caller's
+  `content.read` allows on its collection (`own` included, `hidden_fields` reporting the rest, `title`
+  blanked when its field is unreadable); the published perspective resolves publications pinned at the
+  page's own generation inside the fill's transaction. A reference that resolves to nothing — an unreadable
+  target on drafts, a revoked one on the public side — keeps its stored id, the codebase's "not found, not
+  named" rule; a `many` list and a reference nested in an object, a list or a block keep their stored
+  spellings. `applied`, `query_hash` and cursors are untouched: `depth` was already in the canonical
+  document they name.
 - `fields` only narrows the returned document — never widens it — so it may name any declared field and carries no
   permission risk; indexing governs filters and sorts, not selection.
 - Schema side: `"index": true` opts a top-level field of an indexable kind (`FieldKind::may_be_indexed`) into

@@ -67,7 +67,10 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   `v1:` token, so paging never mixes two releases (DL2). Rows are the `publications` projection pinned by
   delivery's own predicate — `valid_from` open at the generation, never revoked — so unpublished and
   tombstoned entries never answer at any generation (DL5). `fields` narrows the returned content; `depth`
-  validates and echoes but does not apply — references stay ids until DX.5. `applied` echoes the canonical
+  populates (DX.5, D-107): each level's targets resolve from `publications` under the page's own pin,
+  inside the fill's transaction — so a populated reference reads exactly the release its row does, and a
+  publication revoked or taken down since resolves to nothing, staying the stored id at any generation.
+  `applied` echoes the canonical
   document and its `query_hash`, and publications carry no locale, so every answer is in the stored one until
   locale lands on the projection.
 

@@ -32,7 +32,9 @@ impl Access {
     }
 }
 
-fn object(content: &str) -> Result<Map<String, Value>, ApiError> {
+/// `content` as a mutable document: the draft views' and the query expansion's
+/// shared read — stored content is always a JSON object (an internal error when not).
+pub(crate) fn object(content: &str) -> Result<Map<String, Value>, ApiError> {
     match serde_json::from_str(content).map_err(ApiError::internal)? {
         Value::Object(fields) => Ok(fields),
         _ => Err(ApiError::internal(std::io::Error::other(
