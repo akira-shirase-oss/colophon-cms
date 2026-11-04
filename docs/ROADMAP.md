@@ -265,13 +265,15 @@ reported as delayed, never on time; locale variants publish independently; comme
 - Query API: filters, sorting, pagination, field selection and reference population on drafts (for permitted callers)
   and on published content; Sanity-style perspectives (published, drafts, a release). Queries use only indexes the
   content type declares, and Studio and draft reads get the delivery cache's always-consistent rule (after Convex).
-  DX.1–DX.5 are built (D-103, D-105, D-107): the bounded document (`colophon_domain::query`), the hash-bound
+  DX.1–DX.6 are built (D-103, D-105, D-107, D-109): the bounded document (`colophon_domain::query`), the hash-bound
   cursor, `POST {P}/collections/{collection}/entries/query` running it over current drafts with `content.read`
   scoping, `POST /content/v1/{project}/{environment}/{collection}/query` running the same document over the
   published projection — the release `?generation=` pins — with the canonical query echoed and hashed into
-  every cache key, and `depth` reference population on both perspectives: batched per level, narrowed to the
+  every cache key, `depth` reference population on both perspectives: batched per level, narrowed to the
   caller's `content.read` on drafts, pinned to the page's generation on delivery, an unresolved target
-  honestly keeping its stored id. Still to come: the perspectives the drafts and previews take.
+  honestly keeping its stored id, and the information leak closed: a draft query is refused where a filter or
+  sort names a field the role can't read on every row its page could hold, while `fields` still narrows freely
+  with `hidden_fields` disclosing the rest. Still to come: the perspectives the drafts and previews take.
 - GraphQL over the same queries and permissions; OpenAPI for REST; the TypeScript SDK with generated types.
 - Webhooks by event (entry, release, media, schema), import from Strapi and Sanity exports with a dry run, export.
 - Extension points instead of plugins (D-057): custom field types as data, Studio panels in sandboxed iframes.

@@ -2105,6 +2105,21 @@ pub(crate) async fn query(
             return Ok(json(StatusCode::OK, body, None, false));
         }
     };
+    // A filter or a sort key reads a field's stored values on every row the page could
+    // hold — result presence and order would reveal them, so the query is refused where
+    // it names one the role can't read on all of them (D-109). Scoped to the caller's
+    // own entries, that's the own-set (a field readable there only stays legal); on
+    // mixed rows it's the anyone-set, where an `own`-only field would discriminate.
+    visibility::refuse_unreadable(
+        &document,
+        tx.policy
+            .fields(
+                Action::ContentRead,
+                &path.collection,
+                by.is_some_and(|creator| creator == tx.identity),
+            )
+            .as_ref(),
+    )?;
     let found = db_query::page(
         &mut tx,
         &path.collection,
