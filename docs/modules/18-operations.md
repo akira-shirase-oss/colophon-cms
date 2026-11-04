@@ -97,21 +97,30 @@ on clean infrastructure and an independent install, so operations are a module w
   - A database failure makes writes unavailable.
 - Service health is checked from another failure domain.
 
-### Observability (spec §32)
-- **Logs:** structured JSON through `tracing`, with optional OpenTelemetry-compatible trace export.
-- **Correlation fields:** request ID, project, actor, revision, release, job, destination and deployment version.
-- **Metrics:**
-  - HTTP errors and latency;
-  - save conflicts and publish lag;
-  - queue age and failed or uncertain deliveries;
-  - cache hit ratio;
-  - database pools and locks, and WAL size;
-  - cache memory and eviction;
-  - model budget consumption;
-  - dropped logs.
-- **Log budgets:** 7 days and 1 GiB of diagnostics per install, whichever comes first. Records are capped at 16 KiB,
-  with a visible dropped-record counter. Host and container logs are capped separately.
-- **Never logged:** draft text, model prompts, customer addresses or credentials (spec §27).
+### Observability (spec §32; audit written in P6 — `deploy/runbooks/observability.md`)
+- **Logs:** structured JSON through `tracing` (`COLOPHON_LOG_FORMAT=json`; `pretty` locally),
+  `COLOPHON_LOG` an `EnvFilter`. Built; there is deliberately no `/metrics` endpoint — the
+  signals below are exposed on the log lines, and the runbook states which.
+- **Correlation fields (built):** request id (UUIDv7 minted, or a sanitised client
+  `x-request-id`, echoed on the response header and the error envelope), `method`, `route`
+  (low-cardinality template), `path` without the query string, `latency`, `status`, and the
+  deployment's `version`/`commit` on every request-attributed line. Work events carry their
+  own ids (`job`, `generation`, `attempts`, `project`, `identity`, `changeset`) where the
+  event has one — the bare request span does not resolve a project, by design.
+- **Metrics as emitted fields or documented queries:** HTTP errors/latency (`tower_http=debug`
+  response lines), save conflicts (`stale_version` error codes), publish lag
+  (`release committed` → `job attempt recorded` shared `generation`), queue age and
+  failed/uncertain deliveries (`jobs` SQL + `held`), cache hit ratio (`Colophon-Cache`
+  header), model budget consumption (reconciler warnings). **Gaps, listed not hidden:**
+  database pools/locks and WAL size, cache memory/eviction, the dropped-record counter and
+  the in-app log budget are infra queries or unbuilt slices; OTLP export is unbuilt (the spec
+  marks it optional — the request span is already the trace root it would hang off).
+- **Log budgets:** the 7-day/1 GiB/16 KiB-record spec is a platform log-driver duty today;
+  the in-app counter and cap are not built — the synchronous writer means pressure shows as
+  latency, not silent loss, which is honest but not the spec's shape.
+- **Never logged:** draft text, model prompts, customer addresses or credentials (spec §27) —
+  by rule and review: `path` drops the query string, client ids are sanitised, the envelope
+  names `code` never internals.
 
 ### Backups (spec §32; capture and archiving built in P6, D-125)
 - WAL archiving is live on the local stack: `archive_mode=on`, `wal_level=replica`, `archive_timeout=60s` (an idle
@@ -130,13 +139,20 @@ on clean infrastructure and an independent install, so operations are a module w
 - The manifest (`format: 1`) records the checkout's commit, Postgres and pg_basebackup versions, non-system schemas,
   the applied `_sqlx_migrations`, the key reference (never the key), database and cluster sizes, the WAL archive
   state, and `deletion_ledger` — `null` until the ledger slice lands, `{"present":true,"rows":N}` after.
+- `scripts/backup.sh daily` is the scheduled unit (D-130): create + verify + `admin ledger-export` into the backup's
+  own directory (the interval the restore's ledger stage replays) + retention applied + an audit line in
+  `<root>/daily.jsonl`. The platform's scheduler launches it (a documented cron line, launchd or a systemd timer —
+  no daemon). `scripts/backup.sh retention [--apply]` enforces the keep policy — the newest verified backup of each
+  of the newest 7 capture days and 4 ISO weeks, counted over days/weeks that exist; the newest verified is always
+  kept, and a directory that fails retention's own verification (manifest fields + payload SHA-256 + decrypts to a
+  data directory — deliberately no pg_verifybackup, no docker) is **never pruned**, only printed `hold`. Proven by
+  `scripts/backup.sh retention-drill` → `perf/results/…-retention-drill-….json`.
 - Targets: a 15-minute recovery-point objective and a one-hour recovery-time objective on the reference profile. Both
   require demonstrated restore drills; a SQL dump alone is not this strategy. The first dated drill artifact is
   `perf/results/2026-11-04T173702Z-backup-drill-apple-m2-pro-12c.json` (capture 252 s, verify 138 s, 2.2 GB encrypted
   from a 12.4 GB dev cluster — laptop numbers about the reference profile, not a capacity promise).
-- **Still owed:** scheduling (daily is a target, nothing runs it yet), object-store asset versioning (D-016's Garage
-  lacks bucket versioning; production decides) and a documented retention job. The cache does not need restoring
-  for correctness: no backup includes it.
+- **Still owed:** object-store asset versioning (D-016's Garage lacks bucket versioning; production decides) and the
+  table-retention jobs below. The cache does not need restoring for correctness: no backup includes it.
 
 ### Restore procedure (spec §33; F13, F14; D-126, migration 0049; built in P6)
 
@@ -174,9 +190,18 @@ replay side (F14).
 
 A backup existing is not proof of a working restore.
 
-### Upgrades (spec §32)
-- Read the release notes → verify the backup → rehearse on staging → apply additive schema → deploy compatible binaries →
-  smoke checks → backfill → remove old fields only after the support window.
+### Upgrades (spec §32; D-130 — runbook written and its local halves rehearsed in P6)
+- The procedure is `deploy/runbooks/upgrade.md`: release notes and compatibility → pre-flight
+  checks (`colophon doctor`, `admin migrate-status` baseline) → a `verify`-passing backup → the
+  **new** binary's `admin migrate-status` listing what it will apply → binary swap →
+  `colophon admin migrate` as the migrator, never at startup → smoke checks (`/livez`,
+  `/readyz`, `/version`, `doctor`, a real authenticated round-trip).
+- `admin migrate-status` (built in P6) is the read-only schema check the runbook gates on:
+  `current` | `behind` with the pending list | `unknown` at **exit 4** — the database carrying
+  a migration the binary doesn't know means the schema is newer than the code, and serving it
+  or rolling a binary back onto it would be guessing. Proven on the real stack by
+  `colophon-server/tests/migrate_status.rs` and `scripts/upgrade-rehearsal.sh` (dated record in
+  `perf/results/`).
 - Binaries roll back only against a compatible schema. Otherwise, restore or forward-fix with an explicit data-loss and
   reconciliation plan.
 
@@ -243,13 +268,14 @@ A backup existing is not proof of a working restore.
 |---|---|
 | Restore without a complete deletion ledger | Public serving blocked until the gap is resolved |
 | Upgrade with an incompatible schema | Rollback refused; forward-fix or restore with a stated data-loss window |
-| Telemetry exporter down | Application continues; dropped-record counter rises |
+| Telemetry exporter down | Not applicable today: the synchronous writer has no exporter and drops nothing; log pressure shows as latency |
 
 ## Tests and evidence
 
 - F13 and F14.
-- A restore drill on clean infrastructure.
-- An upgrade rehearsal.
+- A restore drill on clean infrastructure (`perf/results/2026-11-04T194355Z-restore-drill-…`).
+- An upgrade rehearsal (`scripts/upgrade-rehearsal.sh`, its dated record in `perf/results/`),
+  plus the backup-retention drill (`scripts/backup.sh retention-drill`).
 - L07 (24-hour soak: memory, WAL and disk growth explained).
 - L12 (PostgreSQL slow or unavailable).
 - Each drill produces a dated report with commands and outcomes.

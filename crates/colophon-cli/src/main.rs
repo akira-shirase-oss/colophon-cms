@@ -631,6 +631,17 @@ enum AdminCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Report applied and pending migrations without applying anything (the upgrade
+    /// runbook's pre-check and rollback gate). Exits 4 when the database holds a migration
+    /// this binary doesn't know: the schema is newer than the code.
+    MigrateStatus {
+        /// The migrator's connection URL. Never the application's.
+        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Make the first administrator, once: bound to an identity provider's issuer and subject,
     /// never to an email address. Afterwards bootstrap is disabled for good.
     Bootstrap {
@@ -777,52 +788,7 @@ fn main() -> ExitCode {
                 out::Out::new("doctor", out::Format::of(json, false)),
             ))
             .into(),
-        Command::Admin(AdminCommand::Migrate { database_url, json }) => runtime
-            .block_on(admin::migrate(
-                &database_url,
-                out::Out::new("admin migrate", out::Format::of(json, false)),
-            ))
-            .into(),
-        Command::Admin(AdminCommand::Bootstrap {
-            database_url,
-            issuer,
-            subject,
-            json,
-        }) => runtime
-            .block_on(admin::bootstrap(
-                &database_url,
-                &issuer,
-                &subject,
-                out::Out::new("admin bootstrap", out::Format::of(json, false)),
-            ))
-            .into(),
-        Command::Admin(AdminCommand::LedgerExport {
-            database_url,
-            out: file,
-            s3_key,
-            after,
-            json,
-        }) => runtime
-            .block_on(admin::ledger_export(
-                &database_url,
-                file.as_deref(),
-                s3_key.as_deref(),
-                after,
-                out::Out::new("admin ledger export", out::Format::of(json, false)),
-            ))
-            .into(),
-        Command::Admin(AdminCommand::LedgerReplay {
-            database_url,
-            input,
-            json,
-        }) => runtime
-            .block_on(admin::ledger_replay(
-                &database_url,
-                &input,
-                out::Out::new("admin ledger replay", out::Format::of(json, false)),
-            ))
-            .into(),
-        Command::Admin(AdminCommand::Restore { step }) => run_restore(&runtime, step),
+        Command::Admin(command) => run_admin(&runtime, command),
         Command::Login {
             server,
             profile,
@@ -850,6 +816,63 @@ fn main() -> ExitCode {
         Command::Comment(command) => run_comment(&runtime, command),
         Command::Task(command) => run_task(&runtime, command),
         Command::Mcp => runtime.block_on(mcp::run()),
+    }
+}
+
+fn run_admin(runtime: &Runtime, command: AdminCommand) -> ExitCode {
+    match command {
+        AdminCommand::Migrate { database_url, json } => runtime
+            .block_on(admin::migrate(
+                &database_url,
+                out::Out::new("admin migrate", out::Format::of(json, false)),
+            ))
+            .into(),
+        AdminCommand::MigrateStatus { database_url, json } => runtime
+            .block_on(admin::migrate_status(
+                &database_url,
+                out::Out::new("admin migrate-status", out::Format::of(json, false)),
+            ))
+            .into(),
+        AdminCommand::Bootstrap {
+            database_url,
+            issuer,
+            subject,
+            json,
+        } => runtime
+            .block_on(admin::bootstrap(
+                &database_url,
+                &issuer,
+                &subject,
+                out::Out::new("admin bootstrap", out::Format::of(json, false)),
+            ))
+            .into(),
+        AdminCommand::LedgerExport {
+            database_url,
+            out: file,
+            s3_key,
+            after,
+            json,
+        } => runtime
+            .block_on(admin::ledger_export(
+                &database_url,
+                file.as_deref(),
+                s3_key.as_deref(),
+                after,
+                out::Out::new("admin ledger export", out::Format::of(json, false)),
+            ))
+            .into(),
+        AdminCommand::LedgerReplay {
+            database_url,
+            input,
+            json,
+        } => runtime
+            .block_on(admin::ledger_replay(
+                &database_url,
+                &input,
+                out::Out::new("admin ledger replay", out::Format::of(json, false)),
+            ))
+            .into(),
+        AdminCommand::Restore { step } => run_restore(runtime, step),
     }
 }
 

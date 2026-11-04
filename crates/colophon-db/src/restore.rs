@@ -36,6 +36,18 @@ pub async fn applied_migrations(pool: &PgPool) -> Result<Vec<Applied>, DbError> 
     .map_err(DbError::from_query)
 }
 
+/// Whether `_sqlx_migrations` exists yet: `migrate` creates the table on its first apply, so
+/// a database nobody ever migrated has none, and its applied list is empty by definition. The
+/// upgrade runbook's `admin migrate-status` reads that as "every migration pending", never as
+/// an error.
+pub async fn has_migrations_table(pool: &PgPool) -> Result<bool, DbError> {
+    sqlx::query_scalar!("SELECT to_regclass('_sqlx_migrations') IS NOT NULL")
+        .fetch_one(pool)
+        .await
+        .map_err(DbError::from_query)
+        .map(|exists| exists.unwrap_or(false))
+}
+
 /// What [`check_schema`] found comparing a restored schema with this binary's migrations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaCheck {

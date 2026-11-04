@@ -479,8 +479,14 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   reconciliation before dispatch), the upgrade runbook, budgets, runbooks, observability. Built so far: the
   deletion ledger itself (D-124 — append-only `deletion_ledger` written inside every governed delete's transaction;
   `admin ledger export`/`replay` as the off-host copy and the restore primitive; stack-proven in
-  `colophon-db/tests/ledger.rs`), encrypted cluster backups (D-125), and the restore procedure (D-126). Still
-  ahead: scheduling, retention, and the rest.
+  `colophon-db/tests/ledger.rs`), encrypted cluster backups (D-125), the restore procedure (D-126), and the
+  operate-it slice (D-130): `scripts/backup.sh daily` (create + verify + the ledger export inside the backup's own
+  directory + retention + an audit line, launched by the platform's own scheduler), `retention [--apply]` (newest
+  verified of the newest 7 capture days and 4 ISO weeks; the newest verified always kept; unverified never pruned)
+  proven by `retention-drill`, `admin migrate-status` (current/behind/unknown at exit 4) gating
+  `deploy/runbooks/upgrade.md` and `scripts/upgrade-rehearsal.sh`, `deploy/runbooks/observability.md` auditing what
+  exists and what does not, and deployment `version`/`commit` on every request-attributed log line. Still ahead:
+  asset versioning, the retention jobs for bounded tables, and the rest.
 - `verification`: the full fault and load matrix, a 24-hour soak, the benchmark report, the requirements matrix.
   Built so far: the L11–L13 dependency-failure runs (D-127) — `perf/k6/{cache-down,postgres-trouble,purge-trouble}.js`
   inject real faults through the receiver's `/control` (container pauses on Postgres/Valkey, a SIGKILLed and
@@ -507,9 +513,15 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   `--resume-jobs` enable (`reconcile`), and `/readyz` on scratch only then (`serve`) — `admin restore
   verify|epoch|hold|jobs|resume` as the migrator-side primitives, `deploy/runbooks/restore.md`, the stack
   regression `colophon-db/tests/restore.rs` (F13's held-outbox and epoch advance on a template clone), and the
-  dated drill record in `perf/results/` ·
-  not built: backup scheduling, retention jobs, asset versioning, upgrade runbook, observability, the usability
-  drills and installs of the proof gate.
+  dated drill record in `perf/results/` · the schedule and retention (D-130): `backup.sh daily` proven end to end on
+  the live stack (capture 283 s, verify 123 s, ledger export @837 inside the backup directory, audit line in
+  `backups/daily.jsonl`), `retention` proven by `retention-drill` on synthetic fixtures
+  (`perf/results/2026-11-04T204618Z-retention-drill-apple-m2-pro-12c.json`, 9 checks), `admin migrate-status` +
+  `colophon-server/tests/migrate_status.rs`, `deploy/runbooks/upgrade.md` rehearsed by `scripts/upgrade-rehearsal.sh`
+  (`perf/results/2026-11-04T205013Z-upgrade-rehearsal-apple-m2-pro-12c.json`, 8 checks), the observability audit in
+  `deploy/runbooks/observability.md` with request-span `version`/`commit` proven live, `SECURITY.md`, `CHANGELOG.md`
+  · not built: object-store asset versioning, the bounded-table retention jobs, the usability drills and installs of
+  the proof gate.
 
 **Proof gate:** F09–F14, L05–L13, the 24-hour soak, a restore drill on clean infrastructure, the usability gate, one
 independent install. **v0.1 release.**

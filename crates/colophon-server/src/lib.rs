@@ -296,6 +296,7 @@ pub async fn run(
             request_timeout: config.request_timeout,
             max_body_bytes: config.max_body_bytes,
         },
+        build,
     );
     let timing = ShutdownTiming {
         drain_delay: config.drain_delay,

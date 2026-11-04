@@ -7,9 +7,9 @@ the drills record real wall-clock numbers against the local stack, which are evi
 that profile, not a promise about other hardware.
 
 **A backup existing is not proof of a working restore.** This runbook covers capture,
-archiving and verification. The restore procedure — clean infrastructure, a new recovery
-epoch, the deletion-ledger replay, reconciling external effects before dispatch — is a later
-P6 slice.
+archiving, scheduling, retention and verification. The restore procedure — clean
+infrastructure, a new recovery epoch, the deletion-ledger replay, reconciling external
+effects before dispatch — has its own runbook, `deploy/runbooks/restore.md` (D-126).
 
 ## What runs all the time
 
@@ -36,6 +36,8 @@ pg_wal growth is the visible alarm; never make the archiver "succeed" by droppin
 scripts/backup.sh create [root]    # writes <root>/<UTC-stamp>/{base.tar.gz.gpg,manifest.json}
 scripts/backup.sh verify <dir>     # decrypt + integrity-check a captured backup
 scripts/backup.sh drill [root]     # create + verify + a dated record in perf/results/
+scripts/backup.sh daily [root]     # the scheduled job: all of the above + retention
+scripts/backup.sh retention [root] [--apply]   # the keep plan (dry-run unless --apply)
 ```
 
 `create` runs `pg_basebackup` **inside the postgres container** (the host has no PostgreSQL
@@ -87,16 +89,33 @@ of it, is what passes or fails.
 (the RTO input) and the verdict `captured-and-verified`. It does not claim the backup
 restores — only the restore drill can say that.
 
-## Retention and O5
+## Retention, scheduling and O5
 
-**Nothing in this stack deletes archived WAL to free disk space (invariant O5).** There is no
-cleanup step anywhere in the pipeline; `scripts/stack.sh reset` removes the archive volume
-only as part of throwing the whole stack away, and base-backup directories under `backups/`
-are deleted by a person, never by a script. When retention is built it will be a documented
-job of its own — e.g. a bucket lifecycle rule in production, plus a listed floor (at least
-one verified backup older than the newest archive's base) — not an archiver flag. Disk
-pressure is handled by the runbook in module 18: stop unsafe admission, measure, apply
-measured retention — never silently.
+`scripts/backup.sh daily` is the scheduled job — create, verify, the deletion-ledger export
+restores replay (written into the backup's own directory as `ledger-export.jsonl`), then
+retention applied, with one audit line appended to `<root>/daily.jsonl`. It is launched by
+the platform's own scheduler — there is no daemon:
+
+```cron
+17 3 * * *  cd /path/to/checkout && scripts/backup.sh daily >> backups/daily.log 2>&1
+```
+
+`scripts/backup.sh retention [root]` prints the keep plan; `--apply` deletes. The policy
+(D-130): among **verified** backups only, keep the newest of each of the newest **7 distinct
+capture days** and the newest of each of the newest **4 ISO weeks**, counted over the days
+and weeks backups actually exist for — a stopped schedule keeps more of its old backups,
+never fewer. The newest verified backup is kept whatever the buckets say, and a directory
+that does not verify is **never pruned by this job** — it prints `hold` for a person.
+"Verified" for retention means the manifest's fields parse, the payload's SHA-256 matches
+and the payload decrypts to a data directory; it deliberately skips `pg_verifybackup`, the
+deep audit capture and `verify`/`drill` already own. The evidence is
+`perf/results/<stamp>-retention-drill-<machine>.json` (`scripts/backup.sh
+retention-drill`).
+
+**Nothing deletes archived WAL to free disk space (invariant O5).** Retention prunes only
+base-backup directories under the backup root — never the archive volume, and never a
+directory it cannot prove is a backup. Disk pressure is still handled by the runbook in
+module 18: stop unsafe admission, measure, apply measured retention — never silently.
 
 ## Failure modes worth knowing
 

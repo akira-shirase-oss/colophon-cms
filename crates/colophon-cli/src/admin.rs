@@ -78,6 +78,74 @@ pub(crate) async fn migrate(database_url: &str, out: Out) -> Exit {
     }
 }
 
+/// `colophon admin migrate-status`: the schema check the upgrade runbook gates on. Reports
+/// the applied migrations and the ones this binary knows but the database lacks (`behind`;
+/// `admin migrate` applies them deliberately), and exits 4 on any the database holds that
+/// this binary doesn't know (`unknown`): the schema is newer than the code, and serving it,
+/// or rolling a binary back onto it, would be guessing.
+pub(crate) async fn migrate_status(database_url: &str, out: Out) -> Exit {
+    let pool = match connect(database_url, &out).await {
+        Ok(pool) => pool,
+        Err(exit) => return exit,
+    };
+    let applied = match restore::has_migrations_table(&pool).await {
+        Ok(true) => match restore::applied_migrations(&pool).await {
+            Ok(applied) => applied,
+            Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+        },
+        Ok(false) => Vec::new(),
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+    };
+    let versions: Vec<i64> = applied.iter().map(|row| row.version).collect();
+    let known = colophon_db::MIGRATOR.iter().count();
+    match restore::check_schema(&applied) {
+        restore::SchemaCheck::Current => {
+            if out.format.machine() {
+                out.print_data(&json!({ "status": "current", "applied": versions, "pending": [] }));
+            } else {
+                println!(
+                    "schema current: {} migrations applied, none of {known} pending",
+                    applied.len()
+                );
+            }
+            Exit::Success
+        }
+        restore::SchemaCheck::Pending(pending) => {
+            if out.format.machine() {
+                out.print_data(&json!({
+                    "status": "behind", "applied": versions, "pending": pending,
+                }));
+            } else {
+                println!(
+                    "schema behind: {} applied, {} pending (`admin migrate` applies):",
+                    applied.len(),
+                    pending.len()
+                );
+                for migration in &pending {
+                    println!("  {migration}");
+                }
+            }
+            Exit::Success
+        }
+        restore::SchemaCheck::Unknown(unknown) => {
+            if out.format.machine() {
+                out.print_data(&json!({
+                    "status": "unknown", "applied": versions, "unknown": unknown,
+                }));
+            } else {
+                eprintln!(
+                    "the database applied {} migration(s) this binary doesn't know:",
+                    unknown.len()
+                );
+                for migration in &unknown {
+                    eprintln!("  {migration}");
+                }
+            }
+            Exit::Conflict
+        }
+    }
+}
+
 /// Why an issuer or subject was refused, before touching the database.
 fn check(issuer: &str, subject: &str) -> Result<(), &'static str> {
     let local = [

@@ -212,7 +212,11 @@ Roughly one working day in five is reserved for maintenance once users depend on
    and `CHANGELOG.md`, runs the workflow once by hand as a dry run, then pushes `v0.1.0-alpha.1`, checks and publishes
    the draft release, and approves the npm job. The Homebrew tap `akira-shirase-oss/homebrew-colophon` is theirs to
    create too.
-3. **P6:** GOVERNANCE, CODEOWNERS, support matrix, container images, upgrade and rollback guide.
+3. **P6:** GOVERNANCE, CODEOWNERS, support matrix, container images, upgrade and rollback guide. Built so far:
+   `SECURITY.md` (the private reporting path through GitHub Security Advisories and the honest support scope),
+   `CHANGELOG.md` seeded with `## 0.1.0-alpha.1`, `deploy/runbooks/upgrade.md` rehearsed by
+   `scripts/upgrade-rehearsal.sh`, and the release workflow audited (the `LICENSE`/`CHANGELOG` tag gates are
+   intentional; O-014 still blocks a real tag).
 
 ## Open decisions
 

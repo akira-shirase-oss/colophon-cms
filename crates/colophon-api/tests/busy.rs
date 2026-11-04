@@ -57,12 +57,14 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
         build: colophon_api::BuildInfo::unstamped("0.0.0-test"),
         admission: None,
     };
+    let build = state.build;
     let app = middleware::apply(
         colophon_api::routes(state),
         HttpLimits {
             request_timeout: Duration::from_secs(5),
             max_body_bytes: 1024,
         },
+        build,
     );
 
     // A well-formed session cookie, so the request reaches the session lookup.

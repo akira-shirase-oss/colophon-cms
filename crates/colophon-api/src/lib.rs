@@ -60,7 +60,8 @@ pub use version::API_VERSIONS;
 /// The complete router: the routes, a fallback that answers with the error envelope, and the
 /// middleware stack around all of them.
 pub fn app(state: AppState, limits: HttpLimits) -> Router {
-    middleware::apply(routes(state), limits)
+    let build = state.build;
+    middleware::apply(routes(state), limits, build)
 }
 
 /// The routes without the middleware stack, for tests that add their own routes before

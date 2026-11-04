@@ -49,7 +49,9 @@ Postgres archives every completed WAL segment into the `postgres-wal-archive` vo
 recovery, and `colophon_backup` — a `REPLICATION` login with no table rights — is the credential
 `scripts/backup.sh` uses for encrypted base backups. See [runbooks/backup.md](runbooks/backup.md)
 ([D-125](../docs/DECISIONS.md)); bringing one back on clean infrastructure is
-[runbooks/restore.md](runbooks/restore.md) ([D-126](../docs/DECISIONS.md)).
+[runbooks/restore.md](runbooks/restore.md) ([D-126](../docs/DECISIONS.md)). Upgrading a
+running install is [runbooks/upgrade.md](runbooks/upgrade.md) and diagnosing one is
+[runbooks/observability.md](runbooks/observability.md) (both D-130).
 
 If a port clashes with something else on your machine, move it: `COLOPHON_PG_PORT`, `COLOPHON_VALKEY_PORT`,
 `COLOPHON_S3_PORT`, `COLOPHON_S3_ADMIN_PORT`, `COLOPHON_KEYCLOAK_PORT`. The bind address is deliberately not a setting.

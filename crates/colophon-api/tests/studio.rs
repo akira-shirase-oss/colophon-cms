@@ -39,13 +39,16 @@ impl Build {
     }
 
     fn app(&self) -> Router {
-        let routes = colophon_api::routes(AppState::without_services(Readiness::new("all", false)));
+        let state = AppState::without_services(Readiness::new("all", false));
+        let build = state.build;
+        let routes = colophon_api::routes(state);
         middleware::apply(
             studio::mount(routes, &self.dir()),
             HttpLimits {
                 request_timeout: Duration::from_secs(5),
                 max_body_bytes: 1024,
             },
+            build,
         )
     }
 }
