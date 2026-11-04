@@ -19,6 +19,7 @@ base64.workspace = true
 colophon-auth.workspace = true
 colophon-db.workspace = true
 colophon-domain.workspace = true
+colophon-mcp.workspace = true
 colophon-media.workspace = true
 # The build stamp `/version` reports; the server binary makes it (D-062).
 colophon-version.workspace = true
@@ -35,6 +36,7 @@ tower.workspace = true
 tower-http.workspace = true
 time = { workspace = true, features = ["formatting"] }
 tracing.workspace = true
+url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

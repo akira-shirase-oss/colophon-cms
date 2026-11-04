@@ -434,8 +434,15 @@ commands stream one envelope per item on `--jsonl` following `next_cursor` withi
 `colophon mcp` links the `colophon-mcp` library into the binary: same configuration, protocol, eighteen safe
 tools and refusal boundary, proved end to end in `tests/cli.rs` including a live `initialize`/`tools/list`
 session and a 403 arriving `missing_permission`-whole on stdout) ·
-not built: remote MCP with its
-authorization, provider `tokens`/`cost` budgets, `content import` and
+remote MCP (built: D-121 — `POST|DELETE {P}/mcp` on the API speaks MCP's Streamable HTTP transport, the same
+`colophon-mcp` session logic as stdio over a shared `Backend`; a project API token is the only credential —
+a person's is 403 `api_token_required`, another project's 404 — sessions are minted on `initialize`, bounded
+per token (429), project and server (503), expire idle and cancel their in-flight requests on `DELETE` or
+expiry; a tool's call is dispatched in-process through the server's own router under the same token, so
+dispatch is never authorization and the D-106 boundary is unchanged, proved in `tests/mcp.rs` by the
+lifecycle, the credential refusals, the transport's `Origin`/`Accept`/protocol-version door checks and
+byte-identical parity with stdio) ·
+not built: provider `tokens`/`cost` budgets, `content import` and
 `export`, L08's load evidence. The proof gate is not met — X12's resume proof is in
 `tests/bulk.rs`, the eval gate's stored run is `perf/results/2026-11-04T141109.623685Z-evals.json`, and L08 remains.
 

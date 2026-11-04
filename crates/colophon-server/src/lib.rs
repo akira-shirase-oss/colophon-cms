@@ -184,6 +184,7 @@ fn api_services(
         content_types: colophon_api::ContentTypeCache::new(),
         assets: asset_store(config)?,
         events,
+        mcp: colophon_api::mcp::Shared::new(config.mcp),
     })
 }
 

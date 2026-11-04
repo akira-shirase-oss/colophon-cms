@@ -547,6 +547,7 @@ dependencies = [
  "colophon-auth",
  "colophon-db",
  "colophon-domain",
+ "colophon-mcp",
  "colophon-media",
  "colophon-version",
  "futures-util",
@@ -562,6 +563,7 @@ dependencies = [
  "tower",
  "tower-http 0.7.1",
  "tracing",
+ "url",
  "uuid",
 ]
 

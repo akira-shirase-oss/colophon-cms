@@ -28,6 +28,8 @@ pub const INTERNAL_ERROR: i64 = -32_603;
 pub const API_UNAVAILABLE: i64 = -32_001;
 /// A request other than `initialize` or `ping` before the session was initialized.
 pub const NOT_INITIALIZED: i64 = -32_002;
+/// A request cancelled while it ran (JSON-RPC's reserved `-32800`).
+pub const REQUEST_CANCELLED: i64 = -32_800;
 
 /// A request id, as the client sent it: a string or an integer.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
