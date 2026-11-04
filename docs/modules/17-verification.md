@@ -67,9 +67,9 @@ quality claim (spec §30).
 | F07 | Entry unpublished while old caches exist | Origin denies revoked content; purge/evidence tracked; remaining exposure visible |
 | F08 | Cache eviction/failover/restart | No loss of content, jobs, sessions or hard budget accounting |
 | F09 | Outbox/disk budget exhausted | New durable work fails before acceptance, or enters an explicit documented degraded state |
-| F10 | Migration interrupted or schema edited concurrently | Checkpointed recovery or conflict; no mixed undocumented schema |
+| F10 | Migration interrupted or schema edited concurrently | Checkpointed recovery or conflict; no mixed undocumented schema. In place: `tests/faults.rs` — a migration worker killed mid-run resumes its checkpoint and finishes the plan (`migration:after-item`); a schema `PUT` killed before its commit leaves the old version whole and kills its idempotency claim with it, killed after, the new version is durable and the same retry replays (`content_type.update:*`); two `PUT`s from one base ETag in flight together make exactly one winner and one `stale_version` — never a merge — and a schema change racing the entry write it invalidates ends with exactly one of them committed |
 | F11 | Model produces invalid or hostile output | No unsafe action; reviewer sees a rejected suggestion with safe diagnostics |
-| F12 | Duplicate/reordered external events | Authoritative reconciliation and exactly one logical effect (the spec's payment case is parked; applied to delivery and webhook receipts) |
+| F12 | Duplicate/reordered external events | Authoritative reconciliation and exactly one logical effect (the spec's payment case is parked; applied to delivery and webhook receipts). In place: `tests/faults.rs` — killed after dispatch, retried after a server error and timed out mid-answer, every repeat carries the job's one idempotency key and a destination deduplicating on it applies exactly one effect (`seen` = 2 posts, `effects` = 1); the reordered half is F05's — `tests/worker.rs` shows an older release superseded before it is ever sent |
 | F13 | Restore backup containing an old outbox | New recovery epoch; reconcile external effects before replay; no blind resend. In place: `crates/colophon-db/tests/restore.rs` on a template clone — epoch advances, in-flight and pending jobs go `held` with leases cleared and can't be claimed, `resume` returns them to `pending`; the end-to-end restore is `scripts/restore.sh`'s six stages |
 | F14 | Deleted project appears in a restored backup | Deletion ledger reapplied before read APIs and caches are enabled. In place: `crates/colophon-db/tests/ledger.rs` replays an export onto a template-cloned backup (deleted project/member/role/collection/entry stay gone, second replay skips all); `scripts/restore.sh`'s `ledger` stage drives it in the real restore |
 | F15 | An entry is deleted while a save adds a reference to it, a changeset pins it, or a release publishes it (D-080) | Never both: the one that waits finds the other committed, so the reference, pin or publication is refused as for a missing entry, or the deletion is refused (`still_referenced`, `published`). In place: `crates/colophon-db/tests/deletion.rs`, two real transactions, both orders |
@@ -83,7 +83,12 @@ tabs. **Since step 1.3** F04 also runs end to end in the Studio (`apps/studio/te
 later save opens the conflict screen, and neither choice loses an accepted edit; the browser also re-sends a save whose
 answer was dropped and gets the replayed result (F02 from the client's side). **Since step 1.4** the simulator
 (`crates/colophon-sim`) runs F01, F02 and F04 under thousands of seeded schedules with lost requests, lost answers and
-crashed clients, and `crates/colophon-db/tests/differential.rs` checks its model against Postgres.
+crashed clients, and `crates/colophon-db/tests/differential.rs` checks its model against Postgres. **Since P6
+(D-129)** the same file closes F10's schema halves and F12's delivery half: `content_type.update:before-commit`/
+`:after-commit` give the schema write the F01/F02 treatment, two schema edits from one base and a schema change racing
+an entry write prove the collection locks serialize honestly, and the worker repeating a delivery — killed after
+dispatch, refused, or timed out — is asserted against a test receiver that deduplicates on the job's idempotency key
+and counts logical effects (`Receiver::effects`), not just posts.
 
 ### Load-test cases (spec §29)
 

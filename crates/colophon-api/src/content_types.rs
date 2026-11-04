@@ -42,6 +42,7 @@ use crate::{
     ApiError, AppState,
     entries::{content_hash, idempotency_key, json, open, request_hash, rfc3339, sha256},
     error::{EntryInTheWay, InTheWay, MAX_ENTRIES_IN_THE_WAY, Problem, StillNeeded},
+    fault,
     session::SignedIn,
     shape::{Data, Page},
 };
@@ -213,7 +214,12 @@ async fn finish(
     idempotency::complete(&mut tx, operation, key, status.as_u16(), &body)
         .await
         .map_err(ApiError::from_db)?;
+    // The same crash boundary as an entry write (F10): killed before the commit, the new
+    // version and the claim roll back together; killed after it, the version is durable and
+    // a retry with the same key replays the recorded answer.
+    fault::point(&format!("{operation}:before-commit"));
     tx.commit().await.map_err(ApiError::from_db)?;
+    fault::point(&format!("{operation}:after-commit"));
     Ok(respond(status, body, number, false))
 }
 

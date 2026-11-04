@@ -9,6 +9,11 @@
 //!   runs out, another worker claims the job and announces it again with the same idempotency
 //!   key, so the destination can tell it's a repeat; the job ends `succeeded` after two attempts,
 //!   and nothing claims the first one didn't happen.
+//! - **F10**, a schema edited concurrently or killed mid-edit: two writes from one base make
+//!   one winner and one `stale_version` — never a merge — and an interrupted edit leaves the
+//!   old version whole or the new one replayed.
+//! - **F12**, a delivery repeated under any fault: the repeat carries the job's one
+//!   idempotency key, so a destination that deduplicates on it applies exactly one effect.
 //!
 //! Sessions live in Postgres, so one sign-in serves every server in the test. Needs the stack,
 //! migrations, and the fault points: `cargo test -p colophon-server --features fault-injection
@@ -22,8 +27,8 @@
 mod common;
 
 use common::{
-    Receiver, Server, Session, article, call, destination, entries, finished_job, key, project,
-    publish_article, sign_in,
+    Receiver, Server, Session, article, call, destination, entries, finished_job, join, key,
+    project, publish_article, sign_in,
 };
 use reqwest::{Method, StatusCode};
 use serde_json::json;
@@ -509,4 +514,461 @@ async fn a_worker_killed_after_a_bulk_item_resumes_without_duplicating_it() {
         "{}",
         items.body
     );
+}
+
+/// The `content-types` route of `project`'s production environment, for `slug`.
+fn content_type(project: &str, slug: &str) -> String {
+    format!("/api/v1/projects/{project}/environments/production/content-types/{slug}")
+}
+
+/// The `articles` definition plus one optional text field — a change any stored content
+/// tolerates, so what settles the race is only who commits first.
+fn with_field(definition: &serde_json::Value, id: &str, label: &str) -> serde_json::Value {
+    let mut next = definition.clone();
+    next["fields"]
+        .as_array_mut()
+        .expect("a field list")
+        .push(json!({"id": id, "label": label, "type": "text"}));
+    next
+}
+
+/// F10's interrupted half, for a schema edit (the interrupted *migration* half is the
+/// worker's `migration:after-item` test above): a `PUT` killed before its commit leaves the
+/// old version whole, and the edit's idempotency claim rolled back with it — the retry with
+/// the same key writes the version fresh. Killed after the commit, the version is durable and
+/// the same retry replays the recorded answer. There is never a half-written version.
+#[tokio::test]
+#[ignore = "needs the stack, migrations and --features fault-injection"]
+async fn a_schema_edit_killed_before_or_after_its_commit_is_never_half_written() {
+    let (owner, path, first, second) = {
+        let _server = Server::start().await;
+        let owner = sign_in("dev-owner").await;
+        let project = project(&owner).await;
+        let path = content_type(&project, "articles");
+        let current = call(&owner, Method::GET, &path, None, &[])
+            .await
+            .expect("request");
+        assert_eq!(current.etag().as_deref(), Some("\"v1\""));
+        let base = current.body["data"]["definition"].clone();
+        let first = with_field(&base, "subtitle", "Subtitle");
+        let second = with_field(&first, "byline", "Byline");
+        (owner, path, first, second)
+    };
+
+    // Killed before the commit: nothing of the edit is stored.
+    let before = key();
+    crash_during("content_type.update:before-commit", async || {
+        call(
+            &owner,
+            Method::PUT,
+            &path,
+            Some(&first),
+            &[("if-match", "\"v1\""), ("idempotency-key", &before)],
+        )
+        .await
+    })
+    .await;
+    {
+        let _server = Server::start().await;
+        let stored = call(&owner, Method::GET, &path, None, &[])
+            .await
+            .expect("request");
+        assert_eq!(
+            (
+                stored.body["data"]["version"].as_i64(),
+                stored.etag().as_deref()
+            ),
+            (Some(1), Some("\"v1\"")),
+            "the interrupted edit left version 1 whole: {}",
+            stored.body
+        );
+        // The claim rolled back with the edit, so the same key now just works.
+        let retry = call(
+            &owner,
+            Method::PUT,
+            &path,
+            Some(&first),
+            &[("if-match", "\"v1\""), ("idempotency-key", &before)],
+        )
+        .await
+        .expect("request");
+        assert_eq!(retry.status, StatusCode::OK, "{}", retry.body);
+        assert!(!retry.replayed(), "a fresh write, not a replay");
+        assert_eq!(retry.etag().as_deref(), Some("\"v2\""));
+    }
+
+    // Killed after the commit: v2 is durable; the client never saw the answer, so it retries
+    // exactly the same request and gets the recorded one back.
+    let after = key();
+    crash_during("content_type.update:after-commit", async || {
+        call(
+            &owner,
+            Method::PUT,
+            &path,
+            Some(&second),
+            &[("if-match", "\"v2\""), ("idempotency-key", &after)],
+        )
+        .await
+    })
+    .await;
+    let _server = Server::start().await;
+    let stored = call(&owner, Method::GET, &path, None, &[])
+        .await
+        .expect("request");
+    assert_eq!(
+        (
+            stored.body["data"]["version"].as_i64(),
+            stored.etag().as_deref()
+        ),
+        (Some(3), Some("\"v3\"")),
+        "the committed edit is the stored schema: {}",
+        stored.body
+    );
+    let retry = call(
+        &owner,
+        Method::PUT,
+        &path,
+        Some(&second),
+        &[("if-match", "\"v2\""), ("idempotency-key", &after)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        (retry.status, retry.etag().as_deref()),
+        (StatusCode::OK, Some("\"v3\"")),
+        "the retry gets the recorded answer: {}",
+        retry.body
+    );
+    assert!(retry.replayed(), "a replay of the recorded answer");
+    assert_eq!(
+        stored.body["data"]["definition"], retry.body["data"]["definition"],
+        "one definition, committed once"
+    );
+}
+
+/// F10's concurrent half: two members whose roles hold `schema.change` put new definitions of
+/// the same collection forward from the same base version, at the same time. The collection's
+/// change lock serializes them and the `If-Match` precondition turns the second away
+/// `stale_version`, naming the version that won — exactly one lands as v2, never a merge of
+/// the two edits and never a silent drop: the loser rebases onto what won and lands v3.
+#[tokio::test]
+#[ignore = "needs the stack, migrations and --features fault-injection"]
+async fn two_schema_edits_from_one_base_make_one_winner_and_one_conflict() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let other = sign_in("dev-editor").await;
+    join(&owner, &other, &project, "developer").await;
+    let path = content_type(&project, "articles");
+
+    let current = call(&owner, Method::GET, &path, None, &[])
+        .await
+        .expect("request");
+    assert_eq!(current.etag().as_deref(), Some("\"v1\""));
+    let base = current.body["data"]["definition"].clone();
+    let first_definition = with_field(&base, "subtitle", "Subtitle");
+    let second_definition = with_field(&base, "byline", "Byline");
+
+    // The same base version, two different edits, in flight at once.
+    let (first_key, second_key) = (key(), key());
+    let first_headers = [
+        ("if-match", "\"v1\""),
+        ("idempotency-key", first_key.as_str()),
+    ];
+    let second_headers = [
+        ("if-match", "\"v1\""),
+        ("idempotency-key", second_key.as_str()),
+    ];
+    let (first, second) = tokio::join!(
+        call(
+            &owner,
+            Method::PUT,
+            &path,
+            Some(&first_definition),
+            &first_headers,
+        ),
+        call(
+            &other,
+            Method::PUT,
+            &path,
+            Some(&second_definition),
+            &second_headers,
+        ),
+    );
+    let first = first.expect("request");
+    let second = second.expect("request");
+    assert!(
+        (first.status, second.status) == (StatusCode::OK, StatusCode::CONFLICT)
+            || (first.status, second.status) == (StatusCode::CONFLICT, StatusCode::OK),
+        "one edit wins, one conflicts — never both, never neither: {} and {} ({}, {})",
+        first.status,
+        second.status,
+        first.body,
+        second.body
+    );
+    let (winner, loser, loser_session, lost_field) = if first.status == StatusCode::OK {
+        (first, second, other, "byline")
+    } else {
+        (second, first, owner, "subtitle")
+    };
+    assert_eq!(
+        loser.body["error"]["details"]["reason"], "stale_version",
+        "{}",
+        loser.body
+    );
+    assert_eq!(
+        loser.etag().as_deref(),
+        Some("\"v2\""),
+        "the loser is told the version that won"
+    );
+
+    // The stored version is verbatim the winner's document — the loser's field is not in it,
+    // so no merged schema exists.
+    let stored = call(&loser_session, Method::GET, &path, None, &[])
+        .await
+        .expect("request");
+    assert_eq!(stored.body["data"]["version"], 2, "{}", stored.body);
+    assert_eq!(
+        stored.body["data"]["definition"], winner.body["data"]["definition"],
+        "the stored v2 is the winner's document alone"
+    );
+    let ids: Vec<&str> = stored.body["data"]["definition"]["fields"]
+        .as_array()
+        .expect("a field list")
+        .iter()
+        .filter_map(|field| field["id"].as_str())
+        .collect();
+    assert!(!ids.contains(&lost_field), "the lost edit's field: {ids:?}");
+
+    // The loser rebases onto what won: its edit lands as v3 on top of it, so the conflict
+    // lost nothing — both fields are in the schema now, in two recorded versions.
+    let rebased = with_field(&stored.body["data"]["definition"], lost_field, "Rebased");
+    let landed = call(
+        &loser_session,
+        Method::PUT,
+        &path,
+        Some(&rebased),
+        &[("if-match", "\"v2\""), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        (landed.status, landed.etag().as_deref()),
+        (StatusCode::OK, Some("\"v3\"")),
+        "{}",
+        landed.body
+    );
+    let ids: Vec<&str> = landed.body["data"]["definition"]["fields"]
+        .as_array()
+        .expect("a field list")
+        .iter()
+        .filter_map(|field| field["id"].as_str())
+        .collect();
+    assert!(
+        ids.contains(&"subtitle") && ids.contains(&"byline"),
+        "both edits landed, in order: {ids:?}"
+    );
+}
+
+/// The rest of F10's concurrent half: a schema change and an entry write the change would
+/// make invalid, in flight at once. The collection's locks (`lock_for_change` exclusive,
+/// `lock_for_write` shared) serialize them, so whichever commits first wins outright: the
+/// change then checks the stored write against the new definition and refuses it
+/// (`needs_migration`, naming the entry in the way), or the write validates under the new
+/// schema and is refused (`too_long`). Both can never succeed — that would be an entry stored
+/// under a schema it breaks, exactly the mixed schema F10 forbids.
+#[tokio::test]
+#[ignore = "needs the stack, migrations and --features fault-injection"]
+async fn a_schema_change_and_an_entry_write_never_both_succeed() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let type_path = content_type(&project, "articles");
+    let list = entries(&project);
+
+    // The articles `title` allows 200 characters; the edit narrows it to 50, so a
+    // 120-character title is valid now and invalid then.
+    let current = call(&owner, Method::GET, &type_path, None, &[])
+        .await
+        .expect("request");
+    assert_eq!(current.etag().as_deref(), Some("\"v1\""));
+    let mut narrower = current.body["data"]["definition"].clone();
+    let title = narrower["fields"]
+        .as_array_mut()
+        .expect("a field list")
+        .iter_mut()
+        .find(|field| field["id"] == "title")
+        .expect("a title field");
+    title["max_chars"] = json!(50);
+    let long_title = "t".repeat(120);
+    let (write_key, edit_key, content) = (key(), key(), article(&long_title, "racing"));
+    let write_headers = [("idempotency-key", write_key.as_str())];
+    let edit_headers = [
+        ("if-match", "\"v1\""),
+        ("idempotency-key", edit_key.as_str()),
+    ];
+
+    let (write, edit) = tokio::join!(
+        call(&owner, Method::POST, &list, Some(&content), &write_headers),
+        call(
+            &owner,
+            Method::PUT,
+            &type_path,
+            Some(&narrower),
+            &edit_headers,
+        ),
+    );
+    let write = write.expect("request");
+    let edit = edit.expect("request");
+
+    match (write.status, edit.status) {
+        // The write committed first: the change saw it stored and refused, naming it.
+        (StatusCode::CREATED, StatusCode::UNPROCESSABLE_ENTITY) => {
+            let details = &edit.body["error"]["details"];
+            assert_eq!(details["reason"], "needs_migration", "{}", edit.body);
+            let entry = write.body["data"]["id"].as_str().expect("an id");
+            assert!(
+                details["entries"]
+                    .as_array()
+                    .expect("a list")
+                    .iter()
+                    .any(|in_the_way| in_the_way["entry"].as_str() == Some(entry)),
+                "the refusal names the entry in the way: {}",
+                edit.body
+            );
+            // The schema didn't move.
+            let stored = call(&owner, Method::GET, &type_path, None, &[])
+                .await
+                .expect("request");
+            assert_eq!(stored.body["data"]["version"], 1, "{}", stored.body);
+        }
+        // The change committed first: the write validated under it and was refused — and
+        // stored nothing.
+        (StatusCode::UNPROCESSABLE_ENTITY, StatusCode::OK) => {
+            assert_eq!(
+                write.body["error"]["details"]["reason"], "too_long",
+                "{}",
+                write.body
+            );
+            assert_eq!(edit.body["data"]["version"], 2, "{}", edit.body);
+            let listed = call(&owner, Method::GET, &list, None, &[])
+                .await
+                .expect("request");
+            assert!(
+                listed.body["data"].as_array().expect("a list").is_empty(),
+                "the refused write stored nothing: {}",
+                listed.body
+            );
+        }
+        pair => panic!(
+            "the race serializes: one succeeds, one is refused — never both 2xx, never both refused: {pair:?}"
+        ),
+    }
+}
+
+/// F12, applied to delivery (its spec case is parked): whatever makes a worker send the same
+/// announcement again — the process killed after the destination recorded it, the
+/// destination answering a server error, or its answer arriving past the attempt's deadline —
+/// the repeat carries the job's one idempotency key, so a destination that deduplicates on it
+/// applies exactly one effect. Each phase delivers the release twice at the receiver while
+/// its effect count stays 1, and the job ends `succeeded` after two attempts. Reordering
+/// (an older release announcing after a newer one) is F05's, proven in tests/worker.rs by
+/// supersession before send.
+#[tokio::test]
+#[ignore = "needs the stack, migrations and --features fault-injection"]
+async fn a_delivery_repeated_under_faults_is_one_effect_at_the_destination() {
+    // Crash and resume: the announcement lands, the worker dies before recording it, the
+    // lease runs out and the next worker reposts under the same key.
+    let receiver = Receiver::start(&[]).await;
+    let owner;
+    let project_id;
+    {
+        let mut server = Server::start_with(&[
+            ("COLOPHON_FAULT", "worker:after-dispatch"),
+            ("COLOPHON_WORKER_LEASE_MS", "1500"),
+            ("COLOPHON_WORKER_ATTEMPT_MS", "500"),
+            ("COLOPHON_WORKER_POLL_MS", "300"),
+        ])
+        .await;
+        owner = sign_in("dev-owner").await;
+        let project = project(&owner).await;
+        destination(&owner, &project, &receiver.url).await;
+        assert_eq!(publish_article(&owner, &project, "Crashed once").await, 1);
+        assert_eq!(
+            server.exit_code().await,
+            Some(FAULT_EXIT),
+            "the worker stopped after announcing"
+        );
+        project_id = project;
+    }
+    {
+        let _server = Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "50")]).await;
+        let job = finished_job(&owner, &project_id, 1, 20).await;
+        assert_eq!(
+            (job["status"].as_str(), job["attempts"].as_i64()),
+            (Some("succeeded"), Some(2)),
+            "{job}"
+        );
+        let seen = receiver.seen();
+        assert_eq!(seen.len(), 2, "re-posted once the lease ran out");
+        assert_eq!(seen[0].key, seen[1].key, "the repeat carries the same key");
+        assert_eq!(
+            receiver.effects(),
+            1,
+            "one effect — the repeat was recognisably the same delivery"
+        );
+    }
+
+    // A server error retried: the retry repeats the same key.
+    {
+        let _server = Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "50")]).await;
+        let receiver = Receiver::start(&[503]).await;
+        let project = project(&owner).await;
+        destination(&owner, &project, &receiver.url).await;
+        assert_eq!(publish_article(&owner, &project, "Retried").await, 1);
+        let job = finished_job(&owner, &project, 1, 15).await;
+        assert_eq!(
+            (job["status"].as_str(), job["attempts"].as_i64()),
+            (Some("succeeded"), Some(2)),
+            "{job}"
+        );
+        let seen = receiver.seen();
+        assert_eq!(seen.len(), 2, "refused once, delivered on the retry");
+        assert_eq!(seen[0].key, seen[1].key);
+        assert_eq!(receiver.effects(), 1);
+    }
+
+    // An answer past the attempt's deadline: the post landed, the worker timed it out and
+    // retried — same key again.
+    {
+        let _server = Server::start_with(&[
+            ("COLOPHON_WORKER_POLL_MS", "50"),
+            ("COLOPHON_WORKER_ATTEMPT_MS", "800"),
+            ("COLOPHON_WORKER_LEASE_MS", "2000"),
+        ])
+        .await;
+        // The first answer goes out 2.5 s late: past the attempt's 800 ms deadline.
+        let receiver = Receiver::start_timed(&[(200, 2500)]).await;
+        let project = project(&owner).await;
+        destination(&owner, &project, &receiver.url).await;
+        assert_eq!(publish_article(&owner, &project, "Slow answer").await, 1);
+        let job = finished_job(&owner, &project, 1, 15).await;
+        assert_eq!(
+            (job["status"].as_str(), job["attempts"].as_i64()),
+            (Some("succeeded"), Some(2)),
+            "{job}"
+        );
+        let seen = receiver.seen();
+        assert_eq!(
+            seen.len(),
+            2,
+            "the timed-out post was recorded, then the retry arrived"
+        );
+        assert_eq!(seen[0].key, seen[1].key);
+        assert_eq!(
+            receiver.effects(),
+            1,
+            "the timed-out post landed once — the retry added no effect"
+        );
+    }
 }

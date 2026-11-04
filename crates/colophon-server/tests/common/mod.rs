@@ -480,10 +480,25 @@ pub(crate) struct Received {
     pub(crate) body: Value,
 }
 
-type ReceiverState = std::sync::Arc<(
-    std::sync::Mutex<Vec<Received>>,
-    std::sync::Mutex<std::collections::VecDeque<u16>>,
-)>;
+/// What the receiver answers a request: a status after this long (the request is recorded
+/// when it arrives, however slowly the answer goes out — a destination that is slow to
+/// acknowledge), then the plain `200` once the script runs out.
+#[derive(Debug, Clone, Copy)]
+struct Answer {
+    status: u16,
+    hold: Duration,
+}
+
+/// What one receiver keeps: every request in order, the answers still to give, and the
+/// idempotency keys already seen — the last is what a deduplicating destination applies an
+/// effect for once and only once (F12's "exactly one logical effect").
+struct Shared {
+    received: std::sync::Mutex<Vec<Received>>,
+    script: std::sync::Mutex<std::collections::VecDeque<Answer>>,
+    applied: std::sync::Mutex<std::collections::HashSet<String>>,
+}
+
+type ReceiverState = std::sync::Arc<Shared>;
 
 /// A webhook destination for the worker tests, on 127.0.0.1: it records every request and
 /// answers with the next status in its script, then 200 once the script runs out.
@@ -511,27 +526,53 @@ async fn receive(
         generation: header("colophon-generation"),
         body: serde_json::from_slice(&body).unwrap_or(Value::Null),
     };
-    state.0.lock().expect("not poisoned").push(received);
-    let status = state
-        .1
+    // A repeat of a seen key is acknowledged but applies no second effect (F12).
+    state
+        .applied
+        .lock()
+        .expect("not poisoned")
+        .insert(received.key.clone());
+    state.received.lock().expect("not poisoned").push(received);
+    let answer = state
+        .script
         .lock()
         .expect("not poisoned")
         .pop_front()
-        .unwrap_or(200);
-    axum::http::StatusCode::from_u16(status).unwrap_or(axum::http::StatusCode::OK)
+        .unwrap_or(Answer {
+            status: 200,
+            hold: Duration::ZERO,
+        });
+    tokio::time::sleep(answer.hold).await;
+    axum::http::StatusCode::from_u16(answer.status).unwrap_or(axum::http::StatusCode::OK)
 }
 
 impl Receiver {
     /// Starts a receiver that answers with `script`, in order, then 200.
     pub(crate) async fn start(script: &[u16]) -> Self {
+        let timed: Vec<(u16, u64)> = script.iter().map(|status| (*status, 0)).collect();
+        Self::start_timed(&timed).await
+    }
+
+    /// Starts a receiver whose scripted answers are `(status, hold_ms)` pairs: each request
+    /// is recorded when it arrives; its answer goes out `hold_ms` later.
+    pub(crate) async fn start_timed(script: &[(u16, u64)]) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("a free port");
         let address = listener.local_addr().expect("an address");
-        let state: ReceiverState = std::sync::Arc::new((
-            std::sync::Mutex::new(Vec::new()),
-            std::sync::Mutex::new(script.iter().copied().collect()),
-        ));
+        let state: ReceiverState = std::sync::Arc::new(Shared {
+            received: std::sync::Mutex::new(Vec::new()),
+            script: std::sync::Mutex::new(
+                script
+                    .iter()
+                    .map(|&(status, hold)| Answer {
+                        status,
+                        hold: Duration::from_millis(hold),
+                    })
+                    .collect(),
+            ),
+            applied: std::sync::Mutex::new(std::collections::HashSet::new()),
+        });
         let app = axum::Router::new()
             .route("/hook", axum::routing::post(receive))
             .with_state(std::sync::Arc::clone(&state));
@@ -547,7 +588,13 @@ impl Receiver {
 
     /// Every request so far, in order.
     pub(crate) fn seen(&self) -> Vec<Received> {
-        self.state.0.lock().expect("not poisoned").clone()
+        self.state.received.lock().expect("not poisoned").clone()
+    }
+
+    /// How many distinct idempotency keys have arrived: the count of effects a destination
+    /// that deduplicates on them has applied — a repeat is acknowledged, never re-applied.
+    pub(crate) fn effects(&self) -> usize {
+        self.state.applied.lock().expect("not poisoned").len()
     }
 }
 
