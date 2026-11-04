@@ -11,6 +11,7 @@
 //! ([`release`]), delivery jobs ([`job`]), where they may go ([`destination`]) and the
 //! bounded query language ([`query`]) and its reference population ([`populate`]).
 
+pub mod budget;
 pub mod cache;
 pub mod changeset;
 pub mod destination;

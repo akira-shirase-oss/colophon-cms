@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(sum(reserved) FILTER (WHERE kind = 'documents' AND state <> 'released'\n                        AND created_at > now() - interval '1 day'), 0)::bigint AS \"documents!\",\n                  coalesce(sum(reserved) FILTER (WHERE kind = 'jobs'\n                        AND state IN ('held', 'uncertain')), 0)::bigint AS \"jobs!\",\n                  coalesce(sum(reserved) FILTER (WHERE kind = 'requests' AND state <> 'released'\n                        AND created_at > now() - interval '1 minute'), 0)::bigint AS \"requests!\"\n           FROM budget_reservations\n           WHERE project_id = $1 AND principal_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "documents!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "jobs!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "requests!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "a87ec9974bc2069bca60a9052f85c0a7d564d69b4aba7d4758e11cf77f3aa041"
+}

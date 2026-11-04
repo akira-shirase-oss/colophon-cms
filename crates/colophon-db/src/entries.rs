@@ -2,6 +2,7 @@
 //! inside a [`ProjectTransaction`], so the caller is a member and row-level security confines
 //! it to the project.
 
+use colophon_domain::budget::Kind;
 use colophon_domain::schema::{ContentAsset, ContentReference};
 use sqlx::types::time::OffsetDateTime;
 use uuid::Uuid;
@@ -137,6 +138,8 @@ pub enum Saved {
 }
 
 /// Creates an entry whose draft is its first revision, written by the transaction's identity.
+/// The write's document is reserved before it starts and settled with it (D-113): an API token
+/// over its `documents_per_day` is refused here, a member or an unconstrained token untouched.
 pub async fn create(
     tx: &mut ProjectTransaction,
     entry_id: Uuid,
@@ -144,6 +147,7 @@ pub async fn create(
     revision: NewRevision<'_>,
     locale: Option<&str>,
 ) -> Result<Draft, DbError> {
+    let reservation = crate::budgets::reserve(tx, Kind::Documents, 1).await?;
     let entry = sqlx::query!(
         "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
@@ -170,6 +174,7 @@ pub async fn create(
     .map_err(DbError::from_write)?;
     let created_at = insert_revision(tx, entry_id, collection, None, revision).await?;
     claim_draft(tx, entry_id, collection, revision).await?;
+    crate::budgets::settle(tx, reservation, 1).await?;
     Ok(Draft {
         entry_id,
         collection: collection.to_owned(),
@@ -217,6 +222,9 @@ pub async fn save(
             current: current.draft_revision_id,
         });
     }
+    // Only a save that will land reserves its document (D-113); a stale or missing draft
+    // returned above consumed nothing.
+    let reservation = crate::budgets::reserve(tx, Kind::Documents, 1).await?;
     let created_at =
         insert_revision(tx, entry_id, &current.collection, Some(expected), revision).await?;
     let moved = sqlx::query_scalar!(
@@ -241,6 +249,7 @@ pub async fn save(
         });
     };
     claim_draft(tx, entry_id, &current.collection, revision).await?;
+    crate::budgets::settle(tx, reservation, 1).await?;
     Ok(Saved::Saved(Box::new(Draft {
         entry_id,
         collection: current.collection,
@@ -1121,6 +1130,7 @@ pub async fn create_localization(
     if let Some(row) = occupied {
         return Ok(Localized::Occupied(row.id));
     }
+    let reservation = crate::budgets::reserve(tx, Kind::Documents, 1).await?;
     let entry = sqlx::query!(
         "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale, localization_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
@@ -1146,6 +1156,7 @@ pub async fn create_localization(
     .map_err(DbError::from_write)?;
     let created_at = insert_revision(tx, entry_id, collection, None, revision).await?;
     claim_draft(tx, entry_id, collection, revision).await?;
+    crate::budgets::settle(tx, reservation, 1).await?;
     Ok(Localized::Made(Box::new(Draft {
         entry_id,
         collection: collection.to_owned(),

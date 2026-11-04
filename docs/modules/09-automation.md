@@ -179,6 +179,30 @@ CLI can show from it what a role or token can do.
 - A provider timeout preserves the uncertainty (it may still incur cost).
 - Estimated cost is never presented as the final invoice.
 
+**Built (P5.2, D-113, migration 0045):** the substrate those bullets name, enforced at the PostgreSQL
+boundary, not in a cache or a worker's memory.
+
+- `api_token_limits` holds a token's ceilings — `documents_per_day` (1…1,000,000),
+  `max_concurrent_jobs` (1…64) and `requests_per_minute` (1…100,000, stored for the hard quota slot;
+  nothing consumes it yet). NULL is unconstrained per dimension; no row means the quota layer does
+  not exist for that credential — a person is never limited this way.
+- `budget_reservations` is the ledger: `held` while work is in flight, `settled` with what the
+  outcome consumed in the same commit, `released` when the work can never happen, `uncertain` when
+  the reconciler finds a held row that outlived what could still be running — retained, still
+  counted, announced as `budget.discrepancy` by a system identity that can't sign in.
+- `colophon_domain::budget` is the pure half (kinds, states, limits checks, `close_for`);
+  `colophon_db::budgets` stores and locks: `reserve` locks the limits row `FOR UPDATE`, counts
+  the principal's open and spent allowance — `released` alone frees — and inserts or refuses.
+- Enforcement points today: `entries::create`/`save`/`create_localization` reserve a document each
+  (an import item is a create); `releases::outbox` reserves one `jobs` slot per dispatch job and
+  releases superseded jobs' reservations; `jobs::finish` closes the slot with the outcome. The
+  worker's sweep reconciles strays beside `jobs::expire`.
+- Limits and usage are managed and read only on the people-facing token routes
+  (`POST`/`PATCH`/`GET {P}/tokens/{token}`); the exhaustion refusal is 403 `budget_exceeded`, a
+  hard quota distinct from the GCRA limiter's `rate_limited`.
+- Provider `tokens`/`cost` kinds and the `requests` consumer are reserved in the schema for the
+  slices that need them; D-113 records the model.
+
 ### Optional AI writing assistant (off by default)
 - **Actions:** suggest a title, improve selected text, draft from a brief, or create a proposed locale revision with
   source attribution.
@@ -219,7 +243,7 @@ CLI can show from it what a role or token can do.
 |---|---|
 | AU1 | Tool metadata never grants permission; every call passes the same policy as a human request. |
 | AU2 | An agent can never approve its own proposal — enforced by the API, which refuses any token's approval of a token-submitted changeset (403 `agent_self_review`, D-111); tools that don't offer approval are only the convenience on top. |
-| AU3 | Budgets are reserved in Postgres before dispatch; no work starts without a reservation. |
+| AU3 | Budgets are reserved in Postgres before dispatch; no work starts without a reservation — the accepting transaction locks the token's limits row, counts its allowance and writes `held`, or refuses `budget_exceeded` (D-113, migration 0045). |
 | AU4 | Model output executes only as a validated typed action, rechecked at execution time. |
 | AU5 | Bulk outcomes are per item; nothing claims global atomicity. |
 | AU6 | The CMS is fully usable with every model provider disabled. |

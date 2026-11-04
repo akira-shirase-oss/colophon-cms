@@ -374,37 +374,45 @@ async fn bad_asset(
 }
 
 /// The outbox: one job per enabled destination for the release at `generation`, committed with
-/// the release or not at all. Older announcements that haven't started are obsolete now.
+/// the release or not at all. Older announcements that haven't started are obsolete now — and
+/// their budget reservations are released with the supersede (D-113). The new jobs' slots are
+/// reserved before the commit stands, for the principal the release is published under: a
+/// token over `max_concurrent_jobs` refuses the whole release (`BudgetExceeded`, which rolls
+/// it back); a person or an unconstrained token passes untouched.
 async fn outbox(
     tx: &mut ProjectTransaction,
     generation: i64,
     job_lifetime: std::time::Duration,
 ) -> Result<(), DbError> {
-    sqlx::query!(
+    let superseded = sqlx::query_scalar!(
         "UPDATE jobs SET status = 'superseded', updated_at = now(), finished_at = now()
-         WHERE project_id = $1 AND environment_id = $2 AND generation < $3 AND status IN ('pending', 'retrying')",
+         WHERE project_id = $1 AND environment_id = $2 AND generation < $3 AND status IN ('pending', 'retrying')
+         RETURNING id",
         tx.project,
         tx.environment,
         generation
     )
-    .execute(&mut *tx.transaction)
+    .fetch_all(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)?;
-    sqlx::query!(
+    crate::budgets::release_jobs(&mut tx.transaction, tx.project, &superseded).await?;
+    let jobs = sqlx::query_scalar!(
         "INSERT INTO jobs (project_id, environment_id, id, destination_id, generation, idempotency_key, deadline_at)
          SELECT project_id, environment_id, uuidv7(), id, $3,
                 format('colophon:%s:%s:%s:%s', project_id, environment_id, $3::bigint, id),
                 now() + make_interval(secs => $4::bigint)
          FROM destinations
-         WHERE project_id = $1 AND environment_id = $2 AND enabled",
+         WHERE project_id = $1 AND environment_id = $2 AND enabled
+         RETURNING id",
         tx.project,
         tx.environment,
         generation,
         i64::try_from(job_lifetime.as_secs()).unwrap_or(i64::MAX)
     )
-    .execute(&mut *tx.transaction)
+    .fetch_all(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
+    crate::budgets::reserve_jobs(tx, &jobs).await?;
     Ok(())
 }
 

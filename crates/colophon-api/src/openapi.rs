@@ -1050,18 +1050,53 @@ pub(crate) static TABLE: &[Route] = &[
     ),
     route(
         (PR, "/tokens/{token}"),
-        &[op(
-            Verb::Delete,
-            |f| on(f, tokens::revoke),
-            OpDoc {
-                id: "revokeToken",
-                summary: "Revoke a project API token — the exact kill switch",
-                tag: "tokens",
-                ok: data("TokenView"),
-                extra: &[NOT_FOUND, FORBIDDEN],
-                ..MIN
-            },
-        )],
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, tokens::get),
+                OpDoc {
+                    id: "getToken",
+                    summary: "One project API token, its limits and its usage",
+                    tag: "tokens",
+                    ok: data("TokenView"),
+                    extra: &[NOT_FOUND, FORBIDDEN],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Patch,
+                |f| on(f, tokens::update),
+                OpDoc {
+                    id: "updateToken",
+                    summary: "Replace (`{\"limits\": {…}}`) or remove (`null`) a token's budget limits",
+                    tag: "tokens",
+                    body: Some(json("PatchToken")),
+                    ok: data("TokenView"),
+                    extra: &[
+                        NOT_FOUND,
+                        FORBIDDEN,
+                        refusal(
+                            422,
+                            "invalid_limit, limits_empty, nothing_to_change",
+                            "the fields refused",
+                        ),
+                    ],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Delete,
+                |f| on(f, tokens::revoke),
+                OpDoc {
+                    id: "revokeToken",
+                    summary: "Revoke a project API token — the exact kill switch",
+                    tag: "tokens",
+                    ok: data("TokenView"),
+                    extra: &[NOT_FOUND, FORBIDDEN],
+                    ..MIN
+                },
+            ),
+        ],
     ),
     route(
         (PR, "/audit"),
@@ -1639,7 +1674,11 @@ pub(crate) static TABLE: &[Route] = &[
                     ok: etagd(created("DraftView")),
                     extra: &[
                         NOT_FOUND,
-                        refusal(403, "missing_permission, fields_not_writable", ""),
+                        refusal(
+                            403,
+                            "missing_permission, fields_not_writable, budget_exceeded",
+                            "the role, or a token's `documents_per_day` budget, refused it",
+                        ),
                         refusal(
                             409,
                             "slug_taken, value_taken",
@@ -1742,7 +1781,11 @@ pub(crate) static TABLE: &[Route] = &[
                 ok: created("ImportedView"),
                 extra: &[
                     NOT_FOUND,
-                    refusal(403, "missing_permission, fields_not_writable", ""),
+                    refusal(
+                        403,
+                        "missing_permission, fields_not_writable, budget_exceeded",
+                        "the role, or a token's `documents_per_day` budget, refused it",
+                    ),
                     refusal(409, "single_exists", "a single type already has its entry"),
                     refusal(
                         422,
@@ -1791,6 +1834,11 @@ pub(crate) static TABLE: &[Route] = &[
                     ok: etagd(data("DraftView")),
                     extra: &[
                         NOT_FOUND,
+                        refusal(
+                            403,
+                            "missing_permission, fields_not_writable, budget_exceeded",
+                            "the role, or a token's `documents_per_day` budget, refused it",
+                        ),
                         refusal(
                             409,
                             "stale_revision",
@@ -1859,6 +1907,11 @@ pub(crate) static TABLE: &[Route] = &[
                 ok: etagd(created("DraftView")),
                 extra: &[
                     NOT_FOUND,
+                    refusal(
+                        403,
+                        "budget_exceeded",
+                        "a token's `documents_per_day` budget refused it",
+                    ),
                     refusal(
                         409,
                         "locale_taken, slug_taken, value_taken, single_exists",
@@ -2327,6 +2380,11 @@ pub(crate) static TABLE: &[Route] = &[
                 ok: created("PublishedView"),
                 extra: &[
                     NOT_FOUND,
+                    refusal(
+                        403,
+                        "budget_exceeded",
+                        "a token's `max_concurrent_jobs` budget refused the release's dispatch",
+                    ),
                     refusal(
                         409,
                         "stale_changeset",
@@ -3766,7 +3824,33 @@ fn membership() -> Value {
                 "expires_at": { "type": "string", "format": "date-time" },
                 "last_used_at": { "type": ["string", "null"], "format": "date-time" },
                 "revoked_at": { "type": ["string", "null"], "format": "date-time" },
+                "limits": { "anyOf": [{ "$ref": "#/components/schemas/TokenLimits" }, { "type": "null" }], "description": "budget ceilings; `null` is unconstrained at the quota layer" },
+                "usage": { "$ref": "#/components/schemas/TokenUsage", "description": "what it holds or spent; only on the single-token answer" },
                 "secret": { "type": "string", "description": "`colophon_api_…`; only in the create answer, shown once" },
+            },
+        },
+        "TokenLimits": {
+            "type": "object",
+            "properties": {
+                "documents_per_day": { "type": ["integer", "null"], "minimum": 1, "maximum": 1_000_000, "description": "entry writes per rolling day" },
+                "max_concurrent_jobs": { "type": ["integer", "null"], "minimum": 1, "maximum": 64, "description": "delivery jobs held at once" },
+                "requests_per_minute": { "type": ["integer", "null"], "minimum": 1, "maximum": 100_000, "description": "management requests per minute (stored; not consumed yet)" },
+            },
+        },
+        "TokenUsage": {
+            "type": "object",
+            "properties": {
+                "documents_last_day": { "type": "integer" },
+                "jobs_open": { "type": "integer" },
+                "requests_last_minute": { "type": "integer" },
+            },
+        },
+        "PatchToken": {
+            "type": "object",
+            "required": ["limits"],
+            "additionalProperties": false,
+            "properties": {
+                "limits": { "anyOf": [{ "$ref": "#/components/schemas/TokenLimits" }, { "type": "null" }], "description": "the token's ceilings; `null` removes them" },
             },
         },
         "PersonView": {
@@ -3786,6 +3870,7 @@ fn membership() -> Value {
                 "kind": { "type": "string", "enum": ["read-only", "full-access", "custom"] },
                 "permissions": { "type": "array", "items": { "$ref": "#/components/schemas/PermissionBody" }, "description": "`custom` only" },
                 "expires_in_days": { "type": "integer", "minimum": 1, "maximum": 366 },
+                "limits": { "$ref": "#/components/schemas/TokenLimits", "description": "budget ceilings (D-113); absent means unconstrained" },
             },
         },
         "EventView": {

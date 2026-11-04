@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE jobs SET status = 'superseded', updated_at = now(), finished_at = now()\n         WHERE project_id = $1 AND environment_id = $2 AND generation < $3 AND status IN ('pending', 'retrying')\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "edc91eb33e95dd90199fadb51f6c5286fc21de6931ccfe9f47aa5a7d87977711"
+}

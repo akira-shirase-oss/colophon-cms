@@ -188,16 +188,42 @@ impl Worker {
         loop {
             if last_expiry.is_none_or(|at| at.elapsed() >= EXPIRY_INTERVAL) {
                 last_expiry = Some(std::time::Instant::now());
-                match jobs::expire(&self.pool).await {
-                    Ok(0) => {}
-                    Ok(expired) => tracing::info!(expired, "jobs ran out of time"),
-                    Err(error) => {
-                        tracing::warn!(error = %error, "expiring jobs failed; trying again later");
+                // One cancel-aware block for the sweeps: each of them can sit in a pool
+                // acquisition for the acquire timeout, and a shutdown can't wait on a
+                // queued-up chain of them (SIGTERM still drains in seconds). A sweep
+                // abandoned mid-flight rolls back; the next pass repeats it.
+                let sweeps = async {
+                    match jobs::expire(&self.pool).await {
+                        Ok(0) => {}
+                        Ok(expired) => tracing::info!(expired, "jobs ran out of time"),
+                        Err(error) => {
+                            tracing::warn!(error = %error, "expiring jobs failed; trying again later");
+                        }
                     }
-                }
-                match colophon_db::assets::expire(&self.pool).await {
-                    Ok(0) | Err(_) => {}
-                    Ok(expired) => tracing::info!(expired, "asset jobs ran out of time"),
+                    match colophon_db::assets::expire(&self.pool).await {
+                        Ok(0) | Err(_) => {}
+                        Ok(expired) => tracing::info!(expired, "asset jobs ran out of time"),
+                    }
+                    // The budget reconciler (D-113): free reservations of jobs that ended,
+                    // flag held rows that outlived their work as `uncertain` and audit the
+                    // discrepancy.
+                    match colophon_db::budgets::reconcile(&self.pool).await {
+                        Ok(done) if done.released == 0 && done.uncertain == 0 => {}
+                        Ok(done) => {
+                            tracing::info!(
+                                released = done.released,
+                                uncertain = done.uncertain,
+                                "budgets reconciled"
+                            );
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "reconciling budgets failed; trying again later");
+                        }
+                    }
+                };
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = sweeps => {}
                 }
             }
             let first = tokio::select! {

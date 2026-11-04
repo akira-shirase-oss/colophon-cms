@@ -286,8 +286,11 @@ pub async fn publish(
     let items = changesets::items(tx, head.id).await?;
     let reviews = changesets::reviews(tx, head.id, Some(&head.hash)).await?;
     // The stage list this decides against can't move under it: a stage-list replace queues on
-    // the locks, so the release commits under the rules it was checked against (D-104).
-    let stages = changesets::stages_locked(tx).await?;
+    // the locks, so the release commits under the rules it was checked against (D-104). The
+    // publish takes the lock `UPDATE environments` will need up front rather than reading in
+    // share mode and upgrading — two share holders can never both upgrade — in no-key mode so
+    // it doesn't deadlock against the foreign-key share locks every writer here already holds.
+    let stages = changesets::stages_locked_for_write(tx).await?;
     let edited = items.iter().filter(|item| item.moved()).count();
     let decided = status(&head, edited, &reviews, &stages, now);
     let seq = match decided {
