@@ -51,7 +51,10 @@ SAMPLE_SECONDS="${SAMPLE_SECONDS:-10}"
 WARMUP_SECONDS="${WARMUP_SECONDS:-60}"
 MAX_GROWTH_PCT="${MAX_GROWTH_PCT:-10}"
 MAX_SLOPE_KB_PER_MIN="${MAX_SLOPE_KB_PER_MIN:-512}"
-port="${LOAD_PORT:-58091}"
+# Registered with the Keycloak realm (deploy/keycloak/colophon-realm.json): the browser
+# sign-in flow the k6 setup drives needs the callback whitelisted — an unregistered port
+# gets an error page, not a login form. 58090 is load.sh's, 58091/58092 the other harnesses'.
+port="${LOAD_PORT:-58093}"
 base_url="http://127.0.0.1:$port"
 public_url="http://localhost:$port"
 
@@ -189,16 +192,26 @@ jq -n --argjson a "$analysis" --arg verdict "$verdict" --arg endpoint "$endpoint
    requests: ($k6[0].metrics.http_reqs.count // 0), failed: ($k6[0].metrics.http_req_failed.passes // 0),
    server_warnings: $warnings, samples: $s}' \
   >"$work/result.json"
-file="perf/results/${stamp//:/}-$endpoint-soak-$machine.json"
-cp "$work/result.json" "$file"
-echo "result: $file"
-
 jq -r '"\(.endpoint) soak: \(.requests) req over \(.duration_minutes)m, RSS \(.analysis.first_median_kb|floor)->\(.analysis.last_median_kb|floor) KB (\(.analysis.growth_pct*100|round/100)%), slope \(.analysis.slope_kb_per_min*100|round/100) KB/min, fds \(.analysis.fds_first)->\(.analysis.fds_last), verdict \(.verdict)"' "$work/result.json"
 
+requests=$(jq -r '.requests' "$work/result.json")
+expected=$(( RATE * minutes * 60 ))
+# A soak that held no pressure proves nothing — half the expected count is already generous
+# (a scenario's setup work costs the first seconds), and a setup that never signs on sends none.
+if (( requests < expected / 2 )); then
+  echo "FAIL: only $requests of ~$expected expected requests arrived — the load never landed" >&2
+  tail -20 "$work/k6.log" >&2
+  exit 1
+fi
 if (( server_warnings > 0 )); then
   echo "FAIL: the server logged $server_warnings warning(s) or error(s) under load" >&2
   exit 1
 fi
+
+# The gates held — only then is it evidence worth keeping.
+file="perf/results/${stamp//:/}-$endpoint-soak-$machine.json"
+cp "$work/result.json" "$file"
+echo "result: $file"
 if [[ "$verdict" == "leak-suspect" ]]; then
   echo "FAIL: memory kept growing after warmup — investigate before calling it a leak or flat" >&2
   exit 1
