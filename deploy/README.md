@@ -48,7 +48,8 @@ Postgres archives every completed WAL segment into the `postgres-wal-archive` vo
 (`archive_timeout=60s`; `postgres/archive-wal.sh` is the `archive_command`) for point-in-time
 recovery, and `colophon_backup` — a `REPLICATION` login with no table rights — is the credential
 `scripts/backup.sh` uses for encrypted base backups. See [runbooks/backup.md](runbooks/backup.md)
-([D-125](../docs/DECISIONS.md)).
+([D-125](../docs/DECISIONS.md)); bringing one back on clean infrastructure is
+[runbooks/restore.md](runbooks/restore.md) ([D-126](../docs/DECISIONS.md)).
 
 If a port clashes with something else on your machine, move it: `COLOPHON_PG_PORT`, `COLOPHON_VALKEY_PORT`,
 `COLOPHON_S3_PORT`, `COLOPHON_S3_ADMIN_PORT`, `COLOPHON_KEYCLOAK_PORT`. The bind address is deliberately not a setting.

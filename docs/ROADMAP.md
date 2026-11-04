@@ -479,8 +479,8 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   reconciliation before dispatch), the upgrade runbook, budgets, runbooks, observability. Built so far: the
   deletion ledger itself (D-124 — append-only `deletion_ledger` written inside every governed delete's transaction;
   `admin ledger export`/`replay` as the off-host copy and the restore primitive; stack-proven in
-  `colophon-db/tests/ledger.rs`). Still ahead: the backups, the restore procedure that drives the replay, and the
-  rest.
+  `colophon-db/tests/ledger.rs`), encrypted cluster backups (D-125), and the restore procedure (D-126). Still
+  ahead: scheduling, retention, and the rest.
 - `verification`: the full fault and load matrix, a 24-hour soak, the benchmark report, the requirements matrix.
 - `docs`: complete guides; every example runs in CI.
 - `oss`: release process, SBOM, signed artifacts, security policy.
@@ -491,9 +491,16 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   REPLICATION-only `colophon_backup` role, gpg-symmetric encryption from a passphrase file, `manifest.json` recording
   commit/Postgres/migrations/key-reference/ledger mark, and `verify` re-running `pg_verifybackup` on the decrypted
   bytes — the drill's stored run is `perf/results/2026-11-04T173702Z-backup-drill-apple-m2-pro-12c.json` (capture
-  252 s, verify 138 s) ·
-  not built: the restore procedure itself (new epoch, ledger replay, reconciliation), scheduling, retention jobs,
-  asset versioning, upgrade runbook, observability, the drills and installs of the proof gate.
+  252 s, verify 138 s) · the restore procedure (D-126, migration 0049): `scripts/restore.sh`'s six marker-gated
+  stages — decrypt and unpack onto a scratch cluster (`prepare`), `pg_verifybackup` plus the manifest/binary schema
+  check (`verify`), one recovery epoch (`epoch`), the deletion-ledger interval anti-joined onto the restored
+  watermark (`ledger`), every unfinished job frozen `held` with an operator's inventory and an explicit
+  `--resume-jobs` enable (`reconcile`), and `/readyz` on scratch only then (`serve`) — `admin restore
+  verify|epoch|hold|jobs|resume` as the migrator-side primitives, `deploy/runbooks/restore.md`, the stack
+  regression `colophon-db/tests/restore.rs` (F13's held-outbox and epoch advance on a template clone), and the
+  dated drill record in `perf/results/` ·
+  not built: backup scheduling, retention jobs, asset versioning, upgrade runbook, observability, the usability
+  drills and installs of the proof gate.
 
 **Proof gate:** F09–F14, L05–L13, the 24-hour soak, a restore drill on clean infrastructure, the usability gate, one
 independent install. **v0.1 release.**

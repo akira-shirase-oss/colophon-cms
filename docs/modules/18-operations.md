@@ -135,23 +135,42 @@ on clean infrastructure and an independent install, so operations are a module w
   `perf/results/2026-11-04T173702Z-backup-drill-apple-m2-pro-12c.json` (capture 252 s, verify 138 s, 2.2 GB encrypted
   from a 12.4 GB dev cluster — laptop numbers about the reference profile, not a capacity promise).
 - **Still owed:** scheduling (daily is a target, nothing runs it yet), object-store asset versioning (D-016's Garage
-  lacks bucket versioning; production decides), a documented retention job, and the restore procedure below — the
-  drill verifies capture and integrity only, never claiming the backup restores. The cache does not need restoring
+  lacks bucket versioning; production decides) and a documented retention job. The cache does not need restoring
   for correctness: no backup includes it.
 
-### Restore procedure (spec §33; F13, F14) — owed, next P6 slice
-1. Restore onto clean infrastructure with outbound integrations disabled.
-2. Verify schema, assets and permissions.
-3. Register a **new recovery epoch** before serving.
-4. Reapply the off-host **deletion ledger**. If the required ledger interval can't be reconstructed, public serving
-   stays blocked. Built in P6 (migration 0048, D-124): `admin ledger export` copies the append-only
-   `deletion_ledger` as a watermarked JSONL snapshot to a file or the `COLOPHON_S3_*` object store — run from the
-   backup schedule, its `high_water` marking the newest deletion the file covers — and `admin ledger replay`
-   (`colophon_db::ledger::replay`) reapplies the interval onto the restored database, idempotently, exiting
-   blocked while any row can't replay. The restore procedure that orders this with the new epoch and the
-   manifest check is still ahead.
-5. Reconcile external effects (CDN, site deployments, webhooks) before replaying any outbox work.
-6. Explicitly enable current jobs.
+### Restore procedure (spec §33; F13, F14; D-126, migration 0049; built in P6)
+
+`scripts/restore.sh` restores a captured backup onto **clean, disposable infrastructure** — a scratch Postgres
+container, volume and Valkey on their own 127.0.0.1 ports, nothing of the live stack's — in six ordered stages,
+each gated by the previous stage's marker (`status` prints them; `blocked` markers record why; a done stage is
+never silently rerun without `--force`; `deploy/runbooks/restore.md` is the operator's copy):
+
+1. **prepare:** decrypt and unpack the payload into a fresh scratch volume — clean infrastructure, never the live
+   stack's directories.
+2. **verify:** `pg_verifybackup` on the restored bytes before the cluster first starts, then the schema check —
+   `admin restore verify` compares the restored `_sqlx_migrations` against the manifest's list and the binary's
+   embedded set (`colophon_db::restore::check_schema`): a backup carrying a migration this binary doesn't know is
+   refused; a schema behind the binary reports `pending` and passes — nothing migrates silently inside verify.
+3. **epoch:** `admin restore epoch` advances every environment's epoch exactly once — the new recovery epoch (D4)
+   that invalidates the old timeline's cache generations, delivery scope keys and worker leases.
+4. **ledger:** every `--ledger` export replays the interval the restored `deletion_ledger` lacks (anti-joined by
+   row id — `id > max` would hide out-of-order rows). A gap the files don't cover, or a row that can't replay,
+   blocks the stage — O2 keeps serving off.
+5. **reconcile:** `admin restore hold` freezes every unfinished job as **`held`** — a real `jobs.status` the claim
+   query never selects, leases cleared, the state it was taken from recorded (`was=running` marks in-flight
+   attempts whose external effect is unknown — F13). `admin restore jobs` is the operator's inventory: the held
+   outbox plus due schedules and open asset, bulk and content-migration work. **`--resume-jobs` is the explicit
+   enable** (`admin restore resume` → `pending` with a fresh lifetime) after reconciliation — O3.
+6. **serve:** only after all five markers, `colophon-server --role api` starts on the scratch stack and `/readyz`
+   must answer — the gate that finally serves.
+
+The drill (`scripts/restore.sh drill`) seeds an in-flight job leased to a worker the restore won't have, captures
+a backup, deletes an entry and edits another **after** capture, exports the ledger, restores, and asserts the new
+epoch, the replayed tombstone, the absent edit, the held job and serving — the dated record is
+`perf/results/<stamp>-restore-drill-<machine>.json`. `colophon-db/tests/restore.rs` is the stack regression:
+a template-cloned "backup" gets a new epoch, its pending and in-flight jobs held with leases cleared, held jobs
+unclaimable through the real claim path, and `resume` returning them to pending; `tests/ledger.rs` covers the
+replay side (F14).
 
 A backup existing is not proof of a working restore.
 

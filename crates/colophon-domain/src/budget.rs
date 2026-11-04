@@ -220,7 +220,7 @@ pub fn close_for(status: Status) -> Option<Close> {
     match status {
         Status::Succeeded | Status::Failed => Some(Close::Settle),
         Status::Superseded => Some(Close::Release),
-        Status::Pending | Status::Running | Status::Retrying => None,
+        Status::Pending | Status::Running | Status::Retrying | Status::Held => None,
     }
 }
 
@@ -389,5 +389,6 @@ mod tests {
         assert_eq!(close_for(Status::Pending), None);
         assert_eq!(close_for(Status::Running), None);
         assert_eq!(close_for(Status::Retrying), None);
+        assert_eq!(close_for(Status::Held), None);
     }
 }

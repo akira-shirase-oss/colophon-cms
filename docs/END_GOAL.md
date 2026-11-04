@@ -17,8 +17,9 @@ v0.1 is done when every box below is checked with stored evidence (commit, comma
 - [ ] All fault cases F01–F14 and load cases L01–L14 pass (L15 is commerce, parked), as defined in
       [verification](modules/17-verification.md).
 - [ ] A benchmark report on the reference profile is committed with commands, dataset seed and raw results.
-- [ ] A backup-and-restore drill onto clean infrastructure is documented, including a new recovery epoch and the
-      deletion ledger replay.
+- [x] A backup-and-restore drill onto clean infrastructure is documented, including a new recovery epoch and the
+      deletion ledger replay — `scripts/restore.sh drill`, evidenced by
+      `perf/results/2026-11-04T194355Z-restore-drill-apple-m2-pro-12c.json` (D-125 capture, D-126 restore).
 - [ ] One person other than the maintainer installs Colophon from the README alone, and the friction is recorded.
 - [ ] Five representative editors attempt draft → preview → review → publish; at least four succeed without help
       (spec §05 usability gate), and the failures are written up.

@@ -25,6 +25,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# ENC, ensure_key, encrypt, decrypt and machine_name live in the library restore.sh shares.
+. scripts/backup-crypt.sh
+
 compose() { docker compose -f deploy/compose.yaml "$@"; }
 
 # The application database the manifest reports on. The backup itself is cluster-wide —
@@ -49,60 +52,6 @@ psql_admin() {
 wal_files() {
   compose exec -T postgres sh -c \
     "find /wal-archive -type f ! -name '.*' 2>/dev/null | wc -l" | tr -d '[:space:]'
-}
-
-# --- encryption --------------------------------------------------------------------------------
-
-ENC=""
-if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1; then ENC=age; else ENC=gpg; fi
-
-# secret_ref: what manifest.json records — where the key came from, never the key itself.
-secret_ref=""
-key_file=""
-ensure_key() { # create=1 lets a first run mint the local dev secret; verify must find one.
-  if [[ "$ENC" == age ]]; then
-    key_file="${COLOPHON_BACKUP_AGE_KEY_FILE:-deploy/backup-age-key.local}"
-    if [[ ! -f "$key_file" ]]; then
-      if [[ "${1:-}" != "create" ]]; then
-        echo "error: no age identity at $key_file (set COLOPHON_BACKUP_AGE_KEY_FILE)" >&2; exit 1
-      fi
-      age-keygen -o "$key_file" 2>/dev/null
-      chmod 600 "$key_file"
-      echo "note: generated $key_file (gitignored, mode 600) — losing it loses every backup" >&2
-    fi
-    secret_ref="age identity ${COLOPHON_BACKUP_AGE_KEY_FILE:+COLOPHON_BACKUP_AGE_KEY_FILE=}$key_file"
-  else
-    key_file="${COLOPHON_BACKUP_PASSPHRASE_FILE:-deploy/backup-passphrase.local}"
-    if [[ ! -f "$key_file" ]]; then
-      if [[ "${1:-}" != "create" ]]; then
-        echo "error: no passphrase file at $key_file (set COLOPHON_BACKUP_PASSPHRASE_FILE)" >&2; exit 1
-      fi
-      openssl rand -base64 48 >"$key_file"
-      chmod 600 "$key_file"
-      echo "note: generated $key_file (gitignored, mode 600) — losing it loses every backup" >&2
-    fi
-    secret_ref="gpg passphrase file ${COLOPHON_BACKUP_PASSPHRASE_FILE:+COLOPHON_BACKUP_PASSPHRASE_FILE=}$key_file"
-  fi
-}
-
-# encrypt <out>: encrypt stdin to <out>. The passphrase stays in its file — nothing on the
-# command line, so `ps` never sees it.
-encrypt() {
-  if [[ "$ENC" == age ]]; then
-    age -e -R "$(age-keygen -y "$key_file")" -o "$1"
-  else
-    gpg --batch --yes --pinentry-mode loopback --passphrase-file "$key_file" \
-      --cipher-algo AES256 --symmetric --output "$1"
-  fi
-}
-
-# decrypt <file>: plaintext on stdout.
-decrypt() {
-  if [[ "$ENC" == age ]]; then
-    age -d -i "$key_file" "$1"
-  else
-    gpg --batch --yes --pinentry-mode loopback --passphrase-file "$key_file" --decrypt "$1"
-  fi
 }
 
 # --- create ------------------------------------------------------------------------------------
@@ -285,16 +234,6 @@ verify_backup() { # <dir>: integrity checks; exits 1 on any failure.
 }
 
 # --- drill -------------------------------------------------------------------------------------
-
-machine_name() {
-  local cpu cores
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    cpu=$(sysctl -n machdep.cpu.brand_string); cores=$(sysctl -n hw.ncpu)
-  else
-    cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//'); cores=$(nproc)
-  fi
-  printf '%s-%sc' "$cpu" "$cores" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/-$//'
-}
 
 drill() { # <root>
   local root=$1 t0 dir v0 verify_seconds

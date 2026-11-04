@@ -30,6 +30,7 @@ pub mod projects;
 pub mod publish;
 pub mod query;
 pub mod releases;
+pub mod restore;
 pub mod roles;
 pub mod schedules;
 pub mod scope;

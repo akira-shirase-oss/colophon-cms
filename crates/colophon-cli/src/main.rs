@@ -683,6 +683,73 @@ enum AdminCommand {
         #[arg(long)]
         json: bool,
     },
+    /// One stage of the restore procedure's database work on a freshly restored database
+    /// (module 18 "Restore procedure", spec §33; O2, O3, F13; D-126): `scripts/restore.sh`
+    /// orders these between decrypting the backup and letting anything serve.
+    Restore {
+        #[command(subcommand)]
+        step: RestoreStep,
+    },
+}
+
+/// The restore procedure's per-stage database actions (each run as the migrator against the
+/// restored database's URL — never the application's).
+#[derive(Debug, Subcommand)]
+enum RestoreStep {
+    /// Check the restored schema against the backup's manifest and this binary's known
+    /// migrations (spec step 2): exits 4 when the backup applied anything this binary doesn't
+    /// know — the backup is newer than the code and serving it would be guessing.
+    Verify {
+        /// The migrator's connection URL of the restored database.
+        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// The backup's manifest.json.
+        #[arg(long)]
+        manifest: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Register the recovery epoch (spec step 3, O2): every environment's epoch advances, so a
+    /// cached generation or stale lease from the old timeline can never act on the new one.
+    /// The procedure runs it exactly once, before anything serves.
+    Epoch {
+        /// The migrator's connection URL of the restored database.
+        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Freeze every unfinished delivery job as 'held' (spec step 5, O3): nothing the old
+    /// timeline dispatched — sent or not — may fire again before external effects are
+    /// reconciled. Reports each held job with the state it was taken from.
+    Hold {
+        /// The migrator's connection URL of the restored database.
+        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the restore's work inventory for the operator's reconciliation: the held outbox,
+    /// plus due schedules and in-flight asset, bulk and content-migration work.
+    Jobs {
+        /// The migrator's connection URL of the restored database.
+        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Return every held job to 'pending' with a fresh attempt window — the explicit enable of
+    /// spec step 6. Only after reconciliation; jobs past their old deadline get a new lifetime.
+    Resume {
+        /// The migrator's connection URL of the restored database.
+        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// The fresh lifetime a resumed job gets when its old deadline has passed (seconds).
+        #[arg(long, default_value_t = 3600)]
+        lifetime_secs: i32,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -755,6 +822,7 @@ fn main() -> ExitCode {
                 out::Out::new("admin ledger replay", out::Format::of(json, false)),
             ))
             .into(),
+        Command::Admin(AdminCommand::Restore { step }) => run_restore(&runtime, step),
         Command::Login {
             server,
             profile,
@@ -1304,5 +1372,50 @@ fn run_task(runtime: &Runtime, command: TaskCommand) -> ExitCode {
             )
             .into()
         }
+    }
+}
+
+fn run_restore(runtime: &Runtime, step: RestoreStep) -> ExitCode {
+    match step {
+        RestoreStep::Verify {
+            database_url,
+            manifest,
+            json,
+        } => runtime
+            .block_on(admin::restore_verify(
+                &database_url,
+                &manifest,
+                out::Out::new("admin restore verify", out::Format::of(json, false)),
+            ))
+            .into(),
+        RestoreStep::Epoch { database_url, json } => runtime
+            .block_on(admin::restore_epoch(
+                &database_url,
+                out::Out::new("admin restore epoch", out::Format::of(json, false)),
+            ))
+            .into(),
+        RestoreStep::Hold { database_url, json } => runtime
+            .block_on(admin::restore_hold(
+                &database_url,
+                out::Out::new("admin restore hold", out::Format::of(json, false)),
+            ))
+            .into(),
+        RestoreStep::Jobs { database_url, json } => runtime
+            .block_on(admin::restore_jobs(
+                &database_url,
+                out::Out::new("admin restore jobs", out::Format::of(json, false)),
+            ))
+            .into(),
+        RestoreStep::Resume {
+            database_url,
+            lifetime_secs,
+            json,
+        } => runtime
+            .block_on(admin::restore_resume(
+                &database_url,
+                lifetime_secs,
+                out::Out::new("admin restore resume", out::Format::of(json, false)),
+            ))
+            .into(),
     }
 }
