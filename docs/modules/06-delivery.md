@@ -60,6 +60,16 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
 - Step 3.1 (D-048) adds a strong `ETag` (304 for a matching `If-None-Match`), the cache policies below,
   `Cache-Tag`, and `Colophon-Cache: hit | miss | coalesced | bypass`.
 - Step 3.2 (D-049): revoked publications are never delivered; an unpublished entry is 410 `gone`.
+- DX.4 (D-103, D-105) adds `POST /content/v1/{project}/{environment}/{collection}/query?generation=&cursor=`:
+  the bounded query language of [domain](01-domain.md) over the published projection, still anonymous. The
+  body is the query document the draft route takes; `?generation=` pins the release, `?cursor=` a page
+  boundary sealed `q1:<generation>:<v1 token>` — the generation of its first page, then the query-bound
+  `v1:` token, so paging never mixes two releases (DL2). Rows are the `publications` projection pinned by
+  delivery's own predicate — `valid_from` open at the generation, never revoked — so unpublished and
+  tombstoned entries never answer at any generation (DL5). `fields` narrows the returned content; `depth`
+  validates and echoes but does not apply — references stay ids until DX.5. `applied` echoes the canonical
+  document and its `query_hash`, and publications carry no locale, so every answer is in the stored one until
+  locale lands on the projection.
 
 ### Cache keys (spec §15)
 - A key includes:
@@ -76,6 +86,11 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   resolves its generation from Postgres in one statement, before and apart from the cache: `delivery_environment`
   (migration 0011) runs as `colophon_delivery` in the project's context and returns only the environment's id, epoch
   and generation. As a delivery transaction (five round trips) the lookup cost as much as the cache saved.
+- DX.4 (D-105): a query page keys on `Scope::query_key` — the normalized query's own `query_hash` and the page
+  boundary's SHA-256, both fixed-width hex, the collection last as always — so two different queries can never
+  share an answer (§15) and a key stays short however long a cursor is. The boundary names the canonical
+  position re-sealed, not the request's token: one page, one key. A query page takes the list's tags, so a
+  purge finds it like any listing.
 
 ### Cache layer (Redis-compatible)
 - Disposable, generation-keyed public results: 300 seconds with jitter, a 1 GiB reference budget, explicit eviction.
@@ -195,7 +210,10 @@ These are policies to test, not a global 30-second consistency guarantee.
   delivered, a pinned read of generation 1 after release 2, a cursor that keeps its generation across a release);
   `crates/colophon-db/tests/releases.rs` (the delivery role refused drafts, entries, changesets, members, sessions,
   identities and every write); `perf/k6/delivery.js` (anonymous latest, pinned and single-entry reads, at least
-  1,000,000 per full run).
+  1,000,000 per full run). DX.4: `crates/colophon-server/tests/delivery_query.rs` (filter, sort and page parity
+  with the draft route, a pinned release unmoved by a newer one, unpublished and tombstoned entries absent at
+  every generation, anonymous and credentialed reads, foreign and uncommitted-generation cursors refused,
+  `fields` narrowing and the `applied` echo, ETag revalidation).
 
 ## Build order
 

@@ -2,10 +2,13 @@
 //! D-040). Like entries, every function runs inside a [`ProjectTransaction`]. Definitions are
 //! validated by the domain (`colophon_domain::schema`) before they reach this module.
 
-use sqlx::types::time::OffsetDateTime;
+use sqlx::{PgPool, types::time::OffsetDateTime};
 use uuid::Uuid;
 
-use crate::{DbError, scope::ProjectTransaction};
+use crate::{
+    DbError,
+    scope::{self, ProjectTransaction, Scope},
+};
 
 /// The most drafts and publications one content type change checks (D-055). A collection with
 /// more needs a migration, which doesn't exist yet.
@@ -93,6 +96,40 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Version>, DbError> 
     .fetch_all(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)
+}
+
+/// The current definition text of `collection` in `environment`, for delivery's query
+/// validation (DX.4): `colophon_delivery` may not read this table — and mustn't, it is
+/// the management side's — so this opens its own transaction as the API role in the
+/// project's context. What the published reads that follow never see.
+pub async fn current_definition(
+    pool: &PgPool,
+    project: Uuid,
+    environment: Uuid,
+    collection: &str,
+) -> Result<Option<String>, DbError> {
+    let mut tx = scope::begin(
+        pool,
+        Scope {
+            project: Some(project),
+            ..Scope::default()
+        },
+    )
+    .await?;
+    let definition = sqlx::query_scalar!(
+        "SELECT definition FROM content_type_versions
+         WHERE project_id = $1 AND environment_id = $2 AND collection = $3
+         ORDER BY version DESC
+         LIMIT 1",
+        project,
+        environment,
+        collection
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?;
+    tx.commit().await.map_err(DbError::from_query)?;
+    Ok(definition)
 }
 
 /// The current version of `collection`, if it exists here.

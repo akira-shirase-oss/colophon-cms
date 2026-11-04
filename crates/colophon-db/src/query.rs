@@ -1,8 +1,10 @@
-//! The query language's SQL translation (docs/modules/02-db.md, "Query translation"; DX.3,
-//! D-103): a validated [`Query`] becomes one statement over each entry's *current draft*
-//! revision — the draft perspective; published reads are a later step.
+//! The query language's SQL translation (docs/modules/02-db.md, "Query translation"; DX.3
+//! and DX.4, D-103): a validated [`Query`] becomes one statement over a perspective —
+//! each entry's *current draft* revision for [`page`], its *publication* at a generation
+//! for [`published_page`] — the draft and the published (or release-pinned) perspectives.
 //!
-//! A draft's content is canonical JSON kept as `text` (D1), so a field absent from it
+//! Stored content is canonical JSON kept as `text` — a draft's `revisions.content`, the
+//! copy a release wrote into `publications.content` (D1) — so a field absent from it
 //! compares as SQL `NULL`; each indexed kind casts to the Postgres type its spellings order
 //! by — text-like kinds as the text they are, numbers as `numeric`, booleans as `boolean`,
 //! dates, times and date-times as theirs. `eq` and `in` compare the stored JSON to the
@@ -30,7 +32,12 @@ use serde_json::Value;
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::{DbError, entries::Draft, scope::ProjectTransaction};
+use crate::{
+    DbError,
+    delivery::{DeliveryTransaction, Published},
+    entries::Draft,
+    scope::ProjectTransaction,
+};
 
 /// One page a query answered with.
 #[derive(Debug)]
@@ -38,6 +45,16 @@ pub struct Page {
     /// The page's entries in the query's order: each current draft with the revision id
     /// and valid-from of the live publication it belongs to, if any.
     pub rows: Vec<(Draft, Option<(Uuid, i64)>)>,
+    /// The sealed cursor for the page after this one, or `None` when this page is last.
+    pub next_cursor: Option<String>,
+}
+
+/// One page a query answered with over the published projection (DX.4).
+#[derive(Debug)]
+pub struct PublishedPage {
+    /// The page's rows in the query's order: each entry's publication as it was at the
+    /// generation the page was read at.
+    pub rows: Vec<Published>,
     /// The sealed cursor for the page after this one, or `None` when this page is last.
     pub next_cursor: Option<String>,
 }
@@ -75,18 +92,7 @@ pub async fn page(
         after,
         created_by,
     )?;
-    // Audited above: the text is built only here, every value and field name a bind.
-    let mut run = sqlx::query(sqlx::AssertSqlSafe(statement.text));
-    for arg in statement.args {
-        run = match arg {
-            Arg::Id(value) => run.bind(value),
-            Arg::OptId(value) => run.bind(value),
-            Arg::Text(value) => run.bind(value),
-            Arg::OptText(value) => run.bind(value),
-            Arg::Rows(value) => run.bind(value),
-        };
-    }
-    let rows = run
+    let rows = bound(statement)
         .fetch_all(&mut *tx.transaction)
         .await
         .map_err(DbError::Query)?;
@@ -100,7 +106,8 @@ pub async fn page(
         let (last, _) = page_rows.last().ok_or(DbError::Corrupt(
             "a page says more without a row to continue from",
         ))?;
-        let position = position_of(last, query).map_err(DbError::Corrupt)?;
+        let position =
+            position_of(last.entry_id, &last.content, query).map_err(DbError::Corrupt)?;
         let token = query
             .cursor(&position)
             .map_err(|_| DbError::Corrupt("a page's own position doesn't fit the query"))?;
@@ -114,6 +121,93 @@ pub async fn page(
     })
 }
 
+/// Runs `query` against `collection`'s publications as of `generation`: the published
+/// perspective, and the release-pinned one when `generation` is a release in the past
+/// (docs/modules/06-delivery.md; DX.4). The pin is delivery's own predicate, exactly as
+/// [`crate::delivery::DeliveryTransaction::list`] spells it — published at or before the
+/// generation, its interval still open there, never revoked — so a revoked or
+/// unpublished entry never answers, at any generation, and a deleted one can't have an
+/// open publication at all (D-080).
+///
+/// `tx` runs as `colophon_delivery`; the project comes from its context, like the list's
+/// own reads. Rows are the projection's own copies: `depth` is carried by the query but
+/// not applied — references stay ids until DX.5.
+pub async fn published_page(
+    tx: &mut DeliveryTransaction,
+    environment: Uuid,
+    collection: &str,
+    definition: &ContentType,
+    query: &Query,
+    after: Option<&Position>,
+    generation: i64,
+) -> Result<PublishedPage, Error> {
+    let statement = published_statement(
+        environment,
+        collection,
+        generation,
+        definition,
+        query,
+        after,
+    )?;
+    let rows = bound(statement)
+        .fetch_all(&mut *tx.transaction)
+        .await
+        .map_err(DbError::Query)?;
+    let limit = usize::from(query.limit());
+    let more = rows.len() > limit;
+    let mut page_rows = Vec::with_capacity(limit);
+    for row in rows.iter().take(limit) {
+        page_rows.push(published(row)?);
+    }
+    let next_cursor = if more {
+        let last = page_rows.last().ok_or(DbError::Corrupt(
+            "a page says more without a row to continue from",
+        ))?;
+        let position =
+            position_of(last.entry_id, &last.content, query).map_err(DbError::Corrupt)?;
+        let token = query
+            .cursor(&position)
+            .map_err(|_| DbError::Corrupt("a page's own position doesn't fit the query"))?;
+        Some(token)
+    } else {
+        None
+    };
+    Ok(PublishedPage {
+        rows: page_rows,
+        next_cursor,
+    })
+}
+
+/// Whether `position`'s literals are ones their order-key fields could hold — the same
+/// check the statement builders run before any SQL exists. Exported so a caller whose
+/// execution sits behind a shared fill a refusal can't escape — the delivery route's
+/// cache, DX.4 — refuses a bad cursor up front, `position_mismatch` like the rest.
+pub fn check_position(
+    definition: &ContentType,
+    query: &Query,
+    position: &Position,
+) -> Result<(), Error> {
+    literals_fit(definition, &query.order(), position)
+}
+
+/// The statement bound with its arguments, ready to run. The text is built only here —
+/// audited — and every value and field name is a bind.
+fn bound(
+    statement: Statement,
+) -> sqlx::query::Query<'static, sqlx::Postgres, sqlx::postgres::PgArguments> {
+    let mut run = sqlx::query(sqlx::AssertSqlSafe(statement.text));
+    for arg in statement.args {
+        run = match arg {
+            Arg::Id(value) => run.bind(value),
+            Arg::OptId(value) => run.bind(value),
+            Arg::Text(value) => run.bind(value),
+            Arg::OptText(value) => run.bind(value),
+            Arg::Generation(value) | Arg::Rows(value) => run.bind(value),
+        };
+    }
+    run
+}
+
 /// One bound value of a translated query, in `$1…` order.
 #[derive(Debug, Clone, PartialEq)]
 enum Arg {
@@ -125,6 +219,8 @@ enum Arg {
     Text(String),
     /// Possibly-`NULL` text: a `null` boundary.
     OptText(Option<String>),
+    /// The generation a published read is pinned at.
+    Generation(i64),
     /// The row cap.
     Rows(i64),
 }
@@ -137,11 +233,10 @@ struct Statement {
     args: Vec<Arg>,
 }
 
-/// Builds the statement for `query`: scope and own-entries predicates, one `AND` leg per
-/// filter, the keyset predicate `after` decodes to, the ordering, and a `LIMIT` of
-/// `limit + 1` so the page knows whether a next cursor is due. Compared values and field
-/// names are arguments; a position value the field couldn't hold is refused like a cursor
-/// that doesn't fit.
+/// Builds the statement for `query` over each entry's current draft: scope and
+/// own-entries predicates, then the shared tail. Compared values and field names are
+/// arguments; a position value the field couldn't hold is refused like a cursor that
+/// doesn't fit.
 fn statement(
     project: Uuid,
     environment: Uuid,
@@ -162,24 +257,8 @@ fn statement(
         Arg::OptId(created_by),
     ]);
     let order = query.order();
-    // A position's field literals must be ones the field accepts, or the casts below
-    // would turn a hand-made cursor into a database error. `null` — the field not set —
-    // is always a boundary.
     if let Some(position) = &after {
-        for ((key, _), literal) in order.iter().zip(&position.values) {
-            match key {
-                OrderKey::Field(field) if literal != "null" => {
-                    fits(definition, field, literal)?;
-                }
-                OrderKey::EntryId => {
-                    let id = scalar(literal);
-                    Uuid::try_parse(&id).map_err(|_| {
-                        refused(format!("the entry-id position '{id}' is not a uuid"))
-                    })?;
-                }
-                OrderKey::Field(_) => {}
-            }
-        }
+        literals_fit(definition, &order, position)?;
     }
     text.push_str(
         "SELECT e.id, e.collection, e.created_at, e.created_by, e.updated_at, e.locale,
@@ -209,18 +288,89 @@ fn statement(
          WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
            AND ($4::uuid IS NULL OR e.created_by = $4)",
     );
+    tail(
+        &mut text,
+        &mut args,
+        &mut fields,
+        definition,
+        query,
+        after,
+        &order,
+        "e.id",
+    )?;
+    Ok(Statement { text, args })
+}
+
+/// The same statement over each entry's publication as of `generation` (DX.4): the
+/// projection's own columns from `publications`, pinned exactly as delivery's reads pin
+/// it — the interval open at the generation and never revoked — then the shared tail.
+/// The project is the transaction's context, as `colophon_delivery` reads it.
+fn published_statement(
+    environment: Uuid,
+    collection: &str,
+    generation: i64,
+    definition: &ContentType,
+    query: &Query,
+    after: Option<&Position>,
+) -> Result<Statement, Error> {
+    let mut text = String::with_capacity(1024);
+    let mut args: Vec<Arg> = Vec::new();
+    let mut fields: HashMap<&str, usize> = HashMap::new();
+    args.extend([
+        Arg::Id(environment),
+        Arg::Text(collection.to_owned()),
+        Arg::Generation(generation),
+    ]);
+    let order = query.order();
+    if let Some(position) = &after {
+        literals_fit(definition, &order, position)?;
+    }
+    text.push_str(
+        "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
+         p.content_hash, p.valid_from
+         FROM publications p
+         CROSS JOIN LATERAL (SELECT p.content::jsonb AS body) d
+         WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
+           AND p.environment_id = $1 AND p.collection = $2
+           AND p.valid_from <= $3 AND (p.valid_to IS NULL OR p.valid_to > $3)
+           AND p.revoked_in IS NULL",
+    );
+    tail(
+        &mut text,
+        &mut args,
+        &mut fields,
+        definition,
+        query,
+        after,
+        &order,
+        "p.entry_id",
+    )?;
+    Ok(Statement { text, args })
+}
+
+/// The statement's tail after the scope predicate: one `AND` leg per filter, the keyset
+/// predicate `after` decodes to, the ordering — `entry_id` naming the target table's
+/// own id column, a fixed spelling this module chooses, never input — and a `LIMIT` of
+/// `limit + 1` so the page knows whether a next cursor is due.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the statement's own parts, bundled"
+)]
+fn tail<'a>(
+    text: &mut String,
+    args: &mut Vec<Arg>,
+    fields: &mut HashMap<&'a str, usize>,
+    definition: &'a ContentType,
+    query: &'a Query,
+    after: Option<&'a Position>,
+    order: &'a [(OrderKey, Direction)],
+    entry_id: &'static str,
+) -> Result<(), Error> {
     for filter in query.filters() {
-        legs(&mut text, &mut args, &mut fields, definition, filter)?;
+        legs(text, args, fields, definition, filter)?;
     }
     if let Some(position) = &after {
-        keyset(
-            &mut text,
-            &mut args,
-            &mut fields,
-            definition,
-            &order,
-            position,
-        )?;
+        keyset(text, args, fields, definition, order, position, entry_id)?;
     }
     text.push_str(" ORDER BY ");
     for (index, (key, direction)) in order.iter().enumerate() {
@@ -230,21 +380,46 @@ fn statement(
         match key {
             OrderKey::Field(field_id) => {
                 let field = declared(definition, field_id)?;
-                let name = name_of(&mut args, &mut fields, field_id);
+                let name = name_of(args, fields, field_id);
                 let cast = cast(&field.kind);
                 let (direction, nulls) = ordered(*direction);
                 let _ = write!(text, "(d.body ->> ${name}){cast} {direction} NULLS {nulls}");
             }
             OrderKey::EntryId => {
                 let (direction, _) = ordered(*direction);
-                let _ = write!(text, "e.id {direction}");
+                let _ = write!(text, "{entry_id} {direction}");
             }
         }
     }
     let rows = args.len() + 1;
     args.push(Arg::Rows(i64::from(query.limit()) + 1));
     let _ = write!(text, " LIMIT ${rows}");
-    Ok(Statement { text, args })
+    Ok(())
+}
+
+/// The check both statement builders run before any SQL exists: each of `position`'s
+/// field literals is a value the field accepts — `null`, the field not set, is always a
+/// boundary — and an entry-id boundary is a uuid, so a hand-made cursor can't reach a
+/// cast and become a database error.
+fn literals_fit(
+    definition: &ContentType,
+    order: &[(OrderKey, Direction)],
+    position: &Position,
+) -> Result<(), Error> {
+    for ((key, _), literal) in order.iter().zip(&position.values) {
+        match key {
+            OrderKey::Field(field) if literal != "null" => {
+                fits(definition, field, literal)?;
+            }
+            OrderKey::EntryId => {
+                let id = scalar(literal);
+                Uuid::try_parse(&id)
+                    .map_err(|_| refused(format!("the entry-id position '{id}' is not a uuid")))?;
+            }
+            OrderKey::Field(_) => {}
+        }
+    }
+    Ok(())
 }
 
 /// One filter's `AND` leg: the comparison its operator makes on the field's stored
@@ -303,6 +478,7 @@ fn keyset<'a>(
     definition: &'a ContentType,
     order: &'a [(OrderKey, Direction)],
     position: &Position,
+    entry_id: &'static str,
 ) -> Result<(), Error> {
     text.push_str(" AND (");
     for (index, ((key, direction), literal)) in order.iter().zip(&position.values).enumerate() {
@@ -311,10 +487,10 @@ fn keyset<'a>(
         }
         text.push('(');
         for ((earlier, _), earlier_literal) in order.iter().zip(&position.values).take(index) {
-            let leg = same(args, fields, definition, earlier, earlier_literal)?;
+            let leg = same(args, fields, definition, earlier, earlier_literal, entry_id)?;
             let _ = write!(text, "{leg} AND ");
         }
-        let leg = beyond(args, fields, definition, key, literal, *direction)?;
+        let leg = beyond(args, fields, definition, key, literal, *direction, entry_id)?;
         text.push_str(&leg);
         text.push(')');
     }
@@ -330,6 +506,7 @@ fn same<'a>(
     definition: &'a ContentType,
     key: &'a OrderKey,
     literal: &str,
+    entry_id: &'static str,
 ) -> Result<String, Error> {
     match key {
         OrderKey::Field(field_id) => {
@@ -342,7 +519,7 @@ fn same<'a>(
         }
         OrderKey::EntryId => {
             let value = boundary(args, literal);
-            Ok(format!("e.id = ${value}::uuid"))
+            Ok(format!("{entry_id} = ${value}::uuid"))
         }
     }
 }
@@ -357,6 +534,7 @@ fn beyond<'a>(
     key: &'a OrderKey,
     literal: &str,
     direction: Direction,
+    entry_id: &'static str,
 ) -> Result<String, Error> {
     match key {
         OrderKey::Field(field_id) => {
@@ -383,7 +561,7 @@ fn beyond<'a>(
                 Direction::Asc => ">",
                 Direction::Desc => "<",
             };
-            Ok(format!("e.id {comparison} ${value}::uuid"))
+            Ok(format!("{entry_id} {comparison} ${value}::uuid"))
         }
     }
 }
@@ -520,11 +698,25 @@ fn live(row: &sqlx::postgres::PgRow) -> Result<Option<(Uuid, i64)>, DbError> {
     })
 }
 
+/// One row of the published page's `SELECT` as the [`Published`] delivery's views take —
+/// the same columns [`crate::delivery::DeliveryTransaction::list`] reads.
+fn published(row: &sqlx::postgres::PgRow) -> Result<Published, DbError> {
+    Ok(Published {
+        entry_id: row.try_get("entry_id").map_err(DbError::Query)?,
+        revision_id: row.try_get("revision_id").map_err(DbError::Query)?,
+        collection: row.try_get("collection").map_err(DbError::Query)?,
+        title: row.try_get("title").map_err(DbError::Query)?,
+        slug: row.try_get("slug").map_err(DbError::Query)?,
+        content: row.try_get("content").map_err(DbError::Query)?,
+        content_hash: row.try_get("content_hash").map_err(DbError::Query)?,
+        valid_from: row.try_get("valid_from").map_err(DbError::Query)?,
+    })
+}
+
 /// The position the page's last row stands on: one canonical literal per order key —
 /// `null` where the entry doesn't set the field — ready for [`Query::cursor`] to seal.
-fn position_of(draft: &Draft, query: &Query) -> Result<Position, &'static str> {
-    let document: Value =
-        serde_json::from_str(&draft.content).map_err(|_| "a draft's stored content isn't JSON")?;
+fn position_of(entry: Uuid, content: &str, query: &Query) -> Result<Position, &'static str> {
+    let document: Value = serde_json::from_str(content).map_err(|_| "stored content isn't JSON")?;
     let mut values = Vec::with_capacity(query.order().len());
     for (key, _) in query.order() {
         values.push(match key {
@@ -533,7 +725,7 @@ fn position_of(draft: &Draft, query: &Query) -> Result<Position, &'static str> {
                     .map_err(|_| "a stored field doesn't write as JSON")?,
                 None => "null".to_owned(),
             },
-            OrderKey::EntryId => serde_json::to_string(&draft.entry_id.to_string())
+            OrderKey::EntryId => serde_json::to_string(&entry.to_string())
                 .map_err(|_| "an entry id doesn't write as JSON")?,
         });
     }
@@ -795,6 +987,14 @@ mod tests {
                 }
                 other => panic!("expected a refusal, got {other:?}"),
             }
+            // `check_position`, the standalone form, refuses the same before SQL exists.
+            let query = checked(&document);
+            match check_position(&definition(), &query, &position) {
+                Err(Error::Cursor(refusal)) => {
+                    assert_eq!(refusal.code, "position_mismatch");
+                }
+                other => panic!("expected a refusal, got {other:?}"),
+            }
         }
         // And the entry id must be a uuid.
         let bad = boundary(&["\"2026-10-25T14:30:00Z\"", "\"not-a-uuid\""]);
@@ -805,5 +1005,104 @@ mod tests {
             Err(Error::Cursor(refusal)) => assert_eq!(refusal.code, "position_mismatch"),
             other => panic!("expected a refusal, got {other:?}"),
         }
+    }
+
+    /// The statement a document builds over the published projection.
+    fn built_published(value: &Value, after: Option<&Position>) -> Result<Statement, Error> {
+        let query = checked(value);
+        published_statement(ENVIRONMENT, "posts", 7, &definition(), &query, after)
+    }
+
+    #[test]
+    fn the_published_page_reads_the_projection_pinned_as_delivery_pins_it() {
+        let stmt = built_published(
+            &json!({
+                "filters": [{"field": "section", "op": "eq", "value": "News"}],
+                "sort": [{"field": "publish_at", "dir": "desc"}]
+            }),
+            None,
+        )
+        .expect("builds");
+        // The scope: the project from the transaction's context, the pin exactly as
+        // delivery's own reads spell it — the interval open at the generation and never
+        // revoked.
+        let (from, _) = stmt.text.split_once(" FROM ").expect("the projection");
+        assert_eq!(
+            from.trim_end(),
+            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,\n         p.content_hash, p.valid_from"
+        );
+        assert!(
+            stmt.text.contains(
+                "WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
+           AND p.environment_id = $1 AND p.collection = $2
+           AND p.valid_from <= $3 AND (p.valid_to IS NULL OR p.valid_to > $3)
+           AND p.revoked_in IS NULL"
+            ),
+            "{}",
+            stmt.text
+        );
+        // The filter's leg, the ordering's entry-id tie-break on the projection's own id,
+        // and the bound arguments: environment, collection, generation, then the filter's
+        // name and value, the sort's name, and the row cap.
+        assert_eq!(
+            stmt.text.rsplit_once(" ORDER BY ").expect("order").1,
+            "(d.body ->> $6)::timestamptz DESC NULLS FIRST, p.entry_id DESC LIMIT $7"
+        );
+        assert_eq!(
+            stmt.args,
+            [
+                Arg::Id(ENVIRONMENT),
+                Arg::Text("posts".to_owned()),
+                Arg::Generation(7),
+                Arg::Text("section".to_owned()),
+                Arg::Text("\"News\"".to_owned()),
+                Arg::Text("publish_at".to_owned()),
+                Arg::Rows(21),
+            ]
+        );
+    }
+
+    /// The part after the published statement's scope predicate: filters' and the
+    /// keyset's legs, like [`predicate`] for the draft.
+    fn published_predicate(text: &str) -> &str {
+        let (where_part, _) = text.rsplit_once(" ORDER BY ").expect("the order");
+        where_part
+            .split("p.revoked_in IS NULL")
+            .nth(1)
+            .expect("the scope predicate")
+    }
+
+    #[test]
+    fn the_published_keyset_is_the_drafts_own_shape_on_the_projections_id() {
+        let id = format!("\"{ENTRY}\"");
+        let position = boundary(&["\"2026-10-25T14:30:00Z\"", &id]);
+        let stmt = built_published(
+            &json!({"sort": [{"field": "publish_at", "dir": "desc"}]}),
+            Some(&position),
+        )
+        .expect("builds");
+        assert_eq!(
+            published_predicate(&stmt.text),
+            concat!(
+                " AND ((((d.body ->> $4)::timestamptz < $5::timestamptz OR ",
+                "((d.body ->> $4)::timestamptz IS NOT NULL AND $5 IS NULL))) ",
+                "OR ((d.body ->> $4)::timestamptz IS NOT DISTINCT FROM $6::timestamptz AND ",
+                "p.entry_id < $7::uuid))"
+            ),
+            "{}",
+            stmt.text
+        );
+        assert_eq!(
+            stmt.args[..stmt.args.len() - 1],
+            [
+                Arg::Id(ENVIRONMENT),
+                Arg::Text("posts".to_owned()),
+                Arg::Generation(7),
+                Arg::Text("publish_at".to_owned()),
+                Arg::OptText(Some("2026-10-25T14:30:00Z".to_owned())),
+                Arg::OptText(Some("2026-10-25T14:30:00Z".to_owned())),
+                Arg::OptText(Some(ENTRY.to_owned())),
+            ]
+        );
     }
 }

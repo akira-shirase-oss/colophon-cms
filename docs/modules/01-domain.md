@@ -205,8 +205,12 @@ invariant. Production adapters and the simulator both run this code unchanged.
   spell across mixed directions.
 - Built in step DX.3 (D-103): the same `Query` runs over each entry's current draft —
   `colophon_db::query::page` translates it to one statement (docs/modules/02-db.md, "Query translation") and
-  `POST {P}/collections/{collection}/entries/query` serves it (docs/modules/04-api.md). The draft perspective
-  only; published querying and reference expansion are later steps.
+  `POST {P}/collections/{collection}/entries/query` serves it (docs/modules/04-api.md).
+- Built in step DX.4 (D-103, D-105): the published perspective. `colophon_db::query::published_page` runs the
+  same `Query` and `Position` over `publications` — the interval open at a generation, never revoked — and
+  `POST /content/v1/{project}/{environment}/{collection}/query` serves it to anyone, echoing `applied` and
+  keying the delivery cache on the query's own hash (docs/modules/06-delivery.md). `depth` validates and
+  echoes but does not apply: references stay ids until DX.5 populates them.
 - `fields` only narrows the returned document — never widens it — so it may name any declared field and carries no
   permission risk; indexing governs filters and sorts, not selection.
 - Schema side: `"index": true` opts a top-level field of an indexable kind (`FieldKind::may_be_indexed`) into

@@ -15,7 +15,9 @@ pub const MAX_PAGE: i64 = 100;
 /// A read-only transaction as `colophon_delivery`, in one project's context. The only way to get
 /// one is [`begin`].
 pub struct DeliveryTransaction {
-    transaction: Transaction<'static, Postgres>,
+    /// The transaction itself: `SET LOCAL ROLE colophon_delivery` with `app.project_id` set.
+    /// `pub(crate)` so the query translator (`crate::query`) runs its page through it.
+    pub(crate) transaction: Transaction<'static, Postgres>,
 }
 
 /// An environment as delivery sees it.
