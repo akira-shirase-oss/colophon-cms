@@ -85,6 +85,17 @@ impl TestDb {
         .expect("drop database");
     }
 
+    /// A `LISTEN` connection on the application login, for the change-hint tests (D-108).
+    pub(crate) async fn listener(&self) -> colophon_db::PgListener {
+        colophon_db::PgListener::connect(&format!(
+            "postgres://colophon_app:colophon-dev@{}/{}",
+            host(),
+            self.name
+        ))
+        .await
+        .expect("a listen connection")
+    }
+
     /// Records a sign-in for `subject` and returns the identity.
     pub(crate) async fn person(&self, subject: &str) -> Uuid {
         identity::record_sign_in(&self.app, "http://issuer.test", subject, Some(subject))

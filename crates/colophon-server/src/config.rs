@@ -180,6 +180,13 @@ pub struct Config {
     /// `COLOPHON_TRUSTED_PROXIES` (comma-separated addresses or networks whose
     /// `X-Forwarded-For` names the client; default none).
     pub admission: colophon_api::admission::AdmissionSettings,
+    /// Live-hint stream bounds (D-108): `COLOPHON_EVENTS_PER_CREDENTIAL` (8),
+    /// `COLOPHON_EVENTS_PER_PROJECT` (256) and `COLOPHON_EVENTS_MAX_STREAMS` (2048) cap the
+    /// streams; `COLOPHON_EVENTS_CHANNEL_CAPACITY` (256) buffers hints per project;
+    /// `COLOPHON_EVENTS_KEEPALIVE_MS` (15 s) warms idle connections;
+    /// `COLOPHON_EVENTS_LIFETIME_MS` (30 min) ends a stream; and
+    /// `COLOPHON_EVENTS_REVALIDATE_MS` (5 min; `0` disables) re-runs the membership check.
+    pub events: colophon_api::events::EventLimits,
 }
 
 /// Whether `text` can name a worker's location: what destinations.location accepts.
@@ -407,6 +414,31 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         })
     }
 
+    /// The rate limits (D-076).
+    fn admission(&mut self) -> colophon_api::admission::AdmissionSettings {
+        colophon_api::admission::AdmissionSettings {
+            per_address: self.rate("COLOPHON_RATE_LIMIT_PER_ADDRESS", "300/600"),
+            per_credential: self.rate("COLOPHON_RATE_LIMIT_PER_CREDENTIAL", "150/300"),
+            delivery_per_address: self.rate("COLOPHON_RATE_LIMIT_DELIVERY", "1000/2000"),
+            trusted_proxies: self.prefixes("COLOPHON_TRUSTED_PROXIES"),
+        }
+    }
+
+    /// The live-hint stream bounds (D-108); `COLOPHON_EVENTS_REVALIDATE_MS` of `0` turns the
+    /// membership re-check off.
+    fn events(&mut self) -> colophon_api::events::EventLimits {
+        let revalidate = self.ranged("COLOPHON_EVENTS_REVALIDATE_MS", 300_000, 0..=3_600_000);
+        colophon_api::events::EventLimits {
+            per_credential: self.ranged("COLOPHON_EVENTS_PER_CREDENTIAL", 8, 1..=1_024),
+            per_project: self.ranged("COLOPHON_EVENTS_PER_PROJECT", 256, 1..=16_384),
+            max_streams: self.ranged("COLOPHON_EVENTS_MAX_STREAMS", 2_048, 1..=65_536),
+            channel_capacity: self.ranged("COLOPHON_EVENTS_CHANNEL_CAPACITY", 256, 8..=8_192),
+            keep_alive: self.millis("COLOPHON_EVENTS_KEEPALIVE_MS", 15_000, 1_000..=120_000),
+            lifetime: self.millis("COLOPHON_EVENTS_LIFETIME_MS", 1_800_000, 1_000..=86_400_000),
+            revalidate: (revalidate > 0).then(|| Duration::from_millis(revalidate)),
+        }
+    }
+
     /// A secret: the value is never echoed, not even in problems.
     fn secret(&mut self, key: &str, required: bool) -> Option<Secret> {
         let value = self.raw(key);
@@ -458,12 +490,7 @@ impl Config {
         let worker_slots = env.ranged("COLOPHON_WORKER_SLOTS", 8, 1..=64);
         let worker_attempt = env.millis("COLOPHON_WORKER_ATTEMPT_MS", 10_000, 100..=60_000);
         let worker_db_connections = env.ranged("COLOPHON_WORKER_DB_CONNECTIONS", 4, 1..=100);
-        let admission = colophon_api::admission::AdmissionSettings {
-            per_address: env.rate("COLOPHON_RATE_LIMIT_PER_ADDRESS", "300/600"),
-            per_credential: env.rate("COLOPHON_RATE_LIMIT_PER_CREDENTIAL", "150/300"),
-            delivery_per_address: env.rate("COLOPHON_RATE_LIMIT_DELIVERY", "1000/2000"),
-            trusted_proxies: env.prefixes("COLOPHON_TRUSTED_PROXIES"),
-        };
+        let admission = env.admission();
         let worker_location = env
             .raw("COLOPHON_WORKER_LOCATION")
             .unwrap_or_else(|| "local".to_owned());
@@ -478,6 +505,7 @@ impl Config {
         // tests need and as rarely as an hourly pass.
         let asset_expiry = env.millis("COLOPHON_ASSET_EXPIRY_MS", 86_400_000, 1..=31_536_000_000);
         let asset_sweep = env.millis("COLOPHON_ASSET_SWEEP_MS", 300_000, 50..=3_600_000);
+        let events = env.events();
 
         if probe_timeout >= probe_interval {
             env.problems.push(
@@ -529,6 +557,7 @@ impl Config {
                 asset_expiry,
                 asset_sweep,
                 admission,
+                events,
             })
         } else {
             Err(ConfigError {

@@ -6,7 +6,10 @@ use axum::extract::FromRef;
 use colophon_auth::OidcClient;
 use colophon_db::PgPool;
 
-use crate::{BuildInfo, ContentTypeCache, DeliveryCache, Readiness, admission::SharedAdmission};
+use crate::{
+    BuildInfo, ContentTypeCache, DeliveryCache, Readiness, admission::SharedAdmission,
+    events::EventBus,
+};
 
 /// Session lifetimes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +50,9 @@ pub struct Services {
     /// The object store uploads are quarantined in and served from (07-media); `None` without
     /// `COLOPHON_S3_*`, and upload endpoints say so.
     pub assets: Option<colophon_media::Shared>,
+    /// The live-hint bus `{P}/events` streams subscribe to (D-108), fed by the server's own
+    /// `LISTEN` connection.
+    pub events: Arc<EventBus>,
 }
 
 /// The router's state. Cloning is two reference-count increments and a copy.

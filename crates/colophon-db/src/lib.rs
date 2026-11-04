@@ -16,6 +16,7 @@ pub mod content_types;
 pub mod delivery;
 pub mod destinations;
 pub mod entries;
+pub mod events;
 pub mod idempotency;
 pub mod identity;
 pub mod jobs;
@@ -39,7 +40,7 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 
-pub use sqlx::postgres::{PgConnection, PgPool};
+pub use sqlx::postgres::{PgConnection, PgListener, PgPool};
 pub use sqlx::{Postgres, Transaction};
 
 /// The schema migrations, embedded at compile time from `migrations/`.

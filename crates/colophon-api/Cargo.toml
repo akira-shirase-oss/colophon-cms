@@ -21,6 +21,7 @@ colophon-domain.workspace = true
 colophon-media.workspace = true
 # The build stamp `/version` reports; the server binary makes it (D-062).
 colophon-version.workspace = true
+futures-util = { workspace = true, features = ["alloc"] }
 http-body.workspace = true
 http-body-util.workspace = true
 object_store.workspace = true

@@ -88,6 +88,7 @@ Evidence: generation marker or response hash, location, time, errors  →  deliv
 | Asset read (media M.1) | Reader → CDN → `/media/v1/{project}/{env}/{asset}` → stream `public/{project}/{env}/{asset}` straight from the object store → object existence is proof of verification; the detected `Content-Type` is read from object attributes; `immutable` caching, `nosniff`, ETag — no sign-in, no asset-row read |
 | Pinned read (time travel) | `/content/v1/…?generation=N` → publication-history intervals map each entry to the revision live at N → revocation rules still apply |
 | Preview | Studio issues a 15-minute capability scoped to the exact revision set → separate preview origin validates it on every fetch → `no-store`, `noindex` |
+| Live hint (E3, D-108) | Studio → `GET {P}/events` (SSE) ← committed writes `pg_notify` → the server's own `LISTEN` connection → per-project bounded broadcast → `change`/`resync` hint (kind and scope only, never content) → the client refetches through the authorized API |
 
 ## Process topology
 
