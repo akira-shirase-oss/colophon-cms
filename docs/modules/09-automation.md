@@ -74,9 +74,10 @@ a zero-unauthorized-action evaluation gate, X12, L08 and F11.
   (D-068), as a client of the HTTP API, so it shares the API's authorization literally; the CLI's versioned
   `data`/`error` envelope and its `colophon mcp` entry point are built (D-119).
 
-### MCP adapter (spec §11; D-068)
+### MCP adapter (spec §11; D-068, D-121)
 
-**Built: local stdio.** `crates/colophon-mcp`, a library and the `colophon-mcp` binary, speaks MCP **2025-11-25** on
+**Built: local stdio and remote Streamable HTTP (D-121, below).** `crates/colophon-mcp`, a library and the
+`colophon-mcp` binary, speaks MCP **2025-11-25** on
 stdin and stdout: one JSON-RPC 2.0 message per line, no batches (MCP removed them in 2025-06-18), logs on stderr only.
 It answers `initialize`, `ping`, `tools/list` and `tools/call`; `notifications/cancelled` stops a request. It always
 answers `initialize` with 2025-11-25, the one version it speaks.
@@ -147,8 +148,10 @@ their tests), rather than the official Rust SDK. `rmcp` 3.8.0 (checked on crates
 2025-11-25, but its default server features pull in `schemars`, `rmcp-macros`, `pastey` and a second `base64`, it
 always needs `chrono`, and it went from 3.5.0 to 3.8.0 in four weeks. This server uses four methods and two
 notifications; owning them puts the frame limit, the error codes and the "bad arguments are tool errors" rule where our
-tests see them, and adds no external dependency (the lockfile gains only the crate itself). Revisit when remote MCP is
-built: the SDK's Streamable HTTP and authorization support may then be worth its weight.
+tests see them, and adds no external dependency (the lockfile gains only the crate itself). Remote MCP is now built
+on the same layer (D-121): the SDK's Streamable HTTP and authorization support was still not worth its weight — the
+transport's part beyond the session (a minted id, in-flight cancellation, idle expiry, the caps) is a small registry,
+not an SDK.
 
 **Built: a route that tells a caller its own permissions.** `GET {P}/permissions`, answered for people and API tokens
 alike (it sits under `/environments/`, where tokens are allowed): `{"data": {"kind": "person" | "token", "role",
@@ -164,14 +167,48 @@ gets the same adapter it gets from `colophon-mcp`; nothing about the D-106 bound
 MCP binary's own (0 clean close, 1 session failure, 2 bad configuration), proved by the `tests/cli.rs` session:
 `initialize` answering 2025-11-25, `tools/list` the eighteen tools, exit 0 when the host closes stdin.
 
+**Built: remote MCP — Streamable HTTP on the API itself (D-121).** `POST|DELETE {P}/mcp` speaks the 2025-11-25
+Streamable HTTP transport, where `{P}` is `/api/v1/projects/{project}/environments/{environment}` — any
+environment slug, not only stdio's `production`. The same `colophon-mcp` crate serves it: the crate is refactored
+around a `Backend` the HTTP client `Api` and the API's in-process `Dispatch` both implement, so stdio's session and
+`remote::RemoteSession` share the handshake, the `tools/call` parser, the work executor, the in-flight semaphore
+and the error mapping — one implementation, and `tests/mcp.rs`'s parity case proves `tools/list`, `tools/call`
+answers and refusal bytes identical on both transports.
+
+- **The transport's shape.** `POST` carries one JSON-RPC message: a request's response is `200
+  `application/json``, a notification or a stray response is `202` with no body, malformed or oversized
+  (2 MiB) input is `400`. The first `initialize` mints an `Mcp-Session-Id` (a UUID — visible ASCII, as the
+  transport requires) that every later request carries; an unknown, malformed, expired or other token's id is
+  `404`. `GET` is not offered — the server never initiates messages, so no SSE stream exists and
+  `Last-Event-ID` is meaningless and ignored, exactly as `{P}/events` treats it (D-108) — and the route's own
+  `405` is the sanctioned answer. `DELETE` ends a session early; its in-flight requests answer
+  `request cancelled` (-32800), as they do on idle expiry or `notifications/cancelled` by id.
+- **The door checks.** A present `Origin` must be trusted exactly (the transport's DNS-rebinding check);
+  `MCP-Protocol-Version` must name 2025-11-25 — required once a session exists, refused outright when wrong;
+  `Accept` must allow `application/json`, the only answer type the endpoint produces.
+- **Who may call it.** A project API token and nothing else: the `SignedIn` extractor does the credential
+  work — a revoked or expired token is 401, another project is 404 — and a browser session or a personal
+  access token is 403 `api_token_required` (AU2). A session is bound to the token id that minted it and every
+  request re-proves the token in Postgres rather than trusting the session's age, so revoking ends what its
+  sessions could do.
+- **Dispatch, never authorization.** A tool call runs in-process through `crate::routes(state)` with the same
+  `Authorization` header the caller sent, the path under the `{P}` the endpoint was addressed on — same
+  routes, same admission limits, same policy an agent over the network meets; the endpoint itself holds no
+  authorization beyond "is this the token's own session".
+- **Bounds (invariant 4).** `COLOPHON_MCP_PER_TOKEN` (8), `COLOPHON_MCP_PER_PROJECT` (256) and
+  `COLOPHON_MCP_MAX_SESSIONS` (2,048) are checked before a session is kept — the token's cap is 429
+  `rate_limited`, the project's or server's 503 — and `COLOPHON_MCP_IDLE_MS` (30 min) of no touch expires a
+  session, swept on every registry operation so a full table can never hold only dead entries. Sessions live
+  in memory, as D-108's streams do: no migration, no persistence to lose sync with Postgres.
+
 **Not built yet (P5):**
-- Remote MCP: Streamable HTTP with the 2025-11-25 authorization requirements and audience validation.
 - Service-account quotas beyond R.4's tokens: provider `tokens`/`cost` budgets (the substrate itself
   is built, D-113; the request-quota consumer landed with D-118).
 - `validate_changeset` and `job_status` (releases and receipts are `list_releases`/`get_release`), and unpublish
   requests.
-- Environments other than `production` through the MCP adapter.
-- Testbed and k6 coverage for the MCP server itself: it adds no API route, and the routes it calls keep their own.
+- Environments other than `production` over stdio (remote serves the `{environment}` its path names).
+- Testbed and k6 coverage for the MCP server itself: the remote endpoint's routes are already covered by
+  `tests/mcp.rs`; the routes the tools call keep their own.
 
 ### Bulk work (spec §11, §17)
 - A bulk job is a manifest of exact IDs and base revisions.
@@ -306,12 +343,23 @@ one boundary, and a person reads back what the run left.
 
 - The MCP server (D-068): unit tests for JSON-RPC framing (malformed JSON, batches, ids, oversized lines, unknown
   methods and tools, the `initialize` handshake and requests before it), tool argument validation, error mapping and
-  configuration (`cargo test -p colophon-mcp`); and `crates/colophon-mcp/tests/stack.rs` (ignored; the local stack and
+  configuration (`cargo test -p colophon-mcp`, the `remote.rs` session unit tests beside them); and
+  `crates/colophon-mcp/tests/stack.rs` (ignored; the local stack and
   `colophon-server`), which drives the binary over stdio with a custom, a read-only and a full-access token: a draft, a
   refused stale save naming the current revision, a create retried with the same key returning the same entry, a
   publish request and its review request; no write tools for the read-only token and its writes refused by the API;
   no approving or publishing tool for anyone; and a wrong `COLOPHON_PROJECT` or a token revoked mid-session said
   plainly (`-32001`, and 401 on the next call: R.4's kill switch holds through MCP).
+- The remote MCP endpoint (D-121): the registry's unit tests in `colophon-api`'s `mcp.rs` (the caps applied before a
+  session is kept, a session answering only to its own token, project and environment, the idle sweep) and
+  `crates/colophon-server/tests/mcp.rs` (ignored, serial; the stack): the whole lifecycle over Streamable HTTP —
+  handshake, the minted `Mcp-Session-Id`, the eighteen tools, a draft and a proposal through `tools/call`, the
+  `-32602` boundary on privileged names, `DELETE` and the 404 after it; the credential boundary — person session and
+  personal token refused `api_token_required`, another project's token 404, a session refusing a token that didn't
+  mint it, revocation 401; the transport's door checks — hostile `Origin` 403, `Accept` that can't take
+  `application/json` 400, missing or wrong `MCP-Protocol-Version` 400, malformed JSON-RPC `-32700`, a request before
+  `initialize` `-32002`, `GET` 405; the per-token cap at `COLOPHON_MCP_PER_TOKEN`; and byte-identical parity with a
+  stdio `colophon-mcp` session on the same token.
 - X12 and F11; L08's stored run is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json`
   (`perf/k6/noisy-agent.js`: two phases in one run — editorial traffic alone, then the same traffic
   beside a 60-a-minute token attempting ~600/s and an editor in a second project; the agent was 99.7%
@@ -328,7 +376,8 @@ one boundary, and a person reads back what the run left.
 1. Service accounts, quotas and the kill switch (with [auth](03-auth.md)).
 2. Typed tools over the CLI JSON contract.
 3. Bulk manifests and budget reservations.
-4. The MCP adapter. Local stdio is built (D-068), ahead of 1 to 3, on R.4's API tokens; remote MCP waits for 3.
+4. The MCP adapter. Local stdio is built (D-068), ahead of 1 to 3, on R.4's API tokens; remote MCP — Streamable
+   HTTP on `{P}/mcp` — is built too (D-121), on the same crate and the same tokens.
 5. The optional AI assistant, last and off by default.
 
 ## Open decisions

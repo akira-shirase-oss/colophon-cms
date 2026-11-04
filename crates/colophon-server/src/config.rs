@@ -189,6 +189,10 @@ pub struct Config {
     /// `COLOPHON_EVENTS_LIFETIME_MS` (30 min) ends a stream; and
     /// `COLOPHON_EVENTS_REVALIDATE_MS` (5 min; `0` disables) re-runs the membership check.
     pub events: colophon_api::events::EventLimits,
+    /// Remote-MCP session bounds (D-121): `COLOPHON_MCP_PER_TOKEN` (8),
+    /// `COLOPHON_MCP_PER_PROJECT` (256) and `COLOPHON_MCP_MAX_SESSIONS` (2048) cap the
+    /// sessions; `COLOPHON_MCP_IDLE_MS` (30 min) forgets one untouched for that long.
+    pub mcp: colophon_api::mcp::Limits,
 }
 
 /// Whether `text` can name a worker's location: what destinations.location accepts.
@@ -444,6 +448,16 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         }
     }
 
+    /// The remote-MCP session bounds (D-121).
+    fn mcp(&mut self) -> colophon_api::mcp::Limits {
+        colophon_api::mcp::Limits {
+            per_token: self.ranged("COLOPHON_MCP_PER_TOKEN", 8, 1..=1_024),
+            per_project: self.ranged("COLOPHON_MCP_PER_PROJECT", 256, 1..=16_384),
+            max_sessions: self.ranged("COLOPHON_MCP_MAX_SESSIONS", 2_048, 1..=65_536),
+            idle: self.millis("COLOPHON_MCP_IDLE_MS", 1_800_000, 60_000..=86_400_000),
+        }
+    }
+
     /// A secret: the value is never echoed, not even in problems.
     fn secret(&mut self, key: &str, required: bool) -> Option<Secret> {
         let value = self.raw(key);
@@ -511,6 +525,7 @@ impl Config {
         let asset_expiry = env.millis("COLOPHON_ASSET_EXPIRY_MS", 86_400_000, 1..=31_536_000_000);
         let asset_sweep = env.millis("COLOPHON_ASSET_SWEEP_MS", 300_000, 50..=3_600_000);
         let events = env.events();
+        let mcp = env.mcp();
 
         if probe_timeout >= probe_interval {
             env.problems.push(
@@ -563,6 +578,7 @@ impl Config {
                 asset_sweep,
                 admission,
                 events,
+                mcp,
             })
         } else {
             Err(ConfigError {

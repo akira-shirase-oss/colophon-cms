@@ -443,8 +443,15 @@ the result file and fails the run on; the stored run
 `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json` shows the agent
 99.7% refused with `Retry-After`, editorial p95 x1.83 of its baseline and project-B's
 x1.86 of its own) ·
-not built: remote MCP with its
-authorization, provider `tokens`/`cost` budgets, `content import` and
+remote MCP (built: D-121 — `POST|DELETE {P}/mcp` on the API speaks MCP's Streamable HTTP transport, the same
+`colophon-mcp` session logic as stdio over a shared `Backend`; a project API token is the only credential —
+a person's is 403 `api_token_required`, another project's 404 — sessions are minted on `initialize`, bounded
+per token (429), project and server (503), expire idle and cancel their in-flight requests on `DELETE` or
+expiry; a tool's call is dispatched in-process through the server's own router under the same token, so
+dispatch is never authorization and the D-106 boundary is unchanged, proved in `tests/mcp.rs` by the
+lifecycle, the credential refusals, the transport's `Origin`/`Accept`/protocol-version door checks and
+byte-identical parity with stdio) ·
+not built: provider `tokens`/`cost` budgets, `content import` and
 `export`. The proof gate is met — X12's resume proof is in
 `tests/bulk.rs`, the eval gate's stored run is `perf/results/2026-11-04T141109.623685Z-evals.json`, and
 L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json`.

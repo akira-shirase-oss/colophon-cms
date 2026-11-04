@@ -25,8 +25,8 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     AppState, BuildInfo, assets, audit, auth, bulk, changesets, collaboration, components,
-    content_types, delivery, destinations, device, entries, graphql, health, members, migrations,
-    projects, receipts, rich_text, roles, schedules, setup, tokens, version,
+    content_types, delivery, destinations, device, entries, graphql, health, mcp, members,
+    migrations, projects, receipts, rich_text, roles, schedules, setup, tokens, version,
 };
 
 /// A verb Colophon's routes use. Naming them in a small enum keeps the table total: the
@@ -187,6 +187,9 @@ enum Security {
     Person,
     /// A browser session only (device approval happens from a signed-in browser).
     Session,
+    /// A project API token only — `{P}/mcp` (D-121). People are refused, whichever credential
+    /// they carry: agents authenticate as agents, never as people (AU2).
+    ApiToken,
 }
 
 /// What the document says about one operation.
@@ -1196,6 +1199,126 @@ pub(crate) static TABLE: &[Route] = &[
                 ..MIN
             },
         )],
+    ),
+    route(
+        (P, "/mcp"),
+        &[
+            op(
+                Verb::Post,
+                |f| on(f, mcp::post),
+                OpDoc {
+                    id: "mcpPost",
+                    summary: "One JSON-RPC message on the remote-MCP session (D-121)",
+                    tag: "mcp",
+                    security: Security::ApiToken,
+                    headers: &[
+                        header_maybe(
+                            "mcp-session-id",
+                            Kind::Uuid,
+                            "the session `initialize` minted; required on every message after it",
+                        ),
+                        header_maybe(
+                            "mcp-protocol-version",
+                            Kind::Str,
+                            "`2025-11-25`; required once a session exists",
+                        ),
+                        header_maybe(
+                            "origin",
+                            Kind::Str,
+                            "when present it must be an origin this server trusts, exactly — the transport's DNS-rebinding check",
+                        ),
+                    ],
+                    body: Some(json("McpMessage")),
+                    ok: Res {
+                        status: 200,
+                        shape: Shape::It("McpResponse"),
+                        headers: &["Mcp-Session-Id"],
+                        media: "",
+                        note: "the request's own JSON-RPC response; `Mcp-Session-Id` rides on the `initialize` answer only",
+                    },
+                    also: Some(ok(
+                        202,
+                        Shape::Empty,
+                        "a notification or a stray response — accepted, nothing to answer",
+                    )),
+                    extra: &[
+                        refusal(
+                            400,
+                            "bad_request",
+                            "not acceptable JSON-RPC, or `MCP-Protocol-Version`/`Accept` failed the transport's checks",
+                        ),
+                        refusal(
+                            403,
+                            "api_token_required",
+                            "a person's credential — a browser session or a personal access token; agents sign in as project API tokens",
+                        ),
+                        refusal(
+                            403,
+                            "origin_not_allowed",
+                            "an `Origin` this server does not trust",
+                        ),
+                        refusal(
+                            404,
+                            "not_found",
+                            "no such session — or one another token holds, which looks the same",
+                        ),
+                        refusal(
+                            429,
+                            "rate_limited",
+                            "the token's session cap is full; `Retry-After`",
+                        ),
+                        refusal(
+                            503,
+                            "unavailable",
+                            "the project's or the server's session cap is full",
+                        ),
+                    ],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Delete,
+                |f| on(f, mcp::delete),
+                OpDoc {
+                    id: "mcpDelete",
+                    summary: "End the remote-MCP session early",
+                    tag: "mcp",
+                    security: Security::ApiToken,
+                    headers: &[
+                        header("mcp-session-id", Kind::Uuid, "the session to end"),
+                        header("mcp-protocol-version", Kind::Str, "`2025-11-25`"),
+                    ],
+                    ok: ok(
+                        200,
+                        Shape::Empty,
+                        "the session ended; its in-flight requests answer `request cancelled`",
+                    ),
+                    extra: &[
+                        refusal(
+                            400,
+                            "bad_request",
+                            "the `Mcp-Session-Id` or `MCP-Protocol-Version` header is missing or wrong",
+                        ),
+                        refusal(
+                            403,
+                            "api_token_required",
+                            "a person's credential — a browser session or a personal access token; agents sign in as project API tokens",
+                        ),
+                        refusal(
+                            403,
+                            "origin_not_allowed",
+                            "an `Origin` this server does not trust",
+                        ),
+                        refusal(
+                            404,
+                            "not_found",
+                            "no such session — or one another token holds, which looks the same",
+                        ),
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
     ),
     route(
         ("", "/api/v1/rich-text/validate"),
@@ -3259,6 +3382,10 @@ const TAGS: &[(&str, &str)] = &[
     ("audit", "the append-only audit log"),
     ("events", "live change hints over server-sent events"),
     (
+        "mcp",
+        "the remote-MCP endpoint — the agent protocol over HTTP (D-121)",
+    ),
+    (
         "schema",
         "content types, shared components, migration plans",
     ),
@@ -3437,6 +3564,9 @@ fn operation(route: &Route, op: &Op) -> Value {
         }
         Security::Session => {
             operation["security"] = json!([{ "sessionCookie": [] }]);
+        }
+        Security::ApiToken => {
+            operation["security"] = json!([{ "apiToken": [] }]);
         }
     }
     operation
@@ -3672,6 +3802,7 @@ fn schemas() -> Value {
         collaboration_parts(),
         publishing_parts(),
         delivery_parts(),
+        mcp_parts(),
     ] {
         if let Value::Object(map) = part {
             schemas.extend(map);
@@ -5026,6 +5157,47 @@ fn delivery_parts() -> Value {
                 "data": { "type": "array", "items": { "$ref": "#/components/schemas/PublishedEntryView" } },
                 "next_cursor": { "type": ["string", "null"] },
                 "applied": { "$ref": "#/components/schemas/AppliedQuery" },
+            },
+        },
+    })
+}
+
+fn mcp_parts() -> Value {
+    json!({
+        "McpMessage": {
+            "type": "object",
+            "description": "one JSON-RPC 2.0 message under MCP protocol 2025-11-25: a request, a notification or a response — never a batch",
+            "required": ["jsonrpc"],
+            "properties": {
+                "jsonrpc": { "type": "string", "enum": ["2.0"] },
+                "id": { "description": "a string or number on requests and their responses; absent on notifications" },
+                "method": {
+                    "type": "string",
+                    "description": "`initialize`, `ping`, `tools/list`, `tools/call`, or a `notifications/*` notification",
+                },
+                "params": { "type": "object" },
+                "result": { "description": "the answer, on a client's own response" },
+                "error": { "type": "object", "description": "`{code, message, data?}`, on a client's own refusal" },
+            },
+        },
+        "McpResponse": {
+            "type": "object",
+            "description": "one JSON-RPC 2.0 response message: `result` on success or `error` on failure, never both",
+            "required": ["jsonrpc", "id"],
+            "properties": {
+                "jsonrpc": { "type": "string", "enum": ["2.0"] },
+                "id": { "description": "the request's id, echoed" },
+                "result": {
+                    "description": "the handshake on `initialize`, `{}` on `ping`, `{tools}` on `tools/list`, and `{content, structuredContent, isError}` on `tools/call` — `isError` carries the API's own refusal",
+                },
+                "error": {
+                    "type": "object",
+                    "properties": {
+                        "code": { "type": "integer", "description": "JSON-RPC's own, plus -32001 API-unavailable, -32002 not-initialized, -32800 cancelled" },
+                        "message": { "type": "string" },
+                        "data": { "description": "the API's error code, status and request id when it refused" },
+                    },
+                },
             },
         },
     })

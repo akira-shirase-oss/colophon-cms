@@ -8,7 +8,7 @@ use colophon_db::PgPool;
 
 use crate::{
     BuildInfo, ContentTypeCache, DeliveryCache, Readiness, admission::SharedAdmission,
-    events::EventBus,
+    events::EventBus, mcp,
 };
 
 /// Session lifetimes.
@@ -53,6 +53,8 @@ pub struct Services {
     /// The live-hint bus `{P}/events` streams subscribe to (D-108), fed by the server's own
     /// `LISTEN` connection.
     pub events: Arc<EventBus>,
+    /// The remote-MCP session registry `{P}/mcp` serves (D-121).
+    pub mcp: mcp::Shared,
 }
 
 /// The router's state. Cloning is two reference-count increments and a copy.

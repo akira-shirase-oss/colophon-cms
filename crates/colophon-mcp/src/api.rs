@@ -9,7 +9,7 @@
 //! an `Idempotency-Key` (the API replays the recorded answer), and asking for review, which is a
 //! no-op once asked.
 
-use std::time::Duration;
+use std::{future::Future, time::Duration};
 
 use reqwest::{Method, StatusCode, Url, header};
 use serde_json::{Map, Value};
@@ -25,7 +25,7 @@ pub const MAX_ANSWER_BYTES: usize = 4 * 1024 * 1024;
 /// How long one tool call may spend on the API, retries included.
 pub const CALL_DEADLINE: Duration = Duration::from_secs(30);
 /// How long one attempt may take, from connecting to the last byte of the answer.
-const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(15);
+pub const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long connecting may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Attempts per request, the first included.
@@ -206,6 +206,80 @@ impl<'a> Request<'a> {
         self.idempotency_key = Some(key);
         self
     }
+
+    /// The method.
+    pub fn method(&self) -> &Method {
+        &self.method
+    }
+
+    /// The path under `{P}`.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// The query parameters, as `(name, value)` pairs in order.
+    pub fn query_pairs(&self) -> &[(&'static str, &'a str)] {
+        &self.query
+    }
+
+    /// The JSON body, when one is sent.
+    pub fn body(&self) -> Option<&'a Value> {
+        self.body
+    }
+
+    /// The `If-Match` value, when sent: one strong `ETag`, quotes included.
+    pub fn if_match_tag(&self) -> Option<&str> {
+        self.if_match.as_deref()
+    }
+
+    /// The `Idempotency-Key`, when sent.
+    pub fn idempotency_key_value(&self) -> Option<&'a str> {
+        self.idempotency_key
+    }
+}
+
+/// Carries a tool's [`Request`] to Colophon's API: [`Api`] sends it over HTTP from a
+/// subprocess or a remote caller; the hosted transport ([`crate::remote`], D-121) gets one
+/// that dispatches it through the server's own router. Either way the API alone decides what
+/// the token may do — this trait is the narrow seam the session works against.
+pub trait Backend: Send + Sync {
+    /// The project every request's path is built under.
+    fn project(&self) -> Uuid;
+
+    /// One attempt at `request`, bounded by `deadline`. Senders must keep the future `Send`:
+    /// the session runs requests in tasks.
+    fn attempt<'a>(
+        &'a self,
+        request: &'a Request<'a>,
+        deadline: Instant,
+    ) -> impl Future<Output = Result<Answer, ApiError>> + Send + 'a;
+
+    /// `request`, retried when that is safe, within [`CALL_DEADLINE`]. The retry contract is
+    /// the one this module documents: only `retryable` failures, only requests safe to repeat.
+    fn send<'a>(
+        &'a self,
+        request: &'a Request<'a>,
+    ) -> impl Future<Output = Result<Answer, ApiError>> + Send + 'a {
+        async move {
+            let deadline = Instant::now() + CALL_DEADLINE;
+            let mut attempt = 0;
+            loop {
+                let error = match self.attempt(request, deadline).await {
+                    Ok(answer) => return Ok(answer),
+                    Err(error) => error,
+                };
+                let wait = BACKOFF.get(attempt).copied();
+                match wait {
+                    Some(wait) if error.retryable() && Instant::now() + wait < deadline => {
+                        tracing::debug!(%error, attempt, "trying again");
+                        sleep(wait).await;
+                        attempt += 1;
+                    }
+                    _ => return Err(error),
+                }
+            }
+        }
+    }
 }
 
 /// A fresh idempotency key: 36 characters, within the API's 16 to 128 of `A-Z a-z 0-9 - _`.
@@ -240,35 +314,20 @@ impl Api {
             project: config.project,
         })
     }
+}
 
+impl Backend for Api {
     /// The project this API serves.
-    pub fn project(&self) -> Uuid {
+    fn project(&self) -> Uuid {
         self.project
     }
 
-    /// Sends `request`, trying again when that is safe, within [`CALL_DEADLINE`].
-    pub async fn send(&self, request: &Request<'_>) -> Result<Answer, ApiError> {
-        let deadline = Instant::now() + CALL_DEADLINE;
-        let mut attempt = 0;
-        loop {
-            let error = match self.attempt(request, deadline).await {
-                Ok(answer) => return Ok(answer),
-                Err(error) => error,
-            };
-            let wait = BACKOFF.get(attempt).copied();
-            match wait {
-                Some(wait) if error.retryable() && Instant::now() + wait < deadline => {
-                    tracing::debug!(%error, attempt, "trying again");
-                    sleep(wait).await;
-                    attempt += 1;
-                }
-                _ => return Err(error),
-            }
-        }
-    }
-
     /// One attempt, bounded by its own timeout and by `deadline`.
-    async fn attempt(&self, request: &Request<'_>, deadline: Instant) -> Result<Answer, ApiError> {
+    async fn attempt<'a>(
+        &'a self,
+        request: &'a Request<'a>,
+        deadline: Instant,
+    ) -> Result<Answer, ApiError> {
         let mut url = self
             .base
             .join(&format!(
@@ -311,16 +370,26 @@ impl Api {
         let (status, etag, replayed, body) = timeout_at(limit, exchange)
             .await
             .map_err(|_| ApiError::TimedOut(ATTEMPT_TIMEOUT))??;
-        if status.is_success() {
-            let body = serde_json::from_slice(&body).map_err(|_| ApiError::BadAnswer)?;
-            Ok(Answer { body, replayed })
-        } else {
-            Err(ApiError::Refused(Box::new(Refusal::from_answer(
-                status,
-                etag.as_deref(),
-                &body,
-            ))))
-        }
+        answer(status, etag.as_deref(), replayed, &body)
+    }
+}
+
+/// What an exchange produced: the `Answer` a success carries, or the refusal an error status
+/// is. The HTTP client above and the in-process dispatch ([`crate::remote`], D-121) share it,
+/// so both see the same envelopes.
+pub fn answer(
+    status: StatusCode,
+    etag: Option<&str>,
+    replayed: bool,
+    body: &[u8],
+) -> Result<Answer, ApiError> {
+    if status.is_success() {
+        let body = serde_json::from_slice(body).map_err(|_| ApiError::BadAnswer)?;
+        Ok(Answer { body, replayed })
+    } else {
+        Err(ApiError::Refused(Box::new(Refusal::from_answer(
+            status, etag, body,
+        ))))
     }
 }
 

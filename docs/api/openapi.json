@@ -1433,6 +1433,75 @@
         },
         "type": "object"
       },
+      "McpMessage": {
+        "description": "one JSON-RPC 2.0 message under MCP protocol 2025-11-25: a request, a notification or a response — never a batch",
+        "properties": {
+          "error": {
+            "description": "`{code, message, data?}`, on a client's own refusal",
+            "type": "object"
+          },
+          "id": {
+            "description": "a string or number on requests and their responses; absent on notifications"
+          },
+          "jsonrpc": {
+            "enum": [
+              "2.0"
+            ],
+            "type": "string"
+          },
+          "method": {
+            "description": "`initialize`, `ping`, `tools/list`, `tools/call`, or a `notifications/*` notification",
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          },
+          "result": {
+            "description": "the answer, on a client's own response"
+          }
+        },
+        "required": [
+          "jsonrpc"
+        ],
+        "type": "object"
+      },
+      "McpResponse": {
+        "description": "one JSON-RPC 2.0 response message: `result` on success or `error` on failure, never both",
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "description": "JSON-RPC's own, plus -32001 API-unavailable, -32002 not-initialized, -32800 cancelled",
+                "type": "integer"
+              },
+              "data": {
+                "description": "the API's error code, status and request id when it refused"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "id": {
+            "description": "the request's id, echoed"
+          },
+          "jsonrpc": {
+            "enum": [
+              "2.0"
+            ],
+            "type": "string"
+          },
+          "result": {
+            "description": "the handshake on `initialize`, `{}` on `ping`, `{tools}` on `tools/list`, and `{content, structuredContent, isError}` on `tools/call` — `isError` carries the API's own refusal"
+          }
+        },
+        "required": [
+          "jsonrpc",
+          "id"
+        ],
+        "type": "object"
+      },
       "Me": {
         "properties": {
           "administrator": {
@@ -11607,6 +11676,288 @@
         ]
       }
     },
+    "/api/v1/projects/{project}/environments/{environment}/mcp": {
+      "delete": {
+        "operationId": "mcpDelete",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the session to end",
+            "in": "header",
+            "name": "mcp-session-id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "`2025-11-25`",
+            "in": "header",
+            "name": "mcp-protocol-version",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the session ended; its in-flight requests answer `request cancelled`"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`bad_request` — the `Mcp-Session-Id` or `MCP-Protocol-Version` header is missing or wrong"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`api_token_required` — a person's credential — a browser session or a personal access token; agents sign in as project API tokens; `origin_not_allowed` — an `Origin` this server does not trust"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such session — or one another token holds, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "apiToken": []
+          }
+        ],
+        "summary": "End the remote-MCP session early",
+        "tags": [
+          "mcp"
+        ]
+      },
+      "post": {
+        "operationId": "mcpPost",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the session `initialize` minted; required on every message after it",
+            "in": "header",
+            "name": "mcp-session-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "`2025-11-25`; required once a session exists",
+            "in": "header",
+            "name": "mcp-protocol-version",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "when present it must be an origin this server trusts, exactly — the transport's DNS-rebinding check",
+            "in": "header",
+            "name": "origin",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpResponse"
+                }
+              }
+            },
+            "description": "the request's own JSON-RPC response; `Mcp-Session-Id` rides on the `initialize` answer only",
+            "headers": {
+              "Mcp-Session-Id": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "a notification or a stray response — accepted, nothing to answer"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`bad_request` — not acceptable JSON-RPC, or `MCP-Protocol-Version`/`Accept` failed the transport's checks"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`api_token_required` — a person's credential — a browser session or a personal access token; agents sign in as project API tokens; `origin_not_allowed` — an `Origin` this server does not trust"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such session — or one another token holds, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — the token's session cap is full; `Retry-After`; over the per-credential or per-address limit; `Retry-After`"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unavailable` — the project's or the server's session cap is full"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "apiToken": []
+          }
+        ],
+        "summary": "One JSON-RPC message on the remote-MCP session (D-121)",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
     "/api/v1/projects/{project}/environments/{environment}/migrations": {
       "get": {
         "operationId": "listMigrations",
@@ -17949,6 +18300,10 @@
     {
       "description": "live change hints over server-sent events",
       "name": "events"
+    },
+    {
+      "description": "the remote-MCP endpoint — the agent protocol over HTTP (D-121)",
+      "name": "mcp"
     },
     {
       "description": "content types, shared components, migration plans",

@@ -41,7 +41,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::api::{self, Answer, Api, ApiError, Refusal, Request, new_idempotency_key, object};
+use crate::api::{self, Answer, ApiError, Backend, Refusal, Request, new_idempotency_key, object};
 
 /// What a tool needs the token to be allowed somewhere, for discovery (`tools/list`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -498,7 +498,7 @@ impl Plan {
 }
 
 /// Runs `tool` with `arguments` (an object) against the API.
-pub async fn call(api: &Api, tool: Tool, arguments: Value) -> Outcome {
+pub async fn call<B: Backend>(api: &B, tool: Tool, arguments: Value) -> Outcome {
     let plan = match plan(tool, arguments) {
         Ok(plan) => plan,
         Err(invalid) => return invalid.outcome(tool),

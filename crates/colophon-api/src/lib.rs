@@ -24,6 +24,7 @@ pub mod events;
 mod fault;
 mod graphql;
 pub mod health;
+pub mod mcp;
 mod members;
 pub mod middleware;
 mod migrations;
