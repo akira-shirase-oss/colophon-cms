@@ -1,0 +1,96 @@
+{
+  "scenario": "throughput",
+  "endpoint": "cold-cache",
+  "date": "2026-11-04T21:09:33Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 30000,
+    "vus": 64
+  },
+  "requests": 30095,
+  "rps": 1017,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 54.768,
+    "p50": 54.297,
+    "p90": 59.934,
+    "p95": 62.089,
+    "p99": 68.165,
+    "p999": 80.251,
+    "max": 534.121
+  },
+  "database_transactions_during_run": 88766,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 6,
+    "server_rss_kb": {
+      "first": 27248,
+      "last": 38256,
+      "max": 38256
+    },
+    "server_cpu_percent": {
+      "avg": 55,
+      "max": 68.5
+    },
+    "postgres_connections": {
+      "last": 28,
+      "max": 28
+    }
+  },
+  "l03": {
+    "gates": {
+      "cache_kept_up": true,
+      "no_errors": true,
+      "cold_p95": true,
+      "cold_p99": true,
+      "every_cold_read_a_fill": true,
+      "every_bypass_read_uncached": true,
+      "nothing_served_from_cache": true
+    },
+    "held": true,
+    "spec": "L03: cold cache / 100% unique keys — cold-origin gate (p95 <=300 ms, p99 <=750 ms), bounded pools, no unbounded database queue",
+    "served": {
+      "hit": 0,
+      "miss": 24029,
+      "coalesced": 0,
+      "bypass": 5971
+    },
+    "errors": 0,
+    "latency_ms": {
+      "cold": {
+        "p95": 62.24505,
+        "p99": 68.57145999999999,
+        "max": 90.068,
+        "p50": 54.5275
+      },
+      "all": {
+        "p95": 62.08879999999999,
+        "p99": 68.16454
+      }
+    },
+    "gate": "every request a unique key: all cold reads origin fills ('miss' or a counted 'bypass' flap, <=2%), all empty reads 'bypass', zero hit/coalesced/errors; cold arm p95 <300 ms, p99 <750 ms; db transactions per request sit beside this in the result",
+    "corpus_entries": 2048,
+    "reads": {
+      "uncached_fills": 5960,
+      "uncached_keeps": 11,
+      "cold_fills": 24040
+    }
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "scenario": "throughput",
+  "endpoint": "spike",
+  "date": "2026-11-04T21:14:10Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 1000000,
+    "vus": 64
+  },
+  "requests": 34506,
+  "rps": 582,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 8,
+  "latency_ms": {
+    "avg": 2.374,
+    "p50": 1.457,
+    "p90": 2.657,
+    "p95": 3.729,
+    "p99": 24.013,
+    "p999": 114.217,
+    "max": 125.514
+  },
+  "database_transactions_during_run": 30170,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 12,
+    "server_rss_kb": {
+      "first": 27280,
+      "last": 34992,
+      "max": 37040
+    },
+    "server_cpu_percent": {
+      "avg": 13,
+      "max": 26.1
+    },
+    "postgres_connections": {
+      "last": 29,
+      "max": 29
+    }
+  },
+  "l06": {
+    "held": true,
+    "baseline_per_second": 300,
+    "answers": {
+      "refused_503": 0,
+      "other": 0,
+      "errors": 0,
+      "served": 28999,
+      "refused_429": 5496
+    },
+    "latency_ms": {
+      "before_p99": 9.267109999999999,
+      "spike_p99": 48.89845999999992,
+      "after_p99": 5.197,
+      "recovery_bound": 15.900664999999998
+    },
+    "spec": "L06: spike from 1x to 5x load for 2 min — controlled 429/503, bounded queues; back to baseline within 2 min after load ends",
+    "gate": "every spike answer a served read or a shaped 429/503 (some 429s must occur — the limiter set real); spike p99 <15000 ms; first recovery window inside 1.5x baseline p99 +2 ms by second 120, holding after",
+    "spike_per_second": 1500,
+    "phases_seconds": {
+      "baseline": 20,
+      "gap": 2,
+      "spike": 15,
+      "recovery": 20
+    },
+    "recovery_windows": [
+      {
+        "index": 0,
+        "p95_ms": 3.011,
+        "p99_ms": 5.197,
+        "window": "w0"
+      }
+    ],
+    "recovered_after_seconds": 0,
+    "gates": {
+      "refusals_controlled": true,
+      "no_errors": true,
+      "spike_p99_bounded": true,
+      "recovery_within_2_minutes": true,
+      "baseline_held": true
+    }
+  }
+}
