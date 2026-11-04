@@ -6,7 +6,8 @@
 #   scripts/load.sh <endpoint> steady                a fixed rate for 60 s (RATE, DURATION, VUS)
 #   scripts/load.sh <endpoint> <scenario> --baseline also save this run as the machine's baseline
 #
-# <endpoint> is a script in perf/k6/: health (the health checks), rich-text (validation),
+# <endpoint> is a script in perf/k6/: health (the health checks), openapi (the served OpenAPI
+# document, alternating full GETs and conditional 304s; D-110), rich-text (validation),
 # session (signed-in requests: session lookup and row-level security on every request),
 # entries (drafts: reads, lists and If-Match saves, each read checked against the last save),
 # content-types (the same for entries of a seven-field type, plus reads of its definition),
@@ -45,8 +46,11 @@
 # workers scripts/cluster.sh started, through its balancer, instead of one server of its own;
 # the result records how many, and is compared only with runs of the same shape: D-075).
 #
-# RATE and P99_MS default per endpoint. health and rich-text never touch the database: 20,000
-# requests/s and a 25 ms p99. session waits on database round trips, so its steady rate is
+# RATE and P99_MS default per endpoint. health and rich-text never touch the
+# database: 20,000 requests/s and a 25 ms p99. openapi never waits on the database either,
+# but each full answer is ~455 KB, so it is bandwidth-bound — a 1,000,000-request throughput
+# run on the reference laptop kneed at ~3.5k/s with p99 90 ms at saturation — and its steady
+# promise stays well under that knee: 2,000/s and a 100 ms p99. session waits on database round trips, so its steady rate is
 # 2,000/s and its p99 threshold 100 ms (END_GOAL's editorial budget is p99 <= 700 ms); the
 # baseline comparison still fails a p99 50% worse than the last accepted run. entries writes
 # on a fifth of its requests: 500/s steady and a 250 ms p99 (END_GOAL: draft writes p99 <= 700 ms).
@@ -62,7 +66,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|stages|collaboration|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|site-starter|assets|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|stages|collaboration|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|site-starter|assets|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -81,6 +85,9 @@ port="${LOAD_PORT:-58090}"
 if [[ "$scenario" == "steady" || "$scenario" == "stress" ]]; then default_vus=256; else default_vus=64; fi
 VUS="${VUS:-$default_vus}"
 case "$endpoint" in
+  # ~455 KB from an in-memory cache: no database, but bandwidth-bound — measured knee
+  # ~3.5k/s, so the steady promise is 2,000/s at a 100 ms p99 (D-110).
+  openapi) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
   session | projects | setup | delivery | site) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
   # Every request pays Argon2id on the blocking pool (about 50-100 ms of CPU each): the steady
   # rate is deliberately low, and the p99 budget is the hashing queue, not the endpoint's work.
@@ -206,6 +213,12 @@ else
     . scripts/local-env.sh
     # The public URL is the sign-in redirect URI registered in the development realm.
     export COLOPHON_LISTEN_ADDR="127.0.0.1:$port" COLOPHON_PUBLIC_URL="http://localhost:$port" COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json
+    # A load run can hold hundreds of live sockets, and a big response keeps each one open
+    # longer: under this Mac's 256-file default the accept loop hit EMFILE about once a second
+    # on GET /openapi.json at 2,000/s (D-110's scenario). Production runs under a service
+    # manager's raised limit, so the measured server gets one too — the run measures the
+    # endpoint, not macOS's default.
+    ulimit -n "${COLOPHON_LOAD_MAXFILES:-16384}" 2>/dev/null || true
     # One machine sends every request: rate limits (D-076) that never refuse, so each request
     # still pays for its check and the run measures it.
     export COLOPHON_RATE_LIMIT_PER_ADDRESS="${COLOPHON_RATE_LIMIT_PER_ADDRESS:-1000000/1000000}" \

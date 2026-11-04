@@ -277,7 +277,10 @@ reported as delayed, never on time; locale variants publish independently; comme
   honestly keeping its stored id, and the information leak closed: a draft query is refused where a filter or
   sort names a field the role can't read on every row its page could hold, while `fields` still narrows freely
   with `hidden_fields` disclosing the rest. Still to come: the perspectives the drafts and previews take.
-- GraphQL over the same queries and permissions; OpenAPI for REST; the TypeScript SDK with generated types.
+- GraphQL over the same queries and permissions; the TypeScript SDK with generated types. The `OpenAPI` 3.1
+  document for REST is built (DX.7, D-110): emitted from the one route table the router is built from, served
+  at `GET /openapi.json` unauthenticated with `ETag`/304, committed byte-for-byte as `docs/api/openapi.json`
+  (80 paths, 104 operations, 110 schemas); client generation from it is the SDK slice's.
 - Webhooks by event (entry, release, media, schema), import from Strapi and Sanity exports with a dry run, export.
 - Extension points instead of plugins (D-057): custom field types as data, Studio panels in sandboxed iframes.
 
