@@ -4,7 +4,7 @@
 // everywhere else uses these. A test fails on internal terms in visible text outside Settings
 // and that drawer (`INTERNAL_TERMS`, tests/server/words.spec.ts).
 
-import type { ChangesetState, Destination } from './api.ts';
+import type { ChangesetState, Destination, StageState } from './api.ts';
 
 /** A changeset: exact versions of entries, asked to be published. */
 export const PUBLISH_REQUEST = 'publish request';
@@ -46,6 +46,18 @@ export const REQUEST_STATE: Record<ChangesetState, string> = {
 	approved: 'Approved',
 	approval_expired: 'Approval expired',
 	published: 'Published'
+};
+
+/** A review stage (D-104): one named sign-off a publish request needs when the environment
+ *  configures a workflow. */
+export const REVIEW_STAGE = 'review stage';
+export const REVIEW_STAGES = 'review stages';
+/** Where a stage stands on a publish request, in words (D-104's states). */
+export const STAGE_STATE: Record<StageState, string> = {
+	pending: 'Waiting',
+	changes_requested: 'Changes asked for',
+	approved: 'Approved',
+	approval_expired: 'Approval expired'
 };
 
 /** An entry's title as a list shows it. The server leaves a title out when the role may not read

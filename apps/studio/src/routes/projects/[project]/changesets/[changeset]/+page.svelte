@@ -2,7 +2,9 @@
   One publish request (a changeset, D-044): the exact versions it holds and what each changes for
   readers, where it stands, the actions that move it on, and its schedule (D-060). Every action
   names the hash on screen, so nobody approves a version they didn't see: if the request changed
-  meanwhile, the page shows the current one and says so. Internal names and hashes are in the
+  meanwhile, the page shows the current one and says so. Where the environment names review
+  stages (D-104), each one and where it stands is listed, every review names the stage it
+  decides, and publishing waits for all of them. Internal names and hashes are in the
   Technical details.
 -->
 <script lang="ts">
@@ -16,7 +18,7 @@
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Textarea } from '@colophon/ui/ui/textarea';
-	import { ApiError, type Changeset, changesetAction, createChangeset, getChangeset, may, mayOn, newKey, publishChangeset } from '#lib/api.ts';
+	import { ApiError, type Changeset, type ChangesetStage, changesetAction, createChangeset, getChangeset, may, mayOn, newKey, publishChangeset } from '#lib/api.ts';
 	import { goto } from '$app/navigation';
 	import { explainLinks, type Named } from '#lib/references.ts';
 	import { plainError } from '#lib/errors.ts';
@@ -27,7 +29,7 @@
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
-	import { PUBLISH_REQUEST, VALUE_TAKEN_ON_PUBLISH } from '#lib/words.ts';
+	import { capital, PUBLISH_REQUEST, REVIEW_STAGES, STAGE_STATE, VALUE_TAKEN_ON_PUBLISH } from '#lib/words.ts';
 
 	const project = $derived(page.params.project ?? '');
 	const id = $derived(page.params.changeset ?? '');
@@ -57,6 +59,15 @@
 	let open = $state<Record<string, boolean>>({});
 
 	let comment = $state('');
+	// The stage the next review decides (D-104): the first one still waiting, so several
+	// approvals can be given in a row without picking each time.
+	let deciding = $state('');
+	const nextUndecided = (stages: ChangesetStage[]) => stages.find((stage) => stage.state !== 'approved')?.key ?? stages[0]?.key ?? '';
+	/** The stage's name for people, or its key marked as gone once the workflow dropped it. */
+	const stageName = (shown: Changeset, key: string) => {
+		const stage = shown.stages.find((item) => item.key === key);
+		return stage === undefined ? `${key} (removed)` : stage.name;
+	};
 	let error = $state('');
 	/** Linked entries a refused publish named, which a new request could include. */
 	let missing = $state<Named[]>([]);
@@ -126,10 +137,13 @@
 		error = '';
 		notice = '';
 		try {
-			const body = decision === undefined ? undefined : { decision, comment };
+			const body = decision === undefined ? undefined : { decision, comment, ...(deciding !== '' ? { stage: deciding } : {}) };
 			const next = await changesetAction(project, id, shown.hash, action, body);
 			queryClient.setQueryData(['changeset', project, id], next);
-			if (decision !== undefined) comment = '';
+			if (decision !== undefined) {
+				comment = '';
+				deciding = nextUndecided(next.stages);
+			}
 		} catch (failure) {
 			if (failure instanceof ApiError && failure.reason === 'stale_changeset') {
 				notice = STALE;
@@ -142,6 +156,17 @@
 			void queryClient.invalidateQueries({ queryKey: ['changesets', project] });
 		}
 	}
+
+	// Keep the pick on a stage that exists; if the list or the request changed under it, move to
+	// the first one still waiting (or the first, when all are decided).
+	$effect(() => {
+		const stages = set.data?.stages ?? [];
+		if (stages.length > 0 && !stages.some((stage) => stage.key === deciding)) deciding = nextUndecided(stages);
+	});
+
+	const STAGE_BADGE = { pending: 'pending', approved: 'live', changes_requested: 'attention', approval_expired: 'attention' } as const;
+	const select =
+		'h-8 rounded-md border border-input bg-card px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50';
 
 	const STEPS = ['Prepared', 'Sent for review', 'Approved', 'Live'] as const;
 	function reached(shown: Changeset): number {
@@ -275,6 +300,31 @@
 			{#if shown.status.state !== 'open' && shown.status.state !== 'stale'}
 				<SchedulePanel {project} changeset={shown} canSchedule={publisher} />
 			{/if}
+			{#if shown.stages.length > 0}
+				<!-- Each stage and where it stands (D-104): all of them approve — in any order —
+				     before this can publish; changes asked for at one stage block it. -->
+				<section aria-labelledby="stages-heading" data-testid="review-stages">
+					<h2 id="stages-heading" class="mb-3 text-base font-semibold">{capital(REVIEW_STAGES)}</h2>
+					<ol class="space-y-2.5">
+						{#each shown.stages as stage, index (stage.key)}
+							<li class="flex flex-wrap items-center gap-x-2.5 gap-y-1" data-testid="stage" data-state={stage.state}>
+								<span class="text-xs text-muted-foreground tabular">{index + 1}.</span>
+								<span class="text-sm font-medium" data-user-content>{stage.name}</span>
+								<Badge variant={STAGE_BADGE[stage.state]}>{STAGE_STATE[stage.state]}</Badge>
+								{#if stage.different_reviewer}
+									<span class="text-xs text-muted-foreground">needs {shown.submitted_by !== null && shown.submitted_by === who.data?.id ? 'someone other than you' : 'someone other than whoever sent it'}</span>
+								{/if}
+								{#if stage.by_name !== null || stage.by !== null}
+									<span class="text-xs text-muted-foreground" data-user-content>
+										by {stage.by_name ?? stage.by}{#if stage.at !== null}
+											· <span title={new Date(stage.at).toLocaleString()}>{ago(stage.at)}</span>{/if}
+									</span>
+								{/if}
+							</li>
+						{/each}
+					</ol>
+				</section>
+			{/if}
 			{#if reviewer && shown.submitted_by !== null && shown.status.state !== 'stale' && shown.status.state !== 'published'}
 				<section class="-order-1 rounded-xl border border-border bg-card p-4 shadow-xs lg:order-none" aria-label="Review" data-testid="review-panel">
 					<h2 class="text-base font-semibold">Review</h2>
@@ -282,6 +332,21 @@
 						You approve exactly the {shown.items.length === 1 ? 'version' : 'versions'} on this page<span class="lg:hidden">: the changes are below</span>. If
 						{shown.items.length === 1 ? 'it changes' : 'they change'}, your approval no longer counts.
 					</p>
+					{#if shown.stages.length > 0}
+						<div class="mt-4 grid gap-1.5">
+							<Label for="review-stage">Deciding</Label>
+							<select id="review-stage" class={select} bind:value={deciding} disabled={busy} data-testid="review-stage">
+								{#each shown.stages as stage (stage.key)}
+									<option value={stage.key} data-user-content
+										>{stage.name} — {STAGE_STATE[stage.state].toLowerCase()}{stage.different_reviewer &&
+										shown.submitted_by === who.data?.id
+											? ', someone other than you'
+											: ''}</option
+									>
+								{/each}
+							</select>
+						</div>
+					{/if}
 					<div class="mt-4 grid gap-1.5">
 						<Label for="review-comment">Comment (optional)</Label>
 						<Textarea id="review-comment" bind:value={comment} rows={3} maxlength={2000} />
@@ -301,7 +366,7 @@
 							<span class="absolute top-1.5 -left-[1.6rem] size-2.5 rounded-full border-2 border-background {review.decision === 'approve' ? 'bg-live' : 'bg-attention'}" aria-hidden="true"></span>
 							<p>
 								<strong class="font-medium">{review.decision === 'approve' ? 'Approved' : 'Changes requested'}</strong>
-								by {review.reviewer_name ?? review.reviewer_id}{#if review.decision === 'approve' && review.reviewer_id === shown.submitted_by}<span
+								{#if review.stage !== null}for <span data-user-content>{stageName(shown, review.stage)}</span> {/if}by {review.reviewer_name ?? review.reviewer_id}{#if review.decision === 'approve' && review.reviewer_id === shown.submitted_by}<span
 										class="text-muted-foreground"
 										data-testid="self-review-note">, who sent it: their own request</span
 									>{/if}

@@ -28,6 +28,7 @@
 		{ href: resolve('/tokens'), label: 'API tokens' },
 		{ href: resolve('/schedules'), label: 'Schedules' },
 		{ href: resolve('/changesets'), label: 'Changesets' },
+		{ href: resolve('/stages'), label: 'Review stages' },
 		{ href: resolve('/collaboration'), label: 'Collaboration' },
 		{ href: resolve('/releases'), label: 'Releases' },
 		{ href: resolve('/deliveries'), label: 'Deliveries' },

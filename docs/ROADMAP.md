@@ -246,7 +246,10 @@ expired-approval scheduling).
   ordered list of them (`GET`/`PUT {P}/review-stages`, `schema.change`-gated, `ETag`'d, idempotent and
   audited), each needs an approval on the changeset's current hash — in any order — for it to publish, a
   request for changes at any stage blocks it, a stage's `different_reviewer` narrows who may approve, and
-  an environment with no list keeps the single implicit review exactly as before.
+  an environment with no list keeps the single implicit review exactly as before. Their surfaces are built
+  too (branch `e2-surfaces`): the changeset page lists each stage in order with its state and approver, every
+  review names the stage it decides, and Settings' Review stages page edits the list under its ETag; the
+  testbed's Review stages page and `perf/k6/stages.js` exercise the gated publish.
 - Live presence and collaboration (O-017); duplicate, bulk actions, saved views, the history slider.
 - Live queries, after Convex: the Studio's lists, drafts, changesets and receipts update as PostgreSQL commits, from one
   listener per server fanned out to bounded sessions, every page read at one snapshot (COMPARISON.md).

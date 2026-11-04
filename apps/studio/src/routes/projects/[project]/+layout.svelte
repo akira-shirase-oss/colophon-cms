@@ -79,6 +79,7 @@
 		'/projects/[project]/settings/components/[component]': 'Content types',
 		'/projects/[project]/settings/roles': 'Settings',
 		'/projects/[project]/settings/roles/[role]': 'Settings',
+		'/projects/[project]/settings/stages': 'Settings',
 		'/projects/[project]/settings/connections': 'Settings',
 		'/projects/[project]/settings/tokens': 'Settings',
 		'/projects/[project]/settings/activity': 'Settings'
@@ -87,6 +88,7 @@
 	const SETTINGS_PAGE: Record<string, string> = {
 		'/projects/[project]/settings/roles': 'Roles',
 		'/projects/[project]/settings/roles/[role]': 'Roles',
+		'/projects/[project]/settings/stages': 'Review stages',
 		'/projects/[project]/settings/connections': 'Website connections',
 		'/projects/[project]/settings/tokens': 'API tokens',
 		'/projects/[project]/settings/activity': 'Activity'
@@ -383,5 +385,6 @@
 	connections={may(mine.data, 'destinations.manage')}
 	tokens={may(mine.data, 'tokens.manage')}
 	activity={may(mine.data, 'audit.read')}
+	stages={may(mine.data, 'schema.change')}
 	bind:open={searching}
 />

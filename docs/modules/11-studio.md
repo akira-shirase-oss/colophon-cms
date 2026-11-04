@@ -78,7 +78,14 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   on a deleted entry keeps the comments while the composer closes with why; and `…/tasks` lists the project's
   tasks by status and who they're waiting on, makes one on an entry with an optional version or publish request,
   and edits title, status and who it's waiting on — Unassigned sent as `assignee: null`, never an omitted field.
-  Test: `tests/server/collaboration.spec.ts`.
+  Since step E2 (D-104): a publish request on an environment with review stages lists them in order with each one's
+  state, who approved and when, and whether it asks for someone other than the sender; the Review panel's *Deciding*
+  names the stage every approval or request for changes counts for (the first one still waiting is picked), history
+  names it too, and one-click publishing approves each stage the sender's approval counts for and says which remain.
+  `…/settings/stages` edits the ordered list — add, rename, reorder, remove, and whether a stage needs someone other
+  than the sender — for roles that may `schema.change`, under the list's ETag so a moved list is refused and offers
+  the latest; every member reads it, so other roles see it without the controls. Tests:
+  `tests/server/stages.spec.ts`, `tests/server/collaboration.spec.ts`.
 - Finishing the Studio (branch `studio/dashboard`, 2026-10-27), slice by slice:
   - **Sign out from any screen** (`shell/AccountMenu.svelte`, in the project shell's header and the plain frame's):
     who is signed in, *Your work and projects*, *About Colophon* (which version this is, below), and *Sign out*, which calls `POST /auth/logout` and only then
@@ -534,7 +541,8 @@ removing a project; changing or removing a website connection (only on and off t
 ending one's sessions; defaults and conditions inside structures; geopoint fields. Later milestones (L): media
 library (P4), localization, presence, visual preview (E), query filters and webhooks by event (D). Comments and
 tasks are built (step E1, D-102): the editor's Comments tab and the project Tasks page cover what the API offers —
-review stages on top of changesets remain for E2.
+review stages are too (step E2, D-104): the changeset's stage list and the Settings page cover the API's ordered
+workflow, per-stage decisions and someone-else constraints.
 
 ## Open decisions
 

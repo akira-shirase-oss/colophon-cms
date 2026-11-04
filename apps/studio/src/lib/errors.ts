@@ -102,6 +102,15 @@ const BY_REASON: Record<string, string> = {
 	invalid_entry: 'Choose the entry it’s about.',
 	invalid_revision: 'A comment names one saved version of the entry.',
 	invalid_changeset: `A task may name a ${PUBLISH_REQUEST} of this project.`,
+	// 409s and 422s for review stages (E2, D-104). A stale list behaves like a stale save; the
+	// 422s name the stage's place in the list.
+	stale_stages: 'Someone changed the review stages since you loaded them. Load the latest list, then make your change again.',
+	too_many_stages: 'A review workflow has at most 20 stages.',
+	invalid_stage_key: 'A stage’s short name is a lowercase letter, then letters, digits and hyphens.',
+	invalid_stage_name: 'A stage’s name is 1 to 100 characters.',
+	duplicate_stage: 'No two stages share a short name.',
+	stage_required: 'Each review decides one stage: pick which one you’re deciding.',
+	unknown_stage: 'That stage isn’t part of this project’s review workflow. Load the page again and try once more.',
 	// 403s that aren't about what the role may do.
 	cannot_grant: "That would give powers your own role doesn't have.",
 	api_token_not_allowed: 'An API token can’t do this; a person has to.',

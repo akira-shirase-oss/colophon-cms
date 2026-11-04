@@ -9,6 +9,7 @@
 	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
+	import ListChecksIcon from '@lucide/svelte/icons/list-checks';
 	import MoonIcon from '@lucide/svelte/icons/moon';
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
@@ -32,6 +33,7 @@
 		connections = false,
 		tokens = false,
 		activity = false,
+		stages = false,
 		open = $bindable(false)
 	}: {
 		project: string;
@@ -44,6 +46,8 @@
 		connections?: boolean;
 		tokens?: boolean;
 		activity?: boolean;
+		/** Whether the role changes the review workflow (E2, D-104). */
+		stages?: boolean;
 		open?: boolean;
 	} = $props();
 
@@ -92,6 +96,7 @@
 		...(builds ? [{ label: 'Content types', icon: ShapesIcon, href: resolve('/projects/[project]/settings/types', { project }) }] : []),
 		...(settings ? [{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }] : []),
 		...(settings ? [{ label: 'Roles', icon: ShieldCheckIcon, href: resolve('/projects/[project]/settings/roles', { project }) }] : []),
+		...(stages ? [{ label: 'Review stages', icon: ListChecksIcon, href: resolve('/projects/[project]/settings/stages', { project }) }] : []),
 		...(connections ? [{ label: 'Website connections', icon: GlobeIcon, href: resolve('/projects/[project]/settings/connections', { project }) }] : []),
 		...(tokens ? [{ label: 'API tokens', icon: KeyRoundIcon, href: resolve('/projects/[project]/settings/tokens', { project }) }] : []),
 		...(activity ? [{ label: 'Activity', icon: HistoryIcon, href: resolve('/projects/[project]/settings/activity', { project }) }] : [])

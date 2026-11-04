@@ -153,6 +153,16 @@ export const checks: Check[] = [
 		}
 	},
 	{
+		id: 'stages-gated',
+		title: 'The review-stages route answers with the envelope',
+		proves: 'The E2 route exists and never answers bare: anonymous callers get 401 unauthorized, a signed-in caller with an unseen project 404 not_found — never route_not_found.',
+		async run() {
+			const project = '00000000-0000-7000-8000-000000000000';
+			const reply = await call('GET', `/api/v1/projects/${project}/environments/production/review-stages`);
+			return outcome(reply, reply.status === 401 ? envelopeProblems(reply, 401, 'unauthorized') : envelopeProblems(reply, 404, 'not_found'));
+		}
+	},
+	{
 		id: 'hostile-id',
 		title: 'A hostile request id is replaced',
 		proves: 'An over-long id is discarded and replaced with a fresh UUIDv7, so it never reaches the logs.',

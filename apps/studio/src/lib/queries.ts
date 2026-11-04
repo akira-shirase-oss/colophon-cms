@@ -11,6 +11,7 @@ import {
 	listMembers,
 	listMigrations,
 	listReleases,
+	listReviewStages,
 	listRoles,
 	listTasks,
 	me,
@@ -45,6 +46,8 @@ export const tasksQuery = (
 	project: string,
 	filter: { entry?: string; collection?: string; assignee?: string; status?: 'open' | 'done' | 'cancelled' } = {}
 ) => ({ queryKey: ['tasks', project, filter], queryFn: () => listTasks(project, filter) });
+/** The environment's review stages and the etag their next change names (E2, D-104). */
+export const stagesQuery = (project: string) => ({ queryKey: ['stages', project], queryFn: () => listReviewStages(project) });
 
 /** "12" or, when there are more than a page, "100+". */
 export const count = (page: { data: unknown[]; next_cursor: string | null }) =>

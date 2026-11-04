@@ -462,7 +462,7 @@ async function send(method: string, path: string, body?: unknown, headers: Recor
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
 			throw new ApiError('not-found', message, 404);
-		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version' || reason === 'stale_role'):
+		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version' || reason === 'stale_role' || reason === 'stale_stages'):
 			throw new ApiError('conflict', message, 409, reason, response.headers.get('etag'), details);
 		case response.status >= 500 || response.status === 429:
 			throw new ApiError('retry', message, response.status, reason);
@@ -985,11 +985,33 @@ export interface ChangesetReview {
 	reviewer_id: string;
 	reviewer_name: string | null;
 	decision: 'approve' | 'request_changes';
+	/** The review stage it decided for, by key; null for the implicit review (D-104). */
+	stage: string | null;
 	changeset_hash: string;
 	/** Made on the changeset's current hash, so it still counts. */
 	current: boolean;
 	comment: string;
 	created_at: string;
+}
+
+/** One stage of an environment's review workflow (D-104): a review names it by `key`. */
+export interface ReviewStage {
+	key: string;
+	name: string;
+	/** Its approval must come from someone other than who sent the request for review. */
+	different_reviewer: boolean;
+}
+
+/** Where a stage stands on a changeset (D-104). */
+export type StageState = 'pending' | 'changes_requested' | 'approved' | 'approval_expired';
+
+/** A configured stage and where it stands on one changeset, in stage order (D-104). */
+export interface ChangesetStage extends ReviewStage {
+	state: StageState;
+	/** Who made its latest counting decision, if anyone did, and when. */
+	by: string | null;
+	by_name: string | null;
+	at: string | null;
 }
 
 export interface Changeset {
@@ -1006,6 +1028,9 @@ export interface Changeset {
 	rollback_generation: number | null;
 	items: ChangesetItem[];
 	reviews: ChangesetReview[];
+	/** Each configured review stage and where it stands, in order; empty when the environment
+	 *  names none and the single implicit review decides (D-104). */
+	stages: ChangesetStage[];
 }
 
 export interface ChangesetSummary {
@@ -1059,13 +1084,15 @@ export async function rollbackRelease(project: string, generation: number, title
 }
 
 /** Submits, refreshes or reviews the changeset whose hash the caller saw; a changed hash is refused
- *  with reason `stale_changeset`. */
+ *  with reason `stale_changeset`. A review names the `stage` it decides where the environment
+ *  configures them — required then (`stage_required`), refused for any other key (`unknown_stage`,
+ *  D-104). */
 export async function changesetAction(
 	project: string,
 	id: string,
 	hash: string,
 	action: 'submit' | 'refresh' | 'reviews',
-	body?: { decision: 'approve' | 'request_changes'; comment: string }
+	body?: { decision: 'approve' | 'request_changes'; comment: string; stage?: string }
 ): Promise<Changeset> {
 	const path = `${changesets(project)}/${id}/${action}`;
 	return ((await (await send('POST', path, body, { 'If-Match': `"${hash}"` })).json()) as { data: Changeset }).data;
@@ -1152,6 +1179,29 @@ export async function publishChangeset(
 	const path = `${changesets(project)}/${id}/publish`;
 	const response = await send('POST', path, { base_generation: baseGeneration }, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key });
 	return ((await response.json()) as { data: { generation: number; entries_changed: number; entries_unpublished: number } }).data;
+}
+
+/** The environment's review stages and the ETag that names the list read (`"sha256:…"`, kept as
+ *  the header sent it): any member may look (D-104). */
+export async function listReviewStages(project: string): Promise<{ stages: ReviewStage[]; etag: string }> {
+	const response = await send('GET', `${base(project)}/review-stages`);
+	const { data } = (await response.json()) as { data: { stages: ReviewStage[] } };
+	return { stages: data.stages, etag: response.headers.get('etag') ?? '' };
+}
+
+/** Replaces the environment's whole review-stage list, in the order given (D-104), under
+ *  `schema.change`: `If-Match` names the list read — a changed one is refused `stale_stages` —
+ *  and the idempotency key makes sending again safe. Removing a stage drops its gate; reviews
+ *  recorded for a stage that keeps its key still count. */
+export async function replaceReviewStages(
+	project: string,
+	stages: ReviewStage[],
+	etag: string,
+	key: string
+): Promise<{ stages: ReviewStage[]; etag: string }> {
+	const response = await send('PUT', `${base(project)}/review-stages`, { stages }, { 'If-Match': etag, 'Idempotency-Key': key });
+	const { data } = (await response.json()) as { data: { stages: ReviewStage[] } };
+	return { stages: data.stages, etag: response.headers.get('etag') ?? '' };
 }
 
 /** A scheduled publish (D-060): what its author chose, the instant that resolves to, and how it
