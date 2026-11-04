@@ -71,7 +71,7 @@ export function setup() {
 
   const drafts = [];
   for (let i = 0; i < 4; i += 1) {
-    const entry = http.post(`${base}/collections/articles/entries`, JSON.stringify({ title: `bulk ${i}`, body: BODY }), { headers: write(`k6-bulk-entry-${i}`) });
+    const entry = http.post(`${base}/collections/articles/entries`, JSON.stringify({ title: `bulk ${i}`, body: BODY }), { headers: write(`k6-bulk-entry-setup-${i}`) });
     if (entry.status !== 201) fail(`entry ${i}: HTTP ${entry.status} ${entry.body}`);
     drafts.push({ id: entry.json('data.id'), revision: entry.json('data.revision.id') });
   }
