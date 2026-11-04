@@ -16,7 +16,9 @@
 # two writers: every move is a save plus two mirror revisions in one transaction, with mirror
 # reads checked against where the link says it is; D-085), transfer (a collection's drafts
 # exported as JSONL, nine requests in ten; the tenth imports a three-line file, entries and
-# a Strapi entity, in one transaction; D-086), locales (a French sibling's save carrying its
+# a Strapi entity, in one transaction; D-086), graphql (entries reads through the
+# per-collection schema — filters, a sort, a page and one expanded reference per node —
+# and one entry read in ten; D-115), locales (a French sibling's save carrying its
 # locale, the source's group read, and a locale-filtered list; D-087), deletion (articles created and deleted
 # with If-Match, replayed deletions, 404 reads of what was deleted, and deletions refused because
 # the article is published, in a changeset or stale; D-080),
@@ -68,7 +70,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|site-starter|assets|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -104,7 +106,7 @@ case "$endpoint" in
   # plus a plan and item insert and a supersede — a heavier write than a changeset's, so half
   # of entries' steady rate and its p99 budget.
   migrations) RATE="${RATE:-250}" P99_MS="${P99_MS:-250}" ;;
-  entries | content-types | modelling | site-starter) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
+  entries | content-types | modelling | site-starter | graphql) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
   # A move writes three revisions in one transaction (the post's, and a mirror into each
   # writer): half of entries' steady rate, and the p99 threshold is END_GOAL's editorial
   # write budget — a smoke run on the reference laptop sat at p99 ~580 ms.

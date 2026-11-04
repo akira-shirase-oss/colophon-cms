@@ -432,7 +432,7 @@ added. A release is simpler: `prepared → committed`, and a committed release n
 | Concurrency | Optimistic revisions with a conflict screen | CRDT live co-editing: much more complex; an explicit non-goal |
 | Cache | Disposable, generation-keyed Redis-compatible store | Making the cache authoritative: loses correctness when the cache does |
 | Studio rendering | Static SPA served by Rust | SvelteKit server rendering: a second backend with its own authority |
-| API style | REST + OpenAPI | GraphQL: unbounded query shapes conflict with strict cost limits; a non-goal |
+| API style | REST + OpenAPI | Ad-hoc GraphQL: unbounded query shapes conflict with strict cost limits — so the GraphQL built (DX.10, D-115) is per-collection, read-only and compiles to the same bounded document |
 | Identity | OIDC with Keycloak | A home-grown password system: a large security surface with no differentiation |
 | Testing | Deterministic simulation + real-process crash loop + integration tests | Integration tests alone: rare races stay rare and unreproducible |
 | Design system | Material 3 tokens on Bits UI (D-011) | `@material/web` (maintenance mode), MUI (React-only) |

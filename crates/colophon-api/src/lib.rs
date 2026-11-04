@@ -21,6 +21,7 @@ mod entries;
 pub mod error;
 pub mod events;
 mod fault;
+mod graphql;
 pub mod health;
 mod members;
 pub mod middleware;

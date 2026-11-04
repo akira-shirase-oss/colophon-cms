@@ -27,6 +27,11 @@ colophon-version = { path = "crates/colophon-version" }
 # one async runtime (Tokio); no TLS stack until a feature needs one.
 anyhow = "1.0.104"
 argon2 = "0.5.3"
+# The GraphQL executor for the per-collection endpoint (DX.10, D-115): the schema is built
+# per request from the project's content types (`dynamic-schema`), resolvers compile each
+# read to the same bounded query document `POST …/entries/query` runs. No `graphiql`,
+# `playground`, `email-validator` or `tempfile` (the default features pull those in).
+async-graphql = { version = "7.2.1", default-features = false, features = ["dynamic-schema"] }
 aws-lc-rs = { version = "1.15", default-features = false, features = ["aws-lc-sys"] }
 axum = "0.8.9"
 base64 = "0.22"

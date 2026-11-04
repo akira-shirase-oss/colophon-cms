@@ -56,7 +56,7 @@ and revisions that block the change, so an owner can fix them or keep the old sh
 | Knowing it reached the site | Not offered | Not offered | Probes look for the release's generation marker; receipts say *verified at N locations* or *pending* (3.3) |
 | Taking content back | Unpublish | Unpublish | Tombstones, origin revocation through historical URLs, CDN purge jobs, remaining exposure shown (3.2) |
 | Reading drafts and releases | Preview | Perspectives: `drafts`, `published`, or a stack of releases | Reads pinned to a generation (2.2); preview links are v0.1 core |
-| Query language | REST, GraphQL plugin | GROQ, GraphQL | REST (`/content/v1`) and a TypeScript SDK; GraphQL is a non-goal |
+| Query language | REST, GraphQL plugin | GROQ, GraphQL | REST (`/content/v1`), a generated-types TypeScript SDK (DX.8), and a per-collection GraphQL read surface that compiles to the same bounded document (DX.10, D-115) |
 
 ## Done differently, on purpose
 
@@ -142,7 +142,7 @@ that builds them.
 | SSO / OpenID Connect | Paid | ✓ (by plan) | done (Keycloak, D-031) |
 | REST delivery with caching | ✓ | ✓ | done (P2, P3) |
 | Query API: filters, sort, populate, field selection, perspectives | ✓ | GROQ | D |
-| GraphQL | Plugin | ✓ | D |
+| GraphQL | Plugin | ✓ | built (DX.10, D-115): per-collection, read-only, compiling to the bounded query document |
 | Webhooks | ✓ | ✓ | done (P2); by event in D |
 | TypeScript SDK and generated types | ✓ | ✓ | D |
 | Import and export, from Strapi and Sanity | Transfer | CLI | D |
