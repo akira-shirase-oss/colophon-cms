@@ -92,6 +92,8 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh roles throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh tokens throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh quotas throughput
+    # L08's smoke: its arms are time-boxed, so DURATION (per phase) is the knob, not TOTAL.
+    PATH="$PATH:$HOME/.local/bin" DURATION=8s P99_MS=500 KEEP=0 scripts/load.sh noisy-agent throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh schedules throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh projects throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh changesets throughput

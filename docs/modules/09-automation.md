@@ -170,8 +170,6 @@ MCP binary's own (0 clean close, 1 session failure, 2 bad configuration), proved
   is built, D-113; the request-quota consumer landed with D-118).
 - `validate_changeset` and `job_status` (releases and receipts are `list_releases`/`get_release`), and unpublish
   requests.
-- L08's load evidence (a noisy agent beside editors): the quota that throttles the agent is built
-  (D-118); the measured latency isolation under load is still owed.
 - Environments other than `production` through the MCP adapter.
 - Testbed and k6 coverage for the MCP server itself: it adds no API route, and the routes it calls keep their own.
 
@@ -218,7 +216,9 @@ boundary, not in a cache or a worker's memory.
   `Retry-After`; the audit log hears the episode's first refusal once as `token.rate_limited`;
   `usage.requests_last_minute` reads the live window back. Valkey's answer is the shared
   limiter's own — a local per-process count while it is away, never a refusal for its absence —
-  and a member session carries no token scope, so the check does not exist for people.
+  and a member session carries no token scope, so the check does not exist for people. The
+  measured isolation is L08's (D-120): `perf/k6/noisy-agent.js` runs the noisy agent beside
+  active editors — and an editor in a second project — and stores the verdict with the run.
 - Provider `tokens`/`cost` kinds are reserved in the schema for the
   slices that need them; D-113 records the model.
 
@@ -271,7 +271,8 @@ one boundary, and a person reads back what the run left.
 - Deliberately no model and no k6 scenario: the cases are deterministic API abuse and the gate is
   correctness, not load. Schema discovery and correct edits are each case's `permitted` work; bulk
   interruption is X12's own proof in `tests/bulk.rs`; provider-failure cases wait for the assistant
-  slice; L08 remains.
+  slice; L08's evidence is `perf/k6/noisy-agent.js` (stored run
+  `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json`).
 
 ## Invariants
 
@@ -296,7 +297,7 @@ one boundary, and a person reads back what the run left.
 | Situation | Behaviour |
 |---|---|
 | Agent interrupted halfway through a bulk edit (X12) | Per-item outcomes, stable keys and base revisions prevent duplicates or overwrites; resume from the cursor |
-| Noisy agent alongside editors (L08) | Throttled; editorial p95 stays within 2× the mixed-workload baseline; no cross-project starvation |
+| Noisy agent alongside editors (L08) | Throttled; editorial p95 stays within 2× the mixed-workload baseline; no cross-project starvation — measured by `perf/k6/noisy-agent.js`, stored run `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json` |
 | Invalid or hostile model output (F11) | No unsafe action; the reviewer sees a rejected suggestion with safe diagnostics |
 | Provider timeout | Uncertainty and reservation preserved; reconciled where possible |
 | Budget exhausted | Request refused before dispatch with a clear error |
@@ -311,7 +312,10 @@ one boundary, and a person reads back what the run left.
   publish request and its review request; no write tools for the read-only token and its writes refused by the API;
   no approving or publishing tool for anyone; and a wrong `COLOPHON_PROJECT` or a token revoked mid-session said
   plainly (`-32001`, and 401 on the next call: R.4's kill switch holds through MCP).
-- X12, L08 and F11.
+- X12 and F11; L08's stored run is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json`
+  (`perf/k6/noisy-agent.js`: two phases in one run — editorial traffic alone, then the same traffic
+  beside a 60-a-minute token attempting ~600/s and an editor in a second project; the agent was 99.7%
+  refused with `Retry-After`, editorial p95 x1.83 of its baseline and project-B's x1.86 of its own).
 - The evaluation suite (D-117, `crates/colophon-server/tests/evals.rs`): ignored and serial, repeated
   under `COLOPHON_EVAL_TRIALS`, a summary line per case, and the `UNAUTHORIZED: 0` gate over all six
   spec §27 abuse cases — prompt injection in content, tool-argument manipulation, cost overruns, a

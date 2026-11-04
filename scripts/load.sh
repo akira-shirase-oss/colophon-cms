@@ -27,7 +27,11 @@
 # custom role, the caller's permissions, role lists and versioned role edits), tokens (requests
 # with a read-only and a field-narrowed API token, audit log pages, and tokens made and revoked),
 # quotas (two read-only tokens with request ceilings: one inside its budget lists entries,
-# one over its two-a-minute ceiling answers 429 with Retry-After; D-118),
+# one over its two-a-minute ceiling answers 429 with Retry-After; D-118), noisy-agent (L08's
+# evidence, D-120: two sequential phases — editorial traffic alone, then the same editorial
+# traffic beside a low-ceiling token hammering past its quota and an editor in a second
+# project; the run computes and stores whether under-noise editorial p95 held within 2x of
+# the baseline it just measured),
 # schedules (schedule lists, and scheduling and cancelling a day ahead), projects (who may create
 # projects: refused creations and /me), setup (setup codes refused on a set-up installation, and
 # /me), changesets (reading, listing, reviewing and creating changesets), stages (the
@@ -72,7 +76,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -105,6 +109,10 @@ case "$endpoint" in
   # Valkey eval, no handler work); two in ten list entries under a high ceiling: tokens' rate,
   # entries' p99 budget since refusals can still wait on the pool.
   quotas) RATE="${RATE:-1000}" P99_MS="${P99_MS:-250}" ;;
+  # Three arms in two phases: ~250/s of editorial requests and ~50/s in a second project while
+  # a 60-a-minute token hammers at ~600/s of mostly refused quota checks — quotas' total rate,
+  # entries' p99 budget for the same reason.
+  noisy-agent) RATE="${RATE:-250}" P99_MS="${P99_MS:-250}" ;;
   # Writers save entries (entries' arm); subscribers' held streams aren't timed — only their
   # clean ends are checked (the p99 gate binds the writes alone).
   live) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
@@ -466,7 +474,7 @@ record=$(jq -c \
     database_transactions_during_run: $tx,
     server_warnings: $warnings,
     thresholds_passed: ($k6_status == 0)
-  }' "$work/summary.json")
+  } + (if .l08 then {l08: .l08} else {} end)' "$work/summary.json")
 
 echo "$record" | jq .
 
@@ -481,6 +489,14 @@ fi
 status=$k6_status
 if (( server_warnings > 0 )); then
   echo "FAIL: the server logged $server_warnings warning(s) or error(s) under load" >&2
+  status=1
+fi
+
+# L08's gate is a comparison only the run can compute (perf/k6/noisy-agent.js measures both
+# phases): the exported summary's `l08` carries the numbers and the verdict — a run whose
+# measured ratio broke the spec's bound fails here, the numbers beside it in the result file.
+if [[ "$(jq -r '.l08.held // empty' "$work/summary.json")" == "false" ]]; then
+  echo "FAIL: the L08 gate did not hold: $(jq -c '.l08' "$work/summary.json")" >&2
   status=1
 fi
 
