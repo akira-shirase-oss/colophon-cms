@@ -17,13 +17,14 @@
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { createQueries, createQuery } from '@tanstack/svelte-query';
+	import { createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import * as Breadcrumb from '@colophon/ui/ui/breadcrumb';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 	import * as Sidebar from '@colophon/ui/ui/sidebar';
 	import { getEntry, may, mayAny, SETTINGS_ACTIONS } from '#lib/api.ts';
 	import { rememberProject } from '#lib/lastProject.ts';
+	import { watchProject } from '#lib/live.ts';
 	import { ago, changesetsQuery, entriesQuery, meQuery, projectQuery, releasesQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
 	import AccountMenu from '#lib/shell/AccountMenu.svelte';
 	import AppearanceMenu from '#lib/shell/AppearanceMenu.svelte';
@@ -63,6 +64,11 @@
 	$effect(() => {
 		if (who.data && mine.data) rememberProject(who.data.id, mine.data.id);
 	});
+
+	// Lists move as PostgreSQL commits (D-108): one events stream per open project turns each
+	// hint into the queries it makes stale. Another project (or leaving these pages) closes it.
+	const queryClient = useQueryClient();
+	$effect(() => watchProject(project, 'production', queryClient));
 
 	const SECTION: Record<string, string> = {
 		'/projects/[project]/changesets': 'Publish requests',

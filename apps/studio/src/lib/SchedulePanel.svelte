@@ -22,10 +22,9 @@
 	const key = $derived(['schedules', project, changeset.id]);
 	const mine = createQuery(() => ({
 		queryKey: key,
-		queryFn: () => listSchedules(project, changeset.id),
-		// While one is due within a minute, look again until it has run.
-		refetchInterval: (query) =>
-			(query.state.data ?? []).some((item) => item.state === 'scheduled' && Date.parse(item.run_at) - Date.now() < 60_000) ? 2_000 : false
+		queryFn: () => listSchedules(project, changeset.id)
+		// A due schedule runs on the worker: its commit arrives as a `schedules` hint and the
+		// live stream refreshes this (D-108) — nothing to poll for.
 	}));
 	const pending = $derived(mine.data?.find((item) => item.state === 'scheduled'));
 	// A schedule is cancelled by whoever set it or by someone who may publish what it publishes

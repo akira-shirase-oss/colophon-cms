@@ -32,7 +32,9 @@
 # migrations (plan lists and reads, item pages, and planning the same required-field change again:
 # a locked dry run of the collection's drafts that supersedes its open plans; D-100),
 # collaboration (comment lists and writes on an entry's revision, resolves and reopens on
-# comment etags, and task creates and updates on task etags; D-102),
+# comment etags, and task creates and updates on task etags; D-102), live ({P}/events streams
+# held open to their clean end while other virtual users save entries steadily — the server
+# gets a short COLOPHON_EVENTS_LIFETIME_MS so a hold is seconds, not 30 minutes; D-108),
 # delivery (anonymous /content/v1 reads, latest and pinned), publishing (whole publishes, five
 # requests each, with the worker announcing every release to a local receiver; needs node),
 # studio (the Studio's static files; builds the Studio first) or site (the reference site's pages,
@@ -62,7 +64,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|stages|collaboration|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|site-starter|assets|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|locales|deletion|collection-delete|site-starter|assets|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -88,6 +90,9 @@ case "$endpoint" in
   # Half its requests list entries (a content type lookup too): about 2,000/s at most here, so
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
   cli | members | roles | tokens | schedules | changesets | stages | collaboration) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
+  # Writers save entries (entries' arm); subscribers' held streams aren't timed — only their
+  # clean ends are checked (the p99 gate binds the writes alone).
+  live) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
   # One request in ten plans a migration: a change-locked dry run of the collection's drafts
   # plus a plan and item insert and a supersede — a heavier write than a changeset's, so half
   # of entries' steady rate and its p99 budget.
@@ -212,6 +217,9 @@ else
       COLOPHON_RATE_LIMIT_PER_CREDENTIAL="${COLOPHON_RATE_LIMIT_PER_CREDENTIAL:-1000000/1000000}" \
       COLOPHON_RATE_LIMIT_DELIVERY="${COLOPHON_RATE_LIMIT_DELIVERY:-1000000/1000000}"
     if [[ -n "$studio_dir" ]]; then export COLOPHON_STUDIO_DIR="$studio_dir"; fi
+    # The live scenario's subscribers hold each stream to its clean end: a 15-second lifetime
+    # keeps a hold in seconds (the 30-minute default is past the client's 90-second timeout).
+    if [[ "$endpoint" == "live" ]]; then export COLOPHON_EVENTS_LIFETIME_MS="${COLOPHON_EVENTS_LIFETIME_MS:-15000}"; fi
     exec target/release/colophon-server
   ) >"$work/server.log" 2>&1 &
   server_pid=$!

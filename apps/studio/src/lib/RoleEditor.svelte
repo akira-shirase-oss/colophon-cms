@@ -17,6 +17,7 @@
 	import { type Action, ApiError, type ContentType, deleteRole, type Grant, type RoleDefinition, updateRole } from '#lib/api.ts';
 	import PermissionGrid from '#lib/PermissionGrid.svelte';
 	import { cell } from '#lib/permissions.ts';
+	import { rolesQuery } from '#lib/queries.ts';
 	import FormRow from '#lib/shell/FormRow.svelte';
 
 	let { project, role, types, editable }: { project: string; role: RoleDefinition; types: ContentType[]; editable: boolean } = $props();
@@ -24,17 +25,23 @@
 	const queryClient = useQueryClient();
 
 	const key = cell;
-	// The editor's copy, keyed on the role's version by the page: a save starts a fresh copy.
+	// The version the form edits. The `role` prop follows every refetch — a live hint that moves
+	// it under an open form must neither drop the work nor move the save's base (E3); only a save
+	// or "Load the latest version" does. An untouched form simply follows the fresh version.
 	// svelte-ignore state_referenced_locally
-	const saved = role;
+	let saved = $state.raw(role);
 	// The grid edits plain permissions; ones limited to some fields or to a member's own entries
 	// (step R.3) are kept apart, listed in words, and saved exactly as they are.
 	const limited = (grant: Grant) => grant.fields !== undefined || grant.condition !== undefined;
-	const initial = saved.permissions.filter((grant) => !limited(grant)).map((grant) => key(grant.action, grant.subject));
-	const initialLimits = JSON.stringify(saved.permissions.filter(limited));
+	const initial = $derived(saved.permissions.filter((grant) => !limited(grant)).map((grant) => key(grant.action, grant.subject)));
+	const initialLimits = $derived(JSON.stringify(saved.permissions.filter(limited)));
+	// svelte-ignore state_referenced_locally
 	let name = $state(saved.name);
+	// svelte-ignore state_referenced_locally
 	let description = $state(saved.description);
+	// svelte-ignore state_referenced_locally
 	let grants = $state(new Set<string>(initial));
+	// svelte-ignore state_referenced_locally
 	let limits = $state<Grant[]>(saved.permissions.filter(limited));
 	let error = $state('');
 	let stale = $state(false);
@@ -48,7 +55,25 @@
 			initial.some((grant) => !grants.has(grant)) ||
 			JSON.stringify(limits) !== initialLimits
 	);
+	// A refetch that brings a newer version moves the notice, never the form: read-only views and
+	// untouched forms follow it straight away; a form being edited keeps its work and says so.
+	const moved = $derived(role.version > saved.version);
+	$effect(() => {
+		if (role.version > saved.version && (!editable || !dirty)) apply(role);
+	});
 	const used = $derived(role.members + role.invitations);
+
+	/** The version shown becomes the version edited: form, base and notices start from it. */
+	function apply(next: RoleDefinition) {
+		saved = next;
+		name = next.name;
+		description = next.description;
+		grants = new Set(next.permissions.filter((grant) => !limited(grant)).map((grant) => key(grant.action, grant.subject)));
+		limits = next.permissions.filter(limited);
+		error = '';
+		stale = false;
+		confirming = false;
+	}
 
 	function permissions(): Grant[] {
 		const plain = [...grants].map((grant) => {
@@ -98,8 +123,11 @@
 		error = '';
 		stale = false;
 		try {
-			const saved = await updateRole(project, role.key, role.version, { name: name.trim(), description: description.trim(), permissions: permissions() });
-			toast.success(`Saved ${saved.name}`);
+			const result = await updateRole(project, saved.key, saved.version, { name: name.trim(), description: description.trim(), permissions: permissions() });
+			toast.success(`Saved ${result.name}`);
+			// The form already holds what was saved; only the base moves, so the `role` prop
+			// catching up never reads as a version someone else moved it to.
+			saved = result;
 			await Promise.all([
 				queryClient.invalidateQueries({ queryKey: ['roles', project] }),
 				queryClient.invalidateQueries({ queryKey: ['project', project] })
@@ -113,14 +141,16 @@
 	}
 
 	async function reload() {
-		await queryClient.invalidateQueries({ queryKey: ['roles', project] });
+		const fresh = await queryClient.fetchQuery(rolesQuery(project));
+		const next = fresh.find((item) => item.key === saved.key);
+		if (next !== undefined) apply(next);
 	}
 
 	async function remove() {
 		busy = true;
 		error = '';
 		try {
-			await deleteRole(project, role.key, role.version);
+			await deleteRole(project, saved.key, saved.version);
 			toast.success(`Deleted ${role.name}`);
 			await queryClient.invalidateQueries({ queryKey: ['roles', project] });
 			await goto(resolve('/projects/[project]/settings/roles', { project }));
@@ -211,10 +241,10 @@
 		{/snippet}
 	</PermissionGrid>
 
-	{#if error}
+	{#if error || moved}
 		<div role="alert" class="mt-6 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive" data-testid="role-error">
-			<p>{stale ? 'Someone changed this role while you were editing it. Load their version, then make your change again.' : error}</p>
-			{#if stale}<Button class="mt-2" variant="secondary" size="sm" onclick={reload}>Load the latest version</Button>{/if}
+			<p>{stale || moved ? 'Someone changed this role while you were editing it. Load their version, then make your change again.' : error}</p>
+			{#if stale || moved}<Button class="mt-2" variant="secondary" size="sm" onclick={reload}>Load the latest version</Button>{/if}
 		</div>
 	{/if}
 

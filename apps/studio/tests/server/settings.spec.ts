@@ -15,7 +15,7 @@ test('an owner finds each setting on a page of its own, from a left panel, with 
 
 	// The panel: every page, General open.
 	const nav = page.getByTestId('settings-nav');
-	await expect(nav.getByRole('link')).toHaveText(['General', 'Roles', 'Website connections', 'API tokens', 'Activity']);
+	await expect(nav.getByRole('link')).toHaveText(['General', 'Roles', 'Review stages', 'Website connections', 'API tokens', 'Activity']);
 	await expect(nav.getByTestId('settings-general-link')).toHaveAttribute('aria-current', 'page');
 	await expect(page.getByRole('heading', { level: 1, name: 'General' })).toBeVisible();
 	await expect(page.getByRole('navigation', { name: 'breadcrumb' })).toContainText('Settings');
@@ -141,7 +141,7 @@ test('a Developer sees only the pages their role can use, and an Editor still ha
 	const developer = await member(page, browser, project, 'developer');
 	await developer.getByTestId('settings-link').click();
 	const nav = developer.getByTestId('settings-nav');
-	await expect(nav.getByRole('link')).toHaveText(['General', 'Roles', 'Website connections']);
+	await expect(nav.getByRole('link')).toHaveText(['General', 'Roles', 'Review stages', 'Website connections']);
 	await developer.getByTestId('roles-link').click();
 	await expect(developer.getByTestId('roles')).toContainText('Developer');
 	await expect(developer.getByRole('button', { name: 'New role' })).toHaveCount(0);

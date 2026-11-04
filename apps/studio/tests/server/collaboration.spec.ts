@@ -27,17 +27,33 @@ test('comment on the version on screen, and a task through its life', async ({ p
 	expect(await violations(page)).toEqual([]);
 
 	// A deleted entry's comments stay: delete it through the API (on its own etag, as deletes
-	// bind), try to say more, and the panel says nothing new can be added while what was said stays.
-	const current = await page.evaluate(async (path) => (await fetch(path)).headers.get('etag'), `${env(project)}/collections/articles/entries/${entry}`);
-	const gone = await api(page, 'DELETE', `${env(project)}/collections/articles/entries/${entry}`, undefined, {
+	// bind). The editor's read freezes where it stood — the tab a hint never reaches — so its
+	// composer learns only when a write answers not-found: the panel closes, what was said stays.
+	const read = `${env(project)}/collections/articles/entries/${entry}`;
+	const frozen = await page.evaluate(async (path) => {
+		const response = await fetch(path);
+		return { etag: response.headers.get('etag'), body: await response.text() };
+	}, read);
+	await page.route(`**/collections/articles/entries/${entry}`, (route) =>
+		route.request().method() === 'GET'
+			? route.fulfill({ status: 200, contentType: 'application/json', headers: { etag: frozen.etag ?? '' }, body: frozen.body })
+			: route.continue()
+	);
+	const gone = await api(page, 'DELETE', read, undefined, {
 		'Idempotency-Key': key(),
-		'If-Match': current ?? ''
+		'If-Match': frozen.etag ?? ''
 	});
 	expect([200, 204]).toContain(gone.status);
 	await page.getByTestId('comment-input').fill('One more thing');
 	await page.getByTestId('comment-post').click();
 	await expect(page.getByTestId('comments-closed')).toBeVisible();
 	await expect(comment).toContainText('Check the opening sentence');
+
+	// Unfrozen, the hint's refetch — and every fresh visit — answers the same truth: the
+	// deleted entry's page becomes "Not found" without a reload (E3 live lists).
+	await page.unroute(`**/collections/articles/entries/${entry}`);
+	await page.reload();
+	await expect(page.getByRole('alert')).toContainText('Not found');
 });
 
 test('a task is made on an entry, assigned, finished, and unassigned', async ({ page }) => {

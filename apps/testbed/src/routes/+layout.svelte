@@ -32,6 +32,7 @@
 		{ href: resolve('/collaboration'), label: 'Collaboration' },
 		{ href: resolve('/releases'), label: 'Releases' },
 		{ href: resolve('/deliveries'), label: 'Deliveries' },
+		{ href: resolve('/live'), label: 'Live lists' },
 		{ href: resolve('/load'), label: 'Load tests' }
 	];
 </script>

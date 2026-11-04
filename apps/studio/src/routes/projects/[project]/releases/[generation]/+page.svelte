@@ -23,11 +23,11 @@
 
 	const project = $derived(page.params.project ?? '');
 	const generation = $derived(Number(page.params.generation ?? '0'));
-	// A pending receipt settles on its own: look again every few seconds until it does.
+	// A pending receipt settles on its own: jobs and probes commit as `releases` hints, and the
+	// live stream refreshes this receipt (D-108) — nothing to poll for.
 	const receipt = createQuery(() => ({
 		queryKey: ['receipt', project, generation],
-		queryFn: () => getReceipt(project, generation),
-		refetchInterval: (query) => (query.state.data?.label === 'pending' ? 2_000 : false)
+		queryFn: () => getReceipt(project, generation)
 	}));
 
 	const when = (at: string) => new Date(at).toLocaleString();

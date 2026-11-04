@@ -45,7 +45,9 @@
 		<Problem error={types.error} />
 	{:else if loaded && types.data}
 		{#if role}
-			{#key `${role.key}@${role.version}`}
+			<!-- Keyed on the role, not its version: a refetch that moves the version must not remount
+			     the editor over an open form — the editor says when its version fell behind (E3). -->
+			{#key role.key}
 				<RoleEditor {project} {role} types={types.data} {editable} />
 			{/key}
 		{:else}
