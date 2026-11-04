@@ -3290,7 +3290,7 @@
             ]
           },
           "requests_per_minute": {
-            "description": "management requests per minute (stored; not consumed yet)",
+            "description": "management requests per rolling minute; over it, 429 `rate_limited` with `Retry-After` (D-118)",
             "maximum": 100000,
             "minimum": 1,
             "type": [
@@ -3310,6 +3310,7 @@
             "type": "integer"
           },
           "requests_last_minute": {
+            "description": "the limiter's current rolling window (D-118); 0 without the ceiling or when unreachable",
             "type": "integer"
           }
         },

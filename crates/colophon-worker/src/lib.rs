@@ -863,12 +863,12 @@ impl Worker {
         }
     }
 
-    /// Bulk work, beside [`run_migrations`] (P5, D-116): a scan finds `running` jobs, each is
-    /// claimed under a session advisory lock on its own connection, and its items run one
-    /// transaction each — opened **as the submitter**, so a revoked token or a demoted member
-    /// stops the run honestly instead of borrowing the worker's power. Everything the drive
-    /// writes is durable in the item's own transaction, so a resumed drive asks every item
-    /// what it already knows and skips what finished. At most [`BULK_SLOTS`] jobs drive at
+    /// Bulk work, beside [`Self::run_migrations`] (P5, D-116): a scan finds `running` jobs,
+    /// each is claimed under a session advisory lock on its own connection, and its items run
+    /// one transaction each — opened **as the submitter**, so a revoked token or a demoted
+    /// member stops the run honestly instead of borrowing the worker's power. Everything the
+    /// drive writes is durable in the item's own transaction, so a resumed drive asks every
+    /// item what it already knows and skips what finished. At most `BULK_SLOTS` jobs drive at
     /// once — the spec's two AI jobs.
     pub async fn run_bulk(self: Arc<Self>, cancel: CancellationToken) {
         use colophon_db::bulk;

@@ -4078,7 +4078,7 @@ fn membership() -> Value {
             "properties": {
                 "documents_per_day": { "type": ["integer", "null"], "minimum": 1, "maximum": 1_000_000, "description": "entry writes per rolling day" },
                 "max_concurrent_jobs": { "type": ["integer", "null"], "minimum": 1, "maximum": 64, "description": "delivery jobs held at once" },
-                "requests_per_minute": { "type": ["integer", "null"], "minimum": 1, "maximum": 100_000, "description": "management requests per minute (stored; not consumed yet)" },
+                "requests_per_minute": { "type": ["integer", "null"], "minimum": 1, "maximum": 100_000, "description": "management requests per rolling minute; over it, 429 `rate_limited` with `Retry-After` (D-118)" },
             },
         },
         "TokenUsage": {
@@ -4086,7 +4086,7 @@ fn membership() -> Value {
             "properties": {
                 "documents_last_day": { "type": "integer" },
                 "jobs_open": { "type": "integer" },
-                "requests_last_minute": { "type": "integer" },
+                "requests_last_minute": { "type": "integer", "description": "the limiter's current rolling window (D-118); 0 without the ceiling or when unreachable" },
             },
         },
         "PatchToken": {

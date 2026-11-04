@@ -126,7 +126,8 @@ pub struct Limits {
     pub documents_per_day: Option<i64>,
     /// Delivery jobs held at once.
     pub max_concurrent_jobs: Option<i64>,
-    /// Management requests per minute (stored; not consumed yet).
+    /// Management requests per rolling minute; the request-time quota throttles over it
+    /// (D-118), outside this ledger.
     pub requests_per_minute: Option<i64>,
 }
 

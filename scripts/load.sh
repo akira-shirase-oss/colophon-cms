@@ -26,6 +26,8 @@
 # invitation lookups, role changes and new invitations), roles (requests by a member holding a
 # custom role, the caller's permissions, role lists and versioned role edits), tokens (requests
 # with a read-only and a field-narrowed API token, audit log pages, and tokens made and revoked),
+# quotas (two read-only tokens with request ceilings: one inside its budget lists entries,
+# one over its two-a-minute ceiling answers 429 with Retry-After; D-118),
 # schedules (schedule lists, and scheduling and cancelling a day ahead), projects (who may create
 # projects: refused creations and /me), setup (setup codes refused on a set-up installation, and
 # /me), changesets (reading, listing, reviewing and creating changesets), stages (the
@@ -70,7 +72,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -99,6 +101,10 @@ case "$endpoint" in
   # Half its requests list entries (a content type lookup too): about 2,000/s at most here, so
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
   cli | members | roles | tokens | schedules | changesets | stages | collaboration) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
+  # Eight requests in ten are refused by the request quota (a token's scoped transaction plus a
+  # Valkey eval, no handler work); two in ten list entries under a high ceiling: tokens' rate,
+  # entries' p99 budget since refusals can still wait on the pool.
+  quotas) RATE="${RATE:-1000}" P99_MS="${P99_MS:-250}" ;;
   # Writers save entries (entries' arm); subscribers' held streams aren't timed — only their
   # clean ends are checked (the p99 gate binds the writes alone).
   live) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;

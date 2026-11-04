@@ -178,7 +178,9 @@ pub struct Config {
     /// second and burst, or `off`), `COLOPHON_RATE_LIMIT_PER_CREDENTIAL` (default `150/300`),
     /// `COLOPHON_RATE_LIMIT_DELIVERY` (public delivery per address, default `1000/2000`), and
     /// `COLOPHON_TRUSTED_PROXIES` (comma-separated addresses or networks whose
-    /// `X-Forwarded-For` names the client; default none).
+    /// `X-Forwarded-For` names the client; default none). The per-token request quota's
+    /// window (D-118) is `COLOPHON_QUOTA_WINDOW_MS`, default `60_000` — the minute
+    /// `requests_per_minute` names; a test shortens it rather than waiting a minute.
     pub admission: colophon_api::admission::AdmissionSettings,
     /// Live-hint stream bounds (D-108): `COLOPHON_EVENTS_PER_CREDENTIAL` (8),
     /// `COLOPHON_EVENTS_PER_PROJECT` (256) and `COLOPHON_EVENTS_MAX_STREAMS` (2048) cap the
@@ -414,13 +416,16 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         })
     }
 
-    /// The rate limits (D-076).
+    /// The rate limits (D-076) and the token quota's window (D-118).
     fn admission(&mut self) -> colophon_api::admission::AdmissionSettings {
         colophon_api::admission::AdmissionSettings {
             per_address: self.rate("COLOPHON_RATE_LIMIT_PER_ADDRESS", "300/600"),
             per_credential: self.rate("COLOPHON_RATE_LIMIT_PER_CREDENTIAL", "150/300"),
             delivery_per_address: self.rate("COLOPHON_RATE_LIMIT_DELIVERY", "1000/2000"),
             trusted_proxies: self.prefixes("COLOPHON_TRUSTED_PROXIES"),
+            // A window under 10 ms is a broken test, not a configuration: the floor keeps
+            // one; the ceiling is an hour, far past the minute the column names.
+            quota_window_ms: self.ranged("COLOPHON_QUOTA_WINDOW_MS", 60_000, 10..=3_600_000),
         }
     }
 

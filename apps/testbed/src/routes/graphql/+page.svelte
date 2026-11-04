@@ -263,6 +263,6 @@
 		padding: 0.4rem 0.5rem;
 	}
 	code {
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 	}
 </style>

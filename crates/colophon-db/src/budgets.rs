@@ -47,7 +47,9 @@ pub struct Usage {
     pub documents_last_day: i64,
     /// Jobs reservations still open (held or uncertain).
     pub jobs_open: i64,
-    /// Requests in the last minute (recorded; nothing consumes them yet, so 0).
+    /// Requests in the last minute. The request quota counts them in the limiter, not this
+    /// ledger (D-118), so this stays 0 unless a reservation records one; the token view
+    /// overlays the limiter's own window.
     pub requests_last_minute: i64,
 }
 

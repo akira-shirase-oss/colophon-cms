@@ -2555,12 +2555,13 @@ export interface components {
             documents_per_day?: number | null;
             /** @description delivery jobs held at once */
             max_concurrent_jobs?: number | null;
-            /** @description management requests per minute (stored; not consumed yet) */
+            /** @description management requests per rolling minute; over it, 429 `rate_limited` with `Retry-After` (D-118) */
             requests_per_minute?: number | null;
         };
         TokenUsage: {
             documents_last_day?: number;
             jobs_open?: number;
+            /** @description the limiter's current rolling window (D-118); 0 without the ceiling or when unreachable */
             requests_last_minute?: number;
         };
         TokenView: {

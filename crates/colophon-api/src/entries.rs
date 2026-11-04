@@ -443,7 +443,9 @@ pub(crate) fn json(
     response
 }
 
-/// Opens a transaction in the caller's project and environment, or 404.
+/// Opens a transaction in the caller's project and environment, or 404. For an API token, the
+/// transaction knows the token's own `requests_per_minute` (read with the token check itself),
+/// so this is also where the request quota rules (D-118): before any handler work.
 pub(crate) async fn open(
     state: &AppState,
     caller: SignedIn,
@@ -463,7 +465,57 @@ pub(crate) async fn open(
             scope::begin_in_project(&services.pool, caller.identity, project, environment).await
         }
     };
-    opened.map_err(ApiError::from_db)?.ok_or(ApiError::NotFound)
+    let tx = opened
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    quota(state, tx).await
+}
+
+/// The token's own request ceiling (D-118): Postgres's row is the only authority for
+/// `requests_per_minute`; the limiter only holds the rolling count. A refusal records the
+/// episode's first `token.rate_limited`, committed alone — the transaction's other state is
+/// only the token check — then answers 429. A member's transaction carries no token, and a
+/// `NULL` ceiling no quota, so this is free for both.
+async fn quota(
+    state: &AppState,
+    mut tx: ProjectTransaction,
+) -> Result<ProjectTransaction, ApiError> {
+    let (Some(admission), Some(token)) = (&state.admission, tx.token) else {
+        return Ok(tx);
+    };
+    let Some(requests_per_minute) = token.requests_per_minute else {
+        return Ok(tx);
+    };
+    let Some(throttle) = admission
+        .quota(tx.project, token.id, requests_per_minute)
+        .await
+    else {
+        return Ok(tx);
+    };
+    if throttle.transition {
+        // The episode's first refusal is the one the audit log hears. When that write can't
+        // land, the refusal still stands: the count never waits on the log.
+        if colophon_db::audit::record_in(
+            &mut tx.transaction,
+            tx.project,
+            tx.identity,
+            "token.rate_limited",
+            &token.id.to_string(),
+            &serde_json::json!({
+                "requests_per_minute": requests_per_minute,
+                "retry_after": throttle.retry_after(),
+            })
+            .to_string(),
+        )
+        .await
+        .is_ok()
+        {
+            drop(tx.commit().await);
+        }
+    }
+    Err(ApiError::TooManyRequests {
+        retry_after: throttle.retry_after(),
+    })
 }
 
 /// The collection's current content type and its version, or 404. The definition is read from
