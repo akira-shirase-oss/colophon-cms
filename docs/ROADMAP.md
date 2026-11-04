@@ -508,7 +508,10 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   applies exactly one effect.
 - `docs`: complete guides; every example runs in CI.
 - `oss`: release process, SBOM, signed artifacts, security policy.
-- Usability test with five editors; one independent install.
+- Usability test with five editors; one independent install. Prepared (D-132): `scripts/clean-install.sh`
+  rehearses the README path verbatim in a throwaway clone on an isolated stack, `docs/usability-protocol.md`
+  scripts the five sessions, and `deploy/runbooks/install-feedback.md` is the installer's friction record; the
+  gates themselves tick only when the people run them.
 - built: backups' capture half (D-125) — `archive_mode=on`, `wal_level=replica`, `archive_timeout=60s`, WAL segments
   into the `postgres-wal-archive` volume through `deploy/postgres/archive-wal.sh` (the local stand-in for object
   storage; the stock image has no S3 tooling), `scripts/backup.sh` capturing the cluster by `pg_basebackup` as the
@@ -529,8 +532,9 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   `colophon-server/tests/migrate_status.rs`, `deploy/runbooks/upgrade.md` rehearsed by `scripts/upgrade-rehearsal.sh`
   (`perf/results/2026-11-04T205013Z-upgrade-rehearsal-apple-m2-pro-12c.json`, 8 checks), the observability audit in
   `deploy/runbooks/observability.md` with request-span `version`/`commit` proven live, `SECURITY.md`, `CHANGELOG.md`
-  · not built: object-store asset versioning, the bounded-table retention jobs, the usability drills and installs of
-  the proof gate.
+  · not built: object-store asset versioning, the bounded-table retention jobs. The proof gate's usability sessions
+  and independent install are prepared (D-132: rehearsal script, protocol, friction record) and still owed by the
+  people who must run them.
 
 **Proof gate:** F09–F14, L05–L13, the 24-hour soak, a restore drill on clean infrastructure, the usability gate, one
 independent install. **v0.1 release.**

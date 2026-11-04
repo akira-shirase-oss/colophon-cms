@@ -22,8 +22,11 @@ v0.1 is done when every box below is checked with stored evidence (commit, comma
       deletion ledger replay — `scripts/restore.sh drill`, evidenced by
       `perf/results/2026-11-04T194355Z-restore-drill-apple-m2-pro-12c.json` (D-125 capture, D-126 restore).
 - [ ] One person other than the maintainer installs Colophon from the README alone, and the friction is recorded.
+      Prepared (D-132): `scripts/clean-install.sh` rehearses the README mechanically;
+      `deploy/runbooks/install-feedback.md` records the human run.
 - [ ] Five representative editors attempt draft → preview → review → publish; at least four succeed without help
-      (spec §05 usability gate), and the failures are written up.
+      (spec §05 usability gate), and the failures are written up. Prepared (D-132): `docs/usability-protocol.md`
+      is the session script.
 - [ ] v0.1 is released with signed artifacts, an SBOM, a changelog, the docs site, and one technical write-up per hard
       problem (outbox, release generations, the simulator, cache invalidation).
 

@@ -54,7 +54,9 @@ running install is [runbooks/upgrade.md](runbooks/upgrade.md) and diagnosing one
 [runbooks/observability.md](runbooks/observability.md) (both D-130).
 
 If a port clashes with something else on your machine, move it: `COLOPHON_PG_PORT`, `COLOPHON_VALKEY_PORT`,
-`COLOPHON_S3_PORT`, `COLOPHON_S3_ADMIN_PORT`, `COLOPHON_KEYCLOAK_PORT`. The bind address is deliberately not a setting.
+`COLOPHON_S3_PORT`, `COLOPHON_S3_ADMIN_PORT`, `COLOPHON_KEYCLOAK_PORT`. `deploy/local.env` carries the same
+addresses for the server and the CLI; update its URLs to match (and `COLOPHON_SERVER` if the server's own port
+moved). The bind address is deliberately not a setting.
 
 ## Several servers behind a balancer
 

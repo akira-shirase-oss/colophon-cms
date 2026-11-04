@@ -183,12 +183,18 @@ crates as the milestones need them; see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Development
 
+```sh
+git clone https://github.com/akira-shirase-oss/colophon-cms.git
+cd colophon-cms
+```
+
 Requirements: [rustup](https://rustup.rs) (it installs the pinned toolchain, Rust 1.99.1, from `rust-toolchain.toml`),
-Docker with Compose, Node 22.17+, and optionally [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) and
+Docker with Compose, Node 22.17+ (with `npm ci` once, for the workspace's dependencies), `curl`, `jq` and `openssl`
+for the stack's own checks, and optionally [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) and
 [k6](https://k6.io) (`scripts/install-k6.sh` installs the pinned version).
 
 ```sh
-scripts/stack.sh up      # PostgreSQL, Valkey, Garage and Keycloak on 127.0.0.1, then 28 checks that each one works
+scripts/stack.sh up      # PostgreSQL, Valkey, Garage and Keycloak on 127.0.0.1, then a check pass that each one works
 scripts/check.sh         # everything CI runs: fmt, clippy -D warnings, tests, docs, architecture rule, cargo-deny,
                          # ShellCheck, and with the stack up: outage tests, the testbed in Chromium, load smoke runs
 scripts/frontend.sh      # type checks, the editor's unit tests, and the Studio in Chromium
@@ -215,9 +221,11 @@ cargo run --release -p colophon-cli -- doctor     # status, role and each depend
 Then open `http://localhost:58000/auth/login?return_to=/me` and sign in as `dev-editor` (password `colophon-dev`):
 you land on `/me`, which shows who you are and your projects.
 
-To use the Studio, build it and point the server at the build before starting it:
+To use the Studio, install the workspace's dependencies once, build it and point the server at the build before
+starting it:
 
 ```sh
+npm ci
 npm run build -w @colophon/studio
 COLOPHON_STUDIO_DIR="$PWD/apps/studio/build" cargo run --release -p colophon-server
 ```
