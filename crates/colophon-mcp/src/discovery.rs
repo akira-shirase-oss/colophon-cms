@@ -113,7 +113,15 @@ mod tests {
                 "list_content_types",
                 "list_entries",
                 "get_entry",
-                "get_publish_request"
+                "query_entries",
+                "get_publish_request",
+                "list_releases",
+                "get_release",
+                "list_migrations",
+                "get_migration",
+                "list_migration_items",
+                "list_comments",
+                "list_tasks"
             ]
         );
     }
@@ -132,7 +140,16 @@ mod tests {
         };
         assert_eq!(
             names(create_only),
-            ["list_content_types", "create_draft", "get_publish_request"]
+            [
+                "list_content_types",
+                "create_draft",
+                "get_publish_request",
+                "list_releases",
+                "get_release",
+                "list_migrations",
+                "get_migration",
+                "list_migration_items"
+            ]
         );
         let update_only = Allowed {
             update: true,
@@ -145,7 +162,14 @@ mod tests {
                 "update_draft",
                 "create_publish_request",
                 "request_review",
-                "get_publish_request"
+                "get_publish_request",
+                "list_releases",
+                "get_release",
+                "list_migrations",
+                "get_migration",
+                "list_migration_items",
+                "create_comment",
+                "create_task"
             ]
         );
     }
