@@ -77,7 +77,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-export PATH="$(brew --prefix rustup 2>/dev/null || echo /nonexistent)/bin:$HOME/.local/bin:$PATH"
+PATH="$(brew --prefix rustup 2>/dev/null || echo /nonexistent)/bin:$HOME/.local/bin:$PATH"
+export PATH
 ./scripts/check-toolchain.sh >/dev/null
 cargo build --quiet --release --locked -p colophon-server -p colophon-cli
 

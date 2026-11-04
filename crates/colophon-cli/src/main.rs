@@ -646,6 +646,43 @@ enum AdminCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Copy the deletion ledger off-host (docs/modules/02-db.md "The deletion ledger"; O2's
+    /// restore step 4 needs it): a versioned JSONL snapshot to a file, or into the
+    /// `COLOPHON_S3_*` object store. Run from the backup schedule; each export is a complete
+    /// interval up to its high-water mark.
+    LedgerExport {
+        /// The migrator's connection URL. Never the application's.
+        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// Write the export to this file ('-' for stdout).
+        #[arg(long, conflicts_with = "s3_key", required_unless_present = "s3_key")]
+        out: Option<String>,
+        /// Put the export under this key in the `COLOPHON_S3_*` object store instead. The key
+        /// convention is `deletion-ledger/<high-water>.jsonl`.
+        #[arg(long)]
+        s3_key: Option<String>,
+        /// Only rows above this earlier export's watermark (an incremental copy; a restore
+        /// still needs every file back to before its backup).
+        #[arg(long, default_value_t = 0)]
+        after: i64,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reapply an exported deletion-ledger interval on a freshly restored database, as the
+    /// restore procedure's step 4 (O2): before read APIs or caches serve. Idempotent; exits
+    /// non-zero while any row can't be replayed — the restore stays blocked.
+    LedgerReplay {
+        /// The migrator's connection URL of the restored database.
+        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// The export file to replay ('-' for standard input).
+        #[arg(long)]
+        input: String,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -690,6 +727,32 @@ fn main() -> ExitCode {
                 &issuer,
                 &subject,
                 out::Out::new("admin bootstrap", out::Format::of(json, false)),
+            ))
+            .into(),
+        Command::Admin(AdminCommand::LedgerExport {
+            database_url,
+            out: file,
+            s3_key,
+            after,
+            json,
+        }) => runtime
+            .block_on(admin::ledger_export(
+                &database_url,
+                file.as_deref(),
+                s3_key.as_deref(),
+                after,
+                out::Out::new("admin ledger export", out::Format::of(json, false)),
+            ))
+            .into(),
+        Command::Admin(AdminCommand::LedgerReplay {
+            database_url,
+            input,
+            json,
+        }) => runtime
+            .block_on(admin::ledger_replay(
+                &database_url,
+                &input,
+                out::Out::new("admin ledger replay", out::Format::of(json, false)),
             ))
             .into(),
         Command::Login {

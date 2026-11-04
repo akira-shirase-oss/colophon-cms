@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_events (project_id, id, actor_id, action, subject, detail)\n         VALUES ($1, $2, $3, 'ledger.replayed', $4, $5::text::jsonb)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "57f714cc0a22a0a6e0f8a97a78ba974af5db20b1fd622366ca3e8719fcbc8a3f"
+}

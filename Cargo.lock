@@ -601,6 +601,7 @@ dependencies = [
  "colophon-db",
  "colophon-mcp",
  "colophon-version",
+ "object_store",
  "reqwest",
  "semver",
  "serde",

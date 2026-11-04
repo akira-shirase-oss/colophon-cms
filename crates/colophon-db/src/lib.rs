@@ -22,6 +22,7 @@ pub mod events;
 pub mod idempotency;
 pub mod identity;
 pub mod jobs;
+pub mod ledger;
 pub mod members;
 pub mod migrations;
 pub mod passwords;

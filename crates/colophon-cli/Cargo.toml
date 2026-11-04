@@ -23,6 +23,8 @@ colophon-db.workspace = true
 # `colophon mcp` is the same server as the `colophon-mcp` binary, linked in (D-119).
 colophon-mcp.workspace = true
 colophon-version.workspace = true
+# `admin ledger export --s3-key` puts the snapshot in the object store (D-124).
+object_store.workspace = true
 reqwest.workspace = true
 semver.workspace = true
 serde.workspace = true

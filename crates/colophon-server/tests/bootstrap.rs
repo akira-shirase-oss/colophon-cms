@@ -95,7 +95,7 @@ async fn only_the_bootstrapped_administrator_creates_projects_and_bootstrap_runs
     // Bootstrap runs once: again for dev-owner it changes nothing; for anyone else it's refused.
     let (code, out, stderr) = bootstrap(&["--subject", DEV_OWNER]);
     assert_eq!(
-        (code, out["status"].as_str()),
+        (code, out["data"]["status"].as_str()),
         (Some(0), Some("already_bootstrapped")),
         "{stderr}"
     );

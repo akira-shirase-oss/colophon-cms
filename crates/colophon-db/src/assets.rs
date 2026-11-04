@@ -562,7 +562,7 @@ pub async fn finish(
         // `deleting` only ever reaches `deleted`: a claimed-again job or a crash between the
         // stages can't flip it back.
         Outcome::Deleted => {
-            sqlx::query!(
+            let deleted = sqlx::query!(
                 "UPDATE assets SET state = 'deleted'
                  WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND state = 'deleting'",
                 job.project_id,
@@ -572,6 +572,20 @@ pub async fn finish(
             .execute(&mut *transaction)
             .await
             .map_err(DbError::from_write)?;
+            // Only the transition is ledgered: a job that finds the asset already `deleted`
+            // (claimed again after a crash) changed nothing, and its row would duplicate the
+            // first's. A restored backup resurrects the row live; the ledger's row (migration
+            // 0048, D-124) is what marks it `deleted` again — the objects are already gone.
+            if deleted.rows_affected() > 0 {
+                crate::ledger::record_in(
+                    &mut transaction,
+                    crate::ledger::Kind::Asset,
+                    job.project_id,
+                    Some(job.environment_id),
+                    &serde_json::json!({"asset": job.asset_id}).to_string(),
+                )
+                .await?;
+            }
         }
         Outcome::Missing | Outcome::StillReferenced => {}
     }

@@ -387,5 +387,15 @@ pub async fn delete(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)?;
+    // The role is gone outright; the deletion ledger's row (migration 0048, D-124) is what a
+    // restored backup is cleaned with.
+    crate::ledger::record_in(
+        &mut tx.transaction,
+        crate::ledger::Kind::Role,
+        tx.project,
+        None,
+        &serde_json::json!({"role": key}).to_string(),
+    )
+    .await?;
     Ok(Removed::Done)
 }
