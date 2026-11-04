@@ -46,6 +46,15 @@
 # gets a short COLOPHON_EVENTS_LIFETIME_MS so a hold is seconds, not 30 minutes; D-108),
 # delivery (anonymous /content/v1 reads, latest and pinned), publishing (whole publishes, five
 # requests each, with the worker announcing every release to a local receiver; needs node),
+# the dependency-failure evidence runs (D-127; each pauses a real stack container or kills a
+# real process mid-run through the receiver's /control endpoint — run them SERIALLY, never
+# beside anything else on the shared stack): cache-down (L11: delivery reads and light
+# writes while Valkey is paused then unpaused — every read falls back to Postgres, no
+# refusals, bounded fills, hits and latency back after), postgres-trouble (L12: reads and
+# writes while Postgres is paused and the separate worker process is SIGKILLed — writes
+# fail honestly, no fake commit, /readyz says not_ready, jobs resume), purge-trouble
+# (L13: publishes while the receiver answers the purge 503 + Retry-After and the site
+# answers a frozen generation — bounded backoff, pending never verified, then drains),
 # studio (the Studio's static files; builds the Studio first) or site (the reference site's pages,
 # served by its runner while a release is published every two seconds; needs node).
 #
@@ -76,7 +85,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|cache-down|postgres-trouble|purge-trouble|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -151,6 +160,16 @@ case "$endpoint" in
   # publishes (200 requests) a second; a run at 100 fell behind (the result is kept). The p99
   # threshold is END_GOAL's editorial write budget, 700 ms.
   publishing) RATE="${RATE:-40}" P99_MS="${P99_MS:-700}" ;;
+  # L11 (D-127): delivery reads at a steady rate while Valkey is paused mid-run — the
+  # reads keep their p99 budget because the Postgres fallback is the point, not the pain.
+  cache-down) RATE="${RATE:-400}" P99_MS="${P99_MS:-250}" ;;
+  # L12 (D-127): reads and light writes while Postgres is paused and the worker is
+  # killed; the clean windows carry the entries p99 budget, the outage's own gate is
+  # the request deadline.
+  postgres-trouble) RATE="${RATE:-100}" P99_MS="${P99_MS:-250}" ;;
+  # L13 (D-127): RATE counts publishes (five requests each) through a failing purge
+  # sink — publishing's editorial write budget for the p99 gate.
+  purge-trouble) RATE="${RATE:-8}" P99_MS="${P99_MS:-700}" ;;
   *) RATE="${RATE:-20000}" P99_MS="${P99_MS:-25}" ;;
 esac
 base_url="http://127.0.0.1:$port"
@@ -167,10 +186,24 @@ if [[ "$cluster" == "1" ]]; then
 fi
 work=$(mktemp -d)
 server_pid=""
+worker_pid=""
 receiver_pid=""
 site_pid=""
 site_port="${SITE_PORT:-58097}"
 receiver_port="${RECEIVER_PORT:-58096}"
+# A port that already has a listener means a stale process from an earlier run: the
+# child spawned here would die on EADDRINUSE while the squatter — with its old state —
+# answers in its place. (A stale receiver once drove a real Valkey pause through its
+# /control while the run's own receiver.log held only the crash dump, so the warn
+# window read empty and every warning counted.) Fail fast, don't measure it.
+port_busy() { lsof -nP -t -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+refuse_squatter() {
+  if port_busy "$1"; then
+    echo "error: port $1 already has a listener — a stale process would answer in place" >&2
+    echo "of this run's own $2. Find it: lsof -nP -iTCP:$1 -sTCP:LISTEN" >&2
+    exit 1
+  fi
+}
 # shellcheck disable=SC2329 # invoked by the EXIT trap below
 cleanup() {
   if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
@@ -184,6 +217,11 @@ cleanup() {
   if [[ -n "$site_pid" ]]; then
     kill "$site_pid" 2>/dev/null || true
     wait "$site_pid" 2>/dev/null || true
+  fi
+  # Never leave the stack dead or the spawned worker behind, however the run ended.
+  if [[ -f "$work/worker.pid" ]]; then kill "$(cat "$work/worker.pid" 2>/dev/null)" 2>/dev/null || true; fi
+  if [[ "$endpoint" == "cache-down" || "$endpoint" == "postgres-trouble" ]]; then
+    docker compose -f deploy/compose.yaml unpause postgres valkey >/dev/null 2>&1 || true
   fi
   if [[ -n "${SERVER_LOG:-}" && -f "$work/server.log" ]]; then cp "$work/server.log" "$SERVER_LOG"; fi
   rm -rf "$work"
@@ -201,17 +239,46 @@ if [[ "$endpoint" == "studio" ]]; then
   studio_dir="$PWD/apps/studio/build"
 fi
 
-# The publishing scenario's webhook destination.
-if [[ "$endpoint" == "publishing" ]]; then
-  command -v node >/dev/null || { echo "error: the publishing scenario needs node" >&2; exit 1; }
-  node perf/receiver/receiver.mjs "$receiver_port" >"$work/receiver.log" 2>&1 &
+# postgres-trouble splits roles: the API server runs --role api and a separate
+# --role worker process runs the outbox, so the scenario's SIGKILL can take the worker
+# down without taking the API with it (L12, D-127). The receiver's /control kills and
+# respawns it through WORKER_PID_FILE and WORKER_CMD; a 15 s lease (config floor is
+# above the 10 s attempt deadline) lets a killed claim lapse inside the recovery window.
+worker_port="${WORKER_PORT:-58092}"
+worker_cmd=""
+if [[ "$endpoint" == "postgres-trouble" && "$cluster" != "1" ]]; then
+  worker_cmd="cd '$PWD' && . scripts/local-env.sh && export COLOPHON_ROLE=worker COLOPHON_LISTEN_ADDR=127.0.0.1:$worker_port COLOPHON_PUBLIC_URL=http://localhost:$worker_port COLOPHON_LOG=warn COLOPHON_LOG_FORMAT=json COLOPHON_WORKER_LEASE_MS=${COLOPHON_WORKER_LEASE_MS:-15000} && exec target/release/colophon-server >>'$work/worker.log' 2>&1"
+fi
+
+# The publishing and dependency-failure scenarios' destination — and, for the failure
+# ones, the fault driver (its /control endpoint pauses the real stack container, flips
+# the purge and site modes, and kills/respawns the worker; D-127). The worker env lets
+# the receiver find and respawn the postgres-trouble worker.
+if [[ "$endpoint" == "publishing" || "$endpoint" == "cache-down" || "$endpoint" == "postgres-trouble" || "$endpoint" == "purge-trouble" ]]; then
+  command -v node >/dev/null || { echo "error: $endpoint needs node" >&2; exit 1; }
+  refuse_squatter "$receiver_port" "fault receiver"
+  if [[ -n "$worker_cmd" ]]; then
+    WORKER_PID_FILE="$work/worker.pid" WORKER_CMD="$worker_cmd" \
+      node perf/receiver/receiver.mjs "$receiver_port" >"$work/receiver.log" 2>&1 &
+  else
+    node perf/receiver/receiver.mjs "$receiver_port" >"$work/receiver.log" 2>&1 &
+  fi
   receiver_pid=$!
+  # The bind can still lose a race after the squatter check; a dead receiver must not
+  # be discovered by the run's missing fault stamps.
+  sleep 0.5
+  if ! kill -0 "$receiver_pid" 2>/dev/null; then
+    echo "error: the fault receiver died at startup:" >&2
+    cat "$work/receiver.log" >&2
+    exit 1
+  fi
 fi
 
 # The site scenario's runner: builds each release it hears about and serves it (apps/web). It
 # adopts the project the scenario creates from the first announcement.
 if [[ "$endpoint" == "site" ]]; then
   command -v node >/dev/null || { echo "error: the site scenario needs node" >&2; exit 1; }
+  refuse_squatter "$site_port" "site runner"
   SITE_API="$base_url" SITE_ROOT="$work/site" SITE_LISTEN="127.0.0.1:$site_port" \
     node apps/web/src/runner.ts >"$work/site.log" 2>&1 &
   site_pid=$!
@@ -230,6 +297,10 @@ if [[ "$cluster" == "1" ]]; then
   fi
   cluster_log_sizes >"$work/log-sizes"
 else
+  # A squatter on the API port would pass the readiness probe below and the run would
+  # measure it; on the worker port, the respawned worker would never bind.
+  refuse_squatter "$port" "API server"
+  [[ -z "$worker_cmd" ]] || refuse_squatter "$worker_port" "worker"
   # The load-test server: the local stack's settings, its own port, and warnings-only logging,
   # as production would run (per-request lines are DEBUG).
   (
@@ -252,6 +323,9 @@ else
     # The live scenario's subscribers hold each stream to its clean end: a 15-second lifetime
     # keeps a hold in seconds (the 30-minute default is past the client's 90-second timeout).
     if [[ "$endpoint" == "live" ]]; then export COLOPHON_EVENTS_LIFETIME_MS="${COLOPHON_EVENTS_LIFETIME_MS:-15000}"; fi
+    # postgres-trouble runs the API and the outbox apart, so the scenario's worker kill
+    # doesn't take the API down with it (L12, D-127).
+    if [[ "$endpoint" == "postgres-trouble" ]]; then export COLOPHON_ROLE=api; fi
     exec target/release/colophon-server
   ) >"$work/server.log" 2>&1 &
   server_pid=$!
@@ -269,6 +343,13 @@ else
     target/release/colophon doctor --server "$base_url" >&2 || true
     cat "$work/server.log" >&2
     exit 1
+  fi
+
+  # The postgres-trouble worker: the same env the receiver's /control uses to respawn it.
+  if [[ -n "$worker_cmd" ]]; then
+    bash -c "$worker_cmd" &
+    worker_pid=$!
+    echo "$worker_pid" >"$work/worker.pid"
   fi
 fi
 
@@ -412,20 +493,62 @@ k6_status=0
   -e P99_MS="$P99_MS" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
   "perf/k6/$endpoint.js" || k6_status=$?
 
+# A scenario that drove a real outage must have healed it — but even a crashed run
+# doesn't get to leave the stack dead for the checks below.
+if [[ "$endpoint" == "cache-down" || "$endpoint" == "postgres-trouble" ]]; then
+  docker compose -f deploy/compose.yaml unpause postgres valkey >/dev/null 2>&1 || true
+fi
+
 sleep 1.5
 tx_after=$(db_transactions)
 
-# The server must still be healthy after the run, and must not have logged any warnings.
-target/release/colophon doctor --server "$base_url" >/dev/null || {
+# The server must still be healthy after the run, and must not have logged any warnings
+# outside the injected outage's window. A healed dependency's readiness probes take a
+# few seconds to report up again, so the failure scenarios' check retries briefly.
+post_run_ready=0
+for _ in $(seq 1 15); do
+  target/release/colophon doctor --server "$base_url" >/dev/null 2>&1 && post_run_ready=1 && break
+  [[ "$endpoint" != "cache-down" && "$endpoint" != "postgres-trouble" ]] && break
+  sleep 1
+done
+if (( post_run_ready == 0 )); then
   echo "error: the server is not ready after the run" >&2
   k6_status=1
-}
+fi
 if [[ "$cluster" == "1" ]]; then
   server_warnings=0
   while read -r file size; do
     added=$(tail -c +"$(( size + 1 ))" "$file" | grep -c '"level":"\(WARN\|ERROR\)"' || true)
     server_warnings=$(( server_warnings + added ))
   done <"$work/log-sizes"
+elif [[ "$endpoint" == "cache-down" || "$endpoint" == "postgres-trouble" ]]; then
+  # The injected outage explains warnings inside its window — a paused dependency
+  # makes the readiness probes log their transitions and every starved request its
+  # 503 at WARN (D-033), and that is the evidence, not a defect. The receiver stamps
+  # `fault <dep> down|up <iso>` around each docker call, so WARN/ERROR lines stamped
+  # between `down` and `up` (plus a short grace for stragglers) are the outage doing
+  # its job; anything outside the window still fails the run. No stamp, no cover.
+  down_at=$(awk '$1=="fault" && ($2=="postgres" || $2=="valkey") && $3=="down" {print $4; exit}' "$work/receiver.log" 2>/dev/null || true)
+  up_at=$(awk '$1=="fault" && ($2=="postgres" || $2=="valkey") && $3=="up" {t=$4} END {print t}' "$work/receiver.log" 2>/dev/null || true)
+  to_epoch() { jq -rn --arg t "$1" '($t[0:19] + "Z") | fromdateiso8601' 2>/dev/null || echo ""; }
+  warn_logs=("$work/server.log")
+  [[ -f "$work/worker.log" ]] && warn_logs+=("$work/worker.log")
+  lo=""; hi=""
+  if [[ -n "$down_at" ]]; then ep=$(to_epoch "$down_at"); [[ "$ep" =~ ^[0-9]+$ ]] && lo=$(( ep - 2 )); fi
+  # The window's far edge covers requests still in flight at the heal: one issued in its last
+  # second can log its failure at up + the 10 s request deadline (plus a beat).
+  if [[ -n "$up_at" ]]; then ep=$(to_epoch "$up_at"); [[ "$ep" =~ ^[0-9]+$ ]] && hi=$(( ep + 12 )); fi
+  [[ -z "$hi" ]] && hi=$(date +%s)
+  if [[ -n "$lo" ]]; then
+    warnings_outside=$(cat "${warn_logs[@]}" | jq -Rsc \
+      --argjson lo "$lo" --argjson hi "$hi" '
+      def epoch: try ((.timestamp[0:19] + "Z") | fromdateiso8601) catch -1;
+      [split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")
+       | select(epoch == -1 or epoch < $lo or epoch > $hi)]')
+  else
+    warnings_outside=$(cat "${warn_logs[@]}" | jq -Rsc '[split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")]')
+  fi
+  server_warnings=$(jq 'length' <<<"$warnings_outside")
 else
   server_warnings=$(grep -c '"level":"\(WARN\|ERROR\)"' "$work/server.log" || true)
 fi
@@ -474,7 +597,10 @@ record=$(jq -c \
     database_transactions_during_run: $tx,
     server_warnings: $warnings,
     thresholds_passed: ($k6_status == 0)
-  } + (if .l08 then {l08: .l08} else {} end)' "$work/summary.json")
+  } + (if .l08 then {l08: .l08} else {} end)
+    + (if .l11 then {l11: .l11} else {} end)
+    + (if .l12 then {l12: .l12} else {} end)
+    + (if .l13 then {l13: .l13} else {} end)' "$work/summary.json")
 
 echo "$record" | jq .
 
@@ -489,16 +615,30 @@ fi
 status=$k6_status
 if (( server_warnings > 0 )); then
   echo "FAIL: the server logged $server_warnings warning(s) or error(s) under load" >&2
+  # The lines, so a real fault-window miss is diagnosable from the output, not just a count.
+  if declare -p warnings_outside >/dev/null 2>&1; then
+    if [[ -n "$down_at" ]]; then
+      echo "  fault window was down $down_at up ${up_at:-never}" >&2
+    else
+      echo "  no 'fault <dep> down' stamp in the receiver's log — no window, every warning counts" >&2
+    fi
+    jq -r '.[:10][] | tojson' <<<"$warnings_outside" >&2 || true
+  fi
   status=1
 fi
 
-# L08's gate is a comparison only the run can compute (perf/k6/noisy-agent.js measures both
-# phases): the exported summary's `l08` carries the numbers and the verdict — a run whose
-# measured ratio broke the spec's bound fails here, the numbers beside it in the result file.
-if [[ "$(jq -r '.l08.held // empty' "$work/summary.json")" == "false" ]]; then
-  echo "FAIL: the L08 gate did not hold: $(jq -c '.l08' "$work/summary.json")" >&2
-  status=1
-fi
+# The lXX gates are comparisons only the run can compute (perf/k6/noisy-agent.js measures
+# both phases; the dependency-failure scenarios measure their own outage windows): each
+# exported summary's object carries the numbers and the verdict — a run whose `held`
+# is false fails here, the numbers beside it in the result file.
+for gate in l08 l11 l12 l13; do
+  # `// empty` would swallow a held:false (jq's // treats false like null) — read it raw:
+  # the gate must fire on a computed false and stay quiet when the key is absent.
+  if [[ "$(jq -r ".$gate.held" "$work/summary.json")" == "false" ]]; then
+    echo "FAIL: the ${gate} gate did not hold: $(jq -c ".$gate" "$work/summary.json")" >&2
+    status=1
+  fi
+done
 
 baseline="perf/baselines/$endpoint-$scenario-$machine$shape.json"
 # Only like with like: a 10,000-request smoke spends a visible share of its requests opening

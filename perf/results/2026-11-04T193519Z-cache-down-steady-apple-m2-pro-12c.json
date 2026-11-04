@@ -1,0 +1,105 @@
+{
+  "scenario": "steady",
+  "endpoint": "cache-down",
+  "date": "2026-11-04T19:35:19Z",
+  "commit": "e06ae75",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 400,
+    "duration": "60s",
+    "vus": 256
+  },
+  "requests": 77902,
+  "rps": 411,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 2,
+  "latency_ms": {
+    "avg": 3.624,
+    "p50": 1.711,
+    "p90": 4.533,
+    "p95": 7.885,
+    "p99": 50.995,
+    "p999": 153.032,
+    "max": 326.043
+  },
+  "database_transactions_during_run": 102527,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "l11": {
+    "sentinel": {
+      "created": 1,
+      "verified": 1
+    },
+    "gates": {
+      "outage_ran": true,
+      "reads_answered": true,
+      "fallback_honest": true,
+      "origin_bounded": true,
+      "degrade_not_refuse": true,
+      "writes_held": true,
+      "readyz_honest": true,
+      "recovered": true,
+      "controlled": true
+    },
+    "held": true,
+    "spec": "L11: cache unavailable for five minutes — rate-limited fallback, no lost accepted work, bounded origin pressure, correct recovery",
+    "reads": {
+      "baseline": {
+        "reads": 23864,
+        "p99_ms": 63.22319999999998
+      },
+      "margin": {
+        "reads": 3598
+      },
+      "outage": {
+        "miss": 0,
+        "coalesced": 4664,
+        "bypass": 19336,
+        "absent": 0,
+        "p99_ms": 58.88299999999995,
+        "reads": 24000,
+        "hit": 0
+      },
+      "recovery": {
+        "reads": 24137,
+        "hit": 24137,
+        "p99_ms": 19.26663
+      },
+      "total": 75599,
+      "errors": 0
+    },
+    "writes": {
+      "errors": 0
+    },
+    "refusals_429": 0,
+    "readyz": {
+      "degraded_in_outage": 120,
+      "ready_in_outage": 0,
+      "ready_elsewhere": 251
+    },
+    "gate": "outage reads all 200 and served bypass|coalesced only; zero 429; bypass fills <= reads; writes and sentinel held; readyz degraded but never not_ready; recovery hit share >= 50% and p99 inside budget",
+    "windows_seconds": {
+      "phase": 60,
+      "margins": 3,
+      "outage_spans": [
+        63,
+        123
+      ],
+      "injected": "docker compose pause valkey at ~60s; unpause at ~126s"
+    }
+  }
+}

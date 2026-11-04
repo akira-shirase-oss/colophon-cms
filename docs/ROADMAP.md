@@ -482,6 +482,11 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   `colophon-db/tests/ledger.rs`). Still ahead: the backups, the restore procedure that drives the replay, and the
   rest.
 - `verification`: the full fault and load matrix, a 24-hour soak, the benchmark report, the requirements matrix.
+  Built so far: the L11–L13 dependency-failure runs (D-127) — `perf/k6/{cache-down,postgres-trouble,purge-trouble}.js`
+  inject real faults through the receiver's `/control` (container pauses on Postgres/Valkey, a SIGKILLed and
+  respawned worker, a 503-ing purge sink with `Retry-After`, a frozen site generation) while traffic arms measure
+  baseline/margin/outage/recovery windows; each exported summary carries its `l11`/`l12`/`l13` verdict, gated by
+  `scripts/load.sh`, with stored evidence under `perf/results/`.
 - `docs`: complete guides; every example runs in CI.
 - `oss`: release process, SBOM, signed artifacts, security policy.
 - Usability test with five editors; one independent install.
