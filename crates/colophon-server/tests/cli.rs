@@ -374,6 +374,8 @@ async fn the_new_commands_all_have_help_text() {
     let config = std::env::temp_dir().join(format!("colophon-cli-{}", uuid::Uuid::now_v7()));
     for command in [
         ["content", "query"],
+        ["content", "import"],
+        ["content", "export"],
         ["release", "list"],
         ["release", "show"],
         ["migration", "list"],
@@ -782,6 +784,510 @@ async fn the_machine_contract_envelopes_results_and_streams_items() {
     assert!(both.stdout.is_empty(), "a usage refusal stays off stdout");
 
     let _cleanup = std::fs::remove_dir_all(&config);
+}
+
+/// `content import` and `content export` end to end (D-123): a JSONL file plans, lands and
+/// replays under its key, a bad file is a usage refusal that never reached the server, the
+/// export streams the same documents back — raw on text, enveloped on `--jsonl`, collected
+/// on `--json` — and the file imports into another project. A read-only member's import
+/// carries the API's refusal whole.
+#[tokio::test]
+#[ignore = "needs the stack, migrations and the colophon binary"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story, told in order: plan, import, replay, export, round-trip, refusals"
+)]
+async fn content_import_and_export_round_trip_through_the_cli() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let guest = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+
+    // A reader of articles: whole-field reads can export, but only `content.create` imports.
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/roles"),
+        Some(&json!({
+            "key": "reader",
+            "name": "Reader",
+            "permissions": [{"action": "content.read", "subject": "articles"}]
+        })),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    join(&owner, &guest, &project, "reader").await;
+
+    let config = std::env::temp_dir().join(format!("colophon-cli-{}", uuid::Uuid::now_v7()));
+    let output = login(&config, &owner).await;
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let files = std::env::temp_dir().join(format!("colophon-io-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&files).expect("a directory");
+
+    // A file whose third item misses a required field: a dry run reports it, an applied
+    // import refuses it — and lands nothing, the one-transaction rule.
+    let broken = files.join("broken.jsonl");
+    std::fs::write(
+        &broken,
+        format!(
+            "{}\n{}\n{}\n",
+            article("First post"),
+            article("Second post"),
+            r#"{"title":"No body"}"#
+        ),
+    )
+    .expect("written");
+    let plan = colophon(
+        &config,
+        &[
+            "content",
+            "import",
+            "articles",
+            "--project",
+            &project,
+            "--file",
+            broken.to_str().expect("utf-8"),
+            "--dry-run",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        plan.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&plan.stderr)
+    );
+    let plan = json_out(&plan);
+    assert_eq!(plan["version"], 2);
+    assert_eq!(plan["command"], "content import");
+    assert_eq!(plan["data"]["status"], "planned", "{plan}");
+    assert_eq!(plan["data"]["dry_run"], true, "{plan}");
+    assert!(plan["data"]["idempotency_key"].is_null(), "{plan}");
+    let outcomes = plan["data"]["outcomes"].as_array().expect("outcomes");
+    assert_eq!(outcomes.len(), 3, "{plan}");
+    assert_eq!(
+        outcomes[0]["status"], "would_create",
+        "a good item plans to create: {plan}"
+    );
+    assert_eq!(
+        outcomes[2]["status"], "invalid",
+        "the item missing `body` plans invalid: {plan}"
+    );
+    assert_eq!(
+        outcomes[2]["refusal"]["code"], "missing_field",
+        "the refusal names what it would fail with: {plan}"
+    );
+
+    // Applying it refuses at the item's pointer — and lands nothing.
+    let refused = colophon(
+        &config,
+        &[
+            "content",
+            "import",
+            "articles",
+            "--project",
+            &project,
+            "--file",
+            broken.to_str().expect("utf-8"),
+            "--json",
+        ],
+    );
+    assert_eq!(
+        refused.status.code(),
+        Some(2),
+        "a 422 is the usage class: {}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    let envelope = json_out(&refused);
+    assert_eq!(envelope["error"]["code"], "validation_failed", "{envelope}");
+    assert_eq!(
+        envelope["error"]["details"]["reason"], "missing_field",
+        "{envelope}"
+    );
+    assert_eq!(
+        envelope["error"]["details"]["pointer"], "/line/3/body",
+        "the refusal names the line and field: {envelope}"
+    );
+    let list = colophon(
+        &config,
+        &[
+            "content",
+            "list",
+            "articles",
+            "--project",
+            &project,
+            "--json",
+        ],
+    );
+    assert_eq!(
+        json_out(&list)["data"]["entries"]
+            .as_array()
+            .expect("entries")
+            .len(),
+        0,
+        "one bad item rolls the whole file back"
+    );
+
+    // The same three items, all valid: they land in one transaction.
+    let good = files.join("good.jsonl");
+    std::fs::write(
+        &good,
+        format!(
+            "{}\n{}\n{}\n",
+            article("First post"),
+            article("Second post"),
+            article("Third post"),
+        ),
+    )
+    .expect("written");
+    let import = colophon(
+        &config,
+        &[
+            "content",
+            "import",
+            "articles",
+            "--project",
+            &project,
+            "--file",
+            good.to_str().expect("utf-8"),
+            "--json",
+        ],
+    );
+    assert_eq!(
+        import.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&import.stderr)
+    );
+    let imported = json_out(&import);
+    assert_eq!(imported["command"], "content import");
+    assert_eq!(imported["data"]["status"], "imported", "{imported}");
+    assert_eq!(imported["data"]["collection"], "articles", "{imported}");
+    assert_eq!(imported["data"]["imported"], 3, "{imported}");
+    let key = imported["data"]["idempotency_key"]
+        .as_str()
+        .expect("a generated key")
+        .to_owned();
+    let outcomes = imported["data"]["outcomes"].as_array().expect("outcomes");
+    assert_eq!(outcomes.len(), 3, "{imported}");
+    assert_eq!(outcomes[0]["item"], "/line/1", "{imported}");
+    assert_eq!(outcomes[0]["status"], "created", "{imported}");
+
+    // The same file under the same key is the recorded answer, not a second import.
+    let again = colophon(
+        &config,
+        &[
+            "content",
+            "import",
+            "articles",
+            "--project",
+            &project,
+            "--file",
+            good.to_str().expect("utf-8"),
+            "--idempotency-key",
+            &key,
+            "--json",
+        ],
+    );
+    let replay = json_out(&again);
+    assert_eq!(replay["data"]["status"], "replayed", "{replay}");
+    assert_eq!(replay["data"]["imported"], 3, "{replay}");
+
+    // A JSON array through --data imports too — a fourth entry.
+    let array = colophon(
+        &config,
+        &[
+            "content",
+            "import",
+            "articles",
+            "--project",
+            &project,
+            "--data",
+            &format!("[{}]", article("Fourth post")),
+            "--json",
+        ],
+    );
+    let array = json_out(&array);
+    assert_eq!(array["data"]["imported"], 1, "{array}");
+    let list = colophon(
+        &config,
+        &[
+            "content",
+            "list",
+            "articles",
+            "--project",
+            &project,
+            "--json",
+        ],
+    );
+    assert_eq!(
+        json_out(&list)["data"]["entries"]
+            .as_array()
+            .expect("entries")
+            .len(),
+        4,
+        "the replay added nothing, the array added one"
+    );
+
+    // Text export is the file itself: four documents, one a line, newest first.
+    let export = colophon(
+        &config,
+        &["content", "export", "articles", "--project", &project],
+    );
+    assert_eq!(
+        export.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&export.stderr)
+    );
+    let text = String::from_utf8_lossy(&export.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 4, "{text}");
+    for (index, line) in lines.iter().enumerate() {
+        let document: Value = serde_json::from_str(line).expect("each line is a document");
+        assert!(document["title"].is_string(), "line {index}: {line}");
+    }
+    assert!(lines[0].contains("Fourth post"), "newest first: {text}");
+    assert!(
+        String::from_utf8_lossy(&export.stderr).contains("Exported 4 entries"),
+        "the count is the diagnostic on stderr: {}",
+        String::from_utf8_lossy(&export.stderr)
+    );
+
+    // --jsonl: the same documents, each in the versioned envelope, as they arrive.
+    let stream = colophon(
+        &config,
+        &[
+            "content",
+            "export",
+            "articles",
+            "--project",
+            &project,
+            "--jsonl",
+        ],
+    );
+    assert_eq!(
+        stream.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&stream.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&stream.stdout);
+    assert!(!stdout.contains('\u{1b}'), "no ANSI in the stream");
+    let mut titles = Vec::new();
+    for line in stdout.lines() {
+        let envelope: Value = serde_json::from_str(line).expect("each line is one object");
+        assert_eq!(envelope["version"], 2, "{envelope}");
+        assert_eq!(envelope["command"], "content export", "{envelope}");
+        titles.push(
+            envelope["data"]["title"]
+                .as_str()
+                .expect("a title")
+                .to_owned(),
+        );
+    }
+    titles.sort_unstable();
+    assert_eq!(
+        titles,
+        ["First post", "Fourth post", "Second post", "Third post"],
+        "every entry streamed once"
+    );
+
+    // --json: the whole export as one object, `entries` like `content list`'s.
+    let whole = colophon(
+        &config,
+        &[
+            "content",
+            "export",
+            "articles",
+            "--project",
+            &project,
+            "--json",
+        ],
+    );
+    let whole = json_out(&whole);
+    assert_eq!(whole["command"], "content export");
+    assert_eq!(whole["data"]["collection"], "articles", "{whole}");
+    assert_eq!(
+        whole["data"]["entries"].as_array().expect("entries").len(),
+        4,
+        "{whole}"
+    );
+
+    // Round-trip: the text export's own stdout is the file another project imports.
+    let exported = files.join("exported.jsonl");
+    std::fs::write(&exported, &*text).expect("written");
+    let other = common::project(&owner).await;
+    let back = colophon(
+        &config,
+        &[
+            "content",
+            "import",
+            "articles",
+            "--project",
+            &other,
+            "--file",
+            exported.to_str().expect("utf-8"),
+            "--json",
+        ],
+    );
+    assert_eq!(
+        back.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&back.stderr)
+    );
+    assert_eq!(
+        json_out(&back)["data"]["imported"],
+        4,
+        "the file came back whole"
+    );
+    let verify = colophon(
+        &config,
+        &[
+            "content",
+            "export",
+            "articles",
+            "--project",
+            &other,
+            "--jsonl",
+        ],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&verify.stdout).lines().count(),
+        4,
+        "and exports as four entries again"
+    );
+
+    // A file that isn't any of the shapes is a usage error before the request is made.
+    let bad = files.join("bad.jsonl");
+    std::fs::write(&bad, format!("{}\nnot json\n", article("Fine"))).expect("written");
+    let malformed = colophon(
+        &config,
+        &[
+            "content",
+            "import",
+            "articles",
+            "--project",
+            &project,
+            "--file",
+            bad.to_str().expect("utf-8"),
+            "--json",
+        ],
+    );
+    assert_eq!(malformed.status.code(), Some(2), "usage, exit 2");
+    let envelope = json_out(&malformed);
+    assert_eq!(envelope["error"]["code"], "usage", "{envelope}");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("line 2")),
+        "the CLI's own check names the line: {envelope}"
+    );
+    assert!(
+        String::from_utf8_lossy(&malformed.stderr).contains("error: line 2"),
+        "stderr says it in words: {}",
+        String::from_utf8_lossy(&malformed.stderr)
+    );
+
+    // An empty file is a usage error, not a silent no-op.
+    let empty = files.join("empty.jsonl");
+    std::fs::write(&empty, "  \n").expect("written");
+    let nothing = colophon(
+        &config,
+        &[
+            "content",
+            "import",
+            "articles",
+            "--project",
+            &project,
+            "--file",
+            empty.to_str().expect("utf-8"),
+            "--json",
+        ],
+    );
+    assert_eq!(nothing.status.code(), Some(2));
+    assert_eq!(json_out(&nothing)["error"]["code"], "usage");
+
+    // A read-only member: export reads every field, so it streams; import needs
+    // `content.create`, so the API's refusal arrives whole on stdout, exit 3.
+    let guest_config = std::env::temp_dir().join(format!("colophon-cli-{}", uuid::Uuid::now_v7()));
+    let output = login(&guest_config, &guest).await;
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let theirs = colophon(
+        &guest_config,
+        &["content", "export", "articles", "--project", &project],
+    );
+    assert_eq!(
+        theirs.status.code(),
+        Some(0),
+        "a role that reads every field exports: {}",
+        String::from_utf8_lossy(&theirs.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&theirs.stdout).lines().count(), 4);
+    let denied = colophon(
+        &guest_config,
+        &[
+            "content",
+            "import",
+            "articles",
+            "--project",
+            &project,
+            "--file",
+            good.to_str().expect("utf-8"),
+            "--json",
+        ],
+    );
+    assert_eq!(
+        denied.status.code(),
+        Some(3),
+        "{}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
+    let envelope = json_out(&denied);
+    assert_eq!(envelope["command"], "content import");
+    assert_eq!(envelope["error"]["code"], "forbidden", "{envelope}");
+    assert_eq!(
+        envelope["error"]["details"]["reason"], "missing_permission",
+        "{envelope}"
+    );
+    assert_eq!(
+        envelope["error"]["details"]["permission"], "content.create",
+        "{envelope}"
+    );
+    assert!(envelope["error"]["request_id"].is_string(), "{envelope}");
+
+    // --json and --jsonl pick one format; together they refuse before anything runs.
+    let both = colophon(
+        &config,
+        &[
+            "content",
+            "export",
+            "articles",
+            "--project",
+            &project,
+            "--json",
+            "--jsonl",
+        ],
+    );
+    assert_eq!(both.status.code(), Some(2), "one format, not two");
+    assert!(both.stdout.is_empty(), "a usage refusal stays off stdout");
+
+    let _cleanup = std::fs::remove_dir_all(&config);
+    let _cleanup = std::fs::remove_dir_all(&guest_config);
+    let _cleanup = std::fs::remove_dir_all(&files);
 }
 
 /// Writes one JSON-RPC message to `stdin`, as an agent host does.

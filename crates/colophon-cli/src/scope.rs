@@ -117,6 +117,24 @@ pub(crate) fn query_value<'a>(text: &'a str, what: &str) -> Result<&'a str, Fail
     }
 }
 
+/// `query_value` widened to every RFC 3986 unreserved character — a Sanity `_type` such as
+/// `blog.article` may hold `.` and `~` too. Anything else is refused rather than encoded, so
+/// what `--type` names is exactly what the URL carries.
+pub(crate) fn query_unreserved<'a>(text: &'a str, what: &str) -> Result<&'a str, Failure> {
+    let shaped = (1..=256).contains(&text.len())
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~'));
+    if shaped {
+        Ok(text)
+    } else {
+        Err(Failure::new(
+            Exit::Usage,
+            format!("{what} may only be letters, digits, '-', '_', '.' and '~'"),
+        ))
+    }
+}
+
 /// An `ETag` for `If-Match`, as `show` and `list` print it (`sha256:<64 hex>`); surrounding
 /// quotes are forgiven.
 pub(crate) fn etag_arg(text: &str) -> Result<String, Failure> {
@@ -195,13 +213,39 @@ pub(crate) async fn send_write(
     body: Option<&Value>,
     headers: &[(&str, &str)],
 ) -> Result<Reply, Failure> {
+    write_with_retries(headers, || client.send(method.clone(), path, body, headers)).await
+}
+
+/// `send_write` for a body that isn't one JSON value — an import's file, sent as it is,
+/// still under the operation's one key so a retry can't import twice.
+pub(crate) async fn send_write_text(
+    client: &Client,
+    method: Method,
+    path: &str,
+    body: &str,
+    content_type: &'static str,
+    headers: &[(&str, &str)],
+) -> Result<Reply, Failure> {
+    write_with_retries(headers, || {
+        client.send_text(method.clone(), path, body.to_owned(), content_type, headers)
+    })
+    .await
+}
+
+/// The retry loop every write shares: a lost answer is retried with `headers`' very same
+/// `idempotency-key`, and the last failure names the key a retry can safely reuse.
+async fn write_with_retries<F, Fut>(headers: &[(&str, &str)], mut send: F) -> Result<Reply, Failure>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<Reply, Failure>>,
+{
     let key = headers
         .iter()
         .find(|(name, _)| *name == "idempotency-key")
         .map_or("?", |(_, value)| *value);
     let mut attempt = 0;
     loop {
-        match client.send(method.clone(), path, body, headers).await {
+        match send().await {
             Ok(reply) => return Ok(reply),
             Err(failure) if failure.exit == Exit::Unavailable && attempt < BACKOFF.len() => {
                 eprintln!("{}; retrying with the same key", failure.message);

@@ -451,8 +451,14 @@ expiry; a tool's call is dispatched in-process through the server's own router u
 dispatch is never authorization and the D-106 boundary is unchanged, proved in `tests/mcp.rs` by the
 lifecycle, the credential refusals, the transport's `Origin`/`Accept`/protocol-version door checks and
 byte-identical parity with stdio) ·
-not built: provider `tokens`/`cost` budgets, `content import` and
-`export`. The proof gate is met — X12's resume proof is in
+the CLI's import and export (built: D-123 — `content import` sends the file the API accepts verbatim,
+checked only the way the API will read it (every JSONL line or array element parses, the file isn't
+empty, at most 512 items, a `--file` within the largest request body); `--dry-run` plans each item and
+sends no key, an applied import sends one `cli-<uuid>` or `--idempotency-key`'s; `content export`
+streams `GET …/export` a line at a time — the file itself on text, one envelope a document on `--jsonl`,
+the bounded `{"collection", "entries"}` on `--json`, no `--cursor` since the endpoint doesn't page;
+proved end to end in `tests/cli.rs`, the file checks unit-tested in `src/content.rs`) ·
+not built: provider `tokens`/`cost` budgets. The proof gate is met — X12's resume proof is in
 `tests/bulk.rs`, the eval gate's stored run is `perf/results/2026-11-04T141109.623685Z-evals.json`, and
 L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json`.
 

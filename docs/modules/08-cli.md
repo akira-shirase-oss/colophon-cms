@@ -57,6 +57,7 @@ colophon content create posts --file article.json --json
 colophon content get posts SLUG --env production [--generation N] --json
 colophon content list posts --limit 20 --json
 colophon content import posts --file posts.jsonl --dry-run
+colophon content export posts --env production > posts.jsonl
 colophon release create --from changeset.json --json
 colophon release validate RELEASE_ID --json
 colophon release publish RELEASE_ID --env production --dry-run
@@ -104,6 +105,28 @@ colophon export --env production --out export-directory
     --status S]`, `task show TASK`, `task create --entry E --title T [--revision R] [--changeset C] [--assignee
     ID]`, `task update TASK --if-match HASH [--title T] [--assignee ID|--unassign] [--status S]` cover E1's
     collaboration. `task show` prints the ETag `task update` binds with `--if-match`; `--unassign` sends `null`.
+- Built in P5 (D-123): `content import COLLECTION (--data JSON | --file PATH) [--dry-run] [--type KIND]
+  [--idempotency-key KEY]` and `content export COLLECTION [--json | --jsonl]` — the two ends of D-086's
+  file, through the same API.
+  - `content import` takes the file the API takes — JSONL, a JSON array, a Strapi envelope or entities,
+    Sanity documents — and checks it only the way the API will read it: every line or element parses (a
+    bad line is named), the file isn't empty and it holds at most the API's 512 items, and a `--file`
+    bigger than the largest request body a server accepts is refused before it's read. The bytes then go
+    over verbatim as `application/jsonlines` or `application/json` (guessed from the first byte; the API
+    sniffs the real shape itself). `--dry-run` plans every item and writes nothing — it sends no
+    `Idempotency-Key`, since a plan records none; an applied import sends one, a generated `cli-<uuid>`
+    or `--idempotency-key`'s, through the same retry-the-same-key write path as every write. `--type`
+    forwards the Sanity-type filter verbatim. `--json` answers the API's `data` — `imported` and the
+    per-item `outcomes` — plus `collection`, `status` (`planned`, `imported`, `replayed`) and the key
+    used; text prints the summary and each item that didn't write cleanly, with the API's item pointer.
+  - `content export` streams `GET …/export` a chunk at a time and splits it into lines as they arrive,
+    never holding more than a line. Text writes each document's own bytes to stdout — `colophon content
+    export posts > posts.jsonl` is a byte-faithful file `content import` reads back, and the count is
+    the diagnostic on stderr; `--jsonl` wraps each document in the versioned envelope as its line
+    arrives; `--json` collects `{"collection", "entries"}` bounded at the API's own 10,000-item cap. A
+    line that isn't JSON, one line bigger than a document can be, or a final line that never ends is an
+    internal failure, so a truncated export reads as one. There is no `--cursor`: the endpoint answers
+    the whole bounded export and doesn't page, so the CLI doesn't invent one.
 - `module enable` from spec §11 is dropped, because v0.1 has no optional modules.
 - `colophon dev` may orchestrate local dependencies but must never discover or use production credentials silently.
 
@@ -283,6 +306,14 @@ colophon export --env production --out export-directory
   `error:` on stderr and exit 3, the `--json`/`--jsonl` conflict at exit 2, and `colophon mcp` answering
   `initialize` and `tools/list` over its own stdio. `crates/colophon-cli/tests/doctor.rs` covers `doctor`'s
   versioned result and its failure envelope against canned servers.
+- Import and export (D-123): unit tests in `src/content.rs` cover the file checks — the JSONL, array and
+  envelope shapes, the named bad line, empty input, the 512-item bound — and the export-line parse. The
+  same `tests/cli.rs` run proves the pair end to end on the stack: a dry run's per-item outcomes, the
+  applied refusal at `/line/3/body` leaving nothing behind, a replay under the same key answering
+  `replayed`, all three export shapes (the raw file, one envelope a document, the collected object), the
+  text export re-importing into another project, a read-only member exporting but importing
+  `missing_permission`-whole at exit 3, and a malformed or empty file refused at exit 2 before any
+  request is made.
 - `insta` snapshots of every `--json` result shape.
 - An exit-code matrix test for every error class.
 - Contract tests against a running server.
@@ -296,8 +327,8 @@ colophon export --env production --out export-directory
 2. **P2:** `release validate|publish|status`, `jobs inspect`.
 3. **P3:** `doctor`, `integration test`.
 4. **P5:** scoped machine credentials, the versioned `data`/`error` envelope on every command with `--jsonl`
-   streams on the seven lists, and `colophon mcp` linked in (D-119, built); `content import`, `export`,
-   `content get --generation`, `release history` still to come.
+   streams on the seven lists, `colophon mcp` linked in (D-119, built), and `content import`/`export`
+   (D-123, built); `content get --generation`, `release history` still to come.
 5. **P6:** `init`, `migrate plan|apply`, `admin`.
 6. **V (D-062):** `--version` with commit and build date, the server version check, and the install paths: npm,
    the install script, Homebrew and `cargo install --git` (built; publishing waits on the maintainer, module

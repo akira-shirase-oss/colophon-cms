@@ -84,6 +84,49 @@ impl Client {
         body: Option<&Value>,
         headers: &[(&str, &str)],
     ) -> Result<Reply, Failure> {
+        let mut request = self.request(method, path, headers)?;
+        if let Some(body) = body {
+            request = request.json(body);
+        }
+        Self::reply(self.perform(request).await?).await
+    }
+
+    /// `send` for a body that isn't one JSON value: an import's file, sent as it is with the
+    /// content type its first byte names — the API sniffs the same shapes (D-086, D-114).
+    pub(crate) async fn send_text(
+        &self,
+        method: Method,
+        path: &str,
+        body: String,
+        content_type: &'static str,
+        headers: &[(&str, &str)],
+    ) -> Result<Reply, Failure> {
+        let request = self
+            .request(method, path, headers)?
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .body(body);
+        Self::reply(self.perform(request).await?).await
+    }
+
+    /// `send` leaving a successful body open to stream, one read at a time (the export's
+    /// JSONL). A non-success status fails exactly as `send` does — refusals never stream.
+    pub(crate) async fn send_stream(
+        &self,
+        method: Method,
+        path: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<reqwest::Response, Failure> {
+        let request = self.request(method, path, headers)?;
+        self.perform(request).await
+    }
+
+    /// Builds a request: the URL under the server, the bearer token, the caller's headers.
+    fn request(
+        &self,
+        method: Method,
+        path: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<reqwest::RequestBuilder, Failure> {
         let url = self
             .base
             .join(path)
@@ -95,9 +138,16 @@ impl Client {
         for (name, value) in headers {
             request = request.header(*name, *value);
         }
-        if let Some(body) = body {
-            request = request.json(body);
-        }
+        Ok(request)
+    }
+
+    /// Sends `request`. A non-success status becomes a [`Failure`] with the server's message
+    /// and the matching exit code; so does no answer at all (exit 5, safe to retry). A
+    /// success hands the response back with its body unread.
+    async fn perform(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, Failure> {
         let response = request.send().await.map_err(|error| {
             Failure::new(
                 Exit::Unavailable,
@@ -108,12 +158,11 @@ impl Client {
                 },
             )
         })?;
-        let status = response.status();
-        let headers = response.headers().clone();
-        let body: Value = response.json().await.unwrap_or(Value::Null);
-        if status.is_success() {
-            return Ok(Reply { headers, body });
+        if response.status().is_success() {
+            return Ok(response);
         }
+        let status = response.status();
+        let body: Value = response.json().await.unwrap_or(Value::Null);
         let message = body["error"]["message"]
             .as_str()
             .unwrap_or("request failed")
@@ -128,6 +177,13 @@ impl Client {
             message: format!("{message}{detail} [HTTP {}]", status.as_u16()),
             refusal: body.get("error").filter(|error| error.is_object()).cloned(),
         })
+    }
+
+    /// A success's [`Reply`]: the headers, and the body read as JSON.
+    async fn reply(response: reqwest::Response) -> Result<Reply, Failure> {
+        let headers = response.headers().clone();
+        let body: Value = response.json().await.unwrap_or(Value::Null);
+        Ok(Reply { headers, body })
     }
 }
 

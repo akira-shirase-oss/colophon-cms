@@ -245,6 +245,51 @@ enum ContentCommand {
         #[arg(long, conflicts_with = "json")]
         jsonl: bool,
     },
+    /// Import entries from a file, in one transaction or not at all.
+    ///
+    /// The file is the API's own input, sent as it is: JSONL (one content document a
+    /// line), a JSON array, or a Strapi or Sanity export. `--dry-run` reports every
+    /// item's plan and writes nothing.
+    Import {
+        #[command(flatten)]
+        place: Where,
+        /// The items inline: a JSON array or one JSONL document.
+        #[arg(long, conflicts_with = "file")]
+        data: Option<String>,
+        /// The file to import: JSONL, a JSON array, or a Strapi/Sanity export.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Plan every item and report it — `would_create`, `would_update`, `skipped`,
+        /// `invalid` — writing nothing and needing no idempotency key.
+        #[arg(long)]
+        dry_run: bool,
+        /// The Sanity `_type` to take from a file that mixes types; documents of other
+        /// types are skipped and reported.
+        #[arg(long = "type")]
+        source_type: Option<String>,
+        /// Reuse the key of an earlier attempt that got no answer: it can't import twice.
+        /// A dry run plans without one.
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export the collection's drafts as JSONL — the file `content import` takes back.
+    ///
+    /// Text mode writes the file itself to stdout (`colophon content export posts >
+    /// posts.jsonl`), one document a line as it arrives; `--jsonl` wraps each in the
+    /// versioned envelope; `--json` collects the bounded export into one object.
+    Export {
+        #[command(flatten)]
+        place: Where,
+        /// Print one versioned JSON result: the whole export in one object.
+        #[arg(long)]
+        json: bool,
+        /// Print one JSON envelope per entry, as its line arrives.
+        #[arg(long, conflicts_with = "json")]
+        jsonl: bool,
+    },
 }
 
 /// Releases are read-only here: publishing stays a person's call in the Studio and API.
@@ -728,6 +773,41 @@ fn run_content(runtime: &Runtime, command: ContentCommand) -> ExitCode {
                 &out,
             )
             .into()
+        }
+        ContentCommand::Import {
+            place,
+            data,
+            file,
+            dry_run,
+            source_type,
+            idempotency_key,
+            json,
+        } => {
+            let out = out::Out::new("content import", out::Format::of(json, false));
+            finish(
+                runtime.block_on(async {
+                    let body = content::import_body(data.as_deref(), file.as_deref()).await?;
+                    let source_type = source_type
+                        .as_deref()
+                        .map(|kind| scope::query_unreserved(kind, "--type"))
+                        .transpose()?;
+                    content::import(
+                        &place.place(),
+                        body,
+                        dry_run,
+                        source_type,
+                        idempotency_key.as_deref(),
+                        out,
+                    )
+                    .await
+                }),
+                &out,
+            )
+            .into()
+        }
+        ContentCommand::Export { place, json, jsonl } => {
+            let out = out::Out::new("content export", out::Format::of(json, jsonl));
+            finish(runtime.block_on(content::export(&place.place(), out)), &out).into()
         }
     }
 }
