@@ -6,7 +6,7 @@
 |---|---|
 | Milestones | P0 (skeleton, error envelope, health), P1 (projects, schemas, entries, revisions), P2 (changesets, reviews, releases, jobs), P3 (destinations, deliveries), P4 (assets, history), P5 (agents, credentials) |
 | Proposed owner | Claude |
-| Depends on | domain, auth, db (through ports), `axum` 0.8, `tower`, `tower-http`, `utoipa` for the OpenAPI document (D-027, from step 1.2) |
+| Depends on | domain, auth, db (through ports), `axum` 0.8, `tower`, `tower-http`; the `OpenAPI` document is emitted from the module's own route table (D-110, step DX.7) |
 | Used by | studio, cli, sdk, automation; wired in by colophon-server |
 | Spec | §09, §10, §26 |
 
@@ -153,8 +153,18 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
   read it. The server binary stamps the build (`crates/colophon-version`, module [19](19-oss.md), "Versions") and
   hands it to the router in `AppState::build`. The CLI reads it to say plainly when it is too old or too new for the
   server ([cli](08-cli.md), "Versions"); a server from before it answers the 404 envelope, which the CLI recognises.
-- An OpenAPI document is exported from the code (D-027, `utoipa`). The TypeScript client ([sdk](13-sdk.md)) is generated from it
-  and tested against the server in CI.
+- **`GET /openapi.json`** (D-110, built in milestone DX.7): the `OpenAPI` 3.1 document for the whole HTTP
+  surface — `/api/v1`, `/auth/*`, `/me`, `/content/v1`, `/media/v1`, `/version`, health, and itself. It is
+  emitted from `openapi::TABLE`, the one route table `routes()` is a loop over, so the served routes and the
+  published contract cannot drift; what can still drift is a doc literal's *wording*, never which paths or
+  methods exist (the drift probe `the_router_matches_the_table` checks every declared verb answers and every
+  undeclared one is 405). Unauthenticated like `/version`: a client reads the contract before it can sign in,
+  and the document names shapes, never data. `application/json`, `Cache-Control: public, max-age=300`, `ETag`'d
+  for conditional 304s, HEAD served by the GET. Three security schemes (`sessionCookie`, `bearerToken`,
+  `apiToken`) describe every credential. The same bytes are committed as `docs/api/openapi.json` and
+  byte-compared by `the_committed_document_is_current` (regenerate with
+  `COLOPHON_UPDATE_OPENAPI=1 cargo test -p colophon-api --lib openapi`). The TypeScript client ([sdk](13-sdk.md))
+  is generated from it in a later slice and tested against the server in CI.
 - Schema discovery returns only the collections and fields the caller may access.
 - Client-side validation helps feedback, but Rust revalidates every mutation.
 - Contract changes need compatibility tests and a documented deprecation window.
@@ -182,8 +192,8 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 ## Interfaces
 
-- HTTP: `/api/v1/*`, `/auth/*`, `/me`, `/livez`, `/readyz`, `/version`.
-- The OpenAPI document (a build artifact).
+- HTTP: `/api/v1/*`, `/auth/*`, `/me`, `/livez`, `/readyz`, `/version`, `/openapi.json`.
+- The `OpenAPI` document: served at `GET /openapi.json`, committed byte-for-byte at `docs/api/openapi.json`.
 - `router(state) -> Router`, used by colophon-server.
 
 ## Failure modes
@@ -200,7 +210,11 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 - In-process `oneshot` tests for every route and every error class; `/version`'s shape and its unstamped
   fallback are in `tests/http.rs`.
-- Contract tests of the OpenAPI document against the server.
+- The `OpenAPI` drift probe (`openapi::tests`): every (path, verb) in the route table is answered by the built
+  router and every undeclared verb is 405; every `$ref` resolves; `operationId`s are unique; the committed
+  `docs/api/openapi.json` is byte-identical. End to end against the real binary:
+  `crates/colophon-server/tests/openapi.rs` (200, JSON parse, non-empty paths, `ETag`/304, `/version`
+  agreement).
 - The parity gate: Studio-API, CLI and SDK run the same scenario and produce equivalent records.
 - Cursor fuzzing: tampered cursors, cursors from another project or query shape.
 - A middleware-order test: request ID present on panic, timeout and body-limit responses.
@@ -223,7 +237,8 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
 
 1. **P0:** skeleton, error envelope, request IDs, health.
 2. **P1:** projects (step 1.1, done); entries, revisions, preconditions, idempotency and pagination (step 1.2,
-   done); content types (step 1.5, done); members and invitations (step 1.7, done); environments, migrations, and the generated OpenAPI document.
+   done); content types (step 1.5, done); members and invitations (step 1.7, done); environments, migrations,
+   and the `OpenAPI` document (step DX.7, done, D-110).
 3. **P2:** changesets and reviews (step 2.1, done); releases (step 2.2, done); destinations and jobs (step 2.3, done).
 4. **P3:** destinations and deliveries.
 5. **P4:** assets, history and rollback.
