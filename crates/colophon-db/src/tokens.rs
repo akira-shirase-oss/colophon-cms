@@ -8,6 +8,7 @@
 //! deleted; revoking it waits for the requests it is serving (they hold a share lock on its row),
 //! so none is still running under it once revocation commits.
 
+use colophon_domain::budget::Limits;
 use colophon_domain::policy::{Condition, Policy, TokenKind};
 use sqlx::{PgPool, types::time::OffsetDateTime};
 use uuid::Uuid;
@@ -48,6 +49,9 @@ pub struct StoredToken {
     pub last_used_at: Option<OffsetDateTime>,
     /// When it was revoked, if it was.
     pub revoked_at: Option<OffsetDateTime>,
+    /// Its budget ceilings (migration 0045, D-113); `None` when it has no limits row — it is
+    /// unconstrained at the quota layer then.
+    pub limits: Option<Limits>,
 }
 
 /// A token to create.
@@ -69,6 +73,8 @@ pub struct NewToken<'a> {
     pub hash: [u8; 32],
     /// When it stops working.
     pub expires_at: OffsetDateTime,
+    /// Budget ceilings to store with it, checked already (D-113).
+    pub limits: Option<&'a Limits>,
 }
 
 /// What creating a token did.
@@ -161,13 +167,18 @@ async fn read(tx: &mut MemberTransaction, id: Option<Uuid>) -> Result<Vec<Stored
     let rows = sqlx::query!(
         r#"SELECT t.id, t.identity_id, t.name, t.description, t.kind, t.created_by,
                   n.display_name AS created_by_name, t.created_at, t.expires_at, t.last_used_at,
-                  t.revoked_at,
+                  t.revoked_at, l.token_id AS "limited?",
+                  l.documents_per_day AS "documents_per_day?",
+                  l.max_concurrent_jobs AS "max_concurrent_jobs?",
+                  l.requests_per_minute AS "requests_per_minute?",
                   coalesce(p.actions, '{}') AS "actions!",
                   coalesce(p.subjects, '{}') AS "subjects!",
                   coalesce(p.fields, '{}') AS "fields!: Vec<Option<String>>",
                   coalesce(p.conditions, '{}') AS "conditions!: Vec<Option<String>>"
            FROM api_tokens t
            LEFT JOIN identities n ON n.id = t.created_by
+           LEFT JOIN api_token_limits l
+                  ON l.project_id = t.project_id AND l.token_id = t.id
            LEFT JOIN LATERAL (
                SELECT array_agg(action ORDER BY action, subject) AS actions,
                       array_agg(subject ORDER BY action, subject) AS subjects,
@@ -206,6 +217,11 @@ async fn read(tx: &mut MemberTransaction, id: Option<Uuid>) -> Result<Vec<Stored
                 expires_at: row.expires_at,
                 last_used_at: row.last_used_at,
                 revoked_at: row.revoked_at,
+                limits: row.limited.map(|_| Limits {
+                    documents_per_day: row.documents_per_day,
+                    max_concurrent_jobs: row.max_concurrent_jobs,
+                    requests_per_minute: row.requests_per_minute,
+                }),
             })
         })
         .collect()
@@ -297,6 +313,9 @@ pub async fn create(tx: &mut MemberTransaction, token: &NewToken<'_>) -> Result<
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
+    if let Some(limits) = token.limits {
+        crate::budgets::set_limits(tx, token.id, limits).await?;
+    }
     let stored = get(tx, token.id)
         .await?
         .ok_or(DbError::Corrupt("a token vanished while it was made"))?;

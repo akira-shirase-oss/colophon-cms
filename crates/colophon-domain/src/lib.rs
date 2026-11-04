@@ -12,6 +12,7 @@
 //! bounded query language ([`query`]) and its reference population ([`populate`]), and the
 //! shapes an import normalizes ([`transfer`]).
 
+pub mod budget;
 pub mod cache;
 pub mod changeset;
 pub mod destination;

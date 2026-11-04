@@ -397,8 +397,18 @@ the first piece of the enforcement itself (built: D-111 — `POST {P}/changesets
 every named stage alike, so no credential can greenlight a proposal with no person in the loop; a token may still
 ask for changes, approve a person's changeset under `content.review`, and publish a person-approved changeset under
 `content.publish`; covered by `tests/tokens.rs`) ·
+the budget substrate (built: P5.2, D-113, migration 0045 — `api_token_limits` ceilings per token and the
+`budget_reservations` ledger: the accepting transaction locks the limits row, counts `held`/`settled`/`uncertain`
+allowance and writes `held` or refuses `budget_exceeded` (403); documents reserve at `entries::create`/`save`/
+`create_localization`, a publish reserves one `jobs` slot per outbox dispatch, `jobs::finish` settles or releases it
+with the outcome, superseded pending jobs' reservations release with the supersede, and the worker's sweep closes
+reservations whose outcomes are on record and flags stale held rows `uncertain` as `budget.discrepancy` audit
+events; limits and usage are managed and read only on the people-facing `POST`/`PATCH`/`GET …/tokens/{token}`
+routes; `requests_per_minute` is stored for the hard quota slot but not yet consumed; covered by
+`colophon-db`'s and `colophon-server`'s `tests/budgets.rs`) ·
 not built: remote MCP with its
-authorization, service-account quotas and budgets, bulk manifests and jobs (X12), the CLI's full JSON contract and a
+authorization, the `requests`-kind quota consumer and provider `tokens`/`cost` budgets, bulk manifests and jobs
+(X12), the CLI's full JSON contract and a
 `colophon mcp` subcommand, the evaluation suite, L08. The proof gate is not met.
 
 ## P6: Operate it (≈ spec M5)

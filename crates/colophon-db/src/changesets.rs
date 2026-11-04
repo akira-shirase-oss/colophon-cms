@@ -714,6 +714,24 @@ pub async fn stages_locked(tx: &mut ProjectTransaction) -> Result<Vec<Stage>, Db
     stages(tx).await
 }
 
+/// [`stages_locked`], in no-key-update mode for a publish that goes on to rewrite the
+/// environment row: it excludes other publishes and stage-list replaces exactly like the
+/// `UPDATE environments` the caller later makes — so no shared read has to upgrade into the
+/// write, which is where two publishes deadlock — while tolerating the `FOR KEY SHARE` lock
+/// every writer in this environment already holds from claiming its idempotency record
+/// (`FOR UPDATE` would deadlock against those instead).
+pub async fn stages_locked_for_write(tx: &mut ProjectTransaction) -> Result<Vec<Stage>, DbError> {
+    sqlx::query!(
+        "SELECT id FROM environments WHERE project_id = $1 AND id = $2 FOR NO KEY UPDATE",
+        tx.project,
+        tx.environment
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    stages(tx).await
+}
+
 /// The environment row, locked until the transaction ends: a stage-list replace takes it, so
 /// two replaces can't interleave a delete with an insert at the same position, and readers of
 /// the list (who take it in share mode through [`stages_locked`]) finish first.

@@ -545,6 +545,11 @@ impl ApiError {
                 },
                 message: "this names no entry of the collection the field points at".to_owned(),
             }),
+            // 403: a hard quota, not a rate — GCRA's shaping owns `rate_limited` (D-113).
+            DbError::BudgetExceeded { .. } => Self::forbidden(
+                "budget_exceeded",
+                "this API token's budget for this work is exhausted; raise its limits, or wait for the window to clear",
+            ),
             // 422, at the very place in the content (media M1).
             DbError::MissingAsset {
                 field,

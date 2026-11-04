@@ -9,6 +9,7 @@ pub mod access;
 pub mod administrators;
 pub mod assets;
 pub mod audit;
+pub mod budgets;
 pub mod changesets;
 pub mod collaboration;
 pub mod components;
@@ -136,6 +137,18 @@ pub enum DbError {
     EntryDeleted {
         /// The entry, as the database reported it.
         entry: Option<uuid::Uuid>,
+    },
+    /// The caller's budget for this kind of work is exhausted (migration 0045, D-113): the
+    /// reservation was refused under the limits lock, and the transaction is aborted and the
+    /// caller rolls it back.
+    #[error("the {kind} budget is exhausted ({used} held or spent of {limit})")]
+    BudgetExceeded {
+        /// What was refused.
+        kind: colophon_domain::budget::Kind,
+        /// What the principal already held or spent.
+        used: i64,
+        /// Its ceiling.
+        limit: i64,
     },
     /// Applying migrations failed.
     #[error("applying migrations failed")]

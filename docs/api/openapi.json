@@ -1746,6 +1746,10 @@
             ],
             "type": "string"
           },
+          "limits": {
+            "$ref": "#/components/schemas/TokenLimits",
+            "description": "budget ceilings (D-113); absent means unconstrained"
+          },
           "name": {
             "type": "string"
           },
@@ -1850,6 +1854,26 @@
         "required": [
           "email",
           "password"
+        ],
+        "type": "object"
+      },
+      "PatchToken": {
+        "additionalProperties": false,
+        "properties": {
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenLimits"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "the token's ceilings; `null` removes them"
+          }
+        },
+        "required": [
+          "limits"
         ],
         "type": "object"
       },
@@ -2974,6 +2998,52 @@
         },
         "type": "object"
       },
+      "TokenLimits": {
+        "properties": {
+          "documents_per_day": {
+            "description": "entry writes per rolling day",
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_concurrent_jobs": {
+            "description": "delivery jobs held at once",
+            "maximum": 64,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "requests_per_minute": {
+            "description": "management requests per minute (stored; not consumed yet)",
+            "maximum": 100000,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "TokenUsage": {
+        "properties": {
+          "documents_last_day": {
+            "type": "integer"
+          },
+          "jobs_open": {
+            "type": "integer"
+          },
+          "requests_last_minute": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "TokenView": {
         "properties": {
           "created_at": {
@@ -3013,6 +3083,17 @@
               "null"
             ]
           },
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenLimits"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "budget ceilings; `null` is unconstrained at the quota layer"
+          },
           "name": {
             "type": "string"
           },
@@ -3040,6 +3121,10 @@
               "revoked"
             ],
             "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsage",
+            "description": "what it holds or spent; only on the single-token answer"
           }
         },
         "type": "object"
@@ -4940,6 +5025,16 @@
             },
             "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`budget_exceeded` — a token's `max_concurrent_jobs` budget refused the release's dispatch"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -5976,7 +6071,7 @@
                 }
               }
             },
-            "description": "`missing_permission, fields_not_writable`"
+            "description": "`missing_permission, fields_not_writable, budget_exceeded` — the role, or a token's `documents_per_day` budget, refused it"
           },
           "404": {
             "content": {
@@ -6623,6 +6718,16 @@
               }
             },
             "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission, fields_not_writable, budget_exceeded` — the role, or a token's `documents_per_day` budget, refused it"
           },
           "404": {
             "content": {
@@ -7669,6 +7774,16 @@
             },
             "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`budget_exceeded` — a token's `documents_per_day` budget refused it"
+          },
           "404": {
             "content": {
               "application/json": {
@@ -8280,7 +8395,7 @@
                 }
               }
             },
-            "description": "`missing_permission, fields_not_writable`"
+            "description": "`missing_permission, fields_not_writable, budget_exceeded` — the role, or a token's `documents_per_day` budget, refused it"
           },
           "404": {
             "content": {
@@ -14646,6 +14761,240 @@
           }
         ],
         "summary": "Revoke a project API token — the exact kill switch",
+        "tags": [
+          "tokens"
+        ]
+      },
+      "get": {
+        "operationId": "getToken",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the token's id",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TokenView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "One project API token, its limits and its usage",
+        "tags": [
+          "tokens"
+        ]
+      },
+      "patch": {
+        "operationId": "updateToken",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the token's id",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchToken"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TokenView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_limit, limits_empty, nothing_to_change` — the fields refused"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Replace (`{\"limits\": {…}}`) or remove (`null`) a token's budget limits",
         "tags": [
           "tokens"
         ]

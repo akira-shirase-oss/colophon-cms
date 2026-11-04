@@ -275,12 +275,24 @@ Built in step 1.7 (D-042), for people:
   update lock, so it waits for requests already running under the token, and none starts once it has committed: the
   kill switch is exact (A4; tested by removing the lock, which fails the test). Last use is written at most once a
   minute, in a transaction of its own, so requests never queue on it.
+- A token's work can be bounded (step P5.2, D-113, migration 0045): `api_token_limits` holds
+  `documents_per_day`, `max_concurrent_jobs` and `requests_per_minute` ceilings — NULL per field
+  means unconstrained, no row means the quota layer does not exist. The accepting transaction
+  counts against `budget_reservations` under the limits row's lock and refuses `budget_exceeded`
+  (403) before any work starts ([automation](09-automation.md), "Budgets"). Limits and the usage
+  read-back live only on the people-facing token routes — set at creation or replaced/removed by
+  `PATCH /api/v1/projects/{project}/tokens/{token}`, read with usage on `GET` of the same path —
+  so a token can neither see nor change its own bounds, and every change is `token.limits_changed`
+  in the log. A person is never a limits row's subject: members are bounded by their roles, not
+  quotas.
 
 ### Audit log (step R.4, D-063)
 - `audit_events` records every change to roles, memberships, invitations and API tokens, in the transaction that makes
   it: `role.created`, `role.updated` (before and after), `role.deleted`, `member.role_changed` (from and to),
   `member.removed`, `member.left`, `invitation.created` (role and label), `invitation.revoked`,
-  `invitation.accepted`, `token.created`, `token.revoked` (name, kind, permissions, expiry). Never a secret: not a
+  `invitation.accepted`, `token.created`, `token.revoked` (name, kind, permissions, expiry and, since P5.2,
+  limits), `token.limits_changed` (before and after, D-113) and `budget.discrepancy` (a held reservation that
+  outlived its work, written by the worker's system identity — the only event no request actor can write). Never a secret: not a
   token's, not an invitation's link.
 - Append-only: the API's database role may insert and read, never update or delete, and a trigger refuses `UPDATE`,
   `DELETE` and `TRUNCATE` from anyone, the table owner included. Retention (90 days by default, spec §21) arrives with
