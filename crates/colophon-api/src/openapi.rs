@@ -26,8 +26,7 @@ use serde_json::{Map, Value, json};
 use crate::{
     AppState, BuildInfo, assets, audit, auth, bulk, changesets, collaboration, components,
     content_types, delivery, destinations, device, entries, graphql, health, members, migrations,
-    projects,
-    receipts, rich_text, roles, schedules, setup, tokens, version,
+    projects, receipts, rich_text, roles, schedules, setup, tokens, version,
 };
 
 /// A verb Colophon's routes use. Naming them in a small enum keeps the table total: the
