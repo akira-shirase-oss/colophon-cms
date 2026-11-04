@@ -72,6 +72,9 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
   scripts/migrate.sh
   # These stop and restart stack services, so one at a time.
   cargo test --workspace --locked -- --ignored --test-threads=1
+  # The P5 evaluation suite (D-117): adversarial cases against the same stack, gated on
+  # UNAUTHORIZED: 0 across COLOPHON_EVAL_TRIALS repetitions of every case.
+  COLOPHON_EVAL_TRIALS=3 cargo test -p colophon-server --test evals --locked -- --ignored --test-threads=1
   # F01, F02 and F03: the server killed before and after a commit, the worker after announcing (needs the fault points).
   cargo test -p colophon-server --features fault-injection --test faults --locked -- --ignored --test-threads=1
   if command -v npm >/dev/null; then

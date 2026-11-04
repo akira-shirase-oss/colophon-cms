@@ -181,6 +181,7 @@ pub(crate) fn cookie(cookies: &[(String, String)], name: &str) -> String {
 }
 
 /// A signed-in browser: its cookies and the CSRF token writes must echo.
+#[derive(Clone)]
 pub(crate) struct Session {
     pub(crate) cookie: String,
     pub(crate) csrf: String,

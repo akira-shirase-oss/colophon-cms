@@ -158,10 +158,11 @@ CLI can show from it what a role or token can do.
 
 **Not built yet (P5):**
 - Remote MCP: Streamable HTTP with the 2025-11-25 authorization requirements and audience validation.
-- Budgets reserved in Postgres, bulk manifests and jobs, and service-account quotas beyond R.4's tokens.
+- Service-account quotas beyond R.4's tokens: the `requests`-kind quota consumer and provider `tokens`/`cost`
+  budgets (the substrate itself is built, D-113).
 - `validate_changeset` and `job_status` (releases and receipts are `list_releases`/`get_release`), and unpublish
   requests.
-- The evaluation suite and L08 (a noisy agent beside editors).
+- L08 (a noisy agent beside editors).
 - A `colophon mcp` subcommand in the CLI, and environments other than `production`.
 - Testbed and k6 coverage for the MCP server itself: it adds no API route, and the routes it calls keep their own.
 
@@ -221,21 +222,38 @@ boundary, not in a cache or a worker's memory.
 - Model output must parse into a validated typed action. Actor scope and approval are rechecked at execution.
 - Least privilege and review are part of the threat model, not a complete solution to prompt injection.
 
-### Evaluation suite (spec §17)
-- **Versioned cases:**
-  - schema discovery and correct edits;
-  - missing facts and malicious instructions;
-  - stale revisions;
-  - cross-project access;
-  - bulk interruption;
-  - provider failures.
-- **Measured per run:**
-  - schema-valid output and task completion;
-  - unauthorized attempts;
-  - reviewer edit effort;
-  - latency and cost.
-- **Required gate:** no unauthorized action executes.
-- Trials are repeated, and model versions recorded, rather than choosing one favourable result.
+### Evaluation suite (spec §17, §27)
+
+**Built (D-117): `crates/colophon-server/tests/evals.rs`** — an ignored, serial stack test where the
+adversary is a scoped API token against the real API — a `colophon-mcp` session over stdio for the MCP
+case — never a mock and never a friendly model. Each case sets up its own project and tokens, attacks
+one boundary, and a person reads back what the run left.
+
+- **The case table** covers all six spec §27 abuse cases — prompt injection in content, tool-argument
+  manipulation, cost overruns, a mass-deletion attempt, an altered approved changeset, an unsafe
+  import — plus the token-privilege surfaces (a token can never approve a token-submitted changeset,
+  its own or a second token's; field lists hide, refuse `field_not_permitted`/`field_not_readable`;
+  another project's routes answer 404 and the people-facing routes `api_token_not_allowed`) and the
+  MCP surface (`tools/list` holds no approving, publishing, resolving or migrating name whatever the
+  token could do; raw `tools/call` answers `-32602`; a smuggled `decision` is `invalid_arguments`).
+- **The oracle** classifies every adversarial call: `refused` when the boundary answers the exact
+  typed refusal the case claims (status plus `details.reason`/`details.permission`, the JSON-RPC code,
+  or a tool error's `code`); `permitted` when the agent's own legitimate work lands — least privilege,
+  not no privilege; `unauthorized` when a prohibited write, delete, approval, publish or
+  cross-boundary read executes. The owner's reads then verify end state (`verified`: the changeset
+  still unapproved, no release, every entry intact). A refusal in the wrong shape or a permitted call
+  refused is a `problem` — the suite's defect, not the system's — and fails the run just the same.
+- **The gate** is the spec's own, printed plainly: `UNAUTHORIZED: 0`, with `PROBLEMS: 0` beside it —
+  an eval that can't tell a refusal from a success proves nothing. Each case prints its own summary
+  line.
+- **Trials** are repeated rather than choosing one favourable result: `COLOPHON_EVAL_TRIALS` repeats
+  every case (default 1; `scripts/check.sh` runs it at 3 inside its ignored half).
+  `COLOPHON_EVAL_RESULTS=<dir>` writes a `<timestamp>-evals.json` artifact — date, machine, commit and
+  every case's lines — as stored evidence; unset, nothing is written.
+- Deliberately no model and no k6 scenario: the cases are deterministic API abuse and the gate is
+  correctness, not load. Schema discovery and correct edits are each case's `permitted` work; bulk
+  interruption is X12's own proof in `tests/bulk.rs`; provider-failure cases wait for the assistant
+  slice; L08 remains.
 
 ## Invariants
 
@@ -276,14 +294,12 @@ boundary, not in a cache or a worker's memory.
   no approving or publishing tool for anyone; and a wrong `COLOPHON_PROJECT` or a token revoked mid-session said
   plainly (`-32001`, and 401 on the next call: R.4's kill switch holds through MCP).
 - X12, L08 and F11.
-- The evaluation suite with repeated trials and the zero-unauthorized-action gate.
-- Spec §27 agent-abuse cases:
-  - prompt injection in content;
-  - tool-argument manipulation;
-  - cost overruns;
-  - a mass-deletion attempt;
-  - an altered approved changeset;
-  - an unsafe import.
+- The evaluation suite (D-117, `crates/colophon-server/tests/evals.rs`): ignored and serial, repeated
+  under `COLOPHON_EVAL_TRIALS`, a summary line per case, and the `UNAUTHORIZED: 0` gate over all six
+  spec §27 abuse cases — prompt injection in content, tool-argument manipulation, cost overruns, a
+  mass-deletion attempt, an altered approved changeset, an unsafe import — plus the token-privilege
+  and MCP surfaces. `scripts/check.sh` runs it at three trials in its ignored half; a stored
+  `<timestamp>-evals.json` lands with `COLOPHON_EVAL_RESULTS` set.
 
 ## Build order
 

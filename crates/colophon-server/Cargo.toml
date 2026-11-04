@@ -46,7 +46,8 @@ uuid.workspace = true
 serde_json.workspace = true
 # Test setup the API can't do yet, such as adding a member with a given role.
 sqlx.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
+# `io-util` and `process` drive the `colophon-mcp` binary over stdio in tests/evals.rs.
+tokio = { workspace = true, features = ["io-util", "process", "test-util"] }
 
 # Crash tests (F01, F02): only with the fault points compiled in.
 [[test]]
