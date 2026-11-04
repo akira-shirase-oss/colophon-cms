@@ -19,6 +19,7 @@ mod destinations;
 mod device;
 mod entries;
 pub mod error;
+pub mod events;
 mod fault;
 pub mod health;
 mod members;
@@ -119,6 +120,10 @@ pub fn routes(state: AppState) -> Router {
         .route(
             "/api/v1/projects/{project}/environments/{environment}/permissions",
             get(roles::own),
+        )
+        .route(
+            "/api/v1/projects/{project}/environments/{environment}/events",
+            get(events::events),
         )
         .route(
             "/api/v1/projects/{project}/environments/{environment}/components",

@@ -249,7 +249,10 @@ expired-approval scheduling).
   an environment with no list keeps the single implicit review exactly as before.
 - Live presence and collaboration (O-017); duplicate, bulk actions, saved views, the history slider.
 - Live queries, after Convex: the Studio's lists, drafts, changesets and receipts update as PostgreSQL commits, from one
-  listener per server fanned out to bounded sessions, every page read at one snapshot (COMPARISON.md).
+  listener per server fanned out to bounded sessions, every page read at one snapshot (COMPARISON.md). E3's backend
+  half is built (D-108, branch `e3-live-lists`, migration 0044): commit-time triggers `pg_notify` compact hints on
+  `colophon_events`, each API process holds one `LISTEN` connection that fans them out to `{P}/events` SSE streams
+  (per-credential/per-project/per-server bounds, resync-not-replay); the Studio's list wiring follows.
 - Visual preview: the site renders a draft through a short-lived capability (spec §06), with click-to-edit.
 
 **Proof gate:** two editors editing at once never lose an acknowledged edit; a schedule missed during downtime is

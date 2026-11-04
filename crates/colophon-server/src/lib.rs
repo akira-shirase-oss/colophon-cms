@@ -4,6 +4,7 @@
 //! rather than in `main.rs`, so tests can drive it.
 
 pub mod config;
+pub mod events;
 pub mod probes;
 pub mod setup_code;
 pub mod shutdown;
@@ -128,6 +129,33 @@ async fn stop_setup_code(cancel: &CancellationToken, task: Option<tokio::task::J
     }
 }
 
+/// Starts the change-hint listener for the api and all roles (D-108): one `LISTEN` connection
+/// feeding the bus the `{P}/events` streams subscribe to. The worker role alone has no streams
+/// to serve and gets none.
+fn start_events(
+    config: &Config,
+    bus: &Arc<colophon_api::events::EventBus>,
+    cancel: &CancellationToken,
+) -> Option<tokio::task::JoinHandle<()>> {
+    matches!(config.role, Role::Api | Role::All).then(|| {
+        tokio::spawn(events::run(
+            bus.clone(),
+            config.database_url.expose().to_owned(),
+            cancel.clone(),
+        ))
+    })
+}
+
+/// Stops the listener; open streams end when the process does anyway, so there is no drain.
+async fn stop_events(cancel: &CancellationToken, task: Option<tokio::task::JoinHandle<()>>) {
+    cancel.cancel();
+    if let Some(task) = task
+        && tokio::time::timeout(CLEANUP_DEADLINE, task).await.is_err()
+    {
+        tracing::warn!("the change-hint listener did not stop in time");
+    }
+}
+
 /// The public delivery cache (D-048): Valkey at `COLOPHON_CACHE_URL`, or none.
 fn delivery_cache(config: &Config) -> anyhow::Result<colophon_api::DeliveryCache> {
     match &config.cache_url {
@@ -136,6 +164,27 @@ fn delivery_cache(config: &Config) -> anyhow::Result<colophon_api::DeliveryCache
             .context("configuring the delivery cache"),
         None => Ok(colophon_api::DeliveryCache::disabled()),
     }
+}
+
+/// The API's `Services`, from the validated configuration.
+fn api_services(
+    config: &Config,
+    pool: &colophon_db::PgPool,
+    events: Arc<colophon_api::events::EventBus>,
+) -> anyhow::Result<colophon_api::Services> {
+    let mut trusted_origins = vec![config.public_origin.clone()];
+    trusted_origins.extend(config.extra_trusted_origins.iter().cloned());
+    Ok(colophon_api::Services {
+        pool: pool.clone(),
+        oidc: oidc_client(config)?,
+        sessions: colophon_api::SessionSettings::default(),
+        trusted_origins,
+        allow_private_destinations: config.listen_addr.ip().is_loopback(),
+        cache: delivery_cache(config)?,
+        content_types: colophon_api::ContentTypeCache::new(),
+        assets: asset_store(config)?,
+        events,
+    })
 }
 
 /// The uploads' object store (07-media): the S3 endpoint in `COLOPHON_S3_*`, or `None` — uploads
@@ -220,18 +269,8 @@ pub async fn run(
         "listening"
     );
 
-    let mut trusted_origins = vec![config.public_origin.clone()];
-    trusted_origins.extend(config.extra_trusted_origins.iter().cloned());
-    let services = colophon_api::Services {
-        pool: pool.clone(),
-        oidc: oidc_client(&config)?,
-        sessions: colophon_api::SessionSettings::default(),
-        trusted_origins,
-        allow_private_destinations: config.listen_addr.ip().is_loopback(),
-        cache: delivery_cache(&config)?,
-        content_types: colophon_api::ContentTypeCache::new(),
-        assets: asset_store(&config)?,
-    };
+    let event_bus = colophon_api::events::EventBus::new(config.events);
+    let services = api_services(&config, &pool, event_bus.clone())?;
     let admission = colophon_api::admission::Admission::new(
         config.admission.clone(),
         config.cache_url.as_ref().map(config::Secret::expose),
@@ -270,6 +309,8 @@ pub async fn run(
     let worker = start_worker(&config, &worker_cancel)?;
     let setup_cancel = cancel.child_token();
     let setup = start_setup_code(&config, &pool, &setup_cancel);
+    let events_cancel = cancel.child_token();
+    let hints = start_events(&config, &event_bus, &events_cancel);
 
     let outcome = tokio::select! {
         outcome = shutdown::serve(listener, app, readiness, timing, trigger) => outcome.context("serving")?,
@@ -278,6 +319,7 @@ pub async fn run(
 
     stop_worker(&worker_cancel, worker).await;
     stop_setup_code(&setup_cancel, setup).await;
+    stop_events(&events_cancel, hints).await;
     supervisor.shutdown(CLEANUP_DEADLINE).await;
     if tokio::time::timeout(CLEANUP_DEADLINE, pool.close())
         .await
