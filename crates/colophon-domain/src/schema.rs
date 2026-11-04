@@ -524,7 +524,7 @@ fn bound(
 /// Whether `number` is a value content may hold: a safe integer, or a decimal with at most six
 /// places below 10^9.
 #[expect(clippy::float_cmp, reason = "exactness is what is being checked")]
-fn check_number(number: f64, integer: bool) -> Result<(), String> {
+pub(crate) fn check_number(number: f64, integer: bool) -> Result<(), String> {
     if !number.is_finite() {
         return Err("numbers must be finite".to_owned());
     }
@@ -553,7 +553,7 @@ fn check_number(number: f64, integer: bool) -> Result<(), String> {
 }
 
 /// A number as `JSON.stringify` writes it, for values [`check_number`] accepts.
-fn write_number(out: &mut String, number: f64, integer: bool) {
+pub(crate) fn write_number(out: &mut String, number: f64, integer: bool) {
     // -0 is written as 0 by JavaScript.
     let number = if number == 0.0 { 0.0 } else { number };
     if integer {

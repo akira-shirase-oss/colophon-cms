@@ -192,6 +192,16 @@ invariant. Production adapters and the simulator both run this code unchanged.
   `order()` appends the entry id in the last key's direction — the stable tie-break every page boundary needs
   (§10). `query_hash` is SHA-256 over the canonical form: the "normalized query" a cache key names (§15) and the
   shape a cursor binds to.
+- Built in step DX.2 (D-103): cursors bound to the query hash itself, still in the domain. A `Position` names
+  one place in the ordering — one canonical-JSON literal per `order()` key, a field's stored value (`null`
+  allowed and significant: an entry that doesn't set the field sorts by `null`), the entry id as a non-empty
+  JSON string. `Query::cursor` seals it as `v1:<query_hash_hex>:<position array>` in base64url;
+  `Query::after_cursor` refuses what doesn't parse (`invalid_cursor`), what isn't this query's own — another
+  version's line or a different hash (`foreign_cursor`, "this cursor is not valid for this query") — a position
+  that doesn't fit the order (`position_mismatch`), and anything over `MAX_CURSOR_BYTES` (8 KiB decoded)
+  before it parses (`too_large`). Validation stays structural — the literal is a scalar or `null`, a number a
+  field could hold — because the definition isn't re-fetched here; whether it's one the field accepts is the
+  SQL layer's compare (DX.3), where a `Position` becomes the `WHERE (k1, k2, …) > (v1, v2, …)` tuple.
 - `fields` only narrows the returned document — never widens it — so it may name any declared field and carries no
   permission risk; indexing governs filters and sorts, not selection.
 - Schema side: `"index": true` opts a top-level field of an indexable kind (`FieldKind::may_be_indexed`) into
