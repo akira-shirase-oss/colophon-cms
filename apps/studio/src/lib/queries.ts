@@ -7,6 +7,7 @@ import {
 	listComponents,
 	listContentTypes,
 	listDestinations,
+	listMigrations,
 	listReleases,
 	listRoles,
 	me,
@@ -21,6 +22,7 @@ export const releasesQuery = (project: string) => ({ queryKey: ['releases', proj
 export const rolesQuery = (project: string) => ({ queryKey: ['roles', project], queryFn: () => listRoles(project) });
 export const componentsQuery = (project: string) => ({ queryKey: ['components', project], queryFn: () => listComponents(project) });
 export const destinationsQuery = (project: string) => ({ queryKey: ['destinations', project], queryFn: () => listDestinations(project) });
+export const migrationsQuery = (project: string) => ({ queryKey: ['migrations', project], queryFn: () => listMigrations(project) });
 /** One collection's newest entries, or those whose title matches `q`. */
 export const entriesQuery = (project: string, collection: string, q = '') => ({
 	queryKey: ['entries', project, collection, q.trim()],

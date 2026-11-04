@@ -9,6 +9,7 @@
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
+	import RouteIcon from '@lucide/svelte/icons/route';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import ShapesIcon from '@lucide/svelte/icons/shapes';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
@@ -67,6 +68,8 @@
 		'/projects/[project]/changesets/[changeset]': 'Publish requests',
 		'/projects/[project]/releases': 'Releases',
 		'/projects/[project]/releases/[generation]': 'Releases',
+		'/projects/[project]/migrations': 'Migrations',
+		'/projects/[project]/migrations/[migration]': 'Migrations',
 		'/projects/[project]/members': 'Members',
 		'/projects/[project]/settings': 'Settings',
 		'/projects/[project]/settings/types': 'Content types',
@@ -119,10 +122,13 @@
 						? resolve('/projects/[project]/settings', { project })
 						: section === 'Content types'
 							? resolve('/projects/[project]/settings/types', { project })
-							: resolve('/projects/[project]/releases', { project });
+							: section === 'Migrations'
+								? resolve('/projects/[project]/migrations', { project })
+								: resolve('/projects/[project]/releases', { project });
 			trail.push({ label: section, href: detail ? href : undefined });
 			if (route.endsWith('[generation]')) trail.push({ label: `Release ${page.params.generation}` });
 			if (route.endsWith('[changeset]')) trail.push({ label: 'Publish request' });
+			if (route.endsWith('[migration]')) trail.push({ label: 'Migration' });
 			const settingsPage = SETTINGS_PAGE[route];
 			if (settingsPage !== undefined) {
 				trail.push({ label: settingsPage, href: route.endsWith('[role]') ? resolve('/projects/[project]/settings/roles', { project }) : undefined });
@@ -272,6 +278,13 @@
 							<Sidebar.MenuButton isActive={inBuilder} tooltipContent="Content types">
 								{#snippet child({ props })}
 									<a href={resolve('/projects/[project]/settings/types', { project })} data-testid="builder-link" {...props}><ShapesIcon /><span>Content types</span></a>
+								{/snippet}
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/migrations')} tooltipContent="Migrations">
+								{#snippet child({ props })}
+									<a href={resolve('/projects/[project]/migrations', { project })} data-testid="migrations-link" {...props}><RouteIcon /><span>Migrations</span></a>
 								{/snippet}
 							</Sidebar.MenuButton>
 						</Sidebar.MenuItem>

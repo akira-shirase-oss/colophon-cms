@@ -42,7 +42,9 @@ describe('promotion', () => {
 		expect(await live(root)).toBe(1);
 	});
 
-	test('promotions that race end on the newest release', async () => {
+	// The promote lock gives a contender ten seconds before refusing: the test's timeout must
+	// outlive that wait or a busy machine fails the test before the code gives up.
+	test('promotions that race end on the newest release', { timeout: 15_000 }, async () => {
 		const root = await mkdtemp(join(tmpdir(), 'site-'));
 		const builds = await Promise.all([5, 4, 3].map((generation) => built(root, generation)));
 		await Promise.all(builds.map((one) => promote(root, one)));

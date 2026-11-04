@@ -47,7 +47,15 @@ use crate::{
 };
 
 /// Studio pages that sit beside a project's collections, at `/studio/projects/{project}/{slug}`.
-const RESERVED_SLUGS: [&str; 4] = ["members", "settings", "changesets", "releases"];
+/// Slugs the Studio's own routes already use; a collection with one could never be reached
+/// there (`reserved_slug`, D-042).
+const RESERVED_SLUGS: [&str; 5] = [
+    "members",
+    "settings",
+    "changesets",
+    "releases",
+    "migrations",
+];
 
 const CREATE: &str = "content_type.create";
 const UPDATE: &str = "content_type.update";

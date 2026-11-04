@@ -13,11 +13,12 @@ mod common;
 use std::collections::BTreeMap;
 
 use colophon_db::{
+    content_types::{self, Updated},
     entries::{self, NewRevision, Saved},
     idempotency::{self, Claim},
     projects, scope,
 };
-use colophon_sim::{Config, Mutation, Reply, Report, RevisionId, Save};
+use colophon_sim::{Config, Mutation, Op, Reply, Report, RevisionId, Save};
 use common::TestDb;
 use uuid::Uuid;
 
@@ -40,6 +41,9 @@ struct World {
     identities: BTreeMap<u64, Uuid>,
     entries: BTreeMap<u64, Uuid>,
     revisions: BTreeMap<RevisionId, Uuid>,
+    /// Each project's `articles` collection's version: the model's own counter, kept honest by
+    /// the real `content_types::update`s the replay makes.
+    versions: BTreeMap<u64, i32>,
 }
 
 /// What the real adapter answered, in the model's terms.
@@ -79,6 +83,17 @@ async fn apply(db: &TestDb, world: &World, save: &Save) -> Real {
     let Some(entry) = world.entries.get(&save.entry) else {
         return Real::NotFound;
     };
+    // As the API's save handler does it: the collection's write lock, then the version it is
+    // stamped with, in the same transaction, so a schema change and a save never interleave
+    // inside one version (D-100).
+    content_types::lock_for_write(&mut tx, "articles")
+        .await
+        .expect("lock");
+    let version = content_types::current(&mut tx, "articles")
+        .await
+        .expect("current")
+        .expect("articles")
+        .version;
     let revision = Uuid::now_v7();
     let hash = digest(&save.content);
     let outcome = entries::save(
@@ -91,7 +106,7 @@ async fn apply(db: &TestDb, world: &World, save: &Save) -> Real {
             content_hash: &hash,
             title: &save.content,
             slug: None,
-            schema_version: 1,
+            schema_version: version,
             references: &[],
             assets: &[],
             unique: &[],
@@ -123,9 +138,11 @@ async fn world(db: &TestDb, report: &Report) -> World {
         identities: BTreeMap::new(),
         entries: BTreeMap::new(),
         revisions: BTreeMap::new(),
+        versions: BTreeMap::new(),
     };
 
-    // Projects and their members, as the model has them.
+    // Projects and their members, as the model has them. A new project's built-in `articles`
+    // collection is at version 1, as the model starts it.
     for (project, _, _, _) in &report.setup {
         if world.projects.contains_key(project) {
             continue;
@@ -137,11 +154,15 @@ async fn world(db: &TestDb, report: &Report) -> World {
             .id;
         world.projects.insert(*project, id);
         world.identities.insert(*project * 1_000_000, creator);
+        world.versions.insert(*project, 1);
     }
     let people: std::collections::BTreeSet<(u64, u64)> = report
         .log
         .iter()
-        .map(|(save, _)| (save.project, save.identity))
+        .filter_map(|op| match op {
+            Op::Save(save, _) => Some((save.project, save.identity)),
+            Op::Change(..) => None,
+        })
         .collect();
     for (project, identity) in people {
         let person = db.person(&format!("i{identity}")).await;
@@ -192,14 +213,72 @@ async fn world(db: &TestDb, report: &Report) -> World {
     world
 }
 
-/// Replays a run's saves against Postgres; the number compared, or the first disagreement.
+/// A content-type change that landed in the model, replayed as a real compatible update on
+/// `articles` (the display name, which no stored document is checked against): the collection's
+/// change lock, then the new version on the one named by the read under it — as the API's
+/// update does. `Ok` when Postgres moved the version to the model's.
+async fn change(db: &TestDb, world: &mut World, project: u64, version: u64) -> Result<(), String> {
+    let creator = world.identities[&(project * 1_000_000)];
+    let mut tx = scope::begin_in_project(&db.app, creator, world.projects[&project], "production")
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "the creator isn't a member".to_owned())?;
+    content_types::lock_for_change(&mut tx, "articles")
+        .await
+        .map_err(|error| error.to_string())?;
+    let now = content_types::current(&mut tx, "articles")
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "articles is missing".to_owned())?;
+    let mut definition: serde_json::Value =
+        serde_json::from_str(&now.definition).map_err(|error| error.to_string())?;
+    definition["name"] = serde_json::Value::String(format!("Articles v{version}"));
+    let definition = definition.to_string();
+    match content_types::update(
+        &mut tx,
+        "articles",
+        now.version,
+        &definition,
+        &digest(&definition),
+    )
+    .await
+    .map_err(|error| error.to_string())?
+    {
+        Updated::Updated(landed) if landed.version == i32::try_from(version).unwrap_or(0) => {
+            tx.commit().await.map_err(|error| error.to_string())?;
+            world.versions.insert(project, landed.version);
+            Ok(())
+        }
+        other => Err(format!("update answered {other:?}")),
+    }
+}
+
+/// Replays a run's operations against Postgres; the number compared, or the first disagreement.
 async fn replay(seed: u64, mutation: Mutation) -> Result<usize, String> {
     let report = colophon_sim::run(seed, &Config::default(), mutation);
     let db = TestDb::new().await;
     let mut world = world(&db, &report).await;
+    // What a save stamped is read back as the owner: the application login sees a revision
+    // only inside a project transaction.
+    let owner = db.owner().await;
+    let mut saves = 0_usize;
 
-    // Every save, in the model's order: the answers must agree.
-    for (index, (save, model)) in report.log.iter().enumerate() {
+    // Every operation, in the model's order: the answers must agree.
+    for (index, op) in report.log.iter().enumerate() {
+        let (save, model) = match op {
+            Op::Save(save, model) => (save, model),
+            Op::Change(project, version) => {
+                if let Err(problem) = change(&db, &mut world, *project, *version).await {
+                    owner.close().await;
+                    db.drop().await;
+                    return Err(format!(
+                        "seed {seed}, op {index}: the model moved p{project}'s type to v{version}, Postgres says {problem}"
+                    ));
+                }
+                continue;
+            }
+        };
+        saves += 1;
         let real = apply(&db, &world, save).await;
         let agree = match (model, &real) {
             (
@@ -229,13 +308,37 @@ async fn replay(seed: u64, mutation: Mutation) -> Result<usize, String> {
             _ => false,
         };
         if !agree {
+            owner.close().await;
             db.drop().await;
             return Err(format!(
                 "seed {seed}, save {index} ({save:?}): the model said {model:?}, Postgres {real:?}"
             ));
         }
+        // The version the real save stamped on the revision is the one current under the
+        // collection's lock — the version the replay's last real update reached.
+        if let Real::Saved {
+            revision,
+            replayed: false,
+        } = real
+        {
+            let stamped =
+                sqlx::query_scalar::<_, i32>("SELECT schema_version FROM revisions WHERE id = $1")
+                    .bind(revision)
+                    .fetch_one(&owner)
+                    .await
+                    .expect("the stamped version");
+            let tracked = world.versions.get(&save.project).copied().unwrap_or(1);
+            if stamped != tracked {
+                owner.close().await;
+                db.drop().await;
+                return Err(format!(
+                    "seed {seed}, save {index} ({save:?}): Postgres stamped r{revision} with v{stamped}, but p{}'s type was v{tracked}",
+                    save.project
+                ));
+            }
+        }
     }
-    let saves = report.log.len();
+    owner.close().await;
     db.drop().await;
     Ok(saves)
 }

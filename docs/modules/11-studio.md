@@ -52,7 +52,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   far: Projects (`/studio/`), a project's content types (`/studio/projects/{project}`), a collection
   (`…/{collection}`), the editor (`…/{collection}/{entry}`), Members (`…/members`), joining a project
   (`/studio/invite`), approving a terminal (`/studio/device`), and the editor playground (`/studio/playground`).
-  Content-type slugs `members` and `settings` are reserved, so these pages can sit beside collections (D-042).
+  Content-type slugs `members`, `settings`, `changesets`, `releases` and `migrations` are reserved, so these pages can sit beside collections (D-042).
   Since step 1.8 (D-043), the home page lets an administrator create a project, with the slug following the name
   until edited, and tells everyone else to ask a project's owner for an invitation.
   Since step 2.1 (D-044): `/studio/projects/{project}/changesets` lists changesets with their state and makes new ones
@@ -256,6 +256,21 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   structures still fit three deep (`componentFits`), shows its fields read-only with a link to its page, and the
   entry editor fills it like any group. Changing one takes `schema.change` everywhere; a role without it reads it,
   and the server refuses its change too. Tests: `tests/components.spec.ts`, `tests/server/components.spec.ts`.
+- D-100 and D-101 in the Studio: **content-schema migrations** (step M.5c). *Migrations* in the main navigation
+  (shown to roles with `schema.change` anywhere, beside *Content types*) opens `…/migrations`: every plan with its
+  state badge, entries done and in the way, and the versions it moves between. A plan's page
+  (`…/migrations/{migration}`) says the collection, the definition it moves to (in the Technical details with the
+  plan's hash and its history), the progress the worker is driving — the page polls while a plan runs — and an
+  outcome-filtered table of its items with each `needs_input` problem. *Resolve* on one opens a dialog holding the
+  entry's document to fix; the page checks it's JSON, the server checks it against the target, and a refusal is
+  said in the dialog. *Approve plan* and *Apply* send the hash on screen (a plan that moved says so and shows the
+  current one), *Cancel plan* while it hasn't run, and Apply is answered `running`, never `done` — the badge lands
+  there when the worker finishes. `republish_required` says, plainly, that applied drafts still serve their old
+  shape until published. Mutating actions show only to a role with `schema.change` on the collection. The one
+  affordance that makes a plan is on the refusal that earns it: the type builder's `needs_migration` answer lists
+  the entries in the way as before, and *Plan a migration for this change* plans the very definition the save sent
+  and opens the new plan. Test: `tests/server/migrations.spec.ts` (refusal → plan → item → resolve → approve →
+  apply → `done` through the real worker).
 - **The content-type builder, rebuilt as a CMS builder** (D-079, 2026-10-28; notes in
   [research/cms-ui-patterns.md](../research/cms-ui-patterns.md)). *Content types* in the main navigation (shown to roles
   with `schema.change` anywhere) opens `…/settings/types`: a left panel (`BuilderFrame.svelte`) of collections, single

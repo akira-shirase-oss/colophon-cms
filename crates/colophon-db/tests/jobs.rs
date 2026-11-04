@@ -221,9 +221,9 @@ async fn a_job_past_its_deadline_fails_and_the_worker_role_sees_no_drafts() {
     owner.close().await;
 
     for statement in [
-        "SELECT count(*) FROM revisions",
-        // The worker reads a few entries columns for retention (0039), which makes count(*)
-        // legal; a draft's title is not among them — the worker still sees no drafts.
+        // The worker reads a few entries columns for retention (0039), and a few revisions
+        // columns for a migration run (0041), which makes count(*) on either legal; a draft's
+        // title is not among them — the worker still sees no drafts.
         "SELECT draft_title FROM entries",
         "SELECT count(*) FROM memberships",
         "SELECT count(*) FROM sessions",

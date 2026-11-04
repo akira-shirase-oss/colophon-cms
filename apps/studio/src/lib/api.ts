@@ -1402,3 +1402,135 @@ export async function updateComponent(project: string, slug: string, definition:
 	const response = await send('PUT', `${components(project)}/${slug}`, definition, { 'If-Match': etag, 'Idempotency-Key': key });
 	return ((await response.json()) as { data: Component }).data;
 }
+
+// ---- Migrations: plans for content-type changes that stored entries can't take as they are
+// (step M.5, D-100, D-101). ----
+
+/** Where a migration plan stands (D-100). */
+export type MigrationState = 'proposed' | 'approved' | 'running' | 'done' | 'blocked' | 'superseded' | 'cancelled';
+
+/** What the dry run found for one entry, or what a run did with it (D-101). */
+export type MigrationOutcome = 'ok' | 'migrates' | 'needs_input' | 'blocked' | 'resolved' | 'applied' | 'skipped';
+
+/** A plan's item counts: `done` covers every finished outcome, `blocked` what still needs a
+ *  person. */
+export interface MigrationItems {
+	expected: number;
+	done: number;
+	blocked: number;
+}
+
+/** A migration plan as a list names it. */
+export interface MigrationSummary {
+	id: string;
+	collection: string;
+	base_version: number;
+	target_version: number | null;
+	state: MigrationState;
+	/** The plan's hash — what `If-Match` names on its writes. */
+	hash: string;
+	items: MigrationItems;
+	created_by: string;
+	approved_by: string | null;
+	approved_at: string | null;
+	started_at: string | null;
+	finished_at: string | null;
+	error: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+/** A migration plan in full: the definition it would move the collection to. */
+export interface MigrationPlan extends MigrationSummary {
+	target_definition: Definition;
+	target_definition_hash: string;
+	operations: unknown | null;
+	/** Whether an applied item still publishes a revision from before the run's target version:
+	 *  those entries stay live on the old shape until republished. */
+	republish_required: boolean;
+}
+
+/** One entry in a plan. */
+export interface MigrationItem {
+	entry_id: string;
+	/** The draft at plan time: what the run rewrites. */
+	expected_revision_id: string;
+	title: string | null;
+	outcome: MigrationOutcome;
+	problem: { reason: string; pointer: string; message: string } | null;
+	/** The replacement document a person gave it, if any. */
+	resolution: unknown | null;
+	new_revision_id: string | null;
+	applied_at: string | null;
+	/** Whether this applied item still publishes a pre-run revision until republished. */
+	republish_required: boolean;
+}
+
+const migrations = (project: string) => `${base(project)}/migrations`;
+
+/** The project's newest 100 plans, `collection`/`state` filtered. Any member may read them. */
+export async function listMigrations(project: string, collection?: string, state?: MigrationState): Promise<MigrationSummary[]> {
+	const query = new URLSearchParams();
+	if (collection) query.set('collection', collection);
+	if (state) query.set('state', state);
+	return ((await (await send('GET', `${migrations(project)}?${query}`)).json()) as { data: MigrationSummary[] }).data;
+}
+
+export async function getMigration(project: string, id: string): Promise<MigrationPlan> {
+	return ((await (await send('GET', `${migrations(project)}/${id}`)).json()) as { data: MigrationPlan }).data;
+}
+
+/** One page of a plan's items, `outcome` filtered; `after` is the last page's cursor. */
+export async function migrationItems(project: string, id: string, outcome?: MigrationOutcome, after?: string): Promise<Page<MigrationItem>> {
+	const query = new URLSearchParams();
+	if (outcome) query.set('outcome', outcome);
+	if (after) query.set('after', after);
+	return (await (await send('GET', `${migrations(project)}/${id}/items?${query}`)).json()) as Page<MigrationItem>;
+}
+
+/** Computes the plan for `definition` — the change a plain `PUT` was refused for. Dry-run is
+ *  the POST: the answer names every entry in the way. `no_migration_needed` when the change
+ *  could have applied plainly, `migration_in_progress` while a run holds the collection. */
+export async function planMigration(project: string, collection: string, definition: Definition, key: string): Promise<MigrationPlan> {
+	return ((await (await send('POST', migrations(project), { collection, definition }, { 'Idempotency-Key': key })).json()) as { data: MigrationPlan }).data;
+}
+
+/** Stores `resolution` — a full replacement document the target accepts — for a `needs_input`
+ *  item, bound to the plan hash the caller saw. The response's `hash` is the plan's. */
+export async function resolveMigrationItem(
+	project: string,
+	id: string,
+	entry: string,
+	resolution: unknown,
+	hash: string,
+	key: string
+): Promise<{ hash: string; item: MigrationItem }> {
+	return ((await (
+		await send('PUT', `${migrations(project)}/${id}/items/${entry}`, { resolution }, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key })
+	).json()) as { data: { hash: string; item: MigrationItem } }).data;
+}
+
+/** Approves the plan whose hash the caller saw (`plan_moved` names the current one when it
+ *  isn't). */
+export async function approveMigration(project: string, id: string, hash: string, key: string): Promise<MigrationPlan> {
+	return ((await (await send('POST', `${migrations(project)}/${id}/approve`, undefined, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key })).json()) as { data: MigrationPlan }).data;
+}
+
+/** What `apply` answers: the plan started (202) — a worker drives it to `done` or `blocked`
+ *  (D-101); refetch for where it stands. */
+export interface MigrationStarted {
+	id: string;
+	state: MigrationState;
+	hash: string;
+	started_at: string | null;
+}
+
+/** Starts the run on the approved plan whose hash the caller saw. */
+export async function applyMigration(project: string, id: string, hash: string, key: string): Promise<MigrationStarted> {
+	return ((await (await send('POST', `${migrations(project)}/${id}/apply`, undefined, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key })).json()) as { data: MigrationStarted }).data;
+}
+
+/** Cancels a plan that hasn't run; a running one is refused (`cannot_cancel_running`). */
+export async function cancelMigration(project: string, id: string, key: string): Promise<MigrationPlan> {
+	return ((await (await send('POST', `${migrations(project)}/${id}/cancel`, undefined, { 'Idempotency-Key': key })).json()) as { data: MigrationPlan }).data;
+}

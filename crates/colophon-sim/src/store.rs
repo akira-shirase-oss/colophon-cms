@@ -6,7 +6,9 @@
 //! - revisions are never changed, and each names the revision it was saved on (D1);
 //! - a key replays its recorded answer for the same request, refuses a different one, and only
 //!   successes are recorded;
-//! - a project sees only its own entries (S8).
+//! - a project sees only its own entries (S8);
+//! - a save is stamped with the content-type version current when it commits, read under the
+//!   collection's lock — a schema change and a save never interleave inside one version (D-100).
 //!
 //! The differential test in `colophon-db` replays the same operations against Postgres and
 //! requires the same answers, so the model can't drift from the real adapter unnoticed.
@@ -38,15 +40,21 @@ pub enum Mutation {
     /// key instead of resending the request it had sent, so an edit that did commit can be
     /// stored again.
     NewKeyAfterCrash,
+    /// A save stamps the content-type version the request was validated against — the one the
+    /// client saw when it composed the edit — instead of the version current at commit: a save
+    /// validated outside the collection's lock writes a revision against a superseded version
+    /// (D-100).
+    StampSeenVersion,
 }
 
 impl Mutation {
     /// Every mutation, for the mutation suite.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::SkipBaseCheck,
         Self::ForgetKeys,
         Self::LeakAcrossProjects,
         Self::NewKeyAfterCrash,
+        Self::StampSeenVersion,
     ];
 
     /// The name used on the command line.
@@ -57,6 +65,7 @@ impl Mutation {
             Self::ForgetKeys => "forget-keys",
             Self::LeakAcrossProjects => "leak-across-projects",
             Self::NewKeyAfterCrash => "new-key-after-crash",
+            Self::StampSeenVersion => "stamp-seen-version",
         }
     }
 
@@ -82,6 +91,10 @@ pub struct Save {
     pub expected: RevisionId,
     /// The idempotency key.
     pub key: u64,
+    /// The content-type version the client saw when it composed the edit. A correct store
+    /// stamps the version current at commit, not this one — it only matters to a save that
+    /// validates outside the collection's lock.
+    pub seen_version: u64,
     /// The new content.
     pub content: String,
 }
@@ -116,6 +129,9 @@ pub struct Revision {
     pub base: Option<RevisionId>,
     /// Its content.
     pub content: String,
+    /// The content-type version it was written against: the version current when the save
+    /// committed, read under the collection's lock (D-100).
+    pub schema_version: u64,
     /// Who saved it, and with which key (`None` for an entry's first, made by setup).
     pub saved_by: Option<(IdentityId, u64)>,
 }
@@ -138,6 +154,9 @@ pub struct Store {
     entries: BTreeMap<EntryId, Entry>,
     revisions: BTreeMap<RevisionId, Revision>,
     records: BTreeMap<(ProjectId, IdentityId, u64), Record>,
+    /// Each project's collection's current version (the model keeps one collection per
+    /// project): a content-type change bumps it, a save stamps it on its revision.
+    versions: BTreeMap<ProjectId, u64>,
     next_id: u64,
     mutation: Mutation,
 }
@@ -158,6 +177,21 @@ impl Store {
         id
     }
 
+    /// The version `project`'s collection is at: 1 before any change, one more after each.
+    pub fn version(&self, project: ProjectId) -> u64 {
+        self.versions.get(&project).copied().unwrap_or(1)
+    }
+
+    /// A content-type change that lands, atomically: the collection's version moves forward.
+    /// In the API a change too unsafe for a plain update is refused `needs_migration` (D-100)
+    /// and only a migration run's own writes move the version — so a change modelled here is
+    /// one that always applies.
+    pub fn change_type(&mut self, project: ProjectId) -> u64 {
+        let next = self.version(project) + 1;
+        self.versions.insert(project, next);
+        next
+    }
+
     /// Creates an entry in `project` whose draft is a first revision with `content`; the
     /// entry's id and the revision's.
     pub fn create(&mut self, project: ProjectId, content: &str) -> (EntryId, RevisionId) {
@@ -169,6 +203,7 @@ impl Store {
                 entry,
                 base: None,
                 content: content.to_owned(),
+                schema_version: self.version(project),
                 saved_by: None,
             },
         );
@@ -209,6 +244,14 @@ impl Store {
                 current: entry.draft,
             };
         }
+        // The version the revision is stamped with: the one current under the collection's
+        // lock, which this atomic save holds. StampSeenVersion models a save that validated
+        // outside the lock, against the version the client had seen.
+        let schema_version = if self.mutation == Mutation::StampSeenVersion {
+            save.seen_version
+        } else {
+            self.version(save.project)
+        };
         let revision = self.id();
         self.revisions.insert(
             revision,
@@ -216,6 +259,7 @@ impl Store {
                 entry: save.entry,
                 base: Some(save.expected),
                 content: save.content.clone(),
+                schema_version,
                 saved_by: Some((save.identity, save.key)),
             },
         );
@@ -279,6 +323,7 @@ mod tests {
             entry,
             expected,
             key,
+            seen_version: 1,
             content: content.to_owned(),
         }
     }
@@ -342,5 +387,28 @@ mod tests {
         let mut store = Store::new(Mutation::LeakAcrossProjects);
         let (entry, _) = store.create(1, "a");
         assert!(store.read(2, entry).is_some());
+    }
+
+    #[test]
+    fn a_save_stamps_the_version_current_at_commit() {
+        let mut store = Store::new(Mutation::None);
+        let (entry, first) = store.create(1, "a");
+        assert_eq!(store.revision(first).map(|r| r.schema_version), Some(1));
+        assert_eq!(store.change_type(1), 2);
+        // The client still "saw" version 1 when it composed the edit; the save commits on
+        // version 2, and the revision is stamped with it.
+        let Reply::Saved { revision, .. } = store.save(&save(entry, first, 1, "b")) else {
+            panic!("a fresh save")
+        };
+        assert_eq!(store.revision(revision).map(|r| r.schema_version), Some(2));
+
+        // With the rule broken, the same race stamps the version the client had seen.
+        let mut store = Store::new(Mutation::StampSeenVersion);
+        let (entry, first) = store.create(1, "a");
+        assert_eq!(store.change_type(1), 2);
+        let Reply::Saved { revision, .. } = store.save(&save(entry, first, 1, "b")) else {
+            panic!("a fresh save")
+        };
+        assert_eq!(store.revision(revision).map(|r| r.schema_version), Some(1));
     }
 }

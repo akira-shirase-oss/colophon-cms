@@ -199,8 +199,12 @@ applied against its hash, blocks schema writes while it runs, and takes resoluti
 input; M.5b is built too (D-101, migration 0041): the worker drives a `running` plan under an advisory-lock
 claim, `fill`/`move` operations transform or a stored `resolution` replaces each item, per-item outcomes
 commit durably (crash-resumable; F-05b proves it), and the plan ends `done` or `blocked` with
-`republish_required` pinning open publications to republish. Remaining for M.5: the Studio, testbed and k6
-surfaces (M.5c) and the simulator's schema/save races. What is built has its tests, a testbed page (`/modelling`) and a load scenario
+`republish_required` pinning open publications to republish. M.5c is built too: the Studio's Migrations
+section (a list of plans and a plan's page — counters, a filterable item table, a resolution dialog, and
+hash-bound approve/apply/cancel gated on `schema.change`), the "Plan a migration" affordance on the type
+builder's `needs_migration` refusal, the testbed's `/migrations` page, `perf/k6/migrations.js`, and the
+simulator's schema/save races (invariant V: no revision is written against a superseded version, with the
+`stamp-seen-version` mutation proving it's checked). What is built has its tests, a testbed page (`/modelling`) and a load scenario
 (`perf/k6/modelling.js`) whose million-request runs wait for a quiet machine; the Studio's builder and editor cover
 M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 

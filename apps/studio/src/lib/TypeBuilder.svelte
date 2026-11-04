@@ -17,7 +17,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
-	import { ApiError, type ContentType, type Definition, type Details, deleteContentType, type FieldDefinition, newKey, updateContentType } from './api.ts';
+	import { ApiError, type ContentType, type Definition, type Details, deleteContentType, type FieldDefinition, newKey, planMigration, updateContentType } from './api.ts';
 	import { plainError, plainOr } from './errors.ts';
 	import { savedPaths, structureProblems } from './fieldDefs.ts';
 	import FieldList from './FieldList.svelte';
@@ -41,7 +41,12 @@
 	let key = newKey();
 	let lastSent = '';
 	let busy = $state(false);
-	let refusal = $state<{ message: string; details: Details | null; stale: boolean } | null>(null);
+	// `migration` when the server said the change needs one (needs_migration): the refusal then
+	// offers to plan it instead of fixing every entry first (D-100).
+	let refusal = $state<{ message: string; details: Details | null; stale: boolean; migration: boolean } | null>(null);
+	// The definition the refused save sent, kept to plan the migration with.
+	let attempted = $state<Definition | null>(null);
+	let planning = $state(false);
 	let editingType = $state(false);
 	let confirming = $state(false);
 	let removing = $state(false);
@@ -75,6 +80,7 @@
 			const sending = $state.snapshot(draft);
 			sending.name = sending.name.trim();
 			trimmed(sending.fields);
+			attempted = sending;
 			const result = await updateContentType(project, type.slug, sending, etag, key);
 			toast.success(`Saved ${result.type.definition.name}, version ${result.type.version}`);
 			queryClient.setQueryData(['type', project, type.slug], result.type);
@@ -95,12 +101,37 @@
 								: failure.reason === 'needs_migration' && (failure.details?.pointer?.endsWith('/when') || (failure.details?.entries ?? []).some((entry) => entry.problem?.reason === 'not_applicable'))
 									? 'Some entries don’t fit this condition yet. Change them (they are listed above), then save again.'
 									: failure.message;
-				refusal = { message: words, details: failure.details, stale: failure.failure === 'conflict' };
+				refusal = { message: words, details: failure.details, stale: failure.failure === 'conflict', migration: failure.reason === 'needs_migration' };
 			} else {
 				toast.error(failure instanceof Error ? failure.message : String(failure));
 			}
 		} finally {
 			busy = false;
+		}
+	}
+
+	/** Plans the migration the save was refused for (D-100): the plan names every entry in the
+	 *  way, and its page offers to give each a document that fits, approve and apply. */
+	async function plan() {
+		if (attempted === null) return;
+		planning = true;
+		try {
+			const made = await planMigration(project, type.slug, attempted, newKey());
+			await queryClient.invalidateQueries({ queryKey: ['migrations', project] });
+			// The attempted definition lives in the plan: leaving loses nothing, so there is
+			// nothing to warn about.
+			draft = structuredClone(saved);
+			refusal = null;
+			await goto(resolve('/projects/[project]/migrations/[migration]', { project, migration: made.id }));
+		} catch (failure) {
+			refusal = {
+				message: failure instanceof ApiError ? failure.message : String(failure),
+				details: failure instanceof ApiError ? failure.details : null,
+				stale: false,
+				migration: false
+			};
+		} finally {
+			planning = false;
 		}
 	}
 
@@ -178,6 +209,14 @@
 				{#if (refusal.details.total ?? 0) > refusal.details.entries.length}
 					<p class="mt-2 text-muted-foreground">And {(refusal.details.total ?? 0) - refusal.details.entries.length} more.</p>
 				{/if}
+			{/if}
+			{#if refusal.migration}
+				<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+					<Button variant="secondary" size="sm" onclick={plan} disabled={planning} data-testid="plan-migration">
+						{planning ? 'Planning…' : 'Plan a migration for this change'}
+					</Button>
+					<span class="max-w-md text-xs text-muted-foreground">A plan names every entry in the way and applies the change once they fit, or as someone resolves them — instead of fixing each first.</span>
+				</div>
 			{/if}
 		</div>
 	{/if}

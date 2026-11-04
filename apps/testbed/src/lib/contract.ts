@@ -115,10 +115,10 @@ export const checks: Check[] = [
 	},
 	{
 		id: 'too-large',
-		title: 'A 2 MiB body is refused with the envelope',
-		proves: 'The 1 MiB body limit holds, and tower-http’s plain-text 413 is rewritten into the envelope.',
+		title: 'A 22 MiB body is refused with the envelope',
+		proves: 'The 21 MiB body limit (uploads carry 20 MiB images) holds, and tower-http’s plain-text 413 is rewritten into the envelope.',
 		async run() {
-			const reply = await call('POST', '/api/v1/testbed-upload', { body: new Uint8Array(2 * 1024 * 1024) });
+			const reply = await call('POST', '/api/v1/testbed-upload', { body: new Uint8Array(22 * 1024 * 1024) });
 			return outcome(reply, envelopeProblems(reply, 413, 'payload_too_large'));
 		}
 	},

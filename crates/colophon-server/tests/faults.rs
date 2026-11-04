@@ -297,6 +297,10 @@ async fn a_worker_killed_after_announcing_is_followed_by_one_with_the_same_key()
 /// F-05b for migrations (M.5b). Nothing an item wrote is done twice.
 #[tokio::test]
 #[ignore = "needs the stack, migrations and --features fault-injection"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one crash-and-resume story, told in order: seed, plan, kill, finish"
+)]
 async fn a_migration_worker_killed_mid_run_resumes_and_finishes_the_plan() {
     let owner;
     let path;
