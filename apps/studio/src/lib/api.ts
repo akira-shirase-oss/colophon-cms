@@ -1274,7 +1274,7 @@ export interface Job {
 	destination_id: string;
 	destination_name: string;
 	generation: number;
-	status: 'pending' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'superseded';
+	status: 'pending' | 'running' | 'retrying' | 'held' | 'succeeded' | 'failed' | 'superseded';
 	attempts: number;
 	last_http_status: number | null;
 	last_error: string | null;

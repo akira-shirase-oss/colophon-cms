@@ -70,8 +70,8 @@ quality claim (spec §30).
 | F10 | Migration interrupted or schema edited concurrently | Checkpointed recovery or conflict; no mixed undocumented schema |
 | F11 | Model produces invalid or hostile output | No unsafe action; reviewer sees a rejected suggestion with safe diagnostics |
 | F12 | Duplicate/reordered external events | Authoritative reconciliation and exactly one logical effect (the spec's payment case is parked; applied to delivery and webhook receipts) |
-| F13 | Restore backup containing an old outbox | New recovery epoch; reconcile external effects before replay; no blind resend |
-| F14 | Deleted project appears in a restored backup | Deletion ledger reapplied before read APIs and caches are enabled |
+| F13 | Restore backup containing an old outbox | New recovery epoch; reconcile external effects before replay; no blind resend. In place: `crates/colophon-db/tests/restore.rs` on a template clone — epoch advances, in-flight and pending jobs go `held` with leases cleared and can't be claimed, `resume` returns them to `pending`; the end-to-end restore is `scripts/restore.sh`'s six stages |
+| F14 | Deleted project appears in a restored backup | Deletion ledger reapplied before read APIs and caches are enabled. In place: `crates/colophon-db/tests/ledger.rs` replays an export onto a template-cloned backup (deleted project/member/role/collection/entry stay gone, second replay skips all); `scripts/restore.sh`'s `ledger` stage drives it in the real restore |
 | F15 | An entry is deleted while a save adds a reference to it, a changeset pins it, or a release publishes it (D-080) | Never both: the one that waits finds the other committed, so the reference, pin or publication is refused as for a missing entry, or the deletion is refused (`still_referenced`, `published`). In place: `crates/colophon-db/tests/deletion.rs`, two real transactions, both orders |
 
 **In place (step 1.2):** F01 and F02 run against the real binary in

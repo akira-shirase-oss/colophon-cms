@@ -1,0 +1,41 @@
+{
+  "scenario": "restore-drill",
+  "date": "2026-11-04T19:43:55Z",
+  "commit": "e06ae75aa79b3803a3845570ff9efab5ee244b73",
+  "dirty_files": 30,
+  "machine": "apple-m2-pro-12c",
+  "backup_dir": "restores/drill-2026-11-04T19:43:55Z/backups/2026-11-04T194355Z",
+  "restore_dir": "restores/drill-2026-11-04T19:43:55Z/restore",
+  "database": "colophon_port",
+  "fixture": {
+    "second_id": "01a1a67e-e3a4-700b-bead-d9b50ff60f65",
+    "victim_id": "01a1a67e-e19e-736a-b730-a068dae9bf64",
+    "project_id": "01a1a67e-e169-75ed-b57d-68fa820ddea7",
+    "epoch_before": 1,
+    "victim_title": "Short-lived",
+    "destination_id": "01a1a67e-e189-727c-a489-fd35a972b0ba",
+    "environment_id": "01a1a67e-e16d-7680-9d3b-8eb51987cb06",
+    "victim_revision": "01a1a67e-e19e-736a-b730-a067007e272b",
+    "victim_collection": "articles",
+    "release_generation": 3
+  },
+  "in_flight_job": "d45eb193-e399-4fcb-80e4-7bda93e3b4b3",
+  "ledger_high_water": 900,
+  "seconds": {
+    "capture": 282,
+    "restore": 118,
+    "capture_to_verified_serving": 400
+  },
+  "checks_passed": 5,
+  "checks_failed": 0,
+  "serving": true,
+  "stages": [
+    "prepare",
+    "verify",
+    "epoch",
+    "ledger",
+    "reconcile",
+    "serve"
+  ],
+  "verdict": "restored-and-verified"
+}

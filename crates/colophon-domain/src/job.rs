@@ -25,6 +25,9 @@ pub enum Status {
     Running,
     /// Waiting to be tried again.
     Retrying,
+    /// Frozen by a restore until the operator reconciles external effects and resumes it
+    /// (migration 0049, O3, F13): nobody may dispatch it, and nobody holds its lease.
+    Held,
     /// Delivered.
     Succeeded,
     /// Given up: refused for good, out of attempts or out of time.
@@ -35,10 +38,11 @@ pub enum Status {
 
 impl Status {
     /// Every status, for listings and tests.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Pending,
         Self::Running,
         Self::Retrying,
+        Self::Held,
         Self::Succeeded,
         Self::Failed,
         Self::Superseded,
@@ -50,6 +54,7 @@ impl Status {
             Self::Pending => "pending",
             Self::Running => "running",
             Self::Retrying => "retrying",
+            Self::Held => "held",
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::Superseded => "superseded",

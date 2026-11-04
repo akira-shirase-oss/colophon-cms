@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE jobs SET status = 'held', lease_owner = NULL, lease_expires_at = NULL, updated_at = now()\n         WHERE status IN ('pending', 'retrying', 'running')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "2dcb77b56acb602d791334b65746ed6089a155ce0155ee4e2728300926488a90"
+}

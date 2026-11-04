@@ -9,7 +9,7 @@ use object_store::ObjectStore as _;
 use colophon_db::{
     PgPool, PoolSettings,
     administrators::{self, Bootstrapped},
-    ledger,
+    ledger, restore,
 };
 use serde_json::json;
 
@@ -352,6 +352,269 @@ pub(crate) async fn ledger_replay(database_url: &str, input: &str, out: Out) -> 
         }
         Err(error) => fail(&out, Exit::Internal, &chain(&error)),
     }
+}
+
+/// `colophon admin restore verify`: compares the restored database's applied migrations with
+/// the backup's `manifest.json` and this binary's embedded set — spec step 2. Exits 4
+/// (`conflict`) when the backup applied a migration this binary doesn't know: the backup is
+/// newer than the code, and serving it would be guessing (F10's territory). A schema the
+/// binary is *ahead* of reports `behind` with the pending list, and succeeds — the upgrade
+/// runbook's `admin migrate` applies them deliberately, never inside verify.
+pub(crate) async fn restore_verify(database_url: &str, manifest: &str, out: Out) -> Exit {
+    let pool = match connect(database_url, &out).await {
+        Ok(pool) => pool,
+        Err(exit) => return exit,
+    };
+    let manifest_versions = match restore_manifest(manifest, &out) {
+        Ok(versions) => versions,
+        Err(exit) => return exit,
+    };
+    let applied = match restore::applied_migrations(&pool).await {
+        Ok(applied) => applied,
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+    };
+    let applied_versions: Vec<i64> = applied.iter().map(|row| row.version).collect();
+    let manifest_match = applied_versions == manifest_versions;
+    match restore::check_schema(&applied) {
+        restore::SchemaCheck::Unknown(unknown) => {
+            if out.format.machine() {
+                out.print_data(&json!({
+                    "status": "unknown", "manifest_match": manifest_match,
+                    "applied": applied_versions, "manifest": manifest_versions,
+                    "unknown": unknown,
+                }));
+            } else {
+                eprintln!(
+                    "the backup applied {} migration(s) this binary doesn't know — restore refused:",
+                    unknown.len()
+                );
+                for migration in &unknown {
+                    eprintln!("  {migration}");
+                }
+            }
+            Exit::Conflict
+        }
+        restore::SchemaCheck::Pending(pending) => {
+            if out.format.machine() {
+                out.print_data(&json!({
+                    "status": "behind", "manifest_match": manifest_match,
+                    "applied": applied_versions, "manifest": manifest_versions,
+                    "pending": pending,
+                }));
+            } else {
+                println!(
+                    "schema verified: {} migrations applied, {} pending on this binary{}",
+                    applied.len(),
+                    pending.len(),
+                    if manifest_match {
+                        ""
+                    } else {
+                        " (differs from the manifest's list)"
+                    }
+                );
+            }
+            Exit::Success
+        }
+        restore::SchemaCheck::Current => {
+            if out.format.machine() {
+                out.print_data(&json!({
+                    "status": "current", "manifest_match": manifest_match,
+                    "applied": applied_versions, "manifest": manifest_versions,
+                }));
+            } else {
+                println!(
+                    "schema verified: {} migrations, current with this binary{}",
+                    applied.len(),
+                    if manifest_match {
+                        ""
+                    } else {
+                        " (differs from the manifest's list)"
+                    }
+                );
+            }
+            Exit::Success
+        }
+    }
+}
+
+/// Reads a backup `manifest.json` and returns its recorded migration versions — the list
+/// `scripts/backup.sh` wrote beside the payload. Anything that doesn't read, parse, or carry a
+/// migrations list is a usage error, not a restore conflict: the operator gave it the wrong file.
+fn restore_manifest(manifest: &str, out: &Out) -> Result<Vec<i64>, Exit> {
+    let bytes = std::fs::read(manifest)
+        .map_err(|error| fail(out, Exit::Usage, &format!("can't read {manifest}: {error}")))?;
+    let recorded: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+        fail(
+            out,
+            Exit::Usage,
+            &format!("{manifest} doesn't parse: {error}"),
+        )
+    })?;
+    let Some(migrations) = recorded
+        .get("migrations")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Err(fail(
+            out,
+            Exit::Usage,
+            &format!("{manifest} holds no migrations list — it isn't a backup manifest"),
+        ));
+    };
+    Ok(migrations
+        .iter()
+        .filter_map(|row| row.get("version").and_then(serde_json::Value::as_i64))
+        .collect())
+}
+
+/// `colophon admin restore epoch`: registers the recovery epoch (spec step 3, O2) — every
+/// environment's epoch advances past whatever the backup held.
+pub(crate) async fn restore_epoch(database_url: &str, out: Out) -> Exit {
+    let pool = match connect(database_url, &out).await {
+        Ok(pool) => pool,
+        Err(exit) => return exit,
+    };
+    let bumped = match restore::advance_epoch(&pool).await {
+        Ok(bumped) => bumped,
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+    };
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": "advanced",
+            "environments": bumped.iter().map(|env| json!({
+                "project_id": env.project_id, "environment_id": env.environment_id,
+                "slug": env.slug, "epoch": env.epoch,
+            })).collect::<Vec<_>>(),
+        }));
+    } else {
+        let mut epochs: Vec<i64> = bumped.iter().map(|env| env.epoch).collect();
+        epochs.sort_unstable();
+        epochs.dedup();
+        println!(
+            "recovery epoch registered: {} environment(s) now at epoch {}",
+            bumped.len(),
+            epochs
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    Exit::Success
+}
+
+/// `colophon admin restore hold`: freezes every unfinished delivery job as `held` (spec step
+/// 5, O3) and reports what it took, with the state each was taken from — `running` marks the
+/// in-flight attempts whose external effect is unknown (F13: never resent blind).
+pub(crate) async fn restore_hold(database_url: &str, out: Out) -> Exit {
+    let pool = match connect(database_url, &out).await {
+        Ok(pool) => pool,
+        Err(exit) => return exit,
+    };
+    let held = match restore::hold_jobs(&pool).await {
+        Ok(held) => held,
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+    };
+    let in_flight = held.iter().filter(|job| job.was == "running").count();
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": "held",
+            "in_flight_at_backup": in_flight,
+            "jobs": held.iter().map(held_job).collect::<Vec<_>>(),
+        }));
+    } else {
+        println!(
+            "held {} unfinished job(s) — {} were running at backup time and may already have reached their destination",
+            held.len(),
+            in_flight
+        );
+    }
+    Exit::Success
+}
+
+/// `colophon admin restore jobs`: the reconciliation inventory (spec step 5): job counts by
+/// status, the held list, and the other surfaces that could act once a server points at the
+/// restored database.
+pub(crate) async fn restore_jobs(database_url: &str, out: Out) -> Exit {
+    let pool = match connect(database_url, &out).await {
+        Ok(pool) => pool,
+        Err(exit) => return exit,
+    };
+    let inventory = match restore::outbox(&pool).await {
+        Ok(inventory) => inventory,
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+    };
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": "listed",
+            "jobs": inventory.jobs.iter().map(|(status, n)| json!({"status": status, "count": n}))
+                .collect::<Vec<_>>(),
+            "held": inventory.held.iter().map(held_job).collect::<Vec<_>>(),
+            "schedules_waiting": inventory.schedules_waiting,
+            "schedules_due": inventory.schedules_due,
+            "asset_jobs_open": inventory.asset_jobs_open,
+            "bulk_jobs_open": inventory.bulk_jobs_open,
+            "migration_runs_open": inventory.migration_runs_open,
+        }));
+    } else {
+        for (status, count) in &inventory.jobs {
+            println!("jobs {status}: {count}");
+        }
+        println!("held for reconciliation: {}", inventory.held.len());
+        for job in &inventory.held {
+            println!(
+                "  {} → {} (generation {}, was {} at backup, {} attempt(s))",
+                job.id, job.destination_name, job.generation, job.was, job.attempts
+            );
+        }
+        if let (Some(waiting), Some(due)) = (inventory.schedules_waiting, inventory.schedules_due) {
+            println!("schedules waiting: {waiting} ({due} already due)");
+        }
+        for (name, count) in [
+            ("asset jobs open", inventory.asset_jobs_open),
+            ("bulk jobs open", inventory.bulk_jobs_open),
+            ("content migrations open", inventory.migration_runs_open),
+        ] {
+            if let Some(count) = count {
+                println!("{name}: {count}");
+            }
+        }
+    }
+    Exit::Success
+}
+
+/// `colophon admin restore resume`: returns every held job to `pending` — the explicit
+/// enable of spec step 6, run only after reconciliation.
+pub(crate) async fn restore_resume(database_url: &str, lifetime_secs: i32, out: Out) -> Exit {
+    let pool = match connect(database_url, &out).await {
+        Ok(pool) => pool,
+        Err(exit) => return exit,
+    };
+    let resumed = match restore::resume_jobs(&pool, lifetime_secs).await {
+        Ok(resumed) => resumed,
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+    };
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": "resumed", "jobs": resumed.len(), "ids": resumed,
+        }));
+    } else {
+        println!(
+            "resumed {} held job(s): pending, due now, with a fresh {}s lifetime where the old deadline passed",
+            resumed.len(),
+            lifetime_secs
+        );
+    }
+    Exit::Success
+}
+
+/// A [`restore::HeldJob`] as the machine envelope carries it.
+fn held_job(job: &restore::HeldJob) -> serde_json::Value {
+    json!({
+        "id": job.id, "project_id": job.project_id, "environment_id": job.environment_id,
+        "destination_id": job.destination_id, "destination_name": job.destination_name,
+        "generation": job.generation, "was": job.was, "attempts": job.attempts,
+        "deadline_at": job.deadline_at.to_string(),
+    })
 }
 
 #[cfg(test)]

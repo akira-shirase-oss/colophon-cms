@@ -61,6 +61,7 @@
 		pending: 'waiting',
 		running: 'sending',
 		retrying: 'will retry',
+		held: 'held: waiting on the operator after a restore',
 		succeeded: 'delivered',
 		failed: 'failed',
 		superseded: 'skipped: a newer release went instead'
@@ -69,6 +70,7 @@
 		pending: 'bg-pending',
 		running: 'bg-pending',
 		retrying: 'bg-pending',
+		held: 'bg-attention',
 		succeeded: 'bg-live',
 		failed: 'bg-attention',
 		superseded: 'bg-draft'
