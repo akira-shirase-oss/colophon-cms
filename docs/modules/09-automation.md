@@ -71,8 +71,8 @@ a zero-unauthorized-action evaluation gate, X12, L08 and F11.
   Not built: `validate_changeset`, `job_status`; and deliberately never tools (D-106): comment resolve/reopen,
   task update, and every migration transition.
 - The plan was the CLI's JSON contract first, then the MCP adapter over the same services. The MCP server came first
-  (D-068), as a client of the HTTP API, so it shares the API's authorization literally; the CLI's JSON contract
-  follows.
+  (D-068), as a client of the HTTP API, so it shares the API's authorization literally; the CLI's versioned
+  `data`/`error` envelope and its `colophon mcp` entry point are built (D-119).
 
 ### MCP adapter (spec §11; D-068)
 
@@ -156,6 +156,14 @@ alike (it sits under `/environments/`, where tokens are allowed): `{"data": {"ki
 the same scoped transaction (a revoked token can't read it). The MCP server's discovery reads it; the Studio and the
 CLI can show from it what a role or token can do.
 
+**Built: `colophon mcp`, the same server inside the CLI (D-119).** The `mcp` subcommand of `crates/colophon-cli`
+links `colophon-mcp` as a library and runs its `Config::from_env` → `Api::new` → `serve` on the process's own
+stdin and stdout — identical configuration (`COLOPHON_SERVER`, `COLOPHON_TOKEN`, `COLOPHON_PROJECT`), identical
+protocol and tool list, identical refusals, logs still on stderr. An agent host that only installs `colophon`
+gets the same adapter it gets from `colophon-mcp`; nothing about the D-106 boundary changes. Its exits are the
+MCP binary's own (0 clean close, 1 session failure, 2 bad configuration), proved by the `tests/cli.rs` session:
+`initialize` answering 2025-11-25, `tools/list` the eighteen tools, exit 0 when the host closes stdin.
+
 **Not built yet (P5):**
 - Remote MCP: Streamable HTTP with the 2025-11-25 authorization requirements and audience validation.
 - Service-account quotas beyond R.4's tokens: provider `tokens`/`cost` budgets (the substrate itself
@@ -164,7 +172,7 @@ CLI can show from it what a role or token can do.
   requests.
 - L08's load evidence (a noisy agent beside editors): the quota that throttles the agent is built
   (D-118); the measured latency isolation under load is still owed.
-- A `colophon mcp` subcommand in the CLI, and environments other than `production`.
+- Environments other than `production` through the MCP adapter.
 - Testbed and k6 coverage for the MCP server itself: it adds no API route, and the routes it calls keep their own.
 
 ### Bulk work (spec §11, §17)

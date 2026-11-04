@@ -78,7 +78,14 @@ colophon export --env production --out export-directory
 - Built in the parity slice (D-106): the same API surface the Studio and the MCP server can reach, as one command
   per route family. Every command takes `--project ID|SLUG`, `--env NAME` (default `production`) and `--profile`;
   every list takes `--cursor` and most take `--limit`; every write takes `--idempotency-key` (a generated
-  `cli-<uuid>` when omitted) and `--json` prints one versioned result.
+  `cli-<uuid>` when omitted). Every command takes `--json`; the seven list commands — `content list`,
+  `content query`, `release list`, `migration list`, `migration items`, `comment list`, `task list` — also take
+  `--jsonl` and stream every page, one object per line (D-119, "Output" below).
+- Built in P5 (D-119): `colophon mcp` runs the same MCP stdio server as the standalone `colophon-mcp` binary,
+  linked into this binary rather than spawned — an agent host needs one executable. Configuration is the same
+  three environment variables (`COLOPHON_SERVER`, `COLOPHON_TOKEN`, `COLOPHON_PROJECT`) and its exit codes are the
+  MCP server's own (0 clean close, 1 session failure, 2 bad configuration), not the contract below. The tool
+  boundary is unchanged: [automation](09-automation.md), D-106.
   - `content query COLLECTION (--data JSON | --file PATH) [--cursor CURSOR] [--limit N]` posts a DX.3 query
     document to `…/entries/query`. `--limit` fills the document's `limit` — a document that already sets one is
     refused (exit 2), as is a non-object document when `--limit` must be injected. The result carries `entries`,
@@ -174,11 +181,27 @@ colophon export --env production --out export-directory
   until the licence is confirmed (O-014), and `cargo package -p colophon-cli` stops because its path dependencies
   (`colophon-db`, which needs `colophon-domain`, and `colophon-version`) would have to be published first.
 
-### Output (spec §09, §11)
+### Output (spec §09, §11; D-119)
 - Default output is for humans.
-- `--json` writes exactly one versioned JSON result to stdout.
-- `--jsonl` streams one documented event per line.
-- Logs, progress and diagnostics go to stderr.
+- `--json` writes exactly one object to stdout: `{"version": 2, "command": "content list", "data": …}` on success,
+  the same object with `error` in place of `data` on failure. `version` is the contract's (2 since D-119 —
+  version 1 was the flat `{"version": 1, …, …fields}` shape, replaced wholesale), `command` the name as
+  `colophon <command>` spells it, and `data` the command's result with stable field names: the entry, page or
+  report, and `next_cursor` on a paged list.
+- `--jsonl` is the list commands' streaming form: the same envelope, one object per item, as its page arrives —
+  `{"version": 2, "command": "content list", "data": {…one entry…}}` per line, never a wrapped array. The stream
+  follows `next_cursor` to the list's end (`--cursor` starts it mid-list), never holding more than a page's rows
+  and bound at 1,000 pages; a page that fails ends the stream with an `error` line on stdout, `error: …` on
+  stderr and the matching exit code, so a consumer sees a truncation as a truncation. `--json` and `--jsonl`
+  conflict — one format, not two.
+- An `error` object the API sent arrives whole — `code`, `message`, `details` (`reason`, `permission`,
+  `pointer`) and `request_id`, so a refusal means the same thing on every surface. A failure the CLI raised
+  before or beside the API gets `{"code": <reason>, "message": …}` where `<reason>` is the exit class —
+  `usage`, `denied`, `conflict`, `unavailable` or `internal`, matching the exit code — or a more specific
+  stable word the command names (doctor's `invalid_server`, `unreachable`, `unexpected_reply`); either way
+  the exit code is the class to branch on.
+- Logs, progress and diagnostics go to stderr; a failure always says `error: …` there, whatever the format.
+  Nothing written to stdout carries an ANSI escape — the CLI emits none at all.
 
 ### Exit codes (spec §11)
 
@@ -208,7 +231,7 @@ colophon export --env production --out export-directory
 
 | ID | Invariant |
 |---|---|
-| C1 | `--json` prints exactly one versioned result on stdout; nothing else goes to stdout. |
+| C1 | `--json` prints exactly one versioned `data`/`error` envelope on stdout, `--jsonl` one envelope per item; nothing but the contract's JSON ever goes to stdout on a machine format. |
 | C2 | Exit codes map one-to-one onto error classes. |
 | C3 | Agent mode never prompts. |
 | C4 | A retried logical operation reuses its idempotency key. |
@@ -254,6 +277,12 @@ colophon export --env production --out export-directory
   fails it. `scripts/test-homebrew-formula.sh` renders the formula, checks it with `ruby -c`, evaluates it with a
   stand-in for Homebrew's DSL to check each platform block's URL and hash, and checks a missing hash is refused; a
   template with two hashes swapped fails it.
+- The machine contract (D-119): `crates/colophon-server/tests/cli.rs` runs the real binary against the stack —
+  a `--json` result parsed to its `data` page, one object per `--jsonl` line across a two-page list, a 403
+  arriving as the API's own `error` object (`forbidden`/`missing_permission`/`request_id`) on stdout beside
+  `error:` on stderr and exit 3, the `--json`/`--jsonl` conflict at exit 2, and `colophon mcp` answering
+  `initialize` and `tools/list` over its own stdio. `crates/colophon-cli/tests/doctor.rs` covers `doctor`'s
+  versioned result and its failure envelope against canned servers.
 - `insta` snapshots of every `--json` result shape.
 - An exit-code matrix test for every error class.
 - Contract tests against a running server.
@@ -266,8 +295,9 @@ colophon export --env production --out export-directory
    `--json`, exit codes (step 1.6, done).
 2. **P2:** `release validate|publish|status`, `jobs inspect`.
 3. **P3:** `doctor`, `integration test`.
-4. **P5:** scoped machine credentials, `--jsonl`, `content import`, `export`, `content get --generation`,
-   `release history`.
+4. **P5:** scoped machine credentials, the versioned `data`/`error` envelope on every command with `--jsonl`
+   streams on the seven lists, and `colophon mcp` linked in (D-119, built); `content import`, `export`,
+   `content get --generation`, `release history` still to come.
 5. **P6:** `init`, `migrate plan|apply`, `admin`.
 6. **V (D-062):** `--version` with commit and build date, the server version check, and the install paths: npm,
    the install script, Homebrew and `cargo install --git` (built; publishing waits on the maintainer, module

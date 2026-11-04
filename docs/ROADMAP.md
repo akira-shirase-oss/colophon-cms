@@ -428,10 +428,16 @@ transaction opens: 429 `rate_limited` with `Retry-After`, `token.rate_limited` a
 throttle episode, members untouched, Valkey-outage semantics the shared limiter's own,
 `COLOPHON_QUOTA_WINDOW_MS` shortening the window for tests; covered by `tests/quotas.rs` and
 `perf/k6/quotas.js`) ·
+the CLI's machine contract and the MCP entry point inside it (built: D-119 — every command's `--json` is
+one versioned `{"version", "command", "data"|"error"}` envelope carrying API refusals whole, the seven list
+commands stream one envelope per item on `--jsonl` following `next_cursor` within a 1,000-page bound, and
+`colophon mcp` links the `colophon-mcp` library into the binary: same configuration, protocol, eighteen safe
+tools and refusal boundary, proved end to end in `tests/cli.rs` including a live `initialize`/`tools/list`
+session and a 403 arriving `missing_permission`-whole on stdout) ·
 not built: remote MCP with its
-authorization, provider `tokens`/`cost` budgets, the CLI's full JSON
-contract and a `colophon mcp` subcommand, L08's load evidence. The proof gate is not met — X12's resume proof is in
-`tests/bulk.rs`, the eval gate wants a stored green run, and L08 remains.
+authorization, provider `tokens`/`cost` budgets, `content import` and
+`export`, L08's load evidence. The proof gate is not met — X12's resume proof is in
+`tests/bulk.rs`, the eval gate's stored run is `perf/results/2026-11-04T141109.623685Z-evals.json`, and L08 remains.
 
 ## P6: Operate it (≈ spec M5)
 

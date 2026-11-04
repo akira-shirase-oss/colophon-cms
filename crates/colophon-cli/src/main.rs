@@ -2,13 +2,14 @@
 //!
 //! Exit codes follow the CLI contract in `docs/modules/08-cli.md`: 0 success,
 //! 2 usage or validation error, 3 unauthorized, 4 conflict, 5 transient or
-//! unavailable, 6 internal failure. Errors and diagnostics go to stderr; stdout
-//! is reserved for results.
+//! unavailable, 6 internal failure. Diagnostics go to stderr; stdout carries results,
+//! machine-readable as the `data`/`error` envelope under `--json` and `--jsonl` (D-119).
 //!
 //! Commands arrive with the milestones that make them true: `doctor` in P0,
 //! `login`, `whoami`, `content create` and `content list` in P1, `release …` in P2,
 //! and — with the API's collaboration and migration routes (M.5, E1) — `content query`,
-//! `release …`, `migration …`, `comment …` and `task …`.
+//! `release …`, `migration …`, `comment …` and `task …`. `mcp` is P5: the same MCP
+//! stdio server the `colophon-mcp` binary serves, linked into this binary.
 
 mod admin;
 mod client;
@@ -18,7 +19,9 @@ mod content;
 mod credentials;
 mod doctor;
 mod login;
+mod mcp;
 mod migration;
+mod out;
 mod release;
 mod scope;
 
@@ -36,6 +39,21 @@ enum Exit {
     Conflict = 4,
     Unavailable = 5,
     Internal = 6,
+}
+
+impl Exit {
+    /// The error class the code stands for — the `code` a failure the CLI itself raised
+    /// gets in the `error` envelope.
+    fn class(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Usage => "usage",
+            Self::Denied => "denied",
+            Self::Conflict => "conflict",
+            Self::Unavailable => "unavailable",
+            Self::Internal => "internal",
+        }
+    }
 }
 
 impl From<Exit> for ExitCode {
@@ -100,6 +118,9 @@ enum Command {
     Logout {
         #[arg(long, default_value = "default")]
         profile: String,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
     },
     /// Show who you're signed in as, and your projects.
     Whoami {
@@ -126,6 +147,10 @@ enum Command {
     /// Operator mode: direct infrastructure access, separate from normal commands.
     #[command(subcommand)]
     Admin(AdminCommand),
+    /// Serve MCP on this process's stdin and stdout: the same server `colophon-mcp`
+    /// is, for an agent host to start. Configuration comes from the environment
+    /// (`COLOPHON_SERVER`, `COLOPHON_TOKEN`, `COLOPHON_PROJECT`); logs go to stderr.
+    Mcp,
 }
 
 /// The project and environment a command works in.
@@ -184,8 +209,15 @@ enum ContentCommand {
         place: Where,
         #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u8).range(1..=100))]
         limit: u8,
+        /// `next_cursor` from a previous page; `--jsonl` starts its stream there.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Print one versioned JSON result instead of text.
         #[arg(long)]
         json: bool,
+        /// Print one JSON object per entry, following every page.
+        #[arg(long, conflicts_with = "json")]
+        jsonl: bool,
     },
     /// Run a query document against a collection's entries, one page at a time.
     ///
@@ -200,14 +232,18 @@ enum ContentCommand {
         /// A file holding the query document as JSON.
         #[arg(long)]
         file: Option<PathBuf>,
-        /// `next_cursor` from the previous page.
+        /// `next_cursor` from the previous page; `--jsonl` starts its stream there.
         #[arg(long)]
         cursor: Option<String>,
         /// The page's `limit` (1–100); refused if the document sets one already.
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=100))]
         limit: Option<u8>,
+        /// Print one versioned JSON result instead of text.
         #[arg(long)]
         json: bool,
+        /// Print one JSON object per entry, following every page.
+        #[arg(long, conflicts_with = "json")]
+        jsonl: bool,
     },
 }
 
@@ -218,8 +254,12 @@ enum ReleaseCommand {
     List {
         #[command(flatten)]
         scope: InProject,
+        /// Print one versioned JSON result instead of text.
         #[arg(long)]
         json: bool,
+        /// Print one JSON object per release.
+        #[arg(long, conflicts_with = "json")]
+        jsonl: bool,
     },
     /// Show one release: its changeset, counts, deliveries and probe observations.
     Show {
@@ -228,6 +268,7 @@ enum ReleaseCommand {
         /// The release's generation, as `release list` prints it.
         #[arg(value_parser = clap::value_parser!(u64).range(1..))]
         generation: u64,
+        /// Print one versioned JSON result instead of text.
         #[arg(long)]
         json: bool,
     },
@@ -248,8 +289,12 @@ enum MigrationCommand {
         /// Only plans in this state.
         #[arg(long, value_parser = ["proposed", "approved", "running", "done", "blocked", "superseded", "cancelled"])]
         state: Option<String>,
+        /// Print one versioned JSON result instead of text.
         #[arg(long)]
         json: bool,
+        /// Print one JSON object per plan.
+        #[arg(long, conflicts_with = "json")]
+        jsonl: bool,
     },
     /// Show one plan: its target, hash, items and where it stands.
     Show {
@@ -269,13 +314,17 @@ enum MigrationCommand {
         /// Only items with this outcome.
         #[arg(long, value_parser = ["ok", "migrates", "needs_input", "blocked", "resolved", "applied", "skipped"])]
         outcome: Option<String>,
-        /// `next_cursor` from the previous page.
+        /// `next_cursor` from the previous page; `--jsonl` starts its stream there.
         #[arg(long)]
         cursor: Option<String>,
         #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u8).range(1..=100))]
         limit: u8,
+        /// Print one versioned JSON result instead of text.
         #[arg(long)]
         json: bool,
+        /// Print one JSON object per item, following every page.
+        #[arg(long, conflicts_with = "json")]
+        jsonl: bool,
     },
     /// Compute and store a dry-run plan for a definition the collection won't take directly.
     ///
@@ -379,11 +428,15 @@ enum CommentCommand {
         state: Option<String>,
         #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u8).range(1..=100))]
         limit: u8,
-        /// `next_cursor` from the previous page.
+        /// `next_cursor` from the previous page; `--jsonl` starts its stream there.
         #[arg(long)]
         cursor: Option<String>,
+        /// Print one versioned JSON result instead of text.
         #[arg(long)]
         json: bool,
+        /// Print one JSON object per comment, following every page.
+        #[arg(long, conflicts_with = "json")]
+        jsonl: bool,
     },
     /// Write a comment on a revision of an entry.
     Create {
@@ -428,11 +481,15 @@ enum TaskCommand {
         status: Option<String>,
         #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u8).range(1..=100))]
         limit: u8,
-        /// `next_cursor` from the previous page.
+        /// `next_cursor` from the previous page; `--jsonl` starts its stream there.
         #[arg(long)]
         cursor: Option<String>,
+        /// Print one versioned JSON result instead of text.
         #[arg(long)]
         json: bool,
+        /// Print one JSON object per task, following every page.
+        #[arg(long, conflicts_with = "json")]
+        jsonl: bool,
     },
     /// Show one task.
     Show {
@@ -505,11 +562,13 @@ impl Where {
     }
 }
 
-/// Prints a failure to stderr and returns its exit code.
-fn finish(result: Result<(), client::Failure>) -> Exit {
+/// Prints a failure — its `error` envelope on a machine format, `error: …` on stderr
+/// either way — and returns its exit code.
+fn finish(result: Result<(), client::Failure>, out: &out::Out) -> Exit {
     match result {
         Ok(()) => Exit::Success,
         Err(failure) => {
+            out.print_failure(&failure);
             eprintln!("error: {}", failure.message);
             failure.exit
         }
@@ -523,6 +582,9 @@ enum AdminCommand {
         /// The migrator's connection URL. Never the application's.
         #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
         database_url: String,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
     },
     /// Make the first administrator, once: bound to an identity provider's issuer and subject,
     /// never to an email address. Afterwards bootstrap is disabled for good.
@@ -563,35 +625,55 @@ fn main() -> ExitCode {
             .block_on(doctor::run(
                 &server,
                 Duration::from_millis(timeout_ms),
-                json,
+                out::Out::new("doctor", out::Format::of(json, false)),
             ))
             .into(),
-        Command::Admin(AdminCommand::Migrate { database_url }) => {
-            runtime.block_on(admin::migrate(&database_url)).into()
-        }
+        Command::Admin(AdminCommand::Migrate { database_url, json }) => runtime
+            .block_on(admin::migrate(
+                &database_url,
+                out::Out::new("admin migrate", out::Format::of(json, false)),
+            ))
+            .into(),
         Command::Admin(AdminCommand::Bootstrap {
             database_url,
             issuer,
             subject,
             json,
         }) => runtime
-            .block_on(admin::bootstrap(&database_url, &issuer, &subject, json))
+            .block_on(admin::bootstrap(
+                &database_url,
+                &issuer,
+                &subject,
+                out::Out::new("admin bootstrap", out::Format::of(json, false)),
+            ))
             .into(),
         Command::Login {
             server,
             profile,
             name,
             json,
-        } => finish(runtime.block_on(login::login(&server, &profile, &name, json))).into(),
-        Command::Logout { profile } => finish(runtime.block_on(login::logout(&profile))).into(),
+        } => {
+            let out = out::Out::new("login", out::Format::of(json, false));
+            finish(
+                runtime.block_on(login::login(&server, &profile, &name, out)),
+                &out,
+            )
+            .into()
+        }
+        Command::Logout { profile, json } => {
+            let out = out::Out::new("logout", out::Format::of(json, false));
+            finish(runtime.block_on(login::logout(&profile, out)), &out).into()
+        }
         Command::Whoami { profile, json } => {
-            finish(runtime.block_on(login::whoami(&profile, json))).into()
+            let out = out::Out::new("whoami", out::Format::of(json, false));
+            finish(runtime.block_on(login::whoami(&profile, out)), &out).into()
         }
         Command::Content(command) => run_content(&runtime, command),
         Command::Release(command) => run_release(&runtime, command),
         Command::Migration(command) => run_migration(&runtime, command),
         Command::Comment(command) => run_comment(&runtime, command),
         Command::Task(command) => run_task(&runtime, command),
+        Command::Mcp => runtime.block_on(mcp::run()),
     }
 }
 
@@ -603,13 +685,30 @@ fn run_content(runtime: &Runtime, command: ContentCommand) -> ExitCode {
             file,
             idempotency_key,
             json,
-        } => finish(runtime.block_on(async {
-            let content = content::content(data.as_deref(), file.as_deref()).await?;
-            content::create(&place.place(), &content, idempotency_key.as_deref(), json).await
-        }))
-        .into(),
-        ContentCommand::List { place, limit, json } => {
-            finish(runtime.block_on(content::list(&place.place(), limit, json))).into()
+        } => {
+            let out = out::Out::new("content create", out::Format::of(json, false));
+            finish(
+                runtime.block_on(async {
+                    let content = content::content(data.as_deref(), file.as_deref()).await?;
+                    content::create(&place.place(), &content, idempotency_key.as_deref(), out).await
+                }),
+                &out,
+            )
+            .into()
+        }
+        ContentCommand::List {
+            place,
+            limit,
+            cursor,
+            json,
+            jsonl,
+        } => {
+            let out = out::Out::new("content list", out::Format::of(json, jsonl));
+            finish(
+                runtime.block_on(content::list(&place.place(), limit, cursor.as_deref(), out)),
+                &out,
+            )
+            .into()
         }
         ContentCommand::Query {
             place,
@@ -618,24 +717,39 @@ fn run_content(runtime: &Runtime, command: ContentCommand) -> ExitCode {
             cursor,
             limit,
             json,
-        } => finish(runtime.block_on(async {
-            let document = content::content(data.as_deref(), file.as_deref()).await?;
-            content::query(&place.place(), &document, cursor.as_deref(), limit, json).await
-        }))
-        .into(),
+            jsonl,
+        } => {
+            let out = out::Out::new("content query", out::Format::of(json, jsonl));
+            finish(
+                runtime.block_on(async {
+                    let document = content::content(data.as_deref(), file.as_deref()).await?;
+                    content::query(&place.place(), &document, cursor.as_deref(), limit, out).await
+                }),
+                &out,
+            )
+            .into()
+        }
     }
 }
 
 fn run_release(runtime: &Runtime, command: ReleaseCommand) -> ExitCode {
     match command {
-        ReleaseCommand::List { scope, json } => {
-            finish(runtime.block_on(release::list(&scope.scope(), json))).into()
+        ReleaseCommand::List { scope, json, jsonl } => {
+            let out = out::Out::new("release list", out::Format::of(json, jsonl));
+            finish(runtime.block_on(release::list(&scope.scope(), out)), &out).into()
         }
         ReleaseCommand::Show {
             scope,
             generation,
             json,
-        } => finish(runtime.block_on(release::show(&scope.scope(), generation, json))).into(),
+        } => {
+            let out = out::Out::new("release show", out::Format::of(json, false));
+            finish(
+                runtime.block_on(release::show(&scope.scope(), generation, out)),
+                &out,
+            )
+            .into()
+        }
     }
 }
 
@@ -660,18 +774,32 @@ fn run_migration_read(runtime: &Runtime, command: MigrationCommand) -> ExitCode 
             collection,
             state,
             json,
-        } => finish(runtime.block_on(migration::list(
-            &scope.scope(),
-            collection.as_deref(),
-            state.as_deref(),
-            json,
-        )))
-        .into(),
+            jsonl,
+        } => {
+            let out = out::Out::new("migration list", out::Format::of(json, jsonl));
+            finish(
+                runtime.block_on(migration::list(
+                    &scope.scope(),
+                    collection.as_deref(),
+                    state.as_deref(),
+                    out,
+                )),
+                &out,
+            )
+            .into()
+        }
         MigrationCommand::Show {
             scope,
             migration,
             json,
-        } => finish(runtime.block_on(migration::show(&scope.scope(), &migration, json))).into(),
+        } => {
+            let out = out::Out::new("migration show", out::Format::of(json, false));
+            finish(
+                runtime.block_on(migration::show(&scope.scope(), &migration, out)),
+                &out,
+            )
+            .into()
+        }
         MigrationCommand::Items {
             scope,
             migration,
@@ -679,15 +807,22 @@ fn run_migration_read(runtime: &Runtime, command: MigrationCommand) -> ExitCode 
             cursor,
             limit,
             json,
-        } => finish(runtime.block_on(migration::items(
-            &scope.scope(),
-            &migration,
-            outcome.as_deref(),
-            cursor.as_deref(),
-            limit,
-            json,
-        )))
-        .into(),
+            jsonl,
+        } => {
+            let out = out::Out::new("migration items", out::Format::of(json, jsonl));
+            finish(
+                runtime.block_on(migration::items(
+                    &scope.scope(),
+                    &migration,
+                    outcome.as_deref(),
+                    cursor.as_deref(),
+                    limit,
+                    out,
+                )),
+                &out,
+            )
+            .into()
+        }
         _ => {
             eprintln!("error: a migration write command reached the read dispatch");
             Exit::Internal.into()
@@ -795,17 +930,21 @@ fn migration_plan(
     idempotency_key: Option<&str>,
     json: bool,
 ) -> ExitCode {
-    finish(runtime.block_on(async {
-        let definition = content::content(data, file).await?;
-        migration::plan(
-            &place.place(),
-            &definition,
-            operations,
-            idempotency_key,
-            json,
-        )
-        .await
-    }))
+    let out = out::Out::new("migration plan", out::Format::of(json, false));
+    finish(
+        runtime.block_on(async {
+            let definition = content::content(data, file).await?;
+            migration::plan(
+                &place.place(),
+                &definition,
+                operations,
+                idempotency_key,
+                out,
+            )
+            .await
+        }),
+        &out,
+    )
     .into()
 }
 
@@ -825,19 +964,23 @@ fn migration_resolve(
     idempotency_key: Option<&str>,
     json: bool,
 ) -> ExitCode {
-    finish(runtime.block_on(async {
-        let resolution = content::content(data, file).await?;
-        migration::resolve(
-            &scope.scope(),
-            migration,
-            entry,
-            &resolution,
-            if_match,
-            idempotency_key,
-            json,
-        )
-        .await
-    }))
+    let out = out::Out::new("migration resolve", out::Format::of(json, false));
+    finish(
+        runtime.block_on(async {
+            let resolution = content::content(data, file).await?;
+            migration::resolve(
+                &scope.scope(),
+                migration,
+                entry,
+                &resolution,
+                if_match,
+                idempotency_key,
+                out,
+            )
+            .await
+        }),
+        &out,
+    )
     .into()
 }
 
@@ -851,14 +994,25 @@ fn migration_act(
     idempotency_key: Option<&str>,
     json: bool,
 ) -> ExitCode {
-    finish(runtime.block_on(migration::act(
-        &scope.scope(),
-        migration,
-        action,
-        if_match,
-        idempotency_key,
-        json,
-    )))
+    // `command` names the full command: `migration approve`, `migration apply`, `migration cancel`.
+    let command = match action {
+        "approve" => "migration approve",
+        "apply" => "migration apply",
+        "cancel" => "migration cancel",
+        _ => "migration act",
+    };
+    let out = out::Out::new(command, out::Format::of(json, false));
+    finish(
+        runtime.block_on(migration::act(
+            &scope.scope(),
+            migration,
+            action,
+            if_match,
+            idempotency_key,
+            out,
+        )),
+        &out,
+    )
     .into()
 }
 
@@ -872,16 +1026,23 @@ fn run_comment(runtime: &Runtime, command: CommentCommand) -> ExitCode {
             limit,
             cursor,
             json,
-        } => finish(runtime.block_on(collaboration::list_comments(
-            &place.place(),
-            &entry,
-            revision.as_deref(),
-            state.as_deref(),
-            limit,
-            cursor.as_deref(),
-            json,
-        )))
-        .into(),
+            jsonl,
+        } => {
+            let out = out::Out::new("comment list", out::Format::of(json, jsonl));
+            finish(
+                runtime.block_on(collaboration::list_comments(
+                    &place.place(),
+                    &entry,
+                    revision.as_deref(),
+                    state.as_deref(),
+                    limit,
+                    cursor.as_deref(),
+                    out,
+                )),
+                &out,
+            )
+            .into()
+        }
         CommentCommand::Create {
             place,
             entry,
@@ -890,16 +1051,22 @@ fn run_comment(runtime: &Runtime, command: CommentCommand) -> ExitCode {
             field,
             idempotency_key,
             json,
-        } => finish(runtime.block_on(collaboration::create_comment(
-            &place.place(),
-            &entry,
-            &revision,
-            field.as_deref(),
-            &body,
-            idempotency_key.as_deref(),
-            json,
-        )))
-        .into(),
+        } => {
+            let out = out::Out::new("comment create", out::Format::of(json, false));
+            finish(
+                runtime.block_on(collaboration::create_comment(
+                    &place.place(),
+                    &entry,
+                    &revision,
+                    field.as_deref(),
+                    &body,
+                    idempotency_key.as_deref(),
+                    out,
+                )),
+                &out,
+            )
+            .into()
+        }
     }
 }
 
@@ -914,19 +1081,31 @@ fn run_task(runtime: &Runtime, command: TaskCommand) -> ExitCode {
             limit,
             cursor,
             json,
-        } => finish(runtime.block_on(collaboration::list_tasks(
-            &scope.scope(),
-            entry.as_deref(),
-            collection.as_deref(),
-            assignee.as_deref(),
-            status.as_deref(),
-            limit,
-            cursor.as_deref(),
-            json,
-        )))
-        .into(),
+            jsonl,
+        } => {
+            let out = out::Out::new("task list", out::Format::of(json, jsonl));
+            finish(
+                runtime.block_on(collaboration::list_tasks(
+                    &scope.scope(),
+                    entry.as_deref(),
+                    collection.as_deref(),
+                    assignee.as_deref(),
+                    status.as_deref(),
+                    limit,
+                    cursor.as_deref(),
+                    out,
+                )),
+                &out,
+            )
+            .into()
+        }
         TaskCommand::Show { scope, task, json } => {
-            finish(runtime.block_on(collaboration::show_task(&scope.scope(), &task, json))).into()
+            let out = out::Out::new("task show", out::Format::of(json, false));
+            finish(
+                runtime.block_on(collaboration::show_task(&scope.scope(), &task, out)),
+                &out,
+            )
+            .into()
         }
         TaskCommand::Create {
             scope,
@@ -937,17 +1116,23 @@ fn run_task(runtime: &Runtime, command: TaskCommand) -> ExitCode {
             assignee,
             idempotency_key,
             json,
-        } => finish(runtime.block_on(collaboration::create_task(
-            &scope.scope(),
-            &entry,
-            &title,
-            revision.as_deref(),
-            changeset.as_deref(),
-            assignee.as_deref(),
-            idempotency_key.as_deref(),
-            json,
-        )))
-        .into(),
+        } => {
+            let out = out::Out::new("task create", out::Format::of(json, false));
+            finish(
+                runtime.block_on(collaboration::create_task(
+                    &scope.scope(),
+                    &entry,
+                    &title,
+                    revision.as_deref(),
+                    changeset.as_deref(),
+                    assignee.as_deref(),
+                    idempotency_key.as_deref(),
+                    out,
+                )),
+                &out,
+            )
+            .into()
+        }
         TaskCommand::Update {
             scope,
             task,
@@ -958,17 +1143,23 @@ fn run_task(runtime: &Runtime, command: TaskCommand) -> ExitCode {
             status,
             idempotency_key,
             json,
-        } => finish(runtime.block_on(collaboration::update_task(
-            &scope.scope(),
-            &task,
-            &if_match,
-            title.as_deref(),
-            assignee.as_deref(),
-            unassign,
-            status.as_deref(),
-            idempotency_key.as_deref(),
-            json,
-        )))
-        .into(),
+        } => {
+            let out = out::Out::new("task update", out::Format::of(json, false));
+            finish(
+                runtime.block_on(collaboration::update_task(
+                    &scope.scope(),
+                    &task,
+                    &if_match,
+                    title.as_deref(),
+                    assignee.as_deref(),
+                    unassign,
+                    status.as_deref(),
+                    idempotency_key.as_deref(),
+                    out,
+                )),
+                &out,
+            )
+            .into()
+        }
     }
 }

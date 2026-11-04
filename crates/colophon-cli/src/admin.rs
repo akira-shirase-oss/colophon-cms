@@ -9,7 +9,10 @@ use colophon_db::{
 };
 use serde_json::json;
 
-use crate::Exit;
+use crate::{
+    Exit,
+    out::{self, Out},
+};
 
 /// `outer: inner: innermost`: an operator needs the cause, not just "query failed".
 fn chain(error: &(dyn std::error::Error + 'static)) -> String {
@@ -23,41 +26,51 @@ fn chain(error: &(dyn std::error::Error + 'static)) -> String {
     message
 }
 
+/// Reports an operator-side failure the way a command does: `error: …` on stderr, and the
+/// `error` envelope on a machine format.
+fn fail(out: &Out, exit: Exit, message: &str) -> Exit {
+    eprintln!("error: {message}");
+    out.print_error(&out::cli_error(exit.class(), message));
+    exit
+}
+
 /// One connection as the migrator, checked; the exit code if there is none.
-async fn connect(database_url: &str) -> Result<PgPool, Exit> {
+async fn connect(database_url: &str, out: &Out) -> Result<PgPool, Exit> {
     let settings = PoolSettings {
         max_connections: 1,
         acquire_timeout: Duration::from_secs(10),
         // Migrations may take longer than the application's statement limit.
         statement_timeout: Duration::from_secs(300),
     };
-    let pool = colophon_db::connect_lazy(database_url, settings).map_err(|error| {
-        eprintln!("error: {error}");
-        Exit::Usage
-    })?;
+    let pool = colophon_db::connect_lazy(database_url, settings)
+        .map_err(|error| fail(out, Exit::Usage, &error.to_string()))?;
     if let Err(error) = colophon_db::ping(&pool, Duration::from_secs(10)).await {
-        eprintln!("error: can't reach the database: {}", chain(&error));
-        return Err(Exit::Unavailable);
+        return Err(fail(
+            out,
+            Exit::Unavailable,
+            &format!("can't reach the database: {}", chain(&error)),
+        ));
     }
     Ok(pool)
 }
 
 /// `colophon admin migrate`: applies pending schema migrations as the migrator role.
-pub(crate) async fn migrate(database_url: &str) -> Exit {
-    let pool = match connect(database_url).await {
+pub(crate) async fn migrate(database_url: &str, out: Out) -> Exit {
+    let pool = match connect(database_url, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
     let known = colophon_db::MIGRATOR.iter().count();
     match colophon_db::migrate(&pool).await {
         Ok(()) => {
-            println!("migrations up to date ({known} known)");
+            if out.format.machine() {
+                out.print_data(&json!({ "status": "up_to_date", "known_migrations": known }));
+            } else {
+                println!("migrations up to date ({known} known)");
+            }
             Exit::Success
         }
-        Err(error) => {
-            eprintln!("error: {}", chain(&error));
-            Exit::Internal
-        }
+        Err(error) => fail(&out, Exit::Internal, &chain(&error)),
     }
 }
 
@@ -83,12 +96,11 @@ fn check(issuer: &str, subject: &str) -> Result<(), &'static str> {
 
 /// `colophon admin bootstrap`: makes `(issuer, subject)` the installation's first administrator,
 /// once (D-043). Exits 4 if it was already bootstrapped for someone else.
-pub(crate) async fn bootstrap(database_url: &str, issuer: &str, subject: &str, json: bool) -> Exit {
+pub(crate) async fn bootstrap(database_url: &str, issuer: &str, subject: &str, out: Out) -> Exit {
     if let Err(message) = check(issuer, subject) {
-        eprintln!("error: {message}");
-        return Exit::Usage;
+        return fail(&out, Exit::Usage, message);
     }
-    let pool = match connect(database_url).await {
+    let pool = match connect(database_url, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
@@ -96,22 +108,19 @@ pub(crate) async fn bootstrap(database_url: &str, issuer: &str, subject: &str, j
         Ok(Bootstrapped::Done { identity }) => ("bootstrapped", identity),
         Ok(Bootstrapped::AlreadyDone { identity }) => ("already_bootstrapped", identity),
         Ok(Bootstrapped::Refused) => {
-            eprintln!(
-                "error: this installation was already bootstrapped for someone else; bootstrap runs once"
+            return fail(
+                &out,
+                Exit::Conflict,
+                "this installation was already bootstrapped for someone else; bootstrap runs once",
             );
-            return Exit::Conflict;
         }
-        Err(error) => {
-            eprintln!("error: {}", chain(&error));
-            return Exit::Internal;
-        }
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
     };
-    if json {
-        let result = json!({
-            "version": 1, "command": "admin bootstrap", "status": status,
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": status,
             "identity": identity, "issuer": issuer, "subject": subject,
-        });
-        println!("{result}");
+        }));
     } else if status == "bootstrapped" {
         println!(
             "{subject} at {issuer} is now this installation's first administrator; bootstrap is now disabled"

@@ -22,6 +22,7 @@ colophon-auth = { path = "crates/colophon-auth" }
 colophon-sim = { path = "crates/colophon-sim" }
 colophon-worker = { path = "crates/colophon-worker" }
 colophon-version = { path = "crates/colophon-version" }
+colophon-mcp = { path = "crates/colophon-mcp" }
 
 # External crates: versions live here only (rust-mastery chapter 15). Minimal features;
 # one async runtime (Tokio); no TLS stack until a feature needs one.

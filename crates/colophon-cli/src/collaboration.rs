@@ -10,6 +10,7 @@ use crate::{
     Exit,
     client::Failure,
     content::Place,
+    out::{Format, Out},
     scope::{self, Scope},
 };
 
@@ -24,7 +25,8 @@ fn tasks_path(project: &str, scope: &Scope<'_>) -> String {
     format!("{}/tasks", scope::env_path(project, scope))
 }
 
-/// Runs `colophon comment list COLLECTION ENTRY`.
+/// Runs `colophon comment list COLLECTION ENTRY`: one page of comments, or — on `--jsonl` —
+/// every page, one object per line (`scope::stream_jsonl`).
 pub(crate) async fn list_comments(
     place: &Place<'_>,
     entry: &str,
@@ -32,40 +34,42 @@ pub(crate) async fn list_comments(
     state: Option<&str>,
     limit: u8,
     cursor: Option<&str>,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let entry = scope::id_arg(entry, "the entry")?;
     let revision = revision
         .map(|id| scope::id_arg(id, "--revision"))
         .transpose()?;
-    let cursor = cursor.map(scope::cursor).transpose()?;
+    let cursor = cursor.map(scope::cursor).transpose()?.map(str::to_owned);
     let (client, project) = scope::open(&place.scope).await?;
-    let mut path = format!("{}?limit={limit}", comments_path(&project, place, &entry));
+    let mut base = format!("{}?limit={limit}", comments_path(&project, place, &entry));
     if let Some(revision) = &revision {
-        path.push_str("&revision=");
-        path.push_str(revision);
+        base.push_str("&revision=");
+        base.push_str(revision);
     }
     if let Some(state) = state {
-        path.push_str("&state=");
-        path.push_str(state);
+        base.push_str("&state=");
+        base.push_str(state);
     }
-    if let Some(cursor) = cursor {
-        path.push_str("&cursor=");
-        path.push_str(cursor);
+    let path = |page: Option<&str>| match page {
+        Some(page) => format!("{base}&cursor={page}"),
+        None => base.clone(),
+    };
+    if out.format == Format::Jsonl {
+        return scope::stream_jsonl(&client, Method::GET, path, None, cursor, &out).await;
     }
-    let reply = client.send(Method::GET, &path, None, &[]).await?.body;
+    let reply = client
+        .send(Method::GET, &path(cursor.as_deref()), None, &[])
+        .await?
+        .body;
     let rows = reply["data"].as_array().cloned().unwrap_or_default();
-    if json {
-        println!(
-            "{}",
-            json!({
-                "version": 1, "command": "comment list",
-                "collection": place.collection,
-                "entry": entry,
-                "comments": rows,
-                "next_cursor": reply["next_cursor"],
-            })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({
+            "collection": place.collection,
+            "entry": entry,
+            "comments": rows,
+            "next_cursor": reply["next_cursor"],
+        }));
     } else {
         if rows.is_empty() {
             println!("No comments.");
@@ -104,7 +108,7 @@ pub(crate) async fn create_comment(
     field: Option<&str>,
     body_text: &str,
     key: Option<&str>,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let entry = scope::id_arg(entry, "the entry")?;
     let revision = scope::id_arg(revision, "--revision")?;
@@ -133,16 +137,12 @@ pub(crate) async fn create_comment(
         .get("idempotent-replayed")
         .is_some_and(|value| value == "true");
     let comment = &reply.body["data"];
-    if json {
-        println!(
-            "{}",
-            json!({
-                "version": 1, "command": "comment create",
-                "status": if replayed { "replayed" } else { "created" },
-                "idempotency_key": key,
-                "comment": comment,
-            })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": if replayed { "replayed" } else { "created" },
+            "idempotency_key": key,
+            "comment": comment,
+        }));
     } else {
         println!(
             "{} comment {} on {}/{}",
@@ -159,7 +159,8 @@ pub(crate) async fn create_comment(
     Ok(())
 }
 
-/// Runs `colophon task list`.
+/// Runs `colophon task list`: one page of tasks, or — on `--jsonl` — every page, one
+/// object per line (`scope::stream_jsonl`).
 #[expect(
     clippy::too_many_arguments,
     reason = "the command's flags, grouped where they can be: scope, filters, page, format"
@@ -172,7 +173,7 @@ pub(crate) async fn list_tasks(
     status: Option<&str>,
     limit: u8,
     cursor: Option<&str>,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let entry = entry.map(|id| scope::id_arg(id, "--entry")).transpose()?;
     let collection = collection
@@ -183,34 +184,39 @@ pub(crate) async fn list_tasks(
         Some(special @ ("me" | "none")) => Some(special.to_owned()),
         Some(id) => Some(scope::id_arg(id, "--assignee")?),
     };
-    let cursor = cursor.map(scope::cursor).transpose()?;
+    let cursor = cursor.map(scope::cursor).transpose()?.map(str::to_owned);
     let (client, project) = scope::open(scope).await?;
-    let mut path = format!("{}?limit={limit}", tasks_path(&project, scope));
+    let mut base = format!("{}?limit={limit}", tasks_path(&project, scope));
     for (name, value) in [
         ("entry", entry.as_deref()),
         ("collection", collection),
         ("assignee", assignee.as_deref()),
         ("status", status),
-        ("cursor", cursor),
     ] {
         if let Some(value) = value {
-            path.push('&');
-            path.push_str(name);
-            path.push('=');
-            path.push_str(value);
+            base.push('&');
+            base.push_str(name);
+            base.push('=');
+            base.push_str(value);
         }
     }
-    let reply = client.send(Method::GET, &path, None, &[]).await?.body;
+    let path = |page: Option<&str>| match page {
+        Some(page) => format!("{base}&cursor={page}"),
+        None => base.clone(),
+    };
+    if out.format == Format::Jsonl {
+        return scope::stream_jsonl(&client, Method::GET, path, None, cursor, &out).await;
+    }
+    let reply = client
+        .send(Method::GET, &path(cursor.as_deref()), None, &[])
+        .await?
+        .body;
     let rows = reply["data"].as_array().cloned().unwrap_or_default();
-    if json {
-        println!(
-            "{}",
-            json!({
-                "version": 1, "command": "task list",
-                "tasks": rows,
-                "next_cursor": reply["next_cursor"],
-            })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({
+            "tasks": rows,
+            "next_cursor": reply["next_cursor"],
+        }));
     } else {
         if rows.is_empty() {
             println!("No tasks.");
@@ -232,7 +238,7 @@ pub(crate) async fn list_tasks(
 }
 
 /// Runs `colophon task show TASK`.
-pub(crate) async fn show_task(scope: &Scope<'_>, task: &str, json: bool) -> Result<(), Failure> {
+pub(crate) async fn show_task(scope: &Scope<'_>, task: &str, out: Out) -> Result<(), Failure> {
     let id = scope::id_arg(task, "the task")?;
     let (client, project) = scope::open(scope).await?;
     let task = client
@@ -245,11 +251,8 @@ pub(crate) async fn show_task(scope: &Scope<'_>, task: &str, json: bool) -> Resu
         .await?
         .body["data"]
         .clone();
-    if json {
-        println!(
-            "{}",
-            json!({ "version": 1, "command": "task show", "task": task })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({ "task": task }));
     } else {
         println!(
             "Task {} — {}",
@@ -284,7 +287,7 @@ pub(crate) async fn create_task(
     changeset: Option<&str>,
     assignee: Option<&str>,
     key: Option<&str>,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let entry = scope::id_arg(entry, "--entry")?;
     if title.trim().is_empty() {
@@ -324,16 +327,12 @@ pub(crate) async fn create_task(
         .get("idempotent-replayed")
         .is_some_and(|value| value == "true");
     let task = &reply.body["data"];
-    if json {
-        println!(
-            "{}",
-            json!({
-                "version": 1, "command": "task create",
-                "status": if replayed { "replayed" } else { "created" },
-                "idempotency_key": key,
-                "task": task,
-            })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": if replayed { "replayed" } else { "created" },
+            "idempotency_key": key,
+            "task": task,
+        }));
     } else {
         println!(
             "{} task {} ({})",
@@ -364,7 +363,7 @@ pub(crate) async fn update_task(
     unassign: bool,
     status: Option<&str>,
     key: Option<&str>,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let id = scope::id_arg(task, "the task")?;
     let tag = scope::etag_arg(if_match)?;
@@ -408,16 +407,12 @@ pub(crate) async fn update_task(
         .get("idempotent-replayed")
         .is_some_and(|value| value == "true");
     let task = &reply.body["data"];
-    if json {
-        println!(
-            "{}",
-            json!({
-                "version": 1, "command": "task update",
-                "status": if replayed { "replayed" } else { "updated" },
-                "idempotency_key": key,
-                "task": task,
-            })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": if replayed { "replayed" } else { "updated" },
+            "idempotency_key": key,
+            "task": task,
+        }));
     } else {
         println!(
             "{} task {} is now {}",

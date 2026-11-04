@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use crate::{
     Exit,
     client::{Client, Failure},
+    out::{Format, Out},
     scope::{self, Scope},
 };
 
@@ -58,7 +59,7 @@ pub(crate) async fn create(
     place: &Place<'_>,
     content: &Value,
     key: Option<&str>,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let (client, project) = open(place).await?;
     let key = key.map_or_else(scope::new_key, str::to_owned);
@@ -80,16 +81,12 @@ pub(crate) async fn create(
         .get("etag")
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
-    if json {
-        println!(
-            "{}",
-            json!({
-                "version": 1, "command": "content create",
-                "status": if replayed { "replayed" } else { "created" },
-                "idempotency_key": key,
-                "entry": { "id": data["id"], "collection": data["collection"], "revision": data["revision"]["id"], "etag": etag, "content": data["content"] }
-            })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": if replayed { "replayed" } else { "created" },
+            "idempotency_key": key,
+            "entry": { "id": data["id"], "collection": data["collection"], "revision": data["revision"]["id"], "etag": etag, "content": data["content"] }
+        }));
     } else {
         println!(
             "{} {} {} ({})",
@@ -106,28 +103,53 @@ pub(crate) async fn create(
     Ok(())
 }
 
-/// Runs `colophon content list`.
-pub(crate) async fn list(place: &Place<'_>, limit: u8, json: bool) -> Result<(), Failure> {
+/// The `?limit=&cursor=` of one page of a collection's entries.
+fn list_path(project: &str, place: &Place<'_>, limit: u8, cursor: Option<&str>) -> String {
+    let mut path = format!("{}?limit={limit}", entries(project, place));
+    if let Some(cursor) = cursor {
+        path.push_str("&cursor=");
+        path.push_str(cursor);
+    }
+    path
+}
+
+/// Runs `colophon content list`: one page of rows, or — on `--jsonl` — every page, one
+/// object per line (`scope::stream_jsonl`).
+pub(crate) async fn list(
+    place: &Place<'_>,
+    limit: u8,
+    cursor: Option<&str>,
+    out: Out,
+) -> Result<(), Failure> {
+    let cursor = cursor.map(scope::cursor).transpose()?.map(str::to_owned);
     let (client, project) = open(place).await?;
+    if out.format == Format::Jsonl {
+        return scope::stream_jsonl(
+            &client,
+            Method::GET,
+            |page| list_path(&project, place, limit, page),
+            None,
+            cursor,
+            &out,
+        )
+        .await;
+    }
     let reply = client
         .send(
             Method::GET,
-            &format!("{}?limit={limit}", entries(&project, place)),
+            &list_path(&project, place, limit, cursor.as_deref()),
             None,
             &[],
         )
         .await?
         .body;
     let rows = reply["data"].as_array().cloned().unwrap_or_default();
-    if json {
-        let entries: Vec<Value> = rows
-            .iter()
-            .map(|row| json!({ "id": row["id"], "title": row["revision"]["title"], "revision": row["revision"]["id"], "updated_at": row["updated_at"] }))
-            .collect();
-        println!(
-            "{}",
-            json!({ "version": 1, "command": "content list", "collection": place.collection, "entries": entries, "next_cursor": reply["next_cursor"] })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({
+            "collection": place.collection,
+            "entries": rows,
+            "next_cursor": reply["next_cursor"],
+        }));
     } else if rows.is_empty() {
         println!("No entries in {}.", place.collection);
     } else {
@@ -139,19 +161,23 @@ pub(crate) async fn list(place: &Place<'_>, limit: u8, json: bool) -> Result<(),
                 row["revision"]["title"].as_str().unwrap_or("")
             );
         }
+        if let Some(cursor) = reply["next_cursor"].as_str() {
+            eprintln!("More entries: pass --cursor {cursor}");
+        }
     }
     Ok(())
 }
 
 /// Runs `colophon content query`: posts a query document and gets one page of entries back,
 /// with the canonical query and its hash the server actually ran (`applied`), so scripts can
-/// pin exactly the page they got.
+/// pin exactly the page they got. On `--jsonl` every page streams, one object per line; the
+/// `applied` report is the `--json` answer's.
 pub(crate) async fn query(
     place: &Place<'_>,
     document: &Value,
     cursor: Option<&str>,
     limit: Option<u8>,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let mut document = document.clone();
     if let Some(limit) = limit {
@@ -166,29 +192,29 @@ pub(crate) async fn query(
         }
         object.insert("limit".to_owned(), json!(limit));
     }
-    let cursor = cursor.map(scope::cursor).transpose()?;
+    let cursor = cursor.map(scope::cursor).transpose()?.map(str::to_owned);
     let (client, project) = open(place).await?;
-    let mut path = format!("{}/query", entries(&project, place));
-    if let Some(cursor) = cursor {
-        path.push_str("?cursor=");
-        path.push_str(cursor);
+    let base = format!("{}/query", entries(&project, place));
+    let path = |page: Option<&str>| match page {
+        Some(page) => format!("{base}?cursor={page}"),
+        None => base.clone(),
+    };
+    if out.format == Format::Jsonl {
+        return scope::stream_jsonl(&client, Method::POST, path, Some(&document), cursor, &out)
+            .await;
     }
     let reply = client
-        .send(Method::POST, &path, Some(&document), &[])
+        .send(Method::POST, &path(cursor.as_deref()), Some(&document), &[])
         .await?
         .body;
     let rows = reply["data"].as_array().cloned().unwrap_or_default();
-    if json {
-        println!(
-            "{}",
-            json!({
-                "version": 1, "command": "content query",
-                "collection": place.collection,
-                "entries": rows,
-                "next_cursor": reply["next_cursor"],
-                "applied": reply["applied"],
-            })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({
+            "collection": place.collection,
+            "entries": rows,
+            "next_cursor": reply["next_cursor"],
+            "applied": reply["applied"],
+        }));
     } else {
         for row in &rows {
             println!(

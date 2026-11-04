@@ -80,12 +80,14 @@ fn json_output_is_one_versioned_result() {
     assert_eq!(
         stdout_json(&out),
         json!({
-            "version": 1,
+            "version": 2,
             "command": "doctor",
-            "server": server,
-            "status": "ready",
-            "role": "all",
-            "checks": { "database": "up", "cache": "up" }
+            "data": {
+                "server": server,
+                "status": "ready",
+                "role": "all",
+                "checks": { "database": "up", "cache": "up" }
+            }
         })
     );
 }
@@ -99,7 +101,7 @@ fn degraded_and_not_ready_exit_with_the_unavailable_code() {
         let server = canned_server(status_line, body);
         let out = doctor(&["--server", &server, "--json"]);
         assert_eq!(out.status.code(), Some(5), "{status}");
-        assert_eq!(stdout_json(&out)["status"], status);
+        assert_eq!(stdout_json(&out)["data"]["status"], status);
     }
 }
 
@@ -114,7 +116,8 @@ fn an_unreachable_server_exits_5_and_says_so() {
     let server = format!("http://127.0.0.1:{port}");
     let out = doctor(&["--server", &server, "--json", "--timeout-ms", "2000"]);
     assert_eq!(out.status.code(), Some(5));
-    assert_eq!(stdout_json(&out)["status"], "unreachable");
+    // The `error` envelope names the failure class; the message stays on stderr too.
+    assert_eq!(stdout_json(&out)["error"]["code"], "unreachable");
     assert!(String::from_utf8_lossy(&out.stderr).contains("connection failed"));
 }
 
@@ -127,6 +130,11 @@ fn a_reply_that_is_not_a_readiness_report_is_an_internal_failure() {
 
     let server = canned_server("404 Not Found", r#"{"error":{"code":"route_not_found"}}"#);
     assert_eq!(doctor(&["--server", &server]).status.code(), Some(6));
+
+    // The same failure on `--json` is an `error` envelope on stdout.
+    let out = doctor(&["--server", &server, "--json"]);
+    assert_eq!(out.status.code(), Some(6));
+    assert_eq!(stdout_json(&out)["error"]["code"], "unexpected_reply");
 }
 
 #[test]
