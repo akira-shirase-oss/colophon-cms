@@ -224,8 +224,17 @@ invariant. Production adapters and the simulator both run this code unchanged.
   named" rule; a `many` list and a reference nested in an object, a list or a block keep their stored
   spellings. `applied`, `query_hash` and cursors are untouched: `depth` was already in the canonical
   document they name.
+- Built in step DX.6 (D-109): the draft query is refused — `field_not_readable`, at the name's own pointer —
+  where a filter or a sort key names a field the caller's `content.read` doesn't allow on every row the
+  page could hold: a filter's result presence and a sort's order would reveal the stored values they ran
+  against. The field set is the anyone-set on mixed rows, and the own-set when the page can only hold the
+  caller's own entries — where a field readable only on `own` stays legal, since no row can forbid it.
+  `fields` still names any declared field: a selection can only narrow, and an unreadable one is disclosed
+  in `hidden_fields`, the same report a draft view or a populated target gives. The published perspective
+  asks no check: everything published is public.
 - `fields` only narrows the returned document — never widens it — so it may name any declared field and carries no
-  permission risk; indexing governs filters and sorts, not selection.
+  permission risk; indexing governs filters and sorts, not selection. Readability governs them instead (D-109):
+  a filter or a sort on a field the role can't read is refused, where the document names it.
 - Schema side: `"index": true` opts a top-level field of an indexable kind (`FieldKind::may_be_indexed`) into
   filtering and sorting — a single-line text, number, boolean, choice, date, time, date-time, email, URL, slug or
   single reference; anywhere else `invalid_index`, and a query that touches a non-indexed field is refused

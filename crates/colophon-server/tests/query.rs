@@ -12,7 +12,7 @@
 
 mod common;
 
-use common::{Reply, Server, Session, call, join, key, project, sign_in};
+use common::{Reply, Server, Session, call, join, key, project, release, sign_in};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 
@@ -389,6 +389,282 @@ async fn a_cursor_that_isnt_this_querys_is_refused() {
         );
         assert_eq!(reason(&refused), "position_mismatch");
     }
+}
+
+/// A refusal's `error.details`, as `(reason, pointer)`.
+fn refused(reply: &Reply) -> (Value, Value) {
+    (
+        reply.body["error"]["details"]["reason"].clone(),
+        reply.body["error"]["details"]["pointer"].clone(),
+    )
+}
+
+/// Replaces `role`'s permissions — `If-Match` like any save — so one member's read can
+/// narrow mid-test (a member holds one role).
+async fn set_permissions(owner: &Session, project: &str, role: &str, permissions: Value) {
+    let path = format!("/api/v1/projects/{project}/roles/{role}");
+    let read = send(owner, Method::GET, &path, None).await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+    let saved = call(
+        owner,
+        Method::PUT,
+        &path,
+        Some(&json!({"name": "Role", "permissions": permissions})),
+        &[
+            ("if-match", &read.etag().expect("an ETag")),
+            ("idempotency-key", &key()),
+        ],
+    )
+    .await
+    .expect("request");
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_query_cant_read_a_field_the_role_cant() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let guest = sign_in("dev-editor").await;
+    let project = seed(&owner).await;
+
+    // `analyst` reads everyone's posts, but only `headline` and `rating` of them.
+    let made = send(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/roles"),
+        Some(&json!({
+            "key": "analyst",
+            "name": "Analyst",
+            "permissions": [
+                {"action": "content.read", "subject": "posts", "fields": ["headline", "rating"]}
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    join(&owner, &guest, &project, "analyst").await;
+
+    // A filter on `section` — a field it can't read — is refused where the document
+    // names it: the page's presence would reveal which posts are News.
+    let reply = ask(
+        &guest,
+        &project,
+        "posts",
+        &json!({"filters": [{"field": "section", "op": "eq", "value": "News"}]}),
+        None,
+    )
+    .await;
+    assert_eq!(
+        reply.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        reply.body
+    );
+    assert_eq!(
+        refused(&reply),
+        (json!("field_not_readable"), json!("/filters/0/field"))
+    );
+    // So is a sort on it: the order would reveal the values just the same.
+    let reply = ask(
+        &guest,
+        &project,
+        "posts",
+        &json!({"sort": [{"field": "rating"}, {"field": "section"}]}),
+        None,
+    )
+    .await;
+    assert_eq!(
+        refused(&reply),
+        (json!("field_not_readable"), json!("/sort/1/field"))
+    );
+
+    // The fields the role can read filter and sort as before.
+    let reply = ask(
+        &guest,
+        &project,
+        "posts",
+        &json!({
+            "filters": [{"field": "rating", "op": "gte", "value": 3}],
+            "sort": [{"field": "rating", "dir": "desc"}]
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(
+        headlines(&reply),
+        ["Gamma news", "Alpha news", "Epsilon news", "Beta guide"]
+    );
+
+    // `fields` asks nothing: a selection only narrows the answer, and the field the
+    // role can't read is reported in `hidden_fields` — like a populated target's —
+    // not leaked and not refused.
+    let reply = ask(
+        &guest,
+        &project,
+        "posts",
+        &json!({"fields": ["headline", "section"]}),
+        None,
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    let first = &reply.body["data"][0];
+    assert_eq!(first["content"], json!({"headline": "Alpha news"}));
+    let hidden: Vec<&str> = first["hidden_fields"]
+        .as_array()
+        .expect("hidden fields")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(hidden.contains(&"section"), "{hidden:?}");
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn an_own_only_field_is_queryable_only_where_every_row_is_the_callers() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let guest = sign_in("dev-editor").await;
+    let project = seed(&owner).await;
+
+    // `diarist` reads every field of its own posts, and everyone's `headline`.
+    let made = send(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/roles"),
+        Some(&json!({
+            "key": "diarist",
+            "name": "Diarist",
+            "permissions": [
+                {"action": "content.read", "subject": "posts", "fields": ["headline"]},
+                {"action": "content.read", "subject": "posts", "condition": "own"},
+                {"action": "content.create", "subject": "posts"}
+            ]
+        })),
+    )
+    .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    join(&owner, &guest, &project, "diarist").await;
+    let own = send(
+        &guest,
+        Method::POST,
+        &format!("{}/collections/posts/entries", base(&project)),
+        Some(
+            &json!({"headline": "Guest post", "rating": 4, "section": "News",
+                     "publish_at": "2026-01-06T09:00:00Z"}),
+        ),
+    )
+    .await;
+    assert_eq!(own.status, StatusCode::CREATED, "{}", own.body);
+
+    // The page may hold others' posts, where only `headline` is readable: `rating` —
+    // readable on the guest's own — is still refused, or the filter would read it on
+    // rows that don't allow it. `headline` is everyone's: it filters and sorts.
+    let reply = ask(
+        &guest,
+        &project,
+        "posts",
+        &json!({"filters": [{"field": "rating", "op": "gte", "value": 3}]}),
+        None,
+    )
+    .await;
+    assert_eq!(
+        refused(&reply),
+        (json!("field_not_readable"), json!("/filters/0/field"))
+    );
+    let reply = ask(
+        &guest,
+        &project,
+        "posts",
+        &json!({"sort": [{"field": "rating"}]}),
+        None,
+    )
+    .await;
+    assert_eq!(
+        refused(&reply),
+        (json!("field_not_readable"), json!("/sort/0/field"))
+    );
+    let reply = ask(
+        &guest,
+        &project,
+        "posts",
+        &json!({"filters": [{"field": "headline", "op": "contains", "value": "post"}],
+                 "sort": [{"field": "headline"}]}),
+        None,
+    )
+    .await;
+    assert_eq!(headlines(&reply), ["Guest post"]);
+
+    // The same role, narrowed to reading only its own posts — every field of them,
+    // but no one else's. Every row its page can hold is now one it reads whole, so
+    // `rating` and `section` stay legal.
+    set_permissions(
+        &owner,
+        &project,
+        "diarist",
+        json!([
+            {"action": "content.read", "subject": "posts", "condition": "own"},
+            {"action": "content.create", "subject": "posts"}
+        ]),
+    )
+    .await;
+    let reply = ask(
+        &guest,
+        &project,
+        "posts",
+        &json!({"filters": [{"field": "rating", "op": "gte", "value": 3}],
+                 "sort": [{"field": "section"}]}),
+        None,
+    )
+    .await;
+    assert_eq!(headlines(&reply), ["Guest post"]);
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn the_published_query_reads_every_field_for_anyone() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = seed(&owner).await;
+
+    // Publish two posts, then ask anonymously — published content is public, so no
+    // field check applies at all: `section` filters and sorts like any other field.
+    let entries = send(
+        &owner,
+        Method::GET,
+        &format!("{}/collections/posts/entries", base(&project)),
+        None,
+    )
+    .await;
+    let ids: Vec<&str> = entries.body["data"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .filter_map(|entry| entry["id"].as_str())
+        .collect();
+    release(&owner, &project, &json!({"title": "Posts", "entries": ids})).await;
+
+    let answer = common::app()
+        .post(format!(
+            "{}/content/v1/{project}/production/posts/query",
+            common::ORIGIN
+        ))
+        .json(
+            &json!({"filters": [{"field": "section", "op": "eq", "value": "Guides"}],
+                       "sort": [{"field": "section"}]}),
+        )
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(answer.status(), StatusCode::OK);
+    let body: Value = answer.json().await.expect("a body");
+    let headlines: Vec<&str> = body["data"]
+        .as_array()
+        .expect("a page")
+        .iter()
+        .filter_map(|entry| entry["content"]["headline"].as_str())
+        .collect();
+    assert_eq!(headlines, ["Beta guide", "Delta guide"]);
 }
 
 #[tokio::test]
