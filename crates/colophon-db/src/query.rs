@@ -130,8 +130,8 @@ pub async fn page(
 /// open publication at all (D-080).
 ///
 /// `tx` runs as `colophon_delivery`; the project comes from its context, like the list's
-/// own reads. Rows are the projection's own copies: `depth` is carried by the query but
-/// not applied — references stay ids until DX.5.
+/// own reads. Rows are the projection's own copies; `depth` expands them afterwards —
+/// [`resolved_publications`] fetches each level's targets under the same pin.
 pub async fn published_page(
     tx: &mut DeliveryTransaction,
     environment: Uuid,
@@ -176,6 +176,87 @@ pub async fn published_page(
         rows: page_rows,
         next_cursor,
     })
+}
+
+/// The most ids one `ANY` expansion read carries (DX.5): one level's targets are
+/// fetched in chunks of it, so a page with very many named references stays a bounded
+/// statement — and never one read per row or per field.
+pub const RESOLVE_BATCH: usize = 10_000;
+
+/// The current drafts of `ids`, for one level of expansion (DX.5): the same draft row
+/// [`page`] reads, looked up by id in one `ANY` per [`RESOLVE_BATCH`] chunk — in no
+/// order, since an expansion follows its documents' order, not this result's. A
+/// deleted entry is invisible to the caller's role like everywhere else, so a
+/// reference that somehow names one simply doesn't resolve.
+pub async fn resolved_drafts(
+    tx: &mut ProjectTransaction,
+    ids: &[Uuid],
+) -> Result<Vec<Draft>, DbError> {
+    let mut drafts = Vec::with_capacity(ids.len());
+    for chunk in ids.chunks(RESOLVE_BATCH) {
+        let rows = sqlx::query(sqlx::AssertSqlSafe(
+            "SELECT e.id, e.collection, e.created_at, e.created_by, e.updated_at, e.locale,
+                    r.id AS revision_id, r.base_revision_id, r.author_id,
+                    r.created_at AS revision_created_at, r.content_hash, r.title, r.content
+             FROM entries e
+             CROSS JOIN LATERAL (
+                 SELECT r.id, r.base_revision_id, r.author_id, r.created_at, r.content_hash,
+                        r.title, r.content
+                 FROM revisions r
+                 WHERE r.project_id = e.project_id
+                   AND r.environment_id = e.environment_id
+                   AND r.id = e.draft_revision_id
+                 LIMIT 1
+             ) r
+             WHERE e.project_id = $1 AND e.environment_id = $2 AND e.id = ANY($3)",
+        ))
+        .bind(tx.project)
+        .bind(tx.environment)
+        .bind(chunk)
+        .fetch_all(&mut *tx.transaction)
+        .await
+        .map_err(DbError::Query)?;
+        for row in &rows {
+            drafts.push(read(row)?);
+        }
+    }
+    Ok(drafts)
+}
+
+/// The publications of `ids` open at `generation` and never revoked, resolved for one
+/// level of expansion (DX.5): the same pin [`published_page`] applies —
+/// `valid_from` at or before the generation, its interval still open there, never
+/// revoked — so a publication that was taken down since doesn't resolve at any
+/// generation, exactly as it never answers as a row. `tx` runs as
+/// `colophon_delivery`; the project comes from its context.
+pub async fn resolved_publications(
+    tx: &mut DeliveryTransaction,
+    environment: Uuid,
+    ids: &[Uuid],
+    generation: i64,
+) -> Result<Vec<Published>, DbError> {
+    let mut publications = Vec::with_capacity(ids.len());
+    for chunk in ids.chunks(RESOLVE_BATCH) {
+        let rows = sqlx::query(sqlx::AssertSqlSafe(
+            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
+                    p.content_hash, p.valid_from
+             FROM publications p
+             WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
+               AND p.environment_id = $1 AND p.entry_id = ANY($2)
+               AND p.valid_from <= $3 AND (p.valid_to IS NULL OR p.valid_to > $3)
+               AND p.revoked_in IS NULL",
+        ))
+        .bind(environment)
+        .bind(chunk)
+        .bind(generation)
+        .fetch_all(&mut *tx.transaction)
+        .await
+        .map_err(DbError::Query)?;
+        for row in &rows {
+            publications.push(published(row)?);
+        }
+    }
+    Ok(publications)
 }
 
 /// Whether `position`'s literals are ones their order-key fields could hold — the same

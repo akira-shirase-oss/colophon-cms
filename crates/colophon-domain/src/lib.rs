@@ -9,7 +9,7 @@
 //! project fields ([`project`]), content types, which validate entries' content ([`schema`]),
 //! who may do what ([`policy`]), changesets and their review ([`changeset`]), releases
 //! ([`release`]), delivery jobs ([`job`]), where they may go ([`destination`]) and the
-//! bounded query language ([`query`]).
+//! bounded query language ([`query`]) and its reference population ([`populate`]).
 
 pub mod cache;
 pub mod changeset;
@@ -17,6 +17,7 @@ pub mod destination;
 pub mod job;
 pub mod migrate;
 pub mod policy;
+pub mod populate;
 pub mod project;
 pub mod query;
 pub mod receipt;

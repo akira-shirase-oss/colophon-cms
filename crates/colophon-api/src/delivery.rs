@@ -7,9 +7,12 @@
 //! - `POST /content/v1/{project}/{environment}/{collection}/query?generation=&cursor=`
 //!   (DX.4): the query language over the published projection — the same document the
 //!   draft route takes, the same `applied` echo, answered from `publications`, never
-//!   drafts. `depth` validates and is echoed but not applied: references stay ids until
-//!   DX.5. A query page's cache key names the query's own hash — the normalized query —
-//!   so two different queries can never share an answer (spec §15).
+//!   drafts. `depth` populates references (DX.5, D-107): each level's targets are the
+//!   publications pinned at the page's own generation, resolved inside the fill's
+//!   transaction — so a populated reference reads exactly the release its row does, and
+//!   a publication that doesn't resolve at it stays the stored id. A query page's cache
+//!   key names the query's own hash — the normalized query — so two different queries
+//!   can never share an answer (spec §15).
 //!
 //! Without `generation`, reads are at the latest release; with it, pinned to that release, as it
 //! was. Every answer names its generation in `Colophon-Generation`, and a list's cursor carries
@@ -27,7 +30,7 @@
 //! it out and a read of it is 410 `gone`, uncached. Cache keys name the environment's latest
 //! unpublish, so answers cached before it are never served again.
 
-use std::future::Future;
+use std::{collections::BTreeSet, future::Future};
 
 use axum::{
     Json,
@@ -478,7 +481,8 @@ struct QueryPage {
 /// over the published projection (DX.4, D-103): the same document the draft route
 /// takes, validated against the collection's content type, answered as
 /// `colophon_delivery` from `publications` pinned at the generation — never drafts.
-/// `depth` validates and echoes but does not apply; references stay ids until DX.5.
+/// `depth` populates references (DX.5, D-107): each level's targets resolve under the
+/// same pin, inside the fill's transaction.
 ///
 /// A cursor is `q1:<generation>:<v1 token>`: the generation its first page read at —
 /// so paging a query, like paging a list, never mixes two releases — and the position
@@ -564,6 +568,9 @@ pub(crate) async fn query(
         generation,
         pinned,
         || async {
+            let depth = language.depth();
+            let keep = language.fields();
+            let mut resolved = crate::populate::Resolved::default();
             let found = if generation == 0 {
                 db_query::PublishedPage {
                     rows: Vec::new(),
@@ -573,7 +580,7 @@ pub(crate) async fn query(
                 let mut tx = delivery::begin(&services.pool, project)
                     .await
                     .map_err(ApiError::from_db)?;
-                let found = db_query::published_page(
+                let mut found = db_query::published_page(
                     &mut tx,
                     environment.id,
                     &path.collection,
@@ -588,17 +595,39 @@ pub(crate) async fn query(
                     // `check_position` refused a bad cursor above; reaching this is a bug.
                     db_query::Error::Cursor(refusal) => ApiError::internal(refusal),
                 })?;
+                // Narrow each row to `fields`, then collect the ids `depth` expands and
+                // resolve them — inside the pin's transaction, so every level reads the
+                // same snapshot, pinned at the page's own generation.
+                let mut wanted = BTreeSet::new();
+                for row in &mut found.rows {
+                    if let Some(keep) = keep {
+                        row.content = narrow(&row.content, keep)?;
+                    }
+                    if depth > 0 {
+                        crate::populate::collect_wanted(&content_type, &row.content, &mut wanted)?;
+                    }
+                }
+                if !wanted.is_empty() {
+                    resolved = crate::populate::resolve_publications(
+                        services,
+                        &mut tx,
+                        project,
+                        environment.id,
+                        &wanted,
+                        generation,
+                        depth,
+                    )
+                    .await?;
+                }
                 tx.finish().await.map_err(ApiError::from_db)?;
                 found
             };
-            let keep = language.fields();
             let data = found
                 .rows
                 .into_iter()
                 .map(|mut row| {
-                    if let Some(keep) = keep {
-                        row.content = narrow(&row.content, keep)?;
-                    }
+                    row.content =
+                        crate::populate::expand_document(&content_type, &row.content, &resolved)?;
                     PublishedView::new(row)
                 })
                 .collect::<Result<Vec<_>, ApiError>>()?;

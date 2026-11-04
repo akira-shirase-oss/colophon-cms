@@ -24,6 +24,7 @@ pub mod health;
 mod members;
 pub mod middleware;
 mod migrations;
+mod populate;
 mod projects;
 mod receipts;
 mod rich_text;

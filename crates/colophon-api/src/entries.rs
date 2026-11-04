@@ -4,7 +4,8 @@
 //! - `GET  {P}/collections/{collection}/entries`: newest first, with a cursor;
 //! - `POST {P}/collections/{collection}/entries`: create (`Idempotency-Key` required);
 //! - `POST {P}/collections/{collection}/entries/query`: the query language (D-103) — the
-//!   document in the body, the page boundary in `?cursor=`;
+//!   document in the body, the page boundary in `?cursor=`, `depth` populating
+//!   references (DX.5, [`crate::populate`]);
 //! - `GET  {P}/collections/{collection}/entries/{entry}`: the draft, with its `ETag`;
 //! - `PUT  {P}/collections/{collection}/entries/{entry}`: save (`If-Match` and
 //!   `Idempotency-Key` required);
@@ -19,7 +20,7 @@
 //! answer 404 alike. A draft's `ETag` names its revision; a save whose `If-Match` names an older
 //! one is refused with 409 and the current `ETag`, and writes nothing.
 
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use aws_lc_rs::digest;
 use axum::{
@@ -194,7 +195,9 @@ impl DraftView {
     }
 }
 
-fn field_ids(content_type: &ContentType) -> Vec<String> {
+/// The content type's field ids, in definition order — the universe `hidden_fields`
+/// (and a projection's readability check) is measured against.
+pub(crate) fn field_ids(content_type: &ContentType) -> Vec<String> {
     content_type
         .fields()
         .iter()
@@ -1957,8 +1960,10 @@ struct QueriedView {
     created_by: Uuid,
     updated_at: String,
     revision: RevisionView,
-    /// The stored canonical JSON, narrowed twice: to what the caller's role may read, then
-    /// to the query's `fields` when it selects any.
+    /// The stored canonical JSON, narrowed twice — to what the caller's role may read,
+    /// then to the query's `fields` when it selects any — then populated: its
+    /// single-reference values rewritten to the objects they resolved to at `depth`
+    /// (DX.5, D-107).
     content: Box<RawValue>,
     /// The content type's fields left out because the caller's role can't read them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1970,20 +1975,17 @@ struct QueriedView {
 }
 
 impl QueriedView {
+    /// `content`/`hidden_fields` are what [`QueriedView::shown`] computed — possibly
+    /// already expanded ([`crate::populate::expand_document`]) for `depth` ≥ 1.
     fn of(
         draft: Draft,
         published: Option<(Uuid, i64)>,
         access: &Access,
         content_type: &ContentType,
-        keep: Option<&[String]>,
+        content: String,
+        hidden_fields: Vec<String>,
     ) -> Result<Self, ApiError> {
         let read = access.read.as_ref().ok_or(ApiError::NotFound)?;
-        let fields = field_ids(content_type);
-        let (content, hidden_fields) = visibility::project(draft.content, read, &fields)?;
-        let content = match keep {
-            Some(keep) => narrow(&content, keep)?,
-            None => content,
-        };
         let mut revision = draft.revision;
         if !read.includes(content_type.title_field()) {
             revision.title = String::new();
@@ -2003,6 +2005,26 @@ impl QueriedView {
             }),
             locale: draft.locale,
         })
+    }
+
+    /// The row's content as the caller may see it — `draft.content` narrowed to the
+    /// role's read fields, then to the query's `fields` selection — and which of the
+    /// content type's fields the role hid. Expansion collects its ids from this: a
+    /// reference the role can't read, or the selection dropped, resolves nothing.
+    fn shown(
+        draft: &Draft,
+        access: &Access,
+        content_type: &ContentType,
+        keep: Option<&[String]>,
+    ) -> Result<(String, Vec<String>), ApiError> {
+        let read = access.read.as_ref().ok_or(ApiError::NotFound)?;
+        let (content, hidden_fields) =
+            visibility::project(draft.content.clone(), read, &field_ids(content_type))?;
+        let content = match keep {
+            Some(keep) => narrow(&content, keep)?,
+            None => content,
+        };
+        Ok((content, hidden_fields))
     }
 }
 
@@ -2096,14 +2118,31 @@ pub(crate) async fn query(
         db_query::Error::Cursor(refusal) => ApiError::Invalid(refusal),
         db_query::Error::Db(error) => ApiError::from_db(error),
     })?;
-    let (policy, identity) = (tx.policy.clone(), tx.identity);
+    // Stage each row's shown content, collecting the ids `depth` expands — still inside
+    // the page's own transaction, so every level's targets read the same snapshot.
+    let depth = language.depth();
+    let keep = language.fields();
+    let mut wanted = BTreeSet::new();
+    let mut staged = Vec::with_capacity(found.rows.len());
+    for (draft, live) in found.rows {
+        let access = Access::of(&tx.policy, tx.identity, &path.collection, draft.created_by);
+        let (content, hidden_fields) = QueriedView::shown(&draft, &access, &content_type, keep)?;
+        if depth > 0 {
+            crate::populate::collect_wanted(&content_type, &content, &mut wanted)?;
+        }
+        staged.push((draft, live, access, content, hidden_fields));
+    }
+    let resolved = if depth == 0 || wanted.is_empty() {
+        crate::populate::Resolved::default()
+    } else {
+        crate::populate::resolve_drafts(&state, &mut tx, &wanted, depth).await?
+    };
     tx.commit().await.map_err(ApiError::from_db)?;
-    let data = found
-        .rows
+    let data = staged
         .into_iter()
-        .map(|(draft, live)| {
-            let access = Access::of(&policy, identity, &path.collection, draft.created_by);
-            QueriedView::of(draft, live, &access, &content_type, language.fields())
+        .map(|(draft, live, access, content, hidden_fields)| {
+            let content = crate::populate::expand_document(&content_type, &content, &resolved)?;
+            QueriedView::of(draft, live, &access, &content_type, content, hidden_fields)
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
     let body = serde_json::to_string(&QueryPage {
