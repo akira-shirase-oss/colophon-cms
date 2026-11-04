@@ -24,6 +24,7 @@ pub mod migrations;
 pub mod passwords;
 pub mod projects;
 pub mod publish;
+pub mod query;
 pub mod releases;
 pub mod roles;
 pub mod schedules;

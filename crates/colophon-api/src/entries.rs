@@ -3,6 +3,8 @@
 //!
 //! - `GET  {P}/collections/{collection}/entries`: newest first, with a cursor;
 //! - `POST {P}/collections/{collection}/entries`: create (`Idempotency-Key` required);
+//! - `POST {P}/collections/{collection}/entries/query`: the query language (D-103) — the
+//!   document in the body, the page boundary in `?cursor=`;
 //! - `GET  {P}/collections/{collection}/entries/{entry}`: the draft, with its `ETag`;
 //! - `PUT  {P}/collections/{collection}/entries/{entry}`: save (`If-Match` and
 //!   `Idempotency-Key` required);
@@ -31,10 +33,12 @@ use colophon_db::{
     content_types,
     entries::{self, Deleted, Draft, NewRevision, Revision, Saved, Summary},
     idempotency::{self, Claim},
+    query as db_query,
     scope::{self, ProjectTransaction},
 };
 use colophon_domain::{
     policy::{Action, Fields, Policy},
+    query::Query as Document,
     schema::{Content, ContentType, FieldKind, Refusal},
 };
 use serde::{Deserialize, Serialize};
@@ -264,6 +268,13 @@ pub(crate) struct ListQuery {
     q: Option<String>,
     created_by: Option<String>,
     locale: Option<String>,
+}
+
+/// The `?cursor=` a query takes (D-103): the page boundary travels outside the document,
+/// which the validator holds to its own keys.
+#[derive(Deserialize)]
+pub(crate) struct CursorQuery {
+    cursor: Option<String>,
 }
 
 /// The `?locale=` a create, save or localize takes (D-087).
@@ -1933,6 +1944,166 @@ pub(crate) async fn list(
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
     let body = serde_json::to_string(&Page { data, next_cursor }).map_err(ApiError::internal)?;
+    Ok(json(StatusCode::OK, body, None, false))
+}
+
+/// An entry in a query's page: the draft's own read shape, without the per-entry lookups a
+/// page doesn't make (referrers, the localization group).
+#[derive(Serialize)]
+struct QueriedView {
+    id: Uuid,
+    collection: String,
+    created_at: String,
+    created_by: Uuid,
+    updated_at: String,
+    revision: RevisionView,
+    /// The stored canonical JSON, narrowed twice: to what the caller's role may read, then
+    /// to the query's `fields` when it selects any.
+    content: Box<RawValue>,
+    /// The content type's fields left out because the caller's role can't read them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    hidden_fields: Vec<String>,
+    /// What readers get now, if the entry is published.
+    published: Option<LiveView>,
+    /// The entry's locale tag, or `null` for the project's default (D-087).
+    locale: Option<String>,
+}
+
+impl QueriedView {
+    fn of(
+        draft: Draft,
+        published: Option<(Uuid, i64)>,
+        access: &Access,
+        content_type: &ContentType,
+        keep: Option<&[String]>,
+    ) -> Result<Self, ApiError> {
+        let read = access.read.as_ref().ok_or(ApiError::NotFound)?;
+        let fields = field_ids(content_type);
+        let (content, hidden_fields) = visibility::project(draft.content, read, &fields)?;
+        let content = match keep {
+            Some(keep) => narrow(&content, keep)?,
+            None => content,
+        };
+        let mut revision = draft.revision;
+        if !read.includes(content_type.title_field()) {
+            revision.title = String::new();
+        }
+        Ok(Self {
+            id: draft.entry_id,
+            collection: draft.collection,
+            created_at: rfc3339(draft.created_at)?,
+            created_by: draft.created_by,
+            updated_at: rfc3339(draft.updated_at)?,
+            revision: RevisionView::new(revision)?,
+            content: RawValue::from_string(content).map_err(ApiError::internal)?,
+            hidden_fields,
+            published: published.map(|(revision_id, generation)| LiveView {
+                revision_id,
+                generation,
+            }),
+            locale: draft.locale,
+        })
+    }
+}
+
+/// `content` — already narrowed to what the role may read — down to the `fields` the
+/// query selected: the selection can only narrow the answer, never widen it.
+fn narrow(content: &str, keep: &[String]) -> Result<String, ApiError> {
+    let mut object = serde_json::from_str::<serde_json::Map<String, Value>>(content)
+        .map_err(ApiError::internal)?;
+    object.retain(|field, _| keep.iter().any(|wanted| wanted == field));
+    serde_json::to_string(&object).map_err(ApiError::internal)
+}
+
+/// The page a `POST …/entries/query` answers with: the rows, and the applied query's own
+/// name — its canonical form and the hash its cursor binds to (D-103).
+#[derive(Serialize)]
+struct QueryPage {
+    data: Vec<QueriedView>,
+    next_cursor: Option<String>,
+    applied: AppliedQuery,
+}
+
+/// The query that ran, as the answer echoes it.
+#[derive(Serialize)]
+struct AppliedQuery {
+    /// The canonical JSON document, embedded as is.
+    query: Box<RawValue>,
+    /// `sha256:<64 hex>` of those bytes.
+    query_hash: String,
+}
+
+/// `POST {P}/collections/{collection}/entries/query?cursor=` — the query language (D-103,
+/// step DX.3): the document in the body, validated against the collection's content type;
+/// the page boundary in `?cursor=`, outside the document the validator checks.
+pub(crate) async fn query(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<CollectionPath>,
+    Query(parameters): Query<CursorQuery>,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let Json(document) = body?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_read(&tx, &path.collection)?;
+    // An unknown collection is 404, like an empty list's.
+    let (content_type, _) = content_type(&state, &mut tx, &path.collection).await?;
+    let language = Document::validate(&content_type, &document).map_err(ApiError::Invalid)?;
+    let after = parameters
+        .cursor
+        .as_deref()
+        .map(|token| language.after_cursor(token))
+        .transpose()
+        .map_err(ApiError::Invalid)?;
+    let applied = || {
+        Ok::<_, ApiError>(AppliedQuery {
+            query: RawValue::from_string(language.canonical_json()).map_err(ApiError::internal)?,
+            query_hash: content_hash(&language.query_hash()),
+        })
+    };
+    let by = match whose(&tx.policy, tx.identity, &path.collection, None, false, None)? {
+        Whose::Anyone => None,
+        Whose::Only(creator) => Some(creator),
+        Whose::Nobody => {
+            tx.commit().await.map_err(ApiError::from_db)?;
+            let body = serde_json::to_string(&QueryPage {
+                data: Vec::new(),
+                next_cursor: None,
+                applied: applied()?,
+            })
+            .map_err(ApiError::internal)?;
+            return Ok(json(StatusCode::OK, body, None, false));
+        }
+    };
+    let found = db_query::page(
+        &mut tx,
+        &path.collection,
+        &content_type,
+        &language,
+        after.as_ref(),
+        by,
+    )
+    .await
+    .map_err(|error| match error {
+        db_query::Error::Cursor(refusal) => ApiError::Invalid(refusal),
+        db_query::Error::Db(error) => ApiError::from_db(error),
+    })?;
+    let (policy, identity) = (tx.policy.clone(), tx.identity);
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let data = found
+        .rows
+        .into_iter()
+        .map(|(draft, live)| {
+            let access = Access::of(&policy, identity, &path.collection, draft.created_by);
+            QueriedView::of(draft, live, &access, &content_type, language.fields())
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    let body = serde_json::to_string(&QueryPage {
+        data,
+        next_cursor: found.next_cursor,
+        applied: applied()?,
+    })
+    .map_err(ApiError::internal)?;
     Ok(json(StatusCode::OK, body, None, false))
 }
 

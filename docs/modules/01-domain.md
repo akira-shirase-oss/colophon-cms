@@ -201,7 +201,12 @@ invariant. Production adapters and the simulator both run this code unchanged.
   that doesn't fit the order (`position_mismatch`), and anything over `MAX_CURSOR_BYTES` (8 KiB decoded)
   before it parses (`too_large`). Validation stays structural — the literal is a scalar or `null`, a number a
   field could hold — because the definition isn't re-fetched here; whether it's one the field accepts is the
-  SQL layer's compare (DX.3), where a `Position` becomes the `WHERE (k1, k2, …) > (v1, v2, …)` tuple.
+  SQL layer's compare (DX.3), where a `Position` becomes the lexicographic OR-of-ANDs a row-value tuple can't
+  spell across mixed directions.
+- Built in step DX.3 (D-103): the same `Query` runs over each entry's current draft —
+  `colophon_db::query::page` translates it to one statement (docs/modules/02-db.md, "Query translation") and
+  `POST {P}/collections/{collection}/entries/query` serves it (docs/modules/04-api.md). The draft perspective
+  only; published querying and reference expansion are later steps.
 - `fields` only narrows the returned document — never widens it — so it may name any declared field and carries no
   permission risk; indexing governs filters and sorts, not selection.
 - Schema side: `"index": true` opts a top-level field of an indexable kind (`FieldKind::may_be_indexed`) into

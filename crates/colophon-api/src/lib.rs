@@ -203,6 +203,10 @@ fn collections() -> Router<AppState> {
             get(entries::list).post(entries::create),
         )
         .route(
+            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/query",
+            post(entries::query),
+        )
+        .route(
             "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/export",
             get(entries::export),
         )
