@@ -231,6 +231,16 @@ invariant. Production adapters and the simulator both run this code unchanged.
   per item, sorted by entry id); `status` decides `Open`, `Stale`, `AwaitingReview`, `ChangesRequested`,
   `Approved { self_review }` or `ApprovalExpired` from the facts: only decisions on the current hash count, the
   highest sequence number wins, approvals last seven days, and a project may require a different reviewer.
+- Named review stages come in step E2 (D-104): `Facts.stages` carries the environment's ordered list of
+  `Stage { key, name, different_reviewer }` (`is_stage_key` takes a role key's shape; `MAX_STAGES` is 20), and each
+  `Review` names the `stage` it decided — `None` for the single implicit review an empty list keeps, so an
+  environment that never configures stages behaves exactly as before. `counting` keeps the newest decision per
+  stage on the current hash (self-approvals excluded where the stage's or the project's different-reviewer rule
+  says so), and `status` is `Approved { self_review, seq }` only when every stage's counting decision approves:
+  approvals land in any order — the list's order is for people reading it — while a request for changes at any
+  stage blocks the whole changeset until a newer approval clears it. `seq` names the review that completed the
+  set, so a publish binds its release to it; `stage_status` reports each stage `Pending`, `ChangesRequested` or
+  `Approved { by, self_review, at, expired }` for the API's per-stage view, with the seven-day expiry per stage.
 
 ### Releases (spec §14)
 - `Release`: `prepared → committed`, identified by `(epoch, generation)`.

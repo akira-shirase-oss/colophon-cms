@@ -210,15 +210,31 @@ pub(crate) async fn create(
     let reviews = changesets::reviews(&mut tx, id, Some(&head.hash))
         .await
         .map_err(ApiError::from_db)?;
+    // The stage list this checks against can't move under it: a stage-list replace waits, so the
+    // schedule is made under the same rules the worker will re-check (D-104).
+    let stages = changesets::stages_locked(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
     let edited = items.iter().filter(|item| item.moved()).count();
-    let status = publish::status(&head, edited, &reviews, now);
-    if !matches!(status, Status::Approved { .. }) {
-        publishable(&status)?;
-    }
+    let status = publish::status(&head, edited, &reviews, &stages, now);
+    publishable(&status)?;
+    let Status::Approved { seq, .. } = status else {
+        return Err(ApiError::internal(std::io::Error::other(
+            "a publishable changeset isn't approved",
+        )));
+    };
+    // The schedule binds the approval that completed the required set; its window closes when
+    // the oldest of them ages out, since any one's expiry expires the approval (D-104).
     let approval = reviews
-        .first()
+        .iter()
+        .find(|review| i64::from(review.seq) == seq)
         .ok_or_else(|| ApiError::internal(std::io::Error::other("approved without a review")))?;
-    let expires = approval.created_at.unix_timestamp() + APPROVAL_LIFETIME_SECS;
+    let oldest = publish::counting(&head, &reviews, &stages)
+        .iter()
+        .filter_map(|(_, decided)| decided.map(|review| review.created_at.unix_timestamp()))
+        .min()
+        .ok_or_else(|| ApiError::internal(std::io::Error::other("approved without a review")))?;
+    let expires = oldest + APPROVAL_LIFETIME_SECS;
     schedule::check_window(resolved.at, now.unix_timestamp(), expires)
         .map_err(|error| refused(error).unwrap_or_else(|internal| internal))?;
     let created = schedules::create(

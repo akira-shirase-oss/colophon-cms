@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO review_stages (project_id, environment_id, key, name, position, different_reviewer)\n         SELECT $1, $2, key, name, position, different_reviewer\n         FROM unnest($3::text[], $4::text[], $5::integer[], $6::boolean[])\n              AS stage (key, name, position, different_reviewer)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "TextArray",
+        "TextArray",
+        "Int4Array",
+        "BoolArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f7f29d8c6d236fb74f583f6a4c41cca44b93f298134bf54f007133055aac275c"
+}

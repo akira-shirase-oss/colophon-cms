@@ -97,6 +97,9 @@ pub struct Review {
     pub reviewer_name: Option<String>,
     /// `approve` or `request_changes`.
     pub decision: String,
+    /// The review stage it decided for — `None` for the implicit review of an environment
+    /// without stages (D-104).
+    pub stage: Option<String>,
     /// The changeset hash it was made on.
     pub changeset_hash: Vec<u8>,
     /// Its place in the changeset's decisions: 1 for the first, increasing by one.
@@ -105,6 +108,20 @@ pub struct Review {
     pub comment: String,
     /// When.
     pub created_at: OffsetDateTime,
+}
+
+/// A review stage of the environment, as stored (D-104): one of an ordered list of gates a
+/// submitted changeset needs an approval on before it may publish.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage {
+    /// Its key in the list — what a review names it by.
+    pub key: String,
+    /// Its name, as reviewers see it.
+    pub name: String,
+    /// Its place in the list, from 0: display order only, never a gate.
+    pub position: i32,
+    /// Whether its approval must come from someone other than the submitter.
+    pub different_reviewer: bool,
 }
 
 /// A changeset in a list.
@@ -540,17 +557,19 @@ pub async fn submit(tx: &mut ProjectTransaction, id: Uuid) -> Result<(), DbError
 }
 
 /// Records the transaction's identity's decision on the changeset with `hash`, as its next
-/// decision in sequence. The caller holds [`lock`] and has checked that `hash` is current.
+/// decision in sequence — `stage` names the review stage it decides for, `None` the implicit
+/// review (D-104). The caller holds [`lock`] and has checked that `hash` is current.
 pub async fn review(
     tx: &mut ProjectTransaction,
     id: Uuid,
     hash: &[u8],
     decision: &str,
     comment: &str,
+    stage: Option<&str>,
 ) -> Result<(), DbError> {
     sqlx::query!(
-        "INSERT INTO reviews (project_id, environment_id, id, changeset_id, changeset_hash, seq, reviewer_id, decision, comment)
-         SELECT $1, $2, $3, $4, $5, coalesce(max(seq), 0) + 1, $6, $7, $8
+        "INSERT INTO reviews (project_id, environment_id, id, changeset_id, changeset_hash, seq, reviewer_id, decision, comment, stage)
+         SELECT $1, $2, $3, $4, $5, coalesce(max(seq), 0) + 1, $6, $7, $8, $9
          FROM reviews WHERE project_id = $1 AND environment_id = $2 AND changeset_id = $4",
         tx.project,
         tx.environment,
@@ -559,7 +578,8 @@ pub async fn review(
         hash,
         tx.identity,
         decision,
-        comment
+        comment,
+        stage
     )
     .execute(&mut *tx.transaction)
     .await
@@ -576,7 +596,7 @@ pub async fn reviews(
 ) -> Result<Vec<Review>, DbError> {
     sqlx::query_as!(
         Review,
-        r#"SELECT v.id, v.reviewer_id, i.display_name AS reviewer_name, v.decision,
+        r#"SELECT v.id, v.reviewer_id, i.display_name AS reviewer_name, v.decision, v.stage,
                   v.changeset_hash, v.seq, v.comment, v.created_at
            FROM reviews v JOIN identities i ON i.id = v.reviewer_id
            WHERE v.project_id = $1 AND v.environment_id = $2 AND v.changeset_id = $3
@@ -592,6 +612,141 @@ pub async fn reviews(
     .fetch_all(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)
+}
+
+/// The newest [`MAX_REVIEWS`] reviews on each of `changesets`' current hash, paired with the
+/// changeset's id, newest first within each — what an environment with stages needs to decide
+/// every listed changeset, which the one `latest` review per changeset can't do (D-104).
+pub async fn current_reviews(
+    tx: &mut ProjectTransaction,
+    changesets: &[Uuid],
+) -> Result<Vec<(Uuid, Review)>, DbError> {
+    let rows = sqlx::query!(
+        r#"SELECT v.changeset_id, v.id, v.reviewer_id, i.display_name AS reviewer_name,
+                  v.decision, v.stage, v.changeset_hash, v.seq, v.comment, v.created_at
+           FROM (
+               SELECT v.*, row_number() OVER (PARTITION BY v.changeset_id
+                                              ORDER BY v.seq DESC) AS n
+               FROM reviews v
+               JOIN changesets c ON c.project_id = v.project_id
+                                AND c.environment_id = v.environment_id
+                                AND c.id = v.changeset_id AND v.changeset_hash = c.hash
+               WHERE v.project_id = $1 AND v.environment_id = $2 AND v.changeset_id = ANY($3)
+           ) v JOIN identities i ON i.id = v.reviewer_id
+           WHERE v.n <= $4
+           ORDER BY v.changeset_id, v.seq DESC"#,
+        tx.project,
+        tx.environment,
+        changesets,
+        MAX_REVIEWS
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.changeset_id,
+                Review {
+                    id: row.id,
+                    reviewer_id: row.reviewer_id,
+                    reviewer_name: row.reviewer_name,
+                    decision: row.decision,
+                    stage: row.stage,
+                    changeset_hash: row.changeset_hash,
+                    seq: row.seq,
+                    comment: row.comment,
+                    created_at: row.created_at,
+                },
+            )
+        })
+        .collect())
+}
+
+/// The environment's review stages, in their order (D-104).
+pub async fn stages(tx: &mut ProjectTransaction) -> Result<Vec<Stage>, DbError> {
+    sqlx::query_as!(
+        Stage,
+        "SELECT key, name, position, different_reviewer FROM review_stages
+         WHERE project_id = $1 AND environment_id = $2 ORDER BY position",
+        tx.project,
+        tx.environment
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// [`stages`], with the environment row locked in share mode first: a stage-list replace takes
+/// [`lock_environment`], so it waits for every in-flight review, publish or schedule check that
+/// is deciding against the list — while share locks don't exclude one another, so those
+/// decisions don't serialize against each other. The environment row is the lock target rather
+/// than the stage rows: `colophon_api` deliberately has no `UPDATE` on `review_stages` (its rows
+/// are never rewritten, only deleted and reinserted by a replace), and Postgres requires an
+/// updatable column for any `FOR` lock — `environments` has one (`generation`, `last_unpublish`).
+pub async fn stages_locked(tx: &mut ProjectTransaction) -> Result<Vec<Stage>, DbError> {
+    sqlx::query!(
+        "SELECT id FROM environments WHERE project_id = $1 AND id = $2 FOR SHARE",
+        tx.project,
+        tx.environment
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    stages(tx).await
+}
+
+/// The environment row, locked until the transaction ends: a stage-list replace takes it, so
+/// two replaces can't interleave a delete with an insert at the same position, and readers of
+/// the list (who take it in share mode through [`stages_locked`]) finish first.
+pub async fn lock_environment(tx: &mut ProjectTransaction) -> Result<(), DbError> {
+    sqlx::query!(
+        "SELECT id FROM environments WHERE project_id = $1 AND id = $2 FOR UPDATE",
+        tx.project,
+        tx.environment
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    Ok(())
+}
+
+/// Replaces the environment's stage list with `stages`, in their order: a stage that keeps its
+/// key keeps the reviews recorded for it; a removed one's become history (D-104). The caller
+/// holds [`lock_environment`].
+pub async fn set_stages(tx: &mut ProjectTransaction, stages: &[Stage]) -> Result<(), DbError> {
+    sqlx::query!(
+        "DELETE FROM review_stages WHERE project_id = $1 AND environment_id = $2",
+        tx.project,
+        tx.environment
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    let keys: Vec<&str> = stages.iter().map(|stage| stage.key.as_str()).collect();
+    let names: Vec<&str> = stages.iter().map(|stage| stage.name.as_str()).collect();
+    let positions: Vec<i32> = stages.iter().map(|stage| stage.position).collect();
+    let flags: Vec<bool> = stages
+        .iter()
+        .map(|stage| stage.different_reviewer)
+        .collect();
+    sqlx::query!(
+        "INSERT INTO review_stages (project_id, environment_id, key, name, position, different_reviewer)
+         SELECT $1, $2, key, name, position, different_reviewer
+         FROM unnest($3::text[], $4::text[], $5::integer[], $6::boolean[])
+              AS stage (key, name, position, different_reviewer)",
+        tx.project,
+        tx.environment,
+        &keys as &[&str],
+        &names as &[&str],
+        &positions,
+        &flags
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
 }
 
 /// The environment's changesets, newest first (at most 100), each with its counts and the newest
@@ -613,6 +768,7 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
                   counts.items AS "items!", counts.unpublish AS "unpublish!", counts.stale AS "stale!",
                   latest.id AS "review_id?", latest.reviewer_id AS "reviewer_id?",
                   latest.reviewer_name, latest.decision AS "decision?", latest.seq AS "seq?",
+                  latest.stage AS "stage?",
                   latest.comment AS "comment?", latest.created_at AS "reviewed_at?"
            FROM changesets c
            CROSS JOIN LATERAL (
@@ -635,8 +791,8 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
                  AND i.changeset_id = c.id
            ) counts
            LEFT JOIN LATERAL (
-               SELECT v.id, v.reviewer_id, n.display_name AS reviewer_name, v.decision, v.seq, v.comment,
-                      v.created_at
+               SELECT v.id, v.reviewer_id, n.display_name AS reviewer_name, v.decision, v.seq, v.stage,
+                      v.comment, v.created_at
                FROM reviews v JOIN identities n ON n.id = v.reviewer_id
                WHERE v.project_id = c.project_id AND v.environment_id = c.environment_id
                  AND v.changeset_id = c.id AND v.changeset_hash = c.hash
@@ -664,6 +820,7 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Summary>, DbError> 
                     row.reviewer_id,
                     row.reviewer_name,
                     row.decision,
+                    row.stage,
                     row.seq,
                     row.comment,
                     row.reviewed_at,
@@ -701,12 +858,13 @@ fn latest_review(
         Option<Uuid>,
         Option<String>,
         Option<String>,
+        Option<String>,
         Option<i32>,
         Option<String>,
         Option<OffsetDateTime>,
     ),
 ) -> Option<Review> {
-    let (id, reviewer_id, reviewer_name, decision, seq, comment, created_at) = parts;
+    let (id, reviewer_id, reviewer_name, decision, stage, seq, comment, created_at) = parts;
     match (id, reviewer_id, decision, seq, comment, created_at) {
         (
             Some(id),
@@ -720,6 +878,7 @@ fn latest_review(
             reviewer_id,
             reviewer_name,
             decision,
+            stage,
             changeset_hash: hash.to_vec(),
             seq,
             comment,

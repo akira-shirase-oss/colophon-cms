@@ -64,7 +64,7 @@ async fn ready(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid, Uuid) {
         .await
         .expect("submitted");
     changesets::lock(&mut tx, changeset).await.expect("lock");
-    changesets::review(&mut tx, changeset, &[5; 32], "approve", "")
+    changesets::review(&mut tx, changeset, &[5; 32], "approve", "", None)
         .await
         .expect("approved");
     let review = changesets::reviews(&mut tx, changeset, None)
@@ -265,7 +265,7 @@ async fn approved(tx: &mut ProjectTransaction, pins: &[changesets::Pin]) -> (Uui
         .expect("created");
     changesets::submit(tx, changeset).await.expect("submitted");
     changesets::lock(tx, changeset).await.expect("lock");
-    changesets::review(tx, changeset, &[6; 32], "approve", "")
+    changesets::review(tx, changeset, &[6; 32], "approve", "", None)
         .await
         .expect("approved");
     let review = changesets::reviews(tx, changeset, None)

@@ -269,6 +269,10 @@ fn publishing() -> Router<AppState> {
             get(changesets::list).post(changesets::create),
         )
         .route(
+            "/api/v1/projects/{project}/environments/{environment}/review-stages",
+            get(changesets::stages_list).put(changesets::stages_replace),
+        )
+        .route(
             "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}",
             get(changesets::get),
         )

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT v.id, v.reviewer_id, i.display_name AS reviewer_name, v.decision,\n                  v.changeset_hash, v.seq, v.comment, v.created_at\n           FROM reviews v JOIN identities i ON i.id = v.reviewer_id\n           WHERE v.project_id = $1 AND v.environment_id = $2 AND v.changeset_id = $3\n             AND ($4::bytea IS NULL OR v.changeset_hash = $4)\n           ORDER BY v.seq DESC\n           LIMIT $5",
+  "query": "SELECT v.id, v.reviewer_id, i.display_name AS reviewer_name, v.decision, v.stage,\n                  v.changeset_hash, v.seq, v.comment, v.created_at\n           FROM reviews v JOIN identities i ON i.id = v.reviewer_id\n           WHERE v.project_id = $1 AND v.environment_id = $2 AND v.changeset_id = $3\n             AND ($4::bytea IS NULL OR v.changeset_hash = $4)\n           ORDER BY v.seq DESC\n           LIMIT $5",
   "describe": {
     "columns": [
       {
@@ -49,6 +49,17 @@
       },
       {
         "ordinal": 4,
+        "name": "stage",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reviews",
+            "name": "stage"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
         "name": "changeset_hash",
         "type_info": "Bytea",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "seq",
         "type_info": "Int4",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "comment",
         "type_info": "Text",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -106,11 +117,12 @@
       false,
       true,
       false,
+      true,
       false,
       false,
       false,
       false
     ]
   },
-  "hash": "8bb675bc38336729d74fdcec4e93b76895a69922858936fb78d8df5ef71c566a"
+  "hash": "615e51ecf84416f27b83d093b89e5f815dd6e541e3ab38768e8bedb3d0b4b353"
 }

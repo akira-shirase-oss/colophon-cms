@@ -80,7 +80,7 @@ async fn ready(db: &TestDb) -> Ready {
         .await
         .expect("submitted");
     changesets::lock(&mut tx, changeset).await.expect("lock");
-    changesets::review(&mut tx, changeset, &[5; 32], "approve", "")
+    changesets::review(&mut tx, changeset, &[5; 32], "approve", "", None)
         .await
         .expect("approved");
     let approval = changesets::reviews(&mut tx, changeset, None)

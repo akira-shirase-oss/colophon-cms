@@ -4,7 +4,7 @@
 //! publishing: their role's policy is the one checked.
 
 use colophon_domain::{
-    changeset::{self, Decision, Facts, Status},
+    changeset::{self, Decision, Status},
     policy::Action,
     schema::ContentType,
 };
@@ -106,43 +106,110 @@ pub enum Refusal {
 }
 
 /// Whether a project needs someone other than the submitter to approve (D-044). Projects can't
-/// require it yet: the rule is in place in the domain for when project settings can. The project
-/// view reports it, so the Studio's one-click publish follows the same rule as a publish, by hand
-/// or on a schedule (D-059).
+/// require it yet: the rule is in place in the domain for when project settings can — a stage
+/// of the review workflow can require it instead (D-104). The project view reports it, so the
+/// Studio's one-click publish follows the same rule as a publish, by hand or on a schedule
+/// (D-059).
 pub const REQUIRE_DIFFERENT_REVIEWER: bool = false;
 
+/// The fields `changeset::Facts` borrows, owned (D-104): built once from stored rows so a
+/// caller asking both the status and the per-stage decisions decides on the same data.
+struct Inputs {
+    hash: String,
+    submitted_by: Option<String>,
+    reviews: Vec<changeset::Review>,
+    stages: Vec<changeset::Stage>,
+}
+
+impl Inputs {
+    /// Converts `head`'s stored reviews on its current hash and the environment's `stages`
+    /// into the domain's types.
+    fn new(
+        head: &changesets::Head,
+        reviews: &[changesets::Review],
+        stages: &[changesets::Stage],
+    ) -> Self {
+        let hash = hex(&head.hash);
+        Self {
+            submitted_by: head.submitted_by.map(|id| id.to_string()),
+            reviews: reviews
+                .iter()
+                .filter(|review| review.changeset_hash == head.hash)
+                .filter_map(|review| {
+                    Some(changeset::Review {
+                        reviewer: review.reviewer_id.to_string(),
+                        decision: Decision::parse(&review.decision)?,
+                        hash: hash.clone(),
+                        stage: review.stage.clone(),
+                        seq: i64::from(review.seq),
+                        at: review.created_at.unix_timestamp(),
+                    })
+                })
+                .collect(),
+            stages: stages
+                .iter()
+                .map(|stage| changeset::Stage {
+                    key: stage.key.clone(),
+                    name: stage.name.clone(),
+                    different_reviewer: stage.different_reviewer,
+                })
+                .collect(),
+            hash,
+        }
+    }
+
+    /// The domain facts borrowing these inputs, for `edited` moved items at `now`.
+    fn facts(&self, edited: usize, now: i64, published: Option<i64>) -> changeset::Facts<'_> {
+        changeset::Facts {
+            hash: &self.hash,
+            submitted_by: self.submitted_by.as_deref(),
+            stale_items: edited,
+            reviews: &self.reviews,
+            now,
+            require_different_reviewer: REQUIRE_DIFFERENT_REVIEWER,
+            stages: &self.stages,
+            published,
+        }
+    }
+}
+
 /// The domain's decision for `head`, from its reviews (newest first), `edited` of its entries
-/// having moved on, at `now`.
+/// having moved on, the environment's `stages`, at `now`.
 pub fn status(
     head: &changesets::Head,
     edited: usize,
     reviews: &[changesets::Review],
+    stages: &[changesets::Stage],
     now: OffsetDateTime,
 ) -> Status {
-    let hash = hex(&head.hash);
-    let reviews: Vec<changeset::Review> = reviews
-        .iter()
-        .filter(|review| review.changeset_hash == head.hash)
-        .filter_map(|review| {
-            Some(changeset::Review {
-                reviewer: review.reviewer_id.to_string(),
-                decision: Decision::parse(&review.decision)?,
-                hash: hash.clone(),
-                seq: i64::from(review.seq),
-                at: review.created_at.unix_timestamp(),
-            })
+    let inputs = Inputs::new(head, reviews, stages);
+    changeset::status(&inputs.facts(edited, now.unix_timestamp(), head.published))
+}
+
+/// Each required stage's latest counting decision on `head`'s current hash, in stage order —
+/// the stage's key, or `None` for the implicit review of an environment without stages — as
+/// the stored review it is, `None` where nothing counts for it yet (D-104).
+pub fn counting<'a>(
+    head: &changesets::Head,
+    reviews: &'a [changesets::Review],
+    stages: &[changesets::Stage],
+) -> Vec<(Option<String>, Option<&'a changesets::Review>)> {
+    let inputs = Inputs::new(head, reviews, stages);
+    // `counting` reads none of stale items, now or publication; the real ones are unused.
+    let facts = inputs.facts(0, 0, head.published);
+    changeset::counting(&facts)
+        .into_iter()
+        .map(|(stage, decided)| {
+            (
+                stage.map(str::to_owned),
+                decided.and_then(|decided| {
+                    reviews
+                        .iter()
+                        .find(|stored| i64::from(stored.seq) == decided.seq)
+                }),
+            )
         })
-        .collect();
-    let submitter = head.submitted_by.map(|id| id.to_string());
-    changeset::status(&Facts {
-        hash: &hash,
-        submitted_by: submitter.as_deref(),
-        stale_items: edited,
-        reviews: &reviews,
-        now: now.unix_timestamp(),
-        require_different_reviewer: REQUIRE_DIFFERENT_REVIEWER,
-        published: head.published,
-    })
+        .collect()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -218,14 +285,20 @@ pub async fn publish(
     }
     let items = changesets::items(tx, head.id).await?;
     let reviews = changesets::reviews(tx, head.id, Some(&head.hash)).await?;
+    // The stage list this decides against can't move under it: a stage-list replace queues on
+    // the locks, so the release commits under the rules it was checked against (D-104).
+    let stages = changesets::stages_locked(tx).await?;
     let edited = items.iter().filter(|item| item.moved()).count();
-    let decided = status(&head, edited, &reviews, now);
-    if !matches!(decided, Status::Approved { .. }) {
-        return Ok(Err(Refusal::NotPublishable(decided)));
-    }
-    // Approved means the newest decision on this hash is an approval: the one it publishes under.
+    let decided = status(&head, edited, &reviews, &stages, now);
+    let seq = match decided {
+        Status::Approved { seq, .. } => seq,
+        other => return Ok(Err(Refusal::NotPublishable(other))),
+    };
+    // Approved means every required stage's latest decision on this hash is an approval; the
+    // recorded one that completed the set is the approval the release binds (D-104).
     let approval = reviews
-        .first()
+        .iter()
+        .find(|review| i64::from(review.seq) == seq)
         .ok_or(DbError::Corrupt("a changeset is approved without a review"))?;
     let mut generation = match base {
         Base::Seen(generation) => generation,

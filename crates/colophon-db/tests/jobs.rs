@@ -91,7 +91,7 @@ async fn release(db: &TestDb, alice: Uuid, project: Uuid, base: i64) {
         .await
         .expect("submitted");
     changesets::lock(&mut tx, changeset).await.expect("lock");
-    changesets::review(&mut tx, changeset, &[2; 32], "approve", "")
+    changesets::review(&mut tx, changeset, &[2; 32], "approve", "", None)
         .await
         .expect("approved");
     let review = changesets::reviews(&mut tx, changeset, None)

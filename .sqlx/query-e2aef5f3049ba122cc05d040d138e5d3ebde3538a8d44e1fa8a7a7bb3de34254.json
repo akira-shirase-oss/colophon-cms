@@ -1,0 +1,139 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT v.changeset_id, v.id, v.reviewer_id, i.display_name AS reviewer_name,\n                  v.decision, v.stage, v.changeset_hash, v.seq, v.comment, v.created_at\n           FROM (\n               SELECT v.*, row_number() OVER (PARTITION BY v.changeset_id\n                                              ORDER BY v.seq DESC) AS n\n               FROM reviews v\n               JOIN changesets c ON c.project_id = v.project_id\n                                AND c.environment_id = v.environment_id\n                                AND c.id = v.changeset_id AND v.changeset_hash = c.hash\n               WHERE v.project_id = $1 AND v.environment_id = $2 AND v.changeset_id = ANY($3)\n           ) v JOIN identities i ON i.id = v.reviewer_id\n           WHERE v.n <= $4\n           ORDER BY v.changeset_id, v.seq DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "changeset_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "reviews",
+            "name": "changeset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "reviews",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "reviewer_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "reviews",
+            "name": "reviewer_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "reviewer_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "identities",
+            "name": "display_name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "decision",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reviews",
+            "name": "decision"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "stage",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reviews",
+            "name": "stage"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "changeset_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "reviews",
+            "name": "changeset_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "seq",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "reviews",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "comment",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reviews",
+            "name": "comment"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "reviews",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "UuidArray",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e2aef5f3049ba122cc05d040d138e5d3ebde3538a8d44e1fa8a7a7bb3de34254"
+}
