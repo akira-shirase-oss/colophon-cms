@@ -258,10 +258,12 @@ reported as delayed, never on time; locale variants publish independently; comme
 - Query API: filters, sorting, pagination, field selection and reference population on drafts (for permitted callers)
   and on published content; Sanity-style perspectives (published, drafts, a release). Queries use only indexes the
   content type declares, and Studio and draft reads get the delivery cache's always-consistent rule (after Convex).
-  DX.1–DX.3 are built (D-103, branch `dx3-query-api`): the bounded document (`colophon_domain::query`), the
-  hash-bound cursor, and `POST {P}/collections/{collection}/entries/query` running it over current drafts with
-  `content.read` scoping and the canonical query echoed in every answer. Still to come: the published
-  perspective, `depth` reference expansion, and the delivery cache serving it.
+  DX.1–DX.4 are built (D-103, D-105): the bounded document (`colophon_domain::query`), the hash-bound cursor,
+  `POST {P}/collections/{collection}/entries/query` running it over current drafts with `content.read`
+  scoping, and `POST /content/v1/{project}/{environment}/{collection}/query` running the same document over
+  the published projection — the release `?generation=` pins — with the canonical query echoed and hashed into
+  every cache key. Still to come: `depth` reference expansion, and the perspectives the drafts and previews
+  take.
 - GraphQL over the same queries and permissions; OpenAPI for REST; the TypeScript SDK with generated types.
 - Webhooks by event (entry, release, media, schema), import from Strapi and Sanity exports with a dry run, export.
 - Extension points instead of plugins (D-057): custom field types as data, Studio panels in sandboxed iframes.

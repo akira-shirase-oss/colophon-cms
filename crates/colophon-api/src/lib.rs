@@ -329,6 +329,10 @@ fn publishing() -> Router<AppState> {
             get(delivery::list),
         )
         .route(
+            "/content/v1/{project}/{environment}/{collection}/query",
+            post(delivery::query),
+        )
+        .route(
             "/content/v1/{project}/{environment}/{collection}/{entry}",
             get(delivery::get),
         )

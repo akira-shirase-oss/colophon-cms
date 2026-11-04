@@ -2007,8 +2007,9 @@ impl QueriedView {
 }
 
 /// `content` — already narrowed to what the role may read — down to the `fields` the
-/// query selected: the selection can only narrow the answer, never widen it.
-fn narrow(content: &str, keep: &[String]) -> Result<String, ApiError> {
+/// query selected: the selection can only narrow the answer, never widen it. Delivery
+/// (`crate::delivery`) narrows a published copy the same way, without the role's pass.
+pub(crate) fn narrow(content: &str, keep: &[String]) -> Result<String, ApiError> {
     let mut object = serde_json::from_str::<serde_json::Map<String, Value>>(content)
         .map_err(ApiError::internal)?;
     object.retain(|field, _| keep.iter().any(|wanted| wanted == field));
@@ -2024,13 +2025,25 @@ struct QueryPage {
     applied: AppliedQuery,
 }
 
-/// The query that ran, as the answer echoes it.
+/// The query that ran, as the answer echoes it. The same `applied` a delivery query
+/// answers with (`crate::delivery::query`, DX.4).
 #[derive(Serialize)]
-struct AppliedQuery {
+pub(crate) struct AppliedQuery {
     /// The canonical JSON document, embedded as is.
     query: Box<RawValue>,
     /// `sha256:<64 hex>` of those bytes.
     query_hash: String,
+}
+
+impl AppliedQuery {
+    /// `applied` for `language`: the canonical document and its hash, the name every
+    /// cursor — and every delivery cache key — binds to.
+    pub(crate) fn of(language: &Document) -> Result<Self, ApiError> {
+        Ok(Self {
+            query: RawValue::from_string(language.canonical_json()).map_err(ApiError::internal)?,
+            query_hash: content_hash(&language.query_hash()),
+        })
+    }
 }
 
 /// `POST {P}/collections/{collection}/entries/query?cursor=` — the query language (D-103,
@@ -2055,12 +2068,7 @@ pub(crate) async fn query(
         .map(|token| language.after_cursor(token))
         .transpose()
         .map_err(ApiError::Invalid)?;
-    let applied = || {
-        Ok::<_, ApiError>(AppliedQuery {
-            query: RawValue::from_string(language.canonical_json()).map_err(ApiError::internal)?,
-            query_hash: content_hash(&language.query_hash()),
-        })
-    };
+    let applied = || AppliedQuery::of(&language);
     let by = match whose(&tx.policy, tx.identity, &path.collection, None, false, None)? {
         Whose::Anyone => None,
         Whose::Only(creator) => Some(creator),
