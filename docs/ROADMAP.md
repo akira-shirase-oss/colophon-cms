@@ -251,11 +251,14 @@ expired-approval scheduling).
   review names the stage it decides, and Settings' Review stages page edits the list under its ETag; the
   testbed's Review stages page and `perf/k6/stages.js` exercise the gated publish.
 - Live presence and collaboration (O-017); duplicate, bulk actions, saved views, the history slider.
-- Live queries, after Convex: the Studio's lists, drafts, changesets and receipts update as PostgreSQL commits, from one
-  listener per server fanned out to bounded sessions, every page read at one snapshot (COMPARISON.md). E3's backend
-  half is built (D-108, branch `e3-live-lists`, migration 0044): commit-time triggers `pg_notify` compact hints on
-  `colophon_events`, each API process holds one `LISTEN` connection that fans them out to `{P}/events` SSE streams
-  (per-credential/per-project/per-server bounds, resync-not-replay); the Studio's list wiring follows.
+- Live queries, after Convex: the Studio's lists, drafts, changesets and receipts update live as PostgreSQL commits,
+  from one listener per server fanned out to bounded sessions, every page read at one snapshot (COMPARISON.md). E3's
+  backend half is built (D-108, branch `e3-live-lists`, migration 0044): commit-time triggers `pg_notify` compact hints
+  on `colophon_events`, each API process holds one `LISTEN` connection that fans them out to `{P}/events` SSE streams
+  (per-credential/per-project/per-server bounds, resync-not-replay). The Studio's wiring is built too (branch
+  `e3-surfaces`): the project shell holds one stream and turns each hint's kind into the invalidations a fresh visit
+  would run, so a member's save lands in an owner's list without a reload or a poll — and a save on an entry being
+  edited stays a conflict, never a silent overwrite.
 - Visual preview: the site renders a draft through a short-lived capability (spec §06), with click-to-edit.
 
 **Proof gate:** two editors editing at once never lose an acknowledged edit; a schedule missed during downtime is

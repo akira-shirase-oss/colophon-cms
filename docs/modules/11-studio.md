@@ -86,6 +86,23 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   than the sender — for roles that may `schema.change`, under the list's ETag so a moved list is refused and offers
   the latest; every member reads it, so other roles see it without the controls. Tests:
   `tests/server/stages.spec.ts`, `tests/server/collaboration.spec.ts`.
+  Since step E3 (D-108, branch `e3-surfaces`): the project shell holds one `GET {P}/events` stream per open project
+  (`lib/live.ts`, `watchProject`, mounted in the project layout) and turns each `change` hint — a kind and a scope,
+  never content — into the query invalidations a fresh visit would run: entries, drafts, history, changesets, stages,
+  releases and their jobs and receipts, schedules, tasks, comments, migrations and their items, assets, members and
+  invitations, roles, tokens, destinations and the audit trail all move as PostgreSQL commits, without a reload or a
+  poll. A `resync` event and every reconnect invalidates every key in the project; the stream closes on teardown,
+  EventSource reopens it on its own, and a hidden tab that becomes visible resyncs (and reconnects if its stream
+  died). The polling the hints replace — releases and their deliveries, a release's receipt, a running migration's
+  plan and items, the schedule panel's due times, an upload waiting out quarantine — is gone; only a bounded fallback
+  backs the asset wait while a stream is down. There is still no co-editing, presence or cursor synchronization (spec
+  §01): a save on an entry being edited refreshes its read but leaves the form alone, and the next save opens the
+  conflict screen, never a silent overwrite. The role editor answers the same way: its form keeps editing the
+  version it opened while the page tracks the newest, so a version moved under it says "someone changed this role
+  while you were editing it" and loads the latest only when asked — and an untouched form or a read-only view
+  simply follows. Tests: `tests/server/live.spec.ts` (two contexts: a member's commit
+  lands in the owner's list; a moved draft refuses the stale save); the testbed's `/live` page and spec exercise the
+  stream through the real API, and `perf/k6/live.js` holds streams open under steady writes.
 - Finishing the Studio (branch `studio/dashboard`, 2026-10-27), slice by slice:
   - **Sign out from any screen** (`shell/AccountMenu.svelte`, in the project shell's header and the plain frame's):
     who is signed in, *Your work and projects*, *About Colophon* (which version this is, below), and *Sign out*, which calls `POST /auth/logout` and only then
@@ -272,7 +289,8 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   (shown to roles with `schema.change` anywhere, beside *Content types*) opens `…/migrations`: every plan with its
   state badge, entries done and in the way, and the versions it moves between. A plan's page
   (`…/migrations/{migration}`) says the collection, the definition it moves to (in the Technical details with the
-  plan's hash and its history), the progress the worker is driving — the page polls while a plan runs — and an
+  plan's hash and its history), the progress the worker is driving — `migrations` hints keep it moving while a plan
+  runs — and an
   outcome-filtered table of its items with each `needs_input` problem. *Resolve* on one opens a dialog holding the
   entry's document to fix; the page checks it's JSON, the server checks it against the target, and a refusal is
   said in the dialog. *Approve plan* and *Apply* send the hash on screen (a plan that moved says so and shows the

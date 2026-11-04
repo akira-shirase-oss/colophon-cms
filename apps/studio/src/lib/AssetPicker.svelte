@@ -2,8 +2,9 @@
   Choosing uploads for an `asset` field (media M.2, D-095): "Choose image" opens a panel over the
   project's uploads — usable images show their picture from the media origin, anything still in
   quarantine or rejected shows its state, because a draft may name either (only publishing needs
-  usable). Upload inside the panel sends the file into quarantine and polls until the worker
-  settles it; a usable result is picked at once. A chosen upload shows as its thumbnail and name
+  usable). Upload inside the panel sends the file into quarantine and waits on the library,
+  which the worker's `assets` hints refresh (D-108), until the worker settles it; a usable
+  result is picked at once. A chosen upload shows as its thumbnail and name
   with Change and Remove; a list shows chips that can be moved up and down and removed, up to its
   maximum, never the same upload twice. The server decides: an id that names no upload is refused,
   and marked on its chip.
@@ -14,7 +15,7 @@
 	import ImageIcon from '@lucide/svelte/icons/image';
 	import TrashIcon from '@lucide/svelte/icons/trash-2';
 	import XIcon from '@lucide/svelte/icons/x';
-	import { createQueries, createQuery } from '@tanstack/svelte-query';
+	import { createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import * as AlertDialog from '@colophon/ui/ui/alert-dialog';
 	import { Button } from '@colophon/ui/ui/button';
 	import { ApiError, assetUrl, deleteAsset, getAsset, listAssets, newKey, uploadAsset, type Asset, type FieldDefinition } from './api.ts';
@@ -44,6 +45,7 @@
 		onchange?: () => void;
 	} = $props();
 
+	const queryClient = useQueryClient();
 	const chosen = $derived(Array.isArray(value) ? value : value === '' ? [] : [value]);
 	const full = $derived(field.many ? chosen.length >= field.max : chosen.length >= 1);
 
@@ -116,6 +118,30 @@
 		}
 	}
 
+	/** Waits for upload `id` to leave quarantine, watching the open library's reads: the
+	 *  worker's commit arrives as an `assets` hint (D-108) which refreshes it — the 10-second
+	 *  timer is only a backstop for the stream being down, and only then does this read again
+	 *  itself. `null` when it hasn't settled within the half minute. */
+	async function settled(id: string): Promise<Asset | null> {
+		const deadline = Date.now() + 30_000;
+		while (Date.now() < deadline) {
+			const found = queryClient.getQueryData<Asset[]>(['assets', project])?.find((asset) => asset.id === id);
+			if (found !== undefined && found.state !== 'quarantined') return found;
+			const heard = await new Promise<boolean>((resolve) => {
+				const timer = setTimeout(() => resolve(false), Math.min(10_000, Math.max(1, deadline - Date.now())));
+				const off = queryClient.getQueryCache().subscribe((event) => {
+					if (event.type === 'updated' && event.query.queryKey[0] === 'assets' && event.query.queryKey[1] === project) {
+						clearTimeout(timer);
+						off();
+						resolve(true);
+					}
+				});
+			});
+			if (!heard) await library.refetch();
+		}
+		return null;
+	}
+
 	/** Sends the picked file into quarantine and waits for the worker's verdict; a usable
 	 *  result is chosen at once. */
 	async function upload(file: File) {
@@ -123,14 +149,10 @@
 		uploading = file.name;
 		try {
 			const made = await uploadAsset(project, file);
-			const deadline = Date.now() + 15_000;
-			let asset = made;
-			while (asset.state === 'quarantined') {
-				if (Date.now() > deadline) break;
-				await new Promise((wait) => setTimeout(wait, 300));
-				asset = await getAsset(project, asset.id);
-			}
 			await library.refetch();
+			// Quarantine settles on the worker: wait on the library's reads (live-refreshed),
+			// not on polling this one record.
+			const asset = made.state === 'quarantined' ? ((await settled(made.id)) ?? made) : made;
 			if (asset.state === 'usable') {
 				choose(asset.id);
 			} else if (asset.state === 'rejected') {

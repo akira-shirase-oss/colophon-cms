@@ -3,7 +3,7 @@
 // live is told another release came first, then publishes on top of it.
 
 import { type Page, expect, test } from '@playwright/test';
-import { newProject, signIn, violations } from './helpers.ts';
+import { env, newProject, signIn, violations } from './helpers.ts';
 
 /** An approved changeset of one new article, made through the API; the changeset page's path. */
 async function approvedChangeset(page: Page, project: string, title: string): Promise<string> {
@@ -66,12 +66,32 @@ test('an approved changeset is published as release 1, and a stale tab is told a
 	await other.goto(third);
 	await expect(status(other)).toHaveAttribute('data-state', 'approved');
 
+	// Freeze the other tab's latest-release read where it stands — the tab a hint never
+	// reaches (E3's stream otherwise refreshes it before the click can carry the old base).
+	const frozen = await other.evaluate(async (path) => {
+		const response = await fetch(path);
+		return { generation: response.headers.get('colophon-generation'), body: await response.text() };
+	}, `${env(project)}/releases`);
+	await other.route(`**/environments/production/releases*`, (route) =>
+		route.request().method() === 'GET'
+			? route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					headers: { 'colophon-generation': frozen.generation ?? '1' },
+					body: frozen.body
+				})
+			: route.continue()
+	);
+
 	await page.goto(second);
 	await page.getByRole('button', { name: 'Publish', exact: true }).click();
 	await expect(page.getByTestId('release-link')).toHaveText('release 2');
 
 	await other.getByRole('button', { name: 'Publish', exact: true }).click();
 	await expect(other.getByTestId('changeset-notice')).toContainText('Another release was published first');
+	await expect(status(other)).toHaveAttribute('data-state', 'approved');
+	await other.unroute(`**/environments/production/releases*`);
+	await other.reload();
 	await expect(status(other)).toHaveAttribute('data-state', 'approved');
 	await other.getByRole('button', { name: 'Publish', exact: true }).click();
 	await expect(other.getByTestId('release-link')).toHaveText('release 3');

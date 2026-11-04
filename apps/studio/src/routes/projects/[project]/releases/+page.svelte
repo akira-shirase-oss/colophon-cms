@@ -9,7 +9,7 @@
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Badge } from '@colophon/ui/ui/badge';
@@ -23,12 +23,11 @@
 	import TechnicalDetails from '#lib/shell/TechnicalDetails.svelte';
 
 	const project = $derived(page.params.project ?? '');
-	// Schedules: upcoming first; look again while one is due within a minute, to show how it went.
+	// Schedules: upcoming first. A schedule running commits a release, and the live stream's
+	// `schedules` and `releases` hints land here (D-108) — nothing to poll for.
 	const schedules = createQuery(() => ({
 		queryKey: ['schedules', project],
-		queryFn: () => listSchedules(project),
-		refetchInterval: (query) =>
-			(query.state.data ?? []).some((item) => item.state === 'scheduled' && Date.parse(item.run_at) - Date.now() < 60_000) ? 2_000 : false
+		queryFn: () => listSchedules(project)
 	}));
 	const upcoming = $derived(
 		(schedules.data ?? []).filter((item) => item.state === 'scheduled').sort((one, other) => Date.parse(one.run_at) - Date.parse(other.run_at))
@@ -37,35 +36,18 @@
 	const reads = (item: Schedule) =>
 		new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: item.time_zone }).format(new Date(item.run_at));
 
-	// A schedule that just published made a release this page hasn't read yet: read it now.
-	const queryClient = useQueryClient();
-	let newest: number | null = null;
-	$effect(() => {
-		const latest = Math.max(0, ...(schedules.data ?? []).map((item) => item.generation ?? 0));
-		if (newest !== null && latest > newest) {
-			void queryClient.invalidateQueries({ queryKey: ['releases', project] });
-			void queryClient.invalidateQueries({ queryKey: ['jobs', project] });
-		}
-		newest = latest;
-	});
-	/** Whether a schedule publishes within the minute: its release is about to appear. */
-	const dueSoon = () => (schedules.data ?? []).some((item) => item.state === 'scheduled' && Date.parse(item.run_at) - Date.now() < 60_000);
-
 	const types = createQuery(() => typesQuery(project));
 	const firstType = $derived(types.data?.find((type) => type.slug !== 'articles') ?? types.data?.[0]);
-	// A CDN purge and a probe settle on their own: look again while one is pending.
+	// A CDN purge and a probe settle on their own: the worker's commits arrive as `releases`
+	// hints (D-108), which cover this and the jobs below — nothing to poll for.
 	const releases = createQuery(() => ({
 		queryKey: ['releases', project],
-		queryFn: () => listReleases(project),
-		refetchInterval: (query) =>
-			query.state.data?.releases.some((release) => release.purge === 'pending' || release.label === 'pending') || dueSoon() ? 2_000 : false
+		queryFn: () => listReleases(project)
 	}));
-	// Deliveries settle on their own; look again every few seconds while any is still going.
+	// Deliveries settle on their own; the `releases` kind carries job commits too.
 	const jobs = createQuery(() => ({
 		queryKey: ['jobs', project],
-		queryFn: () => listJobs(project),
-		refetchInterval: (query) =>
-			(query.state.data ?? []).some((job) => ['pending', 'running', 'retrying'].includes(job.status)) ? 2_000 : false
+		queryFn: () => listJobs(project)
 	}));
 
 	const byRelease = $derived(

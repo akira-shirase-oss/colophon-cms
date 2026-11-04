@@ -43,9 +43,9 @@
 	const queryClient = useQueryClient();
 	const plan = createQuery(() => ({
 		queryKey: ['migration', project, id],
-		queryFn: () => getMigration(project, id),
-		// While a run is under way the worker drives it: follow along.
-		refetchInterval: (query) => (query.state.data?.state === 'running' ? 1000 : false)
+		queryFn: () => getMigration(project, id)
+		// While a run is under way the worker drives it: its commits arrive as `migrations`
+		// hints (D-108), which refresh this and the items below — nothing to poll for.
 	}));
 	const mine = createQuery(() => projectQuery(project));
 	const types = createQuery(() => typesQuery(project));
@@ -66,8 +66,7 @@
 		queryKey: ['migration-items', project, id, outcome ?? 'all'],
 		queryFn: ({ pageParam }: { pageParam: string | null }) => migrationItems(project, id, outcome, pageParam ?? undefined),
 		initialPageParam: null as string | null,
-		getNextPageParam: (last: { next_cursor: string | null }) => last.next_cursor,
-		refetchInterval: plan.data?.state === 'running' ? 1000 : false
+		getNextPageParam: (last: { next_cursor: string | null }) => last.next_cursor
 	}));
 	const loaded = $derived((items.data?.pages ?? []).flatMap((one) => one.data));
 
