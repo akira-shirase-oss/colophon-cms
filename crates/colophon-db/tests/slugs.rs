@@ -81,7 +81,7 @@ async fn publish(tx: &mut ProjectTransaction, entries: &[Uuid]) -> Result<Commit
     changesets::create(tx, changeset, "Slugs", &pins, &[9; 32], None).await?;
     changesets::submit(tx, changeset).await?;
     changesets::lock(tx, changeset).await?;
-    changesets::review(tx, changeset, &[9; 32], "approve", "").await?;
+    changesets::review(tx, changeset, &[9; 32], "approve", "", None).await?;
     let review = changesets::reviews(tx, changeset, None).await?[0].id;
     let (_, base) = releases::generation(tx).await?;
     releases::commit(tx, base, changeset, &[9; 32], review, HOUR).await

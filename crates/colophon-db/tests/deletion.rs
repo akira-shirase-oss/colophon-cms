@@ -138,7 +138,7 @@ async fn approved(tx: &mut ProjectTransaction, pins: &[changesets::Pin]) -> (Uui
         .expect("changeset");
     changesets::submit(tx, changeset).await.expect("submit");
     changesets::lock(tx, changeset).await.expect("lock");
-    changesets::review(tx, changeset, &[9; 32], "approve", "")
+    changesets::review(tx, changeset, &[9; 32], "approve", "", None)
         .await
         .expect("review");
     let review = changesets::reviews(tx, changeset, None)

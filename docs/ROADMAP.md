@@ -242,7 +242,11 @@ expired-approval scheduling).
   are built too (branch `e1-surfaces`): a Comments tab on the entry editor binds the version on screen and
   answers or reopens comments on their etags, and a project Tasks page lists, makes and edits them — nobody
   sent as `assignee: null`; the testbed's Collaboration page and `perf/k6/collaboration.js` exercise the loop.
-  E2 builds the review stages.
+  E2 builds the review stages (D-104, branch `e2-stages`, migration 0043): an environment may name an
+  ordered list of them (`GET`/`PUT {P}/review-stages`, `schema.change`-gated, `ETag`'d, idempotent and
+  audited), each needs an approval on the changeset's current hash — in any order — for it to publish, a
+  request for changes at any stage blocks it, a stage's `different_reviewer` narrows who may approve, and
+  an environment with no list keeps the single implicit review exactly as before.
 - Live presence and collaboration (O-017); duplicate, bulk actions, saved views, the history slider.
 - Live queries, after Convex: the Studio's lists, drafts, changesets and receipts update as PostgreSQL commits, from one
   listener per server fanned out to bounded sessions, every page read at one snapshot (COMPARISON.md).

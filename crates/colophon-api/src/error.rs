@@ -343,6 +343,15 @@ pub enum ApiError {
         /// Its current hash, as `sha256:<hex>`.
         current: String,
     },
+    /// A review-stage change named the `ETag` of a list that is no longer current (D-104). The
+    /// response's `ETag` names the list now.
+    #[error(
+        "the review stages changed since you loaded them; load the list again and check what changed"
+    )]
+    StaleStages {
+        /// The current list's `ETag`, as `sha256:<hex>`.
+        current: String,
+    },
     /// A release was prepared on a generation the environment has moved past: another release
     /// committed first. The response's `Colophon-Generation` header names the current one
     /// (D-045).
@@ -638,6 +647,7 @@ impl ApiError {
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
             | Self::StalePlan { .. }
+            | Self::StaleStages { .. }
             | Self::GenerationMoved { .. }
             | Self::StaleRole { .. }
             | Self::RoleInUse { .. }
@@ -676,6 +686,7 @@ impl ApiError {
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
             | Self::StalePlan { .. }
+            | Self::StaleStages { .. }
             | Self::GenerationMoved { .. }
             | Self::StaleRole { .. }
             | Self::RoleInUse { .. }
@@ -704,6 +715,7 @@ impl ApiError {
             Self::StaleVersion { .. } => Some(ErrorDetails::new("stale_version", "")),
             Self::StaleChangeset { .. } => Some(ErrorDetails::new("stale_changeset", "")),
             Self::StalePlan { .. } => Some(ErrorDetails::new("plan_moved", "")),
+            Self::StaleStages { .. } => Some(ErrorDetails::new("stale_stages", "")),
             Self::GenerationMoved { .. } => Some(ErrorDetails::new("generation_moved", "")),
             Self::StaleRole { .. } => Some(ErrorDetails::new("stale_role", "")),
             Self::RoleInUse { .. } => Some(ErrorDetails::new("role_in_use", "")),
@@ -806,7 +818,9 @@ impl IntoResponse for ApiError {
                     response.headers_mut().insert(header::ETAG, etag);
                 }
             }
-            Self::StaleChangeset { current } | Self::StalePlan { current } => {
+            Self::StaleChangeset { current }
+            | Self::StalePlan { current }
+            | Self::StaleStages { current } => {
                 if let Ok(etag) = HeaderValue::from_str(&format!("\"{current}\"")) {
                     response.headers_mut().insert(header::ETAG, etag);
                 }
