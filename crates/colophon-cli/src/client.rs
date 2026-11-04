@@ -17,6 +17,9 @@ pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) struct Failure {
     pub(crate) exit: Exit,
     pub(crate) message: String,
+    /// The API's `{"error": {…}}` object, kept whole so `--json` can report the refusal
+    /// exactly — `code`, `message`, `details` and `request_id` (D-119).
+    pub(crate) refusal: Option<Value>,
 }
 
 impl Failure {
@@ -24,7 +27,16 @@ impl Failure {
         Self {
             exit,
             message: message.into(),
+            refusal: None,
         }
+    }
+
+    /// The `error` object's machine form: the API's own envelope when it sent one, else
+    /// `code` naming the exit class and the message a person would read.
+    pub(crate) fn envelope(&self) -> Value {
+        self.refusal
+            .clone()
+            .unwrap_or_else(|| crate::out::cli_error(self.exit.class(), &self.message))
     }
 }
 
@@ -111,10 +123,11 @@ impl Client {
             .filter(|pointer| !pointer.is_empty())
             .map(|pointer| format!(" (at {pointer})"))
             .unwrap_or_default();
-        Err(Failure::new(
-            exit_for(status),
-            format!("{message}{detail} [HTTP {}]", status.as_u16()),
-        ))
+        Err(Failure {
+            exit: exit_for(status),
+            message: format!("{message}{detail} [HTTP {}]", status.as_u16()),
+            refusal: body.get("error").filter(|error| error.is_object()).cloned(),
+        })
     }
 }
 

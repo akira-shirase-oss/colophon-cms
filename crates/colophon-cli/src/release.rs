@@ -8,6 +8,7 @@ use serde_json::json;
 
 use crate::{
     client::Failure,
+    out::{Format, Out},
     scope::{self, Scope},
 };
 
@@ -17,7 +18,7 @@ fn releases_path(project: &str, scope: &Scope<'_>) -> String {
 
 /// Runs `colophon release list`, newest first. The `colophon-generation` answer header is
 /// the environment's current generation and is reported beside the page.
-pub(crate) async fn list(scope: &Scope<'_>, json: bool) -> Result<(), Failure> {
+pub(crate) async fn list(scope: &Scope<'_>, out: Out) -> Result<(), Failure> {
     let (client, project) = scope::open(scope).await?;
     let reply = client
         .send(Method::GET, &releases_path(&project, scope), None, &[])
@@ -28,26 +29,30 @@ pub(crate) async fn list(scope: &Scope<'_>, json: bool) -> Result<(), Failure> {
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
     let rows = reply.body["data"].as_array().cloned().unwrap_or_default();
-    if json {
-        println!(
-            "{}",
-            json!({
-                "version": 1, "command": "release list",
-                "generation": generation,
-                "releases": rows,
-            })
-        );
-    } else if rows.is_empty() {
-        println!("Nothing has been published yet.");
-    } else {
-        for row in &rows {
-            println!(
-                "generation {}  {}  {}  {}",
-                row["generation"].as_i64().unwrap_or_default(),
-                row["published_at"].as_str().unwrap_or(""),
-                row["label"].as_str().unwrap_or(""),
-                row["title"].as_str().unwrap_or("")
-            );
+    match out.format {
+        Format::Json => out.print_data(&json!({
+            "generation": generation,
+            "releases": rows,
+        })),
+        Format::Jsonl => {
+            for row in &rows {
+                out.print_item(row);
+            }
+        }
+        Format::Text => {
+            if rows.is_empty() {
+                println!("Nothing has been published yet.");
+            } else {
+                for row in &rows {
+                    println!(
+                        "generation {}  {}  {}  {}",
+                        row["generation"].as_i64().unwrap_or_default(),
+                        row["published_at"].as_str().unwrap_or(""),
+                        row["label"].as_str().unwrap_or(""),
+                        row["title"].as_str().unwrap_or("")
+                    );
+                }
+            }
         }
     }
     Ok(())
@@ -55,7 +60,7 @@ pub(crate) async fn list(scope: &Scope<'_>, json: bool) -> Result<(), Failure> {
 
 /// Runs `colophon release show GENERATION`: the release and its receipt — deliveries per
 /// destination and the probes' observations.
-pub(crate) async fn show(scope: &Scope<'_>, generation: u64, json: bool) -> Result<(), Failure> {
+pub(crate) async fn show(scope: &Scope<'_>, generation: u64, out: Out) -> Result<(), Failure> {
     let (client, project) = scope::open(scope).await?;
     let release = client
         .send(
@@ -67,11 +72,8 @@ pub(crate) async fn show(scope: &Scope<'_>, generation: u64, json: bool) -> Resu
         .await?
         .body["data"]
         .clone();
-    if json {
-        println!(
-            "{}",
-            json!({ "version": 1, "command": "release show", "release": release })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({ "release": release }));
     } else {
         println!(
             "Release {} — {}",

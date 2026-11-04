@@ -423,9 +423,15 @@ plus the token-privilege and MCP refusal surfaces, every call classified `refuse
 against typed-refusal oracles and owner-read end state, `COLOPHON_EVAL_TRIALS` repetitions and the
 `UNAUTHORIZED: 0` gate; `scripts/check.sh` runs it at three trials, `COLOPHON_EVAL_RESULTS` stores the
 artifact) ·
+the CLI's machine contract and the MCP entry point inside it (built: P5.5, D-119 — every command's `--json` is
+one versioned `{"version", "command", "data"|"error"}` envelope carrying API refusals whole, the seven list
+commands stream one envelope per item on `--jsonl` following `next_cursor` within a 1,000-page bound, and
+`colophon mcp` links the `colophon-mcp` library into the binary: same configuration, protocol, eighteen safe
+tools and refusal boundary, proved end to end in `tests/cli.rs` including a live `initialize`/`tools/list`
+session and a 403 arriving `missing_permission`-whole on stdout) ·
 not built: remote MCP with its
-authorization, the `requests`-kind quota consumer and provider `tokens`/`cost` budgets, the CLI's full JSON
-contract and a `colophon mcp` subcommand, L08. The proof gate is not met — X12's resume proof is in
+authorization, the `requests`-kind quota consumer and provider `tokens`/`cost` budgets, `content import` and
+`export`, L08. The proof gate is not met — X12's resume proof is in
 `tests/bulk.rs`, the eval gate wants a stored green run, and L08 remains.
 
 ## P6: Operate it (≈ spec M5)

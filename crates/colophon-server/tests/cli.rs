@@ -1,6 +1,8 @@
 //! The command line against the real server (step 1.6): `colophon login` approved in a browser
 //! session, then `whoami`, `content create` and `content list` creating and reading the same
 //! records the Studio does, every exit code of the CLI contract, and `logout` revoking the token.
+//! The D-119 machine contract runs here too: the `data`/`error` envelope `--json` and `--jsonl`
+//! print, and `colophon mcp` serving the standalone MCP server over its own stdio.
 //! Needs the stack, migrations, and the `colophon` binary next to the server's
 //! (`cargo test --workspace` builds both).
 #![cfg(unix)]
@@ -16,11 +18,17 @@ use std::{
     os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    time::Duration,
 };
 
-use common::{ORIGIN, Server, Session, call, sign_in, unique_slug};
+use common::{ORIGIN, Server, Session, call, create_article, join, project, sign_in, unique_slug};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
+use tokio::{
+    io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader as LinesBuf, Lines},
+    process::{ChildStdin, ChildStdout},
+    time::timeout,
+};
 
 /// The CLI binary, built alongside the server's.
 fn colophon_binary() -> PathBuf {
@@ -163,7 +171,7 @@ async fn the_cli_signs_in_through_the_browser_and_creates_the_same_records() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(json_out(&output)["status"], "signed_in");
+    assert_eq!(json_out(&output)["data"]["status"], "signed_in");
     let credentials = config.join("credentials.json");
     let mode = std::fs::metadata(&credentials)
         .expect("written")
@@ -172,7 +180,7 @@ async fn the_cli_signs_in_through_the_browser_and_creates_the_same_records() {
     assert_eq!(mode & 0o777, 0o600, "only the owner can read the token");
 
     let whoami = colophon(&config, &["whoami", "--json"]);
-    assert_eq!(json_out(&whoami)["me"]["display_name"], "Dev Owner");
+    assert_eq!(json_out(&whoami)["data"]["me"]["display_name"], "Dev Owner");
 
     // Create an article by slug, then read the very same record through the API.
     let create = colophon(
@@ -195,9 +203,12 @@ async fn the_cli_signs_in_through_the_browser_and_creates_the_same_records() {
         String::from_utf8_lossy(&create.stderr)
     );
     let outcome = json_out(&create);
-    assert_eq!(outcome["status"], "created");
-    let id = outcome["entry"]["id"].as_str().expect("an id").to_owned();
-    let key = outcome["idempotency_key"]
+    assert_eq!(outcome["data"]["status"], "created");
+    let id = outcome["data"]["entry"]["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let key = outcome["data"]["idempotency_key"]
         .as_str()
         .expect("a key")
         .to_owned();
@@ -235,14 +246,17 @@ async fn the_cli_signs_in_through_the_browser_and_creates_the_same_records() {
     );
     let replay = json_out(&again);
     assert_eq!(
-        (replay["status"].as_str(), replay["entry"]["id"].as_str()),
+        (
+            replay["data"]["status"].as_str(),
+            replay["data"]["entry"]["id"].as_str()
+        ),
         (Some("replayed"), Some(id.as_str()))
     );
     let list = colophon(
         &config,
         &["content", "list", "articles", "--project", &slug, "--json"],
     );
-    let entries = json_out(&list)["entries"]
+    let entries = json_out(&list)["data"]["entries"]
         .as_array()
         .cloned()
         .expect("a list");
@@ -389,6 +403,16 @@ async fn the_new_commands_all_have_help_text() {
         let text = String::from_utf8_lossy(&help.stdout);
         assert!(text.contains("Usage:"), "{args:?}: {text}");
     }
+    // A top-level command too — it takes no family prefix.
+    let help = colophon(&config, &["mcp", "--help"]);
+    assert_eq!(
+        help.status.code(),
+        Some(0),
+        "mcp: {}",
+        String::from_utf8_lossy(&help.stderr)
+    );
+    let text = String::from_utf8_lossy(&help.stdout);
+    assert!(text.contains("Usage:"), "mcp: {text}");
 }
 
 /// A real `content query` round trip: posts created through the CLI are found by a filtered,
@@ -497,8 +521,8 @@ async fn content_query_runs_a_document_against_the_cli_s_own_entries() {
     );
     let page = json_out(&first);
     assert_eq!(page["command"], "content query");
-    assert_eq!(page["collection"], "posts");
-    let entries = page["entries"].as_array().expect("a page");
+    assert_eq!(page["data"]["collection"], "posts");
+    let entries = page["data"]["entries"].as_array().expect("a page");
     assert_eq!(entries.len(), 1, "{page}");
     assert_eq!(
         entries[0]["revision"]["title"].as_str(),
@@ -506,12 +530,12 @@ async fn content_query_runs_a_document_against_the_cli_s_own_entries() {
         "the 5 first, descending"
     );
     assert!(
-        page["applied"]["query_hash"]
+        page["data"]["applied"]["query_hash"]
             .as_str()
             .is_some_and(|hash| hash.starts_with("sha256:")),
         "the canonical query is echoed with its hash: {page}"
     );
-    let cursor = page["next_cursor"]
+    let cursor = page["data"]["next_cursor"]
         .as_str()
         .expect("a page boundary")
         .to_owned();
@@ -539,7 +563,7 @@ async fn content_query_runs_a_document_against_the_cli_s_own_entries() {
         String::from_utf8_lossy(&second.stderr)
     );
     let page = json_out(&second);
-    let entries = page["entries"].as_array().expect("a page");
+    let entries = page["data"]["entries"].as_array().expect("a page");
     assert_eq!(entries.len(), 1, "{page}");
     assert_eq!(entries[0]["revision"]["title"].as_str(), Some("Gamma news"));
 
@@ -583,4 +607,310 @@ async fn content_query_runs_a_document_against_the_cli_s_own_entries() {
     assert_eq!(doubled.status.code(), Some(2), "limit is said once");
 
     let _cleanup = std::fs::remove_dir_all(&config);
+}
+
+/// The output contract end to end (D-119): `--json` wraps its result in the versioned
+/// `data` envelope, `--jsonl` prints one envelope per entry across every page of the
+/// list, and a refusal reaches stdout as the API's own `error` object — `code`,
+/// `details` and `request_id` whole — while stderr still says `error: …` for a person.
+/// Nothing a machine reads carries an ANSI escape.
+#[tokio::test]
+#[ignore = "needs the stack, migrations and the colophon binary"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story, told in order: a reader, three notes, the envelope and the refusal"
+)]
+async fn the_machine_contract_envelopes_results_and_streams_items() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let guest = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+
+    // A reader of articles, and nothing else.
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/roles"),
+        Some(&json!({
+            "key": "reader",
+            "name": "Reader",
+            "permissions": [{"action": "content.read", "subject": "articles"}]
+        })),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    join(&owner, &guest, &project, "reader").await;
+
+    let mut ids = Vec::new();
+    for title in ["First note", "Second note", "Third note"] {
+        ids.push(create_article(&owner, &project, title).await);
+    }
+
+    let config = std::env::temp_dir().join(format!("colophon-cli-{}", uuid::Uuid::now_v7()));
+    let output = login(&config, &guest).await;
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // --json: exactly one object; the page is `data`.
+    let list = colophon(
+        &config,
+        &[
+            "content",
+            "list",
+            "articles",
+            "--project",
+            &project,
+            "--json",
+        ],
+    );
+    assert_eq!(
+        list.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let page = json_out(&list);
+    assert_eq!(page["version"], 2);
+    assert_eq!(page["command"], "content list");
+    assert_eq!(page["data"]["collection"], "articles");
+    assert_eq!(
+        page["data"]["entries"].as_array().expect("entries").len(),
+        3
+    );
+    assert!(page["data"]["next_cursor"].is_null(), "{page}");
+    assert!(
+        !String::from_utf8_lossy(&list.stdout).contains('\u{1b}'),
+        "machine output never carries an ANSI escape"
+    );
+
+    // --jsonl: one object per entry, pages of two followed to the end.
+    let stream = colophon(
+        &config,
+        &[
+            "content",
+            "list",
+            "articles",
+            "--project",
+            &project,
+            "--jsonl",
+            "--limit",
+            "2",
+        ],
+    );
+    assert_eq!(
+        stream.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&stream.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&stream.stdout);
+    assert!(!stdout.contains('\u{1b}'), "no ANSI in the stream");
+    let mut seen = Vec::new();
+    for line in stdout.lines() {
+        let envelope: Value = serde_json::from_str(line).expect("each line is one JSON object");
+        assert_eq!(envelope["version"], 2, "{envelope}");
+        assert_eq!(envelope["command"], "content list", "{envelope}");
+        seen.push(envelope["data"]["id"].as_str().expect("an id").to_owned());
+    }
+    ids.sort();
+    seen.sort();
+    assert_eq!(seen, ids, "every entry streamed exactly once");
+
+    // A refusal is the API's own error object on stdout, exit 3; stderr carries the
+    // same failure in words, as a text run's would.
+    let denied = colophon(
+        &config,
+        &[
+            "content",
+            "create",
+            "articles",
+            "--project",
+            &project,
+            "--data",
+            &article("Not mine to write"),
+            "--json",
+        ],
+    );
+    assert_eq!(
+        denied.status.code(),
+        Some(3),
+        "{}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
+    let envelope = json_out(&denied);
+    assert_eq!(envelope["version"], 2);
+    assert_eq!(envelope["command"], "content create");
+    assert_eq!(envelope["error"]["code"], "forbidden", "{envelope}");
+    assert_eq!(
+        envelope["error"]["details"]["reason"], "missing_permission",
+        "{envelope}"
+    );
+    assert_eq!(
+        envelope["error"]["details"]["permission"], "content.create",
+        "{envelope}"
+    );
+    assert!(
+        envelope["error"]["request_id"].is_string(),
+        "the API's request id travels verbatim: {envelope}"
+    );
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("error:"),
+        "stderr still says it in words: {}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
+
+    // --json and --jsonl pick one format; together they refuse before anything runs.
+    let both = colophon(
+        &config,
+        &[
+            "content",
+            "list",
+            "articles",
+            "--project",
+            &project,
+            "--json",
+            "--jsonl",
+        ],
+    );
+    assert_eq!(both.status.code(), Some(2), "one format, not two");
+    assert!(both.stdout.is_empty(), "a usage refusal stays off stdout");
+
+    let _cleanup = std::fs::remove_dir_all(&config);
+}
+
+/// Writes one JSON-RPC message to `stdin`, as an agent host does.
+async fn mcp_send(stdin: &mut ChildStdin, message: &Value) {
+    let mut line = message.to_string();
+    line.push('\n');
+    stdin.write_all(line.as_bytes()).await.expect("write");
+    stdin.flush().await.expect("flush");
+}
+
+/// Reads lines until the response to `id` arrives; the message.
+async fn mcp_answer(lines: &mut Lines<LinesBuf<ChildStdout>>, id: i64) -> Value {
+    loop {
+        let line = timeout(Duration::from_secs(60), lines.next_line())
+            .await
+            .expect("an answer within a minute")
+            .expect("read")
+            .expect("a line before the end");
+        let message: Value = serde_json::from_str(&line).expect("each line is JSON");
+        if message["id"] == id {
+            return message;
+        }
+    }
+}
+
+/// `colophon mcp` is the standalone `colophon-mcp` server, linked rather than spawned
+/// (D-106, D-119): the same three environment variables configure it, `initialize`
+/// and `tools/list` answer over its own stdin and stdout with the same protocol and
+/// the same eighteen safe tools — and closing stdin ends it, exit 0.
+#[tokio::test]
+#[ignore = "needs the stack, migrations and the colophon binary"]
+async fn colophon_mcp_serves_the_stdio_server_in_process() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/tokens"),
+        Some(&json!({"name": "cli-mcp", "kind": "full-access", "expires_in_days": 1})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let secret = made.body["data"]["secret"]
+        .as_str()
+        .expect("a secret")
+        .to_owned();
+
+    let mut child = tokio::process::Command::new(colophon_binary())
+        .arg("mcp")
+        .env_clear()
+        .env("COLOPHON_SERVER", ORIGIN)
+        .env("COLOPHON_TOKEN", &secret)
+        .env("COLOPHON_PROJECT", &project)
+        .env("COLOPHON_MCP_LOG", "warn")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("colophon mcp starts");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut lines = LinesBuf::new(child.stdout.take().expect("stdout")).lines();
+
+    let init = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                   "clientInfo": {"name": "cli-test", "version": "1"}}
+    });
+    mcp_send(&mut stdin, &init).await;
+    let answered = mcp_answer(&mut lines, 1).await;
+    assert_eq!(
+        answered["result"]["protocolVersion"], "2025-11-25",
+        "{answered}"
+    );
+    assert_eq!(
+        answered["result"]["serverInfo"]["name"], "colophon-mcp",
+        "the same server the colophon-mcp binary runs: {answered}"
+    );
+    mcp_send(
+        &mut stdin,
+        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )
+    .await;
+
+    mcp_send(
+        &mut stdin,
+        &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+    )
+    .await;
+    let listed = mcp_answer(&mut lines, 2).await;
+    let mut tools: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    tools.sort_unstable();
+    assert_eq!(
+        tools,
+        [
+            "create_comment",
+            "create_draft",
+            "create_publish_request",
+            "create_task",
+            "get_entry",
+            "get_migration",
+            "get_publish_request",
+            "get_release",
+            "list_comments",
+            "list_content_types",
+            "list_entries",
+            "list_migration_items",
+            "list_migrations",
+            "list_releases",
+            "list_tasks",
+            "query_entries",
+            "request_review",
+            "update_draft",
+        ],
+        "the same eighteen safe tools the standalone server offers (D-106)"
+    );
+
+    drop(stdin);
+    let status = timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("exits once the host closes stdin")
+        .expect("wait");
+    assert_eq!(status.code(), Some(0));
 }

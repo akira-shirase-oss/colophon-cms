@@ -597,12 +597,15 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "clap",
  "colophon-db",
+ "colophon-mcp",
  "colophon-version",
  "reqwest",
  "semver",
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

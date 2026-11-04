@@ -15,6 +15,7 @@ use crate::{
     Exit,
     client::Failure,
     content::Place,
+    out::{Format, Out},
     scope::{self, Scope},
 };
 
@@ -32,7 +33,7 @@ pub(crate) async fn list(
     scope: &Scope<'_>,
     collection: Option<&str>,
     state: Option<&str>,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let (client, project) = scope::open(scope).await?;
     let mut path = plans_path(&project, scope);
@@ -49,36 +50,40 @@ pub(crate) async fn list(
     }
     let reply = client.send(Method::GET, &path, None, &[]).await?.body;
     let rows = reply["data"].as_array().cloned().unwrap_or_default();
-    if json {
-        println!(
-            "{}",
-            json!({ "version": 1, "command": "migration list", "migrations": rows })
-        );
-    } else if rows.is_empty() {
-        println!("No migration plans.");
-    } else {
-        for row in &rows {
-            println!(
-                "{}  {}  {} v{}\u{2192}{}  {}/{} items ({} blocked)  {}",
-                row["id"].as_str().unwrap_or("?"),
-                row["state"].as_str().unwrap_or("?"),
-                row["collection"].as_str().unwrap_or("?"),
-                row["base_version"].as_i64().unwrap_or_default(),
-                row["target_version"]
-                    .as_i64()
-                    .map_or_else(|| "?".to_owned(), |version| format!("v{version}")),
-                row["items"]["done"].as_i64().unwrap_or_default(),
-                row["items"]["expected"].as_i64().unwrap_or_default(),
-                row["items"]["blocked"].as_i64().unwrap_or_default(),
-                row["created_at"].as_str().unwrap_or("")
-            );
+    match out.format {
+        Format::Json => out.print_data(&json!({ "migrations": rows })),
+        Format::Jsonl => {
+            for row in &rows {
+                out.print_item(row);
+            }
+        }
+        Format::Text => {
+            if rows.is_empty() {
+                println!("No migration plans.");
+            }
+            for row in &rows {
+                println!(
+                    "{}  {}  {} v{}\u{2192}{}  {}/{} items ({} blocked)  {}",
+                    row["id"].as_str().unwrap_or("?"),
+                    row["state"].as_str().unwrap_or("?"),
+                    row["collection"].as_str().unwrap_or("?"),
+                    row["base_version"].as_i64().unwrap_or_default(),
+                    row["target_version"]
+                        .as_i64()
+                        .map_or_else(|| "?".to_owned(), |version| format!("v{version}")),
+                    row["items"]["done"].as_i64().unwrap_or_default(),
+                    row["items"]["expected"].as_i64().unwrap_or_default(),
+                    row["items"]["blocked"].as_i64().unwrap_or_default(),
+                    row["created_at"].as_str().unwrap_or("")
+                );
+            }
         }
     }
     Ok(())
 }
 
 /// Runs `colophon migration show MIGRATION`.
-pub(crate) async fn show(scope: &Scope<'_>, migration: &str, json: bool) -> Result<(), Failure> {
+pub(crate) async fn show(scope: &Scope<'_>, migration: &str, out: Out) -> Result<(), Failure> {
     let id = plan_id(migration)?;
     let (client, project) = scope::open(scope).await?;
     let reply = client
@@ -90,11 +95,8 @@ pub(crate) async fn show(scope: &Scope<'_>, migration: &str, json: bool) -> Resu
         )
         .await?;
     let plan = &reply.body["data"];
-    if json {
-        println!(
-            "{}",
-            json!({ "version": 1, "command": "migration show", "migration": plan })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({ "migration": plan }));
     } else {
         println!(
             "Plan {} — {}",
@@ -137,39 +139,42 @@ pub(crate) async fn show(scope: &Scope<'_>, migration: &str, json: bool) -> Resu
     Ok(())
 }
 
-/// Runs `colophon migration items MIGRATION`.
+/// Runs `colophon migration items MIGRATION`: one page of items, or — on `--jsonl` —
+/// every page, one object per line (`scope::stream_jsonl`; the API's cursor is `?after=`).
 pub(crate) async fn items(
     scope: &Scope<'_>,
     migration: &str,
     outcome: Option<&str>,
     cursor: Option<&str>,
     limit: u8,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let id = plan_id(migration)?;
-    let cursor = cursor.map(scope::cursor).transpose()?;
+    let cursor = cursor.map(scope::cursor).transpose()?.map(str::to_owned);
     let (client, project) = scope::open(scope).await?;
-    let mut path = format!("{}/{id}/items?limit={limit}", plans_path(&project, scope));
+    let mut base = format!("{}/{id}/items?limit={limit}", plans_path(&project, scope));
     if let Some(outcome) = outcome {
-        path.push_str("&outcome=");
-        path.push_str(outcome);
+        base.push_str("&outcome=");
+        base.push_str(outcome);
     }
-    if let Some(cursor) = cursor {
-        path.push_str("&after=");
-        path.push_str(cursor);
+    let path = |page: Option<&str>| match page {
+        Some(page) => format!("{base}&after={page}"),
+        None => base.clone(),
+    };
+    if out.format == Format::Jsonl {
+        return scope::stream_jsonl(&client, Method::GET, path, None, cursor, &out).await;
     }
-    let reply = client.send(Method::GET, &path, None, &[]).await?.body;
+    let reply = client
+        .send(Method::GET, &path(cursor.as_deref()), None, &[])
+        .await?
+        .body;
     let rows = reply["data"].as_array().cloned().unwrap_or_default();
-    if json {
-        println!(
-            "{}",
-            json!({
-                "version": 1, "command": "migration items",
-                "migration": id,
-                "items": rows,
-                "next_cursor": reply["next_cursor"],
-            })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({
+            "migration": id,
+            "items": rows,
+            "next_cursor": reply["next_cursor"],
+        }));
     } else {
         if rows.is_empty() {
             println!("No items.");
@@ -196,7 +201,7 @@ pub(crate) async fn plan(
     definition: &Value,
     operations: Option<&Path>,
     key: Option<&str>,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let operations = match operations {
         Some(file) => Some(file_json(file).await?),
@@ -216,7 +221,7 @@ pub(crate) async fn plan(
         &[("idempotency-key", &key)],
     )
     .await?;
-    finish_write(&reply.headers, &reply.body, "plan", &key, json, |plan| {
+    finish_write(&reply.headers, &reply.body, &key, &out, |plan| {
         format!(
             "Planned migration {} on {}: {}/{} items, {} needing input. Hash: {}",
             plan["id"].as_str().unwrap_or("?"),
@@ -238,7 +243,7 @@ pub(crate) async fn act(
     action: &'static str,
     if_match: Option<&str>,
     key: Option<&str>,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let id = plan_id(migration)?;
     let (client, project) = scope::open(scope).await?;
@@ -257,7 +262,7 @@ pub(crate) async fn act(
         &headers,
     )
     .await?;
-    finish_write(&reply.headers, &reply.body, action, &key, json, |plan| {
+    finish_write(&reply.headers, &reply.body, &key, &out, |plan| {
         format!(
             "Plan {} is now {}.",
             plan["id"].as_str().unwrap_or(&id),
@@ -276,7 +281,7 @@ pub(crate) async fn resolve(
     resolution: &Value,
     if_match: &str,
     key: Option<&str>,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let id = plan_id(migration)?;
     let entry = scope::id_arg(entry, "the entry")?;
@@ -292,7 +297,7 @@ pub(crate) async fn resolve(
         &[("idempotency-key", &key), ("if-match", &quoted)],
     )
     .await?;
-    finish_write(&reply.headers, &reply.body, "resolve", &key, json, |data| {
+    finish_write(&reply.headers, &reply.body, &key, &out, |data| {
         format!(
             "Item {} of plan {} is resolved.",
             data["item"]["entry_id"].as_str().unwrap_or("?"),
@@ -322,26 +327,20 @@ async fn file_json(file: &Path) -> Result<Value, Failure> {
 fn finish_write(
     headers: &reqwest::header::HeaderMap,
     body: &Value,
-    command: &str,
     key: &str,
-    json: bool,
+    out: &Out,
     say: impl FnOnce(&Value) -> String,
 ) {
     let replayed = headers
         .get("idempotent-replayed")
         .is_some_and(|value| value == "true");
     let data = &body["data"];
-    if json {
-        println!(
-            "{}",
-            json!({
-                "version": 1,
-                "command": format!("migration {command}"),
-                "status": if replayed { "replayed" } else { "ok" },
-                "idempotency_key": key,
-                "migration": data,
-            })
-        );
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": if replayed { "replayed" } else { "ok" },
+            "idempotency_key": key,
+            "migration": data,
+        }));
     } else {
         println!(
             "{}{}",

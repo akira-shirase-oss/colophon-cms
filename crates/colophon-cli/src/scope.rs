@@ -13,6 +13,7 @@ use crate::{
     Exit,
     client::{Client, Failure, Reply},
     credentials,
+    out::Out,
 };
 
 /// Attempts at a write before giving up (the first plus retries), and the waits between.
@@ -134,6 +135,54 @@ pub(crate) fn etag_arg(text: &str) -> Result<String, Failure> {
             "--if-match must be an ETag as `show` prints it, such as sha256:…",
         ))
     }
+}
+
+/// The most pages a `--jsonl` stream follows: a bound on a cursor that never ends (C5).
+const MAX_STREAM_PAGES: u32 = 1_000;
+
+/// Follows `next_cursor` to the list's end, printing each row as one `--jsonl` line as its
+/// page arrives — the stream never holds more than a page's rows (D-119). `path` maps the
+/// page's cursor (`None` on the first page) to the request's path; `body` rides along for
+/// a `POST` such as `content query`. A page whose cursor isn't shaped like one, or a list
+/// that outlives the bound, is an internal failure: the stream ends with the error
+/// envelope on stdout and `error: …` on stderr like any other failure.
+pub(crate) async fn stream_jsonl(
+    client: &Client,
+    method: Method,
+    path: impl Fn(Option<&str>) -> String,
+    body: Option<&Value>,
+    first: Option<String>,
+    out: &Out,
+) -> Result<(), Failure> {
+    let mut after = first;
+    for _ in 0..MAX_STREAM_PAGES {
+        let reply = client
+            .send(method.clone(), &path(after.as_deref()), body, &[])
+            .await?;
+        let rows = reply.body["data"].as_array().cloned().unwrap_or_default();
+        for row in &rows {
+            out.print_item(row);
+        }
+        match reply.body["next_cursor"].as_str() {
+            Some(next) => {
+                after = Some(
+                    cursor(next)
+                        .map_err(|_| {
+                            Failure::new(
+                                Exit::Internal,
+                                "the server sent a next_cursor that isn't one",
+                            )
+                        })?
+                        .to_owned(),
+                );
+            }
+            None => return Ok(()),
+        }
+    }
+    Err(Failure::new(
+        Exit::Internal,
+        format!("the list didn't end after {MAX_STREAM_PAGES} pages"),
+    ))
 }
 
 /// Sends a request that carries an `idempotency-key` header, retrying a lost answer with
