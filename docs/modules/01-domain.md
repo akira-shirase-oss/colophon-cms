@@ -171,6 +171,36 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - Locale fallback is an explicit project policy, none by default. A fallback resolves only to published revisions and
   labels the resolved locale.
 
+### The query language (spec §07, §10)
+- A query is one JSON document sent in a `POST` body, like a definition or a changeset — never a spray of URL
+  parameters: one parser, one canonical form, one hash. The shape is
+  `{"filters": [{"field", "op", "value"}], "sort": [{"field", "dir"}], "limit", "fields", "depth"}` and nothing
+  else; every refusal is a `Refusal` with a code and a JSON Pointer into the document, like a definition's own.
+- Bounds (§26): at most 8 filters and 4 sort keys; `in` compares against 1 to 100 different values; a page is 20
+  entries unless asked, never over 100; `depth` expands references at most 2 deep.
+- Operators stay within what a kind can say: `eq` and `in` on every indexable kind; `lt`, `lte`, `gt`, `gte` on the
+  kinds whose stored spellings order (single-line text, number, date, time, date-time, slug); `contains` on
+  single-line text only, where a substring search reads naturally. Boolean, choice, email, URL and single
+  reference stay at equality: ordering them would compare a spelling, not a meaning.
+- A filter's value is checked by the field's own rules and kept in canonical JSON — the exact bytes stored content
+  uses — so a query can never compare against something the field couldn't hold. `in` takes a set: its values are
+  sorted and must be distinct. A `contains` needle instead searches inside values, so it needs only be non-empty,
+  free of control characters and no longer than the field allows.
+- Built in step DX.1 (D-103): `colophon_domain::query::Query` (`validate`, then `filters`, `sort`, `limit`,
+  `fields`, `depth`, `order`, `canonical_json`, `query_hash`). Filters AND together, so the canonical form sorts
+  them by their own text; `fields` is kept in definition order and `null` when the whole document is kept.
+  `order()` appends the entry id in the last key's direction — the stable tie-break every page boundary needs
+  (§10). `query_hash` is SHA-256 over the canonical form: the "normalized query" a cache key names (§15) and the
+  shape a cursor binds to.
+- `fields` only narrows the returned document — never widens it — so it may name any declared field and carries no
+  permission risk; indexing governs filters and sorts, not selection.
+- Schema side: `"index": true` opts a top-level field of an indexable kind (`FieldKind::may_be_indexed`) into
+  filtering and sorting — a single-line text, number, boolean, choice, date, time, date-time, email, URL, slug or
+  single reference; anywhere else `invalid_index`, and a query that touches a non-indexed field is refused
+  `field_not_indexed`. The flag writes only when set, so a definition from before DX.1 keeps its bytes and hash,
+  and adding or dropping it is `Compatible` (it changes no stored value). `ContentType::indexed_fields` lists the
+  ids in order; which database index serves a query is the engine's choice, not the definition's.
+
 ### Editorial workflow (spec §06)
 - Editorial states: `draft → submitted → changes_requested | approved`. Publication is a separate state.
 - `Changeset`: the exact entry, revision, schema and asset hashes.

@@ -251,6 +251,30 @@ impl FieldKind {
         )
     }
 
+    /// Whether a field of this kind may be `index`ed (DX.1, D-103): a scalar the query
+    /// language can compare as written — a single-line text, number, boolean, choice,
+    /// date, time, date-time, email, URL, slug or single reference. Rich text, JSON,
+    /// structures, lists and assets hold no comparable scalar, and multi-line text isn't
+    /// worth an index.
+    pub const fn may_be_indexed(&self) -> bool {
+        matches!(
+            self,
+            Self::Text {
+                multiline: false,
+                ..
+            } | Self::Number { .. }
+                | Self::Boolean
+                | Self::Enum { .. }
+                | Self::DateTime
+                | Self::Slug { .. }
+                | Self::Email
+                | Self::Url
+                | Self::Date
+                | Self::Time
+                | Self::Reference { many: false, .. }
+        )
+    }
+
     /// The name in definitions.
     pub const fn name(&self) -> &'static str {
         match self {
@@ -304,6 +328,11 @@ pub struct Field {
     /// Whether no two entries may hold the same value: top-level scalar fields only (step M.4,
     /// D-070). The database enforces it; see [`ContentType::unique_fields`].
     pub unique: bool,
+    /// Whether the query language may filter and sort on the field (step DX.1, D-103):
+    /// top-level fields of a kind that compares as written only; see
+    /// [`ContentType::indexed_fields`]. Which database index serves a query is the
+    /// engine's choice, not the definition's.
+    pub index: bool,
     /// The value a new entry gets when it leaves the field out, in canonical JSON (step M.4,
     /// D-071): top-level scalar fields only, checked against the field's own rules.
     pub default: Option<String>,
@@ -770,6 +799,11 @@ fn write_fields(out: &mut String, fields: &[Field]) {
         // (migration 0027), which a quote inside a string can't form: it is written `\"`.
         if field.unique {
             out.push_str(r#","unique":true"#);
+        }
+        // Only when set, like `unique` (D-103): definitions from before DX.1 keep their
+        // bytes and hash.
+        if field.index {
+            out.push_str(r#","index":true"#);
         }
         write_options(out, &field.kind);
         // Only when set, like `description`: already canonical, checked when parsed.
@@ -1688,6 +1722,7 @@ impl ContentType {
                     description: String::new(),
                     required: true,
                     unique: false,
+                    index: false,
                     default: None,
                     when: None,
                     kind: FieldKind::Text {
@@ -1703,6 +1738,7 @@ impl ContentType {
                     description: String::new(),
                     required: true,
                     unique: false,
+                    index: false,
                     default: None,
                     when: None,
                     kind: FieldKind::RichText,
@@ -1998,6 +2034,7 @@ impl ContentType {
             .to_owned();
         let required = bool_or(object, "required", false, pointer)?;
         let unique = bool_or(object, "unique", false, pointer)?;
+        let index = bool_or(object, "index", false, pointer)?;
         let description = description(object, pointer)?;
         let common = [
             "id",
@@ -2006,6 +2043,7 @@ impl ContentType {
             "type",
             "required",
             "unique",
+            "index",
             "default",
             "when",
         ];
@@ -2015,6 +2053,13 @@ impl ContentType {
                 "invalid_unique",
                 &at(pointer, "unique"),
                 "only a top-level single-line text, email, URL, number, date, time or date-time field can be unique",
+            ));
+        }
+        if index && (depth > 0 || !kind.may_be_indexed()) {
+            return Err(refuse(
+                "invalid_index",
+                &at(pointer, "index"),
+                "only a top-level single-line text, number, boolean, choice, date, time, date-time, email, URL, slug or single reference field can be indexed",
             ));
         }
         if depth > 0
@@ -2048,6 +2093,7 @@ impl ContentType {
             description,
             required,
             unique,
+            index,
             default,
             when,
             kind,
@@ -2084,6 +2130,26 @@ impl ContentType {
             },
         )?;
         Ok(out)
+    }
+
+    /// A literal `value` of `field`'s kind, in canonical JSON: the field's own checks,
+    /// without a document around it. The query language checks its filter values this way
+    /// (DX.1, D-103): a filter compares, so nothing is collected — a `reference` value is
+    /// checked for its shape, not recorded.
+    pub(crate) fn literal(
+        field: &Field,
+        value: &Value,
+        pointer: &Pointer,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        Self::value(
+            &field.kind,
+            &field.label,
+            value,
+            pointer,
+            out,
+            &mut Found::default(),
+        )
     }
 
     /// What a field holds: its `type` and that type's options, refusing any other key.
@@ -2253,6 +2319,16 @@ impl ContentType {
             return (Cow::Borrowed(value), ids);
         }
         (Cow::Owned(Value::Object(filled)), ids)
+    }
+
+    /// The ids of the fields the query language may filter and sort on (DX.1, D-103),
+    /// in order.
+    pub fn indexed_fields(&self) -> Vec<String> {
+        self.fields
+            .iter()
+            .filter(|field| field.index)
+            .map(|field| field.id.clone())
+            .collect()
     }
 
     /// The ids of the fields no two entries may share a value of (D-070), in order.
