@@ -70,7 +70,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -128,6 +128,9 @@ case "$endpoint" in
   # An upload's write is a body-bound check, an S3 PUT and two inserts — transfer's arm: an
   # external call on every write, so half the entries rate and the editorial write budget.
   assets) RATE="${RATE:-250}" P99_MS="${P99_MS:-700}" ;;
+  # Job and item reads dominate; one iteration in seven submits a one-item sealed job (the
+  # manifest insert plus its two reservations): migrations' rate and p99.
+  bulk) RATE="${RATE:-250}" P99_MS="${P99_MS:-250}" ;;
   studio) RATE="${RATE:-5000}" P99_MS="${P99_MS:-25}" ;;
   # RATE counts publishes here, five requests each, and every request writes and commits: on the
   # reference laptop that tops out around 500 to 700 requests a second, so the steady rate is 40

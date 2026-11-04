@@ -24,8 +24,9 @@ use axum::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-    AppState, BuildInfo, assets, audit, auth, changesets, collaboration, components, content_types,
-    delivery, destinations, device, entries, graphql, health, members, migrations, projects,
+    AppState, BuildInfo, assets, audit, auth, bulk, changesets, collaboration, components,
+    content_types, delivery, destinations, device, entries, graphql, health, members, migrations,
+    projects,
     receipts, rich_text, roles, schedules, setup, tokens, version,
 };
 
@@ -1646,6 +1647,174 @@ pub(crate) static TABLE: &[Route] = &[
                         "cannot_cancel_running, plan_finished",
                         "running plans can't be cancelled; finished ones are done",
                     ),
+                    REUSED_KEY,
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    // Bounded bulk work on drafts: chunks of named items, per-item outcomes (D-116).
+    route(
+        (P, "/bulk"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, bulk::list),
+                OpDoc {
+                    id: "listBulkJobs",
+                    summary: "The environment's bulk jobs, newest first",
+                    tag: "bulk",
+                    security: Security::Any,
+                    query: &[
+                        query(
+                            "state",
+                            Kind::Str,
+                            "`accepting`, `running`, `done`, `blocked`, `cancelled`",
+                        ),
+                        CURSOR,
+                    ],
+                    ok: page("BulkJobView"),
+                    extra: &[NOT_FOUND],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Post,
+                |f| on(f, bulk::create),
+                OpDoc {
+                    id: "submitBulkJob",
+                    summary: "Submit a manifest of exact entries and base revisions (a chunk is at most 100 items and 1 MiB)",
+                    tag: "bulk",
+                    security: Security::Any,
+                    headers: &[IDEMPOTENCY],
+                    body: Some(json("NewBulkJob")),
+                    ok: Res {
+                        status: 202,
+                        shape: Shape::Data("BulkJobView"),
+                        headers: &["ETag"],
+                        media: "",
+                        note: "`ETag: \"sha256:<manifest hash>\"` — what `If-Match` binds",
+                    },
+                    extra: &[
+                        NOT_FOUND,
+                        refusal(
+                            422,
+                            "invalid_*, chunk_too_large, manifest_empty",
+                            "a manifest item wouldn't validate",
+                        ),
+                        refusal(
+                            403,
+                            "missing_permission, budget_exceeded",
+                            "a permission the manifest asks for isn't the caller's, or a budget refuses",
+                        ),
+                        REUSED_KEY,
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (P, "/bulk/{job}"),
+        &[op(
+            Verb::Get,
+            |f| on(f, bulk::get),
+            OpDoc {
+                id: "getBulkJob",
+                summary: "One bulk job, `ETag`'d with its manifest hash",
+                tag: "bulk",
+                security: Security::Any,
+                ok: etagd(data("BulkJobView")),
+                extra: &[NOT_FOUND],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        (P, "/bulk/{job}/items"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, bulk::items),
+                OpDoc {
+                    id: "listBulkItems",
+                    summary: "A job's items in key order — the resumable cursor",
+                    tag: "bulk",
+                    security: Security::Any,
+                    query: &[
+                        query(
+                            "outcome",
+                            Kind::Str,
+                            "`pending`, `applied`, `conflict`, `refused`, `skipped`",
+                        ),
+                        query("after", Kind::Cursor, "continue past this item"),
+                        LIMIT,
+                    ],
+                    ok: page("BulkItemView"),
+                    extra: &[NOT_FOUND],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Post,
+                |f| on(f, bulk::append),
+                OpDoc {
+                    id: "appendBulkItems",
+                    summary: "Append the next chunk while the job is `accepting`",
+                    tag: "bulk",
+                    security: Security::Any,
+                    headers: &[IF_MATCH, IDEMPOTENCY],
+                    body: Some(json("AppendBulkItems")),
+                    ok: Res {
+                        status: 202,
+                        shape: Shape::Data("BulkAppendView"),
+                        headers: &["ETag"],
+                        media: "",
+                        note: "the job after the chunk; `duplicates` names keys that landed already",
+                    },
+                    extra: &[
+                        NOT_FOUND,
+                        refusal(
+                            409,
+                            "job_moved",
+                            "the manifest changed; the `ETag` names it now",
+                        ),
+                        refusal(409, "job_not_accepting", "the manifest is closed"),
+                        refusal(
+                            422,
+                            "invalid_*, chunk_too_large, manifest_too_large",
+                            "the chunk wouldn't validate",
+                        ),
+                        refusal(
+                            403,
+                            "missing_permission, budget_exceeded",
+                            "a permission the chunk asks for isn't the caller's, or a budget refuses",
+                        ),
+                        P428,
+                        BAD_MATCH,
+                        REUSED_KEY,
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (P, "/bulk/{job}/cancel"),
+        &[op(
+            Verb::Post,
+            |f| on(f, bulk::cancel),
+            OpDoc {
+                id: "cancelBulkJob",
+                summary: "Cancel an open job; pending items skip, reservations release",
+                tag: "bulk",
+                security: Security::Any,
+                headers: &[IDEMPOTENCY],
+                ok: etagd(data("BulkJobView")),
+                extra: &[
+                    NOT_FOUND,
+                    refusal(409, "job_finished", "the job is already finished"),
+                    FORBIDDEN,
                     REUSED_KEY,
                 ],
                 ..MIN
@@ -4154,6 +4323,76 @@ fn schema_parts() -> Value {
             "properties": {
                 "hash": { "type": "string" },
                 "item": { "$ref": "#/components/schemas/MigrationItemView" },
+            },
+        },
+        "BulkItemInput": {
+            "type": "object",
+            "required": ["key", "entry", "expected_revision", "op"],
+            "additionalProperties": false,
+            "properties": {
+                "key": { "type": "string", "description": "the client's stable name for the item within the job (1–256 characters)" },
+                "entry": { "type": "string", "format": "uuid" },
+                "expected_revision": { "type": "string", "format": "uuid", "description": "the base revision the write is bound to" },
+                "op": { "type": "object", "description": "`{\"op\": \"update\", \"content\": {…}}`, `{\"op\": \"set\", \"path\", \"value\"}`, `{\"op\": \"move\", \"from\", \"to\"}` or `{\"op\": \"delete\"}`" },
+            },
+        },
+        "NewBulkJob": {
+            "type": "object",
+            "required": ["collection", "items"],
+            "additionalProperties": false,
+            "properties": {
+                "collection": { "type": "string" },
+                "items": { "type": "array", "items": { "$ref": "#/components/schemas/BulkItemInput" }, "minItems": 1, "maxItems": 100 },
+                "seal": { "type": "boolean", "description": "close the manifest at once and start the run" },
+            },
+        },
+        "AppendBulkItems": {
+            "type": "object",
+            "required": ["items"],
+            "additionalProperties": false,
+            "properties": {
+                "items": { "type": "array", "items": { "$ref": "#/components/schemas/BulkItemInput" }, "minItems": 1, "maxItems": 100 },
+                "seal": { "type": "boolean" },
+            },
+        },
+        "BulkJobView": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "kind": { "type": "string", "enum": ["entries"] },
+                "operation": { "type": "object" },
+                "state": { "type": "string", "enum": ["accepting", "running", "done", "blocked", "cancelled"] },
+                "hash": { "type": "string", "description": "`sha256:<hex>` — the job's `ETag`" },
+                "items": { "$ref": "#/components/schemas/ItemsCount" },
+                "created_by": { "type": "string", "format": "uuid" },
+                "principal": { "type": "string", "enum": ["member", "token"] },
+                "started_at": { "type": ["string", "null"], "format": "date-time" },
+                "finished_at": { "type": ["string", "null"], "format": "date-time" },
+                "error": { "type": ["string", "null"] },
+                "created_at": { "type": "string", "format": "date-time" },
+                "updated_at": { "type": "string", "format": "date-time" },
+            },
+        },
+        "BulkItemView": {
+            "type": "object",
+            "properties": {
+                "key": { "type": "string" },
+                "entry_id": { "type": "string", "format": "uuid" },
+                "expected_revision_id": { "type": "string", "format": "uuid" },
+                "input": { "type": "object" },
+                "outcome": { "type": "string", "enum": ["pending", "applied", "conflict", "refused", "skipped"] },
+                "problem": { "type": ["object", "null"], "description": "why the item didn't apply, as a refusal reports it" },
+                "new_revision_id": { "type": ["string", "null"], "format": "uuid" },
+                "applied_at": { "type": ["string", "null"], "format": "date-time" },
+            },
+        },
+        "BulkAppendView": {
+            "type": "object",
+            "properties": {
+                "job": { "$ref": "#/components/schemas/BulkJobView" },
+                "appended": { "type": "integer" },
+                "duplicates": { "type": "array", "items": { "type": "string" } },
+                "sealed": { "type": "boolean" },
             },
         },
     })

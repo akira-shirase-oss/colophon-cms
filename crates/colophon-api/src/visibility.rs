@@ -124,55 +124,26 @@ pub(crate) fn locked(access: &Access, fields: &[String]) -> Vec<String> {
 /// A save's `submitted` content with every field its author can't read put back as `stored`: they
 /// never saw those fields, so leaving them out of a save mustn't erase them. Sending one with a
 /// different value is refused, not dropped (D11): the role can't change what it can't read.
+/// The rule itself is `colophon_domain::policy::restore_hidden`, shared with the bulk
+/// worker's per-item write (D-116).
 pub(crate) fn restore_hidden(
     submitted: Value,
     stored: &str,
     read: &Fields,
 ) -> Result<Value, ApiError> {
-    if *read == Fields::All {
-        return Ok(submitted);
-    }
-    let Value::Object(mut fields) = submitted else {
-        // Not an object: validation refuses it, with its own words.
-        return Ok(submitted);
-    };
-    let stored = object(stored)?;
-    if let Some(field) = fields
-        .iter()
-        .find(|(field, value)| !read.includes(field) && stored.get(*field) != Some(*value))
-        .map(|(field, _)| field.clone())
-    {
-        return Err(not_permitted(&field));
-    }
-    for (field, value) in stored {
-        if !read.includes(&field) {
-            fields.insert(field, value);
-        }
-    }
-    Ok(Value::Object(fields))
+    colophon_domain::policy::restore_hidden(submitted, stored, read).map_err(ApiError::Invalid)
 }
 
 /// Refuses a save that changes a field `update` doesn't allow, naming the first such field.
+/// The rule itself is `colophon_domain::policy::only_permitted_changes`, shared with the
+/// bulk worker (D-116).
 pub(crate) fn only_permitted_changes(
     saved: &str,
     stored: &str,
     update: &Fields,
 ) -> Result<(), ApiError> {
-    if *update == Fields::All {
-        return Ok(());
-    }
-    let (saved, stored) = (object(saved)?, object(stored)?);
-    let mut changed: Vec<&String> = saved
-        .keys()
-        .chain(stored.keys())
-        .filter(|field| saved.get(*field) != stored.get(*field))
-        .collect();
-    changed.sort();
-    changed.dedup();
-    match changed.into_iter().find(|field| !update.includes(field)) {
-        None => Ok(()),
-        Some(field) => Err(not_permitted(field)),
-    }
+    colophon_domain::policy::only_permitted_changes(saved, stored, update)
+        .map_err(ApiError::Invalid)
 }
 
 /// Refuses content for a new entry that sets a field `create` doesn't allow, other than those

@@ -13,6 +13,7 @@
 //! shapes an import normalizes ([`transfer`]).
 
 pub mod budget;
+pub mod bulk;
 pub mod cache;
 pub mod changeset;
 pub mod destination;

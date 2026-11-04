@@ -10,6 +10,7 @@ pub mod administrators;
 pub mod assets;
 pub mod audit;
 pub mod budgets;
+pub mod bulk;
 pub mod changesets;
 pub mod collaboration;
 pub mod components;

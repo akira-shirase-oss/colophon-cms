@@ -9,6 +9,7 @@ mod assets;
 mod audit;
 mod auth;
 mod body;
+mod bulk;
 mod cache;
 mod changesets;
 mod collaboration;

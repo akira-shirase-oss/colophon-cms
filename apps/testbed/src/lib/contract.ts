@@ -163,6 +163,16 @@ export const checks: Check[] = [
 		}
 	},
 	{
+		id: 'bulk-gated',
+		title: 'The bulk routes answer with the envelope',
+		proves: 'The P5 routes exist and never answer bare: anonymous callers get 401 unauthorized, a signed-in caller with an unseen project 404 not_found — never route_not_found.',
+		async run() {
+			const project = '00000000-0000-7000-8000-000000000000';
+			const reply = await call('GET', `/api/v1/projects/${project}/environments/production/bulk`);
+			return outcome(reply, reply.status === 401 ? envelopeProblems(reply, 401, 'unauthorized') : envelopeProblems(reply, 404, 'not_found'));
+		}
+	},
+	{
 		id: 'live-events',
 		title: 'The events route answers with the envelope',
 		proves: 'The E3 live-hints route exists and never answers bare: anonymous callers get 401 unauthorized, a signed-in caller with an unseen project 404 not_found — never route_not_found.',

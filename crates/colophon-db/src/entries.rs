@@ -201,6 +201,30 @@ pub async fn save(
     expected: Uuid,
     revision: NewRevision<'_>,
 ) -> Result<Saved, DbError> {
+    save_impl(tx, entry_id, expected, revision, true).await
+}
+
+/// Like [`save`], but the document budget is reserved elsewhere: the caller's job-level
+/// reservation already covers the write (bulk items — one reservation per manifest item,
+/// taken when the chunk was accepted, D-116). The lock, the staleness check, the revision,
+/// the draft pointer and the unique claims are identical.
+pub async fn save_covered(
+    tx: &mut ProjectTransaction,
+    entry_id: Uuid,
+    expected: Uuid,
+    revision: NewRevision<'_>,
+) -> Result<Saved, DbError> {
+    save_impl(tx, entry_id, expected, revision, false).await
+}
+
+/// [`save`] with `cover` choosing whether the `documents` reservation happens here.
+async fn save_impl(
+    tx: &mut ProjectTransaction,
+    entry_id: Uuid,
+    expected: Uuid,
+    revision: NewRevision<'_>,
+    cover: bool,
+) -> Result<Saved, DbError> {
     // Lock the entry so concurrent saves queue here. This read only tells "stale" from
     // "missing" and names the current revision; the conditional UPDATE below is the rule.
     let current = sqlx::query!(
@@ -223,8 +247,13 @@ pub async fn save(
         });
     }
     // Only a save that will land reserves its document (D-113); a stale or missing draft
-    // returned above consumed nothing.
-    let reservation = crate::budgets::reserve(tx, Kind::Documents, 1).await?;
+    // returned above consumed nothing. A bulk item's document is covered by the job's
+    // own reservation, taken when its chunk was accepted (D-116).
+    let reservation = if cover {
+        Some(crate::budgets::reserve(tx, Kind::Documents, 1).await?)
+    } else {
+        None
+    };
     let created_at =
         insert_revision(tx, entry_id, &current.collection, Some(expected), revision).await?;
     let moved = sqlx::query_scalar!(
@@ -249,7 +278,9 @@ pub async fn save(
         });
     };
     claim_draft(tx, entry_id, &current.collection, revision).await?;
-    crate::budgets::settle(tx, reservation, 1).await?;
+    if let Some(reservation) = reservation {
+        crate::budgets::settle(tx, reservation, 1).await?;
+    }
     Ok(Saved::Saved(Box::new(Draft {
         entry_id,
         collection: current.collection,

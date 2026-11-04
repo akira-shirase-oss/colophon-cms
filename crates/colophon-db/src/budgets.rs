@@ -184,6 +184,152 @@ pub async fn reserve_jobs(tx: &mut ProjectTransaction, job_ids: &[Uuid]) -> Resu
     Ok(())
 }
 
+/// Reserves the `jobs` slot a bulk job holds (D-116): one `held` row linked by
+/// `bulk_job_id`, so the ledger tells it from delivery dispatch. Called once, in the
+/// transaction that accepts the job — like [`reserve_jobs`] for a release's dispatch.
+pub async fn reserve_bulk_job(tx: &mut ProjectTransaction, job: Uuid) -> Result<(), DbError> {
+    let Some(limits) = lock_limits(tx).await? else {
+        return Ok(());
+    };
+    let used = used(&mut tx.transaction, tx.project, tx.identity).await?;
+    if !budget::fits(used.jobs_open, 1, limits.max_concurrent_jobs) {
+        return Err(DbError::BudgetExceeded {
+            kind: Kind::Jobs,
+            used: used.jobs_open,
+            limit: limits.max_concurrent_jobs.unwrap_or_default(),
+        });
+    }
+    sqlx::query!(
+        "INSERT INTO budget_reservations
+             (project_id, environment_id, id, principal_id, kind, reserved, state, bulk_job_id)
+         VALUES ($1, $2, uuidv7(), $3, 'jobs', 1, 'held', $4)",
+        tx.project,
+        tx.environment,
+        tx.identity,
+        job
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
+}
+
+/// Reserves one `documents` unit per item a bulk chunk adds (D-116): `count` `held` rows of
+/// `reserved` 1 each, linked to the job, so every item's own commit can settle exactly the
+/// unit it consumed and a never-run item can release its own. Called in each accepting
+/// transaction, after [`reserve_bulk_job`] for the job's first chunk.
+pub async fn reserve_bulk_documents(
+    tx: &mut ProjectTransaction,
+    job: Uuid,
+    count: i64,
+) -> Result<(), DbError> {
+    if count <= 0 {
+        return Ok(());
+    }
+    let Some(limits) = lock_limits(tx).await? else {
+        return Ok(());
+    };
+    let used = used(&mut tx.transaction, tx.project, tx.identity).await?;
+    if !budget::fits(used.documents_last_day, count, limits.documents_per_day) {
+        return Err(DbError::BudgetExceeded {
+            kind: Kind::Documents,
+            used: used.documents_last_day,
+            limit: limits.documents_per_day.unwrap_or_default(),
+        });
+    }
+    sqlx::query!(
+        "INSERT INTO budget_reservations
+             (project_id, environment_id, id, principal_id, kind, reserved, state, bulk_job_id)
+         SELECT $1, $2, uuidv7(), $3, 'documents', 1, 'held', $4
+         FROM generate_series(1, $5::bigint)",
+        tx.project,
+        tx.environment,
+        tx.identity,
+        job,
+        count
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
+}
+
+/// Marks one of `job`'s held `documents` units consumed, in the item transaction that spent
+/// it (D-116): the applied write and its settlement land or roll back together. A job whose
+/// caller has no limits row holds nothing, so this is a no-op for it.
+pub async fn settle_bulk_document(
+    transaction: &mut Transaction<'_, Postgres>,
+    project: Uuid,
+    job: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query!(
+        "UPDATE budget_reservations SET state = 'settled', settled = 1, settled_at = now()
+         WHERE id = (SELECT id FROM budget_reservations
+                     WHERE project_id = $1 AND bulk_job_id = $2
+                       AND kind = 'documents' AND state = 'held'
+                     ORDER BY created_at LIMIT 1)",
+        project,
+        job
+    )
+    .execute(&mut **transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
+}
+
+/// Releases one of `job`'s held `documents` units, in the item transaction that proved the
+/// item can never consume it (D-116): a refused, conflicted or skipped item frees what it
+/// held, so the allowance is honest rather than conservative.
+pub async fn release_bulk_document(
+    transaction: &mut Transaction<'_, Postgres>,
+    project: Uuid,
+    job: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query!(
+        "UPDATE budget_reservations SET state = 'released', settled_at = now()
+         WHERE id = (SELECT id FROM budget_reservations
+                     WHERE project_id = $1 AND bulk_job_id = $2
+                       AND kind = 'documents' AND state = 'held'
+                     ORDER BY created_at LIMIT 1)",
+        project,
+        job
+    )
+    .execute(&mut **transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
+}
+
+/// Closes every reservation `job` still holds when it reaches a terminal state (D-116):
+/// the `jobs` slot settles when the job ran (it consumed a slot of the caller's
+/// concurrency) and releases when it never started; every `documents` unit an item didn't
+/// already settle is released — what was never written costs nothing. In the transaction
+/// that records the terminal state, like [`close_job`] for a delivery job.
+pub async fn close_bulk(
+    transaction: &mut Transaction<'_, Postgres>,
+    project: Uuid,
+    environment: Uuid,
+    job: Uuid,
+    ran: bool,
+) -> Result<(), DbError> {
+    sqlx::query!(
+        "UPDATE budget_reservations
+         SET state = CASE WHEN kind = 'jobs' AND $4 THEN 'settled' ELSE 'released' END,
+             settled = CASE WHEN kind = 'jobs' AND $4 THEN reserved ELSE NULL END,
+             settled_at = now()
+         WHERE project_id = $1 AND environment_id = $2 AND bulk_job_id = $3
+           AND state IN ('held', 'uncertain')",
+        project,
+        environment,
+        job,
+        ran
+    )
+    .execute(&mut **transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
+}
+
 /// The outcome's commit tells the reservation what the work consumed (D-113). For a
 /// reservation the same transaction holds, like an entry write's: the write and its settlement
 /// land or roll back together.
@@ -344,8 +490,9 @@ pub async fn reconcile(pool: &PgPool) -> Result<Reconciled, DbError> {
         "WITH stale AS (
              SELECT project_id, id FROM budget_reservations
              WHERE state = 'held'
-               AND ((job_id IS NULL AND created_at < now() - $2::interval)
-                    OR (job_id IS NOT NULL AND created_at < now() - $1::interval))
+               AND ((job_id IS NULL AND bulk_job_id IS NULL AND created_at < now() - $2::interval)
+                    OR ((job_id IS NOT NULL OR bulk_job_id IS NOT NULL)
+                        AND created_at < now() - $1::interval))
              ORDER BY created_at
              LIMIT $3 FOR UPDATE SKIP LOCKED
          )
@@ -392,6 +539,39 @@ pub async fn reconcile(pool: &PgPool) -> Result<Reconciled, DbError> {
         released,
         uncertain: u64::try_from(stale.len()).unwrap_or(u64::MAX),
     })
+}
+
+/// The bulk half of [`reconcile`]'s closing pass (D-116): reservations a terminal
+/// `bulk_jobs` row still holds — crashed before its close could commit — are closed the way
+/// its outcome says: the `jobs` slot `settled` when the job ran, `released` when it never
+/// started; `documents` units an item never spent are `released`. The item-level settle and
+/// release already cover the common path; this is the crash backstop, like the `jobs` join
+/// above.
+pub async fn reconcile_bulk(pool: &PgPool) -> Result<u64, DbError> {
+    let mut tx = worker(pool).await?;
+    let closed = sqlx::query!(
+        "WITH closing AS (
+             SELECT r.project_id, r.id, r.kind, (b.started_at IS NOT NULL) AS ran
+             FROM budget_reservations r
+             JOIN bulk_jobs b ON b.project_id = r.project_id AND b.environment_id = r.environment_id
+                            AND b.id = r.bulk_job_id
+             WHERE r.state IN ('held', 'uncertain')
+               AND b.state IN ('done', 'blocked', 'cancelled')
+             LIMIT $1
+         )
+         UPDATE budget_reservations r
+         SET state = CASE WHEN closing.kind = 'jobs' AND closing.ran THEN 'settled' ELSE 'released' END,
+             settled = CASE WHEN closing.kind = 'jobs' AND closing.ran THEN r.reserved ELSE NULL END,
+             settled_at = now()
+         FROM closing WHERE r.project_id = closing.project_id AND r.id = closing.id",
+        MAX_SWEEP
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?
+    .rows_affected();
+    tx.commit().await.map_err(DbError::from_query)?;
+    Ok(closed)
 }
 
 /// Replaces a token's limits row (at least one bound, checked by [`Limits::check`] first).

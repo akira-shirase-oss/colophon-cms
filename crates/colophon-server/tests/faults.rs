@@ -26,6 +26,7 @@ use common::{
     publish_article, sign_in,
 };
 use reqwest::{Method, StatusCode};
+use serde_json::json;
 
 /// The exit code `fault::point` uses.
 const FAULT_EXIT: i32 = 86;
@@ -411,4 +412,101 @@ async fn a_migration_worker_killed_mid_run_resumes_and_finishes_the_plan() {
         assert_eq!(item["outcome"], "applied", "{item}");
         assert!(item["new_revision_id"].is_string(), "{item}");
     }
+}
+
+/// F06: a worker killed just after a bulk item's commit resumes without applying it twice —
+/// the item's outcome is the crash boundary, not the job's (D-116).
+#[tokio::test]
+#[ignore = "needs the stack, migrations and --features fault-injection"]
+async fn a_worker_killed_after_a_bulk_item_resumes_without_duplicating_it() {
+    let owner;
+    let project_id;
+    let job_id;
+    {
+        let mut server = Server::start_with(&[
+            ("COLOPHON_FAULT", "bulk:after-item"),
+            ("COLOPHON_WORKER_POLL_MS", "100"),
+        ])
+        .await;
+        owner = sign_in("dev-owner").await;
+        let project = project(&owner).await;
+        let entries = entries(&project);
+        let made = call(
+            &owner,
+            Method::POST,
+            &entries,
+            Some(&article("crashed item", "body")),
+            &[("idempotency-key", &key())],
+        )
+        .await
+        .expect("request");
+        assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+        let entry = made.body["data"]["id"].as_str().expect("an id").to_owned();
+        let revision = made.body["data"]["revision"]["id"]
+            .as_str()
+            .expect("a revision")
+            .to_owned();
+        let base = format!("/api/v1/projects/{project}/environments/production/bulk");
+        let submitted = call(
+            &owner,
+            Method::POST,
+            &base,
+            Some(&json!({
+                "collection": "articles", "seal": true,
+                "items": [
+                    {"key": "a", "entry": entry, "expected_revision": revision,
+                     "op": {"op": "set", "path": "title", "value": "crashed once"}},
+                ],
+            })),
+            &[("idempotency-key", &key())],
+        )
+        .await
+        .expect("request");
+        assert_eq!(submitted.status, StatusCode::ACCEPTED, "{}", submitted.body);
+        job_id = submitted.body["data"]["id"]
+            .as_str()
+            .expect("a job id")
+            .to_owned();
+        assert_eq!(
+            server.exit_code().await,
+            Some(FAULT_EXIT),
+            "the worker stopped after the item's commit"
+        );
+        project_id = project;
+    }
+
+    let _server = Server::start_with(&[("COLOPHON_WORKER_POLL_MS", "100")]).await;
+    let base = format!("/api/v1/projects/{project_id}/environments/production/bulk");
+    let mut state = String::new();
+    for _ in 0..150 {
+        let got = call(&owner, Method::GET, &format!("{base}/{job_id}"), None, &[])
+            .await
+            .expect("request");
+        state = got.body["data"]["state"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if matches!(state.as_str(), "done" | "blocked" | "cancelled") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    assert_eq!(state, "done", "the resumed run finished");
+    // The item applied exactly once: the entry's history has exactly one revision with the
+    // bulk write's title, and the item row says `applied` — never a second write.
+    let items = call(
+        &owner,
+        Method::GET,
+        &format!("{base}/{job_id}/items"),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        items.body["data"][0]["outcome"].as_str(),
+        Some("applied"),
+        "{}",
+        items.body
+    );
 }
