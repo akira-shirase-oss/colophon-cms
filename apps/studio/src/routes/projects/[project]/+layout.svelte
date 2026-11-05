@@ -6,6 +6,7 @@
 <script lang="ts">
 	import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
+	import ImageIcon from '@lucide/svelte/icons/image';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 	import ListTodoIcon from '@lucide/svelte/icons/list-todo';
@@ -78,6 +79,7 @@
 		'/projects/[project]/migrations': 'Migrations',
 		'/projects/[project]/migrations/[migration]': 'Migrations',
 		'/projects/[project]/tasks': 'Tasks',
+		'/projects/[project]/media': 'Media',
 		'/projects/[project]/members': 'Members',
 		'/projects/[project]/settings': 'Settings',
 		'/projects/[project]/settings/types': 'Content types',
@@ -250,6 +252,13 @@
 			<Sidebar.Group>
 				<Sidebar.GroupLabel>Work</Sidebar.GroupLabel>
 				<Sidebar.Menu>
+					<Sidebar.MenuItem>
+						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/media')} tooltipContent="Media">
+							{#snippet child({ props })}
+								<a href={resolve('/projects/[project]/media', { project })} data-testid="media-link" {...props}><ImageIcon /><span>Media</span></a>
+							{/snippet}
+						</Sidebar.MenuButton>
+					</Sidebar.MenuItem>
 					<Sidebar.MenuItem>
 						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/tasks')} tooltipContent="Tasks">
 							{#snippet child({ props })}
