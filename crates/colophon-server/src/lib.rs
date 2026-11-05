@@ -185,6 +185,7 @@ fn api_services(
         allow_private_destinations: config.listen_addr.ip().is_loopback(),
         cache: delivery_cache(config)?,
         content_types: colophon_api::ContentTypeCache::new(),
+        environment_ids: colophon_api::EnvironmentIds::new(),
         assets: asset_store(config)?,
         events,
         mcp: colophon_api::mcp::Shared::new(config.mcp),

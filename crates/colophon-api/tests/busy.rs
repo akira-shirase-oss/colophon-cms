@@ -48,6 +48,7 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
             allow_private_destinations: true,
             cache: colophon_api::DeliveryCache::disabled(),
             content_types: colophon_api::ContentTypeCache::new(),
+            environment_ids: colophon_api::EnvironmentIds::new(),
             assets: None,
             events: colophon_api::events::EventBus::new(
                 colophon_api::events::EventLimits::default(),

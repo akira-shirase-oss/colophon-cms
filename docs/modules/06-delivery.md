@@ -213,7 +213,11 @@ These are policies to test, not a global 30-second consistency guarantee.
   delivered, a pinned read of generation 1 after release 2, a cursor that keeps its generation across a release);
   `crates/colophon-db/tests/releases.rs` (the delivery role refused drafts, entries, changesets, members, sessions,
   identities and every write); `perf/k6/delivery.js` (anonymous latest, pinned and single-entry reads, at least
-  1,000,000 per full run). DX.4: `crates/colophon-server/tests/delivery_query.rs` (filter, sort and page parity
+  1,000,000 per full run); `perf/k6/audience-sites.js` (the five demo sites' real read mix —
+  `/media/v1` thumbs, renditions and originals beside collection lists with cursor paging,
+  latest and pinned entries, `If-None-Match` revalidation and a made-up 404 — against the
+  seeded `demo-sites` project, which is what found the media origin's per-request environment
+  lookup D-134 memoises). DX.4: `crates/colophon-server/tests/delivery_query.rs` (filter, sort and page parity
   with the draft route, a pinned release unmoved by a newer one, unpublished and tombstoned entries absent at
   every generation, anonymous and credentialed reads, foreign and uncommitted-generation cursors refused,
   `fields` narrowing and the `applied` echo, ETag revalidation).

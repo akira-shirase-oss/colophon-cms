@@ -7,8 +7,8 @@ use colophon_auth::OidcClient;
 use colophon_db::PgPool;
 
 use crate::{
-    BuildInfo, ContentTypeCache, DeliveryCache, Readiness, admission::SharedAdmission,
-    events::EventBus, mcp,
+    BuildInfo, ContentTypeCache, DeliveryCache, EnvironmentIds, Readiness,
+    admission::SharedAdmission, events::EventBus, mcp,
 };
 
 /// Session lifetimes.
@@ -47,6 +47,9 @@ pub struct Services {
     pub cache: DeliveryCache,
     /// Parsed content types by their definition's hash (D-078).
     pub content_types: ContentTypeCache,
+    /// Environment ids the media origin has already resolved — the slug-to-id mapping is
+    /// immutable, so a remembered answer is what Postgres would answer.
+    pub environment_ids: EnvironmentIds,
     /// The object store uploads are quarantined in and served from (07-media); `None` without
     /// `COLOPHON_S3_*`, and upload endpoints say so.
     pub assets: Option<colophon_media::Shared>,

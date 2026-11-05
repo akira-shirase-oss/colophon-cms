@@ -44,7 +44,10 @@
 # comment etags, and task creates and updates on task etags; D-102), live ({P}/events streams
 # held open to their clean end while other virtual users save entries steadily — the server
 # gets a short COLOPHON_EVENTS_LIFETIME_MS so a hold is seconds, not 30 minutes; D-108),
-# delivery (anonymous /content/v1 reads, latest and pinned), publishing (whole publishes, five
+# delivery (anonymous /content/v1 reads, latest and pinned), audience-sites (the demo sites'
+# real read shapes against the seeded demo-sites project: media thumbs and originals,
+# collection lists with cursor paging, entries latest and pinned, and If-None-Match
+# revalidations; needs scripts/seed-demo-sites.sh's record or DEMO_PROJECT), publishing (whole publishes, five
 # requests each, with the worker announcing every release to a local receiver; needs node),
 # the load-matrix evidence runs (D-128): smoke (L01: one signed-in user's whole walk — reads,
 # saves, revision reads, publishes and the release IDs they land — at a one's pace, every
@@ -102,7 +105,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -125,6 +128,9 @@ case "$endpoint" in
   # ~3.5k/s, so the steady promise is 2,000/s at a 100 ms p99 (D-110).
   openapi) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
   session | projects | setup | delivery | site) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
+  # The demo sites' mix: over half the requests are media, each an environment lookup plus an
+  # object-store read, so its steady promise is far under delivery's cache-hit path.
+  audience-sites) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
   # Every request pays Argon2id on the blocking pool (about 50-100 ms of CPU each): the steady
   # rate is deliberately low, and the p99 budget is the hashing queue, not the endpoint's work.
   accounts) RATE="${RATE:-50}" P99_MS="${P99_MS:-500}" ;;
@@ -423,7 +429,7 @@ tx_before=$(db_transactions)
 # plus a migrator connection amount to. SAMPLE_SECONDS apart; recorded into the result's
 # `resources`. One server, so skipped under CLUSTER=1 (the numbers would name nothing).
 case "$endpoint" in
-  warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load)
+  warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|audience-sites)
     if [[ "$cluster" != "1" ]]; then
       (
         while :; do

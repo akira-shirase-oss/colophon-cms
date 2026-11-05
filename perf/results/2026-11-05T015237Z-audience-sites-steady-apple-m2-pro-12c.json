@@ -1,0 +1,58 @@
+{
+  "scenario": "steady",
+  "endpoint": "audience-sites",
+  "date": "2026-11-05T01:52:37Z",
+  "commit": "6dc3a3c",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 300,
+    "duration": "60s",
+    "vus": 256
+  },
+  "requests": 18115,
+  "rps": 298,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 9.908,
+    "p50": 3.563,
+    "p90": 24.543,
+    "p95": 39.283,
+    "p99": 82.338,
+    "p999": 149.806,
+    "max": 174.128
+  },
+  "database_transactions_during_run": 9601,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 12,
+    "server_rss_kb": {
+      "first": 27024,
+      "last": 35024,
+      "max": 42256
+    },
+    "server_cpu_percent": {
+      "avg": 7.7,
+      "max": 10.0
+    },
+    "postgres_connections": {
+      "last": 22,
+      "max": 22
+    }
+  }
+}

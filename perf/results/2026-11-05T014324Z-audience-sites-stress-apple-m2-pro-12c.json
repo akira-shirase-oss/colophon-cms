@@ -1,0 +1,249 @@
+{
+  "scenario": "stress",
+  "endpoint": "audience-sites",
+  "date": "2026-11-05T01:43:24Z",
+  "commit": "6dc3a3c",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "p99_gate_ms": 250,
+  "step_seconds": 20,
+  "knee_rate": 1797,
+  "failure_mode": "fell behind",
+  "healthy_after": true,
+  "steps": [
+    {
+      "rate": 125,
+      "attempt": 1,
+      "rps": 129,
+      "p99_ms": 6.228,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 13.25,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 156,
+      "attempt": 1,
+      "rps": 160,
+      "p99_ms": 6.032,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 12.03,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 195,
+      "attempt": 1,
+      "rps": 198,
+      "p99_ms": 8.748,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 10.88,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 243,
+      "attempt": 1,
+      "rps": 244,
+      "p99_ms": 25.548,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 14.47,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 303,
+      "attempt": 1,
+      "rps": 305,
+      "p99_ms": 18.016,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 22.20,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 378,
+      "attempt": 1,
+      "rps": 379,
+      "p99_ms": 18.51,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 23.60,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 472,
+      "attempt": 1,
+      "rps": 472,
+      "p99_ms": 19.774,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 22.21,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 590,
+      "attempt": 1,
+      "rps": 588,
+      "p99_ms": 11.236,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 20.07,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 737,
+      "attempt": 1,
+      "rps": 734,
+      "p99_ms": 34.589,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 27.71,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 921,
+      "attempt": 1,
+      "rps": 916,
+      "p99_ms": 12.347,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 37.37,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 1151,
+      "attempt": 1,
+      "rps": 1142,
+      "p99_ms": 15.307,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 43.60,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 1438,
+      "attempt": 1,
+      "rps": 1425,
+      "p99_ms": 17.182,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 47.90,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 1797,
+      "attempt": 1,
+      "rps": 1781,
+      "p99_ms": 24.553,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 0,
+      "held": true,
+      "load_average": 50.93,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 2246,
+      "attempt": 1,
+      "rps": 2152,
+      "p99_ms": 313.078,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 920,
+      "held": false,
+      "load_average": 55.13,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    },
+    {
+      "rate": 2246,
+      "attempt": 2,
+      "rps": 2202,
+      "p99_ms": 135.74,
+      "failed": 0,
+      "checks_failed": 0,
+      "dropped": 103,
+      "held": false,
+      "load_average": 64.10,
+      "server_logged": {
+        "requests": {},
+        "other": {}
+      }
+    }
+  ]
+}

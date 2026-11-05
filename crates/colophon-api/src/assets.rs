@@ -247,13 +247,18 @@ async fn stream(
     }) {
         return Err(ApiError::NotFound);
     }
-    let environment = colophon_db::delivery::environment(&services.pool, project, &environment)
+    // The slug names the environment id the key needs; the mapping is immutable, so the
+    // server's memo answers after the first lookup and misses still cost the lookup
+    // (`environment_ids.rs` — nothing about an environment slug's id can change).
+    let environment = services
+        .environment_ids
+        .resolve(&services.pool, project, &environment)
         .await
         .map_err(ApiError::from_db)?
         .ok_or(ApiError::NotFound)?;
     let mut key = colophon_media::public_key(
         &project.to_string(),
-        &environment.id.to_string(),
+        &environment.to_string(),
         &asset.to_string(),
     );
     if let Some(name) = name {

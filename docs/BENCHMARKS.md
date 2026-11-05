@@ -280,6 +280,42 @@ the commit plus its uncommitted diff.
   (21 MB) and 4 wrong-type uploads refused at the door; 72 media reads; 0 errors.
 - One earlier iteration stored `held: false` on the editorial gate (`...T211951Z-`).
 
+## The demo sites' audience mix
+
+`perf/k6/audience-sites.js` (wired into `scripts/load.sh` as `audience-sites`,
+with the resource sampler) is not one of the L-cases: it is the durable shape
+of the five demo sites' real reads — the seeded `demo-sites` project's five
+collections (`posts`, `guides`, `recipes`, `stories`, `photos`) consumed the
+way `apps/sites` actually pages them. A hundred iterations hold 35 `w320`
+renditions, 12 `w1280`s, 5 originals, 15 latest entries, 5 entries pinned at
+the release the seed published, 12 `limit=100` first pages, 5 five-entry
+first pages, 5 cursor continuations, 5 `If-None-Match` revalidations and 1
+made-up entry — a 404 that is never cached. `setup()` reads the seeded record
+(`DEMO_PROJECT`/`DEMO_ENVIRONMENT`, else `apps/sites/.colophon.json`), lists
+each collection anonymously exactly as the site builds do to learn entry and
+asset ids, and warms every cacheable key first, so `cache_hits` measures the
+cache working rather than cold-setup misses.
+
+- Command:
+  `RATE=300 DURATION=60s VUS=256 DEMO_PROJECT=<seeded project id> COLOPHON_TEST_DATABASE=<seeded database> scripts/load.sh audience-sites steady`.
+  The scenario rides an already-seeded project rather than building a corpus,
+  so it runs against whatever database the seed was written into.
+- Stored runs — the D-134 before/after: `2026-11-05T013738Z-audience-sites-steady-apple-m2-pro-12c.json`
+  held 18,116 requests at 300/s, avg 2.4 ms, p50 2.2 ms, p99 7.1 ms, 100%
+  cache hits, 0 failures, 19,487 database transactions; `2026-11-05T015237Z-…`
+  with `EnvironmentIds` held the same 18,115-request mix at 298/s and dropped
+  to 9,601 database transactions (−51%) — the lookup the media origin no
+  longer makes per request. The second run's latency line (avg 9.9 ms, p99
+  82 ms) was measured while the laptop's load average sat around 80–90 —
+  ambient load, not the change; the transaction halving is a count rather
+  than a latency. The per-request latency effect is the paired run's:
+  `2026-11-05T020500Z-envids-paired-apple-m2-pro-12c.json` alternated old and
+  new binaries under identical ambient with the unchanged list path as
+  control, and put the saving at ~0.7 ms median on `w320`/`w1280` reads.
+- The same evening's `2026-11-05T014324Z-audience-sites-stress-apple-m2-pro-12c.json`
+  walked the mix up in 20 s steps to a ~1,800/s held knee and a 2,246/s
+  fall-behind on this one laptop — local saturation evidence only.
+
 ## What the numbers prove and what they do not
 
 **They prove behaviour, on this machine, at those commits.** That a cold read is a

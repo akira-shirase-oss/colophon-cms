@@ -58,6 +58,11 @@ release still references. Proven by L14, malicious-upload fixtures and X10.
 - Assets are served from a separate asset origin, never the administration origin.
 - Public images and private objects use separate paths, visibility policies and access tests.
 - Production and staging use separate buckets.
+- The origin's only lookup — the URL's environment slug to the id its object keys name — goes
+  through `EnvironmentIds`, a bounded in-process memo (`colophon-api/src/environment_ids.rs`,
+  D-134): the mapping is immutable, so a remembered answer is what Postgres would answer;
+  misses still ask. Everything else about the read stays as D-094 describes — no session, no
+  asset-row read, object existence as the proof it verified.
 
 ### Processing limits
 - Four image workers, each with process and time limits ([worker](05-worker.md) image pool).
