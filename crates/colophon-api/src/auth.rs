@@ -56,6 +56,26 @@ fn expires_in(duration: Duration) -> OffsetDateTime {
     OffsetDateTime::now_utc() + time::Duration::try_from(duration).unwrap_or(time::Duration::MINUTE)
 }
 
+/// What the sign-in page may offer: the built-in accounts are always there; `sso` says whether
+/// an external identity provider is configured, so the page never shows a button that can only
+/// fail (D-141).
+#[derive(Serialize)]
+pub(crate) struct Providers {
+    sso: bool,
+}
+
+/// `GET /auth/providers`: public — a sign-in page asks before offering the provider button.
+pub(crate) async fn providers(
+    State(state): State<AppState>,
+) -> Result<Json<Data<Providers>>, ApiError> {
+    let services = services(&state)?;
+    Ok(Json(Data {
+        data: Providers {
+            sso: services.oidc.is_some(),
+        },
+    }))
+}
+
 /// `GET /auth/login?return_to=/path[&start=create]`: starts a sign-in and sends the browser to the
 /// provider: to its sign-in form, or with `start=create` to its form for making an account.
 /// Either way the person comes back signed in; an account grants nothing by itself (D-043).

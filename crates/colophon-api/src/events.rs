@@ -317,8 +317,7 @@ pub(crate) async fn delivery_events(
     })?;
 
     let limits = services.events.limits();
-    let frames =
-        public_frames(subscription, environment.id, limits).map(Ok::<_, Infallible>);
+    let frames = public_frames(subscription, environment.id, limits).map(Ok::<_, Infallible>);
 
     let mut response = Sse::new(frames)
         .keep_alive(

@@ -15,12 +15,15 @@ import {
 	listRoles,
 	listTasks,
 	me,
-	searchEntries
+	searchEntries,
+	authProviders
 } from './api.ts';
 
 export const projectQuery = (project: string) => ({ queryKey: ['project', project], queryFn: () => getProject(project) });
 export const typesQuery = (project: string) => ({ queryKey: ['types', project], queryFn: () => listContentTypes(project) });
 export const meQuery = () => ({ queryKey: ['me'], queryFn: me });
+/** Server configuration that never changes within a page's life: which sign-in methods exist. */
+export const providersQuery = () => ({ queryKey: ['auth-providers'], queryFn: authProviders, staleTime: Infinity });
 export const changesetsQuery = (project: string) => ({ queryKey: ['changesets', project], queryFn: () => listChangesets(project) });
 export const releasesQuery = (project: string) => ({ queryKey: ['releases', project], queryFn: () => listReleases(project) });
 export const rolesQuery = (project: string) => ({ queryKey: ['roles', project], queryFn: () => listRoles(project) });
