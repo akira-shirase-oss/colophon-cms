@@ -29,7 +29,7 @@
 	const manages = $derived(may(mine.data, 'audience.manage'));
 	const readsLog = $derived(may(mine.data, 'audit.read'));
 
-	const users = createQuery(() => ({ queryKey: ['audience-users', project], queryFn: () => listSiteUsers(project) }));
+	const users = createQuery(() => ({ queryKey: ['audience-users', project], queryFn: () => listSiteUsers(project), enabled: manages }));
 	const roles = createQuery(() => ({ queryKey: ['audience-roles', project], queryFn: () => listAudienceRoles(project), enabled: manages }));
 	const activity = createQuery(() => ({
 		queryKey: ['audience-activity', project],
@@ -52,6 +52,7 @@
 		'audience.role_created': 'created the role',
 		'audience.role_updated': 'changed the role',
 		'audience.role_deleted': 'deleted the role',
+		'audience.user_created': 'was added',
 		'audience.user_updated': 'was changed',
 		'audience.session_revoked': 'had a session revoked'
 	};
@@ -100,7 +101,13 @@
 
 {#if error}<p role="alert" class="mb-4 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>{/if}
 
-{#if users.isPending}
+{#if mine.isPending}
+	<p class="text-sm text-muted-foreground">Loading…</p>
+{:else if !manages}
+	<EmptyState icon={UsersRoundIcon} title="Not for this role" testid="audience-hidden">
+		Your role can't see the project's site visitors.
+	</EmptyState>
+{:else if users.isPending}
 	<p class="text-sm text-muted-foreground">Loading…</p>
 {:else if users.isError}
 	<Problem error={users.error} />

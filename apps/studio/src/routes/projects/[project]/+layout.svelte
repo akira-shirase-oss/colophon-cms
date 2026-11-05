@@ -307,13 +307,15 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
-					<Sidebar.MenuItem>
-						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/audience')} tooltipContent="Audience">
-							{#snippet child({ props })}
-								<a href={resolve('/projects/[project]/audience', { project })} data-testid="audience-link" {...props}><UserRoundIcon /><span>Audience</span></a>
-							{/snippet}
-						</Sidebar.MenuButton>
-					</Sidebar.MenuItem>
+					{#if may(mine.data, 'audience.manage')}
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/audience')} tooltipContent="Audience">
+								{#snippet child({ props })}
+									<a href={resolve('/projects/[project]/audience', { project })} data-testid="audience-link" {...props}><UserRoundIcon /><span>Audience</span></a>
+								{/snippet}
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
+					{/if}
 					{#if builds}
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton isActive={inBuilder} tooltipContent="Content types">
