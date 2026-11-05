@@ -36,6 +36,7 @@ pub mod schedules;
 pub mod scope;
 pub mod setup;
 pub mod tokens;
+pub mod work;
 
 use std::{str::FromStr, time::Duration};
 
@@ -151,6 +152,16 @@ pub enum DbError {
         /// What the principal already held or spent.
         used: i64,
         /// Its ceiling.
+        limit: i64,
+    },
+    /// The project already retains all the unfinished work its bound allows (spec §33,
+    /// D-131): [`work::admit`] refused the job row this transaction would have added, under
+    /// the admission lock. The transaction is aborted and the caller rolls it back.
+    #[error("the project's pending work is at its bound ({open} of {limit} jobs open)")]
+    WorkFull {
+        /// Unfinished jobs the project retains across the job tables.
+        open: i64,
+        /// Its bound.
         limit: i64,
     },
     /// Applying migrations failed.

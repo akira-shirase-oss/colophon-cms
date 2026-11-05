@@ -505,7 +505,13 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   `stale_version`, a schema change racing an entry write resolves to exactly one committed side, a schema `PUT`
   killed at its commit boundary rolls back or replays (`content_type.update:*` fault points), and a delivery
   repeated by crash/resume, refusal or attempt timeout keeps one idempotency key, so a deduplicating destination
-  applies exactly one effect.
+  applies exactly one effect. F09 and F11 joined them (D-131): `colophon_db::work` bounds a project's open jobs at
+  spec §33's 10,000 across `jobs`/`asset_jobs`/`bulk_jobs`/`migration_plans`, every transaction that adds a durable
+  work row admits under the project's advisory lock first and a refused admission aborts the whole transaction —
+  503 `unavailable` + `work_full` + `Retry-After` for capacity, a 500 for the outbox write that cannot commit —
+  proven in `tests/faults.rs` by filling a project to the bound, refusing then freeing, and by revoking the
+  outbox's `INSERT` grant as the honest disk-failure stand-in; F11's citation is `tests/evals.rs` (D-117), where
+  hostile model output is refused and owner-oracle-verified at `UNAUTHORIZED: 0`.
 - `docs`: complete guides; every example runs in CI.
 - `oss`: release process, SBOM, signed artifacts, security policy.
 - Usability test with five editors; one independent install.

@@ -477,14 +477,6 @@ pub(crate) async fn create(
         return Ok(replay);
     }
     let id = Uuid::now_v7();
-    // The job's reservations land in its accepting transaction, like a release's dispatch
-    // (D-113): the jobs slot, then a documents unit per item.
-    budgets::reserve_bulk_job(&mut tx, id)
-        .await
-        .map_err(ApiError::from_db)?;
-    budgets::reserve_bulk_documents(&mut tx, id, i64::try_from(items.len()).unwrap_or(0))
-        .await
-        .map_err(ApiError::from_db)?;
     let head = sha256(format!("entries/{}", collection.as_str()).as_bytes());
     let manifest_hash = roll_hash(&head, &new.items);
     let principal = if caller.project.is_some() {
@@ -492,6 +484,10 @@ pub(crate) async fn create(
     } else {
         "member"
     };
+    // The job's `create` admits it against the project's work bound (D-131), and it comes
+    // before the reservations for two reasons that point the same way: `create` is the
+    // INSERT `budget_reservations.bulk_job_id` references, and the admission lock must
+    // precede the token-limits row a reservation locks.
     let job = bulk::create(
         &mut tx,
         &bulk::NewJob {
@@ -506,6 +502,15 @@ pub(crate) async fn create(
     )
     .await
     .map_err(ApiError::from_db)?;
+    // The job's reservations land in its accepting transaction, like a release's dispatch
+    // (D-113): the jobs slot, then a documents unit per item — refused, and the whole job
+    // rolls back with them.
+    budgets::reserve_bulk_job(&mut tx, id)
+        .await
+        .map_err(ApiError::from_db)?;
+    budgets::reserve_bulk_documents(&mut tx, id, i64::try_from(items.len()).unwrap_or(0))
+        .await
+        .map_err(ApiError::from_db)?;
     bulk::append(&mut tx, id, &items)
         .await
         .map_err(ApiError::from_db)?;

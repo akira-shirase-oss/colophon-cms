@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*) AS \"open!\" FROM (\n               SELECT 1 FROM jobs\n               WHERE project_id = $1 AND status IN ('pending', 'retrying', 'running', 'held')\n               UNION ALL\n               SELECT 1 FROM asset_jobs\n               WHERE project_id = $1 AND status IN ('pending', 'running', 'retrying')\n               UNION ALL\n               SELECT 1 FROM bulk_jobs\n               WHERE project_id = $1 AND state IN ('accepting', 'running')\n               UNION ALL\n               SELECT 1 FROM migration_plans\n               WHERE project_id = $1 AND state IN ('proposed', 'approved', 'running')\n           ) retained",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "open!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7e6468ebd2dffb8c8ebdd6b96f2f802119b05ec891dfa9484baaa5b6c0c5904b"
+}

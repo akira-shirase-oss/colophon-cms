@@ -16,6 +16,13 @@ pub const BACKOFF_BASE_MS: u64 = 1_000;
 /// No retry waits longer than this, whatever a `Retry-After` asks for.
 pub const BACKOFF_CAP_MS: u64 = 60_000;
 
+/// The most unfinished jobs a project may retain (spec §33): delivery `jobs`, `asset_jobs`,
+/// `bulk_jobs` and `migration_plans` counted together — the same "open work" a restore's
+/// inventory counts (O3). `colophon_db::work` enforces it at admission: every transaction that
+/// inserts such a row admits first, and over the bound new work is refused before acceptance
+/// (D-131, F09).
+pub const MAX_PENDING: i64 = 10_000;
+
 /// Where a job stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
