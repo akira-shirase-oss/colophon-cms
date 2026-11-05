@@ -72,15 +72,32 @@ impl Sweeper {
         tracing::info!("asset retention sweep stopped");
     }
 
-    /// One pass: the expiry enqueue, then the orphan listing.
+    /// One pass: the expiry enqueue, then the orphan listing. The enqueue budgets what it
+    /// adds against the room the installation's payload bound leaves (D-135): the jobs it
+    /// commits carry their assets' recorded sizes as payload metadata, so a sweep must
+    /// never be the admitter that tips the bound over.
     async fn pass(&self) {
         let cutoff = OffsetDateTime::now_utc() - self.expiry;
         let deadline = OffsetDateTime::now_utc() + self.job_lifetime;
-        match colophon_db::assets::enqueue_expired(&self.pool, cutoff, deadline, ENQUEUE).await {
-            Ok(0) => {}
-            Ok(expired) => tracing::info!(expired, "expire jobs enqueued"),
+        let room = match colophon_db::work::install_payload(&self.pool).await {
+            Ok(pending) => colophon_db::work::MAX_PENDING_PAYLOAD.saturating_sub(pending),
             Err(error) => {
-                tracing::warn!(error = %error, "the sweep's expiry enqueue failed");
+                // No count, no room: this pass enqueues nothing rather than guess.
+                tracing::warn!(error = %error, "the sweep's payload count failed; enqueueing nothing");
+                0
+            }
+        };
+        if room <= 0 {
+            tracing::debug!("no room under the payload bound; expire enqueue skipped");
+        } else {
+            match colophon_db::assets::enqueue_expired(&self.pool, cutoff, deadline, ENQUEUE, room)
+                .await
+            {
+                Ok(0) => {}
+                Ok(expired) => tracing::info!(expired, "expire jobs enqueued"),
+                Err(error) => {
+                    tracing::warn!(error = %error, "the sweep's expiry enqueue failed");
+                }
             }
         }
         self.orphans(cutoff).await;

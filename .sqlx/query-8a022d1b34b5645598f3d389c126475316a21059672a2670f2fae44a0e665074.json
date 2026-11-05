@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH doomed AS (\n             SELECT project_id, environment_id, id FROM bulk_jobs b\n             WHERE b.finished_at < $1\n               AND NOT EXISTS (\n                   SELECT 1 FROM budget_reservations r\n                   WHERE r.bulk_job_id = b.id)\n               AND NOT EXISTS (\n                   SELECT 1 FROM bulk_items i\n                   WHERE i.project_id = b.project_id AND i.environment_id = b.environment_id\n                     AND i.job_id = b.id)\n             ORDER BY b.finished_at\n             LIMIT $2)\n         DELETE FROM bulk_jobs b USING doomed d\n         WHERE b.project_id = d.project_id AND b.environment_id = d.environment_id\n           AND b.id = d.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8a022d1b34b5645598f3d389c126475316a21059672a2670f2fae44a0e665074"
+}

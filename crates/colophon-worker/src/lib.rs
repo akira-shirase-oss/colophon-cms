@@ -12,6 +12,7 @@ mod fault;
 pub mod guard;
 pub mod retention;
 pub mod schedules;
+pub mod tables;
 
 use std::{sync::Arc, time::Duration};
 

@@ -31,6 +31,7 @@ pub mod publish;
 pub mod query;
 pub mod releases;
 pub mod restore;
+pub mod retention;
 pub mod roles;
 pub mod schedules;
 pub mod scope;
@@ -162,6 +163,19 @@ pub enum DbError {
         /// Unfinished jobs the project retains across the job tables.
         open: i64,
         /// Its bound.
+        limit: i64,
+    },
+    /// The installation already retains all the pending payload metadata its bound allows
+    /// (spec §33, D-135): [`work::check_payload`] refused this transaction's stored bytes,
+    /// under the install-wide byte lock. The transaction is aborted and the caller rolls it
+    /// back.
+    #[error(
+        "the installation's pending payload is over its bound ({pending} of {limit} bytes held)"
+    )]
+    PayloadFull {
+        /// Payload bytes pending across every project.
+        pending: i64,
+        /// The bound.
         limit: i64,
     },
     /// Applying migrations failed.

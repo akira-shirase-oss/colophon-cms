@@ -55,9 +55,21 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   admission refuses with `DbError::WorkFull` → 503 `unavailable` + `work_full` + `Retry-After`, rolling
   the whole accepting transaction back; a due schedule that hits it stays `scheduled` and retries at the
   next poll. Worker transactions never take the lock (they only finish admitted work).
+- **The installation payload bound** (P6, D-135): beside the row count, `colophon_pending_payload` sums
+  the stored bytes of every project's open work — job keys, recorded asset sizes, bulk manifests and
+  pending items, plan definitions and resolutions — under a second, install-wide advisory lock, and over
+  spec §33's 1 GiB the same refusal shape answers `payload_full`. Every payload-storing site re-checks
+  after its write, and the media sweep enqueues only inside the room `install_payload` leaves, so the
+  bound is never tipped by work nobody admitted.
+- **The table-retention sweep** (P6, D-135): `colophon_worker::tables::Sweeper` runs beside the
+  delivery loop every `COLOPHON_TABLE_SWEEP_MS` (default hourly): `colophon_db::retention::sweep`
+  deletes dead state in 500-row batches, oldest first, up to 20 passes a tick — the ledger, receipts
+  and terminal work at their ages, the audit log through `colophon_audit_sweep`, and the private
+  session and flow tables through `colophon_retention`'s definer functions, which the worker may
+  execute but never read. What it never removes — `deletion_ledger`, content history, `uncertain`
+  reservations — is spelled out in [module 02](02-db.md) "Retention".
 - **Not yet:** per-project limits, signed announcements, wake-ups instead of polling,
-  reconciliation beyond repeating with the same key, spec §33's second bound (1 GiB of pending
-  payload metadata per install — job payloads are object-storage pointers, so it needs its own design).
+  reconciliation beyond repeating with the same key.
 
 ## Why it exists
 
@@ -169,6 +181,23 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
 - Cancellation stops new attempts. It does not reverse remote side effects that already happened.
 - For safety-critical actions, cancellation and permission revocation are rechecked before each next external attempt.
 
+### Retention (spec §27, D-135)
+- `colophon_worker::tables::Sweeper` runs beside the delivery loop and the scheduler on the worker's pool,
+  ticking every `COLOPHON_TABLE_SWEEP_MS` (default 3_600_000 — hourly; 1 s to 24 h accepted). Each tick runs
+  `colophon_db::retention::sweep` up to 20 times, stopping when a pass removed nothing; a stalled tick is
+  abandoned at a 120-second deadline and retried whole next interval — every pass commits on its own, so a
+  partial tick is progress kept, never work to undo.
+- One pass is one `colophon_worker` transaction, at most `retention::BATCH` (500) rows a table, oldest
+  first, in an order that orphans nothing mid-pass: settled `budget_reservations`, then `observations`,
+  then terminal `jobs`/`asset_jobs`, then `bulk_items`/`bulk_jobs`, `migration_items`/`migration_plans`,
+  `schedules`, the audit log, and the auth/flow tables. The ages live in `retention::Retention::DEFAULT`
+  and are spelled out per table in [module 02](02-db.md) "Retention"; what is never deleted is decided
+  there too.
+- The worker's own reach stays minimal: it gains DELETE on the work tables and EXECUTE on
+  `colophon_retention`'s definer functions — never SELECT on `sessions`, `access_tokens` or the sign-in
+  and setup tables, so it removes private rows it cannot enumerate (the `jobs.rs` privilege test proves
+  the reach did not widen).
+
 ### Admission (spec §33)
 - Capacity is reserved before work is accepted. **In place (D-131):** `colophon_db::work::admit` counts a
   project's open rows across `jobs`, `asset_jobs`, `bulk_jobs` and `migration_plans` under a per-project
@@ -176,8 +205,12 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
   new row is inserted, mapped to 503 `unavailable` + `details.reason` `work_full` + `Retry-After: 5`. The
   lock is the first any admitting transaction takes, so it precedes content-type and token-limit locks and
   no two admissions can deadlock; worker transactions never take it.
-- Large bodies live in object storage, referenced from the job — the spec's 1 GiB pending-payload bound is
-  therefore a separate design, still owed (the row bound above is what F09 proves).
+- The byte half is in place too (D-135): `work::admission` pairs the project lock with the install-wide
+  byte lock, `check_payload` counts the transaction's own uncommitted stored bytes — idempotency keys,
+  recorded `assets.size_bytes`, bulk operation documents and pending item inputs, plan definitions and
+  resolutions — through `colophon_pending_payload`, and over `job::MAX_PENDING_PAYLOAD` (1 GiB) the refusal
+  is `DbError::PayloadFull` → 503 `unavailable` + `details.reason` `payload_full` + `Retry-After`. Large
+  bodies live in object storage, so their recorded size is what the database honestly weighs.
 - When capacity is exhausted, new work is refused with a clear error **before** it is accepted (F09): the
   refusal aborts the whole accepting transaction, so no release, job, idempotency claim or generation move
   stands, and the client's retry after recovery commits fresh.
@@ -219,7 +252,7 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
 |---|---|
 | Worker killed after an external call, before recording it (F03) | Lease expires; another worker reclaims; reconcile before any repeat |
 | Old delivery runs after a newer release (F05) | Generation check blocks it; recorded as superseded |
-| Outbox or disk budget exhausted (F09) | New durable work fails before acceptance: over the 10,000-row bound, 503 `work_full` + `Retry-After` (D-131); a durable write that cannot commit answers 500, never success; either way the transaction rolls back whole and the same request lands after the condition clears (`tests/faults.rs`) |
+| Outbox or disk budget exhausted (F09) | New durable work fails before acceptance: over the 10,000-row bound, 503 `work_full` + `Retry-After` (D-131); over the 1 GiB install payload bound, 503 `payload_full` + `Retry-After` (D-135, `tests/work.rs`); a durable write that cannot commit answers 500, never success; either way the transaction rolls back whole and the same request lands after the condition clears (`tests/faults.rs`) |
 | Cache unavailable | Wake-ups fall back to polling; no work is lost |
 | Postgres unavailable | Stop claiming; nothing is acknowledged from memory; resume from Postgres afterwards |
 | Provider 429 / 5xx | Backoff with jitter within the attempt budget, then `failed` or `uncertain` with a repair action |

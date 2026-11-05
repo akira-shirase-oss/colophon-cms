@@ -16,6 +16,10 @@
 --   colophon_backup  runs pg_basebackup (scripts/backup.sh, D-125): a login with REPLICATION
 --                 and nothing else — it can copy the cluster but cannot read a user table, so
 --                 the backup credential is separate from every application credential
+--   colophon_retention  owns the retention sweep's definer functions (migration 0050,
+--                 D-135): SELECT and DELETE on the audit log and the private session and
+--                 flow tables, and nothing else; no login, and nothing logs in as it.
+--                 Migration 0050 also creates it if it is missing
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'colophon_api') THEN
@@ -35,6 +39,9 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'colophon_backup') THEN
         CREATE ROLE colophon_backup LOGIN REPLICATION PASSWORD 'colophon-dev' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'colophon_retention') THEN
+        CREATE ROLE colophon_retention NOLOGIN NOSUPERUSER NOBYPASSRLS;
     END IF;
 END
 $$;

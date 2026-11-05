@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH collectable AS (\n             SELECT a.project_id, a.environment_id, a.id, a.created_at, a.size_bytes,\n                    'expire:' || a.id::text || ':' || gen_random_uuid()::text AS key\n             FROM assets a\n             WHERE a.created_at < $1 AND a.state IN ('quarantined', 'usable', 'rejected')\n               AND NOT EXISTS (\n                   SELECT 1 FROM asset_references r\n                   JOIN entries e\n                     ON e.project_id = r.project_id AND e.environment_id = r.environment_id\n                    AND e.draft_revision_id = r.revision_id AND e.deleted_at IS NULL\n                   WHERE r.project_id = a.project_id AND r.environment_id = a.environment_id\n                     AND r.asset_id = a.id)\n               AND NOT EXISTS (\n                   SELECT 1 FROM asset_references r\n                   JOIN publications p\n                     ON p.project_id = r.project_id AND p.environment_id = r.environment_id\n                    AND p.revision_id = r.revision_id\n                   WHERE r.project_id = a.project_id AND r.environment_id = a.environment_id\n                     AND r.asset_id = a.id)\n               AND NOT EXISTS (\n                   SELECT 1 FROM asset_jobs j\n                   WHERE j.project_id = a.project_id AND j.environment_id = a.environment_id\n                     AND j.asset_id = a.id\n                     AND j.status IN ('pending', 'running', 'retrying'))\n               AND (\n                   SELECT count(*) FROM (\n                       SELECT 1 FROM jobs j\n                       WHERE j.project_id = a.project_id\n                         AND j.status IN ('pending', 'retrying', 'running', 'held')\n                       UNION ALL\n                       SELECT 1 FROM asset_jobs j\n                       WHERE j.project_id = a.project_id\n                         AND j.status IN ('pending', 'running', 'retrying')\n                       UNION ALL\n                       SELECT 1 FROM bulk_jobs b\n                       WHERE b.project_id = a.project_id AND b.state IN ('accepting', 'running')\n                       UNION ALL\n                       SELECT 1 FROM migration_plans m\n                       WHERE m.project_id = a.project_id\n                         AND m.state IN ('proposed', 'approved', 'running')\n                   ) open_work\n               ) < $4\n             ORDER BY a.created_at\n             LIMIT $3\n         ), fitting AS (\n             SELECT c.*, sum(c.size_bytes + octet_length(c.key))\n                        OVER (ORDER BY c.created_at)::bigint AS running\n             FROM collectable c\n         )\n         INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind,\n                                 idempotency_key, deadline_at)\n         SELECT project_id, environment_id, gen_random_uuid(), id, 'expire', key, $2\n         FROM fitting\n         WHERE running <= $5",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0d8006ee907e821ef5018f7d830c866d239f90c2c5991a4803b51290263a85a7"
+}
