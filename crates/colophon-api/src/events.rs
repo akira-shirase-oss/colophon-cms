@@ -35,7 +35,7 @@ use axum::{
     http::{HeaderValue, header::HeaderName},
     response::{IntoResponse, Response, Sse, sse::Event, sse::KeepAlive},
 };
-use colophon_db::events::Hint;
+use colophon_db::events::{Hint, Kind};
 use futures_util::{Stream, StreamExt, stream};
 use serde::Deserialize;
 use serde_json::json;
@@ -168,9 +168,24 @@ impl EventBus {
         project: Uuid,
         credential: Uuid,
     ) -> Result<Subscription, StreamRefused> {
+        self.subscribe_as(project, Some(credential))
+    }
+
+    /// A public delivery stream (D-139): no credential to count, still bounded per project and
+    /// per server, so anonymous listeners can never crowd out a project's staff streams.
+    fn subscribe_public(self: &Arc<Self>, project: Uuid) -> Result<Subscription, StreamRefused> {
+        self.subscribe_as(project, None)
+    }
+
+    fn subscribe_as(
+        self: &Arc<Self>,
+        project: Uuid,
+        credential: Option<Uuid>,
+    ) -> Result<Subscription, StreamRefused> {
         let mut shared = lock(&self.shared);
-        if shared.per_credential.get(&credential).copied().unwrap_or(0)
-            >= self.limits.per_credential
+        if let Some(credential) = credential
+            && shared.per_credential.get(&credential).copied().unwrap_or(0)
+                >= self.limits.per_credential
         {
             return Err(StreamRefused::Credential);
         }
@@ -185,7 +200,9 @@ impl EventBus {
             return Err(StreamRefused::Project);
         }
         let receiver = sender.subscribe();
-        *shared.per_credential.entry(credential).or_insert(0) += 1;
+        if let Some(credential) = credential {
+            *shared.per_credential.entry(credential).or_insert(0) += 1;
+        }
         shared.total += 1;
         Ok(Subscription {
             receiver,
@@ -208,10 +225,22 @@ struct Subscription {
     receiver: broadcast::Receiver<Frame>,
     bus: Arc<EventBus>,
     project: Uuid,
-    credential: Uuid,
+    /// The credential the stream is counted against; `None` for a public delivery stream.
+    credential: Option<Uuid>,
 }
 
 impl Subscription {
+    /// Whatever is already queued, without waiting: used to coalesce a burst into one frame.
+    fn try_next(&mut self) -> Option<Frame> {
+        match self.receiver.try_recv() {
+            Ok(frame) => Some(frame),
+            // A lagging receiver's backlog is not replayed; the burst it missed is answered by
+            // the frame the caller is about to send anyway.
+            Err(broadcast::error::TryRecvError::Lagged(_)) => Some(Frame::Resync),
+            Err(_) => None,
+        }
+    }
+
     /// The next frame; a lagging receiver answers one `Resync`, never a replay (D-108).
     async fn next(&mut self) -> Option<Frame> {
         match self.receiver.recv().await {
@@ -231,10 +260,12 @@ impl Subscription {
 impl Drop for Subscription {
     fn drop(&mut self) {
         let mut shared = lock(&self.bus.shared);
-        if let Some(count) = shared.per_credential.get_mut(&self.credential) {
+        if let Some(credential) = self.credential
+            && let Some(count) = shared.per_credential.get_mut(&credential)
+        {
             *count = count.saturating_sub(1);
             if *count == 0 {
-                shared.per_credential.remove(&self.credential);
+                shared.per_credential.remove(&credential);
             }
         }
         shared.total = shared.total.saturating_sub(1);
@@ -255,6 +286,112 @@ impl Drop for Subscription {
 pub(crate) struct EventsPath {
     project: String,
     environment: String,
+}
+
+/// `GET /content/v1/{project}/{environment}/events` (D-139): the public live-hint stream.
+///
+/// Anonymous, and deliberately bare: a frame says only that published content changed — no
+/// ids, no kinds, no collections — so a gated entry's existence cannot leak through it. A site
+/// reacts by re-reading through the delivery API it already reads, at the new generation.
+///
+/// Only `releases` hints are forwarded: a publish inserts a release row, while draft saves and
+/// job/probe churn are `entries`/`releases`-adjacent noise a reader must not be woken for.
+/// Bursts coalesce — a publish's several hints become one frame — and the stream is bounded by
+/// the same per-project and per-server caps as the staff bus, so anonymous listeners can never
+/// crowd out a project's editors.
+pub(crate) async fn delivery_events(
+    State(state): State<AppState>,
+    Path(path): Path<EventsPath>,
+) -> Result<Response, ApiError> {
+    let services = services(&state)?;
+    let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
+    // The environment must resolve exactly as a delivery read would, so an unknown project or
+    // slug answers 404 rather than holding a stream open.
+    let environment =
+        colophon_db::delivery::environment(&services.pool, project, &path.environment)
+            .await
+            .map_err(ApiError::from_db)?
+            .ok_or(ApiError::NotFound)?;
+    let subscription = services.events.subscribe_public(project).map_err(|_| {
+        ApiError::Unavailable("this server is carrying as many live streams as it can")
+    })?;
+
+    let limits = services.events.limits();
+    let frames =
+        public_frames(subscription, environment.id, limits).map(Ok::<_, Infallible>);
+
+    let mut response = Sse::new(frames)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(limits.keep_alive)
+                .text("keep-alive"),
+        )
+        .into_response();
+    response.headers_mut().insert(
+        HeaderName::from_static("x-accel-buffering"),
+        HeaderValue::from_static("no"),
+    );
+    // A live stream is never a cacheable read.
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
+}
+
+/// The public stream: `hello`, then one `change` per burst of release hints for this
+/// environment; ends at the bus's lifetime.
+fn public_frames(
+    subscription: Subscription,
+    environment: Uuid,
+    limits: EventLimits,
+) -> impl Stream<Item = Event> + Send + 'static {
+    struct Live {
+        subscription: Subscription,
+        environment: Uuid,
+        ends_at: Instant,
+    }
+
+    let live = Live {
+        subscription,
+        environment,
+        ends_at: Instant::now() + limits.lifetime,
+    };
+
+    let changes = stream::unfold(live, |mut live| async move {
+        loop {
+            tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(live.ends_at) => return None,
+                frame = live.subscription.next() => match frame {
+                    Some(Frame::Change(hint)) => {
+                        if !is_release_for(&hint, live.environment) {
+                            continue;
+                        }
+                        // A publish commits several hints (the release, its jobs, probes):
+                        // drain whatever is already queued and answer one frame for the burst.
+                        while live.subscription.try_next().is_some() {}
+                        return Some((public_change(), live));
+                    }
+                    // A missed hint means published content may have moved: tell the client to
+                    // re-read, which is all the public stream ever says.
+                    Some(Frame::Resync) => return Some((public_change(), live)),
+                    None => return None,
+                },
+            }
+        }
+    });
+    stream::once(async { Out::Hello.into_event() }).chain(changes)
+}
+
+/// A release hint in this stream's environment (or one with no environment at all).
+fn is_release_for(hint: &Hint, environment: Uuid) -> bool {
+    hint.kind == Kind::Releases && hint.environment.is_none_or(|id| id == environment)
+}
+
+/// The public `change` frame: no payload beyond "something published changed".
+fn public_change() -> Event {
+    Event::default().event("change").data("{}")
 }
 
 /// `GET {P}/events`: a server-sent-events stream of change hints (D-108). Any credential the
@@ -477,6 +614,83 @@ mod tests {
                 .is_err(),
             "hints stay inside their project"
         );
+    }
+
+    #[tokio::test]
+    async fn the_public_stream_answers_only_release_hints() {
+        let bus = EventBus::new(limits());
+        let project = Uuid::now_v7();
+        let environment = Uuid::now_v7();
+        let subscription = bus.subscribe_public(project).expect("room");
+        let mut frames = Box::pin(public_frames(subscription, environment, limits()));
+        assert!(frames.next().await.is_some(), "hello comes first");
+
+        // A draft save is an `entries` hint: a reader must not be woken for it.
+        bus.publish(hint(project, Some(environment), Kind::Entries));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), frames.next())
+                .await
+                .is_err(),
+            "draft saves stay off the public stream"
+        );
+
+        // A publish inserts a release: that is the signal.
+        bus.publish(hint(project, Some(environment), Kind::Releases));
+        let frame = tokio::time::timeout(Duration::from_millis(200), frames.next())
+            .await
+            .expect("a release wakes the stream")
+            .expect("a frame");
+        assert!(
+            format!("{frame:?}").contains("change"),
+            "the frame is a change"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_public_stream_ignores_other_environments() {
+        let bus = EventBus::new(limits());
+        let project = Uuid::now_v7();
+        let (here, elsewhere) = (Uuid::now_v7(), Uuid::now_v7());
+        let subscription = bus.subscribe_public(project).expect("room");
+        let mut frames = Box::pin(public_frames(subscription, here, limits()));
+        assert!(frames.next().await.is_some(), "hello comes first");
+        bus.publish(hint(project, Some(elsewhere), Kind::Releases));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), frames.next())
+                .await
+                .is_err(),
+            "another environment's release stays off this stream"
+        );
+        bus.publish(hint(project, Some(here), Kind::Releases));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), frames.next())
+                .await
+                .is_ok(),
+            "this environment's release wakes the stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn public_streams_are_capped_per_project() {
+        let bus = EventBus::new(limits());
+        let project = Uuid::now_v7();
+        let held: Vec<_> = (0..limits().per_project)
+            .map(|_| bus.subscribe_public(project).expect("room"))
+            .collect();
+        assert_eq!(
+            bus.subscribe_public(project).err(),
+            Some(StreamRefused::Project),
+            "anonymous streams cannot exceed the project's cap"
+        );
+        drop(held);
+        assert_eq!(bus.streams(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_public_change_frame_carries_nothing() {
+        // The frame's data is exactly `{}`: no ids, kinds or collections can leak through it.
+        let frame = public_change();
+        assert!(format!("{frame:?}").contains("{}"));
     }
 
     #[tokio::test]

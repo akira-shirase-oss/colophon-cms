@@ -34,3 +34,5 @@ dist/
 # The demo sites' seed record (D-133): which project the seeded content lives in — per-machine
 # state, rewritten by every run of scripts/seed-demo-sites.sh.
 /apps/sites/.colophon.json
+dist.prev/
+dist.next/

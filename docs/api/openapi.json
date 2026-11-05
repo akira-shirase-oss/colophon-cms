@@ -19527,6 +19527,89 @@
         ]
       }
     },
+    "/content/v1/{project}/{environment}/events": {
+      "get": {
+        "operationId": "streamDeliveryEvents",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventStream"
+                }
+              }
+            },
+            "description": "`hello`, then a `change` per release burst; no ids or content, so a reader only learns to re-read"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-address delivery limit; `Retry-After`"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unavailable` — this server is carrying as many live streams as it can"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [],
+        "summary": "Live change hints for published content, anonymously",
+        "tags": [
+          "delivery"
+        ]
+      }
+    },
     "/content/v1/{project}/{environment}/{collection}": {
       "get": {
         "operationId": "deliveryList",

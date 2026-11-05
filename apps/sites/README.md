@@ -41,7 +41,8 @@ re-seeding is safe.
 
 ```sh
 scripts/serve-demo-sites.sh           # build all five, then serve them (Ctrl-C stops)
-scripts/serve-demo-sites.sh build     # build only
+scripts/serve-demo-sites.sh build     # build only (one at a time: it takes a lock)
+scripts/serve-demo-sites.sh static    # the four prerendered sites only (what the hook rebuilds)
 scripts/serve-demo-sites.sh serve     # serve what is already built, in the background
 scripts/serve-demo-sites.sh stop      # stop the background sites
 scripts/serve-demo-sites.sh blog      # build and serve one site in the foreground
@@ -51,6 +52,19 @@ scripts/serve-demo-sites.sh blog      # build and serve one site in the foregrou
 reads `apps/sites/.colophon.json`, or the `COLOPHON_API`, `COLOPHON_PROJECT` and
 `COLOPHON_ENVIRONMENT` variables when set. With neither, the build still succeeds and draws a
 page explaining the seed, so a clean checkout and CI never fail.
+
+## Live updates (The Draft)
+
+The Draft renders its public pages per request (`prerender = false`, D-139) and keeps one
+server-sent-events connection to Colophon's public delivery stream
+(`/content/v1/{project}/{environment}/events`). Its `/api/live` fans that one connection out to
+every open browser tab, so a publish re-renders open pages within about a second — **no rebuild,
+and one CMS stream per site server rather than per visitor**. The stream carries only "published
+content changed", so a gated entry's existence cannot leak through it.
+
+The other four sites stay prerendered and update through the website connection below, which is
+the deploy model; The Draft demonstrates the live model. Both are honest: a static site pins one
+release, a live site renders the current one.
 
 ## Publishing rebuilds them (the website connection)
 

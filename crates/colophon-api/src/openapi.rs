@@ -3576,6 +3576,35 @@ pub(crate) static TABLE: &[Route] = &[
         )],
     ),
     route(
+        ("", "/content/v1/{project}/{environment}/events"),
+        &[op(
+            Verb::Get,
+            |f| on(f, crate::events::delivery_events),
+            OpDoc {
+                id: "streamDeliveryEvents",
+                summary: "Live change hints for published content, anonymously",
+                tag: "delivery",
+                security: Security::Public,
+                ok: Res {
+                    status: 200,
+                    shape: Shape::It("EventStream"),
+                    headers: &[],
+                    media: "text/event-stream",
+                    note: "`hello`, then a `change` per release burst; no ids or content, so a reader only learns to re-read",
+                },
+                extra: &[
+                    NOT_FOUND,
+                    refusal(
+                        503,
+                        "unavailable",
+                        "this server is carrying as many live streams as it can",
+                    ),
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
         (
             "",
             "/content/v1/{project}/{environment}/{collection}/{entry}",

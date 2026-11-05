@@ -60,6 +60,15 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
 - Step 3.1 (D-048) adds a strong `ETag` (304 for a matching `If-None-Match`), the cache policies below,
   `Cache-Tag`, and `Colophon-Cache: hit | miss | coalesced | bypass`.
 - Step 3.2 (D-049): revoked publications are never delivered; an unpublished entry is 410 `gone`.
+- P7 (D-139) adds the public live-hint stream:
+  `GET /content/v1/{project}/{environment}/events` is an anonymous server-sent-events stream that says
+  only *that* published content changed — no ids, kinds or collections, so a gated entry's existence
+  cannot leak through it. Only `releases` hints are forwarded (a publish inserts a release row; draft
+  saves and delivery-job churn stay off the stream), a burst coalesces into one `change` frame, and the
+  stream is bounded by the same per-project and per-server caps as the staff bus (D-108), ending at its
+  lifetime. A site reacts by re-reading through the delivery API at the new generation: The Draft renders
+  its public pages per request and fans one upstream connection out to every open tab, so a publish
+  reaches a browser with no rebuild.
 - DX.4 (D-103, D-105) adds `POST /content/v1/{project}/{environment}/{collection}/query?generation=&cursor=`:
   the bounded query language of [domain](01-domain.md) over the published projection, still anonymous. The
   body is the query document the draft route takes; `?generation=` pins the release, `?cursor=` a page

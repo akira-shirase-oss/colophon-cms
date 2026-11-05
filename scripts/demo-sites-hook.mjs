@@ -68,7 +68,9 @@ async function drain() {
 	try {
 		while (state.wanted > state.built) {
 			const before = state.built;
-			await run('serve-demo-sites.sh', ['build']);
+			// The Draft renders per request, so a release reaches it without a build; the four
+			// prerendered sites are the ones a release must rebuild.
+			await run('serve-demo-sites.sh', ['static']);
 			await ensureServing();
 			// What was built is what the delivery API now serves — never the announced number,
 			// which a duplicate or a mistaken announcement could overstate.

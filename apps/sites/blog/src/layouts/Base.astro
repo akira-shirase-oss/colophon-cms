@@ -45,5 +45,30 @@ const { title, description = 'The Draft, a demo blog published through Colophon'
 				}
 			</div>
 		</footer>
+		{
+			generation !== undefined && generation > 0 && (
+				<script is:inline>
+					// Live updates without a rebuild (D-139): when the CMS announces a release, this page
+					// re-renders from the delivery API at the new generation. The stream carries only a
+					// number, so nothing gated can leak through it.
+					(() => {
+						const shown = Number(document.querySelector('meta[name="colophon-generation"]')?.getAttribute('content')) || 0;
+						if (shown < 1) return;
+						const source = new EventSource('/api/live');
+						source.addEventListener('generation', (event) => {
+							try {
+								const next = JSON.parse(event.data).generation;
+								if (Number.isInteger(next) && next > shown) {
+									source.close();
+									location.reload();
+								}
+							} catch {
+								// A malformed frame is not a reason to do anything.
+							}
+						});
+					})();
+				</script>
+			)
+		}
 	</body>
 </html>

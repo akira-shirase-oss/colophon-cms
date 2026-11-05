@@ -26,6 +26,22 @@ STATE=target/demo-sites
 mkdir -p "$STATE"
 
 site_names() { for s in "${SITES[@]}"; do echo "${s%%:*}"; done; }
+static_names() { for s in "${SITES[@]}"; do [[ "${s%%:*}" != "blog" ]] && echo "${s%%:*}"; done; }
+
+# One build at a time: the publish hook and a person can both ask for a rebuild, and two
+# builds promoting the same directory would race (dist.next moved twice).
+lock() {
+  local waited=0
+  while ! mkdir "$STATE/build.lock" 2>/dev/null; do
+    waited=$((waited + 1))
+    if [[ $waited -gt 300 ]]; then
+      echo "error: another build has held $STATE/build.lock for five minutes" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  trap 'rmdir "$STATE/build.lock" 2>/dev/null || true' EXIT
+}
 port_of() { for s in "${SITES[@]}"; do [[ "${s%%:*}" == "$1" ]] && echo "${s##*:}" && return; done; }
 
 build_one() {
@@ -98,9 +114,17 @@ stop_all() {
 command="${1:-all}"
 case "$command" in
   build)
+    lock
     for site in $(site_names); do build_one "$site"; done
     for site in $(site_names); do promote_one "$site"; done
     restart_blog
+    ;;
+  static)
+    # The publish hook's rebuild: the four prerendered sites. The Draft renders per request,
+    # so a release reaches it with no build and no restart.
+    lock
+    for site in $(static_names); do build_one "$site"; done
+    for site in $(static_names); do promote_one "$site"; done
     ;;
   serve)
     stop_all >/dev/null
@@ -143,7 +167,7 @@ case "$command" in
       fi
       exec npx astro preview --port "$port" --host 127.0.0.1
     else
-      echo "usage: $0 [build|serve|stop|all|$(site_names | tr '\n' '|')]" >&2
+      echo "usage: $0 [build|static|serve|stop|all|$(site_names | tr '\n' '|')]" >&2
       exit 2
     fi
     ;;
