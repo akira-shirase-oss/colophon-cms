@@ -1,0 +1,48 @@
+---
+import '../styles/site.css';
+
+interface Props {
+	title: string;
+	description?: string;
+	generation?: number;
+}
+const { title, description = 'The Draft, a demo blog published through Colophon', generation } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		{generation !== undefined && generation > 0 && <meta name="colophon-generation" content={String(generation)} />}
+		<title>{title}</title>
+		<meta name="description" content={description} />
+	</head>
+	<body>
+		<header class="site-header">
+			<div class="wrap">
+				<a class="brand" href="/">The Draft</a>
+				<nav class="site-nav">
+					<a href="/">Latest posts</a>
+				</nav>
+			</div>
+		</header>
+		<main class="wrap">
+			<slot />
+		</main>
+		<footer class="site-footer">
+			<div class="wrap">
+				{
+					generation !== undefined && generation > 0 ? (
+						<p>
+							Every word on this site was published through <a href="https://github.com/akira-shirase-oss/colophon-cms">Colophon</a> as
+							release {generation} of the demo-sites project, and this page names the release it was built from.
+						</p>
+					) : (
+						<p>A Colophon demo site.</p>
+					)
+				}
+			</div>
+		</footer>
+	</body>
+</html>

@@ -517,7 +517,11 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
 - Usability test with five editors; one independent install. Prepared (D-132): `scripts/clean-install.sh`
   rehearses the README path verbatim in a throwaway clone on an isolated stack, `docs/usability-protocol.md`
   scripts the five sessions, and `deploy/runbooks/install-feedback.md` is the installer's friction record; the
-  gates themselves tick only when the people run them.
+  gates themselves tick only when the people run them. The sessions' real sites are built (D-133): five Astro
+  apps under `apps/sites/` — a blog, a docs set, a recipe box, a newspaper and a photo portfolio — each reading
+  its collection of one `demo-sites` project through the anonymous delivery API and media origin, seeded and
+  published for real by `scripts/seed-demo-sites.sh` and served on ports 58110–58114 by
+  `scripts/serve-demo-sites.sh`.
 - built: backups' capture half (D-125) — `archive_mode=on`, `wal_level=replica`, `archive_timeout=60s`, WAL segments
   into the `postgres-wal-archive` volume through `deploy/postgres/archive-wal.sh` (the local stand-in for object
   storage; the stock image has no S3 tooling), `scripts/backup.sh` capturing the cluster by `pg_basebackup` as the

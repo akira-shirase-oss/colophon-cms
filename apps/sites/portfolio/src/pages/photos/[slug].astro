@@ -1,0 +1,49 @@
+---
+import { site, entries, entryPath, mediaUrl, type Entry, type Site } from '@colophon/site-kit';
+import Base from '../../layouts/Base.astro';
+
+interface Props {
+	photo: Entry;
+	generation: number;
+	cms: Site;
+}
+
+export async function getStaticPaths() {
+	const cms = site();
+	if (cms === null) return [];
+	const { items, generation } = await entries(cms, 'photos');
+	return items.map((photo) => ({
+		params: { slug: entryPath(photo) },
+		props: { photo, generation, cms }
+	}));
+}
+
+const { photo, generation, cms } = Astro.props;
+const asset = typeof photo.content['photo'] === 'string' ? photo.content['photo'] : '';
+const facts = [
+	typeof photo.content['location'] === 'string' ? photo.content['location'] : '',
+	typeof photo.content['taken_on'] === 'string' ? photo.content['taken_on'] : ''
+].filter((fact) => fact !== '');
+---
+
+<Base title={`${photo.title} · Wren Hollis`} generation={generation}>
+	<article class="photo-page">
+		{asset !== '' && (
+			<img
+				src={mediaUrl(cms, asset, 'w1280')}
+				alt={typeof photo.content['caption'] === 'string' ? photo.content['caption'] : photo.title}
+				decoding="async"
+			/>
+		)}
+		<div class="details">
+			<div>
+				<h1>{photo.title}</h1>
+				{typeof photo.content['caption'] === 'string' && <p class="caption">{photo.content['caption']}</p>}
+			</div>
+			<div class="facts">
+				{typeof photo.content['series'] === 'string' && <span class="series">{photo.content['series']}</span>}
+				{facts.join(' · ')}
+			</div>
+		</div>
+	</article>
+</Base>

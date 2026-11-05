@@ -1,0 +1,49 @@
+---
+import { site, entries, entryPath, type Entry } from '@colophon/site-kit';
+import Base from '../../layouts/Base.astro';
+
+interface Props {
+	tag: string;
+	posts: Entry[];
+	generation: number;
+}
+
+export async function getStaticPaths() {
+	const cms = site();
+	if (cms === null) return [];
+	const { items, generation } = await entries(cms, 'posts');
+	const tags = new Map<string, Entry[]>();
+	for (const post of items) {
+		const value = post.content['tags'];
+		if (!Array.isArray(value)) continue;
+		for (const tag of value) {
+			if (typeof tag !== 'string') continue;
+			tags.set(tag, [...(tags.get(tag) ?? []), post]);
+		}
+	}
+	return [...tags].map(([tag, posts]) => ({ params: { tag }, props: { tag, posts, generation } }));
+}
+
+const { tag, posts, generation } = Astro.props;
+---
+
+<Base title={`${tag} · The Draft`} generation={generation}>
+	<section class="hero">
+		<h1>{tag}</h1>
+		<p>{posts.length} {posts.length === 1 ? 'post' : 'posts'} filed under this tag.</p>
+	</section>
+	<ul class="posts">
+		{
+			posts.map((post) => (
+				<li>
+					<a href={`/posts/${entryPath(post)}/`}>
+						<span class="meta">
+							{typeof post.content['published_on'] === 'string' && post.content['published_on']}
+						</span>
+						<h2>{post.title}</h2>
+					</a>
+				</li>
+			))
+		}
+	</ul>
+</Base>

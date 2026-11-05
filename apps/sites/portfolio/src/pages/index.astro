@@ -1,0 +1,46 @@
+---
+import { site, entries, entryPath, mediaUrl } from '@colophon/site-kit';
+import Base from '../layouts/Base.astro';
+import Unseeded from '../components/Unseeded.astro';
+
+const cms = site();
+const photos = cms === null ? { items: [], generation: 0 } : await entries(cms, 'photos');
+---
+
+<Base title="Wren Hollis · photographs" generation={photos.generation}>
+	{
+		cms === null ? (
+			<Unseeded />
+		) : (
+			<>
+				<section class="intro">
+					<h1>Photographs, mostly at dusk</h1>
+					<p>
+						Selected work 2024–2026. Every image is a verified asset in the demo-sites project's media library,
+						served from Colophon's <code>/media/v1</code> origin.
+					</p>
+				</section>
+				<div class="gallery">
+					{photos.items.map((photo) => (
+						<a class="photo" href={`/photos/${entryPath(photo)}/`}>
+							<figure>
+								{typeof photo.content['photo'] === 'string' && (
+									<img
+										src={mediaUrl(cms, photo.content['photo'], 'w320')}
+										alt={typeof photo.content['caption'] === 'string' ? photo.content['caption'] : photo.title}
+										loading="lazy"
+										decoding="async"
+									/>
+								)}
+								<figcaption>
+									<span>{photo.title}</span>
+									{typeof photo.content['series'] === 'string' && <span class="series">{photo.content['series']}</span>}
+								</figcaption>
+							</figure>
+						</a>
+					))}
+				</div>
+			</>
+		)
+	}
+</Base>

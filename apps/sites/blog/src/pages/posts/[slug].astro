@@ -1,0 +1,47 @@
+---
+import { site, entries, entryPath, richText, type Entry, type Site } from '@colophon/site-kit';
+import Base from '../../layouts/Base.astro';
+
+interface Props {
+	post: Entry;
+	generation: number;
+	cms: Site;
+}
+
+export async function getStaticPaths() {
+	const cms = site();
+	if (cms === null) return [];
+	const { items, generation } = await entries(cms, 'posts');
+	return items.map((post) => ({
+		params: { slug: entryPath(post) },
+		props: { post, generation, cms }
+	}));
+}
+
+const { post, generation, cms } = Astro.props;
+const tags = Array.isArray(post.content['tags'])
+	? post.content['tags'].filter((tag): tag is string => typeof tag === 'string')
+	: [];
+const body = richText(cms, post.content['body']);
+---
+
+<Base title={`${post.title} · The Draft`} generation={generation}>
+	<article class="post">
+		<span class="meta">
+			{typeof post.content['published_on'] === 'string' && post.content['published_on']}
+			{typeof post.content['author'] === 'string' && ` · ${post.content['author']}`}
+		</span>
+		<h1>{post.title}</h1>
+		{typeof post.content['excerpt'] === 'string' && <p class="lede">{post.content['excerpt']}</p>}
+		<div class="tags">
+			{
+				tags.map((tag) => (
+					<a class="tag" href={`/tags/${encodeURIComponent(tag)}/`}>
+						{tag}
+					</a>
+				))
+			}
+		</div>
+		<div class="prose" set:html={body} />
+	</article>
+</Base>

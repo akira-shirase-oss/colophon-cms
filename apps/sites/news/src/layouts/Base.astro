@@ -1,0 +1,51 @@
+---
+import '../styles/site.css';
+
+interface Props {
+	title: string;
+	generation?: number;
+}
+const { title, generation } = Astro.props;
+const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		{generation !== undefined && generation > 0 && <meta name="colophon-generation" content={String(generation)} />}
+		<title>{title}</title>
+	</head>
+	<body>
+		<header class="masthead">
+			<p class="dateline">{today} · Demonstration issue</p>
+			<h1 class="masthead-brand"><a href="/">The Meridian Post</a></h1>
+			<nav class="sections">
+				<a href="/">Front page</a>
+				<a href="/#world">World</a>
+				<a href="/#technology">Technology</a>
+				<a href="/#culture">Culture</a>
+				<a href="/#science">Science</a>
+				<a href="/#sport">Sport</a>
+			</nav>
+		</header>
+		<main class="wrap">
+			<slot />
+		</main>
+		<footer class="site-footer">
+			<div class="wrap">
+				{
+					generation !== undefined && generation > 0 ? (
+						<p>
+							Every story in this issue was published through <a href="https://github.com/akira-shirase-oss/colophon-cms">Colophon</a>{' '}
+							as release {generation} of the demo-sites project. This page names the release it was built from.
+						</p>
+					) : (
+						<p>A Colophon demo site.</p>
+					)
+				}
+			</div>
+		</footer>
+	</body>
+</html>

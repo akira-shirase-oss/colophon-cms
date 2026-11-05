@@ -1,0 +1,70 @@
+# The five demo sites
+
+Five independent Astro sites, each a different content category, all reading the published
+content of one `demo-sites` project through Colophon's anonymous delivery API
+(`/content/v1/{project}/{environment}/{collection}`) and media origin (`/media/v1/…`). They are
+the usability surface for the draft → review → publish → site story: an editor changes an entry
+in the Studio, publishes a release, rebuilds a site, and sees the change on a real page (D-133).
+
+| Site | Package | Port | Collection | What it exercises |
+|---|---|---|---|---|
+| The Draft, a blog | `@colophon/site-blog` | 58110 | `posts` | rich-text bodies, a slug field, tags, dates, author |
+| Fieldnotes Docs | `@colophon/site-docs` | 58111 | `guides` | enum sections, ordered sidebar navigation, rich-text |
+| Butter & Thyme, recipes | `@colophon/site-recipes` | 58112 | `recipes` | a list of objects (ingredients), a list of text (steps), enums, numbers |
+| The Meridian Post, news | `@colophon/site-news` | 58113 | `stories` | a featured flag, categories, datelines, bylines |
+| Wren Hollis, portfolio | `@colophon/site-portfolio` | 58114 | `photos` | real uploaded assets served from `/media/v1`, renditions `w320`/`w1280` |
+
+One project, five collections: the point is that the same published projection can feed front
+ends that share nothing but the API.
+
+## Seeding
+
+With the local stack and `colophon-server` running (see `deploy/README.md`):
+
+```sh
+scripts/seed-demo-sites.sh            # against http://localhost:58000
+scripts/seed-demo-sites.sh <origin>   # against another server
+```
+
+The seed signs in as the development realm's `dev-owner`, creates a `demo-sites-<stamp>`
+project and the five content types, draws ten PNG photographs and pushes them through the real
+upload → quarantine → verify pipeline, writes about fifty entries, then submits, approves and
+publishes them all as release 1 of one changeset. Nothing it writes is a draft: every site
+reads published content only. Finally it writes `apps/sites/.colophon.json` (the project id,
+the API origin and the release generation), which the sites read at build time. The file is
+gitignored, and every run makes a new project, so re-seeding is safe.
+
+## Building and serving
+
+```sh
+scripts/serve-demo-sites.sh           # build all five, then serve them (Ctrl-C stops)
+scripts/serve-demo-sites.sh build     # build only
+scripts/serve-demo-sites.sh serve     # serve what is already built, in the background
+scripts/serve-demo-sites.sh stop      # stop the background sites
+scripts/serve-demo-sites.sh blog      # build and serve one site in the foreground
+```
+
+`npm run build -w @colophon/site-blog` (or any of the five packages) builds a site by hand; it
+reads `apps/sites/.colophon.json`, or the `COLOPHON_API`, `COLOPHON_PROJECT` and
+`COLOPHON_ENVIRONMENT` variables when set. With neither, the build still succeeds and draws a
+page explaining the seed, so a clean checkout and CI never fail.
+
+## How a site is put together
+
+Every site is a plain, fully static Astro app. At build time it pages through its collection's
+published entries (the cursor carries the first page's generation, so a build never mixes two
+releases), renders them, and writes the release number into every page as
+`<meta name="colophon-generation" content="N">`, the marker probes read. Rich-text fields go
+through `@colophon/content-renderer`, the one renderer the Studio's preview and the reference
+site share. The only shared code is `@colophon/site-kit` (`apps/sites/shared`): the config, the
+paging fetch and the render wrapper, together about a hundred lines.
+
+A site that cannot reach its API fails the build rather than going live silently empty; a site
+built before any seeding draws the "run the seed" page instead.
+
+## Republishing
+
+Edit anything in the Studio's `demo-sites` project, run it through a changeset to a release,
+then rebuild a site (`scripts/serve-demo-sites.sh <site>`). The rebuilt pages name the new
+generation, which is the whole point of the marker: a page can always say exactly which release
+it was built from.
