@@ -24,6 +24,7 @@ use colophon_domain::{
     job::{self, Next, Outcome},
     migrate, receipt, schema,
 };
+use futures_util::StreamExt;
 use object_store::ObjectStoreExt;
 use serde_json::json;
 use time::OffsetDateTime;
@@ -1895,18 +1896,22 @@ impl Worker {
             return;
         };
         match job.kind.as_str() {
-            "verify" => self.verify(&job, attempts, &store, asked_at).await,
+            // A reverify is a verify: the job's own quarantine key and upload metadata are what
+            // `claim` coalesced into the attempt, and the landing decides first- versus
+            // replacement-version by the state it meets (D-136).
+            "verify" | "reverify" => self.verify(&job, attempts, &store, asked_at).await,
             "delete" | "expire" => self.remove(&job, attempts, &store, asked_at).await,
             other => {
                 tracing::warn!(job = %job.id, kind = %other, "an asset job kind this worker doesn't do");
-                self.finish_asset(
-                    &job,
-                    attempts,
-                    "failed",
-                    Some("an asset job kind this worker doesn't do"),
-                    &colophon_db::assets::Outcome::Missing,
-                )
-                .await;
+                let _ = self
+                    .finish_asset(
+                        &job,
+                        attempts,
+                        "failed",
+                        Some("an asset job kind this worker doesn't do"),
+                        &colophon_db::assets::Outcome::Missing,
+                    )
+                    .await;
             }
         }
     }
@@ -1928,26 +1933,31 @@ impl Worker {
         // out); it runs on a blocking thread so a pathological file never stalls this worker.
         let checked =
             tokio::task::spawn_blocking(move || colophon_media::verify_image(&bytes)).await;
-        let key = colophon_media::public_key(
-            &job.project_id.to_string(),
-            &job.environment_id.to_string(),
-            &job.asset_id.to_string(),
-        );
         match checked {
             Ok(Ok(verified)) => {
+                // The key is the content's own name (D-136): no second landing can ever
+                // overwrite it — the same bytes write the same object, different bytes a
+                // different one — so a retried attempt is idempotent by construction.
+                let key = colophon_media::version_key(
+                    &job.project_id.to_string(),
+                    &job.environment_id.to_string(),
+                    &job.asset_id.to_string(),
+                    &colophon_media::sha_hex(&verified.sha256),
+                );
                 self.promote(job, attempts, store, key, verified).await;
             }
             Ok(Err(reason)) => {
-                self.finish_asset(
-                    job,
-                    attempts,
-                    "succeeded",
-                    None,
-                    &colophon_db::assets::Outcome::Rejected {
-                        reason: reason.to_string(),
-                    },
-                )
-                .await;
+                let _ = self
+                    .finish_asset(
+                        job,
+                        attempts,
+                        "succeeded",
+                        None,
+                        &colophon_db::assets::Outcome::Rejected {
+                            reason: reason.to_string(),
+                        },
+                    )
+                    .await;
             }
             Err(join) => {
                 self.retry_asset(job, attempts, &trim(&join.to_string()))
@@ -1975,44 +1985,71 @@ impl Worker {
                 return;
             }
             Ok(Deletion::Gone) => {
-                self.finish_asset(job, attempts, "succeeded", None, &Outcome::Deleted)
+                let _ = self
+                    .finish_asset(job, attempts, "succeeded", None, &Outcome::Deleted)
                     .await;
                 return;
             }
             Ok(Deletion::StillReferenced) => {
-                self.finish_asset(
-                    job,
-                    attempts,
-                    "failed",
-                    Some("still referenced"),
-                    &Outcome::StillReferenced,
-                )
-                .await;
+                let _ = self
+                    .finish_asset(
+                        job,
+                        attempts,
+                        "failed",
+                        Some("still referenced"),
+                        &Outcome::StillReferenced,
+                    )
+                    .await;
                 return;
             }
             Ok(Deletion::Held) => {
-                self.finish_asset(
-                    job,
-                    attempts,
-                    "failed",
-                    Some("not in a state a delete may act on"),
-                    &Outcome::StillReferenced,
-                )
-                .await;
+                let _ = self
+                    .finish_asset(
+                        job,
+                        attempts,
+                        "failed",
+                        Some("not in a state a delete may act on"),
+                        &Outcome::StillReferenced,
+                    )
+                    .await;
                 return;
             }
-            Ok(Deletion::Removing {
-                public_key,
-                derivatives,
-                quarantine_key,
-            }) => {
-                let mut keys = Vec::with_capacity(derivatives.len() + 2);
-                if let Some(public) = public_key {
-                    keys.push(public.clone());
-                    keys.extend(derivatives.iter().map(|name| format!("{public}/{name}")));
+            Ok(Deletion::Removing { quarantine_keys }) => {
+                let budget = self.settings.attempt.saturating_sub(asked_at.elapsed());
+                // Everything under the asset's public prefix goes: originals at every
+                // versioned key, renditions beneath them, a pre-D-136 layout's `…/{asset}`
+                // object, and strays no row ever recorded — so what "deleted" means never
+                // depends on which layout a version used. The prefix names the asset's full
+                // 36-char id, so it can't reach a sibling's key.
+                let prefix = object_store::path::Path::from(format!(
+                    "public/{}/{}/{}",
+                    job.project_id, job.environment_id, job.asset_id
+                ));
+                let listed = tokio::time::timeout(budget, async {
+                    let mut keys = Vec::new();
+                    let mut objects = store.list(Some(&prefix));
+                    while let Some(object) = objects.next().await {
+                        keys.push(object?.location.to_string());
+                    }
+                    Ok::<Vec<String>, object_store::Error>(keys)
+                })
+                .await;
+                match listed {
+                    Ok(Ok(mut keys)) => {
+                        keys.extend(quarantine_keys);
+                        keys
+                    }
+                    Ok(Err(error)) => {
+                        self.retry_asset(job, attempts, &trim(&error.to_string()))
+                            .await;
+                        return;
+                    }
+                    Err(_) => {
+                        self.retry_asset(job, attempts, "listing the objects timed out")
+                            .await;
+                        return;
+                    }
                 }
-                keys.push(quarantine_key);
-                keys
             }
         };
         let budget = self.settings.attempt.saturating_sub(asked_at.elapsed());
@@ -2033,7 +2070,8 @@ impl Worker {
                 }
             }
         }
-        self.finish_asset(job, attempts, "succeeded", None, &Outcome::Deleted)
+        let _ = self
+            .finish_asset(job, attempts, "succeeded", None, &Outcome::Deleted)
             .await;
     }
 
@@ -2104,15 +2142,16 @@ impl Worker {
                 .await;
             return;
         }
-        // The renditions beside it: `public/…/{asset}/{name}`, each tagged with the same
+        // The renditions under it: `public/…/{asset}/{sha}/{name}`, each tagged with the same
         // detected type. A refused write retries the whole job — the row commits only when
         // every object the origin may name has landed.
         let mut names = Vec::new();
+        let mut written_keys = vec![key.clone()];
         for rendition in &verified.renditions {
             let at = format!("{key}/{}", rendition.name);
             let written = store
                 .put_opts(
-                    &object_store::path::Path::from(at),
+                    &object_store::path::Path::from(at.clone()),
                     rendition.bytes.clone().into(),
                     object_store::PutOptions {
                         attributes: attributes.clone(),
@@ -2126,37 +2165,62 @@ impl Worker {
                 return;
             }
             names.push(rendition.name.to_owned());
+            written_keys.push(at);
         }
-        self.finish_asset(
-            job,
-            attempts,
-            "succeeded",
-            None,
-            &colophon_db::assets::Outcome::Usable {
-                detected_type: verified.detected_type,
-                width: i32::try_from(verified.width).unwrap_or(i32::MAX),
-                height: i32::try_from(verified.height).unwrap_or(i32::MAX),
-                sha256: verified.sha256.to_vec(),
-                public_key: key,
-                derivatives: names,
-            },
-        )
-        .await;
+        let landed = self
+            .finish_asset(
+                job,
+                attempts,
+                "succeeded",
+                None,
+                &colophon_db::assets::Outcome::Usable {
+                    detected_type: verified.detected_type,
+                    width: i32::try_from(verified.width).unwrap_or(i32::MAX),
+                    height: i32::try_from(verified.height).unwrap_or(i32::MAX),
+                    sha256: verified.sha256.to_vec(),
+                    public_key: key,
+                    derivatives: names,
+                },
+            )
+            .await;
+        if landed == Some(colophon_db::assets::Finish::Orphaned) {
+            // The verdict found no asset left to land on — the objects just written serve
+            // nobody, so remove them. A delete that fails here leaves an object the public
+            // orphan sweep collects later: no row ever recorded it.
+            for written in written_keys {
+                match tokio::time::timeout(
+                    self.settings.attempt,
+                    store.delete(&object_store::path::Path::from(written.clone())),
+                )
+                .await
+                {
+                    Ok(Ok(()) | Err(object_store::Error::NotFound { .. })) => {}
+                    outcome => tracing::warn!(
+                        job = %job.id,
+                        key = %written,
+                        "an orphaned promotion's cleanup failed; the sweep will collect it: {outcome:?}"
+                    ),
+                }
+            }
+        }
     }
 
     /// A transient failure: the job tries again, the asset stays quarantined.
     async fn retry_asset(&self, job: &colophon_db::assets::Claimed, attempts: u32, reason: &str) {
-        self.finish_asset(
-            job,
-            attempts,
-            "retrying",
-            Some(reason),
-            &colophon_db::assets::Outcome::Missing,
-        )
-        .await;
+        let _ = self
+            .finish_asset(
+                job,
+                attempts,
+                "retrying",
+                Some(reason),
+                &colophon_db::assets::Outcome::Missing,
+            )
+            .await;
     }
 
-    /// Records an asset attempt's end; a lost lease writes nothing (the job was claimed again).
+    /// Records an asset attempt's end; a lost lease writes nothing (the job was claimed
+    /// again). How [`colophon_db::assets::finish`] left it, for the caller to compensate
+    /// what it wrote ([`colophon_db::assets::Finish::Orphaned`]), or `None` on a store error.
     async fn finish_asset(
         &self,
         job: &colophon_db::assets::Claimed,
@@ -2164,7 +2228,7 @@ impl Worker {
         status: &str,
         error: Option<&str>,
         outcome: &colophon_db::assets::Outcome,
-    ) {
+    ) -> Option<colophon_db::assets::Finish> {
         // A retryable failure schedules the next attempt; a job that has run out of attempts or
         // out of lifetime is recorded `failed` instead.
         let (status, next_attempt_at) = if status == "retrying" {
@@ -2204,10 +2268,15 @@ impl Worker {
         )
         .await
         {
-            Ok(true) => {}
-            Ok(false) => tracing::debug!(job = %job.id, "asset lease was already gone"),
+            Ok(landed) => {
+                if landed == colophon_db::assets::Finish::Lost {
+                    tracing::debug!(job = %job.id, "asset lease was already gone");
+                }
+                Some(landed)
+            }
             Err(db_error) => {
                 tracing::warn!(job = %job.id, error = %db_error, "recording the asset attempt failed; the lease will run out");
+                None
             }
         }
     }

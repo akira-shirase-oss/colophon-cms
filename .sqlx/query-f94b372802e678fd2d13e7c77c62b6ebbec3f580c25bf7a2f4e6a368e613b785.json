@@ -1,0 +1,138 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT seq, declared_type, size_bytes, detected_type, sha256, width, height,\n                public_key, derivatives, created_at\n         FROM asset_versions\n         WHERE project_id = $1 AND environment_id = $2 AND asset_id = $3\n         ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "seq",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "asset_versions",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "declared_type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "asset_versions",
+            "name": "declared_type"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "size_bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "asset_versions",
+            "name": "size_bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "detected_type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "asset_versions",
+            "name": "detected_type"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "sha256",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "asset_versions",
+            "name": "sha256"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "width",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "asset_versions",
+            "name": "width"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "height",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "asset_versions",
+            "name": "height"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "public_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "asset_versions",
+            "name": "public_key"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "derivatives",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "asset_versions",
+            "name": "derivatives"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "asset_versions",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f94b372802e678fd2d13e7c77c62b6ebbec3f580c25bf7a2f4e6a368e613b785"
+}

@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT quarantine_key FROM assets\n         WHERE quarantine_key = ANY($1) AND state = 'quarantined'\n         UNION\n         SELECT quarantine_key FROM asset_jobs\n         WHERE quarantine_key = ANY($1)\n           AND status IN ('pending', 'retrying', 'running')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "quarantine_key",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0eb907190e89f90965912b1470b0ee48ae12c1d896fe1e2896ff934c4efc3462"
+}

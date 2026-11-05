@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO asset_versions (project_id, environment_id, asset_id, seq,\n                                     declared_type, size_bytes, detected_type,\n                                     width, height, sha256, public_key, derivatives)\n         SELECT $1, $2, $3,\n                coalesce(max(v.seq), 0) + 1, $4, $5, $6, $7, $8, $9, $10, $11\n         FROM asset_versions v\n         WHERE v.project_id = $1 AND v.environment_id = $2 AND v.asset_id = $3\n         ON CONFLICT (project_id, environment_id, asset_id, sha256) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int8",
+        "Text",
+        "Int4",
+        "Int4",
+        "Bytea",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b0ed457214ff11b006020bc9104a37e330326a3055fea1100baf82055a6fca1b"
+}

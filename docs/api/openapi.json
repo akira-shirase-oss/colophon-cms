@@ -56,6 +56,20 @@
         },
         "type": "object"
       },
+      "AssetDetailView": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AssetView"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/AssetVersionView"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "AssetUploadView": {
         "properties": {
           "declared_type": {
@@ -76,6 +90,43 @@
               "quarantined"
             ],
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AssetVersionView": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "declared_type": {
+            "type": "string"
+          },
+          "derivatives": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "detected_type": {
+            "type": "string"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "seq": {
+            "type": "integer"
+          },
+          "sha256": {
+            "description": "the content digest the pinned URL names",
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer"
+          },
+          "width": {
+            "type": "integer"
           }
         },
         "type": "object"
@@ -116,6 +167,13 @@
             "type": "string"
           },
           "rejected_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sha256": {
+            "description": "the current version's digest; `/media/v1/…/{asset}/{sha256}` pins it (D-136)",
             "type": [
               "string",
               "null"
@@ -4710,19 +4768,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "properties": {
-                    "data": {
-                      "$ref": "#/components/schemas/AssetView"
-                    }
-                  },
-                  "required": [
-                    "data"
-                  ],
-                  "type": "object"
+                  "$ref": "#/components/schemas/AssetDetailView"
                 }
               }
             },
-            "description": "ok"
+            "description": "`data` is the asset; `versions` its byte history (D-136)"
           },
           "401": {
             "content": {
@@ -4776,7 +4826,7 @@
             "apiToken": []
           }
         ],
-        "summary": "One asset: state, detected type, dimensions, derivatives",
+        "summary": "One asset with every verified version, oldest first",
         "tags": [
           "assets"
         ]
@@ -4891,6 +4941,205 @@
           }
         ],
         "summary": "The entries that name this asset, in collections the role reads",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environments/{environment}/assets/{asset}/replace": {
+      "post": {
+        "operationId": "replaceAsset",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the asset's id",
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment",
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the file's name",
+            "in": "header",
+            "name": "x-colophon-file-name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the claimed image type, verified by the worker",
+            "in": "header",
+            "name": "content-type",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadBody"
+              }
+            }
+          },
+          "description": "the file's bytes",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AssetView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "the reverify job swings the current version only if the bytes verify"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`bad_request` — a malformed `If-Match`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`asset_quarantined, asset_rejected, already_deleted` — its first verdict is still out, it has no version to replace, or it is gone; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_upload` — the name, type or size refused"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`precondition_required` — a required `If-Match` or `Idempotency-Key` is missing"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unavailable` — uploads are not configured on this server"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          },
+          {
+            "apiToken": []
+          }
+        ],
+        "summary": "New bytes for a usable asset — a new version, the old one keeps its objects",
         "tags": [
           "assets"
         ]
@@ -18172,7 +18421,101 @@
           }
         },
         "security": [],
-        "summary": "A rendition the worker wrote, such as `w320`",
+        "summary": "A rendition the worker wrote — or, when `name` is a 64-hex sha, that pinned version's original",
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/media/v1/{project}/{environment}/{asset}/{sha}/{name}": {
+      "get": {
+        "operationId": "serveVersionedRendition",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the asset's id",
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the path parameter",
+            "in": "path",
+            "name": "sha",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "a rendition name the worker wrote, such as `w320`",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "the stored `Content-Type`; caches forever"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unavailable` — the object store is not configured"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [],
+        "summary": "A rendition of a pinned version: the worker wrote it under the version's key",
         "tags": [
           "media"
         ]

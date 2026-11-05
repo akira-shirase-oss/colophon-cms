@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE asset_jobs SET status = 'superseded',\n                                   last_error = 'the asset no longer accepts a verdict',\n                                   updated_at = now(), finished_at = now()\n             WHERE project_id = $1 AND environment_id = $2 AND id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6e746d7965ab0db304b479283997f9772f35d2d68a4dd41c71a92483bd63fd87"
+}

@@ -255,6 +255,13 @@ async fn a_worker_killed_after_announcing_is_followed_by_one_with_the_same_key()
     let owner;
     let project_id;
     {
+        // The shared database's leftover work must not reach this worker first: a stale
+        // job dispatching fires the same fault, and the test would record a crash that
+        // was never about its announcement (the reported flake). Quarantined — the suite
+        // runs one test at a time, so every unfinished row belongs to a dead server.
+        let database = common::owner_database().await;
+        common::clear_unfinished_work(&database).await;
+        database.close().await;
         // Leases short enough to run out during the test; slow polling, so the release's own
         // response is long gone when the worker crashes.
         let mut server = Server::start_with(&[
@@ -269,6 +276,17 @@ async fn a_worker_killed_after_announcing_is_followed_by_one_with_the_same_key()
         let project = project(&owner).await;
         destination(&owner, &project, &receiver.url).await;
         assert_eq!(publish_article(&owner, &project, "Crashed once").await, 1);
+        // The dispatch is what the crash is about: the receiver records a request before
+        // it answers, so `seen` holding the announcement means the worker's post() is at
+        // its return — the fault point. Waiting on it, not a guess at dispatch latency,
+        // is what keeps the exit assertion honest under a busy database.
+        assert!(
+            common::until(15, async || {
+                !receiver.seen().is_empty() || server.exited().is_some()
+            })
+            .await,
+            "the announcement never reached the destination"
+        );
         assert_eq!(
             server.exit_code().await,
             Some(FAULT_EXIT),
@@ -315,6 +333,11 @@ async fn a_migration_worker_killed_mid_run_resumes_and_finishes_the_plan() {
     let owner;
     let path;
     {
+        // A stale plan's first item commit fires the same fault — quarantine whatever
+        // earlier tests left unfinished so this worker sees only this test's plan.
+        let database = common::owner_database().await;
+        common::clear_unfinished_work(&database).await;
+        database.close().await;
         let mut server = Server::start_with(&[
             ("COLOPHON_FAULT", "migration:after-item"),
             ("COLOPHON_WORKER_POLL_MS", "50"),
@@ -379,7 +402,35 @@ async fn a_migration_worker_killed_mid_run_resumes_and_finishes_the_plan() {
             );
         }
         // The worker claims the plan, applies the first item, and exits at the fault: the
-        // item's commit went in before the crash.
+        // item's commit went in before the crash. The committed outcome is the crash's own
+        // observable — the fault point is the first statement after the commit — so the
+        // wait polls it rather than guessing how long the drive takes; `exited` is the
+        // early-out if the process died on something else first.
+        assert!(
+            common::until(15, async || {
+                if server.exited().is_some() {
+                    return true;
+                }
+                call(
+                    &owner,
+                    Method::GET,
+                    &format!("{plan_path}/items"),
+                    None,
+                    &[],
+                )
+                .await
+                .map(|reply| {
+                    reply.body["data"].as_array().is_some_and(|items| {
+                        items
+                            .iter()
+                            .any(|item| item["outcome"].as_str().is_some_and(|o| o != "pending"))
+                    })
+                })
+                .unwrap_or(false)
+            })
+            .await,
+            "the first item's outcome never committed"
+        );
         assert_eq!(
             server.exit_code().await,
             Some(FAULT_EXIT),
@@ -432,6 +483,11 @@ async fn a_worker_killed_after_a_bulk_item_resumes_without_duplicating_it() {
     let project_id;
     let job_id;
     {
+        // A stale run's item commit fires the same fault — quarantine whatever earlier
+        // tests left unfinished so this worker sees only this test's bulk job.
+        let database = common::owner_database().await;
+        common::clear_unfinished_work(&database).await;
+        database.close().await;
         let mut server = Server::start_with(&[
             ("COLOPHON_FAULT", "bulk:after-item"),
             ("COLOPHON_WORKER_POLL_MS", "100"),
@@ -476,6 +532,35 @@ async fn a_worker_killed_after_a_bulk_item_resumes_without_duplicating_it() {
             .as_str()
             .expect("a job id")
             .to_owned();
+        // The item's committed outcome is the crash's own line — the fault point is the
+        // first statement after the item's commit — so the wait polls it rather than
+        // guessing how long the drive takes; `exited` is the early-out if the process
+        // died on something else first.
+        assert!(
+            common::until(15, async || {
+                if server.exited().is_some() {
+                    return true;
+                }
+                call(
+                    &owner,
+                    Method::GET,
+                    &format!("{base}/{job_id}/items"),
+                    None,
+                    &[],
+                )
+                .await
+                .map(|reply| {
+                    reply.body["data"].as_array().is_some_and(|items| {
+                        items
+                            .iter()
+                            .any(|item| item["outcome"].as_str().is_some_and(|o| o != "pending"))
+                    })
+                })
+                .unwrap_or(false)
+            })
+            .await,
+            "the item's outcome never committed"
+        );
         assert_eq!(
             server.exit_code().await,
             Some(FAULT_EXIT),
@@ -891,6 +976,13 @@ async fn a_delivery_repeated_under_faults_is_one_effect_at_the_destination() {
     let owner;
     let project_id;
     {
+        // Stale jobs left by earlier tests must not reach this worker first: a stale
+        // dispatch fires the same fault on work that was never the test's (the reported
+        // flake). The suite runs one test at a time — every unfinished row is a dead
+        // server's.
+        let database = common::owner_database().await;
+        common::clear_unfinished_work(&database).await;
+        database.close().await;
         let mut server = Server::start_with(&[
             ("COLOPHON_FAULT", "worker:after-dispatch"),
             ("COLOPHON_WORKER_LEASE_MS", "1500"),
@@ -902,6 +994,16 @@ async fn a_delivery_repeated_under_faults_is_one_effect_at_the_destination() {
         let project = project(&owner).await;
         destination(&owner, &project, &receiver.url).await;
         assert_eq!(publish_article(&owner, &project, "Crashed once").await, 1);
+        // The receiver records a request before it answers, so `seen` holding the
+        // announcement is the observable the crash is about — wait on it, not on a guess
+        // at dispatch latency.
+        assert!(
+            common::until(15, async || {
+                !receiver.seen().is_empty() || server.exited().is_some()
+            })
+            .await,
+            "the announcement never reached the destination"
+        );
         assert_eq!(
             server.exit_code().await,
             Some(FAULT_EXIT),

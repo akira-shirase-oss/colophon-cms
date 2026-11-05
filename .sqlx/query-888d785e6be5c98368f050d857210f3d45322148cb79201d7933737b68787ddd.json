@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "WITH due AS (\n             SELECT j.project_id, j.environment_id, j.id\n             FROM asset_jobs j\n             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())\n                    OR (j.status = 'running' AND j.lease_expires_at < now()))\n               AND j.deadline_at > now()\n             ORDER BY j.next_attempt_at\n             LIMIT $3\n             FOR UPDATE OF j SKIP LOCKED\n         )\n         UPDATE asset_jobs j SET status = 'running', lease_owner = $1,\n                            lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),\n                            lease_generation = j.lease_generation + 1, attempts = j.attempts + 1,\n                            updated_at = now()\n         FROM due, assets a\n         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id\n           AND a.project_id = j.project_id AND a.environment_id = j.environment_id AND a.id = j.asset_id\n         RETURNING j.project_id, j.environment_id, j.id, j.kind, j.asset_id, a.quarantine_key,\n                   a.public_key, a.derivatives, a.declared_type, j.idempotency_key, j.attempts,\n                   j.lease_generation, j.deadline_at",
+  "query": "WITH due AS (\n             SELECT j.project_id, j.environment_id, j.id\n             FROM asset_jobs j\n             WHERE ((j.status IN ('pending', 'retrying') AND j.next_attempt_at <= now())\n                    OR (j.status = 'running' AND j.lease_expires_at < now()))\n               AND j.deadline_at > now()\n             ORDER BY j.next_attempt_at\n             LIMIT $3\n             FOR UPDATE OF j SKIP LOCKED\n         )\n         UPDATE asset_jobs j SET status = 'running', lease_owner = $1,\n                            lease_expires_at = now() + make_interval(secs => $2::bigint / 1000.0),\n                            lease_generation = j.lease_generation + 1, attempts = j.attempts + 1,\n                            updated_at = now()\n         FROM due, assets a\n         WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id\n           AND a.project_id = j.project_id AND a.environment_id = j.environment_id AND a.id = j.asset_id\n         RETURNING j.project_id, j.environment_id, j.id, j.kind, j.asset_id,\n                   coalesce(j.quarantine_key, a.quarantine_key) AS \"quarantine_key!\",\n                   coalesce(j.declared_type, a.declared_type) AS \"declared_type!\",\n                   coalesce(j.size_bytes, a.size_bytes) AS \"size_bytes!\",\n                   j.idempotency_key, j.attempts,\n                   j.lease_generation, j.deadline_at",
   "describe": {
     "columns": [
       {
@@ -60,50 +60,24 @@
       },
       {
         "ordinal": 5,
-        "name": "quarantine_key",
+        "name": "quarantine_key!",
         "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "assets",
-            "name": "quarantine_key"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "ordinal": 6,
-        "name": "public_key",
+        "name": "declared_type!",
         "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "assets",
-            "name": "public_key"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "ordinal": 7,
-        "name": "derivatives",
-        "type_info": "TextArray",
-        "origin": {
-          "Table": {
-            "table": "assets",
-            "name": "derivatives"
-          }
-        }
+        "name": "size_bytes!",
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 8,
-        "name": "declared_type",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "assets",
-            "name": "declared_type"
-          }
-        }
-      },
-      {
-        "ordinal": 9,
         "name": "idempotency_key",
         "type_info": "Text",
         "origin": {
@@ -114,7 +88,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 9,
         "name": "attempts",
         "type_info": "Int4",
         "origin": {
@@ -125,7 +99,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 10,
         "name": "lease_generation",
         "type_info": "Int4",
         "origin": {
@@ -136,7 +110,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 11,
         "name": "deadline_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -160,15 +134,14 @@
       false,
       false,
       false,
-      false,
-      true,
-      false,
-      false,
+      null,
+      null,
+      null,
       false,
       false,
       false,
       false
     ]
   },
-  "hash": "f20f3f4505593fcd40af037c15d66fb6fffd678a408b33f2a3c243015cf7b90d"
+  "hash": "888d785e6be5c98368f050d857210f3d45322148cb79201d7933737b68787ddd"
 }

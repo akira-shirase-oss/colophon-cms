@@ -12,5 +12,5 @@ mod store;
 mod verify;
 
 pub use asset::{DECLARED_TYPES, Intent, IntentError, MAX_BYTES, State};
-pub use store::{Shared, public_key, quarantine_key};
+pub use store::{Shared, is_version_sha, public_key, quarantine_key, sha_hex, version_key};
 pub use verify::{Reject, Verified, sniff, verify_image};

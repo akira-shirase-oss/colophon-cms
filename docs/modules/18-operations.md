@@ -151,8 +151,11 @@ on clean infrastructure and an independent install, so operations are a module w
   require demonstrated restore drills; a SQL dump alone is not this strategy. The first dated drill artifact is
   `perf/results/2026-11-04T173702Z-backup-drill-apple-m2-pro-12c.json` (capture 252 s, verify 138 s, 2.2 GB encrypted
   from a 12.4 GB dev cluster — laptop numbers about the reference profile, not a capacity promise).
-- **Still owed:** object-store asset versioning (D-016's Garage lacks bucket versioning; production decides) and the
-  table-retention jobs below. The cache does not need restoring for correctness: no backup includes it.
+- Asset objects are versioned at the application level (D-136, migration 0051): every verified landing lives at a
+  content-addressed `public/…/{asset}/{sha}` key recorded in `asset_versions`, and Garage's lack of bucket versioning
+  no longer matters — an object is immutable once written, so a backup's manifest plus the rows is enough to name
+  every byte a restore must find, and the public-orphan sweep collects any object no row serves from. **Still owed:**
+  the table-retention jobs below. The cache does not need restoring for correctness: no backup includes it.
 
 ### Restore procedure (spec §33; F13, F14; D-126, migration 0049; built in P6)
 

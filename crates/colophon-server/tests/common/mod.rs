@@ -92,12 +92,24 @@ impl Server {
         server
     }
 
-    /// Waits up to five seconds for the process to exit on its own; its exit code.
+    /// The server's exit code if it already finished, without waiting.
+    pub(crate) fn exited(&mut self) -> Option<i32> {
+        self.0
+            .try_wait()
+            .expect("wait")
+            .and_then(|status| status.code())
+    }
+
+    /// Waits up to five seconds for the process to exit on its own; its exit code. The
+    /// caller is expected to have waited on what the exit is *about* already — an
+    /// announcement at the receiver, a committed outcome — so the five seconds only ever
+    /// bound the gap between the observable and `fault::point`, never how long the
+    /// worker takes to reach it.
     pub(crate) async fn exit_code(&mut self) -> Option<i32> {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
-            if let Some(status) = self.0.try_wait().expect("wait") {
-                return status.code();
+            if let Some(code) = self.exited() {
+                return Some(code);
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -176,6 +188,72 @@ pub(crate) async fn owner_database() -> sqlx::PgPool {
     sqlx::PgPool::connect(&url)
         .await
         .expect("the stack's database")
+}
+
+/// Ends every unfinished row the shared test database's worker could pick up — delivery
+/// jobs, asset jobs, bulk runs, migration plans and due schedules — so a test starting a
+/// fault-armed server sees only the work it makes itself. Tests run one at a time, so the
+/// rows these statements touch all belong to servers long dead; each lands the terminal
+/// state its own sweep or finish would have given it eventually. Without this, a stale
+/// job's dispatch fires the same `COLOPHON_FAULT` and the process exits on work that was
+/// never the test's — the reported flake.
+pub(crate) async fn clear_unfinished_work(database: &sqlx::PgPool) {
+    sqlx::query(
+        "UPDATE jobs SET status = 'failed', last_error = 'cleared by a later test',
+                          lease_owner = NULL, lease_expires_at = NULL,
+                          updated_at = now(), finished_at = coalesce(finished_at, now())
+         WHERE status IN ('pending', 'retrying', 'running')",
+    )
+    .execute(database)
+    .await
+    .expect("clear delivery jobs");
+    sqlx::query(
+        "UPDATE asset_jobs SET status = 'failed', last_error = 'cleared by a later test',
+                          lease_owner = NULL, lease_expires_at = NULL,
+                          updated_at = now(), finished_at = coalesce(finished_at, now())
+         WHERE status IN ('pending', 'retrying', 'running')",
+    )
+    .execute(database)
+    .await
+    .expect("clear asset jobs");
+    sqlx::query(
+        "UPDATE bulk_jobs SET state = 'cancelled',
+                          started_at = coalesce(started_at, now()),
+                          finished_at = now(), updated_at = now()
+         WHERE state IN ('accepting', 'running')",
+    )
+    .execute(database)
+    .await
+    .expect("clear bulk jobs");
+    sqlx::query(
+        "UPDATE migration_plans SET state = 'cancelled', finished_at = now(), updated_at = now()
+         WHERE state IN ('proposed', 'approved', 'running')",
+    )
+    .execute(database)
+    .await
+    .expect("clear migration plans");
+    sqlx::query(
+        "UPDATE schedules SET state = 'blocked', reason = 'cleared by a later test',
+                          finished_at = now()
+         WHERE state = 'scheduled'",
+    )
+    .execute(database)
+    .await
+    .expect("clear schedules");
+}
+
+/// Polls `check` until it holds or `seconds` pass; whether it held in time. Waits belong
+/// on observable state — an arrival at a receiver, a committed outcome, a dead process —
+/// never on how long the worker should take to reach it.
+pub(crate) async fn until(seconds: u64, mut check: impl AsyncFnMut() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    while Instant::now() < deadline {
+        if check().await {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    check().await
 }
 
 /// Colophon's client: no redirects followed, no cookie store (cookies are checked by hand).

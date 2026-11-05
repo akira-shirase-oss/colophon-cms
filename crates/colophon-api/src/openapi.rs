@@ -3063,10 +3063,16 @@ pub(crate) static TABLE: &[Route] = &[
                 |f| on(f, assets::get),
                 OpDoc {
                     id: "getAsset",
-                    summary: "One asset: state, detected type, dimensions, derivatives",
+                    summary: "One asset with every verified version, oldest first",
                     tag: "assets",
                     security: Security::Any,
-                    ok: data("AssetView"),
+                    ok: Res {
+                        status: 200,
+                        shape: Shape::It("AssetDetailView"),
+                        headers: &[],
+                        media: "",
+                        note: "`data` is the asset; `versions` its byte history (D-136)",
+                    },
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -3107,6 +3113,58 @@ pub(crate) static TABLE: &[Route] = &[
                 },
             ),
         ],
+    ),
+    route(
+        (P, "/assets/{asset}/replace"),
+        &[op(
+            Verb::Post,
+            |f| on(f, assets::replace),
+            OpDoc {
+                id: "replaceAsset",
+                summary: "New bytes for a usable asset — a new version, the old one keeps its objects",
+                tag: "assets",
+                security: Security::Any,
+                headers: &[
+                    IDEMPOTENCY,
+                    header("x-colophon-file-name", Kind::Str, "the file's name"),
+                    header(
+                        "content-type",
+                        Kind::Str,
+                        "the claimed image type, verified by the worker",
+                    ),
+                ],
+                body: Some(Body {
+                    schema: "UploadBody",
+                    media: &["application/octet-stream"],
+                    note: "the file's bytes",
+                }),
+                ok: Res {
+                    status: 202,
+                    shape: Shape::Data("AssetView"),
+                    headers: &[],
+                    media: "",
+                    note: "the reverify job swings the current version only if the bytes verify",
+                },
+                extra: &[
+                    NOT_FOUND,
+                    refusal(
+                        409,
+                        "asset_quarantined, asset_rejected, already_deleted",
+                        "its first verdict is still out, it has no version to replace, or it is gone",
+                    ),
+                    refusal(
+                        503,
+                        "unavailable",
+                        "uploads are not configured on this server",
+                    ),
+                    refusal(422, "invalid_upload", "the name, type or size refused"),
+                    P428,
+                    BAD_MATCH,
+                    REUSED_KEY,
+                ],
+                ..MIN
+            },
+        )],
     ),
     route(
         (P, "/assets/{asset}/references"),
@@ -3251,7 +3309,32 @@ pub(crate) static TABLE: &[Route] = &[
             |f| on(f, assets::serve_rendition),
             OpDoc {
                 id: "serveRendition",
-                summary: "A rendition the worker wrote, such as `w320`",
+                summary: "A rendition the worker wrote — or, when `name` is a 64-hex sha, that pinned version's original",
+                tag: "media",
+                security: Security::Public,
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Empty,
+                    headers: &[],
+                    media: "*/*",
+                    note: "the stored `Content-Type`; caches forever",
+                },
+                extra: &[
+                    NOT_FOUND,
+                    refusal(503, "unavailable", "the object store is not configured"),
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/media/v1/{project}/{environment}/{asset}/{sha}/{name}"),
+        &[op(
+            Verb::Get,
+            |f| on(f, assets::serve_versioned),
+            OpDoc {
+                id: "serveVersionedRendition",
+                summary: "A rendition of a pinned version: the worker wrote it under the version's key",
                 tag: "media",
                 security: Security::Public,
                 ok: Res {
@@ -5118,12 +5201,34 @@ fn delivery_parts() -> Value {
                 "file_name": { "type": "string" },
                 "declared_type": { "type": "string" },
                 "detected_type": { "type": ["string", "null"] },
+                "sha256": { "type": ["string", "null"], "description": "the current version's digest; `/media/v1/…/{asset}/{sha256}` pins it (D-136)" },
                 "size_bytes": { "type": "integer" },
                 "width": { "type": ["integer", "null"] },
                 "height": { "type": ["integer", "null"] },
                 "rejected_reason": { "type": ["string", "null"] },
                 "derivatives": { "type": "array", "items": { "type": "object" }, "description": "the renditions the worker wrote" },
                 "created_at": { "type": "string", "format": "date-time" },
+            },
+        },
+        "AssetVersionView": {
+            "type": "object",
+            "properties": {
+                "seq": { "type": "integer" },
+                "declared_type": { "type": "string" },
+                "size_bytes": { "type": "integer" },
+                "detected_type": { "type": "string" },
+                "sha256": { "type": "string", "description": "the content digest the pinned URL names" },
+                "width": { "type": "integer" },
+                "height": { "type": "integer" },
+                "derivatives": { "type": "array", "items": { "type": "string" } },
+                "created_at": { "type": "string", "format": "date-time" },
+            },
+        },
+        "AssetDetailView": {
+            "type": "object",
+            "properties": {
+                "data": { "$ref": "#/components/schemas/AssetView" },
+                "versions": { "type": "array", "items": { "$ref": "#/components/schemas/AssetVersionView" } },
             },
         },
         "AssetUploadView": {
