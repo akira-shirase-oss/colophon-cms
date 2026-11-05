@@ -66,6 +66,14 @@
 	const current = $derived(
 		projects.find((project) => project.id === chosen) ?? projects.find((project) => project.id === remembered) ?? projects[0]
 	);
+
+	// "All projects" grows without bound on a busy installation, so it can be filtered by name.
+	let filter = $state('');
+	const matching = $derived(
+		filter.trim() === ''
+			? projects
+			: projects.filter((project) => project.name.toLowerCase().includes(filter.trim().toLowerCase()))
+	);
 </script>
 
 <svelte:head><title>{who.data && who.data.projects.length > 0 ? 'Your work' : 'Projects'} · Colophon Studio</title></svelte:head>
@@ -177,24 +185,39 @@
 			{/key}
 		{/if}
 		{#if projects.length > 1}
-			<h2 class="mt-12 mb-3 text-base font-semibold" id="all-projects">All projects</h2>
-			<ul class="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects" aria-labelledby="all-projects">
-				{#each projects as project, index (project.id)}
-					<li style="--i: {index}">
-						<a
-							href={resolve('/projects/[project]', { project: project.id })}
-							class="lift group flex h-full items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-xs outline-none hover:border-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/40"
-						>
-							<span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-sm font-semibold">{project.name.slice(0, 1).toUpperCase()}</span>
-							<span class="min-w-0 flex-1" data-user-content>
-								<span class="block truncate font-medium">{project.name}</span>
-								<span class="block truncate text-xs text-muted-foreground">{project.role_name}</span>
-							</span>
-							<ArrowRightIcon class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-						</a>
-					</li>
-				{/each}
-			</ul>
+			<div class="mt-12 mb-3 flex flex-wrap items-center justify-between gap-3">
+				<h2 class="text-base font-semibold" id="all-projects">All projects</h2>
+				<Input
+					class="h-9 w-full max-w-64"
+					placeholder="Search projects"
+					aria-label="Search projects"
+					bind:value={filter}
+					data-testid="project-search"
+				/>
+			</div>
+			{#if matching.length === 0}
+				<p class="text-sm text-muted-foreground" data-testid="projects-no-match">
+					No project matches <strong class="font-medium text-foreground">{filter.trim()}</strong>.
+				</p>
+			{:else}
+				<ul class="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects" aria-labelledby="all-projects">
+					{#each matching as project, index (project.id)}
+						<li style="--i: {index}">
+							<a
+								href={resolve('/projects/[project]', { project: project.id })}
+								class="lift group flex h-full items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-xs outline-none hover:border-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/40"
+							>
+								<span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-sm font-semibold">{project.name.slice(0, 1).toUpperCase()}</span>
+								<span class="min-w-0 flex-1" data-user-content>
+									<span class="block truncate font-medium">{project.name}</span>
+									<span class="block truncate text-xs text-muted-foreground">{project.role_name}</span>
+								</span>
+								<ArrowRightIcon class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+							</a>
+						</li>
+					{/each}
+				</ul>
+			{/if}
 		{/if}
 		{#if !who.data.administrator}
 			<p class="mt-8 text-sm text-muted-foreground" data-testid="not-administrator">To work on another project, ask its owner for an invitation link.</p>
