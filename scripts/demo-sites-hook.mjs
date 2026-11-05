@@ -67,14 +67,19 @@ async function drain() {
 	state.building = true;
 	try {
 		while (state.wanted > state.built) {
-			const generation = state.wanted;
+			const before = state.built;
 			await run('serve-demo-sites.sh', ['build']);
 			await ensureServing();
-			state.built = generation;
+			// What was built is what the delivery API now serves — never the announced number,
+			// which a duplicate or a mistaken announcement could overstate.
+			state.built = await liveGeneration().catch(() => state.wanted);
 			state.rebuilds += 1;
 			state.lastBuildAt = new Date().toISOString();
 			state.lastError = null;
-			console.log(JSON.stringify({ message: 'rebuilt the five demo sites', generation, rebuilds: state.rebuilds }));
+			console.log(JSON.stringify({ message: 'rebuilt the five demo sites', generation: state.built, rebuilds: state.rebuilds }));
+			// A build that did not advance the live generation means there is nothing newer to
+			// build; stop rather than rebuild in a loop on a bogus announcement.
+			if (state.built <= before) break;
 		}
 	} catch (error) {
 		state.lastError = String(error);
@@ -85,6 +90,16 @@ async function drain() {
 	} finally {
 		state.building = false;
 	}
+}
+
+/** The release the delivery API is serving right now, from its own header. */
+async function liveGeneration() {
+	const { project, environment, collections } = await record();
+	const collection = collections?.[0] ?? 'posts';
+	const response = await fetch(`${SERVER}/content/v1/${project}/${environment}/${collection}`, { method: 'HEAD' });
+	const header = Number(response.headers.get('colophon-generation'));
+	if (!Number.isSafeInteger(header) || header < 1) throw new Error('no colophon-generation header');
+	return header;
 }
 
 /** `build` promotes beside the live directories; only a site that stays down needs `serve`. */
