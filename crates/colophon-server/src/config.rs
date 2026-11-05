@@ -181,6 +181,10 @@ pub struct Config {
     /// How often the retention sweep looks for collectable assets and orphaned quarantine
     /// objects (D-099). `COLOPHON_ASSET_SWEEP_MS`, default `300_000` (five minutes).
     pub asset_sweep: Duration,
+    /// How often the table-retention sweep runs its bounded deletes over finished work,
+    /// the settled ledger, dead flow state and the audit log (spec §27, D-135).
+    /// `COLOPHON_TABLE_SWEEP_MS`, default `3_600_000` (one hour).
+    pub table_sweep: Duration,
     /// Rate limits (D-076): `COLOPHON_RATE_LIMIT_PER_ADDRESS` (default `300/600`, requests a
     /// second and burst, or `off`), `COLOPHON_RATE_LIMIT_PER_CREDENTIAL` (default `150/300`),
     /// `COLOPHON_RATE_LIMIT_DELIVERY` (public delivery per address, default `1000/2000`), and
@@ -513,6 +517,11 @@ impl Config {
     }
 
     /// Builds a configuration from any lookup (the environment, or a map in tests).
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one stanza per environment variable; the function's length is the count \
+                  of settings, not complexity"
+    )]
     pub fn from_lookup(
         role: Role,
         lookup: impl Fn(&str) -> Option<String>,
@@ -558,6 +567,9 @@ impl Config {
         // tests need and as rarely as an hourly pass.
         let asset_expiry = env.millis("COLOPHON_ASSET_EXPIRY_MS", 86_400_000, 1..=31_536_000_000);
         let asset_sweep = env.millis("COLOPHON_ASSET_SWEEP_MS", 300_000, 50..=3_600_000);
+        // Hourly by default: retention is a bound, not a latency promise, so a pass an hour
+        // keeps every table's size where the ages say without spending worker time on it.
+        let table_sweep = env.millis("COLOPHON_TABLE_SWEEP_MS", 3_600_000, 1_000..=86_400_000);
         let events = env.events();
         let mcp = env.mcp();
         if probe_timeout >= probe_interval {
@@ -610,6 +622,7 @@ impl Config {
                 worker_location,
                 asset_expiry,
                 asset_sweep,
+                table_sweep,
                 admission,
                 events,
                 mcp,

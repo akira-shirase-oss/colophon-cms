@@ -425,6 +425,9 @@ async fn outbox(
     .fetch_all(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
+    // The jobs' idempotency keys are this release's payload metadata; the byte bound
+    // answers with them counted, not just the project's row count (D-135).
+    crate::work::check_payload(tx).await?;
     crate::budgets::reserve_jobs(tx, &jobs).await?;
     Ok(())
 }

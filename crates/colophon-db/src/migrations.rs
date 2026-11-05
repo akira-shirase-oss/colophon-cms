@@ -238,6 +238,10 @@ pub async fn create_plan(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
+    // The target definition, the operations and the items' problems are the plan's payload
+    // metadata; the install-wide byte bound answers with them counted, not just the
+    // project's row count (D-135).
+    crate::work::check_payload(tx).await?;
     let plan = get(tx, new.id)
         .await?
         .ok_or(DbError::Corrupt("a migration plan vanished as it was made"))?;
@@ -331,8 +335,12 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Plan>, 
 }
 
 /// The plan, locked until the transaction ends: approvals, applies, cancellations and
-/// resolutions all queue on it, so each sees the state the one before committed.
+/// resolutions all queue on it, so each sees the state the one before committed. The
+/// admission pair comes first (D-135): a resolution's post-write
+/// [`crate::work::check_payload`] must find the byte lock already held, before this row
+/// lock, so the two locks and the row lock can never queue in a circle.
 pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Plan>, DbError> {
+    crate::work::admission(tx).await?;
     sqlx::query_as!(
         Plan,
         r#"SELECT id, collection, base_version, target_version, target_definition,
@@ -596,6 +604,9 @@ pub async fn resolve_item(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)?;
+    // A stored resolution is payload metadata on an open plan (D-135); the install-wide
+    // byte bound answers with it counted, under the pair the plan's `lock` already holds.
+    crate::work::check_payload(tx).await?;
     let item = item(tx, plan, entry).await?.ok_or(DbError::Corrupt(
         "a migration item vanished as it was resolved",
     ))?;

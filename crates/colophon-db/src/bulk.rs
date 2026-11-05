@@ -240,6 +240,10 @@ pub async fn create(tx: &mut ProjectTransaction, new: &NewJob<'_>) -> Result<Job
     .fetch_one(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
+    // The operation document is payload metadata; the install-wide byte bound answers with
+    // it counted, not just the project's row count (D-135). The first chunk's items land in
+    // `append`, which makes its own check after writing.
+    crate::work::check_payload(tx).await?;
     Ok(job_of(row))
 }
 
@@ -305,6 +309,12 @@ pub async fn append(
         .await
         .map_err(DbError::from_write)?;
     }
+    // The items' inputs are the manifest's payload metadata: a chunk can carry a megabyte
+    // where the job row carried almost nothing, so the install-wide byte bound answers with
+    // this append's own bytes counted (D-135). The admission pair is already held — the
+    // caller's `lock` took it before this row's lock — so the count can't stale against a
+    // concurrent admission.
+    crate::work::check_payload(tx).await?;
     Ok((landed, duplicates))
 }
 
@@ -326,8 +336,12 @@ pub async fn get(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Job>, D
     Ok(row.map(job_of))
 }
 
-/// The job, locked for a state change (seal, cancel). `None` while it doesn't exist.
+/// The job, locked for a state change (seal, cancel, or an append that adds payload). The
+/// admission pair comes first (D-135): an append's post-write [`crate::work::check_payload`]
+/// must find the byte lock already held, before this row lock, so the two locks and the row
+/// lock can never queue in a circle.
 pub async fn lock(tx: &mut ProjectTransaction, id: Uuid) -> Result<Option<Job>, DbError> {
+    crate::work::admission(tx).await?;
     let row = sqlx::query_as!(
         JobRow,
         "SELECT project_id, environment_id, id, kind, operation, manifest_hash, state, created_by, principal,

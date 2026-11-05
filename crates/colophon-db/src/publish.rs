@@ -261,12 +261,12 @@ pub async fn publish(
     now: OffsetDateTime,
     job_lifetime: std::time::Duration,
 ) -> Result<Result<Published, Refusal>, DbError> {
-    // The work bound's admission lock is a publish's first lock (D-131): it must precede the
-    // content-type locks below and the token-limits row `reserve_jobs` takes inside the
-    // commit, so a publish never holds a lock another admission waits on while it asks for
-    // the lock a migration plan or bulk job might already hold. Holding it through a refusal
-    // is safe: what it was taken to protect — the outbox insert — never ran.
-    crate::work::lock(tx).await?;
+    // The work bound's admission pair is a publish's first locks (D-131, D-135): they must
+    // precede the content-type locks below and the token-limits row `reserve_jobs` takes
+    // inside the commit, so a publish never holds a lock another admission waits on while it
+    // asks for a lock a migration plan or bulk job might already hold. Holding them through a
+    // refusal is safe: what they were taken to protect — the outbox insert — never ran.
+    crate::work::admission(tx).await?;
     let Some(head) = changesets::lock(tx, id).await? else {
         return Ok(Err(Refusal::NotFound));
     };

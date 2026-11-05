@@ -485,8 +485,16 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   verified of the newest 7 capture days and 4 ISO weeks; the newest verified always kept; unverified never pruned)
   proven by `retention-drill`, `admin migrate-status` (current/behind/unknown at exit 4) gating
   `deploy/runbooks/upgrade.md` and `scripts/upgrade-rehearsal.sh`, `deploy/runbooks/observability.md` auditing what
-  exists and what does not, and deployment `version`/`commit` on every request-attributed log line. Still ahead:
-  asset versioning, the retention jobs for bounded tables, and the rest.
+  exists and what does not, and deployment `version`/`commit` on every request-attributed log line. The
+  bounded tables and spec §33's second budget joined them (D-135, migration 0050): the worker's table-retention
+  sweep (`colophon_db::retention`, `COLOPHON_TABLE_SWEEP_MS`, default hourly) deletes dead state in 500-row
+  batches, oldest first — terminal work and its receipts at 30 days, the settled ledger and the audit log at 90,
+  dead sessions, invitations and setup state on their own ages — through `colophon_retention`'s definer
+  functions where the tables are private to the sign-in flows, never touching `deletion_ledger`, content
+  history or an `uncertain` reservation; and `colophon_pending_payload` counts the installation's pending
+  payload metadata (job keys, recorded asset sizes, bulk manifests and items, plan definitions and
+  resolutions) under a new install-wide byte lock, so `work::admit` and a post-write `check_payload` refuse
+  expensive work over 1 GiB with 503 `payload_full`. Still ahead: asset versioning and the rest.
 - `verification`: the full fault and load matrix, a 24-hour soak, the benchmark report, the requirements matrix.
   Built so far: the L11–L13 dependency-failure runs (D-127) — `perf/k6/{cache-down,postgres-trouble,purge-trouble}.js`
   inject real faults through the receiver's `/control` (container pauses on Postgres/Valkey, a SIGKILLed and
@@ -542,7 +550,11 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   `colophon-server/tests/migrate_status.rs`, `deploy/runbooks/upgrade.md` rehearsed by `scripts/upgrade-rehearsal.sh`
   (`perf/results/2026-11-04T205013Z-upgrade-rehearsal-apple-m2-pro-12c.json`, 8 checks), the observability audit in
   `deploy/runbooks/observability.md` with request-span `version`/`commit` proven live, `SECURITY.md`, `CHANGELOG.md`
-  · not built: object-store asset versioning, the bounded-table retention jobs. The proof gate's usability sessions
+  · the bounded tables and the 1 GiB payload bound (D-135, migration 0050): the worker's hourly table-retention
+  sweep and its `colophon_retention`-owned definer deletes, proven against real Postgres in
+  `colophon-db/tests/retention.rs` (aged rows gone, pinned and recent rows kept, an empty second pass) and the
+  byte bound in `colophon-db/tests/work.rs` (stored bytes counted, admission refused over the bound, room
+  restored as open work drains) · not built: object-store asset versioning. The proof gate's usability sessions
   and independent install are prepared (D-132: rehearsal script, protocol, friction record) and still owed by the
   people who must run them.
 

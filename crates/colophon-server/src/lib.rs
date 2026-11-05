@@ -63,8 +63,10 @@ fn start_worker(
     .context("configuring the worker's database pool")?;
     let worker = colophon_worker::Worker::new(worker_pool.clone(), settings)
         .context("starting the worker")?;
-    // Schedules (D-060) run beside the deliveries, on the same pool and poll; the retention
-    // sweep (D-099) beside both, only where there is a store to keep.
+    // Schedules (D-060) run beside the deliveries, on the same pool and poll; the media
+    // retention sweep (D-099) beside both, only where there is a store to keep; and the
+    // table-retention sweep (D-135) on the same pool, always — the bounds it keeps live in
+    // the database, not the object store.
     let scheduler =
         colophon_worker::schedules::Scheduler::new(worker_pool.clone(), config.worker_poll);
     let sweeper = assets.map(|store| {
@@ -75,6 +77,7 @@ fn start_worker(
             config.asset_expiry,
         )
     });
+    let tables = colophon_worker::tables::Sweeper::new(worker_pool.clone(), config.table_sweep);
     let cancel = cancel.clone();
     Ok(Some(tokio::spawn(async move {
         let sweep_cancel = cancel.clone();
@@ -86,7 +89,8 @@ fn start_worker(
         tokio::join!(
             Arc::new(worker).run(cancel.clone()),
             scheduler.run(cancel.clone()),
-            sweep
+            sweep,
+            tables.run(cancel.clone())
         );
         worker_pool.close().await;
     })))

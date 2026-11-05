@@ -92,7 +92,9 @@ pub async fn insert(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
-    Ok(())
+    // The upload's recorded size and the job's key are payload metadata; the install-wide
+    // byte bound answers with them counted, not just the project's row count (D-135).
+    crate::work::check_payload(tx).await
 }
 
 /// The environment's assets, newest first (at most 100).
@@ -257,6 +259,9 @@ pub async fn request_delete(
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
+    // The delete job's payload metadata counts too (D-135); like the admission above, the
+    // check sits after the verdicts so an asset that owes a different answer still gets it.
+    crate::work::check_payload(tx).await?;
     Ok(DeleteAsked::Queued { asset: found })
 }
 
@@ -630,64 +635,81 @@ pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
 /// the work bound keeps its assets instead: one statement can't honestly hold one project's
 /// admission lock, so each row counts the same open work [`crate::work::admit`] does, under
 /// the statement's own snapshot — a pass may overshoot [`crate::work::MAX_OPEN`] by at most
-/// its own `limit`, and the next pass sees the truth and enqueues nothing (D-131).
+/// its own `limit`, and the next pass sees the truth and enqueues nothing (D-131). The byte
+/// bound is enforced the same way, from the caller's `room` — what
+/// [`crate::work::install_payload`] left under [`crate::work::MAX_PENDING_PAYLOAD`]: a
+/// running sum of each candidate's recorded size plus its key caps the pass's enqueue at
+/// the room there was when it was computed, so the sweep itself can never push the
+/// installation over (D-135). Both counts are of the statement's own snapshot; the gap a
+/// concurrent admission leaves in them closes itself on the next pass.
 pub async fn enqueue_expired(
     pool: &PgPool,
     older_than: OffsetDateTime,
     deadline_at: OffsetDateTime,
     limit: i64,
+    room: i64,
 ) -> Result<u64, DbError> {
     let mut transaction = worker(pool).await?;
     let enqueued = sqlx::query!(
-        "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind,
-                                 idempotency_key, deadline_at)
-         SELECT a.project_id, a.environment_id, gen_random_uuid(), a.id, 'expire',
-                'expire:' || a.id::text || ':' || gen_random_uuid()::text, $2
-         FROM assets a
-         WHERE a.created_at < $1 AND a.state IN ('quarantined', 'usable', 'rejected')
-           AND NOT EXISTS (
-               SELECT 1 FROM asset_references r
-               JOIN entries e
-                 ON e.project_id = r.project_id AND e.environment_id = r.environment_id
-                AND e.draft_revision_id = r.revision_id AND e.deleted_at IS NULL
-               WHERE r.project_id = a.project_id AND r.environment_id = a.environment_id
-                 AND r.asset_id = a.id)
-           AND NOT EXISTS (
-               SELECT 1 FROM asset_references r
-               JOIN publications p
-                 ON p.project_id = r.project_id AND p.environment_id = r.environment_id
-                AND p.revision_id = r.revision_id
-               WHERE r.project_id = a.project_id AND r.environment_id = a.environment_id
-                 AND r.asset_id = a.id)
-           AND NOT EXISTS (
-               SELECT 1 FROM asset_jobs j
-               WHERE j.project_id = a.project_id AND j.environment_id = a.environment_id
-                 AND j.asset_id = a.id
-                 AND j.status IN ('pending', 'running', 'retrying'))
-           AND (
-               SELECT count(*) FROM (
-                   SELECT 1 FROM jobs j
-                   WHERE j.project_id = a.project_id
-                     AND j.status IN ('pending', 'retrying', 'running', 'held')
-                   UNION ALL
+        "WITH collectable AS (
+             SELECT a.project_id, a.environment_id, a.id, a.created_at, a.size_bytes,
+                    'expire:' || a.id::text || ':' || gen_random_uuid()::text AS key
+             FROM assets a
+             WHERE a.created_at < $1 AND a.state IN ('quarantined', 'usable', 'rejected')
+               AND NOT EXISTS (
+                   SELECT 1 FROM asset_references r
+                   JOIN entries e
+                     ON e.project_id = r.project_id AND e.environment_id = r.environment_id
+                    AND e.draft_revision_id = r.revision_id AND e.deleted_at IS NULL
+                   WHERE r.project_id = a.project_id AND r.environment_id = a.environment_id
+                     AND r.asset_id = a.id)
+               AND NOT EXISTS (
+                   SELECT 1 FROM asset_references r
+                   JOIN publications p
+                     ON p.project_id = r.project_id AND p.environment_id = r.environment_id
+                    AND p.revision_id = r.revision_id
+                   WHERE r.project_id = a.project_id AND r.environment_id = a.environment_id
+                     AND r.asset_id = a.id)
+               AND NOT EXISTS (
                    SELECT 1 FROM asset_jobs j
-                   WHERE j.project_id = a.project_id
-                     AND j.status IN ('pending', 'running', 'retrying')
-                   UNION ALL
-                   SELECT 1 FROM bulk_jobs b
-                   WHERE b.project_id = a.project_id AND b.state IN ('accepting', 'running')
-                   UNION ALL
-                   SELECT 1 FROM migration_plans m
-                   WHERE m.project_id = a.project_id
-                     AND m.state IN ('proposed', 'approved', 'running')
-               ) open_work
-           ) < $4
-         ORDER BY a.created_at
-         LIMIT $3",
+                   WHERE j.project_id = a.project_id AND j.environment_id = a.environment_id
+                     AND j.asset_id = a.id
+                     AND j.status IN ('pending', 'running', 'retrying'))
+               AND (
+                   SELECT count(*) FROM (
+                       SELECT 1 FROM jobs j
+                       WHERE j.project_id = a.project_id
+                         AND j.status IN ('pending', 'retrying', 'running', 'held')
+                       UNION ALL
+                       SELECT 1 FROM asset_jobs j
+                       WHERE j.project_id = a.project_id
+                         AND j.status IN ('pending', 'running', 'retrying')
+                       UNION ALL
+                       SELECT 1 FROM bulk_jobs b
+                       WHERE b.project_id = a.project_id AND b.state IN ('accepting', 'running')
+                       UNION ALL
+                       SELECT 1 FROM migration_plans m
+                       WHERE m.project_id = a.project_id
+                         AND m.state IN ('proposed', 'approved', 'running')
+                   ) open_work
+               ) < $4
+             ORDER BY a.created_at
+             LIMIT $3
+         ), fitting AS (
+             SELECT c.*, sum(c.size_bytes + octet_length(c.key))
+                        OVER (ORDER BY c.created_at)::bigint AS running
+             FROM collectable c
+         )
+         INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind,
+                                 idempotency_key, deadline_at)
+         SELECT project_id, environment_id, gen_random_uuid(), id, 'expire', key, $2
+         FROM fitting
+         WHERE running <= $5",
         older_than,
         deadline_at,
         limit,
-        crate::work::MAX_OPEN
+        crate::work::MAX_OPEN,
+        room
     )
     .execute(&mut *transaction)
     .await

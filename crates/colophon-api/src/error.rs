@@ -481,6 +481,20 @@ pub enum ApiError {
         /// Its bound.
         limit: i64,
     },
+    /// The installation already retains all the pending payload metadata its bound allows
+    /// (spec §33, D-135): this request's stored bytes are refused before acceptance. 503
+    /// with `Retry-After` — pending payload drains as workers finish open work, so trying
+    /// again then is the recovery. `details.reason` is `payload_full`; the numbers are the
+    /// installation's, every project's included.
+    #[error(
+        "the installation's pending payload is over its bound ({pending} of {limit} bytes); try again as open work drains"
+    )]
+    PayloadFull {
+        /// Payload bytes pending across every project.
+        pending: i64,
+        /// The bound.
+        limit: i64,
+    },
     /// Sign-in failed. Details are logged, never shown: they can help an attacker.
     #[error("sign-in failed or expired; start again")]
     SignInFailed,
@@ -563,8 +577,10 @@ impl ApiError {
                 "budget_exceeded",
                 "this API token's budget for this work is exhausted; raise its limits, or wait for the window to clear",
             ),
-            // 503, the project's own bound, not a budget or a pool (D-131).
+            // 503, the project's own bound, not a budget or a pool (D-131); the
+            // installation's payload bound answers the same way (D-135).
             DbError::WorkFull { open, limit } => Self::WorkFull { open, limit },
+            DbError::PayloadFull { pending, limit } => Self::PayloadFull { pending, limit },
             // 422, at the very place in the content (media M1).
             DbError::MissingAsset {
                 field,
@@ -678,9 +694,10 @@ impl ApiError {
             Self::RateLimited { .. } | Self::TooManyRequests { .. } => {
                 StatusCode::TOO_MANY_REQUESTS
             }
-            Self::Unavailable(_) | Self::Busy | Self::WorkFull { .. } => {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
+            Self::Unavailable(_)
+            | Self::Busy
+            | Self::WorkFull { .. }
+            | Self::PayloadFull { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -717,7 +734,10 @@ impl ApiError {
             | Self::Taken(_)
             | Self::StillNeeded(_) => ErrorCode::Conflict,
             Self::RateLimited { .. } | Self::TooManyRequests { .. } => ErrorCode::RateLimited,
-            Self::Unavailable(_) | Self::Busy | Self::WorkFull { .. } => ErrorCode::Unavailable,
+            Self::Unavailable(_)
+            | Self::Busy
+            | Self::WorkFull { .. }
+            | Self::PayloadFull { .. } => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
         }
@@ -751,6 +771,7 @@ impl ApiError {
             }),
             Self::Conflict { reason, .. } => Some(ErrorDetails::new(reason, "")),
             Self::WorkFull { .. } => Some(ErrorDetails::new("work_full", "")),
+            Self::PayloadFull { .. } => Some(ErrorDetails::new("payload_full", "")),
             Self::TooManyRequests { .. } => Some(ErrorDetails::new("rate_limited", "")),
             Self::InvalidField {
                 reason, pointer, ..
@@ -800,6 +821,15 @@ impl ApiError {
                 limit,
                 "request refused: project work bound full"
             );
+        } else if let Self::PayloadFull { pending, limit } = self {
+            // The installation's payload bound — saturation an operator can act on the same
+            // way (D-135). Bounded by the request rate.
+            tracing::warn!(
+                code,
+                pending,
+                limit,
+                "request refused: installation payload bound full"
+            );
         } else {
             // A client's mistake: worth a debug line, never a page.
             tracing::debug!(code, error = %self, "request rejected");
@@ -838,7 +868,7 @@ impl IntoResponse for ApiError {
                     HeaderValue::from(BUSY_RETRY_AFTER_SECONDS),
                 );
             }
-            Self::WorkFull { .. } => {
+            Self::WorkFull { .. } | Self::PayloadFull { .. } => {
                 response.headers_mut().insert(
                     header::RETRY_AFTER,
                     HeaderValue::from(WORK_FULL_RETRY_AFTER_SECONDS),

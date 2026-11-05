@@ -23,6 +23,14 @@ pub const BACKOFF_CAP_MS: u64 = 60_000;
 /// (D-131, F09).
 pub const MAX_PENDING: i64 = 10_000;
 
+/// The most pending payload metadata an installation may retain, in bytes (spec §33's second
+/// bound, D-135): the stored variable-size bytes of every open unit of work — job idempotency
+/// keys, pending asset jobs' recorded object sizes, open bulk manifests' operation and pending
+/// item inputs, open plans' definitions and stored resolutions. `colophon_db::work` counts it
+/// through `colophon_pending_payload` under an install-wide admission lock; over the bound new
+/// expensive work is refused before acceptance.
+pub const MAX_PENDING_PAYLOAD: i64 = 1 << 30;
+
 /// Where a job stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {

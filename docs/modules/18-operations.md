@@ -210,7 +210,7 @@ A backup existing is not proof of a working restore.
 | Resource | Default guard |
 |---|---|
 | HTTP API | 1 MiB JSON input, page size ≤ 100, 2 s ordinary query budget; 429/503 before unbounded queues form |
-| Jobs | 10,000 pending jobs per project and 1 GiB pending payload metadata per install |
+| Jobs | 10,000 pending jobs per project and 1 GiB pending payload metadata per install — both in place (D-131, D-135): `colophon_db::work` admits under the project's advisory lock then the install-wide byte lock, and over either bound the accepting transaction refuses 503 `work_full`/`payload_full` + `Retry-After`; the payload is counted as stored bytes — job keys, recorded `assets.size_bytes`, bulk manifests and pending items, plan definitions and resolutions — object bytes stay in storage |
 | Worker pools | 8 publishing/delivery tasks (2 per destination), 4 image jobs, 2 AI jobs |
 | Cache | 1 GiB reference budget with explicit eviction |
 | Logs | 7 days and 1 GiB, 16 KiB record cap, visible dropped-record counter |
@@ -241,9 +241,23 @@ A backup existing is not proof of a working restore.
   - never delete WAL to free space.
 
 ### Retention (spec §27)
-- Unpinned revisions and resolved delivery metadata: 90 days.
-- Terminal ordinary jobs: 30 days.
-- Audit: 90 days.
+- Database rows, in place (D-135): the worker's table-retention sweep runs every `COLOPHON_TABLE_SWEEP_MS`
+  (default hourly) — `colophon_db::retention::sweep`, one transaction a pass, at most 500 rows a table a
+  pass, oldest first, as `colophon_worker`. Ages: terminal `jobs`/`asset_jobs`/`bulk_jobs`/
+  `migration_plans`/`schedules` and `observations` 30 days; `audit_events` 90 days through
+  `colophon_audit_sweep` (the one delete the append-only trigger allows beside a project deletion's own);
+  settled/released `budget_reservations` 90 days — `held` and `uncertain` are never deleted; idempotency
+  records 30 days; expired sessions and access tokens 90 days past expiry; unaccepted expired or revoked
+  invitations and expired setup codes 90 days; setup attempts 15 minutes; `sign_in_attempts` and
+  `device_logins` at expiry. The private tables are deleted only through `colophon_retention`'s definer
+  functions — the worker removes rows it cannot read.
+- Never swept: `deletion_ledger` (append-only, the restore primitive), revisions, publications,
+  tombstones, comments and tasks — retention deletes dead state, never content history.
+- Backups: `scripts/backup.sh retention [--apply]` keeps the newest verified of the newest 7 capture days
+  and 4 ISO weeks; unverified captures are never pruned (D-130).
+- Media: the asset sweep (`COLOPHON_ASSET_SWEEP_MS`, default 5 minutes) enqueues `expire` jobs for
+  collectable assets — quarantined, rejected or unreferenced usable — and removes orphaned quarantine
+  objects (D-099), budgeting its enqueues against the room the payload bound leaves (D-135).
 - Diagnostic logs: 7 days with a byte cap.
 - Deletions record a durable tombstone, purge caches, and delete unreferenced media asynchronously.
 
