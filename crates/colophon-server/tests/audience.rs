@@ -12,8 +12,8 @@
 mod common;
 
 use common::{
-    ORIGIN, Server, app, article, call, cookie, cookies_from, create_article, entries, join, key,
-    project, release, sign_in, unique_slug,
+    ORIGIN, PORT, Server, app, article, call, cookie, cookies_from, create_article, entries, join,
+    key, project, release, sign_in, unique_slug,
 };
 use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
@@ -28,6 +28,31 @@ async fn audience_post(project: &str, action: &str, body: &Value) -> reqwest::Re
         .send()
         .await
         .expect("request")
+}
+
+/// `POST {base}/audience/v1/{project}/{action}` against a named server: `audience_post`
+/// always hits [`ORIGIN`], a second server needs its own.
+async fn audience_post_at(
+    base: &str,
+    project: &str,
+    action: &str,
+    body: &Value,
+) -> reqwest::Response {
+    app()
+        .post(format!("{base}/audience/v1/{project}/{action}"))
+        .json(body)
+        .send()
+        .await
+        .expect("request")
+}
+
+/// The token a `dev_link` carries: `return_to` with `?token=` appended (or `&` when the
+/// address already has a query).
+fn dev_token(link: &str) -> &str {
+    link.rsplit("token=")
+        .next()
+        .filter(|token| !token.is_empty() && *token != link)
+        .expect("a ?token= on the development link")
 }
 
 /// `GET /audience/v1/{project}/me` with whatever headers the caller carries.
@@ -669,4 +694,213 @@ async fn a_write_names_its_gate_and_keeps_it_without_being_asked() {
     .await
     .expect("request");
     assert_eq!(read.body["data"]["visibility"].as_str(), Some("public"));
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one journey, told in order: request, consume, single use, supersede, no open role"
+)]
+async fn magic_links_sign_in_existing_visitors_and_create_new_ones() {
+    // The production shape first: without COLOPHON_DEV_MAIL a request answers only "sent",
+    // carrying no link anyone could read.
+    let _plain = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let staff = format!("/api/v1/projects/{project}/audience");
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("{staff}/roles"),
+        Some(&json!({"name": "member", "self_assign": true})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let email = format!("linked-{}@example.test", unique_slug());
+    let production = audience_post(
+        &project,
+        "magic-link",
+        &json!({"email": email, "return_to": "http://site.test/magic"}),
+    )
+    .await;
+    assert_eq!(production.status(), StatusCode::ACCEPTED);
+    let body: Value = production.json().await.expect("json");
+    assert_eq!(body["data"]["sent"].as_bool(), Some(true));
+    assert!(
+        body["data"]["dev_link"].is_null(),
+        "no link without COLOPHON_DEV_MAIL: {body}"
+    );
+
+    // The development stack has no mail server: with the loopback-only COLOPHON_DEV_MAIL the
+    // request also hands the link back, so the whole flow can run end to end.
+    let _mail = Server::start_on(PORT + 50, &[("COLOPHON_DEV_MAIL", "1")]).await;
+    let dev = format!("http://127.0.0.1:{}", PORT + 50);
+    let request = |email: &str| {
+        let dev = dev.clone();
+        let project = project.clone();
+        let email = email.to_owned();
+        async move {
+            let response = audience_post_at(
+                &dev,
+                &project,
+                "magic-link",
+                &json!({"email": email, "return_to": "http://site.test/magic"}),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            let body: Value = response.json().await.expect("json");
+            (
+                body["data"]["dev_link"]
+                    .as_str()
+                    .expect("a development link")
+                    .to_owned(),
+                body,
+            )
+        }
+    };
+
+    // `return_to` is checked: only an absolute http(s) URL, ever.
+    for bad in ["/relative/path", "ftp://x.test", "javascript:alert(1)"] {
+        let refused = audience_post_at(
+            &dev,
+            &project,
+            "magic-link",
+            &json!({"email": "a@b.c", "return_to": bad}),
+        )
+        .await;
+        assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+        let body: Value = refused.json().await.expect("json");
+        assert_eq!(
+            body["error"]["details"]["reason"].as_str(),
+            Some("invalid_return_to"),
+            "{bad}: {body}"
+        );
+    }
+
+    // A gated read to prove the session the link makes: a member-only entry, published.
+    let gated = create_gated(&owner, &project, "For members", "role:member").await;
+    release(
+        &owner,
+        &project,
+        &json!({"title": "Gates", "entries": [gated]}),
+    )
+    .await;
+
+    // An unknown email: the link is the signup — consume creates the account in the
+    // project's one open role and answers like a sign-in.
+    let (link, _) = request(&email).await;
+    let token = dev_token(&link).to_owned();
+    let consumed =
+        audience_post_at(&dev, &project, &format!("magic-link/{token}"), &json!({})).await;
+    assert_eq!(consumed.status(), StatusCode::OK);
+    let (cookies, csrf) = audience_cookie(&consumed);
+    let body: Value = consumed.json().await.expect("json");
+    let session = body["data"]["session"]
+        .as_str()
+        .expect("a session")
+        .to_owned();
+    let user = body["data"]["user"]["id"].as_str().expect("a user");
+    assert_eq!(body["data"]["user"]["role"].as_str(), Some("member"));
+    let (status, me_body) = me(&project, &[("authorization", &format!("Bearer {session}"))]).await;
+    assert_eq!(
+        (status, me_body["data"]["email"].as_str()),
+        (StatusCode::OK, Some(email.as_str()))
+    );
+
+    // The session reads the gate it was made for — bypassing the shared cache like any
+    // member read.
+    let member = delivered(&project, &[("authorization", &format!("Bearer {session}"))]).await;
+    assert_eq!(member.titles, ["For members"]);
+    assert_eq!(
+        (member.cache.as_str(), member.cache_control.as_str()),
+        ("bypass", MEMBER_CACHE)
+    );
+
+    // And a dead link is dead: the same token answers invalid, never a second session.
+    let again = audience_post_at(&dev, &project, &format!("magic-link/{token}"), &json!({})).await;
+    assert_eq!(again.status(), StatusCode::FORBIDDEN);
+    let body: Value = again.json().await.expect("json");
+    assert_eq!(
+        body["error"]["details"]["reason"].as_str(),
+        Some("magic_link_invalid"),
+        "{body}"
+    );
+
+    // Requesting again retires the old link: the first token is invalid, the newest signs
+    // the same account back in (an existing email takes the sign-in branch, never a
+    // duplicate user).
+    let (stale, _) = request(&email).await;
+    let (live, _) = request(&email).await;
+    let superseded = audience_post_at(
+        &dev,
+        &project,
+        &format!("magic-link/{}", dev_token(&stale)),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(
+        superseded.status(),
+        StatusCode::FORBIDDEN,
+        "the older link died"
+    );
+    let consumed = audience_post_at(
+        &dev,
+        &project,
+        &format!("magic-link/{}", dev_token(&live)),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(consumed.status(), StatusCode::OK);
+    let body: Value = consumed.json().await.expect("json");
+    assert_eq!(
+        body["data"]["user"]["id"].as_str(),
+        Some(user),
+        "the account the first link made, not a second"
+    );
+
+    // A project whose only role is staff-assigned answers the request exactly the same —
+    // and refuses at consume, where the account would be created.
+    let closed = common::project(&owner).await;
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{closed}/audience/roles"),
+        Some(&json!({"name": "vip", "self_assign": false})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let nobody = format!("nobody-{}@example.test", unique_slug());
+    let asked = audience_post_at(
+        &dev,
+        &closed,
+        "magic-link",
+        &json!({"email": nobody, "return_to": "http://site.test/magic"}),
+    )
+    .await;
+    assert_eq!(asked.status(), StatusCode::ACCEPTED);
+    let body: Value = asked.json().await.expect("json");
+    let token = dev_token(body["data"]["dev_link"].as_str().expect("a link")).to_owned();
+    let refused = audience_post_at(&dev, &closed, &format!("magic-link/{token}"), &json!({})).await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    let body: Value = refused.json().await.expect("json");
+    assert_eq!(
+        body["error"]["details"]["reason"].as_str(),
+        Some("no_open_role"),
+        "{body}"
+    );
+
+    // The cookie pair the consume answer set signs out the same way a signup's does.
+    let signout = app()
+        .post(format!("{dev}/audience/v1/{project}/signout"))
+        .header(header::COOKIE, &cookies)
+        .header("x-csrf-token", csrf)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(signout.status(), StatusCode::NO_CONTENT);
 }

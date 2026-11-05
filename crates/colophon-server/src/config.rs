@@ -596,12 +596,21 @@ impl Config {
         let dev_mail = env
             .raw("COLOPHON_DEV_MAIL")
             .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+        // Development mail answers a sign-in link in the response itself: on an address others
+        // can reach it is an account-takeover switch, so like the dev client's secret it is a
+        // loopback-only affordance (D-140).
+        if dev_mail && !listen_addr.ip().is_loopback() {
+            env.problems.push(
+                "COLOPHON_DEV_MAIL hands sign-in links back in responses: it may only run on a \
+                 loopback COLOPHON_LISTEN_ADDR"
+                    .to_owned(),
+            );
+        }
         if let Some(database_url) = database_url
             && env.problems.is_empty()
         {
             Ok(Self {
                 role,
-                dev_mail,
                 listen_addr,
                 database_url,
                 cache_url,
@@ -633,6 +642,7 @@ impl Config {
                 admission,
                 events,
                 mcp,
+                dev_mail,
             })
         } else {
             Err(ConfigError {
@@ -840,6 +850,17 @@ mod tests {
         public.push(("COLOPHON_LISTEN_ADDR", "0.0.0.0:58000"));
         let error = load(&public).expect_err("refused on 0.0.0.0");
         assert!(error.to_string().contains("loopback"), "{error}");
+    }
+
+    #[test]
+    fn development_mail_refuses_to_run_off_loopback() {
+        let base = [("COLOPHON_DATABASE_URL", DB), ("COLOPHON_DEV_MAIL", "1")];
+        let config = load(&base).expect("fine on loopback");
+        assert!(config.dev_mail);
+        let mut public = base.to_vec();
+        public.push(("COLOPHON_LISTEN_ADDR", "0.0.0.0:58000"));
+        let error = load(&public).expect_err("refused on 0.0.0.0");
+        assert!(error.to_string().contains("COLOPHON_DEV_MAIL"), "{error}");
     }
 
     #[test]

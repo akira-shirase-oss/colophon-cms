@@ -68,6 +68,8 @@ trap cleanup EXIT
   # shellcheck source=scripts/local-env.sh
   . scripts/local-env.sh
   export COLOPHON_STUDIO_DIR="$PWD/apps/studio/build" COLOPHON_LOG=warn
+  # Loopback-only: the demo sites exercise the magic-link flow without a mail server (D-140).
+  export COLOPHON_DEV_MAIL=1
   exec target/release/colophon-server
 ) >"$state/server.log" 2>&1 &
 server_pid=$!

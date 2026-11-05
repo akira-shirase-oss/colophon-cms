@@ -336,6 +336,15 @@ Built in step 1.7 (D-042), for people:
   `DELETE {P}/audience/sessions/{session}`. Answers show users and sessions, never hashes; every staff-side
   change writes its audit event in the same transaction (`audience.role_created`/`_updated`/`_deleted`,
   `audience.user_created`/`_updated`, `audience.session_revoked`), like every other governed change.
+- Passwordless sign-in (D-140, migration 0053): `POST /audience/v1/{project}/magic-link` records a link in
+  `audience_magic_links` — only its token's SHA-256, a 15-minute life, superseded by the next request for the
+  same email — and answers `202 {"sent": true}` whether or not the email has an account; `return_to` is the
+  site's own absolute http(s) URL the link lands on. `POST …/magic-link/{token}` spends it once: an existing,
+  enabled account signs in; an unknown email is created in the project's open `self_assign` role with a
+  password nobody knows (a later password sign-in must set one deliberately); used, expired, superseded and
+  unknown tokens all answer one `403 magic_link_invalid`. The server has no mail sender yet — the
+  loopback-only `COLOPHON_DEV_MAIL` hands the link back as `dev_link`, refused off loopback like the
+  development client's secret, which is how the demo sites and the testbed run the whole flow.
 - What the session buys is on the delivery side: [delivery](06-delivery.md). Billing, subscriptions and
   entitlements are explicitly out of scope — a role is a label, not a plan.
 

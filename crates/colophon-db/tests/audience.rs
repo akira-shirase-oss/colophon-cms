@@ -433,6 +433,143 @@ async fn signin_refuses_wrong_passwords_and_locks_after_enough() {
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the link's whole lifecycle in one test: live, spent, superseded, expired, scoped"
+)]
+async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
+    let db = TestDb::new().await;
+    let (owner, project) = project(&db).await;
+    let phc = passwords::hashed("correct horse battery")
+        .await
+        .expect("hash");
+    let audience::SignedUp::Made(user) =
+        audience::sign_up(&db.app, project, "a@b.c", &phc, None, None)
+            .await
+            .expect("sign_up")
+    else {
+        panic!("signed up");
+    };
+    let return_to = "http://site.test/welcome";
+
+    // A link for an existing account signs it in — the answer names the user.
+    let first = [1; 32];
+    audience::request_magic_link(&db.app, project, "a@b.c", &first, return_to)
+        .await
+        .expect("request");
+    match audience::consume_magic_link(&db.app, project, &first)
+        .await
+        .expect("consume")
+    {
+        audience::MagicLink::SignedIn(found) => {
+            assert_eq!(found.id, user.id);
+            assert_eq!(found.email, "a@b.c");
+        }
+        other => panic!("a live link signs its account in: {other:?}"),
+    }
+    // And only once.
+    assert_eq!(
+        audience::consume_magic_link(&db.app, project, &first)
+            .await
+            .expect("consume"),
+        audience::MagicLink::Invalid,
+        "a used link is dead"
+    );
+
+    // An unknown email's link is the signup half: NewUser, still single-use.
+    let second = [2; 32];
+    audience::request_magic_link(&db.app, project, "new@b.c", &second, return_to)
+        .await
+        .expect("request");
+    assert_eq!(
+        audience::consume_magic_link(&db.app, project, &second)
+            .await
+            .expect("consume"),
+        audience::MagicLink::NewUser("new@b.c".to_owned())
+    );
+    assert_eq!(
+        audience::consume_magic_link(&db.app, project, &second)
+            .await
+            .expect("consume"),
+        audience::MagicLink::Invalid
+    );
+
+    // Asking again retires the earlier link: only the newest works.
+    let (stale, live) = ([3; 32], [4; 32]);
+    audience::request_magic_link(&db.app, project, "a@b.c", &stale, return_to)
+        .await
+        .expect("request");
+    audience::request_magic_link(&db.app, project, "a@b.c", &live, return_to)
+        .await
+        .expect("request");
+    assert_eq!(
+        audience::consume_magic_link(&db.app, project, &stale)
+            .await
+            .expect("consume"),
+        audience::MagicLink::Invalid,
+        "a superseded link is dead"
+    );
+    assert!(matches!(
+        audience::consume_magic_link(&db.app, project, &live)
+            .await
+            .expect("consume"),
+        audience::MagicLink::SignedIn(_)
+    ));
+
+    // An expired link is dead too: `expires_at > created_at` is a CHECK, so age both as the
+    // owner (the application login can't write the table's timestamps — and RLS hides the
+    // rows from it outside a project scope anyway).
+    let expired = [5; 32];
+    audience::request_magic_link(&db.app, project, "a@b.c", &expired, return_to)
+        .await
+        .expect("request");
+    let owner_pool = db.owner().await;
+    sqlx::query(
+        "UPDATE audience_magic_links
+         SET created_at = now() - interval '20 minutes', expires_at = now() - interval '5 minutes'
+         WHERE token_hash = $1",
+    )
+    .bind(&expired[..])
+    .execute(&owner_pool)
+    .await
+    .expect("aged");
+    assert_eq!(
+        audience::consume_magic_link(&db.app, project, &expired)
+            .await
+            .expect("consume"),
+        audience::MagicLink::Invalid,
+        "an expired link is dead"
+    );
+
+    // Another project's scope sees none of this project's links: the same token hash is
+    // Invalid there, and the application's login can't even read the rows across.
+    let other = projects::create(&db.app, owner, "other", "Other")
+        .await
+        .expect("created")
+        .id;
+    let sixth = [6; 32];
+    audience::request_magic_link(&db.app, project, "a@b.c", &sixth, return_to)
+        .await
+        .expect("request");
+    assert_eq!(
+        audience::consume_magic_link(&db.app, other, &sixth)
+            .await
+            .expect("consume"),
+        audience::MagicLink::Invalid,
+        "a link names its own project only"
+    );
+    let visible = sqlx::query("SELECT count(*) AS n FROM audience_magic_links")
+        .fetch_one(&db.app)
+        .await
+        .expect("count")
+        .get::<i64, _>("n");
+    assert_eq!(visible, 0, "the app login holds no cross-project read");
+    owner_pool.close().await;
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn a_session_beyond_the_bound_pushes_the_oldest_out() {
     let db = TestDb::new().await;
     let (_owner, project) = project(&db).await;

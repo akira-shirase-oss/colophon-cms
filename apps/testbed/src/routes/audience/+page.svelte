@@ -51,6 +51,10 @@
 	let collection = $state('articles');
 	let delivery = $state('');
 
+	// The passwordless arm (D-140): request a magic link, then spend the token it carries.
+	let linkEmail = $state('');
+	let devLink = $state('');
+
 	const staff = $derived(`/api/v1/projects/${projectId}/audience`);
 	const audience = $derived(`/audience/v1/${projectId}`);
 
@@ -201,6 +205,41 @@
 		me = null;
 	}
 
+	async function requestLink() {
+		devLink = '';
+		const reply = await call('POST', `${audience}/magic-link`, {
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email: linkEmail, return_to: `${window.location.origin}/magic` })
+		});
+		if (reply.status === 202) {
+			const data = (reply.body as { data: { dev_link?: string } }).data;
+			devLink = data.dev_link ?? '';
+			message =
+				devLink === ''
+					? 'link requested — the server mailed it (no development link to show)'
+					: 'link requested — the development answer carries it below';
+		} else {
+			message = describe(reply);
+		}
+	}
+
+	async function useLink() {
+		const token = devLink.split('token=').at(-1) ?? '';
+		const reply = await call('POST', `${audience}/magic-link/${token}`, {
+			headers: { 'Content-Type': 'application/json' }
+		});
+		if (reply.status === 200) {
+			const made = (reply.body as { data: { user: SiteUser; session: string } }).data;
+			visitorToken = made.session;
+			me = made.user;
+			devLink = '';
+			message = `signed in by link as ${made.user.role}`;
+			await load();
+		} else {
+			message = describe(reply);
+		}
+	}
+
 	/**
 	 * One delivery read anonymous and one as the visitor: the gate, counted. The reads fetch
 	 * with credentials omitted — the browser would otherwise send the `colophon_audience`
@@ -317,6 +356,21 @@
 					<button type="button" onclick={signout}>Sign out</button>
 				</p>
 			</form>
+		</section>
+
+		<section>
+			<h2>A sign-in link</h2>
+			<p>
+				Passwordless (D-140): requesting a link answers the same whether or not the email
+				has an account. Development mail hands the link back in the answer; a production
+				server emails it.
+			</p>
+			<form onsubmit={(event) => event.preventDefault()} class="row">
+				<label class="field">Email <input bind:value={linkEmail} name="link-email" type="email" /></label>
+				<button type="button" onclick={requestLink}>Send the link</button>
+				{#if devLink !== ''}<button type="button" onclick={useLink}>Use the link</button>{/if}
+			</form>
+			{#if devLink !== ''}<p data-testid="dev-link"><code>{devLink}</code></p>{/if}
 		</section>
 
 		<section>

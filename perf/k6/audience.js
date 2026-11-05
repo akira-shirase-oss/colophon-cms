@@ -8,7 +8,9 @@
 // live bearer token — each pays the `colophon_audience_session` lookup and reads Postgres as
 // `colophon_delivery` gated by `app.audience_role`, answered `private` and never touching the
 // anonymous cache — some are anonymous lists served by the generation cache, some are `me`,
-// and one in seven signs in (Argon2id on the blocking pool) or signs up. Signups mint a new
+// one in eight signs in (Argon2id on the blocking pool), a fiftieth requests a magic link
+// (D-140; the consume arm runs only when the server hands the link back, the development
+// mailer's COLOPHON_DEV_MAIL), and a hundredth signs up. Signups mint a new
 // account each time; sign-ins refresh the VU's own token, so a member read always carries a
 // live one (MAX_SESSIONS evicts only the oldest).
 // scripts/load.sh gives this endpoint RATE 100 and P99_MS 500: one request in seven pays
@@ -51,7 +53,7 @@ if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.
 
 const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`] };
 // Reported per kind of request, so a tail can be traced to its cause; only the overall p99 fails a run.
-for (const endpoint of ['member_list', 'anon_list', 'me', 'signin', 'signup']) {
+for (const endpoint of ['member_list', 'anon_list', 'me', 'signin', 'signup', 'magic_request', 'magic_consume']) {
   thresholds[`http_req_duration{endpoint:${endpoint}}`] = ['p(99)<60000'];
 }
 if (__ENV.CACHE !== 'off') {
@@ -160,10 +162,21 @@ export default function (data) {
   } else if (slot < 85) {
     res = http.get(`${data.audience}/me`, params('me', bearer));
     check(res, { 'me 200': (r) => r.status === 200 && r.json('data.email') === mine.email });
-  } else if (slot < 98) {
+  } else if (slot < 97) {
     res = http.post(`${data.audience}/signin`, JSON.stringify({ email: mine.email, password: PASSWORD }), params('signin', { 'Content-Type': 'application/json' }));
     check(res, { 'signin 200': (r) => r.status === 200 && typeof r.json('data.session') === 'string' });
     if (res.status === 200) mine.token = res.json('data.session');
+  } else if (slot < 99) {
+    // A magic-link request always answers the same 202; spending it is possible only where
+    // the server mails development links back (COLOPHON_DEV_MAIL, loopback-only).
+    res = http.post(`${data.audience}/magic-link`, JSON.stringify({ email: mine.email, return_to: 'http://site.test/magic' }), params('magic_request', { 'Content-Type': 'application/json' }));
+    check(res, { 'magic request 202 sent': (r) => r.status === 202 && r.json('data.sent') === true });
+    const link = res.status === 202 ? res.json('data.dev_link') : undefined;
+    if (typeof link === 'string') {
+      const consumed = http.post(`${data.audience}/magic-link/${link.split('token=').pop()}`, null, params('magic_consume', { 'Content-Type': 'application/json' }));
+      check(consumed, { 'magic consume 200': (r) => r.status === 200 && typeof r.json('data.session') === 'string' });
+      if (consumed.status === 200) mine.token = consumed.json('data.session');
+    }
   } else {
     const email = `k6-aud-new-${__VU}-${__ITER}@example.test`;
     res = http.post(`${data.audience}/signup`, JSON.stringify({ email, password: PASSWORD }), params('signup', { 'Content-Type': 'application/json' }));

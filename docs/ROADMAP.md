@@ -580,18 +580,23 @@ with a members area", with billing and entitlements deliberately left to a later
   `me`; bearer or `colophon_audience` cookie, CSRF-echoed on its one write) with expiry, idle death, revocation,
   a 16-session bound and an 8-miss/15-minute lock, and a `MAX_SITE_USERS` cap, all inside migration 0052's
   `site_users`/`site_sessions`. Public signup takes a `self_assign` **audience role** (`site_roles`) — a label,
-  never a plan. Staff manage roles, users and their sessions under `audience.manage`.
+  never a plan. Staff manage roles, users and their sessions under `audience.manage`. Passwordless too
+  (D-140, migration 0053): `POST …/magic-link` records a single-use, hashed, 15-minute link behind the same
+  202 either way, and `POST …/magic-link/{token}` spends it — signing an account in or creating one in the
+  open role with an unusable password; `COLOPHON_DEV_MAIL` (loopback-only) stands in for the mail sender the
+  server does not have yet.
 - `delivery` ([module 06](modules/06-delivery.md), "Gated content"): every published projection carries
   `visibility` — `public`, `authenticated` or `role:<name>` — set on editorial writes by `?visibility=` and
   pinned with the revision. `colophon_delivery`'s RLS reads `app.audience_role`: anonymous sees public only, a
   member sees public + authenticated + its role's rows, and a gated row it can't read is the same 404 as an
   unpublished one. Member reads resolve before the generation-keyed cache and bypass it (`private, no-cache`,
   `Colophon-Cache: bypass`).
-- `verification`: five Postgres-level RLS/lifecycle stack tests (`colophon-db/tests/audience.rs`), three
+- `verification`: six Postgres-level RLS/lifecycle stack tests (`colophon-db/tests/audience.rs`), four
   black-box HTTP tests (`colophon-server/tests/audience.rs`), the testbed's Audience page with
   `tests/audience.spec.ts` (roles, a closed-role user, gated delivery counted anonymous-vs-member, session
-  revocation, a disabled sign-in), and `perf/k6/audience.js` wired into `scripts/load.sh` and `scripts/check.sh`
-  (a 3,000-iteration smoke held 0 failures, 3,080 requests, signin p99 1.74 s under Argon2 cost).
+  revocation, a disabled sign-in, a magic link spent exactly once), and `perf/k6/audience.js` wired into
+  `scripts/load.sh` and `scripts/check.sh` (a 3,000-iteration smoke held 0 failures, 3,080 requests, signin
+  p99 1.74 s under Argon2 cost).
 - `sites`: The Draft's members area (`apps/sites/blog`) is the end-to-end demo — SSR signin/members pages under
   the node adapter, the session in a first-party `draft_session` cookie sent to the CMS as a bearer credential,
   gated reads answered `private` — seeded with `member`/`vip` roles, gated posts and a demo member by

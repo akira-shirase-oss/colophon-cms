@@ -121,3 +121,44 @@ test('audience roles, a member account, gated delivery, revocation and a disable
 	await page.getByRole('button', { name: 'Check delivery' }).click();
 	await expect(page.getByTestId('delivery')).toHaveText('anonymous sees 1, this session sees 1');
 });
+
+// Passwordless (D-140): a magic link is requested and spent through the same public API a
+// site uses — the testbed's server runs COLOPHON_DEV_MAIL, so the answer carries the link a
+// production server would mail.
+test('a magic link signs a visitor in without a password, once', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	await page.goto('/audience');
+	await page.getByLabel('Project').selectOption(projectId);
+
+	await page.getByLabel('Name', { exact: true }).fill('member');
+	await page.getByRole('button', { name: 'Create role' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created role member');
+	expect(await publishGated(page, projectId)).toBe(201);
+
+	// An email with no account: the link is the signup — spending it makes a member.
+	await page.getByLabel('Email', { exact: true }).nth(2).fill('carol@example.test');
+	await page.getByRole('button', { name: 'Send the link' }).click();
+	await expect(page.getByTestId('dev-link')).toContainText('token=');
+	await page.getByRole('button', { name: 'Use the link' }).click();
+	await expect(page.getByTestId('message')).toHaveText('signed in by link as member');
+	await expect(page.getByTestId('visitor')).toContainText('carol@example.test');
+	await page.getByRole('button', { name: 'Check delivery' }).click();
+	await expect(page.getByTestId('delivery')).toHaveText('anonymous sees 1, this session sees 2');
+
+	// The account the link made signs in by link again — and the spent link is dead.
+	await page.getByLabel('Email', { exact: true }).nth(2).fill('carol@example.test');
+	await page.getByRole('button', { name: 'Send the link' }).click();
+	await expect(page.getByTestId('dev-link')).toContainText('token=');
+	const link = await page.getByTestId('dev-link').textContent();
+	const token = link?.split('token=').at(-1) ?? '';
+	await page.getByRole('button', { name: 'Use the link' }).click();
+	await expect(page.getByTestId('message')).toHaveText('signed in by link as member');
+	// Spending the same token a second time names it invalid.
+	const spent = await page.evaluate(
+		async ([project, token]) =>
+			(await fetch(`/server/audience/v1/${project}/magic-link/${token}`, { method: 'POST' })).status,
+		[projectId, token]
+	);
+	expect(spent).toBe(403);
+});

@@ -51,6 +51,9 @@ export default defineConfig({
 				// The testbed's pages make cookie-authenticated writes through its proxy.
 				COLOPHON_TRUSTED_ORIGINS: `http://localhost:${TESTBED_PORT}`,
 				COLOPHON_LOG_FORMAT: 'json',
+				// The audience page exercises the whole magic-link flow without a mail
+				// server: the link comes back in the response (loopback-only, D-140).
+				COLOPHON_DEV_MAIL: '1',
 				COLOPHON_PROBE_INTERVAL_MS: '250',
 				COLOPHON_PROBE_TIMEOUT_MS: '200'
 			},
