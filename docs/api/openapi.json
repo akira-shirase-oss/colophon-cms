@@ -20264,7 +20264,7 @@
             }
           },
           {
-            "description": "a rendition name the worker wrote, such as `w320`",
+            "description": "a rendition name the worker wrote, such as `w320`; or an audience role's",
             "in": "path",
             "name": "name",
             "required": true,
