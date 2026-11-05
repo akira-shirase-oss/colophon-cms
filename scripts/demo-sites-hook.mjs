@@ -69,7 +69,7 @@ async function drain() {
 		while (state.wanted > state.built) {
 			const generation = state.wanted;
 			await run('serve-demo-sites.sh', ['build']);
-			await run('serve-demo-sites.sh', ['serve']);
+			await ensureServing();
 			state.built = generation;
 			state.rebuilds += 1;
 			state.lastBuildAt = new Date().toISOString();
@@ -85,6 +85,29 @@ async function drain() {
 	} finally {
 		state.building = false;
 	}
+}
+
+/** `build` promotes beside the live directories; only a site that stays down needs `serve`. */
+async function ensureServing() {
+	const ports = [58110, 58111, 58112, 58113, 58114];
+	const check = () =>
+		Promise.all(
+			ports.map(async (port) => {
+				try {
+					const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) });
+					return response.ok;
+				} catch {
+					return false;
+				}
+			})
+		);
+	// The blog restarts as part of promotion, so a port can be down for a moment: retry before
+	// taking the whole set down for `serve`, which is only for sites that never came back.
+	for (let attempt = 0; attempt < 5; attempt += 1) {
+		if ((await check()).every(Boolean)) return;
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+	}
+	await run('serve-demo-sites.sh', ['serve']);
 }
 
 function note(generation, project) {

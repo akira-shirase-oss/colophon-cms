@@ -36,10 +36,36 @@ build_one() {
     exit 2
   fi
   echo "building @colophon/site-$site"
-  npm run build --silent -w "@colophon/site-$site" >"$STATE/$site-build.log" 2>&1 || {
+  # Build beside the live directory, never over it: a rebuild must not blank a site that is
+  # still serving (astro build empties its outDir, which used to 404 every page mid-build).
+  rm -rf "apps/sites/$site/dist.next"
+  npm run build --silent -w "@colophon/site-$site" -- --outDir dist.next >"$STATE/$site-build.log" 2>&1 || {
     echo "error: the $site build failed; see $STATE/$site-build.log" >&2
     exit 1
   }
+}
+
+# Swaps the freshly built directory in, keeping the previous one; the running static previews
+# serve `dist` by path, so the swap is what moves them — no restart, no window without files.
+promote_one() {
+  local site="$1"
+  local dir="apps/sites/$site"
+  rm -rf "$dir/dist.prev"
+  if [[ -d "$dir/dist" ]]; then mv "$dir/dist" "$dir/dist.prev"; fi
+  mv "$dir/dist.next" "$dir/dist"
+}
+
+# The blog is a node server holding its route table in memory, so a promoted build reaches it
+# only after a restart; the other four serve files per request and need nothing.
+restart_blog() {
+  local site="blog"
+  local pidfile="$STATE/$site.pid"
+  [[ -f "$pidfile" ]] || return 0
+  local pid; pid="$(cat "$pidfile")"
+  kill -0 "$pid" 2>/dev/null || { rm -f "$pidfile"; return 0; }
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  serve_one "$site"
 }
 
 serve_one() {
@@ -73,6 +99,8 @@ command="${1:-all}"
 case "$command" in
   build)
     for site in $(site_names); do build_one "$site"; done
+    for site in $(site_names); do promote_one "$site"; done
+    restart_blog
     ;;
   serve)
     stop_all >/dev/null
@@ -85,6 +113,7 @@ case "$command" in
     ;;
   all)
     for site in $(site_names); do build_one "$site"; done
+    for site in $(site_names); do promote_one "$site"; done
     stop_all >/dev/null
     pids=()
     for site in $(site_names); do
@@ -105,6 +134,7 @@ case "$command" in
   *)
     if port_of "$command" >/dev/null; then
       build_one "$command"
+      promote_one "$command"
       port="$(port_of "$command")"
       echo "  $command → http://127.0.0.1:$port/  (Ctrl-C stops it)"
       cd "apps/sites/$command"
