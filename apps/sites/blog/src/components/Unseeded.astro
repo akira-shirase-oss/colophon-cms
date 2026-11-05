@@ -1,0 +1,15 @@
+---
+// Drawn when the build found no seeded project: the site still builds, so a clean checkout and
+// CI never fail, and the page itself explains the one command that fills it.
+---
+
+<section class="unseeded">
+	<h1>The Draft is not seeded yet</h1>
+	<p>
+		This demo blog reads the published <code>posts</code> collection of a Colophon project. Run the seed against a
+		running server, then build again:
+	</p>
+	<pre><code>scripts/seed-demo-sites.sh
+npm run build -w @colophon/site-blog</code></pre>
+	<p>Or let <code>scripts/serve-demo-sites.sh</code> do both for all five sites.</p>
+</section>

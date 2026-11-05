@@ -1,0 +1,44 @@
+---
+import '../styles/site.css';
+
+interface Props {
+	title: string;
+	generation?: number;
+}
+const { title, generation } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		{generation !== undefined && generation > 0 && <meta name="colophon-generation" content={String(generation)} />}
+		<title>{title}</title>
+	</head>
+	<body>
+		<header class="site-header">
+			<div class="wrap">
+				<a class="brand" href="/">Wren Hollis</a>
+				<nav class="site-nav">
+					<a href="/">Photographs</a>
+				</nav>
+			</div>
+		</header>
+		<main>
+			<slot />
+		</main>
+		<footer class="site-footer">
+			<div class="wrap">
+				{
+					generation !== undefined && generation > 0 && (
+						<p>
+							Photographs published through Colophon as release {generation} of the demo-sites project, served from
+							its media origin.
+						</p>
+					)
+				}
+			</div>
+		</footer>
+	</body>
+</html>

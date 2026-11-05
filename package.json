@@ -5,7 +5,8 @@
   "workspaces": [
     "packages/*",
     "!packages/cli-npm",
-    "apps/*"
+    "apps/*",
+    "apps/sites/*"
   ],
   "engines": {
     "node": ">=22.17"

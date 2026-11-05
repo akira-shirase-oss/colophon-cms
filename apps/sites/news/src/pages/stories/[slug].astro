@@ -1,0 +1,36 @@
+---
+import { site, entries, entryPath, richText, type Entry, type Site } from '@colophon/site-kit';
+import Base from '../../layouts/Base.astro';
+
+interface Props {
+	story: Entry;
+	generation: number;
+	cms: Site;
+}
+
+export async function getStaticPaths() {
+	const cms = site();
+	if (cms === null) return [];
+	const { items, generation } = await entries(cms, 'stories');
+	return items.map((story) => ({
+		params: { slug: entryPath(story) },
+		props: { story, generation, cms }
+	}));
+}
+
+const { story, generation, cms } = Astro.props;
+const body = richText(cms, story.content['body']);
+---
+
+<Base title={`${story.title} · The Meridian Post`} generation={generation}>
+	<article class="story">
+		<span class="kicker">{typeof story.content['category'] === 'string' ? story.content['category'] : 'News'}</span>
+		<h1>{story.title}</h1>
+		{typeof story.content['lede'] === 'string' && <p class="lede">{story.content['lede']}</p>}
+		<p class="byline">
+			{typeof story.content['byline'] === 'string' ? story.content['byline'] : 'Meridian staff'}
+			{typeof story.content['dateline'] === 'string' && ` · Filed ${story.content['dateline']}`}
+		</p>
+		<div class="prose" set:html={body} />
+	</article>
+</Base>

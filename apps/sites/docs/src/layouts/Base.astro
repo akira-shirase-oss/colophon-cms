@@ -1,0 +1,65 @@
+---
+import '../styles/site.css';
+import { entryPath, type Entry } from '@colophon/site-kit';
+
+interface Props {
+	title: string;
+	generation?: number;
+	/** Every guide, for the sidebar: grouped by section below. */
+	guides?: Entry[];
+}
+const { title, generation, guides = [] } = Astro.props;
+
+const SECTION_ORDER = ['Getting started', 'Guides', 'Reference', 'Advanced'];
+const bySection = new Map<string, Entry[]>();
+for (const guide of guides) {
+	const section = typeof guide.content['section'] === 'string' ? guide.content['section'] : 'Guides';
+	bySection.set(section, [...(bySection.get(section) ?? []), guide]);
+}
+for (const list of bySection.values()) {
+	list.sort((a, b) => Number(a.content['position'] ?? 0) - Number(b.content['position'] ?? 0));
+}
+const sections = [...bySection].sort(([a], [b]) => SECTION_ORDER.indexOf(a) - SECTION_ORDER.indexOf(b));
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		{generation !== undefined && generation > 0 && <meta name="colophon-generation" content={String(generation)} />}
+		<title>{title}</title>
+	</head>
+	<body>
+		<header class="topbar">
+			<a class="brand" href="/">Fieldnotes <span>Docs</span></a>
+			<nav>
+				<a href="/">Documentation</a>
+			</nav>
+		</header>
+		<div class="shell">
+			<aside class="sidebar">
+				{
+					sections.map(([section, list]) => (
+						<nav class="nav-section">
+							<h2>{section}</h2>
+							<ul>
+								{list.map((guide) => (
+									<li>
+										<a href={`/guides/${entryPath(guide)}/`} aria-current={Astro.url.pathname === `/guides/${entryPath(guide)}/` ? 'page' : undefined}>
+											{guide.title}
+										</a>
+									</li>
+								))}
+							</ul>
+						</nav>
+					))
+				}
+			</aside>
+			<main class="content">
+				<slot />
+				{generation !== undefined && generation > 0 && <p class="release">Built from release {generation} of the demo-sites project.</p>}
+			</main>
+		</div>
+	</body>
+</html>

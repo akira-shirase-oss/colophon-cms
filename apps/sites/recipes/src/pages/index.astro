@@ -1,0 +1,65 @@
+---
+import { site, entries, entryPath, type Entry } from '@colophon/site-kit';
+import Base from '../layouts/Base.astro';
+import Unseeded from '../components/Unseeded.astro';
+
+const cms = site();
+const recipes = cms === null ? { items: [], generation: 0 } : await entries(cms, 'recipes');
+
+function minutes(recipe: Entry): number {
+	const prep = Number(recipe.content['prep_minutes'] ?? 0);
+	const cook = Number(recipe.content['cook_minutes'] ?? 0);
+	return prep + cook;
+}
+
+function swatch(recipe: Entry): string {
+	const category = typeof recipe.content['category'] === 'string' ? recipe.content['category'] : '';
+	const hues: Record<string, string> = {
+		Mains: 'linear-gradient(120deg, #b3552e, #d98a52)',
+		Baking: 'linear-gradient(120deg, #a86a3f, #e0b07c)',
+		'Soups and salads': 'linear-gradient(120deg, #5d7a4a, #93b56f)',
+		Puddings: 'linear-gradient(120deg, #8a4b6b, #c98aa8)'
+	};
+	return hues[category] ?? 'linear-gradient(120deg, #b3552e, #d98a52)';
+}
+---
+
+<Base title="Butter & Thyme · recipes" generation={recipes.generation}>
+	{
+		cms === null ? (
+			<Unseeded />
+		) : (
+			<>
+				<section class="hero">
+					<h1>Butter &amp; Thyme</h1>
+					<p>
+						Proper recipes, tested twice; each one a published entry in the demo-sites project's{' '}
+						<code>recipes</code> collection, served by Colophon's delivery API.
+					</p>
+				</section>
+				<div class="grid">
+					{recipes.items.map((recipe) => (
+						<a class="card" href={`/recipes/${entryPath(recipe)}/`}>
+							<div class="swatch" style={`background: ${swatch(recipe)}`}>
+								<span>{typeof recipe.content['category'] === 'string' ? recipe.content['category'] : 'Recipe'}</span>
+							</div>
+							<div class="body">
+								<h2>{recipe.title}</h2>
+								{typeof recipe.content['intro'] === 'string' && <p class="intro">{recipe.content['intro']}</p>}
+								<div class="meta-row">
+									<span class="badge">{minutes(recipe)} min</span>
+									{typeof recipe.content['difficulty'] === 'string' && (
+										<span class="badge green">{recipe.content['difficulty']}</span>
+									)}
+									{typeof recipe.content['servings'] !== 'undefined' && (
+										<span class="badge">serves {String(recipe.content['servings'])}</span>
+									)}
+								</div>
+							</div>
+						</a>
+					))}
+				</div>
+			</>
+		)
+	}
+</Base>

@@ -1,0 +1,32 @@
+---
+import { site, entries, entryPath } from '@colophon/site-kit';
+import Base from '../layouts/Base.astro';
+import Unseeded from '../components/Unseeded.astro';
+
+const cms = site();
+const guides = cms === null ? { items: [], generation: 0 } : await entries(cms, 'guides');
+---
+
+<Base title="Fieldnotes Docs" generation={guides.generation} guides={guides.items}>
+	{
+		cms === null ? (
+			<Unseeded />
+		) : (
+			<>
+				<h1>Fieldnotes documentation</h1>
+				<p class="summary">
+					Everything about running Fieldnotes in production; each page a published entry in the demo-sites
+					project's <code>guides</code> collection, read anonymously through Colophon's delivery API.
+				</p>
+				<div class="cards">
+					{guides.items.map((guide) => (
+						<a class="card" href={`/guides/${entryPath(guide)}/`}>
+							<h3>{guide.title}</h3>
+							{typeof guide.content['summary'] === 'string' && <p>{guide.content['summary']}</p>}
+						</a>
+					))}
+				</div>
+			</>
+		)
+	}
+</Base>
