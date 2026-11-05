@@ -9,7 +9,8 @@
 mod common;
 
 use colophon_db::{
-    PgPool, changesets, delivery,
+    PgPool, changesets,
+    delivery::{self, Audience},
     entries::{self, NewRevision},
     projects,
     releases::{self, Committed},
@@ -50,6 +51,7 @@ async fn ready(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid, Uuid) {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
         None,
     )
@@ -133,7 +135,9 @@ async fn delivery_reads_published_content_and_nothing_else() {
         .expect("commit");
     tx.commit().await.expect("commit");
 
-    let mut delivered = delivery::begin(&db.app, project).await.expect("begin");
+    let mut delivered = delivery::begin(&db.app, project, &Audience::Anonymous)
+        .await
+        .expect("begin");
     let environment = delivered
         .environment("production")
         .await
@@ -160,7 +164,9 @@ async fn delivery_reads_published_content_and_nothing_else() {
         "UPDATE publications SET title = 'defaced'",
         "UPDATE environments SET generation = 99",
     ] {
-        let mut delivered = delivery::begin(&db.app, project).await.expect("begin");
+        let mut delivered = delivery::begin(&db.app, project, &Audience::Anonymous)
+            .await
+            .expect("begin");
         let error = sqlx::query(statement)
             .execute(&mut **delivered.raw())
             .await
@@ -172,7 +178,7 @@ async fn delivery_reads_published_content_and_nothing_else() {
     }
 
     // Another project's id sees nothing of this one.
-    let mut elsewhere = delivery::begin(&db.app, Uuid::now_v7())
+    let mut elsewhere = delivery::begin(&db.app, Uuid::now_v7(), &Audience::Anonymous)
         .await
         .expect("begin");
     assert_eq!(
@@ -205,7 +211,9 @@ async fn the_generation_lookup_answers_for_one_project_and_leaves_nothing_behind
         .expect("looked up")
         .expect("found");
     assert_eq!((found.generation, found.epoch), (1, 1));
-    let mut delivered = delivery::begin(&db.app, project).await.expect("begin");
+    let mut delivered = delivery::begin(&db.app, project, &Audience::Anonymous)
+        .await
+        .expect("begin");
     let same = delivered
         .environment("production")
         .await
@@ -282,7 +290,9 @@ async fn delivered_at(
     entry: Uuid,
     generation: i64,
 ) -> (bool, bool, bool) {
-    let mut delivered = delivery::begin(&db.app, project).await.expect("begin");
+    let mut delivered = delivery::begin(&db.app, project, &Audience::Anonymous)
+        .await
+        .expect("begin");
     let environment = delivered
         .environment("production")
         .await
@@ -443,7 +453,9 @@ async fn unpublishing_takes_an_entry_out_of_every_earlier_release_until_it_is_pu
         "UPDATE publications SET revoked_in = NULL",
         "UPDATE environments SET last_unpublish = 0",
     ] {
-        let mut delivered = delivery::begin(&db.app, project).await.expect("begin");
+        let mut delivered = delivery::begin(&db.app, project, &Audience::Anonymous)
+            .await
+            .expect("begin");
         let error = sqlx::query(statement)
             .execute(&mut **delivered.raw())
             .await

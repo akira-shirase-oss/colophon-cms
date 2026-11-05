@@ -110,6 +110,7 @@ async fn apply(db: &TestDb, world: &World, save: &Save) -> Real {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
     )
     .await
@@ -201,6 +202,7 @@ async fn world(db: &TestDb, report: &Report) -> World {
                 references: &[],
                 assets: &[],
                 unique: &[],
+                visibility: None,
             },
             None,
         )

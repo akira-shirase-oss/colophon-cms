@@ -204,7 +204,10 @@ impl Class {
     fn of(path: &str) -> Option<Self> {
         if path.starts_with("/content/") {
             Some(Self::Delivery)
-        } else if path.starts_with("/api/") || path.starts_with("/auth/") {
+        } else if path.starts_with("/api/")
+            || path.starts_with("/auth/")
+            || path.starts_with("/audience/")
+        {
             Some(Self::Management)
         } else {
             None

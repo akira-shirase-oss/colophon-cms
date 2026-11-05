@@ -104,6 +104,7 @@ fn document() -> NewRevision<'static> {
         references: &[],
         assets: &[],
         unique: &[],
+        visibility: None,
     }
 }
 

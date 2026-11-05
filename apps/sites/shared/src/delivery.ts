@@ -17,6 +17,8 @@ export interface Entry {
 	content_hash: string;
 	/** The release it was published in. */
 	published_in: number;
+	/** Who may read it (D-137): `public`, `authenticated` or `role:<name>`. */
+	visibility: string;
 }
 
 /** A collection's whole published set and the generation it was read at. */
@@ -35,11 +37,16 @@ const PAGE = 100;
 const MAX_PAGES = 50;
 
 /**
- * Every published entry of `collection`. Throws on a refused or failed answer: a seeded site
- * that cannot read its API should fail the build, not go live silently empty.
+ * Every published entry of `collection` the caller may read: anonymous without `token`, or as
+ * the site user a live audience session names — whose role the database applies (D-137). A
+ * member read is answered `private` straight from Postgres, never the anonymous cache. Throws
+ * on a refused or failed answer: a seeded site that cannot read its API should fail the build,
+ * not go live silently empty.
  */
-export async function entries(site: Site, collection: string): Promise<Entries> {
+export async function entries(site: Site, collection: string, token?: string): Promise<Entries> {
 	const base = `${site.api}/content/v1/${site.project}/${site.environment}/${collection}`;
+	const headers: Record<string, string> = { accept: 'application/json' };
+	if (token !== undefined) headers.authorization = `Bearer ${token}`;
 	const items: Entry[] = [];
 	let generation = 0;
 	let cursor: string | null = null;
@@ -47,7 +54,7 @@ export async function entries(site: Site, collection: string): Promise<Entries> 
 		const url = new URL(base);
 		url.searchParams.set('limit', String(PAGE));
 		if (cursor !== null) url.searchParams.set('cursor', cursor);
-		const response = await fetch(url, { headers: { accept: 'application/json' } });
+		const response = await fetch(url, { headers });
 		if (!response.ok) {
 			throw new Error(`GET ${url.pathname}: HTTP ${response.status}`);
 		}
@@ -59,6 +66,22 @@ export async function entries(site: Site, collection: string): Promise<Entries> 
 		if (cursor === null) break;
 	}
 	return { items, generation };
+}
+
+/**
+ * One published entry by id — the same read `entries` makes, narrowed. `null` when the caller
+ * may not read it (gated reads are indistinguishable from unpublished ones) or it is gone.
+ */
+export async function entry(site: Site, collection: string, id: string, token?: string): Promise<Entry | null> {
+	const url = `${site.api}/content/v1/${site.project}/${site.environment}/${collection}/${id}`;
+	const headers: Record<string, string> = { accept: 'application/json' };
+	if (token !== undefined) headers.authorization = `Bearer ${token}`;
+	const response = await fetch(url, { headers });
+	if (response.status === 404 || response.status === 410) return null;
+	if (!response.ok) {
+		throw new Error(`GET ${new URL(url).pathname}: HTTP ${response.status}`);
+	}
+	return ((await response.json()) as { data?: Entry }).data ?? null;
 }
 
 /** The public URL of a media asset: `/media/v1/{project}/{environment}/{asset}[/{rendition}]`. */

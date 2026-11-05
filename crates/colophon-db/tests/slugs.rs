@@ -45,6 +45,7 @@ fn revision<'a>(title: &'a str, slug: Option<&'a str>) -> NewRevision<'a> {
         references: &[],
         assets: &[],
         unique: &[],
+        visibility: None,
     }
 }
 

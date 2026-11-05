@@ -77,6 +77,7 @@ async fn release(db: &TestDb, alice: Uuid, project: Uuid, base: i64) {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
         None,
     )

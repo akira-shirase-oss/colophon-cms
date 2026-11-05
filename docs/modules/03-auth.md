@@ -305,6 +305,40 @@ Built in step 1.7 (D-042), for people:
 - Read at `/api/v1/projects/{project}/audit` with `audit.read` (owners, by default): newest first, cursor pages,
   filtered by `?action=` and `?actor=`; each event names its actor as a person or a token.
 
+### The audience (P7, D-137)
+- A project's **site users** are its visitors — the people a published site is for, never staff. They get no
+  membership, no `/api/v1` and no policy: the only thing a site user ever authorizes is a delivery read.
+- Everything is project-scoped and lives in migration 0052's three tables: `site_roles` (a label, `self_assign`
+  when public signup may take it), `site_users` (normalized email unique per project, Argon2id hash, lock counter,
+  `disabled_at`, `last_sign_in_at`) and `site_sessions` (SHA-256 hashes of the token and its CSRF sibling,
+  `expires_at`, `revoked_at`, `last_seen_at`). The app role never reads `password_hash` except to verify, and no
+  API answer carries one.
+- The public routes are unauthenticated and rate-limited per address: `POST /audience/v1/{project}/signup` (201;
+  `email`, `password`, optional `display_name` and `role` — only a `self_assign` role may be chosen, and with
+  none given the project must have exactly one open role to default to), `POST …/signin` (200; a wrong password,
+  a missing account and an unverifiable one answer alike with 401 `sign_in_failed`, eight misses pause it fifteen
+  minutes with 409 `too_many_attempts`, a disabled one is 403 `account_disabled`), `POST …/signout` (204 whether
+  the session was live or not) and `GET …/me` (200 or 401). Signup and sign-in answer the user plus the session:
+  the token and its CSRF sibling in the body and as the `colophon_audience` / `colophon_audience_csrf` cookie
+  pair (session cookie `HttpOnly` + `SameSite=Lax`, CSRF sibling readable + `SameSite=Strict`).
+- A request carries the credential as `Authorization: Bearer <token>` or the cookie pair. Cookie-authenticated
+  writes (signout is the only one) echo the CSRF sibling in `X-CSRF-Token`; bearer credentials are not ambient
+  and need none — the form a cross-origin site uses, which is exactly what the demo sites do.
+- Sessions are opaque random tokens, only hashed at rest; they bound at 16 live per user (the oldest evicts),
+  expire at 30 days, and die after 7 days idle — `last_seen_at` advances at most once a minute and only while the
+  session is still inside its idle window, so a session can never be kept alive past death by traffic. Disabling
+  a user revokes its sessions; `colophon_audience_session` resolves a live one with its fresh role and disabled
+  flag in one statement.
+- Staff manage the audience under a new action, `audience.manage` (every owner role, migration 0052 backfills
+  existing ones): `GET|POST {P}/audience/roles`, `PATCH|DELETE {P}/audience/roles/{name}` (a role users hold is
+  refused), `GET|POST {P}/audience/users` (staff may seat a user in a closed role), `GET|PATCH
+  {P}/audience/users/{user}` (role change or disable/enable), `GET {P}/audience/users/{user}/sessions` and
+  `DELETE {P}/audience/sessions/{session}`. Answers show users and sessions, never hashes; every staff-side
+  change writes its audit event in the same transaction (`audience.role_created`/`_updated`/`_deleted`,
+  `audience.user_created`/`_updated`, `audience.session_revoked`), like every other governed change.
+- What the session buys is on the delivery side: [delivery](06-delivery.md). Billing, subscriptions and
+  entitlements are explicitly out of scope — a role is a label, not a plan.
+
 ### The policy function
 - `authorize(principal, action, resource) -> Decision`, deny by default.
 - Its first form, built in step 1.7: `colophon_domain::policy::allows(role, action)` over `Read`, `WriteContent`,

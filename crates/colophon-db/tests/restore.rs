@@ -67,6 +67,7 @@ async fn released(db: &TestDb, destination_count: usize) -> (Uuid, Uuid, Uuid) {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
         None,
     )

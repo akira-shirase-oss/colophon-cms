@@ -102,7 +102,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -128,6 +128,10 @@ case "$endpoint" in
   # Every request pays Argon2id on the blocking pool (about 50-100 ms of CPU each): the steady
   # rate is deliberately low, and the p99 budget is the hashing queue, not the endpoint's work.
   accounts) RATE="${RATE:-50}" P99_MS="${P99_MS:-500}" ;;
+  # One request in seven signs in or up, each paying Argon2id; the rest are member reads (a
+  # session lookup plus an RLS-gated Postgres read, never cached) and anonymous cache hits.
+  # The steady rate sits between accounts' and delivery's, its p99 the hashing queue.
+  audience) RATE="${RATE:-100}" P99_MS="${P99_MS:-500}" ;;
   # Half its requests list entries (a content type lookup too): about 2,000/s at most here, so
   # its steady rate is half that (a run at 2,000/s fell behind; the result is kept).
   cli | members | roles | tokens | schedules | changesets | stages | collaboration) RATE="${RATE:-1000}" P99_MS="${P99_MS:-100}" ;;
@@ -566,7 +570,7 @@ k6_status=0
   -e BASE_URL="$base_url" -e PUBLIC_URL="$public_url" -e SCENARIO="$scenario" \
   -e TOTAL="${TOTAL:-1000000}" -e VUS="$VUS" \
   -e RATE="$RATE" -e DURATION="${DURATION:-60s}" \
-  -e P99_MS="$P99_MS" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
+  -e P99_MS="$P99_MS" -e USERS="${USERS:-512}" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
   "perf/k6/$endpoint.js" || k6_status=$?
 
 if [[ -n "$sampler_pid" ]]; then

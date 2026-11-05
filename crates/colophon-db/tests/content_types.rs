@@ -222,6 +222,7 @@ async fn a_revision_names_its_entry_s_collection_and_a_version_that_exists() {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
         None,
     )
@@ -274,6 +275,7 @@ async fn with_an_entry(db: &TestDb, alice: Uuid, project: Uuid, collection: &str
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
         None,
     )

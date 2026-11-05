@@ -8,7 +8,7 @@ in the Studio, publishes a release, rebuilds a site, and sees the change on a re
 
 | Site | Package | Port | Collection | What it exercises |
 |---|---|---|---|---|
-| The Draft, a blog | `@colophon/site-blog` | 58110 | `posts` | rich-text bodies, a slug field, tags, dates, author |
+| The Draft, a blog | `@colophon/site-blog` | 58110 | `posts` | rich-text bodies, a slug field, tags, dates, author — and a members area gated by audience sign-in (D-137) |
 | Fieldnotes Docs | `@colophon/site-docs` | 58111 | `guides` | enum sections, ordered sidebar navigation, rich-text |
 | Butter & Thyme, recipes | `@colophon/site-recipes` | 58112 | `recipes` | a list of objects (ingredients), a list of text (steps), enums, numbers |
 | The Meridian Post, news | `@colophon/site-news` | 58113 | `stories` | a featured flag, categories, datelines, bylines |
@@ -30,9 +30,12 @@ The seed signs in as the development realm's `dev-owner`, creates a `demo-sites-
 project and the five content types, draws ten PNG photographs and pushes them through the real
 upload → quarantine → verify pipeline, writes about fifty entries, then submits, approves and
 publishes them all as release 1 of one changeset. Nothing it writes is a draft: every site
-reads published content only. Finally it writes `apps/sites/.colophon.json` (the project id,
-the API origin and the release generation), which the sites read at build time. The file is
-gitignored, and every run makes a new project, so re-seeding is safe.
+reads published content only. Three of the blog's posts are published gated — two `role:member`,
+one `authenticated` — and the seed creates the audience roles they name plus a demo member
+account, `member@draft.test` / `member-of-the-draft`. Finally it writes
+`apps/sites/.colophon.json` (the project id, the API origin and the release generation), which
+the sites read at build time. The file is gitignored, and every run makes a new project, so
+re-seeding is safe.
 
 ## Building and serving
 
@@ -51,16 +54,43 @@ page explaining the seed, so a clean checkout and CI never fail.
 
 ## How a site is put together
 
-Every site is a plain, fully static Astro app. At build time it pages through its collection's
-published entries (the cursor carries the first page's generation, so a build never mixes two
-releases), renders them, and writes the release number into every page as
-`<meta name="colophon-generation" content="N">`, the marker probes read. Rich-text fields go
-through `@colophon/content-renderer`, the one renderer the Studio's preview and the reference
-site share. The only shared code is `@colophon/site-kit` (`apps/sites/shared`): the config, the
-paging fetch and the render wrapper, together about a hundred lines.
+Every site is a plain, fully static Astro app — except The Draft's members pages (below). At
+build time a site pages through its collection's published entries (the cursor carries the
+first page's generation, so a build never mixes two releases), renders them, and writes the
+release number into every page as `<meta name="colophon-generation" content="N">`, the marker
+probes read. Rich-text fields go through `@colophon/content-renderer`, the one renderer the
+Studio's preview and the reference site share. The only shared code is `@colophon/site-kit`
+(`apps/sites/shared`): the config, the delivery reads — anonymous or with an audience bearer
+token — the audience client and the render wrapper, together about two hundred lines.
 
 A site that cannot reach its API fails the build rather than going live silently empty; a site
 built before any seeding draws the "run the seed" page instead.
+
+## The Draft's members area
+
+The Draft also demonstrates audience authentication (docs/modules/03-auth.md, D-137): the
+project's *visitors* — not staff — can sign up, sign in and read gated posts. It works like a
+real site, not an API console:
+
+- `/signin/` is a plain HTML form. It posts to the site's own `/api/signin` and `/api/signup`
+  routes, which call `POST /audience/v1/{project}/signin|signup` server-side.
+- The site keeps the returned session token in its own first-party cookie (`draft_session`,
+  `HttpOnly`, `SameSite=Lax`) and sends it to the CMS as `Authorization: Bearer` — the CMS's
+  audience cookies stay on its origin, so the site never has to forward a CSRF token.
+- `/members/` and `/members/posts/{id}/` are SSR pages (`prerender = false`): each asks
+  `GET /audience/v1/…/me` who the session is, then lists or reads delivery *as that member*.
+  The delivery layer sees `role:member`, so Postgres row-level security answers the gated
+  posts too — they are `private` answers that never touch the anonymous cache. An unsigned
+  reader of the same URLs gets redirected to `/signin/`; signed-in but wrong-role members get
+  a 404, the same as an unpublished entry.
+- The other four sites stay fully static; gated content could never appear on them anyway,
+  because anonymous delivery only ever returns `public` rows.
+
+The blog therefore builds under Astro's node adapter: `npm run build` writes both the static
+pages and `dist/server/entry.mjs`, which `serve-demo-sites.sh` runs with `HOST`/`PORT` set (the
+other four still use `astro preview`). Sign in at `http://127.0.0.1:58110/signin/` with the
+seeded `member@draft.test` / `member-of-the-draft`, or make a fresh account — signup takes the
+open `member` role automatically.
 
 ## Republishing
 

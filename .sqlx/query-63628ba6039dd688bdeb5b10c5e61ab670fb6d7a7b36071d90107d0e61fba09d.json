@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from\n             FROM publications\n             WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n               AND environment_id = $1 AND collection = $2\n               AND valid_from <= $3 AND (valid_to IS NULL OR valid_to > $3) AND revoked_in IS NULL\n               AND ($4::uuid IS NULL OR entry_id < $4)\n             ORDER BY entry_id DESC\n             LIMIT $5",
+  "query": "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility\n             FROM publications\n             WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n               AND environment_id = $1 AND collection = $2 AND entry_id = $3\n               AND valid_from <= $4 AND (valid_to IS NULL OR valid_to > $4) AND revoked_in IS NULL",
   "describe": {
     "columns": [
       {
@@ -90,13 +90,23 @@
             "name": "valid_from"
           }
         }
+      },
+      {
+        "ordinal": 8,
+        "name": "visibility",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "publications",
+            "name": "visibility"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
         "Text",
-        "Int8",
         "Uuid",
         "Int8"
       ]
@@ -109,8 +119,9 @@
       true,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "af505a785ee2905c0b33a8b90ae3877f435be59d158062edcd269a5d4fdee632"
+  "hash": "63628ba6039dd688bdeb5b10c5e61ab670fb6d7a7b36071d90107d0e61fba09d"
 }

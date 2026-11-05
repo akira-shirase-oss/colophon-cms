@@ -34,6 +34,9 @@ pub struct NewRevision<'a> {
     /// The ids of its content type's unique fields (D-070): the entry claims the values the
     /// content sets in them. The caller's shared lock on the content type keeps them current.
     pub unique: &'a [String],
+    /// Who may read it once published (D-137): `public`, `authenticated` or `role:<name>`.
+    /// `None` means the entry's own: the current draft's gate on a save, `public` on a create.
+    pub visibility: Option<&'a str>,
 }
 
 /// The entry that has a slug, as a draft or as what readers get ([`slug_holder`]).
@@ -80,6 +83,8 @@ pub struct Revision {
     pub content_hash: Vec<u8>,
     /// Its title.
     pub title: String,
+    /// Who may read it once published (D-137): pinned with the revision like its content.
+    pub visibility: String,
 }
 
 /// An entry with its current draft.
@@ -101,6 +106,9 @@ pub struct Draft {
     pub content: String,
     /// The entry's locale tag, or `None` for the project's default (D-087).
     pub locale: Option<String>,
+    /// Who may read the entry once published — the current draft's gate (D-137), the entry's
+    /// own copy like `draft_title`'s.
+    pub visibility: String,
 }
 
 /// An entry in a list: its draft's metadata, without the content.
@@ -118,6 +126,8 @@ pub struct Summary {
     pub published: Option<(Uuid, i64)>,
     /// The entry's locale tag, or `None` for the project's default (D-087).
     pub locale: Option<String>,
+    /// Who may read the entry once published — the current draft's gate (D-137).
+    pub visibility: String,
 }
 
 /// The longest title search accepted.
@@ -148,8 +158,11 @@ pub async fn create(
     locale: Option<&str>,
 ) -> Result<Draft, DbError> {
     let reservation = crate::budgets::reserve(tx, Kind::Documents, 1).await?;
+    // A new entry is public unless the caller gated it; `entries.draft_visibility` and the
+    // revision's own `visibility` always agree (the list's copy is the revision's).
+    let visibility = revision.visibility.unwrap_or("public");
     let entry = sqlx::query!(
-        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale)
+        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale, draft_visibility)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
                  -- Single types (D-067): the current version's flag, held still by the caller's
                  -- shared lock on the content type. `entries_single` refuses a second entry.
@@ -157,7 +170,7 @@ pub async fn create(
                            FROM content_type_versions v
                            WHERE v.project_id = $1 AND v.environment_id = $2 AND v.collection = $4
                            ORDER BY v.version DESC LIMIT 1), false),
-                 $9)
+                 $9, $10)
          RETURNING created_at, updated_at",
         tx.project,
         tx.environment,
@@ -167,12 +180,13 @@ pub async fn create(
         revision.slug,
         revision.title,
         tx.identity,
-        locale
+        locale,
+        visibility
     )
     .fetch_one(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
-    let created_at = insert_revision(tx, entry_id, collection, None, revision).await?;
+    let created_at = insert_revision(tx, entry_id, collection, None, revision, visibility).await?;
     claim_draft(tx, entry_id, collection, revision).await?;
     crate::budgets::settle(tx, reservation, 1).await?;
     Ok(Draft {
@@ -188,9 +202,11 @@ pub async fn create(
             created_at,
             content_hash: revision.content_hash.to_vec(),
             title: revision.title.to_owned(),
+            visibility: visibility.to_owned(),
         },
         content: revision.content.to_owned(),
         locale: locale.map(str::to_owned),
+        visibility: visibility.to_owned(),
     })
 }
 
@@ -228,7 +244,7 @@ async fn save_impl(
     // Lock the entry so concurrent saves queue here. This read only tells "stale" from
     // "missing" and names the current revision; the conditional UPDATE below is the rule.
     let current = sqlx::query!(
-        "SELECT draft_revision_id, collection, created_at, created_by, locale FROM entries
+        "SELECT draft_revision_id, collection, created_at, created_by, locale, draft_visibility FROM entries
          WHERE project_id = $1 AND environment_id = $2 AND id = $3
          FOR UPDATE",
         tx.project,
@@ -254,10 +270,21 @@ async fn save_impl(
     } else {
         None
     };
-    let created_at =
-        insert_revision(tx, entry_id, &current.collection, Some(expected), revision).await?;
+    // A save that names no gate keeps the draft's own: the entry's visibility changes only
+    // when the caller changes it (D-137).
+    let visibility = revision.visibility.unwrap_or(&current.draft_visibility);
+    let created_at = insert_revision(
+        tx,
+        entry_id,
+        &current.collection,
+        Some(expected),
+        revision,
+        visibility,
+    )
+    .await?;
     let moved = sqlx::query_scalar!(
-        "UPDATE entries SET draft_revision_id = $4, draft_slug = $6, draft_title = $7, updated_at = now()
+        "UPDATE entries SET draft_revision_id = $4, draft_slug = $6, draft_title = $7,
+                            draft_visibility = $8, updated_at = now()
          WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND draft_revision_id = $5
          RETURNING updated_at",
         tx.project,
@@ -266,7 +293,8 @@ async fn save_impl(
         revision.id,
         expected,
         revision.slug,
-        revision.title
+        revision.title,
+        visibility
     )
     .fetch_optional(&mut *tx.transaction)
     .await
@@ -294,9 +322,11 @@ async fn save_impl(
             created_at,
             content_hash: revision.content_hash.to_vec(),
             title: revision.title.to_owned(),
+            visibility: visibility.to_owned(),
         },
         content: revision.content.to_owned(),
         locale: current.locale,
+        visibility: visibility.to_owned(),
     })))
 }
 
@@ -433,12 +463,13 @@ async fn insert_revision(
     collection: &str,
     base: Option<Uuid>,
     revision: NewRevision<'_>,
+    visibility: &str,
 ) -> Result<OffsetDateTime, DbError> {
     let created_at = sqlx::query_scalar!(
         "INSERT INTO revisions
            (project_id, environment_id, entry_id, id, base_revision_id, content, content_hash, title,
-            author_id, collection, schema_version, slug)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            author_id, collection, schema_version, slug, visibility)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING created_at",
         tx.project,
         tx.environment,
@@ -451,7 +482,8 @@ async fn insert_revision(
         tx.identity,
         collection,
         revision.schema_version,
-        revision.slug
+        revision.slug,
+        visibility
     )
     .fetch_one(&mut *tx.transaction)
     .await
@@ -780,7 +812,7 @@ pub async fn get_with_live(
     entry_id: Uuid,
 ) -> Result<Option<(Draft, Option<(Uuid, i64)>)>, DbError> {
     let row = sqlx::query!(
-        r#"SELECT e.collection, e.created_at, e.created_by, e.updated_at, e.locale,
+        r#"SELECT e.collection, e.created_at, e.created_by, e.updated_at, e.locale, e.draft_visibility,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
                 r.content_hash, r.title, r.content,
                 live.revision_id AS "published_revision_id?", live.valid_from AS "published_in?"
@@ -817,9 +849,11 @@ pub async fn get_with_live(
                 created_at: row.revision_created_at,
                 content_hash: row.content_hash,
                 title: row.title,
+                visibility: row.draft_visibility.clone(),
             },
             content: row.content,
             locale: row.locale,
+            visibility: row.draft_visibility,
         };
         (draft, row.published_revision_id.zip(row.published_in))
     }))
@@ -855,7 +889,7 @@ pub async fn list(
         format!("%{escaped}%")
     });
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.created_by, e.updated_at, e.locale,
+        r#"SELECT e.id, e.created_by, e.updated_at, e.locale, e.draft_visibility,
                 r.id AS revision_id, r.base_revision_id, r.author_id, r.created_at AS revision_created_at,
                 r.content_hash, r.title, live.revision_id AS "published_revision_id?",
                 live.valid_from AS "published_in?"
@@ -906,9 +940,11 @@ pub async fn list(
                 created_at: row.revision_created_at,
                 content_hash: row.content_hash,
                 title: row.title,
+                visibility: row.draft_visibility.clone(),
             },
             published: row.published_revision_id.zip(row.published_in),
             locale: row.locale,
+            visibility: row.draft_visibility,
         })
         .collect())
 }
@@ -1132,7 +1168,7 @@ pub async fn create_localization(
         "UPDATE entries SET localization_id = coalesce(localization_id, $5)
          WHERE project_id = $1 AND environment_id = $2 AND collection = $3
            AND id = $4 AND deleted_at IS NULL
-         RETURNING localization_id",
+         RETURNING localization_id, draft_visibility",
         tx.project,
         tx.environment,
         collection,
@@ -1146,6 +1182,12 @@ pub async fn create_localization(
         return Ok(Localized::Missing);
     };
     let group = assigned.localization_id.unwrap_or(candidate);
+    // A localized copy starts where its source is gated: a member-only English post's French
+    // sibling is member-only too, until someone gates it differently (D-137).
+    let visibility = revision
+        .visibility
+        .unwrap_or(&assigned.draft_visibility)
+        .to_owned();
     let occupied = sqlx::query!(
         "SELECT id FROM entries
          WHERE project_id = $1 AND environment_id = $2 AND localization_id = $3
@@ -1163,13 +1205,13 @@ pub async fn create_localization(
     }
     let reservation = crate::budgets::reserve(tx, Kind::Documents, 1).await?;
     let entry = sqlx::query!(
-        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale, localization_id)
+        "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale, localization_id, draft_visibility)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
                  coalesce((SELECT (v.definition::jsonb ->> 'single')::boolean
                            FROM content_type_versions v
                            WHERE v.project_id = $1 AND v.environment_id = $2 AND v.collection = $4
                            ORDER BY v.version DESC LIMIT 1), false),
-                 $9, $10)
+                 $9, $10, $11)
          RETURNING created_at, updated_at",
         tx.project,
         tx.environment,
@@ -1180,12 +1222,13 @@ pub async fn create_localization(
         revision.title,
         tx.identity,
         Some(locale),
-        group
+        group,
+        visibility
     )
     .fetch_one(&mut *tx.transaction)
     .await
     .map_err(DbError::from_write)?;
-    let created_at = insert_revision(tx, entry_id, collection, None, revision).await?;
+    let created_at = insert_revision(tx, entry_id, collection, None, revision, &visibility).await?;
     claim_draft(tx, entry_id, collection, revision).await?;
     crate::budgets::settle(tx, reservation, 1).await?;
     Ok(Localized::Made(Box::new(Draft {
@@ -1201,9 +1244,11 @@ pub async fn create_localization(
             created_at,
             content_hash: revision.content_hash.to_vec(),
             title: revision.title.to_owned(),
+            visibility: visibility.clone(),
         },
         content: revision.content.to_owned(),
         locale: Some(locale.to_owned()),
+        visibility,
     })))
 }
 
@@ -1310,7 +1355,7 @@ pub async fn history(
 ) -> Result<Vec<Revision>, DbError> {
     sqlx::query_as!(
         Revision,
-        "SELECT id, base_revision_id, author_id, created_at, content_hash, title FROM revisions
+        "SELECT id, base_revision_id, author_id, created_at, content_hash, title, visibility FROM revisions
          WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3 AND collection = $5
          ORDER BY id DESC
          LIMIT $4",
@@ -1334,7 +1379,7 @@ pub async fn revision(
     revision_id: Uuid,
 ) -> Result<Option<(Revision, String)>, DbError> {
     let row = sqlx::query!(
-        "SELECT id, base_revision_id, author_id, created_at, content_hash, title, content FROM revisions
+        "SELECT id, base_revision_id, author_id, created_at, content_hash, title, content, visibility FROM revisions
          WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3 AND id = $4 AND collection = $5",
         tx.project,
         tx.environment,
@@ -1354,6 +1399,7 @@ pub async fn revision(
                 created_at: row.created_at,
                 content_hash: row.content_hash,
                 title: row.title,
+                visibility: row.visibility,
             },
             row.content,
         )

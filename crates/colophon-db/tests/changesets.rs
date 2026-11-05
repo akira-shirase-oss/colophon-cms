@@ -43,6 +43,7 @@ async fn article(tx: &mut ProjectTransaction, title: &str) -> (Uuid, Uuid) {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
         None,
     )

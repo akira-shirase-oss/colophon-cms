@@ -102,6 +102,7 @@ impl Draft {
             references: &self.references,
             assets: &[],
             unique: &self.unique,
+            visibility: None,
         }
     }
 }

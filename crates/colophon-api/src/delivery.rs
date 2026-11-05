@@ -41,7 +41,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use colophon_db::{
     content_types,
-    delivery::{self, Published},
+    delivery::{self, Audience, Published},
     query as db_query,
 };
 use colophon_domain::{cache::Scope, query::Query as Document};
@@ -50,7 +50,7 @@ use serde_json::{Value, value::RawValue};
 use uuid::Uuid;
 
 use crate::{
-    ApiError, AppState, Services,
+    ApiError, AppState, Services, audience,
     cache::{Cached, Filled, Refused},
     entries::{AppliedQuery, json, narrow, sha256},
     session::services,
@@ -68,6 +68,10 @@ pub(crate) const CACHE_TAG: HeaderName = HeaderName::from_static("cache-tag");
 const LATEST: &str = "public, max-age=0, must-revalidate, s-maxage=30";
 /// Module 06: generation-pinned content may be shared for 300 seconds.
 const PINNED: &str = "public, max-age=0, must-revalidate, s-maxage=300";
+/// D-137: a member read is theirs alone — the browser may hold it but must revalidate, and no
+/// shared cache may store it. The generation-keyed cache is the anonymous audience's; a gated
+/// row must never enter it.
+const MEMBER: &str = "private, no-cache";
 
 const DEFAULT_PAGE: i64 = 20;
 
@@ -115,6 +119,9 @@ pub(crate) struct PublishedView {
     content_hash: String,
     /// The release it was published in.
     published_in: i64,
+    /// Who may read it (D-137): a site that caches pages needs to know which answers are
+    /// member-only even before it signs anyone in.
+    visibility: String,
 }
 
 impl PublishedView {
@@ -128,6 +135,7 @@ impl PublishedView {
             content: RawValue::from_string(row.content).map_err(ApiError::internal)?,
             content_hash: crate::entries::content_hash(&row.content_hash),
             published_in: row.valid_from,
+            visibility: row.visibility,
         })
     }
 }
@@ -318,6 +326,48 @@ where
     Ok(response)
 }
 
+/// A member's answer: `fill` reads Postgres as their role, every time — the shared
+/// generation-keyed cache is the anonymous audience's, so a gated row is never served to,
+/// or stored for, another visitor (D-137). The answer still carries an `ETag` over the
+/// member's own body, and `private` marks what no shared cache may keep.
+async fn serve_member<F, Fut>(
+    request: &HeaderMap,
+    generation: i64,
+    fill: F,
+) -> Result<Response, ApiError>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<Read, ApiError>>,
+{
+    let answer = match fill().await? {
+        Read::Found(answer) => answer,
+        Read::Missing => return Err(ApiError::NotFound),
+        Read::Gone => return Err(ApiError::Gone),
+    };
+    let tag = etag(&answer.body);
+    let unchanged = request
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| none_match(value, &tag));
+    let mut response = if unchanged {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        json(StatusCode::OK, answer.body, None, false)
+    };
+    let headers = response.headers_mut();
+    headers.insert(GENERATION, HeaderValue::from(generation));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(MEMBER));
+    headers.insert(
+        header::VARY,
+        HeaderValue::from_static("Authorization, Cookie"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&tag) {
+        headers.insert(header::ETAG, value);
+    }
+    headers.insert(CACHE, HeaderValue::from_static("bypass"));
+    Ok(response)
+}
+
 /// `GET /content/v1/{project}/{environment}/{collection}`.
 pub(crate) async fn list(
     State(state): State<AppState>,
@@ -348,6 +398,9 @@ pub(crate) async fn list(
             query.generation.is_some(),
         ),
     };
+    // Who the read is for: a live site session makes it a member's, reading as its role
+    // (D-137) — otherwise anonymous, which the generation-keyed cache is for.
+    let audience = audience::reader(services, project, &request).await?;
     let scope = Scope {
         project: project.as_u128(),
         environment: environment.id.as_u128(),
@@ -357,18 +410,13 @@ pub(crate) async fn list(
     };
     let key = scope.list_key(&path.collection, limit, before.as_ref().map(Uuid::as_u128));
     let tags = scope.list_tags(&path.collection);
-    serve(
-        services,
-        &request,
-        &key,
-        &tags,
-        generation,
-        pinned,
-        || async {
+    let fill = || {
+        let audience = &audience;
+        async move {
             let mut rows = if generation == 0 {
                 Vec::new()
             } else {
-                let mut tx = delivery::begin(&services.pool, project)
+                let mut tx = delivery::begin(&services.pool, project, audience)
                     .await
                     .map_err(ApiError::from_db)?;
                 let rows = tx
@@ -401,9 +449,12 @@ pub(crate) async fn list(
             let body =
                 serde_json::to_string(&Page { data, next_cursor }).map_err(ApiError::internal)?;
             Ok(Read::Found(Answer { body, empty }))
-        },
-    )
-    .await
+        }
+    };
+    if matches!(audience, Audience::Member { .. }) {
+        return serve_member(&request, generation, fill).await;
+    }
+    serve(services, &request, &key, &tags, generation, pinned, fill).await
 }
 
 /// `GET /content/v1/{project}/{environment}/{collection}/{entry}`.
@@ -421,6 +472,8 @@ pub(crate) async fn get(
     if generation == 0 {
         return Err(ApiError::NotFound);
     }
+    // Who the read is for (D-137), as in `list`.
+    let audience = audience::reader(services, project, &request).await?;
     let scope = Scope {
         project: project.as_u128(),
         environment: environment.id.as_u128(),
@@ -431,15 +484,10 @@ pub(crate) async fn get(
     let key = scope.entry_key(&path.collection, entry.as_u128());
     let tags = scope.entry_tags(&path.collection, entry.as_u128());
     let pinned = query.generation.is_some();
-    serve(
-        services,
-        &request,
-        &key,
-        &tags,
-        generation,
-        pinned,
-        || async {
-            let mut tx = delivery::begin(&services.pool, project)
+    let fill = || {
+        let audience = &audience;
+        async move {
+            let mut tx = delivery::begin(&services.pool, project, audience)
                 .await
                 .map_err(ApiError::from_db)?;
             let found = tx
@@ -462,9 +510,12 @@ pub(crate) async fn get(
             })
             .map_err(ApiError::internal)?;
             Ok(Read::Found(Answer { body, empty: false }))
-        },
-    )
-    .await
+        }
+    };
+    if matches!(audience, Audience::Member { .. }) {
+        return serve_member(&request, generation, fill).await;
+    }
+    serve(services, &request, &key, &tags, generation, pinned, fill).await
 }
 
 /// The page a `POST …/query` answers with: the published rows, and `applied`, the
@@ -551,6 +602,8 @@ pub(crate) async fn query(
         .transpose()
         .map_err(ApiError::Invalid)?
         .map(|inner| format!("q1:{generation}:{inner}"));
+    // Who the read is for (D-137), as in `list`.
+    let audience = audience::reader(services, project, &request).await?;
     let scope = Scope {
         project: project.as_u128(),
         environment: environment.id.as_u128(),
@@ -560,14 +613,9 @@ pub(crate) async fn query(
     };
     let key = scope.query_key(&path.collection, &language.query_hash(), cursor.as_deref());
     let tags = scope.list_tags(&path.collection);
-    serve(
-        services,
-        &request,
-        &key,
-        &tags,
-        generation,
-        pinned,
-        || async {
+    let fill = || {
+        let audience = &audience;
+        async move {
             let depth = language.depth();
             let keep = language.fields();
             let mut resolved = crate::populate::Resolved::default();
@@ -577,7 +625,7 @@ pub(crate) async fn query(
                     next_cursor: None,
                 }
             } else {
-                let mut tx = delivery::begin(&services.pool, project)
+                let mut tx = delivery::begin(&services.pool, project, audience)
                     .await
                     .map_err(ApiError::from_db)?;
                 let mut found = db_query::published_page(
@@ -641,9 +689,12 @@ pub(crate) async fn query(
             })
             .map_err(ApiError::internal)?;
             Ok(Read::Found(Answer { body, empty }))
-        },
-    )
-    .await
+        }
+    };
+    if matches!(audience, Audience::Member { .. }) {
+        return serve_member(&request, generation, fill).await;
+    }
+    serve(services, &request, &key, &tags, generation, pinned, fill).await
 }
 
 #[cfg(test)]
