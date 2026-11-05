@@ -52,6 +52,25 @@ reads `apps/sites/.colophon.json`, or the `COLOPHON_API`, `COLOPHON_PROJECT` and
 `COLOPHON_ENVIRONMENT` variables when set. With neither, the build still succeeds and draws a
 page explaining the seed, so a clean checkout and CI never fail.
 
+## Publishing rebuilds them (the website connection)
+
+`scripts/demo-sites-hook.mjs` closes the loop between publishing and the sites (D-138): it
+listens on `http://127.0.0.1:58120/hook`, registers itself as the project's **website
+connection** (a `webhook` destination, through the real API), and rebuilds all five sites when
+a release announcement arrives.
+
+```sh
+node scripts/demo-sites-hook.mjs      # signs in, ensures the connection, listens, rebuilds
+curl -s http://127.0.0.1:58120/healthz  # what it has built, and the last failure if any
+```
+
+Publishing in the Studio then updates every site without a person running anything: the worker
+posts one announcement per release, the hook answers `202` at once, builds the newest announced
+generation (`serve-demo-sites.sh build` then `serve`), and duplicate announcements cost
+nothing. A failed build leaves the running sites as they were and is retried after a pause.
+`HOOK_PORT`, `COLOPHON_SERVER`, `COLOPHON_ADMIN_USER`/`COLOPHON_ADMIN_PASSWORD` and
+`HOOK_BUILD_ON_START=0` tune it.
+
 ## How a site is put together
 
 Every site is a plain, fully static Astro app — except The Draft's members pages (below). At
