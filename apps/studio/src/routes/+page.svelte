@@ -67,13 +67,16 @@
 		projects.find((project) => project.id === chosen) ?? projects.find((project) => project.id === remembered) ?? projects[0]
 	);
 
-	// "All projects" grows without bound on a busy installation, so it can be filtered by name.
+	// "All projects" grows without bound on a busy installation, so it can be filtered by name —
+	// and even unfiltered it is capped: hundreds of rows hide the project someone wants, not show it.
+	const SHOWN = 24;
 	let filter = $state('');
 	const matching = $derived(
 		filter.trim() === ''
 			? projects
 			: projects.filter((project) => project.name.toLowerCase().includes(filter.trim().toLowerCase()))
 	);
+	const shown = $derived(matching.slice(0, SHOWN));
 </script>
 
 <svelte:head><title>{who.data && who.data.projects.length > 0 ? 'Your work' : 'Projects'} · Colophon Studio</title></svelte:head>
@@ -201,7 +204,7 @@
 				</p>
 			{:else}
 				<ul class="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects" aria-labelledby="all-projects">
-					{#each matching as project, index (project.id)}
+					{#each shown as project, index (project.id)}
 						<li style="--i: {index}">
 							<a
 								href={resolve('/projects/[project]', { project: project.id })}
@@ -217,6 +220,11 @@
 						</li>
 					{/each}
 				</ul>
+				{#if matching.length > shown.length}
+					<p class="mt-3 text-sm text-muted-foreground" data-testid="projects-capped">
+						Showing {shown.length} of {matching.length} — search by name to find the rest.
+					</p>
+				{/if}
 			{/if}
 		{/if}
 		{#if !who.data.administrator}
