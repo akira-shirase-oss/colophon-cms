@@ -62,6 +62,20 @@ fn an_email() -> String {
     format!("{}@example.test", unique_slug())
 }
 
+/// `GET /auth/providers` tells the sign-in page which methods this server offers — public, so
+/// a signed-out browser can ask (D-141). On the stack Keycloak is configured: `sso` is true.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn the_sign_in_page_asks_which_methods_this_server_offers() {
+    let _server = Server::start().await;
+    let (status, body) = get(None, "/auth/providers").await;
+    assert_eq!(
+        (status, body["data"]["sso"].as_bool()),
+        (StatusCode::OK, Some(true)),
+        "{body}"
+    );
+}
+
 #[tokio::test]
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn an_email_account_signs_up_and_uses_its_session() {

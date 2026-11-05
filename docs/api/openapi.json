@@ -297,6 +297,18 @@
         ],
         "type": "object"
       },
+      "AuthProviders": {
+        "properties": {
+          "sso": {
+            "description": "an external identity provider is configured",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sso"
+        ],
+        "type": "object"
+      },
       "BulkAppendView": {
         "properties": {
           "appended": {
@@ -19541,6 +19553,56 @@
           }
         ],
         "summary": "End the session or revoke the bearer credential",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/providers": {
+      "get": {
+        "operationId": "authProviders",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AuthProviders"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "never cached: it is configuration"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [],
+        "summary": "What sign-in methods this server offers (whether an external provider is configured)",
         "tags": [
           "auth"
         ]

@@ -400,6 +400,13 @@ export async function signInPassword(email: string, password: string): Promise<v
 	await send('POST', '/auth/signin', { email, password });
 }
 
+/** What sign-in methods this server offers (D-141): `sso` — an external provider is configured. */
+export async function authProviders(): Promise<{ sso: boolean }> {
+	return ((await (await send('GET', '/auth/providers')).json()) as {
+		data: { sso: boolean };
+	}).data;
+}
+
 /** Every request gives up after this long and counts as "no answer": a save is then retried with
  *  the same key, so nothing waits forever (invariant ST4). */
 export const REQUEST_TIMEOUT_MS = 15_000;

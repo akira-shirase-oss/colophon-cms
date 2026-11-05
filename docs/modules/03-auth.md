@@ -80,6 +80,9 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - The Studio's welcome page and `/studio/invite` share `AuthForm`: email and password, sign-in or create-account
   mode, and "Sign in with your organisation" for the provider. Signing up grants nothing — a project still needs
   an invitation, and only an administrator creates projects.
+- The provider itself is optional (D-141): the built-in accounts carry an installation on their own.
+  `GET /auth/providers` is public and answers `{sso}` — whether an external provider is configured — so
+  `AuthForm` hides the organisation button instead of offering a route that can only answer 503.
 - The endpoints are open (a person arrives without a session); they still sit under the `/auth/` per-address
   rate limit like every management route.
 
@@ -90,8 +93,10 @@ operation, and the cross-project and identity test families from spec §27 pass.
   - the first owner is the installation's first **administrator**: the only kind of person who can create projects.
     Signing in grants nothing by itself; people reach a project by invitation;
   - `colophon admin bootstrap --subject S [--issuer I]` runs as the migrator, finds or creates the identity, claims
-    the single `installation` row and records the administrator, in one transaction. Again for the same identity it
-    changes nothing; for anyone else it exits 4. Migration 0006 makes the installation row permanent (no update,
+    the single `installation` row and records the administrator, in one transaction. The issuer is an https (or
+    loopback http) provider URL, or `password` for the built-in accounts — its subject is then the account's email
+    (D-141). Again for the same identity it changes nothing; for anyone else it exits 4. Migration 0006 makes the
+    installation row permanent (no update,
     delete or truncate, even by the table owner) and gives the application role read-only access to both tables;
   - `POST /api/v1/projects` checks `colophon_db::administrators::standing` (403 for a non-administrator, with a
     different message before any bootstrap), and the restrictive policy `projects_created_by_administrators` refuses

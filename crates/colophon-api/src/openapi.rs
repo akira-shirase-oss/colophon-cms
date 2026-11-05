@@ -507,6 +507,25 @@ pub(crate) static TABLE: &[Route] = &[
     ),
     // Sign-in: OIDC browser flow, email and password, sessions, the device flow, `/me`.
     route(
+        ("", "/auth/providers"),
+        &[op(
+            Verb::Get,
+            |f| on(f, auth::providers),
+            OpDoc {
+                id: "authProviders",
+                summary: "What sign-in methods this server offers (whether an external provider is configured)",
+                tag: "auth",
+                security: Security::Public,
+                ok: ok(
+                    200,
+                    Shape::Data("AuthProviders"),
+                    "never cached: it is configuration",
+                ),
+                ..MIN
+            },
+        )],
+    ),
+    route(
         ("", "/auth/login"),
         &[op(
             Verb::Get,
@@ -4433,6 +4452,10 @@ fn shared() -> Value {
 }
 
 /// Who the caller is, sign-in, the device flow, setup.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a JSON Schema literal reads top to bottom; splitting scatters one component map"
+)]
 fn identity() -> Value {
     json!({
         "Me": {
@@ -4452,6 +4475,11 @@ fn identity() -> Value {
             "type": "object",
             "required": ["has_administrator"],
             "properties": { "has_administrator": { "type": "boolean" } },
+        },
+        "AuthProviders": {
+            "type": "object",
+            "required": ["sso"],
+            "properties": { "sso": { "type": "boolean", "description": "an external identity provider is configured" } },
         },
         "SignedOut": {
             "type": "object",

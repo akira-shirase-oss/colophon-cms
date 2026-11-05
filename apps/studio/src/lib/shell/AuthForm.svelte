@@ -1,18 +1,24 @@
 <!--
   Signing in with an email and a password, or creating that account (D-084). One card, two
   modes; the session cookie comes back in the response itself, and a successful answer makes
-  the parent's `me` query refetch, so the page moves on without a redirect.
+  the parent's `me` query refetch, so the page moves on without a redirect. The provider button
+  shows only when this server actually has one configured (D-141) — an installation on the
+  built-in accounts alone never offers a button that can only fail.
 -->
 <script lang="ts">
-	import { useQueryClient } from '@tanstack/svelte-query';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
 	import { ApiError, signInPassword, signInUrl, signUp } from '#lib/api.ts';
+	import { providersQuery } from '#lib/queries.ts';
 
 	/** Where the single sign-on button comes back to afterwards. */
 	let { returnTo = '/' }: { returnTo?: string } = $props();
 
 	const queryClient = useQueryClient();
+	// Until the answer arrives the button stays: a slow fetch should not flash it away from a
+	// server that does have a provider; only an explicit `false` hides it.
+	const providers = createQuery(providersQuery);
 	let mode = $state<'signin' | 'signup'>('signin');
 	let name = $state('');
 	let email = $state('');
@@ -88,9 +94,11 @@
 		Already have an account? <button type="button" class="underline underline-offset-2 hover:text-foreground" onclick={() => swap('signin')}>Sign in</button>
 	{/if}
 </p>
-<div class="my-6 flex items-center gap-3 text-sm text-muted-foreground" aria-hidden="true">
-	<span class="h-px flex-1 bg-border"></span>or<span class="h-px flex-1 bg-border"></span>
-</div>
-<Button variant="outline" class="w-full" href={signInUrl(returnTo)} data-sveltekit-reload data-testid="sign-in">
-	Sign in with your organisation
-</Button>
+{#if providers.data?.sso !== false}
+	<div class="my-6 flex items-center gap-3 text-sm text-muted-foreground" aria-hidden="true">
+		<span class="h-px flex-1 bg-border"></span>or<span class="h-px flex-1 bg-border"></span>
+	</div>
+	<Button variant="outline" class="w-full" href={signInUrl(returnTo)} data-sveltekit-reload data-testid="sign-in">
+		Sign in with your organisation
+	</Button>
+{/if}

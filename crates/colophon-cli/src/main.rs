@@ -642,16 +642,19 @@ enum AdminCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Make the first administrator, once: bound to an identity provider's issuer and subject,
-    /// never to an email address. Afterwards bootstrap is disabled for good.
+    /// Make the first administrator, once: bound to an issuer and subject — an identity
+    /// provider's pair, or `password` plus the account's email. Afterwards bootstrap is
+    /// disabled for good.
     Bootstrap {
         /// The migrator's connection URL. Never the application's.
         #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
         database_url: String,
-        /// The identity provider's issuer URL; by default the server's.
+        /// The identity provider's issuer URL; by default the server's. For the built-in
+        /// email-and-password accounts pass `password` and the account's email as the subject.
         #[arg(long, env = "COLOPHON_OIDC_ISSUER")]
         issuer: String,
-        /// The person's subject at that provider (`colophon whoami` shows yours).
+        /// The person's subject at that provider (`colophon whoami` shows yours); for
+        /// `--issuer password`, the account's email address.
         #[arg(long)]
         subject: String,
         #[arg(long)]

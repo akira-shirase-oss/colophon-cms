@@ -153,7 +153,13 @@ fn check(issuer: &str, subject: &str) -> Result<(), &'static str> {
         "http://localhost/",
         "http://127.0.0.1:",
     ];
-    if issuer.len() > 512
+    if issuer == colophon_db::identity::PASSWORD_ISSUER {
+        // The built-in accounts: the subject is the account's email, so an installation with
+        // no external provider can still bootstrap its first administrator from the CLI (D-141).
+        if !subject.contains('@') {
+            return Err("a password issuer's subject is the account's email address");
+        }
+    } else if issuer.len() > 512
         || !(issuer.starts_with("https://") || local.iter().any(|start| issuer.starts_with(start)))
     {
         return Err(
@@ -695,6 +701,9 @@ mod tests {
             ("https://id.example.com/realms/main", "f6c1a2", true),
             ("http://localhost:58080/realms/colophon", "f6c1a2", true),
             ("http://127.0.0.1:58080/realms/colophon", "f6c1a2", true),
+            ("password", "owner@example.com", true),
+            ("password", "not-an-email", false),
+            ("password", "", false),
             ("http://id.example.com", "f6c1a2", false),
             ("http://localhost.example.com", "f6c1a2", false),
             ("https://id.example.com", "", false),
