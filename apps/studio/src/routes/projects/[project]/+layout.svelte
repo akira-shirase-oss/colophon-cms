@@ -15,6 +15,7 @@
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import ShapesIcon from '@lucide/svelte/icons/shapes';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
+	import UserRoundIcon from '@lucide/svelte/icons/user-round';
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -81,6 +82,7 @@
 		'/projects/[project]/tasks': 'Tasks',
 		'/projects/[project]/media': 'Media',
 		'/projects/[project]/members': 'Members',
+		'/projects/[project]/audience': 'Audience',
 		'/projects/[project]/settings': 'Settings',
 		'/projects/[project]/settings/types': 'Content types',
 		'/projects/[project]/settings/types/[type]': 'Content types',
@@ -302,6 +304,13 @@
 						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/members')} tooltipContent="Members">
 							{#snippet child({ props })}
 								<a href={resolve('/projects/[project]/members', { project })} data-testid="members-link" {...props}><UsersIcon /><span>Members</span></a>
+							{/snippet}
+						</Sidebar.MenuButton>
+					</Sidebar.MenuItem>
+					<Sidebar.MenuItem>
+						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/audience')} tooltipContent="Audience">
+							{#snippet child({ props })}
+								<a href={resolve('/projects/[project]/audience', { project })} data-testid="audience-link" {...props}><UserRoundIcon /><span>Audience</span></a>
 							{/snippet}
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>

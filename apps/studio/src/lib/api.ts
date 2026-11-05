@@ -36,7 +36,8 @@ export type Action =
 	| 'roles.manage'
 	| 'destinations.manage'
 	| 'tokens.manage'
-	| 'audit.read';
+	| 'audit.read'
+	| 'audience.manage';
 
 /** Actions only people hold: no API token may (step R.4), so a leaked token can't change who has
  *  access or read the record of it. */
@@ -1394,6 +1395,49 @@ export async function createToken(project: string, token: NewToken): Promise<Api
 /** Revokes it at once; revoking again changes nothing. */
 export async function revokeToken(project: string, id: string): Promise<ApiToken> {
 	return ((await (await send('DELETE', `${tokens(project)}/${id}`)).json()) as { data: ApiToken }).data;
+}
+
+/** An audience role (D-137): the label `role:<name>` visibility grants to. `self_assign`
+ *  means public signup and sign-in links may take it. */
+export interface AudienceRole {
+	name: string;
+	self_assign: boolean;
+	created_at: string;
+}
+
+/** A project's site visitor, as staff see one (`GET {P}/audience/users`). */
+export interface SiteUser {
+	id: string;
+	email: string;
+	display_name: string | null;
+	/** The audience role it holds. */
+	role: string;
+	created_at: string;
+	last_sign_in_at?: string;
+	/** `true` once staff disabled it: its sessions are dead and sign-in says so. */
+	disabled: boolean;
+}
+
+const audience = (project: string) => `/api/v1/projects/${project}/audience`;
+
+/** The project's audience roles. Needs `audience.manage`. */
+export async function listAudienceRoles(project: string): Promise<AudienceRole[]> {
+	return ((await (await send('GET', `${audience(project)}/roles`)).json()) as { data: AudienceRole[] }).data;
+}
+
+/** A page of the project's site visitors, newest first. Needs `audience.manage`. */
+export async function listSiteUsers(project: string, limit = 100): Promise<Page<SiteUser>> {
+	return (await (await send('GET', `${audience(project)}/users?limit=${limit}`)).json()) as Page<SiteUser>;
+}
+
+/** Changes a site user's role, or disables (`disabled: true`, revoking its sessions) or
+ *  re-enables it. Needs `audience.manage`. */
+export async function updateSiteUser(
+	project: string,
+	user: string,
+	change: { role?: string; disabled?: boolean }
+): Promise<void> {
+	await send('PATCH', `${audience(project)}/users/${user}`, change);
 }
 
 /** One change in a project's audit log (step R.4). */
