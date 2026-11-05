@@ -49,21 +49,44 @@ const { title, description = 'The Draft, a demo blog published through Colophon'
 			generation !== undefined && generation > 0 && (
 				<script is:inline>
 					// Live updates without a rebuild (D-139): when the CMS announces a release, this page
-					// re-renders from the delivery API at the new generation. The stream carries only a
-					// number, so nothing gated can leak through it.
+					// re-reads itself at the new generation and swaps the content in place — scroll kept,
+					// no flash. The stream carries only a number, so nothing gated can leak through it.
 					(() => {
-						const shown = Number(document.querySelector('meta[name="colophon-generation"]')?.getAttribute('content')) || 0;
-						if (shown < 1) return;
+						const generation = () =>
+							Number(document.querySelector('meta[name="colophon-generation"]')?.getAttribute('content')) || 0;
+						if (generation() < 1) return;
 						const source = new EventSource('/api/live');
-						source.addEventListener('generation', (event) => {
+						let updating = false;
+						source.addEventListener('generation', async (event) => {
+							let next;
 							try {
-								const next = JSON.parse(event.data).generation;
-								if (Number.isInteger(next) && next > shown) {
-									source.close();
-									location.reload();
-								}
+								next = JSON.parse(event.data).generation;
 							} catch {
-								// A malformed frame is not a reason to do anything.
+								return;
+							}
+							if (!Number.isInteger(next) || next <= generation() || updating) return;
+							updating = true;
+							try {
+								const response = await fetch(location.pathname + location.search, {
+									headers: { 'x-colophon-live': '1' },
+									cache: 'no-store'
+								});
+								if (!response.ok) throw new Error(String(response.status));
+								const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+								const main = doc.querySelector('main');
+								const footer = doc.querySelector('footer');
+								const meta = doc.querySelector('meta[name="colophon-generation"]');
+								if (main === null || meta === null) throw new Error('unexpected page');
+								document.querySelector('main')?.replaceWith(main);
+								if (footer !== null) document.querySelector('footer')?.replaceWith(footer);
+								document
+									.querySelector('meta[name="colophon-generation"]')
+									?.setAttribute('content', meta.getAttribute('content') ?? '');
+								document.title = doc.title;
+							} catch {
+								location.reload();
+							} finally {
+								updating = false;
 							}
 						});
 					})();

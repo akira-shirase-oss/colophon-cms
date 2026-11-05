@@ -4,7 +4,7 @@
 
 import type { APIRoute } from 'astro';
 import { site } from '@colophon/site-kit';
-import { currentGeneration, start, subscribe } from '../../lib/live.ts';
+import { currentGeneration, room, start, subscribe } from '../../lib/live.ts';
 
 export const prerender = false;
 
@@ -12,6 +12,7 @@ export const GET: APIRoute = ({ request }) => {
 	const cms = site();
 	if (cms === null) return new Response('not seeded\n', { status: 503 });
 	start(cms, 'posts');
+	if (!room()) return new Response('this site is carrying as many live streams as it can\n', { status: 503 });
 
 	const encoder = new TextEncoder();
 	let closed = false;
@@ -21,8 +22,13 @@ export const GET: APIRoute = ({ request }) => {
 				if (closed) return;
 				controller.enqueue(encoder.encode(`event: generation\ndata: {"generation":${generation}}\n\n`));
 			};
-			send(currentGeneration());
 			const unsubscribe = subscribe(send);
+			if (unsubscribe === null) {
+				// Raced past `room()`: close quietly and let the browser retry.
+				controller.close();
+				return;
+			}
+			send(currentGeneration());
 			const heartbeat = setInterval(() => {
 				if (!closed) controller.enqueue(encoder.encode(': keep-alive\n\n'));
 			}, 15_000);

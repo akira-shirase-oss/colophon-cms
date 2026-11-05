@@ -13,6 +13,8 @@ import { type Site } from '@colophon/site-kit';
 
 /** How long to wait before reconnecting after the stream ends or fails. */
 const RETRY_MS = 2_000;
+/** Concurrent browser streams this site server will fan out to (invariant 4: bounded). */
+const MAX_CLIENTS = 500;
 
 let generation = 0;
 let started = false;
@@ -24,8 +26,14 @@ export function currentGeneration(): number {
 	return generation;
 }
 
-/** Adds a listener; returns the unsubscribe. */
-export function subscribe(listener: (generation: number) => void): () => void {
+/** Whether this server can carry one more browser stream. */
+export function room(): boolean {
+	return listeners.size < MAX_CLIENTS;
+}
+
+/** Adds a listener; `null` when this server already carries `MAX_CLIENTS` of them. */
+export function subscribe(listener: (generation: number) => void): (() => void) | null {
+	if (listeners.size >= MAX_CLIENTS) return null;
 	listeners.add(listener);
 	return () => {
 		listeners.delete(listener);
