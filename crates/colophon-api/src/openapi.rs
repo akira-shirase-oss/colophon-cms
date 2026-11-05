@@ -3319,7 +3319,7 @@ pub(crate) static TABLE: &[Route] = &[
                     shape: Shape::Empty,
                     headers: &[],
                     media: "",
-                    note: "the same answer whether or not the email has an account; `dev_link` only with COLOPHON_DEV_MAIL=1",
+                    note: "the same answer whether or not the email has an account; a configured mail provider emails the link, `dev_link` only with COLOPHON_DEV_MAIL=1",
                 },
                 extra: &[],
                 ..MIN

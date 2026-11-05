@@ -927,6 +927,27 @@ pub(crate) struct MagicLinkPath {
     token: String,
 }
 
+/// The subject every sign-in mail carries (D-145).
+const SIGN_IN_SUBJECT: &str = "Your sign-in link";
+
+/// The plain-text body a sign-in mail carries.
+fn sign_in_text(link: &str) -> String {
+    format!(
+        "Use this link to sign in — it works once and expires in 15 minutes:\n\n{link}\n\nIf you did not ask for it, you can ignore this email."
+    )
+}
+
+/// The HTML body beside it: the link escaped for an attribute, since `return_to` is chosen by
+/// the requester.
+fn sign_in_html(link: &str) -> String {
+    let link = link.replace('&', "&amp;").replace('"', "&quot;");
+    format!(
+        "<p>Use this link to sign in — it works once and expires in 15 minutes:</p>\
+         <p><a href=\"{link}\">{link}</a></p>\
+         <p>If you did not ask for it, you can ignore this email.</p>"
+    )
+}
+
 /// The `return_to` a magic link may carry: an absolute http(s) URL, nothing else.
 fn check_return_to(value: &str) -> Result<String, ApiError> {
     let trimmed = value.trim();
@@ -984,9 +1005,24 @@ pub(crate) async fn request_magic_link(
     )
     .await;
     let separator = if return_to.contains('?') { '&' } else { '?' };
+    let link = format!("{return_to}{separator}token={token}");
     let mut data = serde_json::json!({ "sent": true });
     if services.dev_mail {
-        data["dev_link"] = serde_json::json!(format!("{return_to}{separator}token={token}"));
+        data["dev_link"] = serde_json::json!(link);
+    } else if let Some(mail) = &services.mail {
+        // A failed send still answers 202: the response may never reveal whether the address
+        // has an account. The link stays recorded, so asking again sends a fresh one.
+        if let Err(error) = mail
+            .send(
+                &email,
+                SIGN_IN_SUBJECT,
+                &sign_in_text(&link),
+                &sign_in_html(&link),
+            )
+            .await
+        {
+            tracing::warn!(%error, "a sign-in link could not be emailed");
+        }
     }
     let body =
         serde_json::to_string(&serde_json::json!({ "data": data })).map_err(ApiError::internal)?;

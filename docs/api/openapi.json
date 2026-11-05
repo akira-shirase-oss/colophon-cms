@@ -18562,7 +18562,7 @@
         },
         "responses": {
           "202": {
-            "description": "the same answer whether or not the email has an account; `dev_link` only with COLOPHON_DEV_MAIL=1"
+            "description": "the same answer whether or not the email has an account; a configured mail provider emails the link, `dev_link` only with COLOPHON_DEV_MAIL=1"
           },
           "429": {
             "content": {

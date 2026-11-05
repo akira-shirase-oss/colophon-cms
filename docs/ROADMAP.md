@@ -583,8 +583,9 @@ with a members area", with billing and entitlements deliberately left to a later
   never a plan. Staff manage roles, users and their sessions under `audience.manage`. Passwordless too
   (D-140, migration 0053): `POST …/magic-link` records a single-use, hashed, 15-minute link behind the same
   202 either way, and `POST …/magic-link/{token}` spends it — signing an account in or creating one in the
-  open role with an unusable password; `COLOPHON_DEV_MAIL` (loopback-only) stands in for the mail sender the
-  server does not have yet.
+  open role with an unusable password; `COLOPHON_MAIL_PROVIDER=resend` + `COLOPHON_MAIL_FROM` +
+  `COLOPHON_RESEND_API_KEY` deliver the link through a `Mail` provider seam (D-145), and the loopback-only
+  `COLOPHON_DEV_MAIL` still stands in on the development stack.
 - `delivery` ([module 06](modules/06-delivery.md), "Gated content"): every published projection carries
   `visibility` — `public`, `authenticated` or `role:<name>` — set on editorial writes by `?visibility=` and
   pinned with the revision. `colophon_delivery`'s RLS reads `app.audience_role`: anonymous sees public only, a

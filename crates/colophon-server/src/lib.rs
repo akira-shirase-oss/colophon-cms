@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod events;
+mod mail;
 pub mod probes;
 pub mod setup_code;
 pub mod shutdown;
@@ -188,6 +189,13 @@ fn api_services(
         trusted_origins,
         allow_private_destinations: config.listen_addr.ip().is_loopback(),
         dev_mail: config.dev_mail,
+        mail: config.mail.as_ref().map(|settings| {
+            Arc::new(mail::Resend::new(
+                settings.api_key.clone(),
+                settings.from.clone(),
+                settings.endpoint.clone(),
+            )) as Arc<dyn colophon_api::mail::Mail>
+        }),
         cache: delivery_cache(config)?,
         content_types: colophon_api::ContentTypeCache::new(),
         assets: asset_store(config)?,

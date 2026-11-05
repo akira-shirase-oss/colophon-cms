@@ -554,6 +554,8 @@ pub(crate) struct Received {
     pub(crate) key: String,
     /// Its `Colophon-Generation`.
     pub(crate) generation: String,
+    /// Its `Authorization` — the Resend-mail tests read the bearer back through it (D-145).
+    pub(crate) authorization: String,
     /// Its JSON body.
     pub(crate) body: Value,
 }
@@ -602,6 +604,7 @@ async fn receive(
     let received = Received {
         key: header("idempotency-key"),
         generation: header("colophon-generation"),
+        authorization: header("authorization"),
         body: serde_json::from_slice(&body).unwrap_or(Value::Null),
     };
     // A repeat of a seen key is acknowledged but applies no second effect (F12).
