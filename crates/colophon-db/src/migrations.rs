@@ -159,6 +159,11 @@ pub async fn create_plan(
     tx: &mut ProjectTransaction,
     new: &NewPlan<'_>,
 ) -> Result<Planned, DbError> {
+    // Durable work, so it admits first — before the collection's change lock, the one lock
+    // another admission (a publish) also holds and could wait on this one for (D-131). The
+    // count is pre-`supersede_open`: at the bound a fresh plan can be refused although its
+    // own supersede would have freed a slot — a retryable refusal, never an over-admission.
+    crate::work::admit(tx, 1).await?;
     // Writes in the collection wait from here until this commits, and this waited for the ones
     // already under way — the same lock a type update takes (D-055).
     content_types::lock_for_change(tx, new.collection).await?;

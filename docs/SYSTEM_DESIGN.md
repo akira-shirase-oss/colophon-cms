@@ -372,7 +372,7 @@ added. A release is simpler: `prepared → committed`, and a committed release n
 | Separate semaphores: 8 delivery (≤ 2 per destination), 4 image, 2 AI | worker | Expensive work can't starve editorial saves |
 | One active publication stream per project and environment | worker | Ordered delivery, and supersession instead of backlog |
 | Budget reservations in Postgres before agent work | automation | Cost and volume caps that Redis loss can't bypass |
-| Pending-job caps (10,000 per project) | worker | Durable capacity is reserved before work is accepted |
+| Pending-job caps (10,000 per project, D-131) | db, api | `work::admit` counts open `jobs`/`asset_jobs`/`bulk_jobs`/`migration_plans` under the project's advisory lock before a durable row is inserted; over the bound the transaction aborts and the API refuses 503 `work_full` + `Retry-After` |
 
 ## 10. Failure handling and degraded modes
 

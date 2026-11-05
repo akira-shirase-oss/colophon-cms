@@ -468,6 +468,19 @@ pub enum ApiError {
     /// 503 with `Retry-After`, so clients back off instead of piling on.
     #[error("the server is busy; try again shortly")]
     Busy,
+    /// The project already retains all the unfinished work its bound allows (spec §33,
+    /// D-131): the job this request asked to store is refused before acceptance. 503 with
+    /// `Retry-After` — open work drains as workers finish it, so trying again then is the
+    /// recovery. `details.reason` is `work_full`; the numbers are the project's own.
+    #[error(
+        "this project's pending work is at its bound ({open} of {limit} jobs open); try again as they finish"
+    )]
+    WorkFull {
+        /// Unfinished jobs the project retains.
+        open: i64,
+        /// Its bound.
+        limit: i64,
+    },
     /// Sign-in failed. Details are logged, never shown: they can help an attacker.
     #[error("sign-in failed or expired; start again")]
     SignInFailed,
@@ -550,6 +563,8 @@ impl ApiError {
                 "budget_exceeded",
                 "this API token's budget for this work is exhausted; raise its limits, or wait for the window to clear",
             ),
+            // 503, the project's own bound, not a budget or a pool (D-131).
+            DbError::WorkFull { open, limit } => Self::WorkFull { open, limit },
             // 422, at the very place in the content (media M1).
             DbError::MissingAsset {
                 field,
@@ -663,7 +678,9 @@ impl ApiError {
             Self::RateLimited { .. } | Self::TooManyRequests { .. } => {
                 StatusCode::TOO_MANY_REQUESTS
             }
-            Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Unavailable(_) | Self::Busy | Self::WorkFull { .. } => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -700,7 +717,7 @@ impl ApiError {
             | Self::Taken(_)
             | Self::StillNeeded(_) => ErrorCode::Conflict,
             Self::RateLimited { .. } | Self::TooManyRequests { .. } => ErrorCode::RateLimited,
-            Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
+            Self::Unavailable(_) | Self::Busy | Self::WorkFull { .. } => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
         }
@@ -733,6 +750,7 @@ impl ApiError {
                 ..ErrorDetails::new(reason, "")
             }),
             Self::Conflict { reason, .. } => Some(ErrorDetails::new(reason, "")),
+            Self::WorkFull { .. } => Some(ErrorDetails::new("work_full", "")),
             Self::TooManyRequests { .. } => Some(ErrorDetails::new("rate_limited", "")),
             Self::InvalidField {
                 reason, pointer, ..
@@ -773,6 +791,15 @@ impl ApiError {
             // Operators need to see saturation. Each of these waited out the acquire timeout,
             // so their rate is bounded by in-flight requests over that timeout.
             tracing::warn!(code, "request refused: no database connection free");
+        } else if let Self::WorkFull { open, limit } = self {
+            // A project at its work bound is saturation too — the kind an operator can act on
+            // (a stuck destination, a runaway import). Bounded by the request rate.
+            tracing::warn!(
+                code,
+                open,
+                limit,
+                "request refused: project work bound full"
+            );
         } else {
             // A client's mistake: worth a debug line, never a page.
             tracing::debug!(code, error = %self, "request rejected");
@@ -795,6 +822,11 @@ fn error_chain(error: &(dyn StdError + 'static)) -> String {
 /// Seconds a client should wait before retrying a [`ApiError::Busy`] request.
 pub const BUSY_RETRY_AFTER_SECONDS: u32 = 1;
 
+/// Seconds a client should wait before retrying a [`ApiError::WorkFull`] refusal. Longer than
+/// `Busy`'s: a pool's wait is milliseconds, an open job drains in seconds (a wedged
+/// destination up to its 10-second attempt deadline).
+pub const WORK_FULL_RETRY_AFTER_SECONDS: u32 = 5;
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         self.log();
@@ -804,6 +836,12 @@ impl IntoResponse for ApiError {
                 response.headers_mut().insert(
                     header::RETRY_AFTER,
                     HeaderValue::from(BUSY_RETRY_AFTER_SECONDS),
+                );
+            }
+            Self::WorkFull { .. } => {
+                response.headers_mut().insert(
+                    header::RETRY_AFTER,
+                    HeaderValue::from(WORK_FULL_RETRY_AFTER_SECONDS),
                 );
             }
             // Nothing keeps a removal: if the entry is published again, no cache must still say
@@ -965,6 +1003,26 @@ mod tests {
         let public = conflict.public();
         assert_eq!(public.message, "this changeset has already been published");
         assert_eq!(public.details.expect("details").reason, "already_published");
+    }
+
+    #[test]
+    fn a_full_project_refuses_as_unavailable_work_full() {
+        // The bound's refusal is a typed 503 a client retries after — not a 500, and never a
+        // 2xx with the job dropped (D-131, F09).
+        let error = ApiError::WorkFull {
+            open: 10_000,
+            limit: 10_000,
+        };
+        assert_eq!(error.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(error.code().as_str(), "unavailable");
+        let public = error.public();
+        assert_eq!(public.details.expect("details").reason, "work_full");
+        assert!(public.message.contains("10000 of 10000"));
+        let response = error.into_response();
+        assert_eq!(
+            response.headers()[header::RETRY_AFTER],
+            HeaderValue::from(WORK_FULL_RETRY_AFTER_SECONDS)
+        );
     }
 
     #[test]

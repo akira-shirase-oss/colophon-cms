@@ -9,6 +9,10 @@
 //!   runs out, another worker claims the job and announces it again with the same idempotency
 //!   key, so the destination can tell it's a repeat; the job ends `succeeded` after two attempts,
 //!   and nothing claims the first one didn't happen.
+//! - **F09**, the project's work bound full, or a durable write that cannot commit: new work
+//!   is refused before acceptance — 503 `work_full`, or a 500 the client never mistook for
+//!   success — the whole transaction rolls back, and the same request lands once the
+//!   condition clears (D-131).
 //! - **F10**, a schema edited concurrently or killed mid-edit: two writes from one base make
 //!   one winner and one `stale_version` — never a merge — and an interrupted edit leaves the
 //!   old version whole or the new one replayed.
@@ -27,8 +31,8 @@
 mod common;
 
 use common::{
-    Receiver, Server, Session, article, call, destination, entries, finished_job, join, key,
-    project, publish_article, sign_in,
+    Receiver, Server, Session, article, call, create_article, destination, entries, finished_job,
+    join, key, project, publish_article, sign_in,
 };
 use reqwest::{Method, StatusCode};
 use serde_json::json;
@@ -653,6 +657,10 @@ async fn a_schema_edit_killed_before_or_after_its_commit_is_never_half_written()
 /// the two edits and never a silent drop: the loser rebases onto what won and lands v3.
 #[tokio::test]
 #[ignore = "needs the stack, migrations and --features fault-injection"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one race told in order: both edits in flight, one winner, the loser rebases"
+)]
 async fn two_schema_edits_from_one_base_make_one_winner_and_one_conflict() {
     let _server = Server::start().await;
     let owner = sign_in("dev-owner").await;
@@ -971,4 +979,271 @@ async fn a_delivery_repeated_under_faults_is_one_effect_at_the_destination() {
             "the timed-out post landed once — the retry added no effect"
         );
     }
+}
+
+/// A submitted-and-approved changeset that adds one article to `project`, ready to publish:
+/// the changeset's path and the `If-Match` its current hash binds.
+async fn approved(owner: &Session, project: &str, title: &str) -> (String, String) {
+    let entry = create_article(owner, project, title).await;
+    let base = format!("/api/v1/projects/{project}/environments/production");
+    let set = call(
+        owner,
+        Method::POST,
+        &format!("{base}/changesets"),
+        Some(&json!({"title": title, "entries": [entry]})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(set.status, StatusCode::CREATED, "{}", set.body);
+    let path = format!(
+        "{base}/changesets/{}",
+        set.body["data"]["id"].as_str().expect("an id")
+    );
+    let if_match = format!("\"{}\"", set.body["data"]["hash"].as_str().expect("a hash"));
+    let submitted = call(
+        owner,
+        Method::POST,
+        &format!("{path}/submit"),
+        None,
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(submitted.status, StatusCode::OK, "{}", submitted.body);
+    let approved = call(
+        owner,
+        Method::POST,
+        &format!("{path}/reviews"),
+        Some(&json!({"decision": "approve"})),
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(approved.status, StatusCode::OK, "{}", approved.body);
+    (path, if_match)
+}
+
+/// The durable work a project has committed, as a count of its releases, its outbox `jobs`
+/// and its production generation — all three together, so a half-committed release (a
+/// generation moved without its jobs, or the other way around) can't slip past.
+async fn work_of(database: &sqlx::PgPool, project: &str) -> (i64, i64, i64) {
+    sqlx::query_as(
+        "SELECT (SELECT count(*) FROM releases WHERE project_id = $1::uuid),
+                (SELECT count(*) FROM jobs WHERE project_id = $1::uuid),
+                (SELECT generation FROM environments
+                  WHERE project_id = $1::uuid AND slug = 'production')",
+    )
+    .bind(project)
+    .fetch_one(database)
+    .await
+    .expect("the project's committed work")
+}
+
+/// F09, the bound half (spec §33's 10,000 pending jobs/project, D-131): the project's
+/// unfinished work filled to its bound, the next durable work is refused before acceptance —
+/// 503 `unavailable` with `details.reason` `work_full` and a `Retry-After` — and the refusing
+/// transaction commits nothing: no release, no job, no generation move, and no idempotency
+/// claim, so the same key's retry is a fresh write once one slot frees.
+#[tokio::test]
+#[ignore = "needs the stack, migrations and --features fault-injection"]
+async fn a_project_at_its_work_bound_is_refused_then_recovers() {
+    /// spec §33's bound, written out here so the test says what it fills.
+    const BOUND: i64 = 10_000;
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let receiver = Receiver::start(&[]).await;
+    destination(&owner, &project, &receiver.url).await;
+    let (set, if_match) = approved(&owner, &project, "At the bound").await;
+
+    // The bound in one statement, not ten thousand requests: accepting `bulk_jobs` are
+    // exactly the rows `work::admit` counts as open work.
+    let database = common::owner_database().await;
+    sqlx::query(
+        "INSERT INTO bulk_jobs (project_id, environment_id, id, kind, operation, manifest_hash,
+                                created_by, principal, expected_items)
+         SELECT p.id, e.id, gen_random_uuid(), 'entries', '{\"collection\": \"articles\"}',
+                decode(md5(i::text) || md5((i + 1)::text), 'hex'), m.identity_id, 'member', 0
+         FROM projects p
+         JOIN environments e ON e.project_id = p.id AND e.slug = 'production'
+         JOIN memberships m ON m.project_id = p.id
+         CROSS JOIN generate_series(1, $2) AS i
+         WHERE p.id = $1::uuid",
+    )
+    .bind(&project)
+    .bind(BOUND)
+    .execute(&database)
+    .await
+    .expect("fill the project's work bound");
+
+    let publish = json!({"base_generation": 0});
+    let once = key();
+    let refused = call(
+        &owner,
+        Method::POST,
+        &format!("{set}/publish"),
+        Some(&publish),
+        &[("if-match", &if_match), ("idempotency-key", &once)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        refused.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        refused.body
+    );
+    assert_eq!(
+        refused.body["error"]["code"], "unavailable",
+        "{}",
+        refused.body
+    );
+    assert_eq!(
+        refused.body["error"]["details"]["reason"], "work_full",
+        "{}",
+        refused.body
+    );
+    assert!(
+        refused.headers.get(reqwest::header::RETRY_AFTER).is_some(),
+        "a refused admission says when to try again"
+    );
+    // The refusal is before acceptance: nothing of the release stands — no release row, no
+    // job, and the generation never moved.
+    assert_eq!(
+        work_of(&database, &project).await,
+        (0, 0, 0),
+        "the refused publish committed nothing"
+    );
+
+    // One slot frees: the same request — idempotency key included — commits as a fresh write,
+    // the claim having rolled back with the refusal.
+    sqlx::query(
+        "DELETE FROM bulk_jobs WHERE project_id = $1::uuid
+           AND id = (SELECT id FROM bulk_jobs WHERE project_id = $1::uuid LIMIT 1)",
+    )
+    .bind(&project)
+    .execute(&database)
+    .await
+    .expect("free one slot");
+    let admitted = call(
+        &owner,
+        Method::POST,
+        &format!("{set}/publish"),
+        Some(&publish),
+        &[("if-match", &if_match), ("idempotency-key", &once)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(admitted.status, StatusCode::CREATED, "{}", admitted.body);
+    assert!(
+        !admitted.replayed(),
+        "the refused claim left nothing to replay: this is a fresh commit"
+    );
+    let (releases, jobs, generation) = work_of(&database, &project).await;
+    assert_eq!(
+        (releases, jobs, generation),
+        (1, 1, 1),
+        "release 1 committed its one destination's job"
+    );
+    // …and it runs: the worker still answering this test's server finishes the one job the
+    // bound let through, so the test leaves no open work behind for the next test's worker.
+    assert_eq!(
+        finished_job(&owner, &project, 1, 10).await["status"].as_str(),
+        Some("succeeded")
+    );
+
+    sqlx::query("DELETE FROM bulk_jobs WHERE project_id = $1::uuid")
+        .bind(&project)
+        .execute(&database)
+        .await
+        .expect("clean the filler");
+    database.close().await;
+}
+
+/// F09, the disk half (D-131): a durable write that cannot commit refuses before acceptance —
+/// never a success the client could mistake. `REVOKE INSERT ON jobs FROM colophon_api` is the
+/// honest stand-in for storage that stops taking rows: a real statement failure at the one
+/// place the outbox writes. The refused release leaves what a rolled-back transaction leaves
+/// — nothing — and the restored grant admits the same request fresh.
+#[tokio::test]
+#[ignore = "needs the stack, migrations and --features fault-injection"]
+async fn a_durable_write_that_cannot_commit_is_refused_and_rolls_back() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let receiver = Receiver::start(&[]).await;
+    destination(&owner, &project, &receiver.url).await;
+    let (set, if_match) = approved(&owner, &project, "Unwritable").await;
+    let publish = json!({"base_generation": 0});
+    let once = key();
+
+    let database = common::owner_database().await;
+    // Idempotent first: a run that died mid-test leaves the grant missing, so heal before
+    // breaking it again.
+    sqlx::query("GRANT INSERT ON jobs TO colophon_api")
+        .execute(&database)
+        .await
+        .expect("grant before revoking");
+    sqlx::query("REVOKE INSERT ON jobs FROM colophon_api")
+        .execute(&database)
+        .await
+        .expect("revoke the outbox's insert");
+    let refused = call(
+        &owner,
+        Method::POST,
+        &format!("{set}/publish"),
+        Some(&publish),
+        &[("if-match", &if_match), ("idempotency-key", &once)],
+    )
+    .await;
+    // The grant goes back before anything can panic, whatever the answer was.
+    sqlx::query("GRANT INSERT ON jobs TO colophon_api")
+        .execute(&database)
+        .await
+        .expect("restore the outbox's insert");
+    let refused = refused.expect("request");
+    assert_eq!(
+        refused.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        refused.body
+    );
+    assert_eq!(
+        refused.body["error"]["code"], "internal",
+        "{}",
+        refused.body
+    );
+    assert_eq!(
+        work_of(&database, &project).await,
+        (0, 0, 0),
+        "the write that couldn't commit left nothing"
+    );
+
+    let recovered = call(
+        &owner,
+        Method::POST,
+        &format!("{set}/publish"),
+        Some(&publish),
+        &[("if-match", &if_match), ("idempotency-key", &once)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(recovered.status, StatusCode::CREATED, "{}", recovered.body);
+    assert!(
+        !recovered.replayed(),
+        "the aborted claim left nothing to replay: this is a fresh commit"
+    );
+    let (releases, jobs, generation) = work_of(&database, &project).await;
+    assert_eq!(
+        (releases, jobs, generation),
+        (1, 1, 1),
+        "the same request committed once storage came back"
+    );
+    // …and its job runs out too: the test leaves no open work for the next test's worker.
+    assert_eq!(
+        finished_job(&owner, &project, 1, 10).await["status"].as_str(),
+        Some("succeeded")
+    );
+    database.close().await;
 }

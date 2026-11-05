@@ -48,8 +48,16 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   for a newer release is never lost; the tags come from `colophon_domain::cache::purge_tags`, at most 30 (more, and
   the environment's tag instead). Tested against a fake CDN that caches and purges
   (`crates/colophon-server/tests/purges.rs`).
+- **The project work bound** (P6, D-131, F09): `colophon_db::work` counts a project's open work —
+  `jobs` pending/retrying/running/held, `asset_jobs` pending/running/retrying, `bulk_jobs`
+  accepting/running, `migration_plans` proposed/approved/running — and every transaction that adds a
+  durable work row admits under the project's `pg_advisory_xact_lock` first. Over spec §33's 10,000 the
+  admission refuses with `DbError::WorkFull` → 503 `unavailable` + `work_full` + `Retry-After`, rolling
+  the whole accepting transaction back; a due schedule that hits it stays `scheduled` and retries at the
+  next poll. Worker transactions never take the lock (they only finish admitted work).
 - **Not yet:** per-project limits, signed announcements, wake-ups instead of polling,
-  reconciliation beyond repeating with the same key, admission budgets (F09), scheduled releases.
+  reconciliation beyond repeating with the same key, spec §33's second bound (1 GiB of pending
+  payload metadata per install — job payloads are object-storage pointers, so it needs its own design).
 
 ## Why it exists
 
@@ -162,10 +170,17 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
 - For safety-critical actions, cancellation and permission revocation are rechecked before each next external attempt.
 
 ### Admission (spec §33)
-- Capacity is reserved before work is accepted: 10,000 pending jobs per project and 1 GiB of pending payload metadata
-  per install.
-- Large bodies live in object storage, referenced from the job.
-- When capacity is exhausted, new work is refused with a clear error **before** it is accepted (F09).
+- Capacity is reserved before work is accepted. **In place (D-131):** `colophon_db::work::admit` counts a
+  project's open rows across `jobs`, `asset_jobs`, `bulk_jobs` and `migration_plans` under a per-project
+  `pg_advisory_xact_lock`; at or over `job::MAX_PENDING` (10,000) it refuses `DbError::WorkFull` before any
+  new row is inserted, mapped to 503 `unavailable` + `details.reason` `work_full` + `Retry-After: 5`. The
+  lock is the first any admitting transaction takes, so it precedes content-type and token-limit locks and
+  no two admissions can deadlock; worker transactions never take it.
+- Large bodies live in object storage, referenced from the job — the spec's 1 GiB pending-payload bound is
+  therefore a separate design, still owed (the row bound above is what F09 proves).
+- When capacity is exhausted, new work is refused with a clear error **before** it is accepted (F09): the
+  refusal aborts the whole accepting transaction, so no release, job, idempotency claim or generation move
+  stands, and the client's retry after recovery commits fresh.
 
 ### Destination adapters (spec §25)
 - The contract is `validate_configuration`, `plan`, `execute`, `inspect`, `reconcile`, `revoke`.
@@ -204,7 +219,7 @@ Each pool is a separate semaphore, so expensive work can never starve editorial 
 |---|---|
 | Worker killed after an external call, before recording it (F03) | Lease expires; another worker reclaims; reconcile before any repeat |
 | Old delivery runs after a newer release (F05) | Generation check blocks it; recorded as superseded |
-| Outbox or disk budget exhausted (F09) | New durable work fails before acceptance, or enters a documented degraded state |
+| Outbox or disk budget exhausted (F09) | New durable work fails before acceptance: over the 10,000-row bound, 503 `work_full` + `Retry-After` (D-131); a durable write that cannot commit answers 500, never success; either way the transaction rolls back whole and the same request lands after the condition clears (`tests/faults.rs`) |
 | Cache unavailable | Wake-ups fall back to polling; no work is lost |
 | Postgres unavailable | Stop claiming; nothing is acknowledged from memory; resume from Postgres afterwards |
 | Provider 429 / 5xx | Backoff with jitter within the attempt budget, then `failed` or `uncertain` with a repair action |

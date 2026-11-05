@@ -210,8 +210,12 @@ fn item_of(row: ItemRow) -> Item {
     }
 }
 
-/// Inserts the job (state `accepting` or `running` when sealed at submit).
+/// Inserts the job (state `accepting` or `running` when sealed at submit). Durable work, so
+/// it admits first (D-131): the caller runs this before its budget reservations, so the
+/// admission lock precedes the token-limits row they lock — the one ordering every admission
+/// needs.
 pub async fn create(tx: &mut ProjectTransaction, new: &NewJob<'_>) -> Result<Job, DbError> {
+    crate::work::admit(tx, 1).await?;
     let state = if new.seal { "running" } else { "accepting" };
     let row = sqlx::query_as!(
         JobRow,

@@ -59,6 +59,10 @@ pub async fn insert(
     idempotency_key: &str,
     deadline_at: OffsetDateTime,
 ) -> Result<(), DbError> {
+    // The verify job is durable work: admit before recording it (D-131). The caller's
+    // transaction rolls back the asset row with the refusal, so an object already put to
+    // quarantine is left to the orphan sweep, never half-accepted.
+    crate::work::admit(tx, 1).await?;
     sqlx::query!(
         "INSERT INTO assets (project_id, environment_id, id, file_name, declared_type, size_bytes,
                              quarantine_key, created_by)
@@ -237,6 +241,9 @@ pub async fn request_delete(
     if !referrers.is_empty() {
         return Ok(DeleteAsked::Referenced(referrers));
     }
+    // The delete job is durable work — and only here, after the verdicts, so an asset that
+    // owes a different answer still gets it rather than a `work_full` (D-131).
+    crate::work::admit(tx, 1).await?;
     sqlx::query!(
         "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind, idempotency_key, deadline_at)
          VALUES ($1, $2, $3, $4, 'delete', $5, $6)",
@@ -619,7 +626,11 @@ pub async fn expire(pool: &PgPool) -> Result<u64, DbError> {
 /// keep-rule under the row lock, so a name committed between this statement and the claim
 /// fails the job and never loses an object. An asset already mid-job of any kind is left to
 /// it: what is running decides what it becomes. Two passes racing the same asset can both
-/// enqueue; the second job finds `deleted` and finishes having removed nothing.
+/// enqueue; the second job finds `deleted` and finishes having removed nothing. A project at
+/// the work bound keeps its assets instead: one statement can't honestly hold one project's
+/// admission lock, so each row counts the same open work [`crate::work::admit`] does, under
+/// the statement's own snapshot — a pass may overshoot [`crate::work::MAX_OPEN`] by at most
+/// its own `limit`, and the next pass sees the truth and enqueues nothing (D-131).
 pub async fn enqueue_expired(
     pool: &PgPool,
     older_than: OffsetDateTime,
@@ -653,11 +664,30 @@ pub async fn enqueue_expired(
                WHERE j.project_id = a.project_id AND j.environment_id = a.environment_id
                  AND j.asset_id = a.id
                  AND j.status IN ('pending', 'running', 'retrying'))
+           AND (
+               SELECT count(*) FROM (
+                   SELECT 1 FROM jobs j
+                   WHERE j.project_id = a.project_id
+                     AND j.status IN ('pending', 'retrying', 'running', 'held')
+                   UNION ALL
+                   SELECT 1 FROM asset_jobs j
+                   WHERE j.project_id = a.project_id
+                     AND j.status IN ('pending', 'running', 'retrying')
+                   UNION ALL
+                   SELECT 1 FROM bulk_jobs b
+                   WHERE b.project_id = a.project_id AND b.state IN ('accepting', 'running')
+                   UNION ALL
+                   SELECT 1 FROM migration_plans m
+                   WHERE m.project_id = a.project_id
+                     AND m.state IN ('proposed', 'approved', 'running')
+               ) open_work
+           ) < $4
          ORDER BY a.created_at
          LIMIT $3",
         older_than,
         deadline_at,
-        limit
+        limit,
+        crate::work::MAX_OPEN
     )
     .execute(&mut *transaction)
     .await

@@ -375,10 +375,13 @@ async fn bad_asset(
 
 /// The outbox: one job per enabled destination for the release at `generation`, committed with
 /// the release or not at all. Older announcements that haven't started are obsolete now — and
-/// their budget reservations are released with the supersede (D-113). The new jobs' slots are
-/// reserved before the commit stands, for the principal the release is published under: a
-/// token over `max_concurrent_jobs` refuses the whole release (`BudgetExceeded`, which rolls
-/// it back); a person or an unconstrained token passes untouched.
+/// their budget reservations are released with the supersede (D-113). The supersede frees
+/// before the bound counts: a release that replaces open work asks only for what it adds
+/// (D-131), and a project at [`work::MAX_OPEN`] gets `WorkFull`, which rolls the whole
+/// release back. The new jobs' slots are reserved before the commit stands, for the
+/// principal the release is published under: a token over `max_concurrent_jobs` refuses the
+/// whole release (`BudgetExceeded`, which rolls it back); a person or an unconstrained token
+/// passes untouched.
 async fn outbox(
     tx: &mut ProjectTransaction,
     generation: i64,
@@ -396,6 +399,16 @@ async fn outbox(
     .await
     .map_err(DbError::from_query)?;
     crate::budgets::release_jobs(&mut tx.transaction, tx.project, &superseded).await?;
+    let adding = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "adding!" FROM destinations
+           WHERE project_id = $1 AND environment_id = $2 AND enabled"#,
+        tx.project,
+        tx.environment
+    )
+    .fetch_one(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    crate::work::admit(tx, adding).await?;
     let jobs = sqlx::query_scalar!(
         "INSERT INTO jobs (project_id, environment_id, id, destination_id, generation, idempotency_key, deadline_at)
          SELECT project_id, environment_id, uuidv7(), id, $3,
