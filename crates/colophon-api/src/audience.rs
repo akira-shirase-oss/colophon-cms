@@ -392,11 +392,44 @@ pub(crate) async fn sign_up(
         }
         Err(error) => return Err(ApiError::from_db(error)),
     };
+    let audit_subject = user.id.to_string();
+    let audit_detail = serde_json::json!({ "email": user.email, "role": user.role });
     let made = issue(services, project, user).await?;
+    audited(
+        services,
+        project,
+        "audience.user_signed_up",
+        &audit_subject,
+        audit_detail,
+    )
+    .await;
     let body = serde_json::to_string(&Data { data: &made }).map_err(ApiError::internal)?;
     let mut response = crate::entries::json(StatusCode::CREATED, body, None, false);
     session_cookies(&mut response, &made.session, &made.csrf);
     Ok(response)
+}
+
+/// Writes one `audience.*` auth event to the project's audit log, after the auth commit
+/// (D-142). Best-effort by contract: the write failing must never refuse a sign-in that
+/// already succeeded, so a miss is a warning in the server log, not a client error.
+async fn audited(
+    services: &crate::Services,
+    project: Uuid,
+    action: &'static str,
+    subject: &str,
+    detail: serde_json::Value,
+) {
+    if let Err(error) = audience::record_auth(
+        &services.pool,
+        project,
+        action,
+        subject,
+        &detail.to_string(),
+    )
+    .await
+    {
+        tracing::warn!(%error, action, "audience auth event was not audited");
+    }
 }
 
 /// `POST /audience/v1/{project}/signin`.
@@ -427,7 +460,17 @@ pub(crate) async fn sign_in(
         }
         Err(error) => return Err(ApiError::from_db(error)),
     };
+    let audit_subject = user.id.to_string();
+    let audit_detail = serde_json::json!({ "email": user.email });
     let made = issue(services, project, user).await?;
+    audited(
+        services,
+        project,
+        "audience.user_signed_in",
+        &audit_subject,
+        audit_detail,
+    )
+    .await;
     let body = serde_json::to_string(&Data { data: &made }).map_err(ApiError::internal)?;
     let mut response = crate::entries::json(StatusCode::OK, body, None, false);
     session_cookies(&mut response, &made.session, &made.csrf);
@@ -460,6 +503,14 @@ pub(crate) async fn sign_out(
         audience::revoke_session(&services.pool, project, live.session_id)
             .await
             .map_err(ApiError::from_db)?;
+        audited(
+            services,
+            project,
+            "audience.user_signed_out",
+            &live.user().id.to_string(),
+            serde_json::json!({ "session": live.session_id }),
+        )
+        .await;
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
     let headers = response.headers_mut();
@@ -924,6 +975,14 @@ pub(crate) async fn request_magic_link(
     )
     .await
     .map_err(ApiError::from_db)?;
+    audited(
+        services,
+        project,
+        "audience.magic_link_sent",
+        &email,
+        serde_json::json!({ "return_to": return_to }),
+    )
+    .await;
     let separator = if return_to.contains('?') { '&' } else { '?' };
     let mut data = serde_json::json!({ "sent": true });
     if services.dev_mail {
@@ -949,46 +1008,69 @@ pub(crate) async fn magic_link_sign_in(
 ) -> Result<Response, ApiError> {
     let services = session::services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
-    let user =
-        match audience::consume_magic_link(&services.pool, project, &tokens::hash(&path.token))
-            .await
-            .map_err(ApiError::from_db)?
-        {
-            audience::MagicLink::SignedIn(user) => user,
-            audience::MagicLink::Invalid => {
-                return Err(ApiError::forbidden(
-                    "magic_link_invalid",
-                    "this sign-in link is used, expired or unknown",
-                ));
-            }
-            audience::MagicLink::NewUser(email) => {
-                // An account made by a link holds a password nobody knows: the link was the
-                // credential, and a later password sign-in must set one deliberately.
-                let unusable = tokens::random_token().map_err(|_| {
-                    ApiError::internal(std::io::Error::other("no secure random source"))
-                })?;
-                let phc = colophon_db::passwords::hashed(&unusable)
-                    .await
-                    .map_err(ApiError::from_db)?;
-                match audience::sign_up(&services.pool, project, &email, &phc, None, None).await {
-                    Ok(audience::SignedUp::Made(user)) => user,
-                    Ok(audience::SignedUp::RoleUnavailable) => {
-                        return Err(ApiError::forbidden(
-                            "no_open_role",
-                            "this project has no role a new account may take",
-                        ));
-                    }
-                    Ok(_) => {
-                        return Err(ApiError::conflict(
-                            "email_taken",
-                            "that email already has an account",
-                        ));
-                    }
-                    Err(error) => return Err(ApiError::from_db(error)),
+    let user = match audience::consume_magic_link(
+        &services.pool,
+        project,
+        &tokens::hash(&path.token),
+    )
+    .await
+    .map_err(ApiError::from_db)?
+    {
+        audience::MagicLink::SignedIn(user) => user,
+        audience::MagicLink::Invalid => {
+            return Err(ApiError::forbidden(
+                "magic_link_invalid",
+                "this sign-in link is used, expired or unknown",
+            ));
+        }
+        audience::MagicLink::NewUser(email) => {
+            // An account made by a link holds a password nobody knows: the link was the
+            // credential, and a later password sign-in must set one deliberately.
+            let unusable = tokens::random_token().map_err(|_| {
+                ApiError::internal(std::io::Error::other("no secure random source"))
+            })?;
+            let phc = colophon_db::passwords::hashed(&unusable)
+                .await
+                .map_err(ApiError::from_db)?;
+            match audience::sign_up(&services.pool, project, &email, &phc, None, None).await {
+                Ok(audience::SignedUp::Made(user)) => {
+                    audited(
+                            services,
+                            project,
+                            "audience.user_signed_up",
+                            &user.id.to_string(),
+                            serde_json::json!({ "email": user.email, "role": user.role, "via": "magic_link" }),
+                        )
+                        .await;
+                    user
                 }
+                Ok(audience::SignedUp::RoleUnavailable) => {
+                    return Err(ApiError::forbidden(
+                        "no_open_role",
+                        "this project has no role a new account may take",
+                    ));
+                }
+                Ok(_) => {
+                    return Err(ApiError::conflict(
+                        "email_taken",
+                        "that email already has an account",
+                    ));
+                }
+                Err(error) => return Err(ApiError::from_db(error)),
             }
-        };
+        }
+    };
+    let audit_subject = user.id.to_string();
+    let audit_detail = serde_json::json!({ "email": user.email });
     let made = issue(services, project, user).await?;
+    audited(
+        services,
+        project,
+        "audience.magic_link_spent",
+        &audit_subject,
+        audit_detail,
+    )
+    .await;
     let body = serde_json::to_string(&Data { data: &made }).map_err(ApiError::internal)?;
     let mut response = crate::entries::json(StatusCode::OK, body, None, false);
     session_cookies(&mut response, &made.session, &made.csrf);

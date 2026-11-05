@@ -60,6 +60,29 @@ async fn project_tx(
     .await
 }
 
+/// Records a visitor auth event in the project's audit log (D-142): the actor is the shared
+/// `('urn:colophon:system','audience-auth')` identity a site user can't be, the subject is the
+/// site user's id — or, for `audience.magic_link_sent`, the email the link was sent to, since
+/// the account may not exist yet. Runs in its own `project_tx`: the write follows a committed
+/// sign-in, and the API treats a failure here as a warning, never as a refused auth.
+pub async fn record_auth(
+    pool: &PgPool,
+    project: Uuid,
+    action: &str,
+    subject: &str,
+    detail: &str,
+) -> Result<(), DbError> {
+    let mut tx = project_tx(pool, project).await?;
+    let actor = sqlx::query_scalar!(
+        "SELECT id FROM identities WHERE issuer = 'urn:colophon:system' AND subject = 'audience-auth'"
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?;
+    crate::audit::record_in(&mut tx, project, actor, action, subject, detail).await?;
+    tx.commit().await.map_err(DbError::from_query)
+}
+
 /// One of the project's audience roles, as staff see it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Role {

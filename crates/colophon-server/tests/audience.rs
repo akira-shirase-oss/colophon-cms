@@ -903,4 +903,34 @@ async fn magic_links_sign_in_existing_visitors_and_create_new_ones() {
         .await
         .expect("request");
     assert_eq!(signout.status(), StatusCode::NO_CONTENT);
+
+    // The whole visitor journey is in the project's audit log (D-142): staff read it through
+    // the same /audit feed every other action lands in, under the shared site-auth actor.
+    let log = call(
+        &owner,
+        Method::GET,
+        &format!("/api/v1/projects/{project}/audit"),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(log.status, StatusCode::OK, "{}", log.body);
+    let actions: Vec<&str> = log.body["data"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter_map(|event| event["action"].as_str())
+        .collect();
+    for expected in [
+        "audience.user_signed_up",
+        "audience.magic_link_sent",
+        "audience.magic_link_spent",
+        "audience.user_signed_out",
+    ] {
+        assert!(
+            actions.contains(&expected),
+            "{expected} missing from the audit log: {actions:?}"
+        );
+    }
 }
