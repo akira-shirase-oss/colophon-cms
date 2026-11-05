@@ -7,4 +7,4 @@
 	const entries = createQuery(() => entriesQuery(project, collection));
 </script>
 
-{#if entries.data}<Sidebar.MenuBadge class="tabular">{count(entries.data)}</Sidebar.MenuBadge>{/if}
+{#if entries.data && entries.data.data.length > 0}<Sidebar.MenuBadge class="tabular">{count(entries.data)}</Sidebar.MenuBadge>{/if}

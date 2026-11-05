@@ -298,7 +298,7 @@
 			</Sidebar.Group>
 
 			<Sidebar.Group>
-				<Sidebar.GroupLabel>Project</Sidebar.GroupLabel>
+				<Sidebar.GroupLabel>People</Sidebar.GroupLabel>
 				<Sidebar.Menu>
 					<Sidebar.MenuItem>
 						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/members')} tooltipContent="Members">
@@ -316,7 +316,14 @@
 							</Sidebar.MenuButton>
 						</Sidebar.MenuItem>
 					{/if}
-					{#if builds}
+				</Sidebar.Menu>
+			</Sidebar.Group>
+
+			{#if builds || settings}
+				<Sidebar.Group>
+					<Sidebar.GroupLabel>Structure</Sidebar.GroupLabel>
+					<Sidebar.Menu>
+						{#if builds}
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton isActive={inBuilder} tooltipContent="Content types">
 								{#snippet child({ props })}
@@ -342,7 +349,8 @@
 						</Sidebar.MenuItem>
 					{/if}
 				</Sidebar.Menu>
-			</Sidebar.Group>
+				</Sidebar.Group>
+			{/if}
 		</Sidebar.Content>
 
 		<Sidebar.Footer class="group-data-[collapsible=icon]:hidden">
