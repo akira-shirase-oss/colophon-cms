@@ -19,7 +19,6 @@ mod delivery;
 mod destinations;
 mod device;
 mod entries;
-mod environment_ids;
 pub mod error;
 pub mod events;
 mod fault;
@@ -51,7 +50,6 @@ use axum::{Router, http::HeaderMap, routing::get};
 
 pub use cache::{DeliveryCache, InvalidCacheUrl};
 pub use colophon_version::BuildInfo;
-pub use environment_ids::EnvironmentIds;
 pub use error::{ApiError, ErrorCode, ErrorDetails, PublicError};
 pub use health::{CheckState, Dependency, Readiness, ReadinessReport, Status};
 pub use middleware::{HttpLimits, REQUEST_ID_HEADER};

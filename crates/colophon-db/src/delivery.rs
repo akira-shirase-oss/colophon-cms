@@ -75,6 +75,43 @@ pub async fn environment(
     .map_err(DbError::from_query)
 }
 
+/// What [`media_object`] resolved for one media request (D-136).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaObject {
+    /// The environment the asset lives in.
+    pub environment_id: Uuid,
+    /// The literal object key to serve — `None` when the environment exists but the asset or
+    /// version does not (or isn't `usable`): the origin answers 404.
+    pub public_key: Option<String>,
+}
+
+/// The media origin's whole read (`media_object`, migration 0050): resolve `slug` and pick the
+/// object key in one call — the `usable` asset's current version, or the version `version_sha`
+/// names (the `{sha}` in `/media/v1/{p}/{e}/{asset}/{sha}`). `None` when the environment itself
+/// is unknown; a row with `public_key: None` when it exists but nothing deliverable does.
+/// Quarantined, rejected, deleting and deleted assets answer `None` even while their objects
+/// still sit in the store — the row, not the object, decides what is served.
+pub async fn media_object(
+    pool: &PgPool,
+    project: Uuid,
+    slug: &str,
+    asset: Uuid,
+    version_sha: Option<&str>,
+) -> Result<Option<MediaObject>, DbError> {
+    sqlx::query_as!(
+        MediaObject,
+        r#"SELECT environment_id AS "environment_id!", public_key
+           FROM media_object($1, $2, $3, $4)"#,
+        project,
+        slug,
+        asset,
+        version_sha
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(DbError::from_query)
+}
+
 /// Starts a delivery transaction for `project`: switches to `colophon_delivery` for its duration.
 pub async fn begin(pool: &PgPool, project: Uuid) -> Result<DeliveryTransaction, DbError> {
     let mut transaction = pool.begin().await.map_err(DbError::from_query)?;

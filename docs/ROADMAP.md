@@ -494,7 +494,13 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   history or an `uncertain` reservation; and `colophon_pending_payload` counts the installation's pending
   payload metadata (job keys, recorded asset sizes, bulk manifests and items, plan definitions and
   resolutions) under a new install-wide byte lock, so `work::admit` and a post-write `check_payload` refuse
-  expensive work over 1 GiB with 503 `payload_full`. Still ahead: asset versioning and the rest.
+  expensive work over 1 GiB with 503 `payload_full`. Asset versioning landed too (D-136, migration
+  0051): every verified landing promotes to a content-addressed key `public/{project}/{env}/{asset}/{sha}` —
+  a replace is a new object, never an overwrite — recorded immutably in `asset_versions`, swung onto the asset in
+  the landing transaction, served at `/media/v1/…/{asset}` (current) and `…/{asset}/{sha}` (pinned) through the
+  `media_object` delivery read, replaced via `POST {P}/assets/{asset}/replace` + the `reverify` job, deleted by
+  whole-prefix listing, and swept when a `public/` object has no recording row — so a retained or previously
+  published release's media bytes can never be silently replaced or collected while pinned.
 - `verification`: the full fault and load matrix, a 24-hour soak, the benchmark report, the requirements matrix.
   Built so far: the L11–L13 dependency-failure runs (D-127) — `perf/k6/{cache-down,postgres-trouble,purge-trouble}.js`
   inject real faults through the receiver's `/control` (container pauses on Postgres/Valkey, a SIGKILLed and
@@ -554,7 +560,7 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
   sweep and its `colophon_retention`-owned definer deletes, proven against real Postgres in
   `colophon-db/tests/retention.rs` (aged rows gone, pinned and recent rows kept, an empty second pass) and the
   byte bound in `colophon-db/tests/work.rs` (stored bytes counted, admission refused over the bound, room
-  restored as open work drains) · not built: object-store asset versioning. The proof gate's usability sessions
+  restored as open work drains) · asset versioning is built (D-136, migration 0051). The proof gate's usability sessions
   and independent install are prepared (D-132: rehearsal script, protocol, friction record) and still owed by the
   people who must run them.
 

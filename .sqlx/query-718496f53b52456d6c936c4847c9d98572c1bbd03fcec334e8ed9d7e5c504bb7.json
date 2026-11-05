@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, state, file_name, declared_type, detected_type, size_bytes, width, height,\n                rejected_reason, derivatives, created_at\n         FROM assets\n         WHERE project_id = $1 AND environment_id = $2\n         ORDER BY created_at DESC, id DESC\n         LIMIT 100",
+  "query": "SELECT id, state, file_name, declared_type, detected_type, sha256, size_bytes, width,\n                height, rejected_reason, derivatives, created_at\n         FROM assets\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3",
   "describe": {
     "columns": [
       {
@@ -60,6 +60,17 @@
       },
       {
         "ordinal": 5,
+        "name": "sha256",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "sha256"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
         "name": "size_bytes",
         "type_info": "Int8",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "width",
         "type_info": "Int4",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "height",
         "type_info": "Int4",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "rejected_reason",
         "type_info": "Text",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "derivatives",
         "type_info": "TextArray",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -128,6 +139,7 @@
     "parameters": {
       "Left": [
         "Uuid",
+        "Uuid",
         "Uuid"
       ]
     },
@@ -137,6 +149,7 @@
       false,
       false,
       true,
+      true,
       false,
       true,
       true,
@@ -145,5 +158,5 @@
       false
     ]
   },
-  "hash": "d34ed1ad06ea0bae9e334c56d5996c8b11a78de3a6fca1d6ceeef7e1225a9cc3"
+  "hash": "718496f53b52456d6c936c4847c9d98572c1bbd03fcec334e8ed9d7e5c504bb7"
 }

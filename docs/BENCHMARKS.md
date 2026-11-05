@@ -305,7 +305,9 @@ cache working rather than cold-setup misses.
   cache hits, 0 failures, 19,487 database transactions; `2026-11-05T015237Z-…`
   with `EnvironmentIds` held the same 18,115-request mix at 298/s and dropped
   to 9,601 database transactions (−51%) — the lookup the media origin no
-  longer makes per request. The second run's latency line (avg 9.9 ms, p99
+  longer makes per request. (That memo was later subsumed: D-136's versioned
+  serving resolves the same answer inside `media_object`'s one query.) The
+  second run's latency line (avg 9.9 ms, p99
   82 ms) was measured while the laptop's load average sat around 80–90 —
   ambient load, not the change; the transaction halving is a count rather
   than a latency. The per-request latency effect is the paired run's:

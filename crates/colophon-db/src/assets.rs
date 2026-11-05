@@ -30,6 +30,8 @@ pub struct Asset {
     pub declared_type: String,
     /// What the signature proved, once verified.
     pub detected_type: Option<String>,
+    /// The current version's digest, once verified: the `…/{asset}/{sha}` URL's selector (D-136).
+    pub sha256: Option<Vec<u8>>,
     /// The upload's byte count.
     pub size_bytes: i64,
     /// The decoded dimensions, once verified.
@@ -42,6 +44,51 @@ pub struct Asset {
     pub derivatives: Vec<String>,
     /// When it was uploaded.
     pub created_at: OffsetDateTime,
+}
+
+/// One verified version, as [`versions`] lists it (D-136): the immutable record of a landing
+/// verify attempt — its content digest, its literal object key, and the renditions written
+/// under it. Rows are never updated and never removed; a deleted asset keeps its history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Version {
+    /// Which landing it was: 1 first, each distinct later content max+1.
+    pub seq: i32,
+    /// What this upload claimed.
+    pub declared_type: String,
+    /// Its byte count as declared.
+    pub size_bytes: i64,
+    /// What the signature proved.
+    pub detected_type: String,
+    /// The stripped bytes' digest — the `…/{asset}/{sha}` pinned URL's selector.
+    pub sha256: Vec<u8>,
+    /// The decoded dimensions.
+    pub width: i32,
+    /// The decoded dimensions.
+    pub height: i32,
+    /// The literal object key the original lives at; renditions sit under it.
+    pub public_key: String,
+    /// The rendition names written under `public_key`.
+    pub derivatives: Vec<String>,
+    /// When it landed.
+    pub created_at: OffsetDateTime,
+}
+
+/// Every verified version of `asset`, oldest first — the asset's byte history (D-136).
+pub async fn versions(tx: &mut ProjectTransaction, asset: Uuid) -> Result<Vec<Version>, DbError> {
+    sqlx::query_as!(
+        Version,
+        "SELECT seq, declared_type, size_bytes, detected_type, sha256, width, height,
+                public_key, derivatives, created_at
+         FROM asset_versions
+         WHERE project_id = $1 AND environment_id = $2 AND asset_id = $3
+         ORDER BY seq",
+        tx.project,
+        tx.environment,
+        asset
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
 }
 
 /// Records the asset and its verify job; `job_id`/`idempotency_key` name the job so a replayed
@@ -101,8 +148,8 @@ pub async fn insert(
 pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Asset>, DbError> {
     sqlx::query_as!(
         Asset,
-        "SELECT id, state, file_name, declared_type, detected_type, size_bytes, width, height,
-                rejected_reason, derivatives, created_at
+        "SELECT id, state, file_name, declared_type, detected_type, sha256, size_bytes, width,
+                height, rejected_reason, derivatives, created_at
          FROM assets
          WHERE project_id = $1 AND environment_id = $2
          ORDER BY created_at DESC, id DESC
@@ -119,8 +166,8 @@ pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Asset>, DbError> {
 pub async fn get(tx: &mut ProjectTransaction, asset: Uuid) -> Result<Option<Asset>, DbError> {
     sqlx::query_as!(
         Asset,
-        "SELECT id, state, file_name, declared_type, detected_type, size_bytes, width, height,
-                rejected_reason, derivatives, created_at
+        "SELECT id, state, file_name, declared_type, detected_type, sha256, size_bytes, width,
+                height, rejected_reason, derivatives, created_at
          FROM assets
          WHERE project_id = $1 AND environment_id = $2 AND id = $3",
         tx.project,
@@ -265,6 +312,93 @@ pub async fn request_delete(
     Ok(DeleteAsked::Queued { asset: found })
 }
 
+/// What asking to replace an asset's bytes found; nothing is written unless it is
+/// [`ReplaceAsked::Queued`] (D-136).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplaceAsked {
+    /// No such asset in this environment.
+    Unknown,
+    /// `quarantined`: the first upload's verdict is still out — wait for it to settle, then
+    /// replace (same answer as a delete).
+    Quarantined,
+    /// `rejected`: there is no version to replace — a rejected upload is redone as a new
+    /// upload, never swapped under its id.
+    Rejected,
+    /// `deleting` or `deleted` already: nothing left to replace.
+    Gone,
+    /// The reverify job is queued; the asset as found, for the answer. It stays `usable` on
+    /// the current version until the replacement's verify lands or fails.
+    Queued {
+        /// The asset as the request found it.
+        asset: Box<Asset>,
+    },
+}
+
+/// Everything the reverify row records that isn't the asset's own identity: what the API
+/// staged in quarantine and the job row's bookkeeping ([`request_replace`]'s one bundle,
+/// D-136).
+#[derive(Debug, Clone)]
+pub struct Replace<'a> {
+    /// Where the replacement's bytes wait in the object store.
+    pub quarantine_key: &'a str,
+    /// Its declared MIME type — swung onto the asset and its version row at landing.
+    pub declared_type: &'a str,
+    /// Its declared byte count, swung the same way.
+    pub size_bytes: i64,
+    /// The job row's id.
+    pub job: Uuid,
+    /// The request's idempotency key (namespaced `reverify:` on the job row).
+    pub idempotency_key: &'a str,
+    /// When the job's lifetime ends.
+    pub deadline_at: OffsetDateTime,
+}
+
+/// Records a replace request (D-136): `job` as an `asset_jobs` row of kind `reverify` under
+/// `reverify:{idempotency_key}`, carrying the fresh `quarantine_key` the API already wrote the
+/// bytes to and the upload's declared type and size — the columns the verdict swings onto the
+/// asset and its version row at landing. Only `usable` takes a replacement: quarantine still
+/// owes a verdict, rejected has no version to swap, and gone is gone. References never gate a
+/// replace — pinning the asset is what its versions are for.
+pub async fn request_replace(
+    tx: &mut ProjectTransaction,
+    asset: Uuid,
+    replace: &Replace<'_>,
+) -> Result<ReplaceAsked, DbError> {
+    let Some(found) = get(tx, asset).await? else {
+        return Ok(ReplaceAsked::Unknown);
+    };
+    match found.state.as_str() {
+        "quarantined" => return Ok(ReplaceAsked::Quarantined),
+        "rejected" => return Ok(ReplaceAsked::Rejected),
+        "deleting" | "deleted" => return Ok(ReplaceAsked::Gone),
+        _ => {}
+    }
+    // The reverify job is durable work — admitted after the verdicts, so an asset that owes a
+    // different answer still gets it rather than a `work_full` (D-131).
+    crate::work::admit(tx, 1).await?;
+    sqlx::query!(
+        "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind,
+                                 idempotency_key, deadline_at,
+                                 quarantine_key, declared_type, size_bytes)
+         VALUES ($1, $2, $3, $4, 'reverify', $5, $6, $7, $8, $9)",
+        tx.project,
+        tx.environment,
+        replace.job,
+        asset,
+        format!("reverify:{}", replace.idempotency_key),
+        replace.deadline_at,
+        replace.quarantine_key,
+        replace.declared_type,
+        replace.size_bytes
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(ReplaceAsked::Queued {
+        asset: Box::new(found),
+    })
+}
+
 /// A worker's transaction: as `colophon_worker`, for its duration.
 async fn worker(pool: &PgPool) -> Result<Transaction<'static, Postgres>, DbError> {
     let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
@@ -284,18 +418,17 @@ pub struct Claimed {
     pub environment_id: Uuid,
     /// Its id.
     pub id: Uuid,
-    /// What it is for: `verify`, `delete`, `expire`.
+    /// What it is for: `verify`, `reverify`, `delete`, `expire`.
     pub kind: String,
     /// The asset it works on.
     pub asset_id: Uuid,
-    /// Where the upload waits in the object store.
+    /// Where this attempt's upload waits in the object store: the job's own key for a
+    /// `reverify` (the replacement's object), else the asset's first-upload key (D-136).
     pub quarantine_key: String,
-    /// Where the verified object is served from, once verification lands it.
-    pub public_key: Option<String>,
-    /// The rendition names written beside the public key (`{public_key}/{name}`).
-    pub derivatives: Vec<String>,
-    /// Its declared type and byte count, for the record.
+    /// The upload's declared type — the job's for a `reverify`, the asset's otherwise.
     pub declared_type: String,
+    /// The upload's declared byte count — the job's for a `reverify`, the asset's otherwise.
+    pub size_bytes: i64,
     /// The key every attempt sends.
     pub idempotency_key: String,
     /// This attempt's number: 1 for the first.
@@ -335,8 +468,11 @@ pub async fn claim(
          FROM due, assets a
          WHERE j.project_id = due.project_id AND j.environment_id = due.environment_id AND j.id = due.id
            AND a.project_id = j.project_id AND a.environment_id = j.environment_id AND a.id = j.asset_id
-         RETURNING j.project_id, j.environment_id, j.id, j.kind, j.asset_id, a.quarantine_key,
-                   a.public_key, a.derivatives, a.declared_type, j.idempotency_key, j.attempts,
+         RETURNING j.project_id, j.environment_id, j.id, j.kind, j.asset_id,
+                   coalesce(j.quarantine_key, a.quarantine_key) AS \"quarantine_key!\",
+                   coalesce(j.declared_type, a.declared_type) AS \"declared_type!\",
+                   coalesce(j.size_bytes, a.size_bytes) AS \"size_bytes!\",
+                   j.idempotency_key, j.attempts,
                    j.lease_generation, j.deadline_at",
         owner,
         lease_ms,
@@ -352,15 +488,15 @@ pub async fn claim(
 /// What a delete attempt decided under the asset's row lock (media M3, D-098).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Deletion {
-    /// `deleting` now — or an earlier attempt marked it and died mid-objects, so its list is
-    /// handed out again for the idempotent removals to repeat.
+    /// `deleting` now — or an earlier attempt marked it and died mid-objects, so its keys are
+    /// handed out again for the idempotent removals to repeat (D-136: the worker lists the
+    /// asset's whole `public/…/{asset}` prefix rather than trusting recorded rows, so versions,
+    /// renditions and strays go together; the quarantine objects are the only keys a prefix
+    /// can't reach).
     Removing {
-        /// The public object, if verification landed one.
-        public_key: Option<String>,
-        /// The rendition names written beside it (`{public_key}/{name}`).
-        derivatives: Vec<String>,
-        /// The quarantine object it started as.
-        quarantine_key: String,
+        /// Every quarantine object that could still exist: the asset's own key plus any open
+        /// verify/reverify job's — superseded below, but their uploads may already be bytes.
+        quarantine_keys: Vec<String>,
     },
     /// `deleted` already: a replayed attempt has nothing left to do.
     Gone,
@@ -384,7 +520,7 @@ pub enum Deletion {
 pub async fn mark_deleting(pool: &PgPool, job: &Claimed) -> Result<Deletion, DbError> {
     let mut transaction = worker(pool).await?;
     let row = sqlx::query!(
-        "SELECT state, public_key, quarantine_key, derivatives
+        "SELECT state, quarantine_key
          FROM assets
          WHERE project_id = $1 AND environment_id = $2 AND id = $3
          FOR UPDATE",
@@ -402,11 +538,7 @@ pub async fn mark_deleting(pool: &PgPool, job: &Claimed) -> Result<Deletion, DbE
     };
     let decided = match row.state.as_str() {
         "deleted" => Deletion::Gone,
-        "deleting" => Deletion::Removing {
-            public_key: row.public_key,
-            derivatives: row.derivatives,
-            quarantine_key: row.quarantine_key,
-        },
+        "deleting" => removing(&mut transaction, job, row.quarantine_key).await?,
         // An upload still waiting on its verdict is held against a delete — the request
         // refuses it too — but not against an expire: an abandoned quarantine is exactly
         // what the sweep collects, and the recheck below pins it like any other state.
@@ -449,11 +581,7 @@ pub async fn mark_deleting(pool: &PgPool, job: &Claimed) -> Result<Deletion, DbE
                 .execute(&mut *transaction)
                 .await
                 .map_err(DbError::from_write)?;
-                Deletion::Removing {
-                    public_key: row.public_key,
-                    derivatives: row.derivatives,
-                    quarantine_key: row.quarantine_key,
-                }
+                removing(&mut transaction, job, row.quarantine_key).await?
             }
         }
     };
@@ -461,11 +589,42 @@ pub async fn mark_deleting(pool: &PgPool, job: &Claimed) -> Result<Deletion, DbE
     Ok(decided)
 }
 
+/// `mark_deleting`'s second half, shared by the fresh mark and the replayed attempt: supersede
+/// the asset's not-yet-started verify/reverify jobs (the asset is on its way out, so a
+/// pending verdict has nobody to land on — a running one finishes itself when its swing
+/// meets `deleting`, D-136) and hand back every quarantine key that could hold bytes.
+async fn removing(
+    transaction: &mut Transaction<'static, Postgres>,
+    job: &Claimed,
+    asset_key: String,
+) -> Result<Deletion, DbError> {
+    let open_jobs = sqlx::query!(
+        "UPDATE asset_jobs SET status = 'superseded', last_error = 'the asset is being deleted',
+                               lease_owner = NULL, lease_expires_at = NULL,
+                               updated_at = now(), finished_at = now()
+         WHERE project_id = $1 AND environment_id = $2 AND asset_id = $3
+           AND kind IN ('verify', 'reverify') AND status IN ('pending', 'retrying')
+           AND quarantine_key IS NOT NULL
+         RETURNING quarantine_key",
+        job.project_id,
+        job.environment_id,
+        job.asset_id
+    )
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    let mut quarantine_keys = vec![asset_key];
+    quarantine_keys.extend(open_jobs.into_iter().filter_map(|job| job.quarantine_key));
+    Ok(Deletion::Removing { quarantine_keys })
+}
+
 /// What the attempt proved about the asset, or decided for it; written with the job's finish
 /// or not at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// It verifies: the detected type, dimensions, the stripped object's digest and public key.
+    /// It verifies: the detected type, dimensions, the stripped object's digest and the
+    /// literal object key it was promoted to (`public/…/{asset}/{sha-hex}` under D-136 —
+    /// the same key a retry writes again, and the row `asset_versions` keeps).
     Usable {
         /// The signature-proved MIME type.
         detected_type: &'static str,
@@ -494,8 +653,23 @@ pub enum Outcome {
     StillReferenced,
 }
 
-/// How the attempt ended, recorded with the asset's new state in one transaction; false when
-/// `owner` no longer holds the lease (the job was claimed again) and nothing is written.
+/// How [`finish`] left the attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finish {
+    /// The job's row and every write the outcome asked for landed in one transaction.
+    Applied,
+    /// `owner` no longer holds the lease (the job was claimed again); nothing was written.
+    Lost,
+    /// The lease held and the job row wrote — `superseded`, whatever `status` was asked —
+    /// but a verify verdict found no asset state left to land on (a delete moved it through
+    /// `deleting`, or the row went another way). The objects the worker already promoted are
+    /// nobody's now: it must remove them, they are recorded on no row (D-136).
+    Orphaned,
+}
+
+/// How the attempt ended, recorded with the asset's new state in one transaction;
+/// [`Finish::Lost`] when `owner` no longer holds the lease (the job was claimed again) and
+/// nothing is written.
 pub async fn finish(
     pool: &PgPool,
     job: &Claimed,
@@ -504,7 +678,7 @@ pub async fn finish(
     next_attempt_at: Option<OffsetDateTime>,
     error: Option<&str>,
     outcome: &Outcome,
-) -> Result<bool, DbError> {
+) -> Result<Finish, DbError> {
     let mut transaction = worker(pool).await?;
     let error: Option<String> = error.map(|text| text.chars().take(500).collect());
     let updated = sqlx::query!(
@@ -527,37 +701,16 @@ pub async fn finish(
     .await
     .map_err(DbError::from_query)?;
     if updated.rows_affected() != 1 {
-        return Ok(false);
+        return Ok(Finish::Lost);
     }
+    let mut landed = Finish::Applied;
     match outcome {
-        // A verify verdict lands only while the asset still waits for one: it must never
-        // resurrect an asset a delete already moved through `deleting` into `deleted`.
-        Outcome::Usable {
-            detected_type,
-            width,
-            height,
-            sha256,
-            public_key,
-            derivatives,
-        } => {
-            sqlx::query!(
-                "UPDATE assets SET state = 'usable', detected_type = $4, width = $5, height = $6,
-                                   sha256 = $7, public_key = $8, derivatives = $9, verified_at = now()
-                 WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND state = 'quarantined'",
-                job.project_id,
-                job.environment_id,
-                job.asset_id,
-                *detected_type,
-                width,
-                height,
-                sha256,
-                public_key,
-                derivatives as &[String]
-            )
-            .execute(&mut *transaction)
-            .await
-            .map_err(DbError::from_write)?;
-        }
+        // A verify verdict lands only on a state still waiting for one — a first upload's
+        // `quarantined`, a replacement's `usable` (D-136): it must never resurrect an asset a
+        // delete already moved through `deleting` into `deleted`, nor one `rejected` since.
+        Outcome::Usable { .. } => landed = land_usable(&mut transaction, job, outcome).await?,
+        // A refused first upload moves `quarantined` to `rejected`; a refused replacement
+        // leaves `usable` serving its current version (the job's own `failed` is the record).
         Outcome::Rejected { reason } => {
             sqlx::query!(
                 "UPDATE assets SET state = 'rejected', rejected_reason = $4, verified_at = now()
@@ -602,7 +755,96 @@ pub async fn finish(
         Outcome::Missing | Outcome::StillReferenced => {}
     }
     transaction.commit().await.map_err(DbError::from_query)?;
-    Ok(true)
+    Ok(landed)
+}
+
+/// [`finish`]'s `Outcome::Usable` half: swings the asset's current-version columns and records
+/// the landing's version row when the asset still accepts a verdict — the row lock the UPDATE
+/// takes serializes two landings on one asset, so the second sees the first's version when it
+/// numbers its own. A verdict that finds no state left to land on supersedes the job and
+/// reports [`Finish::Orphaned`], so the caller removes the objects it already promoted.
+async fn land_usable(
+    transaction: &mut Transaction<'static, Postgres>,
+    job: &Claimed,
+    outcome: &Outcome,
+) -> Result<Finish, DbError> {
+    let Outcome::Usable {
+        detected_type,
+        width,
+        height,
+        sha256,
+        public_key,
+        derivatives,
+    } = outcome
+    else {
+        unreachable!("land_usable runs only for Outcome::Usable")
+    };
+    let swung = sqlx::query!(
+        "UPDATE assets SET state = 'usable', detected_type = $4, width = $5, height = $6,
+                           sha256 = $7, public_key = $8, derivatives = $9,
+                           declared_type = $10, size_bytes = $11,
+                           rejected_reason = NULL, verified_at = now()
+         WHERE project_id = $1 AND environment_id = $2 AND id = $3
+           AND state IN ('quarantined', 'usable')",
+        job.project_id,
+        job.environment_id,
+        job.asset_id,
+        *detected_type,
+        width,
+        height,
+        sha256,
+        public_key,
+        derivatives as &[String],
+        job.declared_type,
+        job.size_bytes
+    )
+    .execute(&mut **transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    if swung.rows_affected() != 1 {
+        // The object writes already happened; only the record refuses them. The job ends
+        // `superseded` — honest, and off the retry path — and the caller removes the objects.
+        sqlx::query!(
+            "UPDATE asset_jobs SET status = 'superseded',
+                                   last_error = 'the asset no longer accepts a verdict',
+                                   updated_at = now(), finished_at = now()
+             WHERE project_id = $1 AND environment_id = $2 AND id = $3",
+            job.project_id,
+            job.environment_id,
+            job.id
+        )
+        .execute(&mut **transaction)
+        .await
+        .map_err(DbError::from_write)?;
+        return Ok(Finish::Orphaned);
+    }
+    // The version row is the landing's immutable record; a retry that promotes the same bytes
+    // again meets the (asset, sha256) conflict and adds nothing (D-136).
+    sqlx::query!(
+        "INSERT INTO asset_versions (project_id, environment_id, asset_id, seq,
+                                     declared_type, size_bytes, detected_type,
+                                     width, height, sha256, public_key, derivatives)
+         SELECT $1, $2, $3,
+                coalesce(max(v.seq), 0) + 1, $4, $5, $6, $7, $8, $9, $10, $11
+         FROM asset_versions v
+         WHERE v.project_id = $1 AND v.environment_id = $2 AND v.asset_id = $3
+         ON CONFLICT (project_id, environment_id, asset_id, sha256) DO NOTHING",
+        job.project_id,
+        job.environment_id,
+        job.asset_id,
+        job.declared_type,
+        job.size_bytes,
+        *detected_type,
+        width,
+        height,
+        sha256,
+        public_key,
+        derivatives as &[String]
+    )
+    .execute(&mut **transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(Finish::Applied)
 }
 
 /// Fails unfinished asset jobs that ran out of time (swept with the delivery jobs'); how many.
@@ -718,19 +960,53 @@ pub async fn enqueue_expired(
     Ok(enqueued.rows_affected())
 }
 
-/// Of `keys`, the ones a `quarantined` asset still holds as its `quarantine_key`: the only
-/// objects the orphan sweep keeps (a verified or rejected asset's leftover is dead weight,
-/// and a `deleting` one is already being removed, idempotently — D-099).
+/// Of `keys`, the ones something unfinished still needs: a `quarantined` asset's own
+/// `quarantine_key`, or an open verify/reverify job's (a replacement's upload waits under a
+/// key the asset row doesn't hold — D-136). The only objects the orphan sweep keeps: a
+/// verified or rejected asset's leftover is dead weight, a superseded or failed job's too,
+/// and a `deleting` one is already being removed, idempotently (D-099).
 pub async fn quarantined_keys(pool: &PgPool, keys: &[String]) -> Result<Vec<String>, DbError> {
     let mut transaction = worker(pool).await?;
     let held = sqlx::query_scalar!(
         "SELECT quarantine_key FROM assets
-         WHERE quarantine_key = ANY($1) AND state = 'quarantined'",
+         WHERE quarantine_key = ANY($1) AND state = 'quarantined'
+         UNION
+         SELECT quarantine_key FROM asset_jobs
+         WHERE quarantine_key = ANY($1)
+           AND status IN ('pending', 'retrying', 'running')",
         keys
     )
     .fetch_all(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
     transaction.commit().await.map_err(DbError::from_query)?;
-    Ok(held)
+    Ok(held.into_iter().flatten().collect())
+}
+
+/// Of `keys` found under `public/`, the ones no row serves from — the public-orphan sweep's
+/// removal list (D-136). A key is kept while an asset's current `public_key` or any version's
+/// equals it or prefixes it (a rendition sits under its original's key). Deleting an object
+/// nobody recorded is what made a stable `public_key` dangerous; under content-addressed keys
+/// the check is only ever a guard against an object that outlived its row — a restored backup
+/// re-serves from the same keys, never a wrong one.
+pub async fn unrecorded_public_keys(
+    pool: &PgPool,
+    keys: &[String],
+) -> Result<Vec<String>, DbError> {
+    let mut transaction = worker(pool).await?;
+    let unrecorded = sqlx::query_scalar!(
+        r#"SELECT v.key AS "key!" FROM (SELECT unnest($1::text[]) AS key) v
+         WHERE NOT EXISTS (
+             SELECT 1 FROM assets a
+             WHERE v.key = a.public_key OR starts_with(v.key, a.public_key || '/'))
+           AND NOT EXISTS (
+             SELECT 1 FROM asset_versions ver
+             WHERE v.key = ver.public_key OR starts_with(v.key, ver.public_key || '/'))"#,
+        keys
+    )
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(unrecorded)
 }

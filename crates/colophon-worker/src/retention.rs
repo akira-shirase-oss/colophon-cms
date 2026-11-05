@@ -1,10 +1,11 @@
-//! The retention sweep (docs/modules/07-media.md, spec §18, D-099). One bounded pass, then a
-//! sleep: enqueue an `expire` job for every asset that has been collectable longer than
-//! `expiry` — quarantined, rejected, or usable with nothing naming it — and remove the
-//! `quarantine/` objects no still-quarantined asset holds. The jobs ride the delete attempt
-//! end to end: under the row lock `mark_deleting` makes the verdict that counts, so a pass
-//! that guesses wrong costs a failed job, never a referenced object. Every effect is
-//! idempotent, so a pass cut anywhere — crash, cancel, deadline — is simply run again.
+//! The retention sweep (docs/modules/07-media.md, spec §18, D-099, D-136). One bounded pass,
+//! then a sleep: enqueue an `expire` job for every asset that has been collectable longer
+//! than `expiry` — quarantined, rejected, or usable with nothing naming it — and remove the
+//! objects no row needs: `quarantine/` keys no still-open work holds, and `public/` keys no
+//! current or versioned `public_key` serves from. The jobs ride the delete attempt end to
+//! end: under the row lock `mark_deleting` makes the verdict that counts, so a pass that
+//! guesses wrong costs a failed job, never a referenced object. Every effect is idempotent,
+//! so a pass cut anywhere — crash, cancel, deadline — is simply run again.
 
 use std::time::Duration;
 
@@ -101,6 +102,61 @@ impl Sweeper {
             }
         }
         self.orphans(cutoff).await;
+        self.public_orphans(cutoff).await;
+    }
+
+    /// At most [`ORPHANS`] objects under `public/`: removes each older than `cutoff` which no
+    /// asset's current `public_key` and no `asset_versions` row serves from (D-136) — the
+    /// tombstones of a mid-swing crash, an orphaned promotion the worker couldn't clean, or
+    /// any other object that outlived its record. A promoted object is recorded within the
+    /// attempt deadline, far inside `expiry`, so the age guard is what keeps a landing
+    /// mid-write safe; a deleted asset's objects are gone by its delete job already, and a
+    /// live version's key is always recorded, so nothing served is ever listed here.
+    async fn public_orphans(&self, cutoff: OffsetDateTime) {
+        let cutoff_ms =
+            i64::try_from(cutoff.unix_timestamp_nanos() / 1_000_000).unwrap_or(i64::MIN);
+        let prefix = object_store::path::Path::from("public");
+        let mut objects = self.store.list(Some(&prefix)).take(ORPHANS);
+        let mut stale: Vec<object_store::path::Path> = Vec::new();
+        while let Some(object) = objects.next().await {
+            match object {
+                Ok(meta) => {
+                    if meta.last_modified.timestamp_millis() < cutoff_ms {
+                        stale.push(meta.location);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "listing public objects failed");
+                }
+            }
+        }
+        if stale.is_empty() {
+            return;
+        }
+        let names: Vec<String> = stale.iter().map(ToString::to_string).collect();
+        let unrecorded = match colophon_db::assets::unrecorded_public_keys(&self.pool, &names).await
+        {
+            Ok(unrecorded) => unrecorded
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>(),
+            Err(error) => {
+                tracing::warn!(error = %error, "the public orphan sweep's key check failed");
+                return;
+            }
+        };
+        for path in stale {
+            if !unrecorded.contains(path.as_ref()) {
+                continue;
+            }
+            match self.store.delete(&path).await {
+                Ok(()) | Err(object_store::Error::NotFound { .. }) => {}
+                Err(error) => tracing::warn!(
+                    key = %path,
+                    error = %error,
+                    "removing an unrecorded public object failed"
+                ),
+            }
+        }
     }
 
     /// At most [`ORPHANS`] objects under `quarantine/`: removes each whose `last_modified` is

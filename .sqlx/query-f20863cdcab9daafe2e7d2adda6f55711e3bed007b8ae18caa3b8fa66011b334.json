@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT environment_id AS \"environment_id!\", public_key\n           FROM media_object($1, $2, $3, $4)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "environment_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "public_key",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "f20863cdcab9daafe2e7d2adda6f55711e3bed007b8ae18caa3b8fa66011b334"
+}

@@ -132,6 +132,93 @@ async fn delete_asset(session: &Session, project: &str, id: &str, key: &str) -> 
     .expect("request")
 }
 
+/// `POST {assets}/{id}/replace` with `bytes`, the upload headers and `key`; the reply.
+async fn replace(
+    session: &Session,
+    project: &str,
+    id: &str,
+    bytes: &[u8],
+    name: &str,
+    kind: &str,
+    key: &str,
+) -> common::Reply {
+    let response = app()
+        .post(format!(
+            "{}{assets}/{id}/replace",
+            common::ORIGIN,
+            assets = assets(project)
+        ))
+        .header(header::COOKIE, &session.cookie)
+        .header("x-csrf-token", &session.csrf)
+        .header(header::ORIGIN, common::ORIGIN)
+        .header("idempotency-key", key)
+        .header("x-colophon-file-name", name)
+        .header(header::CONTENT_TYPE, kind)
+        .body(bytes.to_vec())
+        .send()
+        .await
+        .expect("request");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response.json().await.unwrap_or(Value::Null);
+    common::Reply {
+        status,
+        headers,
+        body,
+    }
+}
+
+/// Waits up to `seconds` for the asset's current sha to differ from `was` (a replacement
+/// landed); the asset's final record.
+async fn swung(session: &Session, project: &str, id: &str, was: &str, seconds: u64) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    loop {
+        let reply = call(
+            session,
+            Method::GET,
+            &format!("{}/{id}", assets(project)),
+            None,
+            &[],
+        )
+        .await
+        .expect("request");
+        if reply.body["data"]["sha256"].as_str() != Some(was) {
+            return reply.body["data"].clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "asset {id} never swung off {was}: {}",
+            reply.body
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// The asset's versions, oldest first (`GET`'s `versions` sibling).
+async fn versions_of(session: &Session, project: &str, id: &str) -> Vec<Value> {
+    let reply = call(
+        session,
+        Method::GET,
+        &format!("{}/{id}", assets(project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    reply.body["versions"].as_array().expect("versions").clone()
+}
+
+/// The media origin's bytes for `path`, asserting 200.
+async fn media_bytes(path: &str) -> Vec<u8> {
+    let response = app()
+        .get(format!("{}{}", common::ORIGIN, path))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), StatusCode::OK, "{path}");
+    response.bytes().await.expect("bytes").to_vec()
+}
+
 /// The media origin's status for `path`, following nothing.
 async fn media_status(path: &str) -> StatusCode {
     app()
@@ -1097,4 +1184,337 @@ async fn a_quarantined_asset_whose_object_is_gone_still_expires() {
 
     let tombstone = reached(&owner, &project, &ghost.to_string(), "deleted", 15).await;
     assert_eq!(tombstone["state"], "deleted", "{tombstone}");
+}
+
+// ---------------------------------------------------------------------------
+// Byte versioning (D-136): a replacement is a new content-addressed object, never an
+// overwrite — what a release or a pinned URL named keeps serving.
+
+/// A usable asset on a fresh stack, with the server guard for the caller to hold: its id, its
+/// first version's sha, and the bytes the current URL served as that version.
+async fn usable_asset() -> (common::Server, Session, String, String, String, Vec<u8>) {
+    let server = common::Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let (status, body) = upload(
+        &owner,
+        &project,
+        PNG,
+        "dot.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    let first = settled(&owner, &project, &asset, 15).await;
+    assert_eq!(first["state"], "usable", "{first}");
+    let sha1 = first["sha256"].as_str().expect("a sha256").to_owned();
+    assert_eq!(sha1.len(), 64, "a hex sha256: {sha1}");
+    let one = versions_of(&owner, &project, &asset).await;
+    assert_eq!(one.len(), 1, "{one:?}");
+    assert_eq!(one[0]["seq"], 1, "{one:?}");
+    assert_eq!(one[0]["sha256"], sha1, "{one:?}");
+    let v1_bytes = media_bytes(&media(&project, &asset)).await;
+    (server, owner, project, asset, sha1, v1_bytes)
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_replace_lands_a_new_version_and_the_old_keeps_serving() {
+    let (_server, owner, project, asset, sha1, v1_bytes) = usable_asset().await;
+
+    // A replace is a write like any other: same headers, own idempotency key, 202 queued.
+    let asked = replace(
+        &owner,
+        &project,
+        &asset,
+        WIDE_PNG,
+        "wide.png",
+        "image/png",
+        &key(),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::ACCEPTED, "{}", asked.body);
+
+    // The swing: current version moves to the wide upload; the asset's columns describe it.
+    let second = swung(&owner, &project, &asset, &sha1, 15).await;
+    let sha2 = second["sha256"].as_str().expect("a new sha256").to_owned();
+    assert_ne!(sha2, sha1, "{second}");
+    assert_eq!(second["state"], "usable", "{second}");
+    assert_eq!(
+        (second["width"].as_i64(), second["height"].as_i64()),
+        (Some(400), Some(4)),
+        "{second}"
+    );
+    assert_eq!(second["derivatives"], json!(["w320"]), "{second}");
+
+    // Both landings are on record: seq 1 the first, seq 2 the distinct replacement.
+    let versions = versions_of(&owner, &project, &asset).await;
+    assert_eq!(versions.len(), 2, "{versions:?}");
+    assert_eq!(versions[0]["seq"], 1, "{versions:?}");
+    assert_eq!(versions[0]["sha256"], sha1, "{versions:?}");
+    assert_eq!(versions[1]["seq"], 2, "{versions:?}");
+    assert_eq!(versions[1]["sha256"], sha2, "{versions:?}");
+
+    // The bare path serves the current version — different bytes than version 1's, with its
+    // rendition under it — and the pinned path serves version 1's exact bytes forever.
+    let current = media_bytes(&media(&project, &asset)).await;
+    assert_ne!(current, v1_bytes, "the current version moved on");
+    assert_eq!(
+        media_status(&format!("{}/w320", media(&project, &asset))).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        media_bytes(&format!("{}/{sha1}", media(&project, &asset))).await,
+        v1_bytes,
+        "the pinned version serves the bytes the first upload verified"
+    );
+    // A rendition of a pinned version answers under its own address — and only when the
+    // version actually wrote one (the 1x1 first upload made no `w320`).
+    assert_eq!(
+        media_status(&format!("{}/{sha2}/w320", media(&project, &asset))).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        media_status(&format!("{}/{sha1}/w320", media(&project, &asset))).await,
+        StatusCode::NOT_FOUND
+    );
+    // A 64-hex segment that names no version of this asset is a 404, like anything that
+    // never was.
+    assert_eq!(
+        media_status(&format!("{}/{:0>64}", media(&project, &asset), "deadbeef")).await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_replace_replays_its_key_coalesces_identical_bytes_and_survives_a_refusal() {
+    let (_server, owner, project, asset, sha1, _v1) = usable_asset().await;
+    let second = replace(
+        &owner,
+        &project,
+        &asset,
+        WIDE_PNG,
+        "wide.png",
+        "image/png",
+        &key(),
+    )
+    .await;
+    assert_eq!(second.status, StatusCode::ACCEPTED, "{}", second.body);
+    let sha2 = swung(&owner, &project, &asset, &sha1, 15).await["sha256"]
+        .as_str()
+        .expect("a new sha256")
+        .to_owned();
+
+    // The replace idempotency key replays its recorded 202 — it never enqueues a second
+    // reverify.
+    let again_key = key();
+    let asked = replace(
+        &owner,
+        &project,
+        &asset,
+        PNG,
+        "dot.png",
+        "image/png",
+        &again_key,
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::ACCEPTED, "{}", asked.body);
+    let replay = replace(
+        &owner,
+        &project,
+        &asset,
+        PNG,
+        "dot.png",
+        "image/png",
+        &again_key,
+    )
+    .await;
+    assert_eq!(replay.status, StatusCode::ACCEPTED, "{}", replay.body);
+    assert!(replay.replayed(), "expected an idempotent replay");
+    // Bytes already on record land the same content key: the current version swings back to
+    // version 1 and `asset_versions` records nothing new.
+    let swung_back = swung(&owner, &project, &asset, &sha2, 15).await;
+    assert_eq!(swung_back["sha256"], sha1, "{swung_back}");
+    let versions = versions_of(&owner, &project, &asset).await;
+    assert_eq!(versions.len(), 2, "{versions:?}");
+
+    // A refused replacement leaves the current version serving: not-an-image is rejected by
+    // the worker, and the asset answers exactly as before.
+    let refused = replace(
+        &owner,
+        &project,
+        &asset,
+        b"definitely not an image",
+        "bad.png",
+        "image/png",
+        &key(),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::ACCEPTED, "{}", refused.body);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let after = call(
+        &owner,
+        Method::GET,
+        &format!("{}/{asset}", assets(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(after.body["data"]["state"], "usable", "{}", after.body);
+    assert_eq!(after.body["data"]["sha256"], sha1, "{}", after.body);
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_replaced_asset_a_release_names_keeps_every_version_serving() {
+    let _server = common::Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let editor = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    join(&owner, &editor, &project, "editor").await;
+    covers(&owner, &project).await;
+
+    // Release 1 publishes the asset at version 1.
+    let (status, body) = upload(
+        &editor,
+        &project,
+        PNG,
+        "dot.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    let first = settled(&owner, &project, &asset, 15).await;
+    let sha1 = first["sha256"].as_str().expect("a sha256").to_owned();
+    let v1_bytes = media_bytes(&media(&project, &asset)).await;
+    let entry = cover(&editor, &project, "Released cover", &asset).await;
+    let (path, hash) = approved(&owner, &editor, &project, &entry).await;
+    let published = publish(&owner, &path, &hash, 0).await;
+    assert_eq!(published.status, StatusCode::CREATED, "{}", published.body);
+
+    // The asset is replaced afterwards: the current URL moves on, but a publication pins the
+    // asset — and so every version's objects — forever (D-098, D-136).
+    let asked = replace(
+        &owner,
+        &project,
+        &asset,
+        WIDE_PNG,
+        "wide.png",
+        "image/png",
+        &key(),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::ACCEPTED, "{}", asked.body);
+    let second = swung(&owner, &project, &asset, &sha1, 15).await;
+    let sha2 = second["sha256"].as_str().expect("a new sha256").to_owned();
+
+    // What the release named still serves, byte for byte, at its pinned address.
+    assert_eq!(
+        media_bytes(&format!("{}/{sha1}", media(&project, &asset))).await,
+        v1_bytes,
+        "the version release 1 saw is still there and still served"
+    );
+    assert_eq!(
+        media_status(&format!("{}/{sha2}", media(&project, &asset))).await,
+        StatusCode::OK
+    );
+
+    // And the delete request's keep-rule never let go: a publication still naming the asset
+    // refuses the delete outright, so neither version's objects can be collected.
+    let refused = delete_asset(&owner, &project, &asset, &key()).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(
+        refused.body["error"]["details"]["reason"], "still_referenced",
+        "{}",
+        refused.body
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_deleted_asset_collects_every_version_and_rendition() {
+    let _server = common::Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+
+    // Version 1 wide (with w320), replaced by the 1x1: two versions, three objects.
+    let (status, body) = upload(
+        &owner,
+        &project,
+        WIDE_PNG,
+        "wide.png",
+        "image/png",
+        &Uuid::now_v7().to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let asset = body["data"]["id"].as_str().expect("id").to_owned();
+    let first = settled(&owner, &project, &asset, 15).await;
+    let sha1 = first["sha256"].as_str().expect("a sha256").to_owned();
+    let asked = replace(
+        &owner,
+        &project,
+        &asset,
+        PNG,
+        "dot.png",
+        "image/png",
+        &key(),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::ACCEPTED, "{}", asked.body);
+    let second = swung(&owner, &project, &asset, &sha1, 15).await;
+    let sha2 = second["sha256"].as_str().expect("a new sha256").to_owned();
+
+    // The environment's id, for the literal object keys the worker wrote.
+    let database = common::owner_database().await;
+    let environment: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM environments WHERE project_id = $1::uuid AND slug = 'production'",
+    )
+    .bind(&project)
+    .fetch_one(&database)
+    .await
+    .expect("the production environment");
+
+    // Both versions' objects — originals and the rendition — exist before the delete.
+    let keys = [
+        format!("public/{project}/{environment}/{asset}/{sha1}"),
+        format!("public/{project}/{environment}/{asset}/{sha1}/w320"),
+        format!("public/{project}/{environment}/{asset}/{sha2}"),
+    ];
+    {
+        use object_store::ObjectStoreExt;
+        let store = store();
+        for key in &keys {
+            store
+                .head(&object_store::path::Path::from(key.as_str()))
+                .await
+                .unwrap_or_else(|_| panic!("{key} should exist before the delete"));
+        }
+    }
+
+    let deleted = delete_asset(&owner, &project, &asset, &key()).await;
+    assert_eq!(deleted.status, StatusCode::ACCEPTED, "{}", deleted.body);
+    let tombstone = reached(&owner, &project, &asset, "deleted", 15).await;
+    assert_eq!(tombstone["state"], "deleted", "{tombstone}");
+
+    // The whole prefix went — not only the recorded current key: every version, every
+    // rendition, is collected by the listing delete.
+    let store = store();
+    for key in &keys {
+        object_gone(&store, key, 15).await;
+    }
+    for path in [
+        media(&project, &asset),
+        format!("{}/{sha1}", media(&project, &asset)),
+        format!("{}/{sha2}", media(&project, &asset)),
+    ] {
+        assert_eq!(media_status(&path).await, StatusCode::NOT_FOUND, "{path}");
+    }
+    database.close().await;
 }

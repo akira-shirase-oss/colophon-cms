@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO asset_jobs (project_id, environment_id, id, asset_id, kind,\n                                 idempotency_key, deadline_at,\n                                 quarantine_key, declared_type, size_bytes)\n         VALUES ($1, $2, $3, $4, 'reverify', $5, $6, $7, $8, $9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5985e144d4befc7fc93bce97146db92253eca6a49404cb9fbacb6eff6ef1d7c0"
+}
