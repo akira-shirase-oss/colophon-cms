@@ -12,8 +12,8 @@
 mod common;
 
 use common::{
-    ORIGIN, PORT, Server, app, article, call, cookie, cookies_from, create_article, entries, join,
-    key, project, release, sign_in, unique_slug,
+    ORIGIN, PORT, Receiver, Server, app, article, call, cookie, cookies_from, create_article,
+    entries, join, key, project, release, sign_in, unique_slug,
 };
 use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
@@ -933,4 +933,123 @@ async fn magic_links_sign_in_existing_visitors_and_create_new_ones() {
             "{expected} missing from the audit log: {actions:?}"
         );
     }
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn resend_delivers_the_link_and_a_failed_send_still_answers_sent() {
+    // A receiver stands in for Resend: the endpoint override points the build's adapter at
+    // it, so the whole provider call — method, bearer, payload — is what gets asserted.
+    let mail = Receiver::start(&[200]).await;
+    let _server = Server::start_on(
+        PORT + 51,
+        &[
+            ("COLOPHON_MAIL_PROVIDER", "resend"),
+            ("COLOPHON_MAIL_FROM", "The Draft <hello@thedraft.example>"),
+            ("COLOPHON_RESEND_API_KEY", "re_test_bearer"),
+            ("COLOPHON_RESEND_ENDPOINT", mail.url.as_str()),
+        ],
+    )
+    .await;
+    let base = format!("http://127.0.0.1:{}", PORT + 51);
+
+    // The project lives on the main server; the audience request goes to the mailed one —
+    // they share the database, so the link the provider "delivers" is real.
+    let _main = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/audience/roles"),
+        Some(&json!({"name": "member", "self_assign": true})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+
+    let email = format!("mailed-{}@example.test", unique_slug());
+    let asked = audience_post_at(
+        &base,
+        &project,
+        "magic-link",
+        &json!({"email": email, "return_to": "http://site.test/magic"}),
+    )
+    .await;
+    assert_eq!(asked.status(), StatusCode::ACCEPTED);
+    let body: Value = asked.json().await.expect("json");
+    assert_eq!(body["data"]["sent"].as_bool(), Some(true));
+    assert!(
+        body["data"]["dev_link"].is_null(),
+        "a configured provider means no link in the answer: {body}"
+    );
+
+    // Exactly one provider call: POST with the bearer, from the configured sender, to the
+    // visitor, carrying the sign-in link in both bodies.
+    let seen = mail.seen();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    let sent = &seen[0];
+    assert_eq!(sent.authorization, "Bearer re_test_bearer");
+    assert_eq!(
+        sent.body["from"].as_str(),
+        Some("The Draft <hello@thedraft.example>")
+    );
+    assert_eq!(sent.body["to"].as_array().expect("to").len(), 1);
+    assert_eq!(sent.body["to"][0].as_str(), Some(email.as_str()));
+    assert_eq!(sent.body["subject"].as_str(), Some("Your sign-in link"));
+    let text = sent.body["text"].as_str().expect("a text body");
+    let html = sent.body["html"].as_str().expect("an html body");
+    for body in [text, html] {
+        assert!(
+            body.contains("site.test/magic?token="),
+            "the link in the body: {body}"
+        );
+        assert!(
+            !body.contains("re_test_bearer"),
+            "the key stays out: {body}"
+        );
+    }
+    let token = text
+        .rsplit("token=")
+        .next()
+        .expect("a token")
+        .split_whitespace()
+        .next()
+        .expect("the token's end")
+        .to_owned();
+
+    // The link the provider "sent" is the real one: it signs in once, then dies.
+    let consumed =
+        audience_post_at(&base, &project, &format!("magic-link/{token}"), &json!({})).await;
+    assert_eq!(consumed.status(), StatusCode::OK);
+    let body: Value = consumed.json().await.expect("json");
+    assert_eq!(body["data"]["user"]["email"].as_str(), Some(email.as_str()));
+
+    // A provider that refuses (500) cannot undo the recorded link: the request still
+    // answers "sent", and asking again delivers a fresh link — the failed send only ever
+    // reaches the server's log.
+    let down = Receiver::start(&[500]).await;
+    let _server = Server::start_on(
+        PORT + 52,
+        &[
+            ("COLOPHON_MAIL_PROVIDER", "resend"),
+            ("COLOPHON_MAIL_FROM", "The Draft <hello@thedraft.example>"),
+            ("COLOPHON_RESEND_API_KEY", "re_test_bearer"),
+            ("COLOPHON_RESEND_ENDPOINT", down.url.as_str()),
+        ],
+    )
+    .await;
+    let base = format!("http://127.0.0.1:{}", PORT + 52);
+    let again = audience_post_at(
+        &base,
+        &project,
+        "magic-link",
+        &json!({"email": email, "return_to": "http://site.test/magic"}),
+    )
+    .await;
+    assert_eq!(again.status(), StatusCode::ACCEPTED);
+    let body: Value = again.json().await.expect("json");
+    assert_eq!(body["data"]["sent"].as_bool(), Some(true));
+    assert_eq!(down.seen().len(), 1, "the refusal was attempted once");
 }

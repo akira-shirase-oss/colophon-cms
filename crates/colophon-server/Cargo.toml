@@ -23,6 +23,9 @@ colophon-version.workspace = true
 colophon-worker.workspace = true
 object_store.workspace = true
 redis.workspace = true
+# The Resend mail adapter's one outbound call (D-145); tests keep the cookies feature below.
+reqwest.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true

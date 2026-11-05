@@ -46,6 +46,10 @@ pub struct Services {
     /// Whether a magic-link request also hands the link back in `dev_link` instead of emailing
     /// it: `COLOPHON_DEV_MAIL=1`, a development affordance (D-140).
     pub dev_mail: bool,
+    /// The transactional mailer sign-in links go out through (D-145); `None` without
+    /// `COLOPHON_MAIL_PROVIDER`, and a magic-link request then records the link it cannot
+    /// deliver.
+    pub mail: Option<Arc<dyn crate::mail::Mail>>,
     /// The public delivery cache (D-048); [`DeliveryCache::disabled`] without `COLOPHON_CACHE_URL`.
     pub cache: DeliveryCache,
     /// Parsed content types by their definition's hash (D-078).

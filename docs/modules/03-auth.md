@@ -347,9 +347,13 @@ Built in step 1.7 (D-042), for people:
   site's own absolute http(s) URL the link lands on. `POST …/magic-link/{token}` spends it once: an existing,
   enabled account signs in; an unknown email is created in the project's open `self_assign` role with a
   password nobody knows (a later password sign-in must set one deliberately); used, expired, superseded and
-  unknown tokens all answer one `403 magic_link_invalid`. The server has no mail sender yet — the
-  loopback-only `COLOPHON_DEV_MAIL` hands the link back as `dev_link`, refused off loopback like the
-  development client's secret, which is how the demo sites and the testbed run the whole flow.
+  unknown tokens all answer one `403 magic_link_invalid`. Delivery is a provider seam (D-145):
+  `COLOPHON_MAIL_PROVIDER=resend` with `COLOPHON_MAIL_FROM` and `COLOPHON_RESEND_API_KEY` sends the link
+  through `colophon-server::mail::Resend` (one `POST`, bearer key, ten-second deadline, failure logged but
+  never changing the 202), and `COLOPHON_RESEND_ENDPOINT` moves the provider's address. With no provider the
+  link is recorded but nothing carries it; the loopback-only `COLOPHON_DEV_MAIL` hands it back as `dev_link`,
+  refused off loopback like the development client's secret, which is how the demo sites and the testbed run
+  the whole flow.
 - What the session buys is on the delivery side: [delivery](06-delivery.md). Billing, subscriptions and
   entitlements are explicitly out of scope — a role is a label, not a plan.
 

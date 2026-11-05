@@ -47,6 +47,7 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
             trusted_origins: vec!["http://localhost:58000".to_owned()],
             allow_private_destinations: true,
             dev_mail: false,
+            mail: None,
             cache: colophon_api::DeliveryCache::disabled(),
             content_types: colophon_api::ContentTypeCache::new(),
             assets: None,

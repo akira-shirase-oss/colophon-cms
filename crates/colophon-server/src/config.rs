@@ -207,6 +207,31 @@ pub struct Config {
     /// Whether a magic-link request hands the link back in `dev_link` instead of emailing it:
     /// `COLOPHON_DEV_MAIL=1` (D-140). A development affordance, off by default.
     pub dev_mail: bool,
+    /// Transactional mail for sign-in links (D-145): `COLOPHON_MAIL_PROVIDER=resend` with
+    /// `COLOPHON_MAIL_FROM` and `COLOPHON_RESEND_API_KEY`; `COLOPHON_RESEND_ENDPOINT` overrides
+    /// the API address (a deployment's own relay, or a test receiver). `None` without a
+    /// provider — links are then recorded but not delivered, as before.
+    pub mail: Option<MailSettings>,
+}
+
+/// Transactional mail configuration (D-145); `provider` is the seam further providers hang off.
+#[derive(Debug, Clone)]
+pub struct MailSettings {
+    /// The provider this delivers through.
+    pub provider: MailProvider,
+    /// The `From` header, as the provider wants it (`The Draft <hello@thedraft.example>`).
+    pub from: String,
+    /// The provider's API key.
+    pub api_key: Secret,
+    /// The endpoint mails POST to.
+    pub endpoint: String,
+}
+
+/// A mail provider this build knows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MailProvider {
+    /// Resend: one `POST /emails` with a bearer key.
+    Resend,
 }
 
 /// Whether `text` can name a worker's location: what destinations.location accepts.
@@ -372,6 +397,40 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         }
 
         (public_origin, extra_trusted_origins, oidc)
+    }
+
+    /// Transactional mail (D-145): `COLOPHON_MAIL_PROVIDER=resend` with its key and a `From`,
+    /// or nothing at all. `COLOPHON_RESEND_ENDPOINT` moves the API address — a deployment's
+    /// own relay, or a test's receiver.
+    fn mail(&mut self) -> Option<MailSettings> {
+        let provider = self.raw("COLOPHON_MAIL_PROVIDER");
+        let from = self.raw("COLOPHON_MAIL_FROM");
+        let api_key = self.secret("COLOPHON_RESEND_API_KEY", false);
+        let endpoint = self.raw("COLOPHON_RESEND_ENDPOINT");
+        match (provider.as_deref(), from, api_key, endpoint) {
+            (None, None, None, None) => None,
+            (Some("resend"), Some(from), Some(api_key), endpoint) => Some(MailSettings {
+                provider: MailProvider::Resend,
+                from,
+                api_key,
+                endpoint: endpoint.unwrap_or_else(|| "https://api.resend.com/emails".to_owned()),
+            }),
+            (Some(other), _, _, _) => {
+                self.problems.push(format!(
+                    "COLOPHON_MAIL_PROVIDER: {other:?} is not one this build knows ('resend')"
+                ));
+                None
+            }
+            _ => {
+                self.problems.push(
+                    "COLOPHON_MAIL_PROVIDER, COLOPHON_MAIL_FROM and COLOPHON_RESEND_API_KEY go \
+                     together: set all three or none (COLOPHON_RESEND_ENDPOINT only moves \
+                     the provider's address)"
+                        .to_owned(),
+                );
+                None
+            }
+        }
     }
 
     /// The upload store's settings; all five `COLOPHON_S3_*` values or none, and plain HTTP only
@@ -606,6 +665,7 @@ impl Config {
                     .to_owned(),
             );
         }
+        let mail = env.mail();
         if let Some(database_url) = database_url
             && env.problems.is_empty()
         {
@@ -643,6 +703,7 @@ impl Config {
                 events,
                 mcp,
                 dev_mail,
+                mail,
             })
         } else {
             Err(ConfigError {
@@ -904,5 +965,67 @@ mod tests {
                 .to_string()
                 .contains("COLOPHON_DRAIN_DELAY_MS must be shorter")
         );
+    }
+
+    #[test]
+    fn mail_needs_the_whole_resend_setup_or_nothing() {
+        // Nothing set: no mail, like before.
+        let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
+        assert!(config.mail.is_none());
+
+        // The complete setup, endpoint defaulted.
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_MAIL_PROVIDER", "resend"),
+            ("COLOPHON_MAIL_FROM", "The Draft <hello@thedraft.example>"),
+            ("COLOPHON_RESEND_API_KEY", "re_live_secret"),
+        ])
+        .expect("a full resend setup");
+        let mail = config.mail.as_ref().expect("mail configured");
+        assert_eq!(mail.provider, MailProvider::Resend);
+        assert_eq!(mail.from, "The Draft <hello@thedraft.example>");
+        assert_eq!(mail.endpoint, "https://api.resend.com/emails");
+        // The key is a secret: it never shows in a Debug dump.
+        assert!(!format!("{mail:?}").contains("re_live_secret"));
+        assert!(!format!("{config:?}").contains("re_live_secret"));
+
+        // The endpoint override moves the provider's address.
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_MAIL_PROVIDER", "resend"),
+            ("COLOPHON_MAIL_FROM", "hello@thedraft.example"),
+            ("COLOPHON_RESEND_API_KEY", "re_test"),
+            ("COLOPHON_RESEND_ENDPOINT", "http://127.0.0.1:9999/hook"),
+        ])
+        .expect("an endpoint override");
+        assert_eq!(
+            config.mail.expect("mail").endpoint,
+            "http://127.0.0.1:9999/hook"
+        );
+
+        // Every partial combination refuses, and so does a provider this build
+        // doesn't know.
+        for extra in [
+            vec![("COLOPHON_MAIL_PROVIDER", "resend")],
+            vec![
+                ("COLOPHON_MAIL_PROVIDER", "resend"),
+                ("COLOPHON_MAIL_FROM", "hello@thedraft.example"),
+            ],
+            vec![
+                ("COLOPHON_MAIL_FROM", "hello@thedraft.example"),
+                ("COLOPHON_RESEND_API_KEY", "re_test"),
+            ],
+            vec![("COLOPHON_RESEND_ENDPOINT", "http://127.0.0.1:9/hook")],
+            vec![("COLOPHON_MAIL_PROVIDER", "smtp")],
+        ] {
+            let mut pairs = vec![("COLOPHON_DATABASE_URL", DB)];
+            pairs.extend(extra.iter().copied());
+            let error = load(&pairs).expect_err(&format!("{extra:?}"));
+            assert!(
+                error.to_string().contains("COLOPHON_MAIL_")
+                    || error.to_string().contains("COLOPHON_RESEND_"),
+                "{extra:?}: {error}"
+            );
+        }
     }
 }
