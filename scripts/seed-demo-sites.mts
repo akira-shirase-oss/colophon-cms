@@ -1112,7 +1112,10 @@ const PHOTO_CONTENT: Array<[string, string, string, string, string, string]> = [
 async function main(): Promise<void> {
 	await signIn();
 	const slug = `demo-sites-${Date.now().toString(36)}`;
-	const project = (await api<{ id: string }>('POST', '/api/v1/projects', { slug, name: 'Demo sites' })).id;
+	const project = (await api<{ id: string }>('POST', '/api/v1/projects', {
+		slug,
+		name: 'Demo sites: The Draft, Fieldnotes Docs, Butter & Thyme, The Meridian Post, Wren Hollis'
+	})).id;
 	const base = `/api/v1/projects/${project}/environments/production`;
 	console.log(`project ${project} (${slug})`);
 
