@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM site_sessions WHERE project_id = $1 AND id IN (\n             SELECT id FROM site_sessions\n             WHERE project_id = $1 AND expires_at < now() - interval '90 days'\n             LIMIT 100)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "abd99eb527908ef70c3034e9bde4653bb4f0d10bc89b16bfbfe06ab7a5a8ded0"
+}

@@ -2,7 +2,8 @@
 # Builds and serves the five Astro demo sites (apps/sites/README.md; D-133), each on its own
 # port bound to localhost:
 #
-#   blog      http://127.0.0.1:58110   (collection posts)
+#   blog      http://127.0.0.1:58110   (collection posts; node standalone — its /members
+#                                       pages and audience sign-in render per request, D-137)
 #   docs      http://127.0.0.1:58111   (collection guides)
 #   recipes   http://127.0.0.1:58112   (collection recipes)
 #   news      http://127.0.0.1:58113   (collection stories)
@@ -44,8 +45,14 @@ build_one() {
 serve_one() {
   local site="$1" port
   port="$(port_of "$site")"
-  (cd "apps/sites/$site" && exec npx astro preview --port "$port" --host 127.0.0.1) \
-    >"$STATE/$site.log" 2>&1 &
+  if [[ "$site" == "blog" ]]; then
+    # The node adapter's standalone entry: static assets and the SSR members routes.
+    (cd "apps/sites/$site" && exec env HOST=127.0.0.1 PORT="$port" node ./dist/server/entry.mjs) \
+      >"$STATE/$site.log" 2>&1 &
+  else
+    (cd "apps/sites/$site" && exec npx astro preview --port "$port" --host 127.0.0.1) \
+      >"$STATE/$site.log" 2>&1 &
+  fi
   echo "$!" >"$STATE/$site.pid"
 }
 
@@ -101,6 +108,9 @@ case "$command" in
       port="$(port_of "$command")"
       echo "  $command → http://127.0.0.1:$port/  (Ctrl-C stops it)"
       cd "apps/sites/$command"
+      if [[ "$command" == "blog" ]]; then
+        exec env HOST=127.0.0.1 PORT="$port" node ./dist/server/entry.mjs
+      fi
       exec npx astro preview --port "$port" --host 127.0.0.1
     else
       echo "usage: $0 [build|serve|stop|all|$(site_names | tr '\n' '|')]" >&2

@@ -20,6 +20,7 @@ measurements. A milestone is done when its **proof gate** passes with stored evi
 | V | Versions and distribution | One version across server, CLI, SDK and MCP; the CLI installs from npm, Cargo, Homebrew and a script on a clean machine (D-062) | 1–2 weeks |
 | P5 | Safe automation | Zero unauthorized actions in the eval set; interrupted bulk job resumes (X12) | 3–4 weeks |
 | P6 | Operate it | F09–F14, L05–L13, 24-hour soak, restore drill; **v0.1 release** | 3–4 weeks |
+| P7 | The audience | Site visitors sign up, sign in and read gated content — enforced by Postgres RLS, proven end to end on a real site | 2–3 weeks |
 
 Total: about **10–13 months** to v0.1 at the pace these estimates assumed, with the first public demo at the end of P3.
 
@@ -566,6 +567,41 @@ L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.js
 
 **Proof gate:** F09–F14, L05–L13, the 24-hour soak, a restore drill on clean infrastructure, the usability gate, one
 independent install. **v0.1 release.**
+
+---
+
+## P7: The audience
+
+**Goal:** a project publishes for named visitors, not only the anonymous web — the membership half of "a site
+with a members area", with billing and entitlements deliberately left to a later milestone (D-137).
+
+- `auth` ([module 03](modules/03-auth.md), "The audience"): project-scoped **site users** — email+password
+  accounts at `POST /audience/v1/{project}/signup|signin` (Argon2id hashes only), opaque sessions (`signout`,
+  `me`; bearer or `colophon_audience` cookie, CSRF-echoed on its one write) with expiry, idle death, revocation,
+  a 16-session bound and an 8-miss/15-minute lock, and a `MAX_SITE_USERS` cap, all inside migration 0052's
+  `site_users`/`site_sessions`. Public signup takes a `self_assign` **audience role** (`site_roles`) — a label,
+  never a plan. Staff manage roles, users and their sessions under `audience.manage`.
+- `delivery` ([module 06](modules/06-delivery.md), "Gated content"): every published projection carries
+  `visibility` — `public`, `authenticated` or `role:<name>` — set on editorial writes by `?visibility=` and
+  pinned with the revision. `colophon_delivery`'s RLS reads `app.audience_role`: anonymous sees public only, a
+  member sees public + authenticated + its role's rows, and a gated row it can't read is the same 404 as an
+  unpublished one. Member reads resolve before the generation-keyed cache and bypass it (`private, no-cache`,
+  `Colophon-Cache: bypass`).
+- `verification`: five Postgres-level RLS/lifecycle stack tests (`colophon-db/tests/audience.rs`), three
+  black-box HTTP tests (`colophon-server/tests/audience.rs`), the testbed's Audience page with
+  `tests/audience.spec.ts` (roles, a closed-role user, gated delivery counted anonymous-vs-member, session
+  revocation, a disabled sign-in), and `perf/k6/audience.js` wired into `scripts/load.sh` and `scripts/check.sh`
+  (a 3,000-iteration smoke held 0 failures, 3,080 requests, signin p99 1.74 s under Argon2 cost).
+- `sites`: The Draft's members area (`apps/sites/blog`) is the end-to-end demo — SSR signin/members pages under
+  the node adapter, the session in a first-party `draft_session` cookie sent to the CMS as a bearer credential,
+  gated reads answered `private` — seeded with `member`/`vip` roles, gated posts and a demo member by
+  `scripts/seed-demo-sites.sh`. The other four sites stay fully static and can only ever read public rows.
+
+**Proof gate:** anonymous delivery provably cannot see a gated row (RLS stack test, not an application check),
+a member provably sees its role's rows and no other's, gated content provably never enters the anonymous
+generation-keyed cache, and a visitor can sign up on The Draft and read a members-only post. Billing,
+subscriptions and entitlements are explicitly out of scope — `role:<name>` names who may read, not what they
+paid for.
 
 ---
 

@@ -1401,6 +1401,8 @@ impl Worker {
             references: content.references(),
             assets: content.assets(),
             unique: &unique_fields,
+            // A bulk write edits content, never the entry's gate: keep what it has (D-137).
+            visibility: None,
         };
         match colophon_db::entries::save_covered(
             tx,

@@ -66,6 +66,7 @@ async fn ready(db: &TestDb) -> Ready {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
         None,
     )
@@ -298,6 +299,7 @@ async fn an_edit_or_an_expired_approval_blocks_it_and_nothing_is_published() {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
     )
     .await

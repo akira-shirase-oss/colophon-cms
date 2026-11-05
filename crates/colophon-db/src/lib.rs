@@ -8,6 +8,7 @@
 pub mod access;
 pub mod administrators;
 pub mod assets;
+pub mod audience;
 pub mod audit;
 pub mod budgets;
 pub mod bulk;

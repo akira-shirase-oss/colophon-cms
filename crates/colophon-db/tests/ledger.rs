@@ -94,6 +94,7 @@ async fn entry(tx: &mut ProjectTransaction) -> (Uuid, Uuid) {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
         None,
     )

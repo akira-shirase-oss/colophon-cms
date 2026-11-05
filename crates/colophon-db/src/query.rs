@@ -196,6 +196,7 @@ pub async fn resolved_drafts(
     for chunk in ids.chunks(RESOLVE_BATCH) {
         let rows = sqlx::query(sqlx::AssertSqlSafe(
             "SELECT e.id, e.collection, e.created_at, e.created_by, e.updated_at, e.locale,
+                    e.draft_visibility,
                     r.id AS revision_id, r.base_revision_id, r.author_id,
                     r.created_at AS revision_created_at, r.content_hash, r.title, r.content
              FROM entries e
@@ -239,7 +240,7 @@ pub async fn resolved_publications(
     for chunk in ids.chunks(RESOLVE_BATCH) {
         let rows = sqlx::query(sqlx::AssertSqlSafe(
             "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
-                    p.content_hash, p.valid_from
+                    p.content_hash, p.valid_from, p.visibility
              FROM publications p
              WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND p.environment_id = $1 AND p.entry_id = ANY($2)
@@ -343,6 +344,7 @@ fn statement(
     }
     text.push_str(
         "SELECT e.id, e.collection, e.created_at, e.created_by, e.updated_at, e.locale,
+         e.draft_visibility,
          r.id AS revision_id, r.base_revision_id, r.author_id,
          r.created_at AS revision_created_at, r.content_hash, r.title, r.content,
          live.revision_id AS published_revision_id, live.valid_from AS published_valid_from
@@ -408,7 +410,7 @@ fn published_statement(
     }
     text.push_str(
         "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
-         p.content_hash, p.valid_from
+         p.content_hash, p.valid_from, p.visibility
          FROM publications p
          CROSS JOIN LATERAL (SELECT p.content::jsonb AS body) d
          WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
@@ -758,9 +760,11 @@ fn read(row: &sqlx::postgres::PgRow) -> Result<Draft, DbError> {
             created_at: row.try_get("revision_created_at").map_err(DbError::Query)?,
             content_hash: row.try_get("content_hash").map_err(DbError::Query)?,
             title: row.try_get("title").map_err(DbError::Query)?,
+            visibility: row.try_get("draft_visibility").map_err(DbError::Query)?,
         },
         content: row.try_get("content").map_err(DbError::Query)?,
         locale: row.try_get("locale").map_err(DbError::Query)?,
+        visibility: row.try_get("draft_visibility").map_err(DbError::Query)?,
     })
 }
 
@@ -791,6 +795,7 @@ fn published(row: &sqlx::postgres::PgRow) -> Result<Published, DbError> {
         content: row.try_get("content").map_err(DbError::Query)?,
         content_hash: row.try_get("content_hash").map_err(DbError::Query)?,
         valid_from: row.try_get("valid_from").map_err(DbError::Query)?,
+        visibility: row.try_get("visibility").map_err(DbError::Query)?,
     })
 }
 
@@ -1110,7 +1115,7 @@ mod tests {
         let (from, _) = stmt.text.split_once(" FROM ").expect("the projection");
         assert_eq!(
             from.trim_end(),
-            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,\n         p.content_hash, p.valid_from"
+            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,\n         p.content_hash, p.valid_from, p.visibility"
         );
         assert!(
             stmt.text.contains(

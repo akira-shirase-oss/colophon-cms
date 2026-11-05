@@ -351,6 +351,14 @@ const COLLECTIONS: Record<string, { slug: string; definition: unknown }> = {
 interface Seed {
 	collection: string;
 	content: Record<string, unknown>;
+	/** The `?visibility=` it publishes under — `public` when absent (D-137). */
+	visibility?: string;
+}
+
+/** A seed published behind a gate: `role:<name>` or `authenticated`. */
+function gate(seed: Seed, visibility: string): Seed {
+	seed.visibility = visibility;
+	return seed;
 }
 
 function post(title: string, slug: string, author: string, publishedOn: string, tags: string[], excerpt: string, ...body: Block[]): Seed {
@@ -478,6 +486,45 @@ const SEEDS: Seed[] = [
 		'"What did the page say last Tuesday?" is a support question with a one-line answer when every release is pinned.',
 		para('Add ?generation= to a delivery read and the answer is the release exactly as it was, including which entries did not exist yet.'),
 		para('The same pin is what makes a cached page safe to serve: the key names the generation, so a stale fill can never poison a newer release.')
+	),
+	/* members-only — published role:member; the blog's /members/ pages read them with a live audience session (D-137) */
+	gate(
+		post(
+			'The members’ editing notes, October',
+			'members-editing-notes-october',
+			'June Okafor',
+			'2026-10-30',
+			['members', 'craft'],
+			'What we cut this month and why: the arguments that never make it into the piece, kept for the people who asked.',
+			para('Every essay carries a shadow draft of sentences that lost. This month we keep them: the lede that explained nothing, the metaphor that explained too much.'),
+			para('Members see the cutting-room floor because the floor is where the editing actually happens.')
+		),
+		'role:member'
+	),
+	gate(
+		post(
+			'Early look: the release-pinning essay',
+			'early-look-release-pinning',
+			'Tomas Reyes',
+			'2026-11-02',
+			['members', 'engineering'],
+			'The November feature, a week early for members: how a generation number became the whole consistency story.',
+			para('A first reader’s pass, before copy-edit: the argument is here, the examples are not all checked yet.'),
+			bullets('What changed since the first draft', 'Where the analogy still creaks', 'The graph we may yet drop')
+		),
+		'role:member'
+	),
+	gate(
+		post(
+			'Signed-in extra: the house style sheet, annotated',
+			'signed-in-extra-style-sheet-annotated',
+			'Priya Nair',
+			'2026-10-31',
+			['craft'],
+			'Any signed-in member can read this one: the public style-sheet piece with the committee’s margin notes left in.',
+			para('Published to everyone who is signed in — no role required, just a session. The annotations are the arguments the final text had to settle.')
+		),
+		'authenticated'
 	),
 
 	/* Fieldnotes, guides */
@@ -1074,6 +1121,22 @@ async function main(): Promise<void> {
 	}
 	console.log(`content types: ${Object.keys(COLLECTIONS).join(', ')}`);
 
+	// Audience gates first: `role:<name>` visibility must name a real audience role (D-137).
+	// `member` is open — visitors take it at signup — and the seeded member account holds it;
+	// `vip` is closed, so the seed can show that `role:vip` entries exist even while no visitor
+	// can reach them.
+	for (const [name, selfAssign] of [['member', true], ['vip', false]] as const) {
+		await api('POST', `/api/v1/projects/${project}/audience/roles`, { name, self_assign: selfAssign });
+	}
+	console.log('audience roles: member (open), vip (closed)');
+
+	const member = await api<{ id: string }>(
+		'POST',
+		`/api/v1/projects/${project}/audience/users`,
+		{ email: 'member@draft.test', password: 'member-of-the-draft', display_name: 'Demo member', role: 'member' }
+	);
+	console.log(`audience user ${member.id} (member@draft.test)`);
+
 	// Photographs first: entries need usable asset ids, and verification is a worker's job.
 	const assets = new Map<string, string>();
 	for (const photo of PHOTOS) {
@@ -1084,9 +1147,10 @@ async function main(): Promise<void> {
 
 	const entries: string[] = [];
 	for (const seed of SEEDS) {
+		const gated = seed.visibility === undefined ? '' : `?visibility=${encodeURIComponent(seed.visibility)}`;
 		const created = await api<{ id: string }>(
 			'POST',
-			`${base}/collections/${seed.collection}/entries`,
+			`${base}/collections/${seed.collection}/entries${gated}`,
 			seed.content,
 			{ 'idempotency-key': key() }
 		);
@@ -1143,6 +1207,7 @@ async function main(): Promise<void> {
 		)}\n`
 	);
 	console.log(`wrote ${RECORD}`);
+	console.log('the draft members: member@draft.test / member-of-the-draft (role member)');
 	console.log(project);
 }
 

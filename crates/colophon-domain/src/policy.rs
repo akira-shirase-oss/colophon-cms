@@ -182,11 +182,13 @@ pub enum Action {
     TokensManage,
     /// Read the project's audit log: who changed roles, members and tokens (step R.4).
     AuditRead,
+    /// Manage a project's audience: its site users and the roles they hold (P7, D-137).
+    AudienceManage,
 }
 
 impl Action {
     /// Every action, in the order the Studio lists them.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::ContentRead,
         Self::ContentCreate,
         Self::ContentUpdate,
@@ -199,6 +201,7 @@ impl Action {
         Self::DestinationsManage,
         Self::TokensManage,
         Self::AuditRead,
+        Self::AudienceManage,
     ];
 
     /// The name stored with permissions and used in the API.
@@ -216,6 +219,7 @@ impl Action {
             Self::DestinationsManage => "destinations.manage",
             Self::TokensManage => "tokens.manage",
             Self::AuditRead => "audit.read",
+            Self::AudienceManage => "audience.manage",
         }
     }
 
@@ -461,9 +465,10 @@ impl Policy {
         &self.permissions
     }
 
-    /// The permissions of a built-in role: D-042's table, unchanged.
+    /// The permissions of a built-in role: D-042's table, plus `audit.read` (R.4) and
+    /// `audience.manage` (P7) for owners.
     ///
-    /// | | read, create, update | schema, destinations | members, roles, tokens | review, publish |
+    /// | | read, create, update | schema, destinations | members, roles, tokens, audit, audience | review, publish |
     /// |---|---|---|---|---|
     /// | owner | ✓ | ✓ | ✓ | ✓ |
     /// | developer | ✓ | ✓ | | |
@@ -471,9 +476,9 @@ impl Policy {
     /// | publisher | ✓ | | | ✓ |
     pub fn builtin(role: Role) -> Self {
         use Action::{
-            AuditRead, ContentCreate, ContentDelete, ContentPublish, ContentRead, ContentReview,
-            ContentUpdate, DestinationsManage, MembersManage, RolesManage, SchemaChange,
-            TokensManage,
+            AudienceManage, AuditRead, ContentCreate, ContentDelete, ContentPublish, ContentRead,
+            ContentReview, ContentUpdate, DestinationsManage, MembersManage, RolesManage,
+            SchemaChange, TokensManage,
         };
         let mut actions = vec![ContentRead, ContentCreate, ContentUpdate];
         if matches!(role, Role::Owner | Role::Developer) {
@@ -486,6 +491,7 @@ impl Policy {
                 RolesManage,
                 TokensManage,
                 AuditRead,
+                AudienceManage,
                 ContentDelete,
             ]);
         }
@@ -556,14 +562,16 @@ impl Policy {
     }
 }
 
-/// Actions no API token may hold (D-063): managing who has access, and reading the record of
-/// what was done. People keep them, so a leaked token can't hand itself or anyone else more
-/// power, and can't read the audit log of what it did.
-pub const TOKEN_FORBIDDEN: [Action; 4] = [
+/// Actions no API token may hold (D-063): managing who has access — members, roles, tokens
+/// and the audience — and reading the record of what was done. People keep them, so a leaked
+/// token can't hand itself or anyone else more power, and can't read the audit log of what
+/// it did.
+pub const TOKEN_FORBIDDEN: [Action; 5] = [
     Action::MembersManage,
     Action::RolesManage,
     Action::TokensManage,
     Action::AuditRead,
+    Action::AudienceManage,
 ];
 
 /// What an API token may do, as its creator chose it (step R.4, D-058; Strapi's three kinds).

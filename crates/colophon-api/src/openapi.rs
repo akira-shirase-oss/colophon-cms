@@ -24,9 +24,9 @@ use axum::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-    AppState, BuildInfo, assets, audit, auth, bulk, changesets, collaboration, components,
-    content_types, delivery, destinations, device, entries, graphql, health, mcp, members,
-    migrations, projects, receipts, rich_text, roles, schedules, setup, tokens, version,
+    AppState, BuildInfo, assets, audience, audit, auth, bulk, changesets, collaboration,
+    components, content_types, delivery, destinations, device, entries, graphql, health, mcp,
+    members, migrations, projects, receipts, rich_text, roles, schedules, setup, tokens, version,
 };
 
 /// A verb Colophon's routes use. Naming them in a small enum keeps the table total: the
@@ -190,6 +190,9 @@ enum Security {
     /// A project API token only — `{P}/mcp` (D-121). People are refused, whichever credential
     /// they carry: agents authenticate as agents, never as people (AU2).
     ApiToken,
+    /// A site user's session — the `colophon_audience` cookie or `Authorization: Bearer`
+    /// (D-137). A visitor credential, never a staff one.
+    Audience,
 }
 
 /// What the document says about one operation.
@@ -283,6 +286,27 @@ const IDEMPOTENCY_MAYBE: Param = header_maybe(
     "idempotency-key",
     Kind::Str,
     "16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment; required unless `?dry_run=true`, which plans without one",
+);
+
+/// The optional site-session credential a delivery read upgrades with (D-137).
+const AUDIENCE_BEARER: Param = header_maybe(
+    "authorization",
+    Kind::Str,
+    "`Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous",
+);
+
+/// `X-CSRF-Token` on a site session's cookie-carried writes (signout); bearer needs none.
+const AUDIENCE_CSRF: Param = header_maybe(
+    "x-csrf-token",
+    Kind::Str,
+    "the session's CSRF token — required when it arrives as the `colophon_audience` cookie, unneeded on `Authorization: Bearer`",
+);
+
+/// `?visibility=` on an entry write (D-137): the gate the entry's next publication carries.
+const VISIBILITY: Param = query(
+    "visibility",
+    Kind::Str,
+    "`public`, `authenticated` or `role:<name>` — who may read it once published; absent keeps the draft's gate",
 );
 
 const fn refusal(status: u16, codes: &'static str, note: &'static str) -> Refusal {
@@ -1979,11 +2003,14 @@ pub(crate) static TABLE: &[Route] = &[
                     summary: "Create a draft, validated against the collection's type",
                     tag: "entries",
                     security: Security::Any,
-                    query: &[query(
-                        "locale",
-                        Kind::Str,
-                        "the entry's locale; absent or empty leaves it unlocalized",
-                    )],
+                    query: &[
+                        query(
+                            "locale",
+                            Kind::Str,
+                            "the entry's locale; absent or empty leaves it unlocalized",
+                        ),
+                        VISIBILITY,
+                    ],
                     headers: &[IDEMPOTENCY],
                     body: Some(json("EntryDocument")),
                     ok: etagd(created("DraftView")),
@@ -2187,11 +2214,14 @@ pub(crate) static TABLE: &[Route] = &[
                     summary: "Save a draft on its expected revision",
                     tag: "entries",
                     security: Security::Any,
-                    query: &[query(
-                        "locale",
-                        Kind::Str,
-                        "a tag sets the locale; an empty value clears it; absent leaves it alone",
-                    )],
+                    query: &[
+                        query(
+                            "locale",
+                            Kind::Str,
+                            "a tag sets the locale; an empty value clears it; absent leaves it alone",
+                        ),
+                        VISIBILITY,
+                    ],
                     headers: &[IF_MATCH, IDEMPOTENCY],
                     body: Some(json("EntryDocument")),
                     ok: etagd(data("DraftView")),
@@ -2261,12 +2291,15 @@ pub(crate) static TABLE: &[Route] = &[
                 summary: "Create a locale sibling holding a copy of this draft",
                 tag: "entries",
                 security: Security::Any,
-                query: &[Param {
-                    name: "locale",
-                    kind: Kind::Str,
-                    required: true,
-                    note: "the sibling's locale tag, such as `fr`",
-                }],
+                query: &[
+                    Param {
+                        name: "locale",
+                        kind: Kind::Str,
+                        required: true,
+                        note: "the sibling's locale tag, such as `fr`",
+                    },
+                    VISIBILITY,
+                ],
                 headers: &[IDEMPOTENCY],
                 ok: etagd(created("DraftView")),
                 extra: &[
@@ -3183,6 +3216,302 @@ pub(crate) static TABLE: &[Route] = &[
         )],
     ),
     // Public delivery and media: no credential, the published projection only.
+    // The audience (D-137): a project's site visitors — public signup and sessions on
+    // `/audience/v1`, staff role and user management under `audience.manage` on `{P}`.
+    route(
+        ("", "/audience/v1/{project}/signup"),
+        &[op(
+            Verb::Post,
+            |f| on(f, audience::sign_up),
+            OpDoc {
+                id: "audienceSignUp",
+                summary: "Make a site-user account and start its session",
+                tag: "audience",
+                security: Security::Public,
+                body: Some(json("AudienceSignUp")),
+                ok: Res {
+                    status: 201,
+                    shape: Shape::Data("AudienceSession"),
+                    headers: &["Set-Cookie"],
+                    media: "",
+                    note: "the session's `Set-Cookie` pair: `colophon_audience` and its CSRF sibling",
+                },
+                extra: &[
+                    refusal(409, "email_taken", "an account with this email exists"),
+                    refusal(
+                        409,
+                        "audience_full",
+                        "the project is at its site-user bound",
+                    ),
+                    refusal(
+                        422,
+                        "invalid_email, weak_password, invalid_role, unavailable_role",
+                        "the fields refused — a role not open to signup among them",
+                    ),
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/audience/v1/{project}/signin"),
+        &[op(
+            Verb::Post,
+            |f| on(f, audience::sign_in),
+            OpDoc {
+                id: "audienceSignIn",
+                summary: "Sign a site user in with email and password",
+                tag: "audience",
+                security: Security::Public,
+                body: Some(json("AudienceSignIn")),
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Data("AudienceSession"),
+                    headers: &["Set-Cookie"],
+                    media: "",
+                    note: "the session's `Set-Cookie` pair",
+                },
+                extra: &[
+                    refusal(
+                        400,
+                        "sign_in_failed",
+                        "a wrong password and a missing account alike",
+                    ),
+                    refusal(409, "too_many_attempts", "the account is paused"),
+                    refusal(403, "account_disabled", "staff disabled the account"),
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/audience/v1/{project}/signout"),
+        &[op(
+            Verb::Post,
+            |f| on(f, audience::sign_out),
+            OpDoc {
+                id: "audienceSignOut",
+                summary: "End the site session and clear its cookies",
+                tag: "audience",
+                security: Security::Public,
+                headers: &[AUDIENCE_CSRF],
+                ok: Res {
+                    status: 204,
+                    shape: Shape::Empty,
+                    headers: &["Set-Cookie"],
+                    media: "",
+                    note: "the cleared `Set-Cookie` pair; signing out twice answers the same",
+                },
+                extra: &[refusal(
+                    403,
+                    "csrf_token_invalid",
+                    "a cookie-carried session asked for the CSRF header",
+                )],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/audience/v1/{project}/me"),
+        &[op(
+            Verb::Get,
+            |f| on(f, audience::me),
+            OpDoc {
+                id: "audienceMe",
+                summary: "The site user the session belongs to",
+                tag: "audience",
+                security: Security::Audience,
+                ok: data("SiteUser"),
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        (PR, "/audience/roles"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, audience::list_roles),
+                OpDoc {
+                    id: "audienceRoles",
+                    summary: "The project's audience roles",
+                    tag: "audience",
+                    ok: ok(200, Shape::List("AudienceRole"), "by name"),
+                    extra: &[NOT_FOUND, FORBIDDEN],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Post,
+                |f| on(f, audience::create_role),
+                OpDoc {
+                    id: "audienceRoleCreate",
+                    summary: "Make an audience role",
+                    tag: "audience",
+                    body: Some(json("NewAudienceRole")),
+                    ok: created("AudienceRole"),
+                    extra: &[
+                        NOT_FOUND,
+                        FORBIDDEN,
+                        refusal(409, "role_exists", "the project has this role already"),
+                        refusal(422, "invalid_role", "the name refused"),
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (PR, "/audience/roles/{name}"),
+        &[
+            op(
+                Verb::Patch,
+                |f| on(f, audience::update_role),
+                OpDoc {
+                    id: "audienceRoleUpdate",
+                    summary: "Open the role to signup, or close it",
+                    tag: "audience",
+                    body: Some(json("AudienceRoleChange")),
+                    ok: data("AudienceRole"),
+                    extra: &[NOT_FOUND, FORBIDDEN],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Delete,
+                |f| on(f, audience::delete_role),
+                OpDoc {
+                    id: "audienceRoleDelete",
+                    summary: "Delete the audience role",
+                    tag: "audience",
+                    ok: ok(204, Shape::Empty, "deleted"),
+                    extra: &[
+                        NOT_FOUND,
+                        FORBIDDEN,
+                        refusal(
+                            409,
+                            "role_in_use",
+                            "site users hold it — change their roles first",
+                        ),
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (PR, "/audience/users"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, audience::list_users),
+                OpDoc {
+                    id: "audienceUsers",
+                    summary: "The project's site users, newest first",
+                    tag: "audience",
+                    query: &[LIMIT, CURSOR],
+                    ok: page("SiteUser"),
+                    extra: &[NOT_FOUND, FORBIDDEN],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Post,
+                |f| on(f, audience::create_user),
+                OpDoc {
+                    id: "audienceUserCreate",
+                    summary: "Make a site user, in any audience role",
+                    tag: "audience",
+                    body: Some(json("NewSiteUser")),
+                    ok: created("SiteUser"),
+                    extra: &[
+                        NOT_FOUND,
+                        FORBIDDEN,
+                        refusal(409, "email_taken", "an account with this email exists"),
+                        refusal(
+                            409,
+                            "audience_full",
+                            "the project is at its site-user bound",
+                        ),
+                        refusal(
+                            422,
+                            "invalid_email, weak_password, unknown_audience_role",
+                            "the fields refused",
+                        ),
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (PR, "/audience/users/{user}"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, audience::get_user),
+                OpDoc {
+                    id: "audienceUser",
+                    summary: "One site user",
+                    tag: "audience",
+                    ok: data("SiteUser"),
+                    extra: &[NOT_FOUND, FORBIDDEN],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Patch,
+                |f| on(f, audience::update_user),
+                OpDoc {
+                    id: "audienceUserUpdate",
+                    summary: "Change a site user's role, or disable it",
+                    tag: "audience",
+                    body: Some(json("SiteUserChange")),
+                    ok: data("SiteUser"),
+                    extra: &[
+                        NOT_FOUND,
+                        FORBIDDEN,
+                        refusal(
+                            422,
+                            "unknown_audience_role, empty_change",
+                            "the change refused",
+                        ),
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (PR, "/audience/users/{user}/sessions"),
+        &[op(
+            Verb::Get,
+            |f| on(f, audience::list_sessions),
+            OpDoc {
+                id: "audienceUserSessions",
+                summary: "The site user's sessions, live and dead",
+                tag: "audience",
+                ok: ok(200, Shape::List("SiteSession"), "newest first"),
+                extra: &[NOT_FOUND, FORBIDDEN],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        (PR, "/audience/sessions/{session}"),
+        &[op(
+            Verb::Delete,
+            |f| on(f, audience::revoke_session),
+            OpDoc {
+                id: "audienceSessionRevoke",
+                summary: "Revoke one site session",
+                tag: "audience",
+                ok: ok(204, Shape::Empty, "revoked"),
+                extra: &[NOT_FOUND, FORBIDDEN],
+                ..MIN
+            },
+        )],
+    ),
     route(
         ("", "/content/v1/{project}/{environment}/{collection}"),
         &[op(
@@ -3194,6 +3523,7 @@ pub(crate) static TABLE: &[Route] = &[
                 tag: "delivery",
                 security: Security::Public,
                 query: &[GENERATION, LIMIT, CURSOR],
+                headers: &[AUDIENCE_BEARER],
                 ok: Res {
                     status: 200,
                     shape: Shape::Page("PublishedEntryView"),
@@ -3224,6 +3554,7 @@ pub(crate) static TABLE: &[Route] = &[
                 tag: "delivery",
                 security: Security::Public,
                 query: &[GENERATION, CURSOR],
+                headers: &[AUDIENCE_BEARER],
                 body: Some(json("QueryDocument")),
                 ok: Res {
                     status: 200,
@@ -3258,6 +3589,7 @@ pub(crate) static TABLE: &[Route] = &[
                 tag: "delivery",
                 security: Security::Public,
                 query: &[GENERATION],
+                headers: &[AUDIENCE_BEARER],
                 ok: Res {
                     status: 200,
                     shape: Shape::Data("PublishedEntryView"),
@@ -3416,6 +3748,12 @@ pub(crate) fn document(build: &BuildInfo) -> Value {
                     "scheme": "bearer",
                     "bearerFormat": "colophon_api_",
                     "description": "a project API token (`colophon_api_…`). It acts as its own identity with its own permissions, only on its own project's `/environments` routes and `/api/v1/rich-text/validate`: another project is 404, other routes are 403 `api_token_not_allowed`, and so is scheduling, which runs later as a person."
+                },
+                "audienceCookie": {
+                    "type": "apiKey",
+                    "in": "cookie",
+                    "name": "colophon_audience",
+                    "description": "a site user's session (D-137). `Authorization: Bearer <token>` works everywhere the cookie does; a cookie-carried write also echoes the CSRF token — the readable `colophon_audience_csrf` cookie — in `X-CSRF-Token`."
                 }
             }
         },
@@ -3467,6 +3805,10 @@ const TAGS: &[(&str, &str)] = &[
     (
         "mcp",
         "the remote-MCP endpoint — the agent protocol over HTTP (D-121)",
+    ),
+    (
+        "audience",
+        "the project's site visitors: public signup and sessions, staff-managed roles and users (D-137)",
     ),
     (
         "schema",
@@ -3555,7 +3897,7 @@ fn operation(route: &Route, op: &Op) -> Value {
         by_status.insert(0, (401, vec![&UNAUTHORIZED]));
     }
     let path = route.path();
-    if path.starts_with("/api/") || path.starts_with("/auth/") {
+    if path.starts_with("/api/") || path.starts_with("/auth/") || path.starts_with("/audience/") {
         by_status.push((429, vec![&RATE_LIMITED]));
     } else if path.starts_with("/content/") {
         by_status.push((429, vec![&RATE_LIMITED_DELIVERY]));
@@ -3651,6 +3993,9 @@ fn operation(route: &Route, op: &Op) -> Value {
         Security::ApiToken => {
             operation["security"] = json!([{ "apiToken": [] }]);
         }
+        Security::Audience => {
+            operation["security"] = json!([{ "audienceCookie": [] }, { "bearerToken": [] }]);
+        }
     }
     operation
 }
@@ -3705,7 +4050,7 @@ fn path_params(path: &str) -> Vec<(String, Kind)> {
             let kind = match name {
                 "project" | "identity" | "invitation" | "token" | "entry" | "revision"
                 | "comment" | "task" | "migration" | "changeset" | "schedule" | "destination"
-                | "asset" => Kind::Uuid,
+                | "asset" | "user" | "session" => Kind::Uuid,
                 "generation" => Kind::Int,
                 _ => Kind::Str,
             };
@@ -3737,7 +4082,9 @@ fn path_note(name: &str) -> &'static str {
         "asset" => "the asset's id",
         "generation" => "the release's generation",
         "code" => "the user code the device showed",
-        "name" => "a rendition name the worker wrote, such as `w320`",
+        "name" => "a rendition name the worker wrote, such as `w320`; or an audience role's",
+        "user" => "the site user's id",
+        "session" => "the session's id",
         _ => "the path parameter",
     }
 }
@@ -3880,6 +4227,7 @@ fn schemas() -> Value {
         shared(),
         identity(),
         membership(),
+        audience_parts(),
         schema_parts(),
         entry_parts(),
         collaboration_parts(),
@@ -4369,6 +4717,116 @@ fn membership() -> Value {
                 "nodes": { "type": "integer" },
                 "depth": { "type": "integer" },
                 "bytes": { "type": "integer" },
+            },
+        },
+    })
+}
+
+/// The audience (D-137): signup and sign-in bodies, the session they answer, and the
+/// staff-managed roles, site users and sessions.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a JSON Schema literal reads top to bottom; splitting scatters one component map"
+)]
+fn audience_parts() -> Value {
+    json!({
+        "AudienceSignUp": {
+            "type": "object",
+            "required": ["email", "password"],
+            "properties": {
+                "email": { "type": "string", "description": "the account's email — trimmed, lowered" },
+                "password": { "type": "string", "description": "at least 8 characters" },
+                "display_name": { "type": "string", "description": "a name to show; optional" },
+                "role": { "type": "string", "description": "an audience role open to signup; left out, the project's single open role is taken" },
+            },
+            "additionalProperties": false,
+        },
+        "AudienceSignIn": {
+            "type": "object",
+            "required": ["email", "password"],
+            "properties": {
+                "email": { "type": "string" },
+                "password": { "type": "string" },
+            },
+            "additionalProperties": false,
+        },
+        "AudienceSession": {
+            "type": "object",
+            "required": ["user", "session", "csrf"],
+            "properties": {
+                "user": { "$ref": "#/components/schemas/SiteUser" },
+                "session": { "type": "string", "description": "the session token — `Authorization: Bearer` it, or let the `Set-Cookie` pair carry it" },
+                "csrf": { "type": "string", "description": "the CSRF token — cookie-carried writes echo it in `X-CSRF-Token`" },
+            },
+        },
+        "SiteUser": {
+            "type": "object",
+            "required": ["id", "email", "display_name", "role", "created_at", "disabled"],
+            "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "email": { "type": "string" },
+                "display_name": { "type": ["string", "null"] },
+                "role": { "type": "string", "description": "the audience role it holds — the label `role:<name>` visibility grants to" },
+                "created_at": { "type": "string", "format": "date-time" },
+                "last_sign_in_at": { "type": "string", "format": "date-time", "description": "present once it has signed in" },
+                "disabled": { "type": "boolean", "description": "staff disabled it: its sessions are dead and sign-in says so" },
+            },
+        },
+        "AudienceRole": {
+            "type": "object",
+            "required": ["name", "self_assign", "created_at"],
+            "properties": {
+                "name": { "type": "string", "description": "what `role:<name>` visibility and a site user's `role` hold" },
+                "self_assign": { "type": "boolean", "description": "whether public signup may choose it" },
+                "created_at": { "type": "string", "format": "date-time" },
+            },
+        },
+        "NewAudienceRole": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": { "type": "string", "description": "1–63 of a–z, 0–9 and '-', starting with a letter" },
+                "self_assign": { "type": "boolean", "description": "whether signup may choose it; false unless said" },
+            },
+            "additionalProperties": false,
+        },
+        "AudienceRoleChange": {
+            "type": "object",
+            "required": ["self_assign"],
+            "properties": {
+                "self_assign": { "type": "boolean" },
+            },
+            "additionalProperties": false,
+        },
+        "NewSiteUser": {
+            "type": "object",
+            "required": ["email", "password", "role"],
+            "properties": {
+                "email": { "type": "string" },
+                "password": { "type": "string", "description": "at least 8 characters" },
+                "display_name": { "type": "string" },
+                "role": { "type": "string", "description": "any audience role the project has, open or not" },
+            },
+            "additionalProperties": false,
+        },
+        "SiteUserChange": {
+            "type": "object",
+            "description": "a role and/or a disable — at least one",
+            "properties": {
+                "role": { "type": "string" },
+                "disabled": { "type": "boolean", "description": "true disables and revokes its sessions, false re-enables" },
+            },
+            "additionalProperties": false,
+        },
+        "SiteSession": {
+            "type": "object",
+            "required": ["id", "created_at", "last_seen_at", "expires_at", "revoked"],
+            "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "created_at": { "type": "string", "format": "date-time" },
+                "last_seen_at": { "type": "string", "format": "date-time" },
+                "expires_at": { "type": "string", "format": "date-time", "description": "its absolute end, use or not" },
+                "revoked": { "type": "boolean" },
             },
         },
     })

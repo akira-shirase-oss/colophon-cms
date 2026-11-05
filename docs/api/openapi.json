@@ -200,6 +200,103 @@
         },
         "type": "object"
       },
+      "AudienceRole": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "description": "what `role:<name>` visibility and a site user's `role` hold",
+            "type": "string"
+          },
+          "self_assign": {
+            "description": "whether public signup may choose it",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "self_assign",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "AudienceRoleChange": {
+        "additionalProperties": false,
+        "properties": {
+          "self_assign": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "self_assign"
+        ],
+        "type": "object"
+      },
+      "AudienceSession": {
+        "properties": {
+          "csrf": {
+            "description": "the CSRF token — cookie-carried writes echo it in `X-CSRF-Token`",
+            "type": "string"
+          },
+          "session": {
+            "description": "the session token — `Authorization: Bearer` it, or let the `Set-Cookie` pair carry it",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/SiteUser"
+          }
+        },
+        "required": [
+          "user",
+          "session",
+          "csrf"
+        ],
+        "type": "object"
+      },
+      "AudienceSignIn": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "type": "object"
+      },
+      "AudienceSignUp": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "description": "a name to show; optional",
+            "type": "string"
+          },
+          "email": {
+            "description": "the account's email — trimmed, lowered",
+            "type": "string"
+          },
+          "password": {
+            "description": "at least 8 characters",
+            "type": "string"
+          },
+          "role": {
+            "description": "an audience role open to signup; left out, the project's single open role is taken",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "type": "object"
+      },
       "BulkAppendView": {
         "properties": {
           "appended": {
@@ -1788,6 +1885,23 @@
         },
         "type": "object"
       },
+      "NewAudienceRole": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "1–63 of a–z, 0–9 and '-', starting with a letter",
+            "type": "string"
+          },
+          "self_assign": {
+            "description": "whether signup may choose it; false unless said",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "NewBulkJob": {
         "additionalProperties": false,
         "properties": {
@@ -2061,6 +2175,31 @@
         "required": [
           "local_time",
           "time_zone"
+        ],
+        "type": "object"
+      },
+      "NewSiteUser": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "password": {
+            "description": "at least 8 characters",
+            "type": "string"
+          },
+          "role": {
+            "description": "any audience role the project has, open or not",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "role"
         ],
         "type": "object"
       },
@@ -3199,6 +3338,95 @@
         },
         "type": "object"
       },
+      "SiteSession": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "its absolute end, use or not",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "last_seen_at",
+          "expires_at",
+          "revoked"
+        ],
+        "type": "object"
+      },
+      "SiteUser": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "disabled": {
+            "description": "staff disabled it: its sessions are dead and sign-in says so",
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "last_sign_in_at": {
+            "description": "present once it has signed in",
+            "format": "date-time",
+            "type": "string"
+          },
+          "role": {
+            "description": "the audience role it holds — the label `role:<name>` visibility grants to",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "role",
+          "created_at",
+          "disabled"
+        ],
+        "type": "object"
+      },
+      "SiteUserChange": {
+        "additionalProperties": false,
+        "description": "a role and/or a disable — at least one",
+        "properties": {
+          "disabled": {
+            "description": "true disables and revokes its sessions, false re-enables",
+            "type": "boolean"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "StageListView": {
         "properties": {
           "stages": {
@@ -3634,6 +3862,12 @@
         "description": "a project API token (`colophon_api_…`). It acts as its own identity with its own permissions, only on its own project's `/environments` routes and `/api/v1/rich-text/validate`: another project is 404, other routes are 403 `api_token_not_allowed`, and so is scheduling, which runs later as a person.",
         "scheme": "bearer",
         "type": "http"
+      },
+      "audienceCookie": {
+        "description": "a site user's session (D-137). `Authorization: Bearer <token>` works everywhere the cookie does; a cookie-carried write also echoes the CSRF token — the readable `colophon_audience_csrf` cookie — in `X-CSRF-Token`.",
+        "in": "cookie",
+        "name": "colophon_audience",
+        "type": "apiKey"
       },
       "bearerToken": {
         "description": "a personal access token, as `colophon login` gets from the device flow. A bearer request is authenticated by the token alone — no CSRF.",
@@ -4139,6 +4373,1152 @@
         "summary": "One project, with what the caller's role allows in it",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/audience/roles": {
+      "get": {
+        "operationId": "audienceRoles",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/AudienceRole"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "by name"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "The project's audience roles",
+        "tags": [
+          "audience"
+        ]
+      },
+      "post": {
+        "operationId": "audienceRoleCreate",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewAudienceRole"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AudienceRole"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "created"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`role_exists` — the project has this role already"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_role` — the name refused"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Make an audience role",
+        "tags": [
+          "audience"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/audience/roles/{name}": {
+      "delete": {
+        "operationId": "audienceRoleDelete",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "a rendition name the worker wrote, such as `w320`; or an audience role's",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "deleted"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`role_in_use` — site users hold it — change their roles first"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Delete the audience role",
+        "tags": [
+          "audience"
+        ]
+      },
+      "patch": {
+        "operationId": "audienceRoleUpdate",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "a rendition name the worker wrote, such as `w320`; or an audience role's",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AudienceRoleChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AudienceRole"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Open the role to signup, or close it",
+        "tags": [
+          "audience"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/audience/sessions/{session}": {
+      "delete": {
+        "operationId": "audienceSessionRevoke",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the session's id",
+            "in": "path",
+            "name": "session",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "revoked"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Revoke one site session",
+        "tags": [
+          "audience"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/audience/users": {
+      "get": {
+        "operationId": "audienceUsers",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "page size: 1–100, default 20",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "the `next_cursor` a previous page answered",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/SiteUser"
+                      },
+                      "type": "array"
+                    },
+                    "next_cursor": {
+                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "The project's site users, newest first",
+        "tags": [
+          "audience"
+        ]
+      },
+      "post": {
+        "operationId": "audienceUserCreate",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewSiteUser"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SiteUser"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "created"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`email_taken` — an account with this email exists; `audience_full` — the project is at its site-user bound"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_email, weak_password, unknown_audience_role` — the fields refused"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Make a site user, in any audience role",
+        "tags": [
+          "audience"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/audience/users/{user}": {
+      "get": {
+        "operationId": "audienceUser",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the site user's id",
+            "in": "path",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SiteUser"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "One site user",
+        "tags": [
+          "audience"
+        ]
+      },
+      "patch": {
+        "operationId": "audienceUserUpdate",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the site user's id",
+            "in": "path",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiteUserChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SiteUser"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unknown_audience_role, empty_change` — the change refused"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Change a site user's role, or disable it",
+        "tags": [
+          "audience"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/audience/users/{user}/sessions": {
+      "get": {
+        "operationId": "audienceUserSessions",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the site user's id",
+            "in": "path",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/SiteSession"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "newest first"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "The site user's sessions, live and dead",
+        "tags": [
+          "audience"
         ]
       }
     },
@@ -7504,6 +8884,15 @@
             }
           },
           {
+            "description": "`public`, `authenticated` or `role:<name>` — who may read it once published; absent keeps the draft's gate",
+            "in": "query",
+            "name": "visibility",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "description": "16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment",
             "in": "header",
             "name": "idempotency-key",
@@ -8145,6 +9534,15 @@
             "description": "a tag sets the locale; an empty value clears it; absent leaves it alone",
             "in": "query",
             "name": "locale",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "`public`, `authenticated` or `role:<name>` — who may read it once published; absent keeps the draft's gate",
+            "in": "query",
+            "name": "visibility",
             "required": false,
             "schema": {
               "type": "string"
@@ -9220,6 +10618,15 @@
             "in": "query",
             "name": "locale",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "`public`, `authenticated` or `role:<name>` — who may read it once published; absent keeps the draft's gate",
+            "in": "query",
+            "name": "visibility",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -17099,6 +18506,366 @@
         ]
       }
     },
+    "/audience/v1/{project}/me": {
+      "get": {
+        "operationId": "audienceMe",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SiteUser"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "audienceCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "The site user the session belongs to",
+        "tags": [
+          "audience"
+        ]
+      }
+    },
+    "/audience/v1/{project}/signin": {
+      "post": {
+        "operationId": "audienceSignIn",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AudienceSignIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AudienceSession"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "the session's `Set-Cookie` pair",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`sign_in_failed` — a wrong password and a missing account alike"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`account_disabled` — staff disabled the account"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`too_many_attempts` — the account is paused"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [],
+        "summary": "Sign a site user in with email and password",
+        "tags": [
+          "audience"
+        ]
+      }
+    },
+    "/audience/v1/{project}/signout": {
+      "post": {
+        "operationId": "audienceSignOut",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the session's CSRF token — required when it arrives as the `colophon_audience` cookie, unneeded on `Authorization: Bearer`",
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "the cleared `Set-Cookie` pair; signing out twice answers the same",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`csrf_token_invalid` — a cookie-carried session asked for the CSRF header"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [],
+        "summary": "End the site session and clear its cookies",
+        "tags": [
+          "audience"
+        ]
+      }
+    },
+    "/audience/v1/{project}/signup": {
+      "post": {
+        "operationId": "audienceSignUp",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AudienceSignUp"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AudienceSession"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "the session's `Set-Cookie` pair: `colophon_audience` and its CSRF sibling",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`email_taken` — an account with this email exists; `audience_full` — the project is at its site-user bound"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_email, weak_password, invalid_role, unavailable_role` — the fields refused — a role not open to signup among them"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [],
+        "summary": "Make a site-user account and start its session",
+        "tags": [
+          "audience"
+        ]
+      }
+    },
     "/auth/callback": {
       "get": {
         "operationId": "callback",
@@ -17820,6 +19587,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "`Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous",
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -17962,6 +19738,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "`Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous",
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -18095,6 +19880,15 @@
             "schema": {
               "minimum": 0,
               "type": "integer"
+            }
+          },
+          {
+            "description": "`Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous",
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -18376,7 +20170,7 @@
             }
           },
           {
-            "description": "a rendition name the worker wrote, such as `w320`",
+            "description": "a rendition name the worker wrote, such as `w320`; or an audience role's",
             "in": "path",
             "name": "name",
             "required": true,
@@ -18673,6 +20467,10 @@
     {
       "description": "the remote-MCP endpoint — the agent protocol over HTTP (D-121)",
       "name": "mcp"
+    },
+    {
+      "description": "the project's site visitors: public signup and sessions, staff-managed roles and users (D-137)",
+      "name": "audience"
     },
     {
       "description": "content types, shared components, migration plans",

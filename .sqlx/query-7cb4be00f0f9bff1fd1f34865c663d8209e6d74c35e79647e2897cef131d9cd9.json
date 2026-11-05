@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE site_roles SET self_assign = $3 WHERE project_id = $1 AND name = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7cb4be00f0f9bff1fd1f34865c663d8209e6d74c35e79647e2897cef131d9cd9"
+}

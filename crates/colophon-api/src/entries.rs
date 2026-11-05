@@ -98,6 +98,8 @@ struct RevisionView {
     created_at: String,
     content_hash: String,
     title: String,
+    /// Who may read it once published (D-137): pinned with the revision like its content.
+    visibility: String,
 }
 
 impl RevisionView {
@@ -109,6 +111,7 @@ impl RevisionView {
             created_at: rfc3339(revision.created_at)?,
             content_hash: content_hash(&revision.content_hash),
             title: revision.title,
+            visibility: revision.visibility,
         })
     }
 }
@@ -144,6 +147,8 @@ struct DraftView {
     /// The entries of its localization group, including itself (D-087): `[]` when it is
     /// unlocalized. Filled by the answer's writer, which looks them up in the transaction.
     localizations: Vec<LocalizationView>,
+    /// Who may read the entry once published — the current draft's gate (D-137).
+    visibility: String,
 }
 
 /// A sibling in a localization group, as a draft's `localizations` lists it (D-087).
@@ -193,6 +198,7 @@ impl DraftView {
             referenced_by: None,
             locale: draft.locale,
             localizations: Vec::new(),
+            visibility: draft.visibility,
         })
     }
 }
@@ -219,6 +225,8 @@ struct SummaryView {
     published: Option<LiveView>,
     /// The entry's locale tag, or `null` for the project's default (D-087).
     locale: Option<String>,
+    /// Who may read the entry once published — the current draft's gate (D-137).
+    visibility: String,
 }
 
 /// Whether an entry is live, as an answer about it says.
@@ -282,10 +290,13 @@ pub(crate) struct CursorQuery {
     cursor: Option<String>,
 }
 
-/// The `?locale=` a create, save or localize takes (D-087).
+/// The `?locale=`/`?visibility=` a create, save or localize takes (D-087, D-137): entry
+/// metadata travels beside the document, never inside it, so it can't collide with a
+/// content type's own fields.
 #[derive(Deserialize)]
-pub(crate) struct LocaleQuery {
+pub(crate) struct WriteQuery {
     locale: Option<String>,
+    visibility: Option<String>,
 }
 
 /// An import's query (D-114).
@@ -727,12 +738,14 @@ fn validate(value: &Value, content_type: &ContentType) -> Result<(Content, [u8; 
     Ok((content, hash))
 }
 
-/// A revision of `content` at `version`, for a create, a save or a mirror write.
+/// A revision of `content` at `version`, for a create, a save or a mirror write. `gate` is
+/// the stored `?visibility=` value, already checked: `None` keeps what the entry has.
 fn new_revision<'a>(
     content: &'a Content,
     hash: &'a [u8; 32],
     version: i32,
     unique: &'a [String],
+    gate: Option<&'a str>,
 ) -> NewRevision<'a> {
     NewRevision {
         id: Uuid::now_v7(),
@@ -744,7 +757,38 @@ fn new_revision<'a>(
         references: content.references(),
         assets: content.assets(),
         unique,
+        visibility: gate,
     }
+}
+
+/// The gate `?visibility=` asks for, checked: `public`, `authenticated` or `role:<name>`,
+/// and a `role:` must name an audience role the project has. `None` in the query leaves
+/// the entry's own gate alone on a save (and means `public` on a create).
+async fn gate(
+    tx: &mut ProjectTransaction,
+    asked: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    let Some(text) = asked.filter(|text| !text.is_empty()) else {
+        return Ok(None);
+    };
+    let visibility =
+        colophon_domain::audience::Visibility::parse(text).ok_or(ApiError::InvalidField {
+            reason: "invalid_visibility",
+            pointer: "/visibility",
+            message: "visibility must be 'public', 'authenticated' or 'role:<name>'".to_owned(),
+        })?;
+    if let Some(role) = visibility.role()
+        && !colophon_db::audience::role_exists_for(tx, role)
+            .await
+            .map_err(ApiError::from_db)?
+    {
+        return Err(ApiError::InvalidField {
+            reason: "unknown_audience_role",
+            pointer: "/visibility",
+            message: format!("\"{role}\" isn't an audience role of this project"),
+        });
+    }
+    Ok(Some(visibility.value()))
 }
 
 /// The ids a top-level reference field holds in a stored document: one string, or a list of
@@ -860,7 +904,7 @@ async fn write_back(
     };
     let hash = sha256(content.canonical_json().as_bytes());
     let unique = b_type.unique_fields();
-    let revision = new_revision(&content, &hash, version, &unique);
+    let revision = new_revision(&content, &hash, version, &unique, None);
     let _ = entries::save(tx, other, draft.revision.id, revision)
         .await
         .map_err(ApiError::from_db)?;
@@ -944,7 +988,7 @@ pub(crate) async fn create(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<CollectionPath>,
-    Query(query): Query<LocaleQuery>,
+    Query(query): Query<WriteQuery>,
     headers: HeaderMap,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
@@ -965,6 +1009,7 @@ pub(crate) async fn create(
             Action::ContentCreate,
             "your role can't create entries here",
         ))?;
+    let gate = gate(&mut tx, query.visibility.as_deref()).await?;
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
@@ -978,6 +1023,7 @@ pub(crate) async fn create(
         CREATE,
         &path.collection,
         locale.unwrap_or(""),
+        gate.as_deref().unwrap_or(""),
         content.canonical_json(),
     ]);
     if let Some(replay) = claim(&mut tx, CREATE, key, &request).await? {
@@ -994,7 +1040,7 @@ pub(crate) async fn create(
         None,
     )
     .await?;
-    let revision = new_revision(&content, &hash, version, &unique);
+    let revision = new_revision(&content, &hash, version, &unique, gate.as_deref());
     let draft = entries::create(&mut tx, Uuid::now_v7(), &path.collection, revision, locale)
         .await
         .map_err(ApiError::from_db)?;
@@ -1236,7 +1282,7 @@ pub(crate) async fn localize(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<EntryPath>,
-    Query(query): Query<LocaleQuery>,
+    Query(query): Query<WriteQuery>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let key = idempotency_key(&headers)?;
@@ -1255,11 +1301,18 @@ pub(crate) async fn localize(
             Action::ContentCreate,
             "your role can't create entries here",
         ))?;
+    let gate = gate(&mut tx, query.visibility.as_deref()).await?;
     content_types::lock_for_write(&mut tx, &path.collection)
         .await
         .map_err(ApiError::from_db)?;
     let (content_type, version) = content_type(&state, &mut tx, &path.collection).await?;
-    let request = request_hash(&[LOCALIZE, &path.collection, &entry.to_string(), locale]);
+    let request = request_hash(&[
+        LOCALIZE,
+        &path.collection,
+        &entry.to_string(),
+        locale,
+        gate.as_deref().unwrap_or(""),
+    ]);
     if let Some(replay) = claim(&mut tx, LOCALIZE, key, &request).await? {
         return Ok(replay);
     }
@@ -1292,7 +1345,7 @@ pub(crate) async fn localize(
         None,
     )
     .await?;
-    let revision = new_revision(&content, &hash, version, &unique);
+    let revision = new_revision(&content, &hash, version, &unique, gate.as_deref());
     match entries::create_localization(
         &mut tx,
         Uuid::now_v7(),
@@ -1604,7 +1657,7 @@ async fn import_create(
         tx,
         id.unwrap_or_else(Uuid::now_v7),
         target.collection,
-        new_revision(&content, &hash, target.version, &unique),
+        new_revision(&content, &hash, target.version, &unique, None),
         mapped.locale.as_deref(),
     )
     .await
@@ -1665,7 +1718,7 @@ async fn import_update(
         tx,
         draft.entry_id,
         expected,
-        new_revision(&content, &hash, target.version, &unique),
+        new_revision(&content, &hash, target.version, &unique, None),
     )
     .await
     .map_err(ApiError::from_db)?
@@ -1856,7 +1909,7 @@ pub(crate) async fn save(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<EntryPath>,
-    Query(query): Query<LocaleQuery>,
+    Query(query): Query<WriteQuery>,
     headers: HeaderMap,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Response, ApiError> {
@@ -1874,6 +1927,8 @@ pub(crate) async fn save(
         check_locale(locale)?;
     }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // `?visibility=` rides the same write like `?locale=`: absent leaves the gate alone.
+    let gate = gate(&mut tx, query.visibility.as_deref()).await?;
     let prepared = prepare_save(&state, &mut tx, &path, entry, expected, value).await?;
     let request = request_hash(&[
         SAVE,
@@ -1882,6 +1937,7 @@ pub(crate) async fn save(
         &expected.to_string(),
         // Absent and clear must hash differently: they are different requests.
         set.map_or("", |locale| locale.unwrap_or("\u{0}")),
+        gate.as_deref().unwrap_or(""),
         prepared.content.canonical_json(),
     ]);
     if let Some(replay) = claim(&mut tx, SAVE, key, &request).await? {
@@ -1905,7 +1961,13 @@ pub(crate) async fn save(
         Some(entry),
     )
     .await?;
-    let revision = new_revision(&prepared.content, &prepared.hash, prepared.version, &unique);
+    let revision = new_revision(
+        &prepared.content,
+        &prepared.hash,
+        prepared.version,
+        &unique,
+        gate.as_deref(),
+    );
     // A refusal returns early, dropping the transaction: the claim and anything else roll back.
     match entries::save(&mut tx, entry, expected, revision)
         .await
@@ -2380,6 +2442,7 @@ pub(crate) async fn list(
                     generation,
                 }),
                 locale: row.locale,
+                visibility: row.visibility,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
@@ -2409,6 +2472,8 @@ struct QueriedView {
     published: Option<LiveView>,
     /// The entry's locale tag, or `null` for the project's default (D-087).
     locale: Option<String>,
+    /// Who may read the entry once published — the current draft's gate (D-137).
+    visibility: String,
 }
 
 impl QueriedView {
@@ -2433,6 +2498,7 @@ impl QueriedView {
                 generation,
             }),
             locale: row.draft.locale,
+            visibility: row.draft.visibility,
         })
     }
 }

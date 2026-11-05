@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale, localization_id)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8,\n                 coalesce((SELECT (v.definition::jsonb ->> 'single')::boolean\n                           FROM content_type_versions v\n                           WHERE v.project_id = $1 AND v.environment_id = $2 AND v.collection = $4\n                           ORDER BY v.version DESC LIMIT 1), false),\n                 $9, $10)\n         RETURNING created_at, updated_at",
+  "query": "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale, localization_id, draft_visibility)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8,\n                 coalesce((SELECT (v.definition::jsonb ->> 'single')::boolean\n                           FROM content_type_versions v\n                           WHERE v.project_id = $1 AND v.environment_id = $2 AND v.collection = $4\n                           ORDER BY v.version DESC LIMIT 1), false),\n                 $9, $10, $11)\n         RETURNING created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -37,7 +37,8 @@
         "Text",
         "Uuid",
         "Text",
-        "Uuid"
+        "Uuid",
+        "Text"
       ]
     },
     "nullable": [
@@ -45,5 +46,5 @@
       false
     ]
   },
-  "hash": "a30097725b8222dc015f943af24c16f994c26dddfface7ab448eecf044fc42ea"
+  "hash": "c4ec4321310d7e353abd8e2205d11be860a27de4f0f78675337bcbca5678e07f"
 }

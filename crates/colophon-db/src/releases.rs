@@ -190,8 +190,8 @@ pub async fn commit(
     // A slug another entry still publishes fails `publications_live_slug`: `SlugTaken`, and the
     // whole release rolls back (D-054).
     let opened = sqlx::query!(
-        "INSERT INTO publications (project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, slug, valid_from)
-         SELECT i.project_id, i.environment_id, i.entry_id, r.id, r.collection, r.title, r.content, r.content_hash, r.slug, $4
+        "INSERT INTO publications (project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, slug, valid_from, visibility)
+         SELECT i.project_id, i.environment_id, i.entry_id, r.id, r.collection, r.title, r.content, r.content_hash, r.slug, $4, r.visibility
          FROM changeset_items i
          JOIN revisions r ON r.project_id = i.project_id AND r.environment_id = i.environment_id
                          AND r.id = i.revision_id
@@ -461,10 +461,10 @@ async fn unpublish(
              WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3 AND i.kind = 'unpublish'
                AND p.project_id = i.project_id AND p.environment_id = i.environment_id
                AND p.entry_id = i.entry_id AND p.valid_to IS NULL AND p.revision_id = i.revision_id
-             RETURNING p.entry_id, p.revision_id, p.collection
+             RETURNING p.entry_id, p.revision_id, p.collection, p.visibility
          )
-         INSERT INTO tombstones (project_id, environment_id, entry_id, generation, collection, revision_id)
-         SELECT $1, $2, entry_id, $4, collection, revision_id FROM taken",
+         INSERT INTO tombstones (project_id, environment_id, entry_id, generation, collection, revision_id, visibility)
+         SELECT $1, $2, entry_id, $4, collection, revision_id, visibility FROM taken",
         tx.project,
         tx.environment,
         changeset,

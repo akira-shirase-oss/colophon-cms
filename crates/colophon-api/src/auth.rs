@@ -117,7 +117,8 @@ pub(crate) struct CallbackQuery {
     error: Option<String>,
 }
 
-fn clear(name: &str, path: &str) -> HeaderValue {
+/// Expires cookie `name` — signing out. Shared with the audience routes.
+pub(crate) fn clear(name: &str, path: &str) -> HeaderValue {
     set_cookie(name, "", 0, true, "Lax", path)
 }
 
@@ -229,8 +230,9 @@ pub(crate) struct PasswordSignIn {
 }
 
 /// Normalizes an email for storing or finding: trimmed and lowered, then checked it can be
-/// one address (`a@b`, nothing else, 254 bytes at most).
-fn clean_email(email: &str) -> Result<String, ApiError> {
+/// one address (`a@b`, nothing else, 254 bytes at most). Shared with the audience routes —
+/// members and visitors follow the same rule.
+pub(crate) fn clean_email(email: &str) -> Result<String, ApiError> {
     let email = email.trim().to_lowercase();
     let valid = email.len() <= 254
         && match email.split_once('@') {
@@ -250,8 +252,8 @@ fn clean_email(email: &str) -> Result<String, ApiError> {
 }
 
 /// Checks a password can be tried: at least eight characters, and bounded so a giant body
-/// can't keep Argon2 busy far past the request limit.
-fn check_password(password: &str) -> Result<(), ApiError> {
+/// can't keep Argon2 busy far past the request limit. Shared with the audience routes.
+pub(crate) fn check_password(password: &str) -> Result<(), ApiError> {
     if password.chars().count() < 8 {
         return Err(ApiError::InvalidField {
             reason: "weak_password",

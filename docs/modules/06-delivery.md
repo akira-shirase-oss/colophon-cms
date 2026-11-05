@@ -74,6 +74,25 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   document and its `query_hash`, and publications carry no locale, so every answer is in the stored one until
   locale lands on the projection.
 
+### Gated content (P7, D-137)
+- Every draft, revision and publication carries a `visibility`: `public` (the default), `authenticated` (any
+  signed-in site user) or `role:<name>` (a site user whose [audience](03-auth.md) role is `<name>`). Editorial
+  writes take it as `?visibility=`; `role:` validates against the project's live audience roles, so a gate can
+  never name a role that doesn't exist. The gate pins with the revision like the content itself — a release
+  publishes whatever gate the pinned revision carries.
+- Enforcement is row-level security, not a filter the code could forget: a delivery transaction `SET LOCAL ROLE
+  colophon_delivery` and names the reader as `app.audience_role` — unset for anonymous, the live session's role
+  for a member. The `publications` policy answers `visibility = 'public'` rows to anyone, and
+  `visibility = 'authenticated'` or `visibility = 'role:' || current_setting('app.audience_role')` rows to a
+  member; a gated row the caller's role doesn't match is the same 404 as an unpublished one, to them and to
+  their `?generation=` pins.
+- A request's audience resolves *before* the cache: a live site session (bearer or `colophon_audience` cookie)
+  makes the read a member's — answered `Cache-Control: private, no-cache` with `Colophon-Cache: bypass`
+  straight from Postgres (its own ETag still earns a 304), and **never** through the generation-keyed cache,
+  whose keys name no role and whose audience is anonymous by construction. A dead or absent credential is
+  simply anonymous — delivery never 401s a public collection, it answers the public rows, and the member
+  answer's `Vary: Authorization, Cookie` keeps any shared cache between the two honest.
+
 ### Cache keys (spec §15)
 - A key includes:
   - project, environment, recovery epoch, release generation and locale;

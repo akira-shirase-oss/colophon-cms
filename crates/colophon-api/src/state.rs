@@ -7,8 +7,8 @@ use colophon_auth::OidcClient;
 use colophon_db::PgPool;
 
 use crate::{
-    BuildInfo, ContentTypeCache, DeliveryCache, Readiness,
-    admission::SharedAdmission, events::EventBus, mcp,
+    BuildInfo, ContentTypeCache, DeliveryCache, Readiness, admission::SharedAdmission,
+    events::EventBus, mcp,
 };
 
 /// Session lifetimes.

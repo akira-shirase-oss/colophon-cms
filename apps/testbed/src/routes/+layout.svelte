@@ -27,6 +27,7 @@
 		{ href: resolve('/device'), label: 'Device sign-in' },
 		{ href: resolve('/members'), label: 'Members' },
 		{ href: resolve('/roles'), label: 'Roles' },
+		{ href: resolve('/audience'), label: 'Audience' },
 		{ href: resolve('/tokens'), label: 'API tokens' },
 		{ href: resolve('/schedules'), label: 'Schedules' },
 		{ href: resolve('/changesets'), label: 'Changesets' },

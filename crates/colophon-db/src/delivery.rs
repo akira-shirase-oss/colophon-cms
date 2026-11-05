@@ -52,6 +52,9 @@ pub struct Published {
     pub content_hash: Vec<u8>,
     /// The generation it was published in.
     pub valid_from: i64,
+    /// Who may read it: `public`, `authenticated` or `role:<name>` — what the transaction's
+    /// audience already proved it may see (D-137).
+    pub visibility: String,
 }
 
 /// The environment `slug` of `project` with its latest generation, in one statement: the delivery
@@ -85,7 +88,7 @@ pub struct MediaObject {
     pub public_key: Option<String>,
 }
 
-/// The media origin's whole read (`media_object`, migration 0050): resolve `slug` and pick the
+/// The media origin's whole read (`media_object`, migration 0051): resolve `slug` and pick the
 /// object key in one call — the `usable` asset's current version, or the version `version_sha`
 /// names (the `{sha}` in `/media/v1/{p}/{e}/{asset}/{sha}`). `None` when the environment itself
 /// is unknown; a row with `public_key: None` when it exists but nothing deliverable does.
@@ -112,16 +115,44 @@ pub async fn media_object(
     .map_err(DbError::from_query)
 }
 
-/// Starts a delivery transaction for `project`: switches to `colophon_delivery` for its duration.
-pub async fn begin(pool: &PgPool, project: Uuid) -> Result<DeliveryTransaction, DbError> {
+/// The audience a delivery transaction reads as (D-137): what `app.audience_role` is set to,
+/// and so which `publications` rows the delivery role's policy lets through.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Audience {
+    /// No live site session: only `public` publications.
+    Anonymous,
+    /// A live site session whose user holds this audience role: `public`, `authenticated`
+    /// and `role:<name>` for it.
+    Member {
+        /// The site user's current role, as the session lookup just read it.
+        role: String,
+    },
+}
+
+/// Starts a delivery transaction for `project` reading as `audience`: switches to
+/// `colophon_delivery` for its duration and sets the project's id and the audience scope —
+/// the role's name, or empty for anonymous — as transaction-local settings the policy reads.
+/// The audience is only ever what the API proved a live session holds (or anonymous): the
+/// setting is a claim, but one that expires with the transaction and gates nothing else.
+pub async fn begin(
+    pool: &PgPool,
+    project: Uuid,
+    audience: &Audience,
+) -> Result<DeliveryTransaction, DbError> {
     let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
     sqlx::query("SET LOCAL ROLE colophon_delivery")
         .execute(&mut *transaction)
         .await
         .map_err(DbError::from_query)?;
+    let role = match audience {
+        Audience::Anonymous => "",
+        Audience::Member { role } => role.as_str(),
+    };
     sqlx::query!(
-        "SELECT set_config('app.project_id', $1, true) AS project_scope",
-        project.to_string()
+        "SELECT set_config('app.project_id', $1, true) AS project_scope,
+                set_config('app.audience_role', $2, true) AS audience_scope",
+        project.to_string(),
+        role
     )
     .fetch_one(&mut *transaction)
     .await
@@ -165,7 +196,7 @@ impl DeliveryTransaction {
     ) -> Result<Vec<Published>, DbError> {
         sqlx::query_as!(
             Published,
-            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from
+            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility
              FROM publications
              WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND environment_id = $1 AND collection = $2
@@ -194,7 +225,7 @@ impl DeliveryTransaction {
     ) -> Result<Option<Published>, DbError> {
         sqlx::query_as!(
             Published,
-            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from
+            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility
              FROM publications
              WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND environment_id = $1 AND collection = $2 AND entry_id = $3

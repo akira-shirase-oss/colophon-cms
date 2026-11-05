@@ -81,6 +81,7 @@ async fn released(db: &TestDb) -> Fixture {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
         None,
     )

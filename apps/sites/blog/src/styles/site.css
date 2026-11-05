@@ -227,3 +227,102 @@ article.post .lede {
 	padding: 1rem 1.2rem;
 	border-radius: 0.5rem;
 }
+
+/* Members: sign-in/up forms, the account line and the gate marks (D-137 demo). */
+.account {
+	max-width: 46rem;
+}
+
+.account-forms {
+	display: grid;
+	gap: 1.5rem;
+	grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+	margin-top: 1.5rem;
+}
+
+.card {
+	border: 1px solid var(--rule);
+	border-radius: 0.5rem;
+	padding: 1.25rem 1.5rem;
+	background: #fffdf9;
+}
+
+.card h2 {
+	margin-top: 0;
+}
+
+.card label {
+	display: block;
+	margin: 0.9rem 0;
+	font-size: 0.9rem;
+	color: var(--muted);
+}
+
+.card input {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	margin-top: 0.25rem;
+	padding: 0.5rem 0.6rem;
+	border: 1px solid var(--rule);
+	border-radius: 0.35rem;
+	font: inherit;
+	background: #fff;
+}
+
+.card button,
+.signout button {
+	margin-top: 0.4rem;
+	padding: 0.5rem 1.1rem;
+	border: 1px solid var(--rule);
+	border-radius: 0.35rem;
+	background: var(--accent-soft);
+	font: inherit;
+	cursor: pointer;
+}
+
+.form-error {
+	border-left: 3px solid #b3261e;
+	background: #fdeceb;
+	padding: 0.6rem 1rem;
+	border-radius: 0.25rem;
+}
+
+.account-line code {
+	background: var(--accent-soft);
+	padding: 0.05rem 0.3rem;
+	border-radius: 0.25rem;
+}
+
+.gate {
+	display: inline-block;
+	margin-left: 0.5rem;
+	padding: 0.1rem 0.5rem;
+	border-radius: 1rem;
+	font-size: 0.875rem;
+	font-weight: 600;
+	vertical-align: middle;
+	letter-spacing: 0.02em;
+}
+
+.gate-role {
+	background: #e6e0f5;
+	color: #4a3d8f;
+}
+
+.gate-auth {
+	background: #ddeee4;
+	color: #2f6b45;
+}
+
+.gate-banner {
+	border: 1px dashed var(--rule);
+	border-radius: 0.5rem;
+	background: var(--accent-soft);
+	padding: 0.7rem 1rem;
+	font-size: 0.9rem;
+}
+
+.signout {
+	margin: 1rem 0 2rem;
+}

@@ -57,6 +57,7 @@ impl Content {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         }
     }
 }

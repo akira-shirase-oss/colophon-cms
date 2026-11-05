@@ -192,6 +192,7 @@ async fn pending_payload_counts_stored_bytes_and_drains_as_work_finishes() {
             references: &[],
             assets: &[],
             unique: &[],
+            visibility: None,
         },
         None,
     )

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, base_revision_id, author_id, created_at, content_hash, title FROM revisions\n         WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3 AND collection = $5\n         ORDER BY id DESC\n         LIMIT $4",
+  "query": "SELECT id, base_revision_id, author_id, created_at, content_hash, title, content, visibility FROM revisions\n         WHERE project_id = $1 AND environment_id = $2 AND entry_id = $3 AND id = $4 AND collection = $5",
   "describe": {
     "columns": [
       {
@@ -68,6 +68,28 @@
             "name": "title"
           }
         }
+      },
+      {
+        "ordinal": 6,
+        "name": "content",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "visibility",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "visibility"
+          }
+        }
       }
     ],
     "parameters": {
@@ -75,7 +97,7 @@
         "Uuid",
         "Uuid",
         "Uuid",
-        "Int8",
+        "Uuid",
         "Text"
       ]
     },
@@ -85,8 +107,10 @@
       false,
       false,
       false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "3c946c92731452dd8453667670a26d5889902a25534602234fadecb44058d135"
+  "hash": "eaa8bf101f492e6dcf3ee8dc84425280634716a1ada624303ed2ada7e851c6a0"
 }
