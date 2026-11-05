@@ -43,6 +43,9 @@ pub struct Services {
     /// Whether delivery destinations may be private addresses: only for a development server
     /// bound to loopback (D-046).
     pub allow_private_destinations: bool,
+    /// Whether a magic-link request also hands the link back in `dev_link` instead of emailing
+    /// it: `COLOPHON_DEV_MAIL=1`, a development affordance (D-140).
+    pub dev_mail: bool,
     /// The public delivery cache (D-048); [`DeliveryCache::disabled`] without `COLOPHON_CACHE_URL`.
     pub cache: DeliveryCache,
     /// Parsed content types by their definition's hash (D-078).

@@ -3285,6 +3285,54 @@ pub(crate) static TABLE: &[Route] = &[
         )],
     ),
     route(
+        ("", "/audience/v1/{project}/magic-link"),
+        &[op(
+            Verb::Post,
+            |f| on(f, audience::request_magic_link),
+            OpDoc {
+                id: "audienceMagicLink",
+                summary: "Ask for a single-use sign-in link by email",
+                tag: "audience",
+                security: Security::Public,
+                body: Some(json("MagicLinkRequest")),
+                ok: Res {
+                    status: 202,
+                    shape: Shape::Empty,
+                    headers: &[],
+                    media: "",
+                    note: "the same answer whether or not the email has an account; `dev_link` only with COLOPHON_DEV_MAIL=1",
+                },
+                extra: &[],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/audience/v1/{project}/magic-link/{token}"),
+        &[op(
+            Verb::Post,
+            |f| on(f, audience::magic_link_sign_in),
+            OpDoc {
+                id: "audienceMagicLinkSignIn",
+                summary: "Sign in with the token a magic link carried",
+                tag: "audience",
+                security: Security::Public,
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Data("AudienceSession"),
+                    headers: &["Set-Cookie"],
+                    media: "",
+                    note: "the session's `Set-Cookie` pair; an unknown email is created in the open self-assign role",
+                },
+                extra: &[
+                    refusal(403, "magic_link_invalid", "used, expired or unknown"),
+                    refusal(403, "no_open_role", "no role a new account may take"),
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
         ("", "/audience/v1/{project}/signout"),
         &[op(
             Verb::Post,
@@ -4776,6 +4824,15 @@ fn audience_parts() -> Value {
             "properties": {
                 "email": { "type": "string" },
                 "password": { "type": "string" },
+            },
+            "additionalProperties": false,
+        },
+        "MagicLinkRequest": {
+            "type": "object",
+            "required": ["email", "return_to"],
+            "properties": {
+                "email": { "type": "string" },
+                "return_to": { "type": "string", "description": "the site's absolute http(s) landing page; the token is appended to it" },
             },
             "additionalProperties": false,
         },

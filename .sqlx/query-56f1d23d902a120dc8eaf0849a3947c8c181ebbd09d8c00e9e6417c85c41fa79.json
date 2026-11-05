@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE site_users SET last_sign_in_at = now(), failed_sign_ins = 0, locked_until = NULL\n         WHERE project_id = $1 AND id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "56f1d23d902a120dc8eaf0849a3947c8c181ebbd09d8c00e9e6417c85c41fa79"
+}

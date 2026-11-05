@@ -204,6 +204,9 @@ pub struct Config {
     /// `COLOPHON_MCP_PER_PROJECT` (256) and `COLOPHON_MCP_MAX_SESSIONS` (2048) cap the
     /// sessions; `COLOPHON_MCP_IDLE_MS` (30 min) forgets one untouched for that long.
     pub mcp: colophon_api::mcp::Limits,
+    /// Whether a magic-link request hands the link back in `dev_link` instead of emailing it:
+    /// `COLOPHON_DEV_MAIL=1` (D-140). A development affordance, off by default.
+    pub dev_mail: bool,
 }
 
 /// Whether `text` can name a worker's location: what destinations.location accepts.
@@ -590,11 +593,15 @@ impl Config {
                     .to_owned(),
             );
         }
+        let dev_mail = env
+            .raw("COLOPHON_DEV_MAIL")
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
         if let Some(database_url) = database_url
             && env.problems.is_empty()
         {
             Ok(Self {
                 role,
+                dev_mail,
                 listen_addr,
                 database_url,
                 cache_url,

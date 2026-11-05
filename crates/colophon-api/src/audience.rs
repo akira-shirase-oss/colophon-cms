@@ -859,3 +859,119 @@ pub(crate) async fn revoke_session(
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// What a magic-link request asks for (D-140).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MagicLinkRequest {
+    email: String,
+    /// Where the reader lands: the site's own absolute http(s) URL.
+    return_to: String,
+}
+
+/// `{P}/audience/magic-link/{token}`.
+#[derive(Deserialize)]
+pub(crate) struct MagicLinkPath {
+    project: String,
+    token: String,
+}
+
+/// The `return_to` a magic link may carry: an absolute http(s) URL, nothing else.
+fn check_return_to(value: &str) -> Result<String, ApiError> {
+    let trimmed = value.trim();
+    if trimmed.len() > 2048 {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_return_to",
+            pointer: "/return_to",
+            message: "a return address is at most 2048 characters".to_owned(),
+        });
+    }
+    match url::Url::parse(trimmed) {
+        Ok(url) if matches!(url.scheme(), "http" | "https") && url.host().is_some() => {
+            Ok(trimmed.to_owned())
+        }
+        _ => Err(ApiError::InvalidField {
+            reason: "invalid_return_to",
+            pointer: "/return_to",
+            message: "a return address is an absolute http or https URL".to_owned(),
+        }),
+    }
+}
+
+/// `POST /audience/v1/{project}/magic-link`: records a single-use link and answers `202`
+/// whether or not the email has an account — the same answer either way, so nothing here can
+/// be used to enumerate visitors. The link itself is emailed by a sender this server does not
+/// have yet; with `COLOPHON_DEV_MAIL=1` it is also handed back in `dev_link`, which is how the
+/// development stack and the demo sites test the flow without a mail server.
+pub(crate) async fn request_magic_link(
+    State(state): State<AppState>,
+    Path(path): Path<AudiencePath>,
+    body: Result<Json<MagicLinkRequest>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let services = session::services(&state)?;
+    let Json(body) = body?;
+    let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
+    let email = clean_email(&body.email)?;
+    let return_to = check_return_to(&body.return_to)?;
+    let token = tokens::random_token()
+        .map_err(|_| ApiError::internal(std::io::Error::other("no secure random source")))?;
+    audience::request_magic_link(&services.pool, project, &email, &tokens::hash(&token), &return_to)
+        .await
+        .map_err(ApiError::from_db)?;
+    let separator = if return_to.contains('?') { '&' } else { '?' };
+    let mut data = serde_json::json!({ "sent": true });
+    if services.dev_mail {
+        data["dev_link"] = serde_json::json!(format!("{return_to}{separator}token={token}"));
+    }
+    let body = serde_json::to_string(&serde_json::json!({ "data": data })).map_err(ApiError::internal)?;
+    Ok(crate::entries::json(StatusCode::ACCEPTED, body, None, false))
+}
+
+/// `POST /audience/v1/{project}/magic-link/{token}`: consumes the link and answers like a
+/// sign-in — the session, its CSRF sibling and the cookies. An existing account signs in; an
+/// unknown email becomes a site user in the project's open self-assign role, so a project that
+/// opens no role simply has no passwordless signup.
+pub(crate) async fn magic_link_sign_in(
+    State(state): State<AppState>,
+    Path(path): Path<MagicLinkPath>,
+) -> Result<Response, ApiError> {
+    let services = session::services(&state)?;
+    let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
+    let user = match audience::consume_magic_link(&services.pool, project, &tokens::hash(&path.token))
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        audience::MagicLink::SignedIn(user) => user,
+        audience::MagicLink::Invalid => {
+            return Err(ApiError::forbidden(
+                "magic_link_invalid",
+                "this sign-in link is used, expired or unknown",
+            ));
+        }
+        audience::MagicLink::NewUser(email) => {
+            // An account made by a link holds a password nobody knows: the link was the
+            // credential, and a later password sign-in must set one deliberately.
+            let unusable = tokens::random_token()
+                .map_err(|_| ApiError::internal(std::io::Error::other("no secure random source")))?;
+            let phc = colophon_db::passwords::hashed(&unusable)
+                .await
+                .map_err(ApiError::from_db)?;
+            match audience::sign_up(&services.pool, project, &email, &phc, None, None).await {
+                Ok(audience::SignedUp::Made(user)) => user,
+                Ok(audience::SignedUp::RoleUnavailable) => {
+                    return Err(ApiError::forbidden(
+                        "no_open_role",
+                        "this project has no role a new account may take",
+                    ));
+                }
+                Ok(_) => return Err(ApiError::conflict("email_taken", "that email already has an account")),
+                Err(error) => return Err(ApiError::from_db(error)),
+            }
+        }
+    };
+    let made = issue(services, project, user).await?;
+    let body = serde_json::to_string(&Data { data: &made }).map_err(ApiError::internal)?;
+    let mut response = crate::entries::json(StatusCode::OK, body, None, false);
+    session_cookies(&mut response, &made.session, &made.csrf);
+    Ok(response)
+}

@@ -1,0 +1,23 @@
+---
+// `/magic?token=…`: the landing page a magic link names. The token is consumed server-side
+// against the CMS, the session it answers is kept in this site's cookie, and the reader lands
+// in the members area. A used, expired or unknown token goes back to sign-in with its reason.
+import { site } from '@colophon/site-kit';
+import { redirect, setSession } from '../lib/session.ts';
+
+export const prerender = false;
+
+const cms = site();
+const token = Astro.url.searchParams.get('token') ?? '';
+if (cms === null) return Astro.redirect('/');
+if (token === '') return Astro.redirect('/signin/?error=magic_link_invalid');
+
+const response = await fetch(`${cms.api}/audience/v1/${cms.project}/magic-link/${encodeURIComponent(token)}`, {
+	method: 'POST'
+});
+if (!response.ok) return Astro.redirect('/signin/?error=magic_link_invalid');
+const body = (await response.json().catch(() => null)) as { data?: { session?: string } } | null;
+const session = body?.data?.session;
+if (session === undefined) return Astro.redirect('/signin/?error=magic_link_invalid');
+return redirect('/members/', (answer) => setSession(answer, session));
+---

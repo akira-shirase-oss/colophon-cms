@@ -76,11 +76,16 @@ promote_one() {
 restart_blog() {
   local site="blog"
   local pidfile="$STATE/$site.pid"
-  [[ -f "$pidfile" ]] || return 0
-  local pid; pid="$(cat "$pidfile")"
-  kill -0 "$pid" 2>/dev/null || { rm -f "$pidfile"; return 0; }
-  kill "$pid" 2>/dev/null || true
-  for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  if [[ -f "$pidfile" ]]; then
+    local pid; pid="$(cat "$pidfile")"
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    fi
+    rm -f "$pidfile"
+  fi
+  # Always leave a blog server running: a missing pid file means it is down (a crash, or a
+  # promote that raced it), and a rebuild is exactly when it should come back.
   serve_one "$site"
 }
 

@@ -1588,6 +1588,23 @@
         },
         "type": "object"
       },
+      "MagicLinkRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "return_to": {
+            "description": "the site's absolute http(s) landing page; the token is appended to it",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "return_to"
+        ],
+        "type": "object"
+      },
       "McpMessage": {
         "description": "one JSON-RPC 2.0 message under MCP protocol 2025-11-25: a request, a notification or a response — never a batch",
         "properties": {
@@ -18503,6 +18520,152 @@
         "summary": "Claim the first administrator with the one-time setup code",
         "tags": [
           "setup"
+        ]
+      }
+    },
+    "/audience/v1/{project}/magic-link": {
+      "post": {
+        "operationId": "audienceMagicLink",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MagicLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "the same answer whether or not the email has an account; `dev_link` only with COLOPHON_DEV_MAIL=1"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [],
+        "summary": "Ask for a single-use sign-in link by email",
+        "tags": [
+          "audience"
+        ]
+      }
+    },
+    "/audience/v1/{project}/magic-link/{token}": {
+      "post": {
+        "operationId": "audienceMagicLinkSignIn",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the token's id",
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AudienceSession"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "the session's `Set-Cookie` pair; an unknown email is created in the open self-assign role",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`magic_link_invalid` — used, expired or unknown; `no_open_role` — no role a new account may take"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [],
+        "summary": "Sign in with the token a magic link carried",
+        "tags": [
+          "audience"
         ]
       }
     },

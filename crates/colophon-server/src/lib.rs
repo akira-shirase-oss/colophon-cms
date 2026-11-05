@@ -187,6 +187,7 @@ fn api_services(
         sessions: colophon_api::SessionSettings::default(),
         trusted_origins,
         allow_private_destinations: config.listen_addr.ip().is_loopback(),
+        dev_mail: config.dev_mail,
         cache: delivery_cache(config)?,
         content_types: colophon_api::ContentTypeCache::new(),
         assets: asset_store(config)?,

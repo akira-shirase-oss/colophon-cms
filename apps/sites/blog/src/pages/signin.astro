@@ -17,10 +17,12 @@ const ERROR: Record<string, string> = {
 	account_disabled: 'This account has been disabled.',
 	email_taken: 'That email already has an account — sign in instead.',
 	unavailable_role: 'Signing up isn’t offered right now.',
+	magic_link_invalid: 'That sign-in link is used, expired or unknown — ask for a new one.',
 	failed: 'Something went wrong — try again.'
 };
 const reason = Astro.url.searchParams.get('error') ?? '';
 const message = ERROR[reason] ?? (reason === '' ? null : ERROR.failed);
+const sent = Astro.url.searchParams.get('sent') === '1';
 ---
 
 <Base title="Sign in · The Draft">
@@ -37,6 +39,7 @@ const message = ERROR[reason] ?? (reason === '' ? null : ERROR.failed);
 					<code>member@draft.test</code> with password <code>member-of-the-draft</code>.
 				</p>
 				{message !== null && <p class="form-error">{message}</p>}
+				{sent && <p class="form-ok">If that address has an account, a sign-in link is on its way.</p>}
 				<div class="account-forms">
 					<form method="post" action="/api/signin" class="card">
 						<h2>Sign in</h2>
@@ -61,6 +64,15 @@ const message = ERROR[reason] ?? (reason === '' ? null : ERROR.failed);
 							<input type="password" name="password" required minlength="8" autocomplete="new-password" />
 						</label>
 						<button type="submit">Create account</button>
+					</form>
+					<form method="post" action="/api/magic" class="card">
+						<h2>Email me a link</h2>
+						<p>No password: we’ll send a single-use link that signs you in.</p>
+						<label>
+							Email
+							<input type="email" name="email" required autocomplete="email" />
+						</label>
+						<button type="submit">Send the link</button>
 					</form>
 				</div>
 			</section>

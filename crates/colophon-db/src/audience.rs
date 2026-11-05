@@ -760,3 +760,121 @@ pub async fn update_user(
     }
     Ok(UserChanged::Updated(row))
 }
+
+/// How long a magic link lives: long enough for a mail round trip, short enough that a leaked
+/// inbox copy is worthless by the time anyone finds it (D-140).
+pub const MAGIC_LIFETIME: Duration = Duration::minutes(15);
+
+/// Records a magic link for `email`, retiring any earlier one for the same address first so
+/// only the newest link works. `token_hash` is the SHA-256 of the token the caller handed out;
+/// the token itself is never stored.
+pub async fn request_magic_link(
+    pool: &PgPool,
+    project: Uuid,
+    email: &str,
+    token_hash: &[u8; 32],
+    return_to: &str,
+) -> Result<(), DbError> {
+    let mut tx = project_tx(pool, project).await?;
+    sqlx::query!(
+        "UPDATE audience_magic_links SET used_at = now()
+         WHERE project_id = $1 AND email = $2 AND used_at IS NULL",
+        project,
+        email
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?;
+    sqlx::query!(
+        "INSERT INTO audience_magic_links (project_id, id, email, token_hash, return_to, expires_at)
+         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
+        project,
+        Uuid::now_v7(),
+        email,
+        &token_hash[..],
+        return_to,
+        f64::from(u32::try_from(MAGIC_LIFETIME.whole_seconds()).unwrap_or(u32::MAX))
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?;
+    tx.commit().await.map_err(DbError::from_query)
+}
+
+/// What a magic link's token turned out to be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MagicLink {
+    /// A live link naming an existing, enabled account: signed in.
+    SignedIn(SiteUser),
+    /// A live link naming an email with no account here: the caller may create one in the
+    /// project's open self-assign role, then sign in.
+    NewUser(String),
+    /// Unknown, used, expired or superseded — one answer for all of them.
+    Invalid,
+}
+
+/// Consumes a magic link by its token's hash: single use, and only while live. The account
+/// lookup runs in the same transaction, so a link can never sign in an account disabled
+/// between the check and the session.
+pub async fn consume_magic_link(
+    pool: &PgPool,
+    project: Uuid,
+    token_hash: &[u8; 32],
+) -> Result<MagicLink, DbError> {
+    let mut tx = project_tx(pool, project).await?;
+    let link = sqlx::query!(
+        "SELECT id, email FROM audience_magic_links
+         WHERE project_id = $1 AND token_hash = $2 AND used_at IS NULL AND expires_at > now()
+         FOR UPDATE",
+        project,
+        &token_hash[..]
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?;
+    let Some(link) = link else {
+        return Ok(MagicLink::Invalid);
+    };
+    sqlx::query!(
+        "UPDATE audience_magic_links SET used_at = now() WHERE project_id = $1 AND id = $2",
+        project,
+        link.id
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?;
+    let user = sqlx::query!(
+        "SELECT id, email, display_name, role, created_at, last_sign_in_at
+         FROM site_users
+         WHERE project_id = $1 AND email = $2 AND disabled_at IS NULL
+         FOR UPDATE",
+        project,
+        link.email
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?;
+    let Some(user) = user else {
+        tx.commit().await.map_err(DbError::from_query)?;
+        return Ok(MagicLink::NewUser(link.email));
+    };
+    sqlx::query!(
+        "UPDATE site_users SET last_sign_in_at = now(), failed_sign_ins = 0, locked_until = NULL
+         WHERE project_id = $1 AND id = $2",
+        project,
+        user.id
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?;
+    tx.commit().await.map_err(DbError::from_query)?;
+    Ok(MagicLink::SignedIn(SiteUser {
+        id: user.id,
+        email: user.email,
+        display_name: user.display_name,
+        role: user.role,
+        created_at: user.created_at,
+        last_sign_in_at: Some(OffsetDateTime::now_utc()),
+        disabled_at: None,
+    }))
+}

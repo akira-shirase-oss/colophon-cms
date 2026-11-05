@@ -303,6 +303,13 @@ article.post .lede {
 	border-radius: 0.25rem;
 }
 
+.form-ok {
+	border-left: 3px solid #2e7d32;
+	background: #eef7ee;
+	padding: 0.6rem 1rem;
+	border-radius: 0.25rem;
+}
+
 .account-line code {
 	background: var(--accent-soft);
 	padding: 0.05rem 0.3rem;
