@@ -85,6 +85,21 @@ a {
 	padding: 0;
 }
 
+.more {
+	margin-top: 3rem;
+}
+
+.section-title {
+	margin: 0 0 0.5rem;
+	font-size: 0.95rem;
+	font-weight: 600;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--muted);
+	border-bottom: 1px solid var(--rule);
+	padding-bottom: 0.6rem;
+}
+
 .posts li {
 	border-bottom: 1px solid var(--rule);
 	padding: 1.6rem 0;

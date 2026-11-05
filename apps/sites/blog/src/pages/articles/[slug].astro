@@ -1,0 +1,32 @@
+---
+export const prerender = true;
+import { site, entries, entryPath, richText, type Entry, type Site } from '@colophon/site-kit';
+import Base from '../../layouts/Base.astro';
+
+interface Props {
+	article: Entry;
+	generation: number;
+	cms: Site;
+}
+
+export async function getStaticPaths() {
+	const cms = site();
+	if (cms === null) return [];
+	// A project that has no `articles` collection simply has no article pages.
+	const { items, generation } = await entries(cms, 'articles').catch(() => ({ items: [] as Entry[], generation: 0 }));
+	return items.map((article) => ({
+		params: { slug: entryPath(article) },
+		props: { article, generation, cms }
+	}));
+}
+
+const { article, generation, cms } = Astro.props;
+const body = richText(cms, article.content['body']);
+---
+
+<Base title={`${article.title} · The Draft`} generation={generation}>
+	<article class="post">
+		<h1>{article.title}</h1>
+		<div class="prose" set:html={body} />
+	</article>
+</Base>

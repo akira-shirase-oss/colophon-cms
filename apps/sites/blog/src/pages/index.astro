@@ -6,6 +6,10 @@ import Unseeded from '../components/Unseeded.astro';
 
 const cms = site();
 const posts = cms === null ? { items: [], generation: 0 } : await entries(cms, 'posts');
+// The Draft reads a second collection beside `posts` (D-138): a project without `articles`
+// simply has no article section.
+const articles =
+	cms === null ? { items: [], generation: 0 } : await entries(cms, 'articles').catch(() => ({ items: [], generation: 0 }));
 
 function dateOf(post: (typeof posts.items)[number]): string {
 	const value = post.content['published_on'];
@@ -51,6 +55,22 @@ function tagsOf(post: (typeof posts.items)[number]): string[] {
 						</li>
 					))}
 				</ul>
+				{
+					articles.items.length > 0 && (
+						<section class="more">
+							<h2 class="section-title">Articles</h2>
+							<ul class="posts">
+								{articles.items.map((article) => (
+									<li>
+										<a href={`/articles/${entryPath(article)}/`}>
+											<h2>{article.title}</h2>
+										</a>
+									</li>
+								))}
+							</ul>
+						</section>
+					)
+				}
 			</>
 		)
 	}

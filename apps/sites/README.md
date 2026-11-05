@@ -8,7 +8,7 @@ in the Studio, publishes a release, rebuilds a site, and sees the change on a re
 
 | Site | Package | Port | Collection | What it exercises |
 |---|---|---|---|---|
-| The Draft, a blog | `@colophon/site-blog` | 58110 | `posts` | rich-text bodies, a slug field, tags, dates, author — and a members area gated by audience sign-in (D-137) |
+| The Draft, a blog | `@colophon/site-blog` | 58110 | `posts` + `articles` | rich-text bodies, a slug field, tags, dates, author, a second collection beside the posts (D-138) — and a members area gated by audience sign-in (D-137) |
 | Fieldnotes Docs | `@colophon/site-docs` | 58111 | `guides` | enum sections, ordered sidebar navigation, rich-text |
 | Butter & Thyme, recipes | `@colophon/site-recipes` | 58112 | `recipes` | a list of objects (ingredients), a list of text (steps), enums, numbers |
 | The Meridian Post, news | `@colophon/site-news` | 58113 | `stories` | a featured flag, categories, datelines, bylines |
