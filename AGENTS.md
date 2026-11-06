@@ -1,91 +1,61 @@
 # Colophon CMS: agent instructions
 
-**Current state (2026-10-31, port onto the main lineage).** Local `main` now tracks
-`origin/main` (`fb8c49f`; migrations to 0030). The former `studio/content-cards` line is archived
-at `origin/lineage/content-cards` and local `studio/content-cards` (`81e7002`) — 61 commits of
-Strapi-style modelling on a diverged base; the maintainer chose to **port its unique work onto
-this lineage** rather than merge. Port backlog, in intended order (done: 1 typography, 2 collection delete — D-083, migration
-0031; 3 email/password — D-084, migration 0032; 4 mirrored references — D-085, no migration;
-5 import/export — D-086, migration 0033; 6 locales — D-087, migration 0034):
+**Current state (2026-11-06).** `main` carries migrations through 0054 and decisions
+through D-146. The content-cards port era is finished — its unique work landed on this
+lineage as D-083 to D-087 (migrations 0031–0034); the archived branch stays at
+`origin/lineage/content-cards` for reference.
 
-1. ~~typography floor (14px minimum; `check-typography.sh` + Studio/testbed CSS — no migration)~~
-2. ~~delete an empty collection~~
-3. ~~email-and-password accounts (sign up, sign in, join by invitation; sign-in card UX)~~
-4. ~~mirrored references (a writable inverse field; main lineage has read-only "Linked from")~~
-5. ~~import/export (JSON array and Strapi-entity import, JSONL export)~~
-6. ~~locales and localization groups (deepest port — entry model, lists, API, Studio)~~
-7. Studio polish (invite dialog; the checklist already exists as D-059)
+Every roadmap milestone is built; what remains before v0.1 is the human-run proof-gate
+work: the rehearsed usability sessions and one independent install (P6's gate, D-132),
+the 24-hour soak, and the first public demo (P3.8). Where each milestone stands (full
+detail: `docs/ROADMAP.md` and the build log):
 
-Each port is a `port/<name>` branch merged into `main` when complete, migrations renumber from
-0031, and every port owes the D-018 trio (regression tests, testbed page, load scenario) on the
-new base. Check the archived line for the reference implementation: `git show studio/content-cards:<path>`.
+- **P0–P2 done:** foundation; never-lose-an-edit (insert-only revisions, `If-Match` saves,
+  idempotent writes, the F01/F02 crash tests, `colophon-sim` differentially checked against
+  Postgres — replay a failing seed with `cargo run -p colophon-sim -- --seed N --trace`);
+  publish-exactly-once (changesets bound to their hash, numbered releases on a
+  base generation, the leased outbox, the publishing simulator scenario and crash loop).
+- **P3 built:** generation-keyed Valkey cache with a Postgres fallback and ETags,
+  tombstoned unpublish, CDN purge jobs, probe receipts per location, the reference site,
+  the Studio's design system and non-technical path. Step 3.8 (site live, recorded public
+  demo) is the last open piece.
+- **R built:** roles as data, the role editor, field lists and `own` conditions, project
+  API tokens as their own identity with an exact kill switch, the append-only audit log.
+- **M built:** every field type, references that never dangle, objects/lists/page-builder
+  blocks, single types, patterns, unique fields, defaults, conditional fields, shared
+  components, schema migrations (plan → dry run → per-item outcomes, crash-resumable), and
+  entry deletion as dependency-checked tombstones.
+- **P4 built:** rollback as a new generation, pinned reads, the media pipeline (upload
+  intents, quarantine, derivatives, staged deletion).
+- **E and DX built:** locales and localization groups, scheduled publishing with IANA
+  zones, comments/tasks bound to pinned revisions, review stages, live lists
+  (pg_notify → SSE); the bounded query document, OpenAPI emitted from the route table,
+  `@colophon-cms/sdk`, GraphQL, Strapi/Sanity import.
+- **S built:** the multi-instance stack and failover proof (`scripts/cluster.sh`,
+  `scripts/failover.sh`), Valkey-shared rate limits, `scripts/load.sh … stress`,
+  `colophon-bench` micro-benchmarks.
+- **V built:** `0.1.0-alpha.1` across every binary, the `@colophon-cms/cli` npm launcher,
+  the install script and the Homebrew template; publishing waits on the maintainer
+  (npm org, `NPM_TOKEN`, licence, tag — module 19).
+- **P5 done:** the MCP adapter (stdio and Streamable HTTP) with no self-approval enforced,
+  budget reservations in Postgres, bounded bulk manifests, the eval suite gated at
+  `UNAUTHORIZED: 0`, the L08 noisy-agent run committed.
+- **P6 built:** WAL archiving and encrypted base backups, the six-stage restore with a
+  recovery epoch, `backup.sh daily`, bounded-table retention sweeps, asset versioning, the
+  upgrade rehearsal. Remaining gate items are the human-run sessions above.
+- **P7 built:** site users and audience roles, magic links through the D-145 mail seam
+  (Resend first; `COLOPHON_DEV_MAIL` on the dev stack), RLS-gated delivery, The Draft's
+  members area end to end; built-in password accounts with an external provider optional
+  (D-141, D-146). Five Astro demo sites (D-133) rebuild themselves on publish with live
+  delivery updates (D-138, D-139).
 
-Running locally: `scripts/migrate.sh` migrates the shared `colophon` dev database (this
-lineage's own migrations — `colophon_studio` belonged to the archived line and must not be
-reused), then `COLOPHON_STUDIO_DIR=apps/studio/build target/release/colophon-server` — Studio at
-`http://localhost:58000/studio/`, sign in as `dev-owner`. Port branches run against their own
-database via `COLOPHON_TEST_DATABASE=colophon_port` (rewrites both URLs in
-`scripts/local-env.sh`); merge back to the shared database only when the port lands on `main`.
-Rebuild the Studio bundle with `npm run build -w @colophon/studio` and the running server picks
+Running locally: `scripts/migrate.sh` migrates the shared `colophon` dev database, then
+`COLOPHON_STUDIO_DIR=apps/studio/build target/release/colophon-server` — Studio at
+`http://localhost:58000/studio/`, sign in as `dev-owner`. Rebuild the Studio bundle with
+`npm run build -w @colophon/studio` and the running server picks
 it up from disk; the server binary needs a rebuild only for Rust changes. After touching `sqlx`
 queries, re-prepare with `cargo sqlx prepare --workspace --all-targets` (plain `prepare` wipes
 `.sqlx`).
-
-**Status (2026-10-27): milestone P3 in progress.** P0 is complete: steps 0.1 to 0.7 built the pinned toolchain and
-workspace, the local stack in `deploy/`, the error envelope and health checks, `apps/testbed` and the k6 harness in
-`perf/`, the rich-text format with its editor, validator and renderer, and `packages/ui` with the Studio's first screen
-(D-013 to D-030). Step 1.1 is done: built-in password sign-in with OIDC optional (`colophon-auth`), server-side sessions with
-CSRF and `Origin` checks, projects isolated by row-level security (`colophon-db`, migration 0001), the testbed's Session
-page, and the signed-in load scenario `perf/k6/session.js` (D-031 to D-033). Step 1.2 is done: entries with
-insert-only revisions in the built-in `articles` collection, saves with `If-Match`, idempotent writes, the crash tests
-F01 and F02, the testbed's Entries page and `perf/k6/entries.js` (D-034 to D-036). Step 1.3 is done: the server
-serves the Studio at `/studio`; the Studio edits real drafts with autosave, a device copy of unsaved edits, and a
-conflict screen (`apps/studio/tests/server/`, `scripts/studio.sh`, `perf/k6/studio.js`; D-037, D-038). Step 1.4 is
-done: `crates/colophon-sim`, a deterministic simulator with mutation checks and a differential test against Postgres
-(D-039); replay a failing seed with `cargo run -p colophon-sim -- --seed N --trace`. Step 1.5 is done: content
-types (`colophon_domain::schema`, migration 0003, `{P}/content-types`, the Studio's type-driven editor,
-`perf/k6/content-types.js`; D-040). Step 1.6 is done: `colophon login`/`logout`/`whoami`/`content create`/
-`content list`, device sign-in approved at `/studio/device`, bearer tokens on every route (migration 0004,
-`crates/colophon-server/tests/cli.rs`, `perf/k6/cli.js`; D-041). Step 1.7 is done: roles enforced by one policy
-table (`colophon_domain::policy`), members and single-use invitation links (migration 0005, `colophon_db::members`,
-the Studio's Members and `/studio/invite` pages, `perf/k6/members.js`; D-042). Step 1.8 is done: `colophon admin
-bootstrap` makes the first administrator once, and only administrators create projects (migration 0006,
-`colophon_db::administrators`, `perf/k6/projects.js`; D-043). Tests create projects as `dev-owner@colophon.test`,
-which `scripts/migrate.sh` provisions via `colophon admin account` (deploy/README.md); Keycloak is an opt-in
-`oidc` compose profile for the OIDC compatibility tests only (D-146). P1's proof gate
-is met; see `docs/ROADMAP.md` for what carries forward. P2 has begun: step 2.1 is done, changesets that pin exact
-revisions and reviews bound to their hash (`colophon_domain::changeset`, migration 0007, `{P}/changesets`, the
-Studio's changeset pages, `perf/k6/changesets.js`; D-044). Step 2.2 is done: publishing commits a release on the
-publisher's base generation, publication history is non-overlapping intervals, and `/content/v1` reads a published
-copy as `colophon_delivery` (migration 0008, `colophon_db::{releases, delivery}`, `perf/k6/delivery.js`; D-045; rerun
-`scripts/stack.sh up` on an older stack to create the role). Step 2.3 is done: a release commits its delivery jobs
-(the outbox), and `crates/colophon-worker` (`--role worker|all`) claims them under leases as `colophon_worker` and
-posts webhooks with a stable idempotency key to public addresses only (migration 0009, F03 in `tests/faults.rs`,
-F05 in `tests/worker.rs`, `perf/k6/publishing.js` with `perf/receiver/`; D-046). Step 2.4 is done: the simulator's
-publishing scenario (`colophon-sim --scenario publishing`), one announcement in flight per destination (migration
-0010), and the real-process crash loop (`tests/crash_loop.rs`; D-047). P2 is done. P3, proving it reached the site: step 3.1 is done, a
-generation-keyed Valkey cache for `/content/v1` with the generation always read from Postgres, single-flight fills, a
-Postgres fallback and ETags (migration 0011; D-048). Step 3.2 is done: unpublish with tombstones and origin revocation,
-and CDN purge jobs (migrations 0012, 0013; D-049, D-050). Step 3.3 is done: probes and a receipt for every publish,
-evidence scoped to the locations checked (migration 0014; D-051). Step 3.4 is done: the reference site in `apps/web`,
-built from one release and promoted atomically (D-052, `perf/k6/site.js`). Step 3.5 is done: title search, entry states,
-revision comparison and review diffs, and the design system: every shadcn-svelte component in `packages/ui` on
-Colophon's tokens (D-053, D-056), shown at `/studio/design`. Step 3.6 is done: slugs, and a content-type builder whose
-changes are checked against stored content (migration 0016; D-054, D-055). Step 3.7 is done but for a check at phone
-width: plain words from one glossary (`apps/studio/src/lib/words.ts`), one-click publish, a first-run checklist, and
-sign-up with a one-time setup code for a fresh installation (migration 0020, `perf/k6/setup.js`; D-059, D-061).
-Milestone R, roles and permissions as data (D-058): R.1 (the four built-in roles as data, behaviour unchanged;
-migration 0017), R.2 (custom roles and the Studio's role editor; migration 0018, `perf/k6/roles.js`) and R.3 (field
-lists and `own` conditions; migrations 0021, 0022) are done. Scheduled publishing, from milestone E, is done (migration
-0019, the worker's scheduler, `perf/k6/schedules.js`; D-060). R.4 is built, its full load runs pending: project API
-tokens that act as their own identity, kept away from access control, with an exact kill switch, and an append-only
-audit log (migration 0023, `colophon_db::{tokens, audit}`, `scope::begin_as_token`, `perf/k6/tokens.js`; D-063). Milestone M has begun: field types (M.1, D-064), references that never dangle (M.2, migrations 0024; D-065)
-and objects, lists and page-builder blocks (M.3, migration 0025; D-066) are built, their full load runs pending; single types (M.4, migration 0026; D-067), text patterns (M.4, D-069), unique fields (M.4, migration 0027; D-070), defaults (M.4, D-071), conditional fields (M.4, D-072) and shared components (M.4, migration 0029; D-073) too; deleting entries, as tombstones the database refuses while anything depends on them (migration 0030, `colophon_delete_entry`, `perf/k6/deletion.js`; D-080), is built, its full load run pending. Milestone V (D-062)
-is built: one version (`0.1.0-alpha.1`, `colophon --version`, `GET /version`, the CLI's compatibility check), a
-release workflow written but not yet run on GitHub, the `@colophon-cms/cli` npm launcher, an install script and a
-Homebrew formula template; publishing waits on the maintainer (npm organization, `NPM_TOKEN`, a licence, a tag; see
-module 19). Next: step 3.8 (the site goes live, the first public demo) and the rest of M.4. D-062 adds milestones S (several servers behind a load balancer, stress
-runs, Rust benchmarks; Criterion micro-benchmarks of the per-request hot paths and a pull-request check that times the base and the head on one runner, `crates/colophon-bench`, `scripts/bench.sh`, D-074; S.1, the multi-instance stack and failover proof, is built: `scripts/cluster.sh`, `scripts/failover.sh`, D-075; S.2, rate limits shared in Valkey, D-076; S.3, `scripts/load.sh <endpoint> stress`, D-077; parsed content types cached by definition hash, D-078) and V (versions, and the CLI, SDK and MCP server packaged for npm, Cargo and Homebrew).
 
 ## Read first
 
@@ -128,7 +98,7 @@ failing invariant for a new feature, and never relabel uncertainty as success to
   proxies: `export PATH="$(brew --prefix rustup)/bin:$PATH"`. `scripts/check-toolchain.sh` fails if you forget.
 - `colophon-domain` must not depend on `tokio`, `axum`, `sqlx`, `reqwest` or any I/O crate. The build enforces the
   architecture.
-- Typed errors (`thiserror`) in library crates; `anyhow` only in the two binaries. No `unwrap`/`expect` on external
+- Typed errors (`thiserror`) in library crates; `anyhow` only in the binaries. No `unwrap`/`expect` on external
   input. Every I/O await has a deadline. No secrets, tokens, prompts or article bodies in logs.
 
 ## Frontend rules

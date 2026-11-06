@@ -16,36 +16,26 @@
   <a href="docs/modules/README.md">Modules</a>
 </p>
 
-> **Status: P0, foundation, is done; P1, never lose an edit, is in progress (October 2026).** P0 delivered a pinned
-> toolchain with CI that runs exactly what `scripts/check.sh` runs, a local stack (PostgreSQL, Valkey, Garage),
-> one error envelope with honest health checks, and the rich-text format: 42 shared fixtures, a Tiptap editor
-> that opens a document only if it can give it back byte for byte, and a Rust validator and a renderer that agree with
-> it. The Studio's first screen uses Material 3 components with no accessibility violations in light, dark and
-> high-contrast themes. Every feature follows one testing rule: regression tests, a separate testbed frontend, and
-> million-request load tests. Step 1.1 is done: built-in password sign-in (OIDC/SSO optional), server-side sessions
-> with CSRF and `Origin` checks, and projects that PostgreSQL's row-level security hides from everyone but their members.
-> Step 1.2 is done: drafts that can't be lost. Revisions are never changed, a save on a stale revision is refused, and a
-> server killed just before or just after a save neither loses an acknowledged draft nor saves it twice. Step 1.3 is
-> done: the Studio edits real drafts, autosaves, keeps unsaved edits on the device, and when two people edit the same
-> article it shows both versions and lets the editor choose instead of overwriting anyone. Step 1.4 is done: a
-> deterministic simulator runs thousands of seeded schedules of colliding editors, lost answers and crashes, catches
-> every planted bug, agrees with PostgreSQL save for save, and found a real double-save case in the Studio (fixed).
-> Step 1.5 is done: content types you define (text, rich text, numbers, booleans, choices, dates), changed only in
-> ways that keep every stored entry valid, and edited in the Studio field by field. Step 1.6 is done: the `colophon`
-> command line signs in through a code you approve in the Studio, and creates and lists the same records the Studio
-> edits, with the CLI contract's exit codes. Step 1.7 is done: owners invite people with single-use links, and one
-> policy table decides what owners, developers, editors and publishers may do; a project can never lose its last
-> owner. Step 1.8 is done: the operator makes the first administrator once, from a terminal, and only administrators
-> create projects. With it, the first milestone's proof gate is met. Step 2.1 is done: a changeset pins the exact
-> versions of the entries in it, and an approval counts only for that exact set; edit anything afterwards and it has
-> to be approved again. Step 2.2 is done: publishing an approved changeset is one numbered release, two releases on
-> the same base can't both commit, and anyone can read what's published, past releases included, through a database
-> role that can't see drafts. Step 2.3 is done: each release is announced to your webhooks by a background worker
-> that survives being killed mid-delivery, never sends an older release after a newer one, and only ever calls public
-> addresses. Step 2.4 is done: a deterministic simulator races publishers, crashes workers and scrambles the network
-> thousands of times per run, and a crash loop really kills the server over and over; neither finds anything lost or
-> doubled. That completes the second milestone.
-> Nothing here claims that a feature, benchmark or security review already exists. Progress is logged step by step at
+> **Status: every milestone through P7 is built; the 24-hour soak and the v0.1 release are next (November 2026).**
+> The foundation delivered a pinned toolchain with CI that runs exactly what `scripts/check.sh` runs, a local stack
+> (PostgreSQL, Valkey, Garage), one error envelope, and the rich-text format: 42 shared fixtures, a Tiptap editor that
+> opens a document only if it can give it back byte for byte, and a Rust validator and a renderer that agree with it.
+> Drafts can't be lost: revisions are insert-only, a save on a stale revision is refused, and killing the server just
+> before or just after a save neither loses an acknowledged draft nor saves it twice. Publishing is exactly-once: a
+> changeset pins the exact versions in it, an approval counts only for that hash, a release is one numbered commit on
+> a base generation, and a worker killed mid-delivery reconciles instead of repeating. Every publish carries a
+> receipt: a generation-keyed cache that can never serve the wrong thing, tombstoned unpublishes, and probes that
+> record where a release was actually seen. Roles are data, down to a field, with project API tokens and an append-only
+> audit log. Content modelling covers the Strapi and Sanity shapes — references the database refuses to let dangle,
+> objects, lists, page-builder blocks, locales — with schema migrations that dry-run every stored entry and resume
+> after a crash. The developer surface is whole: a bounded query API, GraphQL, a typed SDK, OpenAPI, Strapi/Sanity
+> import, and an MCP server where agents can draft and propose but never approve — enforced by an evaluation suite
+> gated on zero unauthorized actions. Operators get encrypted backups, a rehearsed six-stage restore, bounded-table
+> retention and a multi-instance stack that survives failover; sites get five Astro demos that rebuild themselves on
+> publish with live delivery updates, and visitors get real accounts with gated content enforced by Postgres
+> row-level security. What remains before **v0.1**: the rehearsed usability sessions and one independent install
+> (both human-run), the 24-hour soak, and the first public demo. Nothing here claims a feature, benchmark or security
+> review that doesn't exist — progress is logged step by step at
 > **[404human.dev/colophon](https://404human.dev/colophon/)**.
 
 ---
@@ -103,7 +93,7 @@ model, flows, consistency guarantees, capacity model and failure handling.
 |---|---|
 | Server | Rust (edition 2024): Axum, Tokio, Tower, SQLx; one binary with API and worker roles |
 | Data | PostgreSQL 18 (authoritative); Valkey, a Redis-protocol cache (disposable); S3-compatible object storage (Garage locally) |
-| Frontends | SvelteKit + TypeScript: the Studio (single-page app), the reference blog (prerendered), the docs (mdsvex + Pagefind) |
+| Frontends | SvelteKit + TypeScript: the Studio (single-page app), the testbed, the reference site, and five Astro demo sites |
 | Design system | Colophon's own: OKLCH tokens, Tailwind CSS v4, owned shadcn-svelte components on Bits UI, Inter (self-hosted) |
 | Editor | Tiptap / ProseMirror, stored as validated, versioned JSON, never HTML |
 | Identity | Built-in password accounts (OIDC/SSO optional); sessions enforced by Rust and Postgres |
@@ -120,14 +110,23 @@ Each milestone is named after what it proves, and is done only when its proof ga
 |---|---|---|---|
 | D | Design | Scope cut, plan written, every decision recorded | ✅ Done |
 | P0 | Foundation | Editor JSON round-trips; Rust rejects invalid documents; CI green | ✅ Done (October 2026) |
-| P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | In progress (step 1.1 done) |
-| P2 | Publish exactly once | Crashed workers reconcile; stale deliveries are superseded | Planned |
-| P3 | Prove it reached the site | Cache and purge faults, no mixed releases; **first public demo** | Planned |
-| P4 | Time travel and media | Rollback, pinned reads, revocation, safe uploads | Planned |
-| P5 | Safe automation | Zero unauthorized agent actions; interrupted bulk jobs resume | Planned |
-| P6 | Operate it | Full fault and load matrix, 24-hour soak, restore drill; **v0.1** | Planned |
+| P1 | Never lose an edit | Kill-before/after-commit faults, safe conflicts, cross-project denial | ✅ Done |
+| P2 | Publish exactly once | Crashed workers reconcile; stale deliveries are superseded | ✅ Done |
+| P3 | Prove it reached the site | Cache and purge faults, no mixed releases; **first public demo** | Built — the demo is owed |
+| R | Roles and permissions | One evaluator for every action × role × field × condition | Built |
+| M | Content modelling parity | Every shape round-trips; references never dangle; migrations resume | Built |
+| P4 | Time travel and media | Rollback, pinned reads, revocation, safe uploads | Built |
+| E | Editorial parity | Locales, schedules, review stages, comments, tasks, live lists | Built |
+| DX | Developer parity | Query API, GraphQL, SDK, OpenAPI, Strapi/Sanity import | Built |
+| S | Scale and performance | Multi-instance failover, shared rate limits, stress runs, benches | Built |
+| V | Versions and distribution | One version everywhere; install from npm, Cargo, Homebrew | Built — publishing waits on the maintainer |
+| P5 | Safe automation | Zero unauthorized agent actions; interrupted bulk jobs resume | ✅ Done (gate met) |
+| P6 | Operate it | Full fault and load matrix, 24-hour soak, restore drill; **v0.1** | Built — soak + human-run gates owed |
+| P7 | The audience | Visitors sign up and read gated content, enforced by Postgres RLS | Built |
 
-Estimated at about 9–12 months to v0.1, since the goal became every feature Strapi and Sanity offer (D-057). Details: [ROADMAP.md](docs/ROADMAP.md).
+Estimated at about 10–13 months to v0.1 at the roadmap's assumed pace, since the goal became every feature Strapi and
+Sanity offer (D-057). Details: [ROADMAP.md](docs/ROADMAP.md) — it calls developer parity "D"; the build log calls it
+"DX" because D is already the design work.
 
 **Deliberately not in v0.1:** commerce, payments, subscriptions, shipping and tax, hosting integrations and custom
 domains ([parked](docs/modules/parked.md)). **Never:** untrusted native plugins, CRDT live co-editing, GraphQL,
@@ -154,21 +153,31 @@ What exists today:
 
 ```text
 crates/
-  colophon-domain/   the rules, starting with the rich-text validator (no I/O allowed; scripts/check-architecture.sh)
-  colophon-db/       PostgreSQL adapter: a bounded, lazy pool and the readiness probe
+  colophon-domain/   the rules: schema, policy, changesets, the bounded query document (no I/O allowed;
+                     scripts/check-architecture.sh enforces it)
+  colophon-db/       PostgreSQL adapter: migrations, the bounded pool, RLS-aware sessions
+  colophon-auth/     password accounts, sessions, OIDC, the audience's site users
   colophon-api/      the HTTP surface: error envelope, request IDs, middleware, /livez, /readyz
-  colophon-cli/      the `colophon` binary (`colophon doctor`)
-  colophon-mcp/      the `colophon-mcp` binary: an MCP server on stdio for agents, over the same HTTP API (D-068)
+  colophon-media/    the media pipeline: upload intents, quarantine, derivatives, staged deletion
+  colophon-sim/      the deterministic simulator: seeded schedules, injected faults, a Postgres differential test
+  colophon-worker/   the worker role: outbox leases, deliveries, the scheduler, retention sweeps
+  colophon-mcp/      the MCP server for agents, stdio and Streamable HTTP, over the same API (D-068)
+  colophon-cli/      the `colophon` binary
   colophon-server/   the `colophon-server` binary: config, probes, graceful shutdown (--role api|worker|all)
   colophon-version/  the version, commit and build date every binary reports (--version, GET /version)
   colophon-bench/    Criterion micro-benchmarks of the per-request hot paths and their inputs (D-074)
 apps/
-  studio/            the Studio: today, the editor spike
+  studio/            the Studio: the client-side SPA the server serves at /studio
   testbed/           a separate SvelteKit frontend that tests Colophon through its real HTTP API
+  web/               the reference site: built from one pinned release, promoted atomically
+  sites/             five Astro demo sites on the delivery API (The Draft carries the members area)
 packages/
   editor/            Tiptap configured to exactly the rich-text format, and the canonical conversion
   content-renderer/  stored documents to safe HTML, one implementation for the Studio and the public site
-  ui/                Material 3 tokens from one seed, and components on Bits UI primitives
+  site-renderer/     a website-starter page's sections and theme into safe HTML/CSS, identically everywhere
+  site-template/     the website starter bundle: section library, navigation and theme types, seed entries
+  ui/                Colophon's design system: OKLCH tokens and owned shadcn-svelte components
+  sdk/               @colophon-cms/sdk: types from the served OpenAPI, a small client, generation-pinned reads
   cli-npm/           @colophon-cms/cli: the npm launcher for the prebuilt `colophon` binaries
 packaging/           the Homebrew formula template (scripts/homebrew-formula.sh fills it in per release)
 fixtures/            the shared rich-text contract: 12 valid documents with their reviewed HTML, 34 that must be refused
@@ -178,8 +187,7 @@ scripts/             check.sh (everything CI runs), stack.sh, testbed.sh, load.s
 docs/                the plan; docs/formats/ holds the stored formats
 ```
 
-The full target layout adds `apps/` (studio, web, docs), `packages/` (sdk, ui, content-renderer) and the remaining
-crates as the milestones need them; see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together.
 
 ## Development
 
