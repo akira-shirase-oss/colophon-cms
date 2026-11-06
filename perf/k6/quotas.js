@@ -1,6 +1,6 @@
 // Load scenario for the request quota (D-118): a token's `requests_per_minute` checked in the
 // admission limiter where its scoped transaction opens. setup() signs the owner in through
-// Keycloak, makes a project and two read-only tokens: `bounded`, ceiling 100,000 a minute and
+// the password card, makes a project and two read-only tokens: `bounded`, ceiling 100,000 a minute and
 // provider `tokens`/`cost` ceilings (D-122) the scenario only stores —
 // the arm asks for a fifth of the run's requests, under the ceiling on any machine this runs
 // on, so its requests prove a token inside its budget keeps its shape and its latency — and
@@ -13,7 +13,6 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import { Rate } from 'k6/metrics';
-import { parseHTML } from 'k6/html';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -64,11 +63,8 @@ export const options = {
 /** Signs `username` in with a cookie jar of its own; the headers a browser tab would send. */
 function signIn(username) {
   const jar = new http.CookieJar();
-  const page = http.get(`${PUBLIC_URL}/auth/login?return_to=/me`, { jar });
-  const action = parseHTML(page.body).find('#kc-form-login').attr('action');
-  if (!action) fail(`no Keycloak login form for ${username}`);
-  const me = http.post(action.replace(/&amp;/g, '&'), { username, password: 'colophon-dev' }, { jar });
-  if (me.status !== 200) fail(`sign-in as ${username} failed: HTTP ${me.status}`);
+  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: `${username}@colophon.test`, password: 'colophon-dev' }), { jar, headers: { 'Content-Type': 'application/json' } });
+  if (signedIn.status !== 204) fail(`sign-in as ${username} failed: HTTP ${signedIn.status}`);
   const cookies = jar.cookiesForURL(PUBLIC_URL);
   return {
     Cookie: `colophon_session=${cookies.colophon_session[0]}`, 'X-CSRF-Token': cookies.colophon_csrf[0], Origin: PUBLIC_URL,

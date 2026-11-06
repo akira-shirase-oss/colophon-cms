@@ -79,14 +79,18 @@ pub(crate) async fn providers(
 /// `GET /auth/login?return_to=/path[&start=create]`: starts a sign-in and sends the browser to the
 /// provider: to its sign-in form, or with `start=create` to its form for making an account.
 /// Either way the person comes back signed in; an account grants nothing by itself (D-043).
+/// With no provider configured (D-146) there is no form to send anyone to: the built-in
+/// password card on the Studio's front door is the sign-in page, and `return_to` carries over.
 pub(crate) async fn login(
     State(state): State<AppState>,
     Query(query): Query<LoginQuery>,
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
-    let oidc = services.oidc.as_ref().ok_or(ApiError::Unavailable(
-        "sign-in is not configured on this server",
-    ))?;
+    let Some(oidc) = services.oidc.as_ref() else {
+        let mut destination = url::form_urlencoded::Serializer::new(String::new());
+        destination.append_pair("return_to", &safe_return_path(query.return_to.as_deref()));
+        return Ok(Redirect::to(&format!("/studio/?{}", destination.finish())).into_response());
+    };
     let start = match query.start.as_deref() {
         Some("create") => colophon_auth::Start::CreateAccount,
         _ => colophon_auth::Start::SignIn,

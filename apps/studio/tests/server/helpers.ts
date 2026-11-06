@@ -3,32 +3,34 @@
 import AxeBuilder from '@axe-core/playwright';
 import { type Browser, expect, type Page } from '@playwright/test';
 
-/** Completes the local Keycloak's sign-in form, wherever the page sent us to it. */
-export async function keycloak(page: Page, user = 'dev-owner') {
-	await page.locator('#username').fill(user);
-	await page.locator('#password').fill('colophon-dev');
-	await page.locator('#kc-login').click();
+/** Fills the built-in password card on this page and submits it (D-146). */
+export async function password(page: Page, user = 'dev-owner') {
+	await page.locator('#auth-email').fill(`${user}@colophon.test`);
+	await page.locator('#auth-password').fill('colophon-dev');
+	await page.getByTestId('password-submit').click();
 }
 
 /** Signs in from the Studio's home page. */
 export async function signIn(page: Page, user = 'dev-owner') {
 	await page.goto('/studio/');
-	await page.getByTestId('sign-in').click();
-	await keycloak(page, user);
+	await password(page, user);
 	await expect(page.getByTestId('signed-in')).toBeVisible();
 }
 
 /** A fresh project, created through the API as the signed-in page; its id. */
-export async function newProject(page: Page): Promise<string> {
-	return page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
-		const response = await fetch('/api/v1/projects', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-			body: JSON.stringify({ slug, name: 'Studio test' })
-		});
-		return ((await response.json()) as { data: { id: string } }).data.id;
-	}, `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`);
+export async function newProject(page: Page, name = 'Studio test'): Promise<string> {
+	return page.evaluate(
+		async ({ slug, name }) => {
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const response = await fetch('/api/v1/projects', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+				body: JSON.stringify({ slug, name })
+			});
+			return ((await response.json()) as { data: { id: string } }).data.id;
+		},
+		{ slug: `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, name }
+	);
 }
 
 /** Accessibility problems on the page, one line per rule and element, so a failure says what. */

@@ -2,7 +2,7 @@
 // blocking pool — a sign-in verifies, a taken sign-up hashes before it finds the account, and a
 // missing account verifies against the dummy hash so it costs the same as a wrong password.
 // setup() signs a small pool of accounts up; iterations sign them in and get refused two ways.
-// No OIDC sign-in: these endpoints are open, so no Keycloak is in the loop.
+// No sign-in: these endpoints are open, so no session is in the loop.
 
 import http from 'k6/http';
 import { check, fail } from 'k6';

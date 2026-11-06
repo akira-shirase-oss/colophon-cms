@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO identities (id, issuer, subject, display_name, email, password_hash)\n         VALUES ($1, $2, $3, $4, $3, $5)\n         ON CONFLICT (issuer, subject) DO UPDATE\n           SET password_hash = EXCLUDED.password_hash,\n               email = EXCLUDED.email,\n               display_name = COALESCE(EXCLUDED.display_name, identities.display_name)\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "identities",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5eb73e079a7c83571f8b33c99ec38ac1b600c34620e801913f65ad5a84915298"
+}

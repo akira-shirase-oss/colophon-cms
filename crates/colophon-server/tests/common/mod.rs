@@ -1,4 +1,5 @@
-//! The real binary over real HTTP, with sign-in through the local stack's Keycloak.
+//! The real binary over real HTTP, signed in on the built-in password card (D-146); the OIDC
+//! helpers stay for the `COLOPHON_TEST_OIDC=1` compatibility suite.
 #![allow(
     dead_code,
     reason = "each test file uses a different subset of these helpers"
@@ -11,7 +12,7 @@ use std::{
 };
 
 use reqwest::{Method, StatusCode, header};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// The server's public origin: `http://localhost:58092`, or `COLOPHON_TEST_ORIGIN` when these
 /// tests were compiled with it set, so two checkouts can run them at once on different ports.
@@ -295,8 +296,28 @@ pub(crate) struct Session {
     pub(crate) csrf: String,
 }
 
+/// Whether the OIDC compatibility suite may run: `COLOPHON_TEST_OIDC=1` with the compose
+/// `oidc` profile up (`docker compose -f deploy/compose.yaml --profile oidc up -d`), since
+/// D-146 took the provider out of the default stack.
+pub(crate) fn oidc_enabled() -> bool {
+    std::env::var("COLOPHON_TEST_OIDC").ok().as_deref() == Some("1")
+}
+
+/// The `COLOPHON_OIDC_*` environment the OIDC tests give their server: what `deploy/oidc.env`
+/// carries, against the compose profile's realm.
+pub(crate) fn oidc_env() -> [(&'static str, &'static str); 3] {
+    [
+        (
+            "COLOPHON_OIDC_ISSUER",
+            "http://localhost:58080/realms/colophon",
+        ),
+        ("COLOPHON_OIDC_CLIENT_ID", "colophon-server"),
+        ("COLOPHON_OIDC_CLIENT_SECRET", "colophon-dev-client-secret"),
+    ]
+}
+
 /// Starts a sign-in and logs in on Keycloak's form; returns the callback URL and the binding
-/// cookie, without completing the callback.
+/// cookie, without completing the callback. OIDC tests only — see [`oidc_enabled`].
 pub(crate) async fn reach_callback(user: &str) -> (String, String) {
     let response = app()
         .get(format!("{ORIGIN}/auth/login?return_to=/me"))
@@ -361,11 +382,33 @@ pub(crate) async fn complete(callback: &str, binding: &str) -> reqwest::Response
         .expect("callback")
 }
 
+/// Signs `user` in on the built-in password card (D-146) as `<user>@colophon.test` with the
+/// development password. A database that hasn't provisioned the account gets it through
+/// `/auth/signup` first — the public endpoint does the same thing `admin account` would.
 pub(crate) async fn sign_in(user: &str) -> Session {
-    let (callback, binding) = reach_callback(user).await;
-    let response = complete(&callback, &binding).await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers()[header::LOCATION], "/me");
+    let email = format!("{user}@colophon.test");
+    let attempt = app()
+        .post(format!("{ORIGIN}/auth/signin"))
+        .json(&json!({"email": email, "password": "colophon-dev"}))
+        .send()
+        .await
+        .expect("sign in");
+    let response = if attempt.status() == StatusCode::NO_CONTENT {
+        attempt
+    } else {
+        let created = app()
+            .post(format!("{ORIGIN}/auth/signup"))
+            .json(&json!({"email": email, "password": "colophon-dev"}))
+            .send()
+            .await
+            .expect("sign up");
+        assert_eq!(
+            created.status(),
+            StatusCode::CREATED,
+            "a missing account signs up"
+        );
+        created
+    };
     let set = cookies_from(&response);
     let (session, csrf) = (
         cookie(&set, "colophon_session"),

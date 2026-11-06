@@ -14,7 +14,7 @@ import { type Browser, expect, type Page, test } from '@playwright/test';
 import { internalTerms, violations } from './helpers.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
-// Its callback must be registered in deploy/keycloak's realm (58400 to 58405 are).
+// Its own port — sign-in is the built-in password card (D-146), so any port works.
 const PORT = Number(process.env['COLOPHON_JOURNEY_PORT'] ?? 58402);
 const ORIGIN = `http://localhost:${PORT}`;
 const SHOTS = process.env['STUDIO_SHOTS_DIR'];

@@ -108,7 +108,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     who is signed in, *Your work and projects*, *About Colophon* (which version this is, below), and *Sign out*, which calls `POST /auth/logout` and only then
     reloads at the front door with a note that says so. If the server can't be reached it says you're still signed
     in. Since f4338a7 the answer names the identity provider's sign-out address, and the browser follows it
-    (Keycloak asks to confirm, then returns to `/studio/`), so signing in again asks for a password; only when the
+    (the provider asks to confirm, then returns to `/studio/`), so signing in again asks for a password; only when the
     provider gives no address does the front door say to close the browser on a shared computer. Test:
     `tests/server/signout.spec.ts`.
   - **Honest states and permission-aware navigation**: the sidebar, the Overview, the command palette and the new

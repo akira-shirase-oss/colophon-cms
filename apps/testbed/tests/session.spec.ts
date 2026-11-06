@@ -1,5 +1,5 @@
 // Sign-in and project isolation through the testbed, in a real browser, against the server's
-// real OpenID Connect flow and the stack's Keycloak.
+// built-in password card (D-146) — no identity provider involved.
 
 import { expect, test } from '@playwright/test';
 import { signIn } from './sign-in.ts';

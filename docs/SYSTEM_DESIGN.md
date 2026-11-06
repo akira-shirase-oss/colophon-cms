@@ -77,7 +77,7 @@ flowchart LR
   PG[("PostgreSQL 18: the only authority")]
   RC[("Redis-compatible cache: disposable")]
   OS[("Object storage")]
-  IDP[Keycloak via OIDC]
+  IDP[OIDC provider, optional]
   CDN[Cloudflare CDN]
   SITE[Static site host]
 
@@ -433,7 +433,7 @@ added. A release is simpler: `prepared → committed`, and a committed release n
 | Cache | Disposable, generation-keyed Redis-compatible store | Making the cache authoritative: loses correctness when the cache does |
 | Studio rendering | Static SPA served by Rust | SvelteKit server rendering: a second backend with its own authority |
 | API style | REST + OpenAPI | Ad-hoc GraphQL: unbounded query shapes conflict with strict cost limits — so the GraphQL built (DX.10, D-115) is per-collection, read-only and compiles to the same bounded document |
-| Identity | OIDC with Keycloak | A home-grown password system: a large security surface with no differentiation |
+| Identity | Built-in password accounts; OIDC optional | An OIDC-only design: every install and every test harness would depend on an external provider — the platform's own auth is the product's stated shape (D-141, D-146) |
 | Testing | Deterministic simulation + real-process crash loop + integration tests | Integration tests alone: rare races stay rare and unreproducible |
 | Design system | Material 3 tokens on Bits UI (D-011) | `@material/web` (maintenance mode), MUI (React-only) |
 

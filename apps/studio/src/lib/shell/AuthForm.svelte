@@ -6,14 +6,19 @@
   built-in accounts alone never offers a button that can only fail.
 -->
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
 	import { ApiError, signInPassword, signInUrl, signUp } from '#lib/api.ts';
 	import { providersQuery } from '#lib/queries.ts';
 
-	/** Where the single sign-on button comes back to afterwards. */
-	let { returnTo = '/' }: { returnTo?: string } = $props();
+	/**
+	 * `returnTo`: where the single sign-on button comes back to afterwards — and where the
+	 * password card navigates when `navigateAfter` is set, which is how `/auth/login`
+	 * degrades with no provider (D-146): the front door signs you in, then sends you on.
+	 */
+	let { returnTo = '/', navigateAfter = false }: { returnTo?: string; navigateAfter?: boolean } = $props();
 
 	const queryClient = useQueryClient();
 	// Until the answer arrives the button stays: a slow fetch should not flash it away from a
@@ -42,6 +47,8 @@
 			if (mode === 'signup') await signUp(email, password, name.trim() || undefined);
 			else await signInPassword(email, password);
 			await queryClient.invalidateQueries({ queryKey: ['me'] });
+			// Only same-site paths, ever (the server's safe_return_path makes the same rule).
+			if (navigateAfter && returnTo.startsWith('/') && !returnTo.startsWith('//')) await goto(returnTo);
 		} catch (failure) {
 			error = words(failure);
 		} finally {

@@ -30,7 +30,7 @@ up and rerunning this matrix there is open work.
 ### The stack
 
 `deploy/compose.yaml`, every image pinned by tag and digest (D-017): PostgreSQL
-18.6, Valkey 9.0.6, Garage 2.5.0 and Keycloak 26.8.1, all bound to 127.0.0.1. The
+18.6, Valkey 9.0.6 and Garage 2.5.0, all bound to 127.0.0.1. The
 measured process is a `cargo build --release` `colophon-server` bound to its own
 loopback port, logging WARN-and-above JSON. Every artifact cited records
 `topology` as one server, no balancer, and `k6` v2.3.0. `postgres-trouble` is the
@@ -50,7 +50,7 @@ macOS's 256 default once made a run measure the OS instead of the code.
 ### The dataset
 
 There is no shared fixture corpus and no spec-D1 dataset in these runs. Each
-scenario's `setup()` signs in through the real Keycloak login form as `dev-owner`,
+scenario's `setup()` signs in on the built-in password card as `dev-owner@colophon.test`,
 the administrator `scripts/migrate.sh` bootstraps on the development realm, creates
 a fresh project (slug `k6-<run>`), then builds its own corpus through the same HTTP
 API a client uses: entry creates carrying `Idempotency-Key`s, or the bulk import

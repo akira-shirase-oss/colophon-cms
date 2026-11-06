@@ -3,7 +3,7 @@
 // can't step down, and a member can leave.
 
 import { expect, test } from '@playwright/test';
-import { keycloak, newProject, signIn, violations } from './helpers.ts';
+import { newProject, password, signIn, violations } from './helpers.ts';
 
 test('an owner invites with a link, the invitee signs in and joins, and roles decide who manages members', async ({ page, browser }) => {
 	await signIn(page);
@@ -33,8 +33,7 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await guest.goto(new URL(link).pathname + new URL(link).hash);
 	await expect(guest.getByTestId('signed-out')).toBeVisible();
 	expect(new URL(guest.url()).hash).toBe('');
-	await guest.getByRole('link', { name: 'Sign in' }).click();
-	await keycloak(guest, 'dev-editor');
+	await password(guest, 'dev-editor');
 	await expect(guest.getByTestId('invite-ask')).toContainText('Dev Owner invited you to join Studio test as Editor: Writes and edits content.');
 	expect(new URL(guest.url()).hash).toBe('');
 	expect(await violations(guest)).toEqual([]);

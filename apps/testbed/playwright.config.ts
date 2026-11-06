@@ -5,7 +5,7 @@ import { defineConfig, devices } from '@playwright/test';
 // Playwright starts its own colophon-server (release build, local stack) and a preview of the
 // built testbed, on ports of their own so they never collide with a dev server.
 // COLOPHON_TESTBED_SERVER_PORT and COLOPHON_TESTBED_PORT move them, so two checkouts can run at
-// once (the server port's callback must be registered in deploy/keycloak's realm, and the testbed
+// once (the server port can be anything — the password card has no registered callback — and the testbed
 // built with VITE_COLOPHON_SERVER_ORIGIN naming it).
 const SERVER_PORT = Number(process.env['COLOPHON_TESTBED_SERVER_PORT'] ?? 58091);
 const TESTBED_PORT = Number(process.env['COLOPHON_TESTBED_PORT'] ?? 58101);

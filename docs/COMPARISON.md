@@ -139,7 +139,7 @@ that builds them.
 | Field-level and "own entries" permissions | ✓ | ✓ (by plan) | done (R.3; D-058) |
 | API tokens: read-only, full, custom | ✓ | ✓ | built in R.4 (D-063): read-only, full access and custom; device sign-in for the CLI since D-041 |
 | Audit log | Paid | ✓ (by plan) | built in R.4 (D-063): roles, members, invitations and tokens, append-only |
-| SSO / OpenID Connect | Paid | ✓ (by plan) | done (Keycloak, D-031) |
+| SSO / OpenID Connect | Paid | ✓ (by plan) | done (optional provider, D-031; built-in password accounts are the default, D-146) |
 | REST delivery with caching | ✓ | ✓ | done (P2, P3) |
 | Query API: filters, sort, populate, field selection, perspectives | ✓ | GROQ | D |
 | GraphQL | Plugin | ✓ | built (DX.10, D-115): per-collection, read-only, compiling to the bounded query document |

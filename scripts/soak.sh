@@ -51,9 +51,8 @@ SAMPLE_SECONDS="${SAMPLE_SECONDS:-10}"
 WARMUP_SECONDS="${WARMUP_SECONDS:-60}"
 MAX_GROWTH_PCT="${MAX_GROWTH_PCT:-10}"
 MAX_SLOPE_KB_PER_MIN="${MAX_SLOPE_KB_PER_MIN:-512}"
-# Registered with the Keycloak realm (deploy/keycloak/colophon-realm.json): the browser
-# sign-in flow the k6 setup drives needs the callback whitelisted — an unregistered port
-# gets an error page, not a login form. 58090 is load.sh's, 58091/58092 the other harnesses'.
+# Sign-in is the built-in password card (D-146) — any port works. 58090 is load.sh's,
+# 58091/58092 the other harnesses'.
 port="${LOAD_PORT:-58093}"
 base_url="http://127.0.0.1:$port"
 public_url="http://localhost:$port"

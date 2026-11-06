@@ -104,3 +104,28 @@ pub async fn bootstrap(
     transaction.commit().await.map_err(DbError::from_query)?;
     Ok(Bootstrapped::Done { identity })
 }
+
+/// Makes `identity` an administrator if it isn't one already (D-146): the idempotent
+/// provisioning half [`bootstrap`] can't do, since bootstrap runs once per installation.
+/// When this account is the installation's first administrator it also claims the
+/// `installation` row — an installation with an administrator is bootstrapped, and
+/// `standing` and a later `bootstrap` must agree about who owns it. Runs as the migrator.
+pub async fn ensure(migrator: &PgPool, identity: Uuid) -> Result<(), DbError> {
+    let mut transaction = migrator.begin().await.map_err(DbError::from_query)?;
+    sqlx::query!(
+        "INSERT INTO administrators (identity_id) VALUES ($1) ON CONFLICT DO NOTHING",
+        identity
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    sqlx::query!(
+        "INSERT INTO installation (bootstrapped_by) VALUES ($1) ON CONFLICT (singleton) DO NOTHING",
+        identity
+    )
+    .execute(&mut *transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(())
+}

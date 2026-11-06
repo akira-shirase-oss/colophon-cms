@@ -9,7 +9,7 @@ use object_store::ObjectStore as _;
 use colophon_db::{
     PgPool, PoolSettings,
     administrators::{self, Bootstrapped},
-    ledger, restore,
+    identity, ledger, restore,
 };
 use serde_json::json;
 
@@ -205,6 +205,67 @@ pub(crate) async fn bootstrap(database_url: &str, issuer: &str, subject: &str, o
         );
     } else {
         println!("already bootstrapped for {subject} at {issuer}; nothing changed");
+    }
+    Exit::Success
+}
+
+/// `colophon admin account`: creates or re-arms a built-in (email-and-password) account, and
+/// with `--admin` makes it an administrator (D-146). Idempotent — the provisioning half
+/// bootstrap can't do after its one run: more administrators, an operator's own account, the
+/// development owner. The hash goes to the database; the password itself is never printed.
+pub(crate) async fn account(
+    database_url: &str,
+    email: &str,
+    password: &str,
+    display_name: Option<&str>,
+    admin: bool,
+    out: Out,
+) -> Exit {
+    if !email.contains('@') || email.len() > 255 || email.chars().any(char::is_control) {
+        return fail(&out, Exit::Usage, "the account's email must contain @");
+    }
+    if password.chars().count() < 8 || password.len() > 512 {
+        return fail(
+            &out,
+            Exit::Usage,
+            "the password is eight characters or more, under 512 bytes",
+        );
+    }
+    let pool = match connect(database_url, &out).await {
+        Ok(pool) => pool,
+        Err(exit) => return exit,
+    };
+    let hash = match colophon_db::passwords::hashed(password).await {
+        Ok(hash) => hash,
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+    };
+    let identity = match identity::ensure_password_account(
+        &pool,
+        email,
+        &hash,
+        display_name.filter(|name| !name.is_empty()),
+    )
+    .await
+    {
+        Ok(identity) => identity,
+        Err(error) => return fail(&out, Exit::Internal, &chain(&error)),
+    };
+    if admin && let Err(error) = administrators::ensure(&pool, identity).await {
+        return fail(&out, Exit::Internal, &chain(&error));
+    }
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": "ensured", "identity": identity, "email": email, "administrator": admin,
+        }));
+    } else {
+        println!(
+            "{email} is provisioned{}",
+            if admin {
+                " and is an administrator"
+            } else {
+                ""
+            }
+        );
     }
     Exit::Success
 }

@@ -1,6 +1,8 @@
-//! Sign-in end to end: the real binary, the local stack's Keycloak, its real login form, and
-//! every check that protects a session, over HTTP. Needs the stack (scripts/stack.sh up) and
-//! migrations (scripts/migrate.sh).
+//! Sign-in end to end: the real binary, the built-in password card (D-146), and every check
+//! that protects a session, over HTTP. Needs the stack (scripts/stack.sh up) and migrations
+//! (scripts/migrate.sh). The provider-flow tests are the opt-in OIDC suite: they return early
+//! unless `COLOPHON_TEST_OIDC=1` and the compose `oidc` profile is up, and give their server
+//! the provider environment through [`common::oidc_env`].
 #![cfg(unix)]
 #![expect(
     clippy::expect_used,
@@ -29,10 +31,7 @@ async fn sign_in_works_and_every_write_needs_csrf_and_a_trusted_origin() {
     let (status, me) = get(Some(&editor), "/me").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(me["data"]["display_name"], "Dev Owner");
-    assert_eq!(
-        me["data"]["issuer"],
-        "http://localhost:58080/realms/colophon"
-    );
+    assert_eq!(me["data"]["issuer"], "password");
 
     // Writes need a CSRF token and a trusted Origin.
     let slug = unique_slug();
@@ -155,9 +154,12 @@ async fn a_project_is_invisible_to_people_who_are_not_members() {
 }
 
 #[tokio::test]
-#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+#[ignore = "needs the oidc compose profile and COLOPHON_TEST_OIDC=1, plus the local stack and migrations"]
 async fn a_callback_works_once_and_only_in_the_browser_that_started_it() {
-    let _server = Server::start().await;
+    if !common::oidc_enabled() {
+        return;
+    }
+    let _server = Server::start_with(&common::oidc_env()).await;
     let (callback, binding) = reach_callback("dev-owner").await;
 
     // Login CSRF: someone else's browser (no binding cookie, or another one) can't complete it.
@@ -182,11 +184,14 @@ async fn a_callback_works_once_and_only_in_the_browser_that_started_it() {
 
 /// A person who makes an account at the provider through `/auth/login?start=create` comes back
 /// signed in, and the account grants them nothing (D-043, D-061): no projects, no administrator,
-/// and a project of their own refused.
+/// and a project of their own refused. OIDC-only; the built-in equivalent is in `passwords.rs`.
 #[tokio::test]
-#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+#[ignore = "needs the oidc compose profile and COLOPHON_TEST_OIDC=1, plus the local stack and migrations"]
 async fn a_new_account_signs_in_and_grants_nothing() {
-    let _server = Server::start().await;
+    if !common::oidc_enabled() {
+        return;
+    }
+    let _server = Server::start_with(&common::oidc_env()).await;
     let response = app()
         .get(format!("{ORIGIN}/auth/login?start=create&return_to=/me"))
         .send()
@@ -340,9 +345,12 @@ async fn provider_asks_for_a_password(keycloak: &reqwest::Client) -> bool {
 }
 
 #[tokio::test]
-#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+#[ignore = "needs the oidc compose profile and COLOPHON_TEST_OIDC=1, plus the local stack and migrations"]
 async fn signing_out_also_ends_the_session_at_the_identity_provider() {
-    let _server = Server::start().await;
+    if !common::oidc_enabled() {
+        return;
+    }
+    let _server = Server::start_with(&common::oidc_env()).await;
     let keycloak = reqwest::Client::builder()
         .cookie_store(true)
         .redirect(reqwest::redirect::Policy::none())

@@ -660,6 +660,30 @@ enum AdminCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Provision a built-in (email-and-password) account, and with `--admin` make it an
+    /// administrator — the idempotent half bootstrap can't do after its one run: more
+    /// administrators, an operator's account, the development owner (D-146).
+    Account {
+        /// The migrator's connection URL. Never the application's.
+        #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// The account's email — also its sign-in name.
+        #[arg(long)]
+        email: String,
+        /// The password to set; re-running replaces it. Prefer the environment variable
+        /// over the flag so it stays out of shell history.
+        #[arg(long, env = "COLOPHON_ACCOUNT_PASSWORD", hide_env_values = true)]
+        password: String,
+        /// A display name for a new account; defaults to the email.
+        #[arg(long)]
+        display_name: Option<String>,
+        /// Also make the account an administrator (it may then create projects).
+        #[arg(long)]
+        admin: bool,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Copy the deletion ledger off-host (docs/modules/02-db.md "The deletion ledger"; O2's
     /// restore step 4 needs it): a versioned JSONL snapshot to a file, or into the
     /// `COLOPHON_S3_*` object store. Run from the backup schedule; each export is a complete
@@ -847,6 +871,23 @@ fn run_admin(runtime: &Runtime, command: AdminCommand) -> ExitCode {
                 &issuer,
                 &subject,
                 out::Out::new("admin bootstrap", out::Format::of(json, false)),
+            ))
+            .into(),
+        AdminCommand::Account {
+            database_url,
+            email,
+            password,
+            display_name,
+            admin,
+            json,
+        } => runtime
+            .block_on(admin::account(
+                &database_url,
+                &email,
+                &password,
+                display_name.as_deref(),
+                admin,
+                out::Out::new("admin account", out::Format::of(json, false)),
             ))
             .into(),
         AdminCommand::LedgerExport {

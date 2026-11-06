@@ -3,9 +3,9 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
 // The Studio against a real colophon-server: the release build serves the built Studio at
-// /studio on its own origin (D-037), with the local stack's Postgres and Keycloak behind it.
+// /studio on its own origin (D-037), with the local stack's Postgres behind it.
 // Run by scripts/studio.sh. COLOPHON_STUDIO_PORT moves it, so two checkouts can run at once (the
-// port's callback must be registered in deploy/keycloak's realm).
+// port can be anything now sign-in is the password card).
 const PORT = Number(process.env['COLOPHON_STUDIO_PORT'] ?? 58093);
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 

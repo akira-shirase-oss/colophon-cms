@@ -20,7 +20,6 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
-import { parseHTML } from 'k6/html';
 import { Rate } from 'k6/metrics';
 
 const anonCacheHits = new Rate('anon_cache_hits');
@@ -78,11 +77,8 @@ const body = (title, text) => ({
 });
 
 export function setup() {
-  const page = http.get(`${PUBLIC_URL}/auth/login?return_to=/me`);
-  const action = parseHTML(page.body).find('#kc-form-login').attr('action');
-  if (!action) fail('no Keycloak login form');
-  const me = http.post(action.replace(/&amp;/g, '&'), { username: 'dev-owner', password: 'colophon-dev' });
-  if (me.status !== 200) fail(`sign-in failed: HTTP ${me.status}`);
+  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
+  if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
   const headers = {
     Cookie: `colophon_session=${jar.colophon_session[0]}`, 'X-CSRF-Token': jar.colophon_csrf[0], Origin: PUBLIC_URL,

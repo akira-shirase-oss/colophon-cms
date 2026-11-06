@@ -127,11 +127,15 @@ test('the home page is accessible signed out and signed in, and lists your proje
 	await expect(page.getByTestId('signed-out')).toBeVisible();
 	expect(await violations(page)).toEqual([]);
 	await signIn(page);
-	const project = await newProject(page);
+	const named = `Studio test ${Date.now().toString(36)}`;
+	const project = await newProject(page, named);
 	// The projects grid lists them all only when there is more than one.
 	await newProject(page);
 	await page.goto('/studio/');
 	await expect(page.getByTestId('projects').getByRole('link')).not.toHaveCount(0);
+	// A shared dev database's hundreds of rows cap the grid at 24; the search the cap
+	// points at narrows to the one just made (D-144).
+	await page.getByTestId('project-search').fill(named);
 	await expect(page.locator(`a[href="/studio/projects/${project}"]`)).toBeVisible();
 	expect(await violations(page)).toEqual([]);
 });

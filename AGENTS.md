@@ -14,7 +14,7 @@ this lineage** rather than merge. Port backlog, in intended order (done: 1 typog
 4. ~~mirrored references (a writable inverse field; main lineage has read-only "Linked from")~~
 5. ~~import/export (JSON array and Strapi-entity import, JSONL export)~~
 6. ~~locales and localization groups (deepest port — entry model, lists, API, Studio)~~
-7. Studio polish (invite dialog, neutral Keycloak theme; the checklist already exists as D-059)
+7. Studio polish (invite dialog; the checklist already exists as D-059)
 
 Each port is a `port/<name>` branch merged into `main` when complete, migrations renumber from
 0031, and every port owes the D-018 trio (regression tests, testbed page, load scenario) on the
@@ -34,7 +34,7 @@ queries, re-prepare with `cargo sqlx prepare --workspace --all-targets` (plain `
 **Status (2026-10-27): milestone P3 in progress.** P0 is complete: steps 0.1 to 0.7 built the pinned toolchain and
 workspace, the local stack in `deploy/`, the error envelope and health checks, `apps/testbed` and the k6 harness in
 `perf/`, the rich-text format with its editor, validator and renderer, and `packages/ui` with the Studio's first screen
-(D-013 to D-030). Step 1.1 is done: OpenID Connect sign-in through Keycloak (`colophon-auth`), server-side sessions with
+(D-013 to D-030). Step 1.1 is done: built-in password sign-in with OIDC optional (`colophon-auth`), server-side sessions with
 CSRF and `Origin` checks, projects isolated by row-level security (`colophon-db`, migration 0001), the testbed's Session
 page, and the signed-in load scenario `perf/k6/session.js` (D-031 to D-033). Step 1.2 is done: entries with
 insert-only revisions in the built-in `articles` collection, saves with `If-Match`, idempotent writes, the crash tests
@@ -50,8 +50,9 @@ types (`colophon_domain::schema`, migration 0003, `{P}/content-types`, the Studi
 table (`colophon_domain::policy`), members and single-use invitation links (migration 0005, `colophon_db::members`,
 the Studio's Members and `/studio/invite` pages, `perf/k6/members.js`; D-042). Step 1.8 is done: `colophon admin
 bootstrap` makes the first administrator once, and only administrators create projects (migration 0006,
-`colophon_db::administrators`, `perf/k6/projects.js`; D-043). Tests create projects as `dev-owner`, which
-`scripts/migrate.sh` bootstraps; a Keycloak started before 1.8 must be recreated (deploy/README.md). P1's proof gate
+`colophon_db::administrators`, `perf/k6/projects.js`; D-043). Tests create projects as `dev-owner@colophon.test`,
+which `scripts/migrate.sh` provisions via `colophon admin account` (deploy/README.md); Keycloak is an opt-in
+`oidc` compose profile for the OIDC compatibility tests only (D-146). P1's proof gate
 is met; see `docs/ROADMAP.md` for what carries forward. P2 has begun: step 2.1 is done, changesets that pin exact
 revisions and reviews bound to their hash (`colophon_domain::changeset`, migration 0007, `{P}/changesets`, the
 Studio's changeset pages, `perf/k6/changesets.js`; D-044). Step 2.2 is done: publishing commits a release on the
@@ -182,8 +183,9 @@ dev-dependencies change serde_json's maps (D-074).
 
 The local stack (`scripts/stack.sh up`, details in `deploy/README.md`) binds every port to `127.0.0.1`; its credentials
 are public development values. The database has two logins: `colophon` owns the tables and runs migrations
-(`scripts/migrate.sh`); the server uses `colophon_app`, which row-level security applies to. After changing the Keycloak
-realm in `deploy/keycloak`, run `docker compose -f deploy/compose.yaml up -d --force-recreate keycloak`.
+(`scripts/migrate.sh`); the server uses `colophon_app`, which row-level security applies to. The development accounts are `dev-owner@colophon.test` and `dev-editor@colophon.test`, password `colophon-dev`,
+provisioned by `scripts/migrate.sh`. After changing the Keycloak realm in `deploy/keycloak` (the opt-in `oidc`
+profile), run `docker compose -f deploy/compose.yaml --profile oidc up -d --force-recreate keycloak`.
 
 Adding a migration whose tables new `sqlx::query!` calls use: `scripts/migrate.sh` compiles those queries before it can
 migrate, so apply the migration with sqlx-cli first, then refresh the offline data, and commit `.sqlx/`:

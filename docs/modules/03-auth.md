@@ -46,8 +46,10 @@ operation, and the cross-project and identity test families from spec §27 pass.
 ### Sign-in (spec §13; built in step 1.1, D-031)
 - Authorization Code flow with PKCE, `state` and `nonce` checks.
 - Exact redirect URIs and exact callback origins.
-- **Keycloak** is the reference provider, behind an adapter boundary. Another provider can replace it once it passes the
-  same contract tests (spec §04).
+- **The built-in password card is the default and needs nothing external** (D-146); OIDC is an optional adapter
+  behind the same boundary — `COLOPHON_OIDC_*` configured adds an SSO provider, unset means the card alone. Keycloak
+  is the reference provider for that adapter (an opt-in compose profile); another provider can replace it once it
+  passes the same contract tests (spec §04).
 - A person's identity is `(issuer, subject)`. An email claim is never used to establish identity or pick an owner.
 - `colophon_auth::OidcClient` is the relying party, built on `reqwest` and `jsonwebtoken` rather than an OIDC crate:
   - discovery is lazy and checked: the document's `issuer` must equal the configured issuer;
@@ -121,13 +123,13 @@ operation, and the cross-project and identity test families from spec §27 pass.
     ever issued;
   - the Studio's home page shows a signed-in person on such an installation where to find the code, a field for
     it, and the bootstrap command with their own subject.
-- Sign-up belongs to the identity provider: `GET /auth/login?start=create` asks it for its sign-up form
-  (`prompt=create`, when its discovery document lists it; its sign-in page otherwise). The development realm allows
-  self-registration since step 3.7. A new account grants nothing: it has no projects until someone invites it, and
-  creates none unless it is an administrator.
-- A development-only identity exists for local work and refuses to run on a publicly bound install: the Keycloak
-  realm in `deploy/keycloak` has a public client secret, and the server refuses to start with it on a non-loopback
-  listen address (D-031).
+- Sign-up is built in: `POST /auth/signup` makes a password account, and `/auth/login?start=create` with an OIDC
+  provider asks it for its sign-up form instead (`prompt=create`, when its discovery document lists it). A new
+  account grants nothing either way: it has no projects until someone invites it, and creates none unless it is an
+  administrator.
+- A development-only OIDC identity exists for the opt-in profile and refuses to run on a publicly bound install:
+  the Keycloak realm in `deploy/keycloak` has a public client secret, and the server refuses to start with it on a
+  non-loopback listen address (D-031).
 
 ### Sessions (built in step 1.1, D-032)
 - Rust issues opaque, random, revocable session tokens and stores only their hash in Postgres.
@@ -144,7 +146,8 @@ operation, and the cross-project and identity test families from spec §27 pass.
   to; `null` if the provider has none or can't be reached). Without it, the next person at a shared computer was
   signed straight back in without a password. No ID token hint is sent, so the provider asks the person to confirm.
   The development realm lists each local port's `/studio/` as a post-logout address. Built after R.4, from a gap
-  the Studio's sign-out showed; tested end to end against Keycloak (a provider without an end-session page is not).
+  the Studio's sign-out showed; tested end to end against Keycloak under `COLOPHON_TEST_OIDC=1` (a provider
+  without an end-session page is not).
 - CORS is narrowly scoped, and no secrets ever appear in URLs.
 - Sensitive actions require fresh authentication: deleting a project, export, credential and role changes.
 
@@ -453,8 +456,9 @@ Built in step 1.7 (D-042), for people:
     cookie without CSRF 403; an expired code 422; the sixth attempt 429 with `Retry-After`, even with the right code,
     while someone else within their limit succeeds; the code appears exactly once in all the process's output
     (its banner) and in no response or structured log line, at `debug`;
-  - `crates/colophon-server/tests/sign_in.rs`: an account made through `/auth/login?start=create` on Keycloak's
-    sign-up form signs in with no projects, isn't an administrator, and can't create a project;
+  - `crates/colophon-server/tests/sign_in.rs` under `COLOPHON_TEST_OIDC=1` (the `oidc` compose profile up): an
+    account made through `/auth/login?start=create` on Keycloak's sign-up form signs in with no projects, isn't an
+    administrator, and can't create a project — the equivalent password-account proof lives in passwords.rs;
   - unit tests: codes are four groups of Crockford characters and read back however they are typed; only an exact
     hash matches, comparing every live code; the banner names the code once, the Studio and the expiry in UTC.
 - **Since step 1.8 (D-043):**
@@ -470,14 +474,15 @@ Built in step 1.7 (D-042), for people:
     in the Studio, others see how to join one instead, and the testbed shows the refusal;
   - `perf/k6/projects.js`: refused creations and `/me` for both people, at least 1,000,000 requests per full run,
     checking that no refusal created anything.
-- **Contract tests** for the identity-provider adapter against Keycloak.
+- **Contract tests** for the identity-provider adapter against Keycloak, opt-in under `COLOPHON_TEST_OIDC=1`.
 - **In place since step 1.1:**
   - `crates/colophon-auth/tests/id_token.rs`: every forged or mismatched ID token is refused, with keys generated per
     run (another key under the provider's key id, nonce, issuer, audience, expiry, `nbf`, subject, `azp`, key id,
     HS256 signed with the public key, `alg: none`);
-  - `crates/colophon-server/tests/sign_in.rs`, against the real binary and Keycloak's login form: sign-in, `/me`,
-    writes refused without CSRF or a trusted `Origin`, logout and 401 afterwards; a project invisible to non-members;
-    a callback that works once and only in the browser that started it;
+  - `crates/colophon-server/tests/sign_in.rs`, against the real binary and the built-in `/auth/signin`: sign-in,
+    `/me`, writes refused without CSRF or a trusted `Origin`, logout and 401 afterwards; a project invisible to
+    non-members; the OIDC callback checks (a callback that works once and only in the browser that started it) run
+    under `COLOPHON_TEST_OIDC=1` against the `oidc` profile's Keycloak;
   - the server's configuration tests: the development client secret is refused off loopback;
   - `apps/testbed/tests/session.spec.ts`: two browsers; a project created by one is invisible to the other;
   - `perf/k6/session.js`: every request authenticated by cookie, at least 1,000,000 requests per full run.
@@ -502,7 +507,7 @@ Built in step 1.7 (D-042), for people:
     each other at the same moment leave one owner; an owner demoted while their request runs can neither promote nor
     remove anyone; another project's owner can neither see nor revoke these
     invitations;
-  - `crates/colophon-server/tests/members.rs`, against the real binary with two people signed in through Keycloak:
+  - `crates/colophon-server/tests/members.rs`, against the real binary with two people signed in on the password card:
     invite, look up, accept once; an owner can't join their own project twice; revoked links are gone; an editor
     writes content but can't change types, invite or promote themselves; a developer can change types; the last
     owner can't step down until there's a second; leaving hides the project;
@@ -513,7 +518,8 @@ Built in step 1.7 (D-042), for people:
 
 ## Build order
 
-1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin and cross-project denial for projects (step 1.1, done); roles,
+1. **P1:** built-in password sign-in with OIDC optional, sessions, CSRF/Origin and cross-project denial for
+   projects (step 1.1, done; provider-free since D-146); roles,
    invitations and the policy function (step 1.7, done); the owner bootstrap (step 1.8, done).
 2. **R:** roles as data (R.1, done), custom roles and the Studio's role editor (R.2, done), field-level permissions and `own`
    conditions (R.3, done), API tokens and the audit log (R.4, done: D-063); docs/ROADMAP.md, D-058.

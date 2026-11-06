@@ -18,6 +18,7 @@
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { ApiError, claimSetup, me } from '#lib/api.ts';
+	import { providersQuery } from '#lib/queries.ts';
 	import { lastProject } from '#lib/lastProject.ts';
 	import MyWork from '#lib/MyWork.svelte';
 	import NewProject from '#lib/NewProject.svelte';
@@ -29,6 +30,9 @@
 
 	const queryClient = useQueryClient();
 	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
+	// Whether a provider exists — the signed-out note's "close the browser" advice only makes
+	// sense when sign-in could live somewhere else too (D-146).
+	const providers = createQuery(providersQuery);
 	let creating = $state(false);
 
 	// The setup code (D-061): typed or pasted from the server's terminal.
@@ -90,13 +94,13 @@
 	<div class="mx-auto max-w-md py-16 text-center">
 		{#if page.url.searchParams.get('signed-out') === '1'}
 			<p role="status" class="mb-8 rounded-xl border border-border bg-card px-4 py-3 text-sm text-pretty" data-testid="signed-out-note">
-				You're signed out of Colophon. The sign-in page may still remember you, so on a shared computer, close the browser.
+				You're signed out of Colophon.{#if providers.data?.sso !== false} The sign-in page may still remember you, so on a shared computer, close the browser.{/if}
 			</p>
 		{/if}
 		<h1 class="text-3xl font-semibold tracking-tight">Welcome to Colophon</h1>
 		<p class="mt-3 text-muted-foreground" data-testid="signed-out">Write, review and publish your website's content, and see what reached your readers.</p>
 		<div class="mt-8 text-left">
-			<AuthForm returnTo={resolve('/')} />
+			<AuthForm returnTo={page.url.searchParams.get('return_to') ?? resolve('/')} navigateAfter={page.url.searchParams.has('return_to')} />
 		</div>
 		<p class="mt-6 text-sm text-muted-foreground">New here? Create an account, then ask the person who runs this Colophon to invite you to a project.</p>
 	</div>

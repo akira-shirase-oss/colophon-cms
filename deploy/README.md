@@ -19,25 +19,30 @@ Needs Docker with Compose, plus `curl`, `jq` and `openssl`. The first `up` downl
 | PostgreSQL, the only source of truth | `postgres:18.6-trixie` | `postgresql://colophon:colophon-dev@localhost:55432/colophon` | owner and migrations: `colophon` / `colophon-dev`; the server: `colophon_app` / `colophon-dev` (`postgres/roles.sql`; row-level security applies to it) |
 | Valkey, the disposable cache ([D-015](../docs/DECISIONS.md)) | `valkey/valkey:9.0.6-trixie` | `redis://:colophon-dev@localhost:56379` | password `colophon-dev` |
 | Garage, S3-compatible storage ([D-016](../docs/DECISIONS.md)) | `dxflrs/garage:v2.5.0` | S3 API `http://localhost:53900` (region `garage`, path-style), admin API `http://localhost:53903` | access key `GK636f6c6f70686f6e2d646576`, secret key in `compose.yaml`, bucket `colophon-dev` |
-| Keycloak, sign-in ([module 03](../docs/modules/03-auth.md)) | `keycloak/keycloak:26.8.1` | issuer `http://localhost:58080/realms/colophon`, admin console `http://localhost:58080/admin` | console: `admin` / `colophon-dev`; users `dev-owner` and `dev-editor`, password `colophon-dev` |
+| Keycloak, optional OIDC provider ([module 03](../docs/modules/03-auth.md)) | `keycloak/keycloak:26.8.1` | issuer `http://localhost:58080/realms/colophon`, admin console `http://localhost:58080/admin` | console: `admin` / `colophon-dev`; users `dev-owner` and `dev-editor`, password `colophon-dev` |
 
-The Keycloak realm (`keycloak/colophon-realm.json`) has one client, `colophon-server` (secret
-`colophon-dev-client-secret`). It allows only the Authorization Code flow with PKCE (S256), and only the redirect URIs
-`http://localhost:{58000,58090,58091,58092,58093}/auth/callback` (the development server, the load test, the
-testbed, the server's integration tests, and the Studio's), plus `58400` to `58405` (step 3.7: `scripts/first-run.sh` on
-58400, and a second checkout's test runs, moved there with `COLOPHON_TEST_ORIGIN`, `COLOPHON_STUDIO_PORT`,
-`COLOPHON_TESTBED_SERVER_PORT` and `LOAD_PORT`): the password grant and the implicit flow are off. Since step 3.7 the
-realm allows **self-registration**: its sign-in page offers "Register", and `/auth/login?start=create` opens the form
-directly (`prompt=create`). Accounts made there are ordinary users with no projects; email isn't verified (no mail
-server). After editing the realm, run
-`docker compose -f deploy/compose.yaml up -d --force-recreate keycloak`. Keycloak keeps no data of its
-own, so `down` followed by `up` resets it to that file.
+Sign-in is the built-in password card ([D-146](../docs/DECISIONS.md)): no identity provider runs by
+default. `scripts/migrate.sh` provisions two accounts against any database — `dev-owner@colophon.test`
+("Dev Owner", an administrator) and `dev-editor@colophon.test` ("Dev Editor"), both with password
+`colophon-dev` — through `colophon admin account`, the same idempotent command an operator uses on a
+real install (`--admin` makes an administrator; `COLOPHON_ACCOUNT_PASSWORD` supplies the password
+non-interactively). Tests sign in as `dev-owner` and invite `dev-editor`.
 
-The two users' ids, which are their subjects in ID tokens, are fixed in the realm file: `dev-owner` is
-`00000000-0000-4000-8000-00000000c001` and `dev-editor` is `…c002`. `scripts/migrate.sh` bootstraps `dev-owner` as
-the installation's first administrator, the only person who can create projects ([D-043](../docs/DECISIONS.md)), so
-tests create projects as `dev-owner` and invite `dev-editor`. A Keycloak started before step 1.8 has random ids:
-recreate it as above.
+Keycloak stays in the Compose file only to keep the OIDC code path testable, behind the `oidc`
+profile: `docker compose -f deploy/compose.yaml --profile oidc up -d` brings it up, and
+`deploy/oidc.env` adds its issuer to the server's environment. The OIDC integration tests are gated
+the same way — `COLOPHON_TEST_OIDC=1` — and pass `deploy/oidc.env`'s settings to the servers they
+start. `scripts/stack.sh check` exercises it when the profile is active and skips it otherwise.
+
+The realm (`keycloak/colophon-realm.json`) has one client, `colophon-server` (secret
+`colophon-dev-client-secret`), allows only the Authorization Code flow with PKCE (S256), and registers
+the redirect URIs `http://localhost:{58000,58090,58091,58092,58093}/auth/callback` plus `58400` to
+`58405`: the password grant and the implicit flow are off, and self-registration is on
+(`/auth/login?start=create` opens its form directly). Accounts made there are ordinary users with no
+projects. After editing the realm, run
+`docker compose -f deploy/compose.yaml --profile oidc up -d --force-recreate keycloak`. Keycloak keeps
+no data of its own, so `down` followed by `up` resets it to that file. The two users' fixed subject ids
+are `dev-owner` → `00000000-0000-4000-8000-00000000c001` and `dev-editor` → `…c002`.
 
 `postgres/roles.sql` also creates `colophon_delivery` (step 2.2, [D-045](../docs/DECISIONS.md)), the read-only role
 public delivery switches to, and `colophon_worker` (step 2.3, [D-046](../docs/DECISIONS.md)), the role the worker
@@ -54,7 +59,8 @@ running install is [runbooks/upgrade.md](runbooks/upgrade.md) and diagnosing one
 [runbooks/observability.md](runbooks/observability.md) (both D-130).
 
 If a port clashes with something else on your machine, move it: `COLOPHON_PG_PORT`, `COLOPHON_VALKEY_PORT`,
-`COLOPHON_S3_PORT`, `COLOPHON_S3_ADMIN_PORT`, `COLOPHON_KEYCLOAK_PORT`. `deploy/local.env` carries the same
+`COLOPHON_S3_PORT`, `COLOPHON_S3_ADMIN_PORT` (`COLOPHON_KEYCLOAK_PORT` too, with the `oidc` profile).
+`deploy/local.env` carries the same
 addresses for the server and the CLI; update its URLs to match (and `COLOPHON_SERVER` if the server's own port
 moved). The bind address is deliberately not a setting.
 
@@ -81,9 +87,11 @@ something:
 | PostgreSQL | speaks the PostgreSQL protocol on the published port; major version 18; data checksums on; a write reads back; WAL archiving is on and a switched segment lands in the archive volume | a wrong password |
 | Valkey | a value with an expiry reads back; memory capped at 128 MiB with LRU eviction; no snapshots and no append-only file | any command before the password |
 | Garage | cluster healthy; the bucket exists; an object stores, reads back byte for byte, deletes, and is gone | an anonymous read; a wrong secret; an upload whose bytes don't match its SHA-256 |
-| Keycloak | the realm's issuer is stable; a full Authorization Code + PKCE sign-in returns an ID token for the right user with our nonce | a code used twice; a code without its PKCE verifier; a wrong password; a sign-in without PKCE; an unregistered redirect URI; the password grant |
+| Keycloak (`oidc` profile only) | the realm's issuer is stable; a full Authorization Code + PKCE sign-in returns an ID token for the right user with our nonce | a code used twice; a code without its PKCE verifier; a wrong password; a sign-in without PKCE; an unregistered redirect URI; the password grant |
 
-The script only decodes the ID token. Colophon's OIDC client verifies it (`colophon-auth`, [D-031](../docs/DECISIONS.md)).
+The Keycloak checks run only when the `oidc` profile is active; the default stack has no provider to
+check. The script only decodes the ID token. Colophon's OIDC client verifies it (`colophon-auth`,
+[D-031](../docs/DECISIONS.md)).
 
 ## Upgrading an image
 

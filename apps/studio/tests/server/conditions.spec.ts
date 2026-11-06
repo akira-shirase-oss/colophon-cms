@@ -30,12 +30,12 @@ const media = (conditional: boolean) => ({
 async function project(page: Page, conditional: boolean): Promise<string> {
 	await signIn(page);
 	const id = await newProject(page);
-	expect((await api(page, 'POST', `${env(id)}/content-types`, { slug: 'media', definition: media(conditional) }, { 'Idempotency-Key': key() })).status).toBe(201);
+	expect((await api(page, 'POST', `${env(id)}/content-types`, { slug: 'clips', definition: media(conditional) }, { 'Idempotency-Key': key() })).status).toBe(201);
 	return id;
 }
 
 async function fields(page: Page, id: string): Promise<Record<string, any>[]> {
-	return (await api(page, 'GET', `${env(id)}/content-types/media`)).body?.['data'].definition.fields as Record<string, any>[];
+	return (await api(page, 'GET', `${env(id)}/content-types/clips`)).body?.['data'].definition.fields as Record<string, any>[];
 }
 
 /** A field's "Show only when", in its advanced settings (the dialog stays open). */
@@ -43,7 +43,7 @@ const when = async (page: Page, id: string) => (await editField(page, id, 'Advan
 
 test('“Show only when” is set in the builder, read back in the other field’s order, and cleared', async ({ page }) => {
 	const id = await project(page, false);
-	await page.goto(`/studio/projects/${id}/settings/types/media`);
+	await page.goto(`/studio/projects/${id}/settings/types/clips`);
 	await expect(await when(page, 'title')).toHaveCount(0);
 	await page.keyboard.press('Escape');
 	const duration = await when(page, 'duration');
@@ -75,7 +75,7 @@ test('“Show only when” is set in the builder, read back in the other field�
 
 test('a field shows only while its condition holds, is required only then, and is cleared when it stops applying', async ({ page }) => {
 	const id = await project(page, true);
-	await page.goto(`/studio/projects/${id}/media?new=1`);
+	await page.goto(`/studio/projects/${id}/clips?new=1`);
 	// Duration doesn't apply to an article, so the new entry doesn't ask for it though it's required.
 	await expect(page.getByRole('dialog').getByLabel('Duration', { exact: true })).toHaveCount(0);
 	await page.getByLabel('Title', { exact: true }).fill('A short film');
@@ -100,7 +100,7 @@ test('a field shows only while its condition holds, is required only then, and i
 	await expect(page.getByLabel('Duration', { exact: true })).toHaveCount(0);
 	await expect(page.getByTestId('cleared-notes')).toContainText('Duration is cleared because it only applies when Kind is video or podcast.');
 	await expect(status).toHaveAttribute('data-status', 'saved');
-	const stored = (await api(page, 'GET', `${env(id)}/collections/media/entries/${entry}`)).body?.['data'].content;
+	const stored = (await api(page, 'GET', `${env(id)}/collections/clips/entries/${entry}`)).body?.['data'].content;
 	expect(stored).toMatchObject({ kind: 'article' });
 	expect(stored).not.toHaveProperty('duration');
 
@@ -123,8 +123,8 @@ test('a field shows only while its condition holds, is required only then, and i
 
 test('a condition stored entries don’t fit is refused with the entries listed', async ({ page }) => {
 	const id = await project(page, false);
-	await newEntry(page, id, 'An article with a duration', 'media', { title: 'An article with a duration', kind: 'article', duration: 5 });
-	await page.goto(`/studio/projects/${id}/settings/types/media`);
+	await newEntry(page, id, 'An article with a duration', 'clips', { title: 'An article with a duration', kind: 'article', duration: 5 });
+	await page.goto(`/studio/projects/${id}/settings/types/clips`);
 	const duration = await when(page, 'duration');
 	await duration.getByRole('combobox').selectOption({ label: 'Kind is…' });
 	const values = duration.getByRole('group', { name: 'Values of Kind that show Duration' });

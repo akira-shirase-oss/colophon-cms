@@ -135,7 +135,7 @@ function note(generation, project) {
 
 // --- the website connection, made by the hook itself -------------------------
 
-/** Signs in the way the seed does: the server's /auth/login redirects into Keycloak's form. */
+/** Signs in on the built-in password card (D-146): /auth/signin, session cookie in the answer. */
 async function signIn() {
 	const cookies = new Map();
 	const remember = (response) => {
@@ -146,33 +146,16 @@ async function signIn() {
 		}
 	};
 	const header = () => [...cookies].map(([name, value]) => `${name}=${value}`).join('; ');
-	const visit = async (url, init = {}) => {
-		let next = url;
-		let options = init;
-		for (let hop = 0; hop < 10; hop += 1) {
-			const response = await fetch(next, {
-				...options,
-				redirect: 'manual',
-				headers: { ...(options.headers ?? {}), cookie: header() }
-			});
-			remember(response);
-			const location = response.headers.get('location');
-			if (response.status < 300 || response.status >= 400 || location === null) return response;
-			next = new URL(location, next).toString();
-			options = {};
-		}
-		throw new Error('too many redirects signing in');
-	};
 
-	const form = await visit(`${SERVER}/auth/login?return_to=/me`);
-	const action = /<form[^>]*id="kc-form-login"[^>]*action="([^"]+)"/.exec(await form.text())?.[1];
-	if (action === undefined) throw new Error('no Keycloak sign-in form at /auth/login');
-	const signedIn = await visit(action.replaceAll('&amp;', '&'), {
+	// COLOPHON_ADMIN_USER may name a dev account ("dev-owner") or give the email itself.
+	const email = USER.includes('@') ? USER : `${USER}@colophon.test`;
+	const signedIn = await fetch(`${SERVER}/auth/signin`, {
 		method: 'POST',
-		headers: { 'content-type': 'application/x-www-form-urlencoded' },
-		body: new URLSearchParams({ username: USER, password: PASSWORD })
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ email, password: PASSWORD })
 	});
-	if (signedIn.status !== 200) throw new Error(`sign-in failed: HTTP ${signedIn.status}`);
+	remember(signedIn);
+	if (signedIn.status !== 204) throw new Error(`sign-in failed: HTTP ${signedIn.status}`);
 
 	return async (method, path, body) => {
 		const response = await fetch(`${SERVER}${path}`, {

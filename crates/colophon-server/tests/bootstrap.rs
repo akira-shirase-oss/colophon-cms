@@ -1,7 +1,8 @@
 //! The first owner (step 1.8, D-043), against the real binaries: `scripts/migrate.sh` has
-//! bootstrapped the development realm's dev-owner, who `/me` calls an administrator and who may
-//! create projects; dev-editor, signed in just the same, may not; and `colophon admin bootstrap`
-//! refuses to make anyone else an administrator. Needs the stack and `scripts/migrate.sh`.
+//! provisioned dev-owner@colophon.test as an administrator (`colophon admin account`, D-146),
+//! who `/me` calls an administrator and who may create projects; dev-editor, signed in just the
+//! same, may not; and `colophon admin bootstrap` refuses to make anyone else an administrator.
+//! Needs the stack and `scripts/migrate.sh`.
 #![cfg(unix)]
 #![expect(
     clippy::expect_used,
@@ -16,8 +17,8 @@ use common::{Server, call, local_env, sign_in, unique_slug};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 
-/// dev-owner's subject, fixed in `deploy/keycloak/colophon-realm.json`.
-const DEV_OWNER: &str = "00000000-0000-4000-8000-00000000c001";
+/// dev-owner's subject: a password account's subject is its email (D-146).
+const DEV_OWNER: &str = "dev-owner@colophon.test";
 
 /// `colophon admin bootstrap` with the local settings, as `scripts/migrate.sh` runs it.
 fn bootstrap(args: &[&str]) -> (Option<i32>, Value, String) {
@@ -38,7 +39,7 @@ fn bootstrap(args: &[&str]) -> (Option<i32>, Value, String) {
 }
 
 #[tokio::test]
-#[ignore = "needs the stack and scripts/migrate.sh, which bootstraps dev-owner"]
+#[ignore = "needs the stack and scripts/migrate.sh, which provisions dev-owner"]
 async fn only_the_bootstrapped_administrator_creates_projects_and_bootstrap_runs_once() {
     let _server = Server::start().await;
     let owner = sign_in("dev-owner").await;
@@ -93,13 +94,13 @@ async fn only_the_bootstrapped_administrator_creates_projects_and_bootstrap_runs
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
 
     // Bootstrap runs once: again for dev-owner it changes nothing; for anyone else it's refused.
-    let (code, out, stderr) = bootstrap(&["--subject", DEV_OWNER]);
+    let (code, out, stderr) = bootstrap(&["--subject", DEV_OWNER, "--issuer", "password"]);
     assert_eq!(
         (code, out["data"]["status"].as_str()),
         (Some(0), Some("already_bootstrapped")),
         "{stderr}"
     );
-    let (code, _, stderr) = bootstrap(&["--subject", &editor_subject]);
+    let (code, _, stderr) = bootstrap(&["--subject", &editor_subject, "--issuer", "password"]);
     assert_eq!(code, Some(4), "{stderr}");
     assert!(stderr.contains("bootstrap runs once"), "{stderr}");
     let (code, _, stderr) = bootstrap(&["--subject", "x", "--issuer", "http://id.example.com"]);

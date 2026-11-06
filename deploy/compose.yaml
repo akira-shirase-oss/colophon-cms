@@ -110,9 +110,13 @@ services:
       start_period: 30s
       start_interval: 1s
 
-  # The reference OpenID Connect provider, with the `colophon` realm imported on start.
-  # Its own data is not kept: `scripts/stack.sh down` resets it to the realm file.
+  # The reference OpenID Connect provider — opt-in only (D-146): the built-in password
+  # accounts are the stack's sign-in, and nothing here needs an identity provider. Bring it
+  # up for the OIDC tests with `docker compose -f deploy/compose.yaml --profile oidc up -d`
+  # and set COLOPHON_TEST_OIDC=1 (crates/colophon-server/tests/sign_in.rs). The `colophon`
+  # realm imports on start; its own data is not kept.
   keycloak:
+    profiles: ["oidc"]
     image: keycloak/keycloak:26.8.1@sha256:a78d6b79572168cb25886b80a8b5b8d4ed4390743e3eecb810538683e209dd6b
     command: ["start-dev", "--import-realm"]
     environment:

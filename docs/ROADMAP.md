@@ -35,7 +35,7 @@ Total: about **10–13 months** to v0.1 at the pace these estimates assumed, wit
 - Cargo workspace with `colophon-domain`, `colophon-db`, `colophon-api`, `colophon-cli`, `colophon-server`; shared
   `[workspace.dependencies]` and `[workspace.lints]`.
 - Frontend workspace with `apps/studio`, `packages/ui`, `packages/content-renderer`.
-- `deploy/compose.yaml`: PostgreSQL 18, Valkey (D-015), Garage (D-016, replacing MinIO), Keycloak; started and checked by `scripts/stack.sh` (D-017).
+- `deploy/compose.yaml`: PostgreSQL 18, Valkey (D-015), Garage (D-016, replacing MinIO); Keycloak only behind the opt-in `oidc` profile since D-146; started and checked by `scripts/stack.sh` (D-017).
 - API error envelope, request IDs, `/livez` and `/readyz`.
 - The testing rule (D-018) in place: `apps/testbed` with Playwright, and the k6 harness in `perf/` with committed
   results and per-machine baselines. Every later step adds its own checks and scenarios.
@@ -57,7 +57,7 @@ rich-text format and editor · 0.5 the Rust validator · 0.6 the renderer · 0.7
 - `domain`: IDs, scopes, schema model and validation, entries, immutable revisions, locales, slug rules, save rule.
 - `db`: core tables, composite foreign keys, slug claims, insert-only revisions, expected-revision save, idempotency
   records, database roles with row-level security.
-- `auth`: OIDC login (Keycloak), sessions, CSRF/Origin checks, owner bootstrap, roles, invitations, cross-project denial.
+- `auth`: built-in password login (OIDC optional, D-146), sessions, CSRF/Origin checks, owner bootstrap, roles, invitations, cross-project denial.
 - `api`: projects, environments, schemas, entries, revisions; `If-Match`, `Idempotency-Key`, cursor pagination; the
   generated OpenAPI document (D-027).
 - `cli`: `login`, `content create`, `content list`, `--json`, exit codes.

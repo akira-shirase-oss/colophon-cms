@@ -17,12 +17,12 @@
 </p>
 
 > **Status: P0, foundation, is done; P1, never lose an edit, is in progress (October 2026).** P0 delivered a pinned
-> toolchain with CI that runs exactly what `scripts/check.sh` runs, a local stack (PostgreSQL, Valkey, Garage,
-> Keycloak), one error envelope with honest health checks, and the rich-text format: 42 shared fixtures, a Tiptap editor
+> toolchain with CI that runs exactly what `scripts/check.sh` runs, a local stack (PostgreSQL, Valkey, Garage),
+> one error envelope with honest health checks, and the rich-text format: 42 shared fixtures, a Tiptap editor
 > that opens a document only if it can give it back byte for byte, and a Rust validator and a renderer that agree with
 > it. The Studio's first screen uses Material 3 components with no accessibility violations in light, dark and
 > high-contrast themes. Every feature follows one testing rule: regression tests, a separate testbed frontend, and
-> million-request load tests. Step 1.1 is done: sign-in through OpenID Connect (Keycloak locally), server-side sessions
+> million-request load tests. Step 1.1 is done: built-in password sign-in (OIDC/SSO optional), server-side sessions
 > with CSRF and `Origin` checks, and projects that PostgreSQL's row-level security hides from everyone but their members.
 > Step 1.2 is done: drafts that can't be lost. Revisions are never changed, a save on a stale revision is refused, and a
 > server killed just before or just after a save neither loses an acknowledged draft nor saves it twice. Step 1.3 is
@@ -106,7 +106,7 @@ model, flows, consistency guarantees, capacity model and failure handling.
 | Frontends | SvelteKit + TypeScript: the Studio (single-page app), the reference blog (prerendered), the docs (mdsvex + Pagefind) |
 | Design system | Colophon's own: OKLCH tokens, Tailwind CSS v4, owned shadcn-svelte components on Bits UI, Inter (self-hosted) |
 | Editor | Tiptap / ProseMirror, stored as validated, versioned JSON, never HTML |
-| Identity | OIDC with Keycloak as the reference provider; sessions enforced by Rust and Postgres |
+| Identity | Built-in password accounts (OIDC/SSO optional); sessions enforced by Rust and Postgres |
 | Delivery | Cloudflare CDN adapter: tag purge and evidence probes |
 | Verification | Unit and property tests, deterministic simulation, real PostgreSQL in a fresh database per test, Vitest, Playwright, k6 |
 
@@ -173,7 +173,7 @@ packages/
 packaging/           the Homebrew formula template (scripts/homebrew-formula.sh fills it in per release)
 fixtures/            the shared rich-text contract: 12 valid documents with their reviewed HTML, 34 that must be refused
 perf/                k6 scenarios, every load and micro-benchmark result, and per-machine baselines
-deploy/              compose.yaml: the local stack (PostgreSQL, Valkey, Garage, Keycloak); local.env
+deploy/              compose.yaml: the local stack (PostgreSQL, Valkey, Garage; Keycloak behind the `oidc` profile); local.env
 scripts/             check.sh (everything CI runs), stack.sh, testbed.sh, load.sh, install-k6.sh, and the checks
 docs/                the plan; docs/formats/ holds the stored formats
 ```
@@ -194,7 +194,7 @@ for the stack's own checks, and optionally [cargo-deny](https://github.com/Embar
 [k6](https://k6.io) (`scripts/install-k6.sh` installs the pinned version).
 
 ```sh
-scripts/stack.sh up      # PostgreSQL, Valkey, Garage and Keycloak on 127.0.0.1, then a check pass that each one works
+scripts/stack.sh up      # PostgreSQL, Valkey and Garage on 127.0.0.1, then a check pass that each one works
 scripts/check.sh         # everything CI runs: fmt, clippy -D warnings, tests, docs, architecture rule, cargo-deny,
                          # ShellCheck, and with the stack up: outage tests, the testbed in Chromium, load smoke runs
 scripts/frontend.sh      # type checks, the editor's unit tests, and the Studio in Chromium

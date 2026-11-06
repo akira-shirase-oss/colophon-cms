@@ -1,5 +1,5 @@
 // Load scenario for bearer tokens (step 1.6): what the CLI does on every command. setup() signs
-// in through Keycloak, runs a device sign-in, approves it with the browser session, and
+// in on the password card, runs a device sign-in, approves it with the browser session, and
 // exchanges it for an access token. Every measured request then authenticates with
 // `Authorization: Bearer` alone (a token lookup, no cookie, no CSRF) and alternates between the
 // project list and a collection's entries. Same settings as health.js; scripts/load.sh gives
@@ -7,7 +7,6 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
-import { parseHTML } from 'k6/html';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -43,11 +42,8 @@ export const options = {
 };
 
 export function setup() {
-  const page = http.get(`${PUBLIC_URL}/auth/login?return_to=/me`);
-  const action = parseHTML(page.body).find('#kc-form-login').attr('action');
-  if (!action) fail('no Keycloak login form');
-  const me = http.post(action.replace(/&amp;/g, '&'), { username: 'dev-owner', password: 'colophon-dev' });
-  if (me.status !== 200) fail(`sign-in failed: HTTP ${me.status}`);
+  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
+  if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
   const browser = {
     Cookie: `colophon_session=${jar.colophon_session[0]}`, 'X-CSRF-Token': jar.colophon_csrf[0], Origin: PUBLIC_URL,

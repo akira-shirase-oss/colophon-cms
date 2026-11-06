@@ -39,7 +39,6 @@ import http from 'k6/http';
 import { check, fail, sleep } from 'k6';
 import exec from 'k6/execution';
 import { Counter } from 'k6/metrics';
-import { parseHTML } from 'k6/html';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -128,11 +127,8 @@ function key() {
 const ARTICLES = EDITORIAL_VUS * 2 * 4;
 
 export function setup() {
-  const page = http.get(`${PUBLIC_URL}/auth/login?return_to=/me`);
-  const action = parseHTML(page.body).find('#kc-form-login').attr('action');
-  if (!action) fail('no Keycloak login form');
-  const me = http.post(action.replace(/&amp;/g, '&'), { username: 'dev-owner', password: 'colophon-dev' });
-  if (me.status !== 200) fail(`sign-in failed: HTTP ${me.status}`);
+  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
+  if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
   const session = { cookie: `colophon_session=${jar.colophon_session[0]}`, csrf: jar.colophon_csrf[0] };
   const write = { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };

@@ -75,8 +75,9 @@
 
 <h1>Session</h1>
 <p class="lede">
-	Sign-in through the server's real OpenID Connect flow (Keycloak in the local stack), then the projects API as that person:
-	every write carries the CSRF token and comes from a trusted origin.
+	Sign-in through the server's own password card (D-146) — or the "Sign in" link, which the
+	server sends to the Studio's card when no identity provider is configured — then the projects
+	API as that person: every write carries the CSRF token and comes from a trusted origin.
 </p>
 
 {#if me}

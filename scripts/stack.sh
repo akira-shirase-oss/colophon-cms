@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Colophon's local stack (deploy/compose.yaml): PostgreSQL, Valkey, Garage and Keycloak.
+# Colophon's local stack (deploy/compose.yaml): PostgreSQL, Valkey and Garage. Keycloak stays
+# in the file behind the `oidc` profile (D-146) — the OIDC tests opt in; nothing else needs it.
 #
 #   scripts/stack.sh up      start everything, wait until healthy, then run the checks
 #   scripts/stack.sh check   prove that each service really works
@@ -231,7 +232,9 @@ oidc_token() {
 
 check_keycloak() {
   local addr issuer discovery jar verifier challenge state nonce action location code reply payload
-  if ! addr=$(published keycloak 8080); then fail "keycloak is not running"; return; fi
+  # Opt-in since D-146: absent is fine — the built-in accounts are the default sign-in. When
+  # the `oidc` profile brought Keycloak up, its checks run as they always did.
+  if ! addr=$(published keycloak 8080); then echo "keycloak  (off — the oidc profile is opt-in)"; return; fi
   echo "keycloak  $addr"
   issuer="http://localhost:${addr##*:}/realms/colophon"
   if ! discovery=$(curl -fsS "$issuer/.well-known/openid-configuration"); then

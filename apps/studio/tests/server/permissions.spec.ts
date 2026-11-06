@@ -4,7 +4,7 @@
 // deleted, and the owner role is shown but never edited.
 
 import { expect, test } from '@playwright/test';
-import { keycloak, newProject, signIn, violations } from './helpers.ts';
+import { newProject, password, signIn, violations } from './helpers.ts';
 
 test('an owner makes a role, chooses what it may do, and someone invited with it holds exactly that', async ({ page, browser }) => {
 	await signIn(page);
@@ -61,8 +61,7 @@ test('an owner makes a role, chooses what it may do, and someone invited with it
 	const link = await page.getByRole('textbox', { name: 'Invitation link' }).inputValue();
 	const guest = await (await browser.newContext()).newPage();
 	await guest.goto(new URL(link).pathname + new URL(link).hash);
-	await guest.getByRole('link', { name: 'Sign in' }).click();
-	await keycloak(guest, 'dev-editor');
+	await password(guest, 'dev-editor');
 	await expect(guest.getByTestId('invite-ask')).toContainText('as Copy desk: Edits articles before they go out.');
 	await guest.getByRole('button', { name: 'Join', exact: true }).click();
 	await expect(guest.getByTestId('invite-outcome')).toContainText('You joined Studio test as Copy desk.');

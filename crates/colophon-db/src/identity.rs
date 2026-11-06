@@ -85,6 +85,35 @@ pub async fn sign_up(
     })
 }
 
+/// Creates or re-arms a password account (D-146): insert if the email is new, or replace the
+/// hash (and fill in email/display name) on the existing one — the provisioning path
+/// `colophon admin account` uses where [`sign_up`] refuses. Runs as the migrator; the id of
+/// the account either way.
+pub async fn ensure_password_account(
+    migrator: &PgPool,
+    email: &str,
+    password_hash: &str,
+    display_name: Option<&str>,
+) -> Result<Uuid, DbError> {
+    sqlx::query_scalar!(
+        "INSERT INTO identities (id, issuer, subject, display_name, email, password_hash)
+         VALUES ($1, $2, $3, $4, $3, $5)
+         ON CONFLICT (issuer, subject) DO UPDATE
+           SET password_hash = EXCLUDED.password_hash,
+               email = EXCLUDED.email,
+               display_name = COALESCE(EXCLUDED.display_name, identities.display_name)
+         RETURNING id",
+        Uuid::now_v7(),
+        PASSWORD_ISSUER,
+        email,
+        display_name,
+        password_hash
+    )
+    .fetch_one(migrator)
+    .await
+    .map_err(DbError::from_write)
+}
+
 /// The answer to an email-and-password sign-in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PasswordSignIn {

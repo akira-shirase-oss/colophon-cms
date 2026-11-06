@@ -1,5 +1,5 @@
 // Load scenario for drafts (step 1.2): every request is signed in, and writes are real saves.
-// setup() signs in through Keycloak, creates a project, and gives every virtual user its own
+// setup() signs in on the built-in password card (D-146), creates a project, and gives every virtual user its own
 // article. Each VU then reads its article (50%), lists the collection (10%), searches titles
 // with `q` (10%, step 3.5), reads the revision it last saved by id (10%, step 3.5), or saves a
 // new revision with If-Match and a fresh Idempotency-Key (20%).
@@ -15,7 +15,6 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
-import { parseHTML } from 'k6/html';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -69,11 +68,8 @@ function key() {
 }
 
 export function setup() {
-  const page = http.get(`${PUBLIC_URL}/auth/login?return_to=/me`);
-  const action = parseHTML(page.body).find('#kc-form-login').attr('action');
-  if (!action) fail('no Keycloak login form');
-  const me = http.post(action.replace(/&amp;/g, '&'), { username: 'dev-owner', password: 'colophon-dev' });
-  if (me.status !== 200) fail(`sign-in failed: HTTP ${me.status}`);
+  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
+  if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
   const session = { cookie: `colophon_session=${jar.colophon_session[0]}`, csrf: jar.colophon_csrf[0] };
   const write = { Cookie: session.cookie, 'X-CSRF-Token': session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };

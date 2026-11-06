@@ -63,7 +63,8 @@ fn an_email() -> String {
 }
 
 /// `GET /auth/providers` tells the sign-in page which methods this server offers — public, so
-/// a signed-out browser can ask (D-141). On the stack Keycloak is configured: `sso` is true.
+/// a signed-out browser can ask (D-141). The default stack configures no provider since
+/// D-146, so `sso` is false; the OIDC suite (`sign_in.rs`) covers `true`.
 #[tokio::test]
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn the_sign_in_page_asks_which_methods_this_server_offers() {
@@ -71,7 +72,7 @@ async fn the_sign_in_page_asks_which_methods_this_server_offers() {
     let (status, body) = get(None, "/auth/providers").await;
     assert_eq!(
         (status, body["data"]["sso"].as_bool()),
-        (StatusCode::OK, Some(true)),
+        (StatusCode::OK, Some(false)),
         "{body}"
     );
 }

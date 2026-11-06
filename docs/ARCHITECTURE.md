@@ -41,7 +41,7 @@ load tests justify it (spec §03).
 | Redis-compatible cache | Generation-keyed public query results, expendable rate counters, optional worker wake-ups | Holds the only copy of anything, decides conflicts, or enforces a hard budget |
 | CDN | Cached public responses and public assets | Caches drafts, previews, sessions, or personalized responses |
 | Object storage | Uploaded originals (quarantine and approved), derivatives, build artifacts | Is written to before an upload intent exists |
-| Identity provider (Keycloak via OIDC) | Login and MFA | Decides CMS permissions (Rust and Postgres do) |
+| Built-in password accounts (OIDC provider optional) | Login | Decides CMS permissions (Rust and Postgres do) |
 
 ## The core model
 
@@ -112,7 +112,7 @@ colophon/
 ├── crates/
 │   ├── colophon-domain/        # rules, state machines, port traits; no I/O dependencies
 │   ├── colophon-db/            # SQLx adapter: transactions, outbox, RLS context
-│   ├── colophon-auth/          # OIDC, sessions, roles, machine credentials, policy
+│   ├── colophon-auth/          # passwords + OIDC, sessions, roles, machine credentials, policy
 │   ├── colophon-api/           # Axum management API /api/v1
 │   ├── colophon-delivery/      # public read API /content/v1, cache, CDN adapter, probes
 │   ├── colophon-worker/        # outbox dispatcher, leases, retries, reconciliation, schedules
@@ -185,7 +185,7 @@ tested set at P0 (spec §02).
 | CLI | `clap` 4 (derive) |
 | Outbound HTTP | one shared `reqwest` 0.13 client (rustls) with connect and request timeouts |
 | Secrets / tokens | Redacting newtypes for in-memory secrets (no `Display`, redacted `Debug`); `aws-lc-rs` for random tokens, SHA-256 and constant-time comparison |
-| Sign-in | An OpenID Connect relying party on `reqwest` and `jsonwebtoken` (`aws-lc-rs` backend), not an OIDC crate (D-031) |
+| Sign-in | Built-in password accounts by default; OIDC an optional relying party on `reqwest` and `jsonwebtoken` (`aws-lc-rs` backend), not an OIDC crate (D-031, D-146) |
 | Testing | `proptest`, `insta`, real PostgreSQL from the local stack (a fresh database per test), `cargo-nextest`, `cargo-deny` |
 | Frontend | SvelteKit + TypeScript + Vite, scoped Svelte CSS over M3 tokens (Tailwind deferred, D-025), Bits UI, Tiptap, mdsvex, Pagefind, Vitest, Playwright |
 | Design system | Colophon's own (D-053): OKLCH tokens in one stylesheet, Tailwind CSS v4, owned shadcn-svelte components on Bits UI primitives, Inter (self-hosted); contrast tested from the tokens |

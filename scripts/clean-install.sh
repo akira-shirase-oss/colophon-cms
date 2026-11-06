@@ -16,7 +16,8 @@
 # deploy/local.env is patched to match. The development stack is never touched: same
 # project name would adopt its volumes (a warm database is not a clean install), and same
 # ports would collide with it. Fresh volumes give the rehearsal what a newcomer gets: an
-# empty database, an unmigrated schema, and a realm Keycloak imports on first start.
+# empty database and an unmigrated schema — sign-in is the built-in password card (D-146),
+# so no identity provider is part of the rehearsal.
 #
 # Needs everything the README lists: git, Docker with Compose, the pinned Rust toolchain
 # through rustup's proxies, Node 22.17+ for the Studio half, and curl/jq/openssl for the
@@ -49,9 +50,7 @@ export COLOPHON_PG_PORT="${COLOPHON_PG_PORT:-55532}"
 export COLOPHON_VALKEY_PORT="${COLOPHON_VALKEY_PORT:-56479}"
 export COLOPHON_S3_PORT="${COLOPHON_S3_PORT:-54000}"
 export COLOPHON_S3_ADMIN_PORT="${COLOPHON_S3_ADMIN_PORT:-54003}"
-export COLOPHON_KEYCLOAK_PORT="${COLOPHON_KEYCLOAK_PORT:-58180}"
-# The server: 58090 is the first redirect URI after the development server's that the
-# realm registers (deploy/keycloak/colophon-realm.json), so signing in works on it too.
+# The server: any port works now that sign-in needs no registered callback (D-146).
 readonly SERVER_PORT=58090
 readonly SERVER_ORIGIN="http://127.0.0.1:$SERVER_PORT"
 # colophon doctor and login default to :58000; COLOPHON_SERVER is the CLI's own knob for
@@ -170,7 +169,7 @@ fi
 # A port the rehearsal wants must be free; the message names the knob that moves it.
 port_taken() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 for port in "$COLOPHON_PG_PORT" "$COLOPHON_VALKEY_PORT" "$COLOPHON_S3_PORT" \
-            "$COLOPHON_S3_ADMIN_PORT" "$COLOPHON_KEYCLOAK_PORT" "$SERVER_PORT"; do
+            "$COLOPHON_S3_ADMIN_PORT" "$SERVER_PORT"; do
   if port_taken "$port"; then
     echo "error: 127.0.0.1:$port is already listening; move the rehearsal's port with the" >&2
     echo "       COLOPHON_*_PORT variables (deploy/compose.yaml) and rerun." >&2
@@ -180,7 +179,7 @@ done
 
 echo "clean-install rehearsal: clone $PWD, README commands only, stack under project $PROJECT"
 echo "isolation ports: pg=$COLOPHON_PG_PORT valkey=$COLOPHON_VALKEY_PORT" \
-     "s3=$COLOPHON_S3_PORT/$COLOPHON_S3_ADMIN_PORT keycloak=$COLOPHON_KEYCLOAK_PORT server=$SERVER_PORT"
+     "s3=$COLOPHON_S3_PORT/$COLOPHON_S3_ADMIN_PORT server=$SERVER_PORT"
 
 # --- The clone: what a newcomer gets ----------------------------------------------------
 
@@ -210,14 +209,13 @@ sed -i.bak \
   -e "s|:55432|:$COLOPHON_PG_PORT|g" \
   -e "s|:56379|:$COLOPHON_VALKEY_PORT|g" \
   -e "s|:53900|:$COLOPHON_S3_PORT|g" \
-  -e "s|:58080|:$COLOPHON_KEYCLOAK_PORT|g" \
   -e "s|:58000|:$SERVER_PORT|g" \
   "$CLONE/deploy/local.env" && rm "$CLONE/deploy/local.env.bak"
 # Nothing from an earlier rehearsal may still be standing.
 (cd "$CLONE" && docker compose -f deploy/compose.yaml down --volumes >/dev/null 2>&1) || true
 record "ports" "isolation" \
   "ports moved through deploy/compose.yaml's COLOPHON_*_PORT variables" \
-  "COLOPHON_{PG,VALKEY,S3,S3_ADMIN,KEYCLOAK}_PORT + deploy/local.env patched to match" \
+  "COLOPHON_{PG,VALKEY,S3,S3_ADMIN}_PORT + deploy/local.env patched to match" \
   "$((SECONDS - t0))" 0
 echo "==> ports: the clone's compose project runs on the rehearsal's set"
 
@@ -305,18 +303,13 @@ if [[ -z "$aborted" ]]; then
 fi
 
 if [[ -z "$aborted" ]]; then
-  # The README's sign-in line, on the rehearsal's port: /auth/login must hand the browser
-  # to the clone's own Keycloak issuer.
-  login=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' \
-    "$SERVER_ORIGIN/auth/login?return_to=/me" 2>/dev/null || true)
-  case "$login" in
-    "302 http://localhost:$COLOPHON_KEYCLOAK_PORT/"* | "303 http://localhost:$COLOPHON_KEYCLOAK_PORT/"*)
-      pass "the sign-in redirect reaches the clone's Keycloak issuer"
-      ;;
-    *)
-      fail "the sign-in redirect: expected a 30x to the clone's issuer, got '$login'"
-      ;;
-  esac
+  # The README's sign-in works without any provider (D-146): migrate.sh provisioned
+  # dev-owner@colophon.test, and /auth/signin answers 204 with the session cookie.
+  signed_in=$(curl -sS -o /dev/null -w '%{http_code}' \
+    -H 'content-type: application/json' \
+    -d '{"email":"dev-owner@colophon.test","password":"colophon-dev"}' \
+    "$SERVER_ORIGIN/auth/signin" 2>/dev/null || true)
+  expect "the password card signs dev-owner in" "204" "$signed_in"
 fi
 
 # The README's Studio block: npm ci (recorded friction before this line existed), the
@@ -358,7 +351,7 @@ jq -n --arg stamp "$stamp" --arg commit "$(git rev-parse HEAD)" \
   --arg project "$PROJECT" \
   --arg gate "one person other than the maintainer installs Colophon from the README alone (END_GOAL v0.1)" \
   --arg what "the mechanical rehearsal: the README's own commands in a fresh clone; the gate itself stays human" \
-  --argjson ports "{\"pg\": $COLOPHON_PG_PORT, \"valkey\": $COLOPHON_VALKEY_PORT, \"s3\": $COLOPHON_S3_PORT, \"s3_admin\": $COLOPHON_S3_ADMIN_PORT, \"keycloak\": $COLOPHON_KEYCLOAK_PORT, \"server\": $SERVER_PORT}" \
+  --argjson ports "{\"pg\": $COLOPHON_PG_PORT, \"valkey\": $COLOPHON_VALKEY_PORT, \"s3\": $COLOPHON_S3_PORT, \"s3_admin\": $COLOPHON_S3_ADMIN_PORT, \"server\": $SERVER_PORT}" \
   --arg aborted "$aborted" \
   --argjson steps "[${steps_json%,}]" \
   --argjson friction "[${friction_json%,}]" \

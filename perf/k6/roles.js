@@ -1,5 +1,5 @@
 // Load scenario for roles owners define (step R.2, D-058). setup() signs two people in through
-// Keycloak; the first creates a project and a "desk" role that may read and edit articles only,
+// the password card; the first creates a project and a "desk" role that may read and edit articles only,
 // invites the second with it, and makes one more role per virtual user to edit. Every measured
 // request then exercises a custom role: five in ten are the desk member listing articles (their
 // role's permissions are loaded with their membership and checked per collection), one reads the
@@ -10,7 +10,6 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
-import { parseHTML } from 'k6/html';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -58,11 +57,8 @@ export const options = {
 /** Signs `username` in with a cookie jar of its own; the headers a browser tab would send. */
 function signIn(username) {
   const jar = new http.CookieJar();
-  const page = http.get(`${PUBLIC_URL}/auth/login?return_to=/me`, { jar });
-  const action = parseHTML(page.body).find('#kc-form-login').attr('action');
-  if (!action) fail(`no Keycloak login form for ${username}`);
-  const me = http.post(action.replace(/&amp;/g, '&'), { username, password: 'colophon-dev' }, { jar });
-  if (me.status !== 200) fail(`sign-in as ${username} failed: HTTP ${me.status}`);
+  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: `${username}@colophon.test`, password: 'colophon-dev' }), { jar, headers: { 'Content-Type': 'application/json' } });
+  if (signedIn.status !== 204) fail(`sign-in as ${username} failed: HTTP ${signedIn.status}`);
   const cookies = jar.cookiesForURL(PUBLIC_URL);
   return {
     Cookie: `colophon_session=${cookies.colophon_session[0]}`, 'X-CSRF-Token': cookies.colophon_csrf[0], Origin: PUBLIC_URL,

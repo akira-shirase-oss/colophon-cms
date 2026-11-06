@@ -149,54 +149,28 @@ struct Person {
     csrf: String,
 }
 
-/// Signs in through the development realm's Keycloak.
+/// Signs in on the built-in password card (D-146), signing the account up first when the
+/// database hasn't provisioned it.
 async fn sign_in(user: &str) -> Person {
-    let start = client()
-        .get(format!("{ORIGIN}/auth/login?return_to=/me"))
+    let email = format!("{user}@colophon.test");
+    let attempt = client()
+        .post(format!("{ORIGIN}/auth/signin"))
+        .json(&serde_json::json!({"email": email, "password": "colophon-dev"}))
         .send()
         .await
-        .expect("login");
-    let binding = set_cookie(&start, "colophon_signin");
-    let provider = start.headers()[header::LOCATION]
-        .to_str()
-        .expect("ascii")
-        .to_owned();
-    let keycloak = reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("a client");
-    let page = keycloak
-        .get(&provider)
-        .send()
-        .await
-        .expect("page")
-        .text()
-        .await
-        .expect("html");
-    let action = page
-        .split("action=\"")
-        .nth(1)
-        .and_then(|rest| rest.split('"').next())
-        .expect("a login form")
-        .replace("&amp;", "&");
-    let accepted = keycloak
-        .post(&action)
-        .form(&[("username", user), ("password", "colophon-dev")])
-        .send()
-        .await
-        .expect("credentials");
-    let callback = accepted.headers()[header::LOCATION]
-        .to_str()
-        .expect("ascii")
-        .to_owned();
-    let done = client()
-        .get(&callback)
-        .header(header::COOKIE, format!("colophon_signin={binding}"))
-        .send()
-        .await
-        .expect("callback");
-    assert_eq!(done.status(), StatusCode::SEE_OTHER, "signed in");
+        .expect("sign in");
+    let done = if attempt.status() == StatusCode::NO_CONTENT {
+        attempt
+    } else {
+        let created = client()
+            .post(format!("{ORIGIN}/auth/signup"))
+            .json(&serde_json::json!({"email": email, "password": "colophon-dev"}))
+            .send()
+            .await
+            .expect("sign up");
+        assert_eq!(created.status(), StatusCode::CREATED, "a fresh account");
+        created
+    };
     let (session, csrf) = (
         set_cookie(&done, "colophon_session"),
         set_cookie(&done, "colophon_csrf"),

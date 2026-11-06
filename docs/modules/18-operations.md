@@ -7,7 +7,7 @@
 |---|---|
 | Milestones | P0 (local Compose stack), P3 (first deployment of the reference site), P6 (backups, restore drill, upgrades, runbooks, budgets) |
 | Proposed owner | Claude builds; the maintainer runs the drills |
-| Depends on | colophon-server, PostgreSQL 18, a Redis-protocol cache (Valkey, D-015), S3-compatible storage (Garage locally, D-016), Keycloak, a CDN |
+| Depends on | colophon-server, PostgreSQL 18, a Redis-protocol cache (Valkey, D-015), S3-compatible storage (Garage locally, D-016), a CDN (Keycloak only under the opt-in `oidc` profile, D-146) |
 | Used by | the maintainer, independent installers, contributors |
 | Spec | §04, §27, §32, §33 |
 
@@ -49,7 +49,7 @@ on clean infrastructure and an independent install, so operations are a module w
   - PostgreSQL 18;
   - Valkey, configured so it cannot persist anything and cannot grow without limit (D-015);
   - Garage, a single-node S3-compatible test object store (D-016);
-  - Keycloak with the `colophon` development realm;
+  - Keycloak with the `colophon` development realm, only when the `oidc` profile is active (OIDC compatibility tests);
   - `colophon-server` in the API and worker roles (later in P0);
   - the Studio's development server (later in P0).
 - Every port is bound to `127.0.0.1`. `scripts/stack.sh up` starts the stack and proves each service from outside:

@@ -42,10 +42,10 @@
 <p class="lede">
 	A fresh installation's first administrator: the server prints a one-time setup code to its terminal when it starts with nobody in charge,
 	and a signed-in person presents it here (<code>POST /api/v1/setup</code>). Single-use, expiring, rate-limited, and refused once anyone is an
-	administrator. New people make their account at the identity provider.
+	administrator. New people make their account on the built-in password card.
 </p>
 
-<p><a href="{SERVER}/auth/login?start=create&return_to=/me" data-testid="create-account">Create an account at the identity provider</a></p>
+<p><a href="{SERVER}/auth/login?start=create&return_to=/me" data-testid="create-account">Create an account</a></p>
 
 {#if status === 200}
 	<p data-testid="installation">
