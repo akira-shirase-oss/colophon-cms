@@ -51,3 +51,11 @@ serial dependency-failure matrix, then the 24-hour mixed soak.
    audience/sign-in 5%, misc 10%) plus hourly failure drills; commit the run + RSS/connection
    series.
 4. Update this table's Evidence column to the exact result filename after each run.
+
+## 2026-11-07 pass — first-time scenarios + fault drills on current commit
+
+- Pass: accounts 303,744@337/s, inverses 1,300,200, quotas 1,000,006, transfer 1,000,130, audience 1,000,524
+- Fault trio pass: cache-down 77,898 (0 failed), postgres-trouble 24,061 (0 failed), purge-trouble 7,994 (0 failed)
+- Cluster pass: failover-kill + failover-drain (cluster3s2w) — 6,001 writes, 0 lost, both verdict pass
+- Kept misses: openapi p99 101ms (455KB doc), deletion p99 339ms, tokens p99 157ms; collection-delete 144 failed + 239 warnings — open, needs classification
+- Remaining: monitor-style 24h mixed soak (P6 gate) not yet started
