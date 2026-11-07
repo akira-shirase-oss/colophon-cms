@@ -1,0 +1,36 @@
+{
+  "scenario": "failover-kill",
+  "date": "2026-11-07T12:09:26Z",
+  "commit": "a356a44",
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12
+  },
+  "topology": {
+    "servers": 3,
+    "workers": 2,
+    "balancer": "haproxy"
+  },
+  "timeline": {
+    "server": 2,
+    "leaves_at_s": 10,
+    "returns_at_s": 15,
+    "how": "SIGKILL"
+  },
+  "params": {
+    "rate": 200,
+    "duration": "30s"
+  },
+  "requests": 6003,
+  "acknowledged": 6001,
+  "first_attempt_failures": 0,
+  "retried": 0,
+  "logical_failures": 0,
+  "stored": {
+    "articles": 6001,
+    "distinct_titles": 6001
+  },
+  "verdict": "pass",
+  "reasons": ""
+}
