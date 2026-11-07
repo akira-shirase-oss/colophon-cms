@@ -68,3 +68,17 @@ Verified by three clean reproductions on the same commit — 20k and 200k bounde
 full 1M-iteration rerun (1,800,125 requests, 0 failed, 0 warnings, p99 93.8ms). Evidence:
 `perf/results/2026-11-07T130953Z-collection-delete-throughput-apple-m2-pro-12c.json`.
 Rule confirmed: never run two load suites on one machine at once.
+
+## P6 24-hour soak — definition
+
+Run: `RATE=200 DURATION=1440m KEEP=1 SERVER_LOG=perf/results/soak-24h-server.log scripts/load.sh mixed steady`
+(mixed = L05: reads + If-Match writes + publishes at once — the closest shape to real editorial
+traffic; 200/s sustains ~17.3M requests/day).
+
+During the run, a sidecar cycles one failure drill per hour (pause Valkey 60s, pause Postgres
+30s, receiver 503 window, repeat) — reusing the /control endpoints the fault scenarios use.
+Measured: per-window p99 stays inside the gate, RSS/connection curves flat, outbox drains after
+each drill, zero `uncertain` states left unresolved at end.
+
+Honest bound: this is one machine's development observation over a day — evidence of
+stability and failure behavior, not a production capacity claim.
