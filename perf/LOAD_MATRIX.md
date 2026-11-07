@@ -59,3 +59,12 @@ serial dependency-failure matrix, then the 24-hour mixed soak.
 - Cluster pass: failover-kill + failover-drain (cluster3s2w) — 6,001 writes, 0 lost, both verdict pass
 - Kept misses: openapi p99 101ms (455KB doc), deletion p99 339ms, tokens p99 157ms; collection-delete 144 failed + 239 warnings — open, needs classification
 - Remaining: monitor-style 24h mixed soak (P6 gate) not yet started
+
+## collection-delete classified (2026-11-07)
+
+The earlier run's 144 failures + 239 warnings were **load contamination**, not a defect: a
+jsrt sustained harness ran concurrently on the same machine (killed mid-run for exactly this).
+Verified by three clean reproductions on the same commit — 20k and 200k bounded slices plus the
+full 1M-iteration rerun (1,800,125 requests, 0 failed, 0 warnings, p99 93.8ms). Evidence:
+`perf/results/2026-11-07T130953Z-collection-delete-throughput-apple-m2-pro-12c.json`.
+Rule confirmed: never run two load suites on one machine at once.
