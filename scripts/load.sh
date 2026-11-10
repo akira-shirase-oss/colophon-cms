@@ -80,7 +80,10 @@
 #
 # Environment overrides: TOTAL, VUS, RATE, DURATION, P99_MS (the k6 latency threshold),
 # KEEP=0 (don't write a result file; for CI smoke runs), LOAD_PORT (default 58090),
-# SERVER_LOG=<path> (keep the server's log there); for stress, START_RATE, STEP_SECONDS and
+# SERVER_LOG=<path> (keep the server's log there); DRILL_WINDOWS=<path> names the
+# soak-sidecar.sh windows JSONL — with it, mixed.js excuses failures inside the drill
+# windows and the run's error gate means "none outside them", and server warnings are
+# filtered the same way; for stress, START_RATE, STEP_SECONDS and
 # MAX_STEPS (below); CLUSTER=1 (run against the servers and
 # workers scripts/cluster.sh started, through its balancer, instead of one server of its own;
 # the result records how many, and is compared only with runs of the same shape: D-075).
@@ -579,12 +582,20 @@ fi
 
 echo "running k6: $endpoint $scenario"
 k6_status=0
+k6_drill_env=()
+if [[ -n "${DRILL_WINDOWS:-}" ]]; then
+  # Announce the sidecar's drill windows to the scenario: its zero-error thresholds move
+  # into handleSummary, which weighs each failure bucket against the windows. An absent
+  # or unreadable file leaves the strict gate standing — errors are never excused blind.
+  k6_drill_env=(-e "DRILL_WINDOWS=$DRILL_WINDOWS")
+fi
 "$k6" run --quiet --no-color \
   --summary-export "$work/summary.json" \
   -e BASE_URL="$base_url" -e PUBLIC_URL="$public_url" -e SCENARIO="$scenario" \
   -e TOTAL="${TOTAL:-1000000}" -e VUS="$VUS" \
   -e RATE="$RATE" -e DURATION="${DURATION:-60s}" \
   -e P99_MS="$P99_MS" -e USERS="${USERS:-512}" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
+  ${k6_drill_env[@]+"${k6_drill_env[@]}"} \
   "perf/k6/$endpoint.js" || k6_status=$?
 
 if [[ -n "$sampler_pid" ]]; then
@@ -649,8 +660,62 @@ elif [[ "$endpoint" == "cache-down" || "$endpoint" == "postgres-trouble" ]]; the
     warnings_outside=$(cat "${warn_logs[@]}" | jq -Rsc '[split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")]')
   fi
   server_warnings=$(jq 'length' <<<"$warnings_outside")
+elif [[ -n "${DRILL_WINDOWS:-}" && -f "$DRILL_WINDOWS" ]]; then
+  # Sidecar drill windows (soak-sidecar.sh's JSONL: {start_epoch,end_epoch} per drill,
+  # end already carrying recovery grace). WARN/ERROR lines stamped inside any window —
+  # two seconds of lead for requests in flight when the pause lands — are the drills
+  # doing their job, the same contract the fault scenarios get from their receiver
+  # stamps; anything outside still fails. A missing file falls through to the strict
+  # count: warnings are never excused without their windows on record.
+  warn_logs=("$work/server.log")
+  [[ -f "$work/worker.log" ]] && warn_logs+=("$work/worker.log")
+  wins_json=$(jq -Rsc 'split("\n") | map(select(length > 0) | fromjson?
+    | {s: ((.start_epoch // 0) - 2), e: (.end_epoch // 0)}) | map(select(.e > .s))' "$DRILL_WINDOWS")
+  warnings_outside=$(cat "${warn_logs[@]}" | jq -Rsc --argjson ws "$wins_json" '
+    def epoch: try ((.timestamp[0:19] + "Z") | fromdateiso8601) catch -1;
+    [split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")
+     | . as $l | ($l | epoch) as $t
+     | select($t == -1 or ([$ws[] | select($t >= .s and $t <= .e)] | length) == 0)]')
+  server_warnings=$(jq 'length' <<<"$warnings_outside")
+  warnings_all=$(cat "${warn_logs[@]}" | jq -Rsc \
+    '[split("\n")[] | fromjson? | select(.level == "WARN" or .level == "ERROR")] | length')
+  warnings_in=$(( warnings_all - server_warnings ))
+  drills_windows=1
 else
   server_warnings=$(grep -c '"level":"\(WARN\|ERROR\)"' "$work/server.log" || true)
+fi
+
+# k6 emitted l05.error_buckets ([epoch_s, failures] over every failed assertion) but
+# cannot read the windows file itself — open() is init-stage only — so the scenario's
+# no_errors gate is the strict reading and its stdout verdict is provisional. Re-weigh
+# the buckets against the sidecar's windows now and rewrite the gate before the record
+# and the lNN gate loop read summary.json. A bucket overlaps a window when it starts
+# before the window's end and ends after its start minus two seconds of lead — the
+# requests already in flight when the pause lands. Malformed or epoch-less window
+# lines are skipped: their errors count as outside, which fails safe.
+if [[ "${drills_windows:-0}" == "1" ]]; then
+  jq --rawfile wins "$DRILL_WINDOWS" --arg wf "$DRILL_WINDOWS" '
+    ($wins | split("\n") | map(select(length > 0) | fromjson? | select(type == "object")
+      | select((.start_epoch | type) == "number" and (.end_epoch | type) == "number")
+      | {dep: (.dep // "?"), kind: (.kind // "drill"), start: (.start // ""), end: (.end // ""),
+         s: (.start_epoch - 2), e: .end_epoch}
+      | select(.e > .s))) as $ws
+    | . as $doc
+    | if ($doc.l05? | type) == "object" then
+        ($doc.l05.error_buckets // []) as $buckets
+        | (reduce $buckets[] as $b ({inn: 0, out: 0};
+             if ([$ws[] | select(($b[0] + 10) > .s and $b[0] < .e)] | length) > 0
+             then .inn += $b[1] else .out += $b[1] end)) as $split
+        | $doc
+          | .l05.gates.no_errors = ($split.out == 0)
+          | .l05.drills = {windows_file: $wf,
+                           windows: [$ws[] | {dep, kind, start, end}],
+                           errors_in_windows: $split.inn,
+                           errors_outside_windows: $split.out}
+          | .l05.gate = ((.l05.gate // "") + " — drill-aware: zero failures outside the announced windows")
+          | .l05.held = ([.l05.gates[]] | all)
+      else $doc end' "$work/summary.json" > "$work/summary.drilled.json" \
+    && mv "$work/summary.drilled.json" "$work/summary.json"
 fi
 
 commit=$(git rev-parse --short HEAD)
@@ -712,12 +777,22 @@ if [[ -s "$work/client.tsv" ]]; then
   fi
 fi
 
+# When the run announced drill windows, record the split beside the gates: warnings
+# inside them are the drills' evidence; server_warnings counted only the outside ones.
+drills_json=null
+if [[ "${drills_windows:-0}" == "1" ]]; then
+  drills_json=$(jq -nc --arg f "$DRILL_WINDOWS" --argjson in "${warnings_in:-0}" \
+    --argjson out "$server_warnings" \
+    '{windows_file: $f, warnings_in_windows: $in, warnings_outside_windows: $out}')
+fi
+
 record=$(jq -c \
   --arg scenario "$scenario" --arg endpoint "$endpoint" --arg stamp "$stamp" --arg commit "$commit" --argjson dirty "$dirty" \
   --arg cpu "$cpu" --argjson cores "$cores" --argjson memory_gb "$memory_gb" --arg machine "$machine" \
   --arg os "$(uname -s) $(uname -r)" --arg k6 "$("$k6" version | awk '{print $2}')" \
   --argjson tx "$(( tx_after - tx_before ))" --argjson warnings "$server_warnings" \
   --argjson k6_status "$k6_status" --argjson topology "$topology" --argjson resources "$resources" \
+  --argjson drills "$drills_json" \
   --arg total "${TOTAL:-1000000}" --arg vus "$VUS" --arg rate "$RATE" --arg duration "${DURATION:-60s}" \
   '{
     scenario: $scenario, endpoint: $endpoint, date: $stamp, commit: $commit, dirty: $dirty,
@@ -740,6 +815,7 @@ record=$(jq -c \
     server_warnings: $warnings,
     thresholds_passed: ($k6_status == 0)
   } + (if $resources then {resources: $resources} else {} end)
+    + (if $drills then {drills: $drills} else {} end)
     # Every `lNN` object a scenario computed lands in the record — the gate loop below
     # fails the run on any whose `held` is false (a new case self-registers: name the
     # object after its spec ID and it is stored and gated like the rest).
@@ -761,7 +837,9 @@ if (( server_warnings > 0 )); then
   echo "FAIL: the server logged $server_warnings warning(s) or error(s) under load" >&2
   # The lines, so a real fault-window miss is diagnosable from the output, not just a count.
   if declare -p warnings_outside >/dev/null 2>&1; then
-    if [[ -n "$down_at" ]]; then
+    if [[ "${drills_windows:-0}" == "1" ]]; then
+      echo "  drill windows came from $DRILL_WINDOWS — $warnings_in warning(s) inside them, these are outside" >&2
+    elif [[ -n "$down_at" ]]; then
       echo "  fault window was down $down_at up ${up_at:-never}" >&2
     else
       echo "  no 'fault <dep> down' stamp in the receiver's log — no window, every warning counts" >&2

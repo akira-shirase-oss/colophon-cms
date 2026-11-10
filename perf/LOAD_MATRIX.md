@@ -73,10 +73,21 @@ Rule confirmed: never run two load suites on one machine at once.
 
 Run: `RATE=200 DURATION=1440m KEEP=1 SERVER_LOG=perf/results/soak-24h-server.log scripts/load.sh mixed steady`
 (mixed = L05: reads + If-Match writes + publishes at once — the closest shape to real editorial
-traffic; 200/s sustains ~17.3M requests/day). In parallel, `scripts/soak-sidecar.sh` cycles one
-failure drill per hour (pause Valkey 60s, pause Postgres 30s, receiver 503 window, repeat) —
-reusing the /control endpoints the fault scenarios use. Both against the same `load.sh` server,
-never two load suites at once.
+traffic; 200/s sustains ~17.3M requests/day). In parallel,
+`scripts/soak-sidecar.sh 24 <log> <windows.jsonl>` cycles one failure drill per hour
+(pause Valkey 60s, pause Postgres 30s, every sixth a session-expiry; the receiver 503
+window applies only to scenarios that configure delivery destinations — the mixed soak
+configures none) and appends each completed drill's window — pause/resume plus
+`SOAK_DRILL_GRACE_S` (default 120 s) of recovery — as a JSONL record. Pass the file to
+load.sh as `DRILL_WINDOWS=<path>`: mixed.js buckets every failed assertion into sparse
+10 s `error_buckets`, and load.sh re-weighs them against the windows before gating —
+the L05 `no_errors` gate then means *zero failures outside the announced windows*, with
+the in/out split recorded under `l05.drills`. Server WARN/ERROR lines get the same
+treatment (`drills.warnings_in/outside_windows` in the result), and a missing or
+malformed window line counts its errors as outside — drills can excuse evidence, never
+hide it. `SOAK_DRILL_INTERVAL_S` compresses the cadence for shorter validations (the
+1 h proof runs used ~8 min drills so all three drill types fire inside the hour).
+Both against the same `load.sh` server, never two load suites at once.
 
 Measured: per-window p99 stays inside the gate, RSS/connection curves flat (the result's
 `resources` block now also carries k6's own RSS/CPU and a /readyz probe series per 5 s —
