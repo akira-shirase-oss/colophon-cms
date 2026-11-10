@@ -1,12 +1,13 @@
 # Test report: Colophon CMS (`colophon-cms` / colophon)
 
-**Commit tested:** `88ef666` for functional/adversarial work; soak tooling on `db370b6`
+**Commit tested:** `88ef666` for functional/adversarial work; soak tooling through `e398151`
 **Date:** 2026-11-10 · **Machine:** Apple M2 Pro, 12 cores, 32 GB, macOS (Darwin 27.0.0)
 **Toolchain:** Rust 1.99.1 via rustup proxies · Docker Compose local stack
 **Guide:** `test/colophon-cms-TESTING.md`
 **Verdict: PASS on every executable check — the soak failure was root-caused, fixed,
-and verified under a forced session-expiry 1h load; the 24h re-run was descoped and
-the validation run's drill-window findings are recorded openly (§6.6).**
+and verified under a forced session-expiry 1h load; the 24h re-run was descoped, the
+drill-window gate mismatch was itself fixed (drill-aware gate, §6.7), and the pool
+recovery question stays open pending the v2 run.**
 
 ---
 
@@ -197,6 +198,49 @@ read-back verified (107,118/107,118).
 **Status:** fix verified; 24 h soak descoped per maintainer decision; the
 pool-exhaustion recovery behavior under postgres pause is a new open finding.
 
+### 6.7 Drill-aware gate — implemented (2026-11-10, `e398151`)
+
+Reading (a) above was a contract bug in the harness, not the product: drills
+that pause a dependency *must* produce refusals, so a binary zero-error gate
+made every drilled L05 run unpassable. The maintainer chose the proper fix —
+a drill-aware gate — over dropping drills:
+
+- `scripts/soak-sidecar.sh` takes a third argument, a **windows JSONL**: one
+  record per *completed* drill (`{dep, kind, start_epoch, end_epoch, start,
+  end}`), where `end` is resume + `SOAK_DRILL_GRACE_S` (120 s, sized from this
+  run's observed ~60–90 s of post-pause refusals). Failed pause/expiry
+  operations record nothing — a drill that didn't run excuses nothing. The
+  file is truncated at start so a reused path can't carry stale windows.
+  `SOAK_DRILL_INTERVAL_S` compresses the cadence for sub-24 h validations
+  (the 1 h proof uses ~8 min drills so all three types fire inside the hour);
+  at the default 3600 s the rotation is unchanged.
+- `perf/k6/mixed.js` routes every arm assertion through `verify()`, which
+  buckets each failure into a sparse 10 s `error_buckets` series emitted in
+  the summary. (k6's `open()` is init-stage only — verified — so the scenario
+  cannot read the windows file itself; it emits raw material and `load.sh`
+  does the window math.) With `DRILL_WINDOWS` set, the zero-error k6
+  thresholds move into the gate.
+- `scripts/load.sh` passes `DRILL_WINDOWS` to k6, then — after the run —
+  re-weighs `error_buckets` against the windows before building the record:
+  `l05.gates.no_errors` becomes *zero failures outside the announced
+  windows*, `l05.drills` records `{windows[], errors_in_windows,
+  errors_outside_windows}`, and server WARN/ERROR lines get the same
+  treatment (`drills.warnings_in/outside_windows`). A bucket overlaps a
+  window with a 2 s lead for in-flight requests; malformed or missing window
+  data counts its errors as **outside** — drills excuse evidence, they never
+  hide it. `/readyz` samples still independently prove recovery.
+
+Verified before the rerun: the jq window filter against this run's real
+server log puts **0 of 1,328 warnings outside** the reconstructed windows;
+the bucket split produces pass and fail verdicts correctly on synthetic
+summaries; shellcheck and `k6 inspect` clean. Committed `e398151`.
+
+**Queued:** the 1 h v2 validation — same shape as §6.6 plus all three drill
+types on the compressed cadence and `DRILL_WINDOWS` wired — runs after the
+durable-runner solo load finishes (one load suite per machine). Result and
+gate outcome land here when it completes; if failures appear outside the
+windows the run fails honestly, pool-recovery finding included.
+
 ## 7. Commits landed by this testing pass
 
 | Commit | Content |
@@ -206,6 +250,7 @@ pool-exhaustion recovery behavior under postgres pause is a new open finding.
 | `db370b6` | soak fix: mixed.js re-auth + expectedStatuses, soak-sidecar.sh, load.sh client telemetry, LOAD_MATRIX update |
 | `daa7600` | fault-suite foreign-server guard + faults.rs clippy fixes |
 | `856cce8` | 1h soak validation evidence (session fix verified; drill-window failures recorded) |
+| `e398151` | drill-aware L05 gate: sidecar windows JSONL, mixed.js error_buckets, load.sh window-split for errors + warnings |
 
 ## 8. Verdict
 
@@ -220,8 +265,11 @@ The one failure found — the soak's unexplained error wave — was root-caused 
 scenario bug (session expiry the harness never handled), fixed with a rehearsed
 re-auth path and new failure-drill coverage, and **verified under a sustained 1 h
 load with a forced mid-run session expiry** (34 re-auths, consistency perfect).
-The 24 h re-run was descoped by the maintainer; the validation run additionally
-exposed a pool-exhaustion recovery gap under the postgres-pause drill and a
-gate/drill-semantics mismatch — both recorded as open findings, not hidden.
+The 24 h re-run was descoped by the maintainer. The validation run's second
+finding — a gate/drill-semantics mismatch — was itself a harness bug and is now
+fixed: the gate is drill-aware (`e398151`), excusing only announced windows and
+failing on anything outside them. The pool-exhaustion recovery behavior under
+the postgres-pause drill remains an open product question pending the v2 run.
 Honest state: **functional/adversarial testing complete and green; the soak
-scenario fix is proven; two resilience/gate questions remain open.**
+scenario fix is proven; the gate contract is fixed; one resilience question
+(pool recovery after a 30 s postgres pause) remains open.**
