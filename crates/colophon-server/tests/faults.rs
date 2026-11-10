@@ -21,7 +21,9 @@
 //!
 //! Sessions live in Postgres, so one sign-in serves every server in the test. Needs the stack,
 //! migrations, and the fault points: `cargo test -p colophon-server --features fault-injection
-//! --test faults -- --ignored`.
+//! --test faults -- --ignored`. The suite shares the dev database, so it refuses to start a
+//! server while another `colophon-server` is running — stop the dev server first (or point
+//! `COLOPHON_TEST_DATABASE` at an isolated database).
 #![cfg(unix)]
 #![expect(
     clippy::expect_used,
@@ -419,14 +421,13 @@ async fn a_migration_worker_killed_mid_run_resumes_and_finishes_the_plan() {
                     &[],
                 )
                 .await
-                .map(|reply| {
+                .is_ok_and(|reply| {
                     reply.body["data"].as_array().is_some_and(|items| {
                         items
                             .iter()
                             .any(|item| item["outcome"].as_str().is_some_and(|o| o != "pending"))
                     })
                 })
-                .unwrap_or(false)
             })
             .await,
             "the first item's outcome never committed"
@@ -478,6 +479,10 @@ async fn a_migration_worker_killed_mid_run_resumes_and_finishes_the_plan() {
 /// the item's outcome is the crash boundary, not the job's (D-116).
 #[tokio::test]
 #[ignore = "needs the stack, migrations and --features fault-injection"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the drill is one linear crash scenario; splitting it would hide the sequence"
+)]
 async fn a_worker_killed_after_a_bulk_item_resumes_without_duplicating_it() {
     let owner;
     let project_id;
@@ -549,14 +554,13 @@ async fn a_worker_killed_after_a_bulk_item_resumes_without_duplicating_it() {
                     &[],
                 )
                 .await
-                .map(|reply| {
+                .is_ok_and(|reply| {
                     reply.body["data"].as_array().is_some_and(|items| {
                         items
                             .iter()
                             .any(|item| item["outcome"].as_str().is_some_and(|o| o != "pending"))
                     })
                 })
-                .unwrap_or(false)
             })
             .await,
             "the item's outcome never committed"

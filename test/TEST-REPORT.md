@@ -70,11 +70,16 @@ ETag; changeset `If-Match` is the changeset hash `"sha256:…"`; `Idempotency-Ke
 - `crash_loop.rs` `killing_the_server_and_worker_loses_and_doubles_nothing` → **pass**
   (17.2 s).
 
-**Test-isolation caveat found (not a product bug):** the `faults` suite assumes
-exclusive worker access to the shared dev DB. With my live `:58000` server running,
-its worker raced the test's worker for delivery jobs and 2 tests failed; both passed
-cleanly once the dev server was stopped. Rule for future runs: don't run a dev server
-on the same stack while executing the fault suite.
+**Test-isolation caveat found (not a product bug), now enforced by a guard:** the
+`faults` suite assumes exclusive worker access to the shared dev DB. With my live
+`:58000` server running, its worker raced the test's worker for delivery jobs and
+2 tests failed; both passed cleanly once the dev server was stopped.
+`common::assert_no_foreign_server()` now refuses to start any test server or worker
+against the default `colophon` database while a `colophon-server` process exists
+outside the test's own process tree — verified live: with the dev server up the
+suite panics with `colophon-server pid(s) [79831] are running outside this test…`;
+with `COLOPHON_TEST_DATABASE` set to an isolated database the check is skipped; with
+no foreign server the suite proceeds normally.
 
 ## 6. The 24h soak — failure, root cause, fix (the main finding)
 

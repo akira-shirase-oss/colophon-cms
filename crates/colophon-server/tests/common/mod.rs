@@ -6,6 +6,7 @@
 )]
 
 use std::{
+    collections::HashMap,
     path::PathBuf,
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
@@ -65,6 +66,7 @@ impl Server {
     /// [`Self::start_with`] on another port of loopback: a second server beside the first,
     /// sharing its database and Valkey. Sign-in needs [`PORT`]'s registered origin.
     pub(crate) async fn start_on(port: u16, extra: &[(&str, &str)]) -> Self {
+        assert_no_foreign_server();
         let mut command = Command::new(env!("CARGO_BIN_EXE_colophon-server"));
         // The server logs on stdout: COLOPHON_TEST_VERBOSE keeps it for a debugging run.
         let log = match std::env::var_os("COLOPHON_TEST_VERBOSE") {
@@ -177,6 +179,65 @@ pub(crate) fn local_env() -> Vec<(String, String)> {
             (key.trim().to_owned(), value)
         })
         .collect()
+}
+
+/// The suite shares the dev database with any `colophon-server` already running: its
+/// worker claims the same delivery jobs the test's servers do, and the 2026-11-10 run
+/// lost two faults tests to exactly that race (a dev server on :58000 was up). Before
+/// spawning a test server, refuse while a `colophon-server` runs that this test process
+/// did not start — ours are told apart by walking each candidate's parent chain back
+/// to us. `COLOPHON_TEST_DATABASE` naming another database opts out: the suite then
+/// shares nothing with a dev server on `colophon`.
+pub(crate) fn assert_no_foreign_server() {
+    if std::env::var("COLOPHON_TEST_DATABASE").is_ok_and(|db| db != "colophon") {
+        return;
+    }
+    let output = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,ucomm="])
+        .output()
+        .expect("ps runs");
+    assert!(output.status.success(), "ps failed");
+    let table = String::from_utf8_lossy(&output.stdout);
+    let mut parents = HashMap::new();
+    let mut servers = Vec::new();
+    for line in table.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(process), Some(parent), Some(comm)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let (Ok(process), Ok(parent)) = (process.parse::<u32>(), parent.parse::<u32>()) else {
+            continue;
+        };
+        parents.insert(process, parent);
+        if comm == "colophon-server" {
+            servers.push(process);
+        }
+    }
+    let me = std::process::id();
+    let foreign: Vec<u32> = servers
+        .into_iter()
+        .filter(|pid| {
+            // Ours when any ancestor is this test process; foreign when the chain
+            // reaches the root (or a hole) without passing through us.
+            let mut at = *pid;
+            for _ in 0..64 {
+                match parents.get(&at) {
+                    Some(&up) if up == me => return false,
+                    Some(&up) if up > 1 => at = up,
+                    _ => return true,
+                }
+            }
+            true
+        })
+        .collect();
+    assert!(
+        foreign.is_empty(),
+        "colophon-server pid(s) {foreign:?} are running outside this test — the suite \
+         shares the dev database and their worker would claim the tests' jobs. Stop the \
+         dev server first (or set COLOPHON_TEST_DATABASE to an isolated database)."
+    );
 }
 
 /// The stack database's owner (the migrator), which row-level security doesn't apply to: for tests
