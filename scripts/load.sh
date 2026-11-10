@@ -441,6 +441,14 @@ case "$endpoint" in
           conns=$(docker compose -f deploy/compose.yaml exec -T postgres psql -U colophon -XAtqc \
             "select count(*) from pg_stat_activity where datname = '$database'" 2>/dev/null || echo "")
           printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "${rss:-}" "${cpu:-}" "${conns:-}" >>"$work/resources.tsv"
+          # The client half of the same window (the 2026-11-09 soak's unexplained read
+          # failures left no server-side trace): k6's own RSS/CPU — a client-side leak or
+          # stall shows here — and a /readyz probe, so a dead or wedged server is a row in
+          # the evidence instead of a silence between request failures.
+          k6pid=$(pgrep -f 'k6 run' | head -1 || true)
+          read -r krss kcpu < <(ps -o rss=,%cpu= -p "${k6pid:-0}" 2>/dev/null | awk '{print $1, $2}')
+          ready=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:$port/readyz" 2>/dev/null || echo "000")
+          printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "${krss:-}" "${kcpu:-}" "${ready:-000}" >>"$work/client.tsv"
           sleep "${SAMPLE_SECONDS:-5}"
         done
       ) &
@@ -678,6 +686,30 @@ if [[ -s "$work/resources.tsv" ]]; then
        postgres_connections: {last: (last.conns),
                               max: ([.[].conns | select(. != null)] | max // null)}}' \
     "$work/resources.tsv")
+fi
+# The client half of the same window: k6's RSS/CPU trend and the /readyz answers. A run whose
+# requests failed while the server stayed ready and the client grew without bound reads very
+# differently from one where the server stopped answering — the 2026-11-09 soak could not
+# tell them apart because neither series existed.
+if [[ -s "$work/client.tsv" ]]; then
+  client=$(jq -Rsc '
+    [split("\n")[] | select(length > 0) | split("\t")
+     | {t: .[0], k6_rss_kb: (.[1] | tonumber? // null), k6_cpu: (.[2] | tonumber? // null),
+        readyz: .[3]}]
+    | [.[].k6_cpu | select(. != null)] as $cpus
+    | [.[].readyz | select(. != null)] as $rz
+    | {samples: length,
+       k6_rss_kb: {first: (first.k6_rss_kb), last: (last.k6_rss_kb), max: ([.[].k6_rss_kb | select(. != null)] | max // null)},
+       k6_cpu_percent: {avg: (if ($cpus | length) > 0 then (((($cpus | add) / ($cpus | length)) * 10) | round) / 10 else null end),
+                        max: ($cpus | max // null)},
+       readyz: {first: (first.readyz), last: (last.readyz),
+                non_200: ([$rz[] | select(. != "200")] | length)}}' \
+    "$work/client.tsv")
+  if [[ "$resources" == "null" ]]; then
+    resources=$(jq -nc --argjson c "$client" '{samples: 0, client: $c}')
+  else
+    resources=$(jq --argjson c "$client" '. + {client: $c}' <<<"$resources")
+  fi
 fi
 
 record=$(jq -c \

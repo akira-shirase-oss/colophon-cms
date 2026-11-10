@@ -73,12 +73,23 @@ Rule confirmed: never run two load suites on one machine at once.
 
 Run: `RATE=200 DURATION=1440m KEEP=1 SERVER_LOG=perf/results/soak-24h-server.log scripts/load.sh mixed steady`
 (mixed = L05: reads + If-Match writes + publishes at once — the closest shape to real editorial
-traffic; 200/s sustains ~17.3M requests/day).
+traffic; 200/s sustains ~17.3M requests/day). In parallel, `scripts/soak-sidecar.sh` cycles one
+failure drill per hour (pause Valkey 60s, pause Postgres 30s, receiver 503 window, repeat) —
+reusing the /control endpoints the fault scenarios use. Both against the same `load.sh` server,
+never two load suites at once.
 
-During the run, a sidecar cycles one failure drill per hour (pause Valkey 60s, pause Postgres
-30s, receiver 503 window, repeat) — reusing the /control endpoints the fault scenarios use.
-Measured: per-window p99 stays inside the gate, RSS/connection curves flat, outbox drains after
-each drill, zero `uncertain` states left unresolved at end.
+Measured: per-window p99 stays inside the gate, RSS/connection curves flat (the result's
+`resources` block now also carries k6's own RSS/CPU and a /readyz probe series per 5 s —
+added after the 2026-11-09 run failed L05 with 867,613 unexplained errors and left no
+client-side evidence), outbox drains after each drill, zero `uncertain` states left
+unresolved at end.
+
+Scenario fix that preceded the re-run (2026-11-11): the first soak's errors were the dev
+accounts' 12 h absolute session expiry expiring mid-run — the second half of the day
+collected 401s. `perf/k6/mixed.js` now snapshots credentials per VU and re-authenticates
+(dev-owner sign-in) on 401 with one retry, and publish/write VUs read `Colophon-Generation`
+and If-Match honestly instead of racing. A session-expiry drill is part of the sidecar's
+rotation so the re-auth path is exercised, not just the fault endpoints.
 
 Honest bound: this is one machine's development observation over a day — evidence of
 stability and failure behavior, not a production capacity claim.

@@ -48,6 +48,7 @@ const saves = new Counter('l05_saves');
 const writeBacks = new Counter('l05_write_backs');
 const publishOps = new Counter('l05_publishes');
 const conflicts = new Counter('l05_conflicts');
+const reauths = new Counter('l05_reauths');
 const served = {
   hit: new Counter('l05_hit'),
   miss: new Counter('l05_miss'),
@@ -107,6 +108,38 @@ const article = (title, text) => JSON.stringify({
 
 function key() {
   return `k6-l05-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// A session lives 12 hours absolute however busy (SessionSettings::default), so a 24 h soak
+// must re-authenticate at the boundary instead of collecting 401s — the 2026-11-09 run's
+// entire second half was exactly that. Each VU keeps its own credential snapshot: `data` is
+// per-VU already, and a re-login here signs in as the same dev-owner the setup() session did.
+let creds = null;
+function session(data) {
+  if (creds === null) creds = { cookie: data.session.cookie, csrf: data.session.csrf };
+  return creds;
+}
+function reauth(data) {
+  reauths.add(1);
+  const res = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), {
+    headers: { 'Content-Type': 'application/json' }, redirects: 0,
+  });
+  if (res.status !== 204) return false;
+  const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
+  creds = { cookie: `colophon_session=${jar.colophon_session[0]}`, csrf: jar.colophon_csrf[0] };
+  return true;
+}
+// Sends fn(); a 401 means the session died — re-authenticate and send once more with the
+// fresh credential. Headers are built inside fn() so the retry carries the new cookie.
+// A 401 never reached the handler, so the retried Idempotency-Key may safely differ.
+// Every authed call expects its success statuses plus 401: the dead-session answer is
+// handled by the retry, and only a 401 that survives it reaches the checks — counting
+// the handled one in http_req_failed would fail the run on a recovered event.
+const expected = (...statuses) => http.expectedStatuses(...statuses, 401);
+function authed(data, fn) {
+  let res = fn();
+  if (res.status === 401 && reauth(data)) res = fn();
+  return res;
 }
 
 export function setup() {
@@ -214,18 +247,18 @@ let etag = null;
 export function writes(data) {
   const mine = data.ids[exec.vu.idInTest % data.ids.length];
   const url = `${data.entries}/${mine}`;
-  const read = { Cookie: data.session.cookie };
-  const write = { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
+  const read = () => ({ Cookie: session(data).cookie });
+  const write = () => ({ Cookie: session(data).cookie, 'X-CSRF-Token': session(data).csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' });
   if (etag === null) {
-    const current = http.get(url, { headers: read, redirects: 0, tags: { arm: 'write', endpoint: 'read', name: 'entries/{entry}' } });
+    const current = authed(data, () => http.get(url, { headers: read(), redirects: 0, responseCallback: expected(200), tags: { arm: 'write', endpoint: 'read', name: 'entries/{entry}' } }));
     if (!check(current, { 'write-arm read 200': (r) => r.status === 200 })) { errors.add(1); return; }
     etag = current.headers['Etag'];
   }
   const text = `iteration ${__ITER}`;
-  const saved = http.put(url, article(`Article for VU ${exec.vu.idInTest}`, text), {
-    headers: Object.assign({ 'If-Match': etag, 'Idempotency-Key': key() }, write),
-    redirects: 0, tags: { arm: 'write', endpoint: 'save', name: 'entries/{entry}' },
-  });
+  const saved = authed(data, () => http.put(url, article(`Article for VU ${exec.vu.idInTest}`, text), {
+    headers: Object.assign({ 'If-Match': etag, 'Idempotency-Key': key() }, write()),
+    redirects: 0, responseCallback: expected(200), tags: { arm: 'write', endpoint: 'save', name: 'entries/{entry}' },
+  }));
   if (!check(saved, {
     'save 200': (r) => r.status === 200,
     'save gives a new ETag': (r) => typeof r.headers['Etag'] === 'string' && r.headers['Etag'] !== etag,
@@ -233,7 +266,7 @@ export function writes(data) {
   saves.add(1);
   etag = saved.headers['Etag'];
   // The consistency check: what the save answered must be what a read returns next.
-  const back = http.get(url, { headers: read, redirects: 0, tags: { arm: 'write', endpoint: 'write-back', name: 'entries/{entry}' } });
+  const back = authed(data, () => http.get(url, { headers: read(), redirects: 0, responseCallback: expected(200), tags: { arm: 'write', endpoint: 'write-back', name: 'entries/{entry}' } }));
   if (!check(back, {
     'read-back 200': (r) => r.status === 200,
     'read-back returns the revision just saved': (r) => r.headers['Etag'] === etag,
@@ -245,40 +278,41 @@ export function writes(data) {
 // release ids it has already seen — it learns the base from a delivery read before it
 // publishes, so two publishers colliding get the honest 409 and a re-read, not a pass.
 export function publishes(data) {
-  const write = { Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' };
+  const write = () => ({ Cookie: session(data).cookie, 'X-CSRF-Token': session(data).csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json' });
   const latest = http.get(`${data.delivery}?limit=1`, { redirects: 0, tags: { arm: 'publish', endpoint: 'base', name: 'content' } });
   if (!check(latest, { 'base read 200': (r) => r.status === 200 })) { errors.add(1); return; }
   let base = parseInt(latest.headers['Colophon-Generation'] || '-1', 10);
-  const made = http.post(data.entries, article(`Published ${key()}`, 'new'), {
-    headers: Object.assign({ 'Idempotency-Key': key() }, write),
-    redirects: 0, tags: { arm: 'publish', endpoint: 'entry', name: 'entries' },
-  });
+  const made = authed(data, () => http.post(data.entries, article(`Published ${key()}`, 'new'), {
+    headers: Object.assign({ 'Idempotency-Key': key() }, write()),
+    redirects: 0, responseCallback: expected(201), tags: { arm: 'publish', endpoint: 'entry', name: 'entries' },
+  }));
   if (!check(made, { 'publish-arm entry 201': (r) => r.status === 201 })) { errors.add(1); return; }
   const id = made.json('data.id');
-  const set = http.post(`${data.env}/changesets`, JSON.stringify({ title: `mixed ${key()}`, entries: [id] }), {
-    headers: Object.assign({ 'Idempotency-Key': key() }, write), redirects: 0, tags: { arm: 'publish', endpoint: 'changeset', name: 'changesets' },
-  });
+  const set = authed(data, () => http.post(`${data.env}/changesets`, JSON.stringify({ title: `mixed ${key()}`, entries: [id] }), {
+    headers: Object.assign({ 'Idempotency-Key': key() }, write()), redirects: 0, responseCallback: expected(201), tags: { arm: 'publish', endpoint: 'changeset', name: 'changesets' },
+  }));
   if (!check(set, { 'changeset 201': (r) => r.status === 201 })) { errors.add(1); return; }
   const path = `${data.env}/changesets/${set.json('data.id')}`;
-  const ifMatch = Object.assign({ 'If-Match': `"${set.json('data.hash')}"` }, write);
-  const submitted = http.post(`${path}/submit`, null, { headers: ifMatch, redirects: 0, tags: { arm: 'publish', endpoint: 'submit', name: 'changesets/{changeset}/submit' } });
+  const ifMatch = () => Object.assign({ 'If-Match': `"${set.json('data.hash')}"` }, write());
+  const submitted = authed(data, () => http.post(`${path}/submit`, null, { headers: ifMatch(), redirects: 0, responseCallback: expected(200), tags: { arm: 'publish', endpoint: 'submit', name: 'changesets/{changeset}/submit' } }));
   if (!check(submitted, { 'submit 200': (r) => r.status === 200 })) { errors.add(1); return; }
-  const approved = http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch, redirects: 0, tags: { arm: 'publish', endpoint: 'review', name: 'changesets/{changeset}/reviews' } });
+  const approved = authed(data, () => http.post(`${path}/reviews`, JSON.stringify({ decision: 'approve' }), { headers: ifMatch(), redirects: 0, responseCallback: expected(200), tags: { arm: 'publish', endpoint: 'review', name: 'changesets/{changeset}/reviews' } }));
   if (!check(approved, { 'review 200': (r) => r.status === 200 })) { errors.add(1); return; }
-  const expect = { responseCallback: http.expectedStatuses(201, 409) };
-  let published = http.post(`${path}/publish`, JSON.stringify({ base_generation: base }), {
-    headers: Object.assign({ 'Idempotency-Key': key() }, ifMatch), redirects: 0,
+  let published = authed(data, () => http.post(`${path}/publish`, JSON.stringify({ base_generation: base }), {
+    headers: Object.assign({ 'Idempotency-Key': key() }, ifMatch()), redirects: 0,
+    responseCallback: expected(201, 409),
     tags: { arm: 'publish', endpoint: 'publish', name: 'changesets/{changeset}/publish' },
-  });
+  }));
   if (published.status === 409) {
     // The honest answer to a lost race: re-read the generation and republish once.
     conflicts.add(1);
     const again = http.get(`${data.delivery}?limit=1`, { redirects: 0, tags: { arm: 'publish', endpoint: 'base', name: 'content' } });
     base = parseInt(again.headers['Colophon-Generation'] || '-1', 10);
-    published = http.post(`${path}/publish`, JSON.stringify({ base_generation: base }), {
-      headers: Object.assign({ 'Idempotency-Key': key() }, ifMatch), redirects: 0,
+    published = authed(data, () => http.post(`${path}/publish`, JSON.stringify({ base_generation: base }), {
+      headers: Object.assign({ 'Idempotency-Key': key() }, ifMatch()), redirects: 0,
+      responseCallback: expected(201, 409),
       tags: { arm: 'publish', endpoint: 'publish', name: 'changesets/{changeset}/publish' },
-    });
+    }));
   }
   if (!check(published, {
     'publish 201': (r) => r.status === 201,
@@ -320,6 +354,7 @@ export function handleSummary(data) {
       write_backs: count('l05_write_backs'),
       publishes: count('l05_publishes'),
       publish_conflicts_retried: count('l05_conflicts'),
+      session_reauths: count('l05_reauths'),
     },
     latency_ms: {
       read: { p50: readArm.med, p95: readArm['p(95)'], p99: readArm['p(99)'] },
@@ -339,7 +374,7 @@ export function handleSummary(data) {
     stdout: [
       '',
       '  L05 — mixed reads, writes and publishing',
-      `    ${count('l05_reads')} reads (p99 ${(readArm['p(99)'] || 0).toFixed(1)} ms, gate ${READ_P99_MS}), ${count('l05_saves')} saves + ${count('l05_write_backs')} verified read-backs (p95 ${(writeArm['p(95)'] || 0).toFixed(1)} ms), ${count('l05_publishes')} publishes (${count('l05_conflicts')} conflicts retried, p99 ${(publishArm['p(99)'] || 0).toFixed(1)} ms)`,
+      `    ${count('l05_reads')} reads (p99 ${(readArm['p(99)'] || 0).toFixed(1)} ms, gate ${READ_P99_MS}), ${count('l05_saves')} saves + ${count('l05_write_backs')} verified read-backs (p95 ${(writeArm['p(95)'] || 0).toFixed(1)} ms), ${count('l05_publishes')} publishes (${count('l05_conflicts')} conflicts retried, ${count('l05_reauths')} session re-auths, p99 ${(publishArm['p(99)'] || 0).toFixed(1)} ms)`,
       `    stale ${count('l05_stale')}, torn ${count('l05_torn')}, errors ${count('l05_errors')}`,
       `    verdict: ${data.l05.held ? 'HELD' : 'BROKE'}`,
       '',
