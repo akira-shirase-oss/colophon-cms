@@ -59,8 +59,11 @@ const DRILL_WINDOWS = __ENV.DRILL_WINDOWS || '';
 // the windows file itself. l05_fail_events keeps the honest total — and the
 // failsafe: fewer stamps than events means unplaceable failures, counted outside.
 const failEvents = new Counter('l05_fail_events');
-function bucket() {
-  if (DRILL_WINDOWS !== '') console.log(`L05FAIL ${Math.floor(Date.now() / 1000)}`);
+function bucket(res, checks) {
+  if (DRILL_WINDOWS !== '') {
+    const bad = Object.keys(checks).filter((name) => !checks[name](res)).join('+');
+    console.log(`L05FAIL ${Math.floor(Date.now() / 1000)} ${bad} status=${res.status}`);
+  }
   failEvents.add(1);
 }
 const readAnswers = new Counter('l05_reads');
@@ -170,7 +173,7 @@ function authed(data, fn) {
 // checks/http_req_failed metrics are untouched.
 function verify(res, checks) {
   const held = check(res, checks);
-  if (!held) bucket();
+  if (!held) bucket(res, checks);
   return held;
 }
 

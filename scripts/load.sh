@@ -716,9 +716,10 @@ if [[ "${drills_windows:-0}" == "1" ]]; then
       | {dep: (.dep // "?"), kind: (.kind // "drill"), start: (.start // ""), end: (.end // ""),
          s: (.start_epoch - 2), e: .end_epoch}
       | select(.e > .s))) as $ws
+    | ($eps | split("\n") | map(select(length > 0) | tonumber)) as $ts
     | . as $doc
     | if ($doc.l05? | type) == "object" then
-        (reduce $eps[] as $t ({inn: 0, out: 0};
+        (reduce $ts[] as $t ({inn: 0, out: 0};
            if ([$ws[] | select($t >= .s and $t <= .e)] | length) > 0
            then .inn += 1 else .out += 1 end)) as $placed
         | (($doc.l05.error_events // 0) - ($placed.inn + $placed.out)) as $unlogged
