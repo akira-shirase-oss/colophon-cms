@@ -1,0 +1,25 @@
+2026-11-11T13:27:57Z sidecar armed: drills every 480s for 1h -> perf/results/soak-1h-v2b-sidecar.log, windows -> perf/results/soak-1h-v2b-windows.jsonl
+2026-11-11T13:35:58Z drill 1: pause valkey 60s
+ Container colophon-valkey-1 Paused 
+ Container colophon-valkey-1 Unpaused 
+2026-11-11T13:36:58Z drill 1: valkey resumed (state: running)
+2026-11-11T13:44:58Z drill 2: pause postgres 30s
+ Container colophon-postgres-1 Paused 
+ Container colophon-postgres-1 Unpaused 
+2026-11-11T13:45:29Z drill 2: postgres resumed (state: running)
+2026-11-11T13:53:29Z drill 3: pause valkey 60s
+ Container colophon-valkey-1 Paused 
+ Container colophon-valkey-1 Unpaused 
+2026-11-11T13:54:29Z drill 3: valkey resumed (state: running)
+2026-11-11T14:02:29Z drill 4: pause postgres 30s
+ Container colophon-postgres-1 Paused 
+ Container colophon-postgres-1 Unpaused 
+2026-11-11T14:02:59Z drill 4: postgres resumed (state: running)
+2026-11-11T14:10:59Z drill 5: pause valkey 60s
+ Container colophon-valkey-1 Paused 
+ Container colophon-valkey-1 Unpaused 
+2026-11-11T14:12:00Z drill 5: valkey resumed (state: running)
+2026-11-11T14:20:00Z drill 6: expire all sessions in colophon
+2026-11-11T14:20:00Z drill 6: sessions expired
+2026-11-11T14:27:57Z sidecar: 0s of run left — last drill skipped
+2026-11-11T14:27:57Z sidecar done after 6 drills

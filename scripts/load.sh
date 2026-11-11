@@ -585,10 +585,15 @@ k6_status=0
 k6_drill_env=()
 if [[ -n "${DRILL_WINDOWS:-}" ]]; then
   # Announce the sidecar's drill windows to the scenario: its zero-error thresholds move
-  # into handleSummary, which weighs each failure bucket against the windows. An absent
-  # or unreadable file leaves the strict gate standing — errors are never excused blind.
+  # into handleSummary, which stamps each failed assertion `L05FAIL <epoch_s>` for the
+  # window split below. An absent or unreadable file leaves the strict gate standing —
+  # errors are never excused blind.
   k6_drill_env=(-e "DRILL_WINDOWS=$DRILL_WINDOWS")
 fi
+# k6's console is teed to $work/k6-console.log: with drills announced, mixed.js
+# stamps every failed assertion there as `L05FAIL <epoch_s>` (VU state cannot
+# reach handleSummary — the v2b run's empty error_buckets proved it), and the
+# window split below reads the stamps back. pipefail keeps k6's exit status.
 "$k6" run --quiet --no-color \
   --summary-export "$work/summary.json" \
   -e BASE_URL="$base_url" -e PUBLIC_URL="$public_url" -e SCENARIO="$scenario" \
@@ -596,7 +601,7 @@ fi
   -e RATE="$RATE" -e DURATION="${DURATION:-60s}" \
   -e P99_MS="$P99_MS" -e USERS="${USERS:-512}" -e RECEIVER_URL="http://127.0.0.1:$receiver_port" -e SITE_URL="http://127.0.0.1:$site_port" \
   ${k6_drill_env[@]+"${k6_drill_env[@]}"} \
-  "perf/k6/$endpoint.js" || k6_status=$?
+  "perf/k6/$endpoint.js" 2>&1 | tee "$work/k6-console.log" || k6_status=$?
 
 if [[ -n "$sampler_pid" ]]; then
   kill "$sampler_pid" 2>/dev/null || true
@@ -685,16 +690,22 @@ else
   server_warnings=$(grep -c '"level":"\(WARN\|ERROR\)"' "$work/server.log" || true)
 fi
 
-# k6 emitted l05.error_buckets ([epoch_s, failures] over every failed assertion) but
-# cannot read the windows file itself — open() is init-stage only — so the scenario's
-# no_errors gate is the strict reading and its stdout verdict is provisional. Re-weigh
-# the buckets against the sidecar's windows now and rewrite the gate before the record
-# and the lNN gate loop read summary.json. A bucket overlaps a window when it starts
-# before the window's end and ends after its start minus two seconds of lead — the
-# requests already in flight when the pause lands. Malformed or epoch-less window
-# lines are skipped: their errors count as outside, which fails safe.
+# mixed.js cannot read the windows file itself — open() is init-stage only — so
+# with drills announced it stamps every failed assertion `L05FAIL <epoch_s>` on
+# k6's console (teed to $work/k6-console.log above) and its no_errors gate is the
+# strict reading whose stdout verdict is provisional. Re-weigh the stamps
+# against the sidecar's windows now and rewrite the gate before the record and
+# the lNN gate loop read summary.json. A stamp inside a window — two seconds of
+# lead for requests in flight when the pause lands — is drill evidence; outside
+# fails. Failsafe both ways: stamps the scenario counted but never logged
+# (error_events > stamps) count as outside, and a missing console log leaves the
+# strict gate standing — errors are never excused blind.
 if [[ "${drills_windows:-0}" == "1" ]]; then
-  jq --rawfile wins "$DRILL_WINDOWS" --arg wf "$DRILL_WINDOWS" '
+  # Every stamp counts — same-second failures share an epoch but are separate
+  # events, so no uniq: the stamp total must reconcile with l05.error_events.
+  fail_epochs_json=$( { grep -oE 'L05FAIL [0-9]+' "$work/k6-console.log" 2>/dev/null || true; } \
+    | awk '{print $2}' | sort -n | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)')
+  jq --argjson eps "$fail_epochs_json" --rawfile wins "$DRILL_WINDOWS" --arg wf "$DRILL_WINDOWS" '
     ($wins | split("\n") | map(select(length > 0) | fromjson? | select(type == "object")
       | select((.start_epoch | type) == "number" and (.end_epoch | type) == "number")
       | {dep: (.dep // "?"), kind: (.kind // "drill"), start: (.start // ""), end: (.end // ""),
@@ -702,16 +713,16 @@ if [[ "${drills_windows:-0}" == "1" ]]; then
       | select(.e > .s))) as $ws
     | . as $doc
     | if ($doc.l05? | type) == "object" then
-        ($doc.l05.error_buckets // []) as $buckets
-        | (reduce $buckets[] as $b ({inn: 0, out: 0};
-             if ([$ws[] | select(($b[0] + 10) > .s and $b[0] < .e)] | length) > 0
-             then .inn += $b[1] else .out += $b[1] end)) as $split
+        (reduce $eps[] as $t ({inn: 0, out: 0};
+           if ([$ws[] | select($t >= .s and $t <= .e)] | length) > 0
+           then .inn += 1 else .out += 1 end)) as $placed
+        | (($doc.l05.error_events // 0) - ($placed.inn + $placed.out)) as $unlogged
         | $doc
-          | .l05.gates.no_errors = ($split.out == 0)
+          | .l05.gates.no_errors = (($placed.out + ($unlogged | if . > 0 then . else 0 end)) == 0)
           | .l05.drills = {windows_file: $wf,
                            windows: [$ws[] | {dep, kind, start, end}],
-                           errors_in_windows: $split.inn,
-                           errors_outside_windows: $split.out}
+                           errors_in_windows: $placed.inn,
+                           errors_outside_windows: ($placed.out + ($unlogged | if . > 0 then . else 0 end))}
           | .l05.gate = ((.l05.gate // "") + " — drill-aware: zero failures outside the announced windows")
           | .l05.held = ([.l05.gates[]] | all)
       else $doc end' "$work/summary.json" > "$work/summary.drilled.json" \

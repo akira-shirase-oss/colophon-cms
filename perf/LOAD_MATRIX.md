@@ -79,8 +79,10 @@ traffic; 200/s sustains ~17.3M requests/day). In parallel,
 window applies only to scenarios that configure delivery destinations — the mixed soak
 configures none) and appends each completed drill's window — pause/resume plus
 `SOAK_DRILL_GRACE_S` (default 120 s) of recovery — as a JSONL record. Pass the file to
-load.sh as `DRILL_WINDOWS=<path>`: mixed.js buckets every failed assertion into sparse
-10 s `error_buckets`, and load.sh re-weighs them against the windows before gating —
+load.sh as `DRILL_WINDOWS=<path>`: mixed.js stamps every failed assertion
+`L05FAIL <epoch_s>` on k6's console (VU state cannot reach handleSummary — k6 metrics
+only aggregate, and open()/fs are init-stage only), load.sh tees that stream and
+re-weighs the stamps against the windows before gating —
 the L05 `no_errors` gate then means *zero failures outside the announced windows*, with
 the in/out split recorded under `l05.drills`. Server WARN/ERROR lines get the same
 treatment (`drills.warnings_in/outside_windows` in the result), and a missing or

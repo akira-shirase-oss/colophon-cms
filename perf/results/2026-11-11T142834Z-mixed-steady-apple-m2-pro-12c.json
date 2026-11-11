@@ -1,0 +1,174 @@
+{
+  "scenario": "steady",
+  "endpoint": "mixed",
+  "date": "2026-11-11T14:28:34Z",
+  "commit": "7476bf2",
+  "dirty": false,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 300,
+    "duration": "60m",
+    "vus": 256
+  },
+  "requests": 1277153,
+  "rps": 354,
+  "failed": 161289,
+  "checks_failed": 320744,
+  "dropped": 19291,
+  "latency_ms": {
+    "avg": 13.432,
+    "p50": 3.499,
+    "p90": 13.524,
+    "p95": 23.518,
+    "p99": 159.815,
+    "p999": 2003.603,
+    "max": 10005.805
+  },
+  "database_transactions_during_run": 1746890,
+  "server_warnings": 0,
+  "thresholds_passed": false,
+  "resources": {
+    "samples": 688,
+    "server_rss_kb": {
+      "first": 27984,
+      "last": 26896,
+      "max": 44512
+    },
+    "server_cpu_percent": {
+      "avg": 19.6,
+      "max": 29.5
+    },
+    "postgres_connections": {
+      "last": 26,
+      "max": 30
+    },
+    "client": {
+      "samples": 688,
+      "k6_rss_kb": {
+        "first": 32,
+        "last": 226288,
+        "max": 318624
+      },
+      "k6_cpu_percent": {
+        "avg": 27.7,
+        "max": 65.8
+      },
+      "readyz": {
+        "first": "200",
+        "last": "200",
+        "non_200": 11
+      }
+    }
+  },
+  "drills": {
+    "windows_file": "perf/results/soak-1h-v2b-windows.jsonl",
+    "warnings_in_windows": 2683,
+    "warnings_outside_windows": 0
+  },
+  "l05": {
+    "drills_announced": true,
+    "gates": {
+      "no_errors": true,
+      "reads_held": true,
+      "writes_held": true,
+      "publishes_held": true,
+      "no_stale_refills": true,
+      "no_torn_pages": true
+    },
+    "gate": "read arm p99 <350 ms (warm gate), write arm p95 <700 ms, publish requests p99 <700 ms — all with reads, saves, read-backs and publishes actually counted; zero stale refills, torn pages or failed assertions — drills announced: load.sh re-weighs error_buckets against the windows and requires zero failures outside them — drill-aware: zero failures outside the announced windows",
+    "latency_ms": {
+      "read": {
+        "p99": 126.05647999999992,
+        "p50": 2.737,
+        "p95": 17.42554999999995
+      },
+      "write": {
+        "p50": 9.966,
+        "p95": 56.100999999999964,
+        "p99": 337.1504999999999
+      },
+      "publish": {
+        "p99": 280.65665999999993,
+        "p50": 13.532,
+        "p95": 98.77189999999996
+      }
+    },
+    "drills": {
+      "windows_file": "perf/results/soak-1h-v2b-windows.jsonl",
+      "windows": [
+        {
+          "dep": "valkey",
+          "kind": "pause",
+          "start": "2026-11-11T13:35:58Z",
+          "end": "2026-11-11T13:38:58Z"
+        },
+        {
+          "dep": "postgres",
+          "kind": "pause",
+          "start": "2026-11-11T13:44:58Z",
+          "end": "2026-11-11T13:47:29Z"
+        },
+        {
+          "dep": "valkey",
+          "kind": "pause",
+          "start": "2026-11-11T13:53:29Z",
+          "end": "2026-11-11T13:56:29Z"
+        },
+        {
+          "dep": "postgres",
+          "kind": "pause",
+          "start": "2026-11-11T14:02:29Z",
+          "end": "2026-11-11T14:04:59Z"
+        },
+        {
+          "dep": "valkey",
+          "kind": "pause",
+          "start": "2026-11-11T14:10:59Z",
+          "end": "2026-11-11T14:14:00Z"
+        },
+        {
+          "dep": "sessions",
+          "kind": "session",
+          "start": "2026-11-11T14:20:00Z",
+          "end": "2026-11-11T14:22:00Z"
+        }
+      ],
+      "errors_in_windows": 0,
+      "errors_outside_windows": 0
+    },
+    "served": {
+      "hit": 832188,
+      "miss": 10841,
+      "coalesced": 18051,
+      "bypass": 40168
+    },
+    "held": true,
+    "spec": "L05: mixed reads, writes and publishing — each operation class meets its target; content stays consistent",
+    "requests": {
+      "session_reauths": 34,
+      "reads": 901248,
+      "saves": 106182,
+      "write_backs": 106179,
+      "publishes": 296,
+      "publish_conflicts_retried": 0
+    },
+    "consistency": {
+      "stale_refills": 0,
+      "torn_pages": 0,
+      "errors": 867
+    },
+    "error_buckets": []
+  }
+}

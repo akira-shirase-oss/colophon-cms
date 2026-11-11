@@ -214,32 +214,63 @@ a drill-aware gate — over dropping drills:
   `SOAK_DRILL_INTERVAL_S` compresses the cadence for sub-24 h validations
   (the 1 h proof uses ~8 min drills so all three types fire inside the hour);
   at the default 3600 s the rotation is unchanged.
-- `perf/k6/mixed.js` routes every arm assertion through `verify()`, which
-  buckets each failure into a sparse 10 s `error_buckets` series emitted in
-  the summary. (k6's `open()` is init-stage only — verified — so the scenario
-  cannot read the windows file itself; it emits raw material and `load.sh`
-  does the window math.) With `DRILL_WINDOWS` set, the zero-error k6
-  thresholds move into the gate.
-- `scripts/load.sh` passes `DRILL_WINDOWS` to k6, then — after the run —
-  re-weighs `error_buckets` against the windows before building the record:
-  `l05.gates.no_errors` becomes *zero failures outside the announced
-  windows*, `l05.drills` records `{windows[], errors_in_windows,
-  errors_outside_windows}`, and server WARN/ERROR lines get the same
-  treatment (`drills.warnings_in/outside_windows`). A bucket overlaps a
-  window with a 2 s lead for in-flight requests; malformed or missing window
-  data counts its errors as **outside** — drills excuse evidence, they never
-  hide it. `/readyz` samples still independently prove recovery.
+- `perf/k6/mixed.js` routes every arm assertion through `verify()`. (k6's
+  `open()`/`fs` are init-stage only — verified — and VU runtimes are isolated:
+  module state never reaches `handleSummary`, and tagged metric sub-keys
+  materialize only for thresholded names — all verified live on v2.3.0.) With
+  `DRILL_WINDOWS` set, each failed assertion is stamped `L05FAIL <epoch_s>`
+  on k6's console and `l05_fail_events` keeps the honest total; the
+  zero-error k6 thresholds move into the gate.
+- `scripts/load.sh` passes `DRILL_WINDOWS` to k6, tees k6's console to
+  `$work/k6-console.log`, then — after the run — re-weighs the stamps
+  against the windows before building the record: `l05.gates.no_errors`
+  becomes *zero failures outside the announced windows*, `l05.drills`
+  records `{windows[], errors_in_windows, errors_outside_windows}`, and
+  server WARN/ERROR lines get the same treatment
+  (`drills.warnings_in/outside_windows`). A stamp inside a window — two
+  seconds of lead for in-flight requests — is drill evidence; outside
+  fails. Two failsafes: `error_events` exceeding the stamp count adds the
+  difference to outside (unstamped failures can't be placed, so they can't
+  be excused), and a missing console log leaves the strict gate standing.
+  Malformed or missing window data counts its errors as **outside** —
+  drills excuse evidence, they never hide it. `/readyz` samples still
+  independently prove recovery.
 
 Verified before the rerun: the jq window filter against this run's real
 server log puts **0 of 1,328 warnings outside** the reconstructed windows;
-the bucket split produces pass and fail verdicts correctly on synthetic
-summaries; shellcheck and `k6 inspect` clean. Committed `e398151`.
+the window split produces pass, fail and unlogged-deficit verdicts
+correctly on synthetic inputs; shellcheck and `k6 inspect` clean.
+Committed `e398151` (bucket design), superseded by the stamp design below.
 
-**Queued:** the 1 h v2 validation — same shape as §6.6 plus all three drill
-types on the compressed cadence and `DRILL_WINDOWS` wired — runs after the
-durable-runner solo load finishes (one load suite per machine). Result and
-gate outcome land here when it completes; if failures appear outside the
-windows the run fails honestly, pool-recovery finding included.
+### 6.8 The v2b run exposed a vacuous gate — fixed and re-validated (2026-11-11)
+
+The first drill-aware 1 h run (v2b, `perf/results/2026-11-11T142834Z-…json`)
+completed all six drills and reported `held: true` — **but the verdict was
+vacuous**: `error_buckets` came back `[]` while `consistency.errors` recorded
+867 failed assertions and `http_req_failed` counted 161,289. The bucket object
+lived in VU module state, which never reaches `handleSummary` (each VU is its
+own JS runtime), so `no_errors` evaluated `bucketTotal === 0` on an empty
+series — true by construction, not by evidence. Server-side forensics still
+held (2,683 WARN/ERROR lines, **0 outside** the windows), but the client-side
+half of the gate proved nothing. Committed honestly as a harness defect, not
+a product pass.
+
+Live experiments on k6 v2.3.0 pinned the mechanism down: tagged Counter
+sub-metrics appear in `data.metrics` only when a threshold names them
+(`http_req_duration{arm:read}` works because thresholds reference it);
+`k6/experimental/fs` `open()` refuses outside init; `console.log` survives
+`--quiet` and reaches the teed output. The fix above replaces buckets with
+console stamps plus the unlogged-deficit failsafe.
+
+Re-validated end-to-end on a 90 s mixed run with a manual 30 s postgres
+pause (`perf/results/2026-11-11T152727Z-…json`): **4,409 failed assertions
+stamped, split 2,361 inside / 2,048 outside** — the outside count is correct,
+because the hand-written window carried only +30 s of grace where the real
+sidecar writes +120 s; recovery refusals landed past it. Stamp total equals
+`error_events` exactly (unlogged = 0). The gate failed the run honestly.
+
+**Queued:** the 1 h v3 validation — same shape as v2b plus the stamp-based
+split — reruns the full drill rotation; result and gate outcome land here.
 
 ## 7. Commits landed by this testing pass
 
