@@ -264,9 +264,16 @@ export function reads(data) {
     res = http.get(`${data.delivery}/${data.ids[__ITER % data.ids.length]}`, params('entry'));
   } else {
     pinned = true;
-    res = http.get(`${data.delivery}/${data.ids[__ITER % data.ids.length]}?generation=1`, params('pinned_entry'));
+    // Pin at the entry's OWN release: ids publish in 100-entry changesets, so ids[i]
+    // joined generation floor(i/100)+1 — asking generation 1 of a later entry is a
+    // legitimate 404 (the 2026-11-11 v3 run stamped it ~320k times). Pinned to its
+    // own release the entry always exists, so 200 plus the echoed generation is
+    // still the contract.
+    const idx = __ITER % data.ids.length;
+    const want = 1 + Math.floor(idx / 100);
+    res = http.get(`${data.delivery}/${data.ids[idx]}?generation=${want}`, params('pinned_entry'));
     verify(res, {
-      'pinned entry answers at release 1': (r) => r.status === 200 && r.headers['Colophon-Generation'] === '1',
+      'pinned entry answers at its own release': (r) => r.status === 200 && r.headers['Colophon-Generation'] === String(want),
     });
   }
   verify(res, { 'read arm 200': (r) => r.status === 200 });

@@ -703,9 +703,14 @@ fi
 if [[ "${drills_windows:-0}" == "1" ]]; then
   # Every stamp counts — same-second failures share an epoch but are separate
   # events, so no uniq: the stamp total must reconcile with l05.error_events.
-  fail_epochs_json=$( { grep -oE 'L05FAIL [0-9]+' "$work/k6-console.log" 2>/dev/null || true; } \
-    | awk '{print $2}' | sort -n | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)')
-  jq --argjson eps "$fail_epochs_json" --rawfile wins "$DRILL_WINDOWS" --arg wf "$DRILL_WINDOWS" '
+  # The epochs go through a file, never argv: a heavy drill hour stamped 320,724
+  # failures (~3.5 MB), over macOS's ARG_MAX — jq never launched, the && mv chain
+  # is exempt from set -e, and the strict gate failed closed (2026-11-11 v3).
+  # A failed rewrite is therefore loud now; the un-rewritten strict gate is the
+  # conservative verdict either way — errors are never excused blind.
+  { grep -oE 'L05FAIL [0-9]+' "$work/k6-console.log" 2>/dev/null || true; } \
+    | awk '{print $2}' | sort -n > "$work/fail-epochs.txt"
+  if jq --rawfile eps "$work/fail-epochs.txt" --rawfile wins "$DRILL_WINDOWS" --arg wf "$DRILL_WINDOWS" '
     ($wins | split("\n") | map(select(length > 0) | fromjson? | select(type == "object")
       | select((.start_epoch | type) == "number" and (.end_epoch | type) == "number")
       | {dep: (.dep // "?"), kind: (.kind // "drill"), start: (.start // ""), end: (.end // ""),
@@ -725,8 +730,11 @@ if [[ "${drills_windows:-0}" == "1" ]]; then
                            errors_outside_windows: ($placed.out + ($unlogged | if . > 0 then . else 0 end))}
           | .l05.gate = ((.l05.gate // "") + " — drill-aware: zero failures outside the announced windows")
           | .l05.held = ([.l05.gates[]] | all)
-      else $doc end' "$work/summary.json" > "$work/summary.drilled.json" \
-    && mv "$work/summary.drilled.json" "$work/summary.json"
+      else $doc end' "$work/summary.json" > "$work/summary.drilled.json"; then
+    mv "$work/summary.drilled.json" "$work/summary.json"
+  else
+    echo "warning: drill-window rewrite failed — the strict gate stands, no failure excused" >&2
+  fi
 fi
 
 commit=$(git rev-parse --short HEAD)
