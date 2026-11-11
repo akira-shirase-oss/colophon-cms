@@ -269,8 +269,40 @@ because the hand-written window carried only +30 s of grace where the real
 sidecar writes +120 s; recovery refusals landed past it. Stamp total equals
 `error_events` exactly (unlogged = 0). The gate failed the run honestly.
 
-**Queued:** the 1 h v3 validation — same shape as v2b plus the stamp-based
-split — reruns the full drill rotation; result and gate outcome land here.
+### 6.9 The v3 run — machinery worked, and it surfaced two more defects (2026-11-11)
+
+The full drill rotation ran (`perf/results/2026-11-11T163036Z-…json`, 1.28M
+requests, 6 drills): **320,724 stamped failures — and the run failed, twice
+over.** What the stamps exposed:
+
+- **`load.sh` passed every epoch as one jq argv** — ~3.5 MB, over macOS's
+  ARG_MAX. jq never launched; the `&&` chain exempted the failure from
+  `set -e`; the un-rewritten strict gate failed closed. The runner log has
+  the `Argument list too long` line. Fixed: epochs now flow through a file
+  via `--rawfile` and a failed rewrite warns loudly instead of silently
+  passing through.
+- **A scenario bug since `15827b3`**: `pinned entry answers at release 1`
+  requested `?generation=1` for a *random* entry — but ids publish in
+  100-entry releases, so only ids[0..100] exist in generation 1. ~75% of
+  pinned-entry reads 404 **by design**, ~128/s constantly for the whole
+  hour — the dominant share of the 320k stamps and of `http_req_failed`
+  (161k). In both earlier runs that mass was misattributed to drill
+  refusals; the postgres-pause pool warnings were real but smaller than
+  believed. Read-arm `verify()` calls never fed `l05_errors` (885), which
+  is why the volume stayed invisible until `error_events` counted every
+  failed assertion. Fixed: each entry now pins to its own release
+  (`floor(idx/100)+1`), so 200 plus the echoed generation is the contract.
+
+Reconstructed post-hoc from the committed stamps and windows (identical
+deterministic transform to the fixed jq): **84,182 stamps inside / 236,542
+outside windows**, `unlogged` = 0. Server-side is still clean: 2,647
+WARN/ERROR lines, **0 outside** the windows. The gate correctly reported
+FAIL on real evidence — the outside failures are the scenario bug plus
+whatever the bug's volume masked, which the v4 rerun answers cleanly.
+
+`abe9652` carries both fixes. **v4 (30 min, drills every 5 min — the
+machinery is proven; this run answers the remaining question with a correct
+scenario):** result lands in §6.10.
 
 ## 7. Commits landed by this testing pass
 
@@ -282,6 +314,8 @@ split — reruns the full drill rotation; result and gate outcome land here.
 | `daa7600` | fault-suite foreign-server guard + faults.rs clippy fixes |
 | `856cce8` | 1h soak validation evidence (session fix verified; drill-window failures recorded) |
 | `e398151` | drill-aware L05 gate: sidecar windows JSONL, mixed.js error_buckets, load.sh window-split for errors + warnings |
+| `8b490cd` | drill-aware gate was vacuous — replaced VU-state buckets with L05FAIL console stamps + unlogged failsafe; v2b evidence committed as harness defect |
+| `abe9652` | pinned-entry scenario bug fix (own-release pin) + jq epochs via --rawfile (E2BIG) + loud rewrite failure |
 
 ## 8. Verdict
 
