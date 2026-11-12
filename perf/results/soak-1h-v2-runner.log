@@ -1,0 +1,4 @@
+error: rust-toolchain.toml pins 1.99.1, but this shell runs rustc 1.96.0 and cargo 1.96.0.
+       /opt/homebrew/bin/cargo is not honouring the pin. Put rustup's proxies first on PATH:
+         export PATH="$(brew --prefix rustup)/bin:$PATH"   # rustup installed with Homebrew
+         export PATH="$HOME/.cargo/bin:$PATH"              # rustup installed from rustup.rs
