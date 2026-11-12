@@ -304,6 +304,38 @@ whatever the bug's volume masked, which the v4 rerun answers cleanly.
 machinery is proven; this run answers the remaining question with a correct
 scenario):** result lands in §6.10.
 
+### 6.10 v4 and v5 — the gate holds under a real drill rotation (2026-11-11)
+
+**v4** (`2026-11-11T171030Z-…json`, 628k-class request volume, 10 drills):
+the pinned-entry fix cut failures **98.5 %** — 4,836 stamps vs v3's 320,724.
+Two findings:
+
+- A third harness bug: `--rawfile` hands jq a *string*, and
+  `reduce $eps[]` crashed on it ("Cannot iterate over string"). The strict
+  gate failed closed again; epochs now split to numbers first. Fixed and
+  verified on the real data: **3,300 stamps inside / 1,536 outside**.
+- The outside mass — 1,497 of 1,536 — sat in the run's **first two
+  minutes**, before drill 1: warmup, not drill bleed. A 2 min diagnostic on
+  a warm server produced zero failures, so the class stayed unidentified;
+  stamps now carry the failing check's name and status to answer it next run.
+
+**v5** (`2026-11-11T200341Z-…json`, **628,813 requests**, 5 drills — valkey
+and postgres pauses on a 5-minute cadence, named stamps + the fixed rewrite):
+**HELD.** Read p99 199.8 ms (<350), write p95 186.4 ms (<700), publish p99
+459.3 ms (<700),
+**0 stale refills, 0 torn pages**, and the re-weighed gate: **3,296 failed
+assertions — every one inside an announced drill window, 0 outside**, 0
+unlogged (stamps reconcile exactly with `l05_fail_events`), **0 server
+warnings outside windows**. The warmup mass did not reproduce — v4's remains
+on record as an unexplained anomaly, and the named stamps stand ready if it
+ever returns. `thresholds_passed` on k6's own metrics stays false by design:
+`http_req_failed` trips during the drills that produce those in-window
+failures — the L05 drill-aware contract is the gate that matters.
+
+L05 — mixed reads, writes and publishing under dependency failure — now has
+committed evidence of holding: drills announced, failures bounded to their
+windows, consistency clean throughout.
+
 ## 7. Commits landed by this testing pass
 
 | Commit | Content |

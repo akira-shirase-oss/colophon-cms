@@ -1,0 +1,168 @@
+{
+  "scenario": "steady",
+  "endpoint": "mixed",
+  "date": "2026-11-11T20:03:41Z",
+  "commit": "15e1e4a",
+  "dirty": false,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 300,
+    "duration": "30m",
+    "vus": 256
+  },
+  "requests": 628813,
+  "rps": 349,
+  "failed": 2593,
+  "checks_failed": 3356,
+  "dropped": 18544,
+  "latency_ms": {
+    "avg": 23.221,
+    "p50": 2.136,
+    "p90": 32.587,
+    "p95": 79.803,
+    "p99": 268.977,
+    "p999": 2003.786,
+    "max": 10005.129
+  },
+  "database_transactions_during_run": 818664,
+  "server_warnings": 0,
+  "thresholds_passed": false,
+  "resources": {
+    "samples": 343,
+    "server_rss_kb": {
+      "first": 27824,
+      "last": 25536,
+      "max": 36784
+    },
+    "server_cpu_percent": {
+      "avg": 18.8,
+      "max": 27.0
+    },
+    "postgres_connections": {
+      "last": 25,
+      "max": 29
+    },
+    "client": {
+      "samples": 343,
+      "k6_rss_kb": {
+        "first": 50416,
+        "last": 152928,
+        "max": 210192
+      },
+      "k6_cpu_percent": {
+        "avg": 29.9,
+        "max": 62.7
+      },
+      "readyz": {
+        "first": "200",
+        "last": "200",
+        "non_200": 12
+      }
+    }
+  },
+  "drills": {
+    "windows_file": "perf/results/soak-30m-v5-windows.jsonl",
+    "warnings_in_windows": 2657,
+    "warnings_outside_windows": 0
+  },
+  "l05": {
+    "error_events": 3296,
+    "drills_announced": true,
+    "drills": {
+      "windows_file": "perf/results/soak-30m-v5-windows.jsonl",
+      "windows": [
+        {
+          "dep": "valkey",
+          "kind": "pause",
+          "start": "2026-11-11T19:39:12Z",
+          "end": "2026-11-11T19:42:13Z"
+        },
+        {
+          "dep": "postgres",
+          "kind": "pause",
+          "start": "2026-11-11T19:45:13Z",
+          "end": "2026-11-11T19:47:43Z"
+        },
+        {
+          "dep": "valkey",
+          "kind": "pause",
+          "start": "2026-11-11T19:50:43Z",
+          "end": "2026-11-11T19:53:44Z"
+        },
+        {
+          "dep": "postgres",
+          "kind": "pause",
+          "start": "2026-11-11T19:56:44Z",
+          "end": "2026-11-11T19:59:14Z"
+        },
+        {
+          "dep": "valkey",
+          "kind": "pause",
+          "start": "2026-11-11T20:02:14Z",
+          "end": "2026-11-11T20:05:14Z"
+        }
+      ],
+      "errors_in_windows": 3296,
+      "errors_outside_windows": 0
+    },
+    "served": {
+      "miss": 6679,
+      "coalesced": 24681,
+      "bypass": 42194,
+      "hit": 447092
+    },
+    "spec": "L05: mixed reads, writes and publishing — each operation class meets its target; content stays consistent",
+    "gate": "read arm p99 <350 ms (warm gate), write arm p95 <700 ms, publish requests p99 <700 ms — all with reads, saves, read-backs and publishes actually counted; zero stale refills, torn pages or failed assertions — drills announced: load.sh re-weighs error_buckets against the windows and requires zero failures outside them — drill-aware: zero failures outside the announced windows",
+    "requests": {
+      "reads": 520646,
+      "saves": 52224,
+      "write_backs": 52224,
+      "publishes": 145,
+      "publish_conflicts_retried": 0,
+      "session_reauths": 0
+    },
+    "latency_ms": {
+      "publish": {
+        "p95": 178.65884999999997,
+        "p99": 459.3390499999998,
+        "p50": 10.346
+      },
+      "read": {
+        "p50": 1.739,
+        "p95": 59.58914999999979,
+        "p99": 199.76728999999997
+      },
+      "write": {
+        "p50": 7.998,
+        "p95": 186.35410000000002,
+        "p99": 570.7928899999993
+      }
+    },
+    "consistency": {
+      "errors": 885,
+      "stale_refills": 0,
+      "torn_pages": 0
+    },
+    "gates": {
+      "reads_held": true,
+      "writes_held": true,
+      "publishes_held": true,
+      "no_stale_refills": true,
+      "no_torn_pages": true,
+      "no_errors": true
+    },
+    "held": true
+  }
+}
