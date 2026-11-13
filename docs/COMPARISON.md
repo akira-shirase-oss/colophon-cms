@@ -5,7 +5,7 @@ what each does, how Colophon does or will do it, and where Colophon's invariants
 [parity backlog](#parity-backlog) at the end is the list the lettered milestones in [ROADMAP.md](ROADMAP.md) work
 through.
 
-**Evidence, checked 2026-10-27.** Strapi: a local Strapi 5.59.0 project in `references/strapi-demo` (its schema files
+**Evidence, checked 2026-10-27.** Strapi: a local Strapi 5.59.0 project in `docs/references/strapi-demo` in the workspace (its schema files
 and installed packages) and docs.strapi.io. Sanity: sanity.io/docs only; there is no local Sanity project. Pricing and
 plan tiers are the vendors' own claims and change often. Where a cell says *not checked*, nobody has looked.
 
@@ -84,7 +84,7 @@ and revisions that block the change, so an owner can fix them or keep the old sh
 
 Convex is not a CMS, but its engine is built for fast, always-consistent reads, and several of its ideas fit
 Colophon's invariants. Source: "How Convex Works" (stack.convex.dev) and docs.convex.dev, read 2026-10-27, plus the
-self-hosted demo in `references/convex-demo`. What Convex does, what Colophon takes, and where:
+self-hosted demo in `docs/references/convex-demo` in the workspace. What Convex does, what Colophon takes, and where:
 
 | Convex | Colophon | Where |
 |---|---|---|

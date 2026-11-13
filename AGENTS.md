@@ -135,7 +135,7 @@ Every feature ships with all three, in the same branch:
   and stored evidence.
 - The repository is `github.com/akira-shirase-oss/colophon-cms` (remote `git@github-learning:akira-shirase-oss/colophon-cms.git`).
   Work happens on a branch and is merged into `main` when a piece is complete; the journey is recorded in the
-  build log at https://404human.dev/colophon/ (source: `akira-shirase-oss/minimal-portfolio`).
+  build log at https://404human.dev/colophon/ (source: `akira-shirase-oss/site/minimal-portfolio`).
 
 ## Verification commands
 
