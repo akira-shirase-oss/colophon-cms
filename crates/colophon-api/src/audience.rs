@@ -57,7 +57,7 @@ use uuid::Uuid;
 
 use crate::{
     ApiError, AppState, Services,
-    auth::{check_password, clean_email},
+    auth::{check_password, check_sign_in_password, clean_email},
     entries::rfc3339,
     members,
     session::{self, Credential, SignedIn, cookie, set_cookie},
@@ -347,7 +347,9 @@ pub(crate) async fn sign_up(
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let email = clean_email(&body.email)?;
     check_password(&body.password)?;
-    let phc = colophon_db::passwords::hashed(&body.password)
+    let phc = services
+        .passwords
+        .hash(&body.password)
         .await
         .map_err(ApiError::from_db)?;
     let name = body
@@ -444,7 +446,16 @@ pub(crate) async fn sign_in(
     let Json(body) = body?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let email = clean_email(&body.email)?;
-    let user = match audience::sign_in(&services.pool, project, &email, &body.password).await {
+    check_sign_in_password(&body.password)?;
+    let user = match audience::sign_in(
+        &services.pool,
+        &services.passwords,
+        project,
+        &email,
+        &body.password,
+    )
+    .await
+    {
         Ok(SignIn::SignedIn(user)) => user,
         // A wrong password and a missing account answer alike, after the same Argon2 work.
         Ok(SignIn::Refused) => return Err(ApiError::SignInFailed),
@@ -811,7 +822,9 @@ pub(crate) async fn create_user(
             message: "an audience role is one of the project's audience roles, by name".to_owned(),
         });
     }
-    let phc = colophon_db::passwords::hashed(&body.password)
+    let phc = session::services(&state)?
+        .passwords
+        .hash(&body.password)
         .await
         .map_err(ApiError::from_db)?;
     let name = body
@@ -1172,7 +1185,9 @@ pub(crate) async fn magic_link_sign_in(
             let unusable = tokens::random_token().map_err(|_| {
                 ApiError::internal(std::io::Error::other("no secure random source"))
             })?;
-            let phc = colophon_db::passwords::hashed(&unusable)
+            let phc = services
+                .passwords
+                .hash(&unusable)
                 .await
                 .map_err(ApiError::from_db)?;
             match audience::sign_up(&services.pool, project, &email, &phc, None, None).await {

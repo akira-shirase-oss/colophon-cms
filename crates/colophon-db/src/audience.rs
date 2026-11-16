@@ -5,7 +5,8 @@
 //!
 //! Account functions here take the project explicitly and run inside
 //! [`scope::begin`] with no identity: RLS confines them, and `site_users`' lockout state is
-//! written under a row lock like [`crate::identity::password_sign_in`]'s. Session lookups go
+//! counted under a row lock like [`crate::identity::password_sign_in`]'s, before the verify
+//! that runs with nothing held (D-150). Session lookups go
 //! through `colophon_audience_session` (migration 0052), the SECURITY DEFINER function that
 //! finds a session by its token's hash before the project's context exists and stamps its use
 //! — at most once a minute, and only inside the idle window, so an idle session's staleness is
@@ -403,14 +404,19 @@ pub enum SignIn {
     Disabled,
 }
 
-/// Signs a site user in with an email and a password: the lock, disabled and counter checks
-/// all run under one row lock, as [`crate::identity::password_sign_in`] does for members.
+/// Signs a site user in with an email and a password, as
+/// [`crate::identity::password_sign_in`] does for members (D-150): the slot first, then one
+/// short transaction that checks the disabled and paused states under the row lock and
+/// counts the attempt before any Argon2, then the verify with nothing held, then — on a
+/// match — the reset.
 pub async fn sign_in(
     pool: &PgPool,
+    gate: &crate::passwords::PasswordGate,
     project: Uuid,
     email: &str,
     password: &str,
 ) -> Result<SignIn, DbError> {
+    let slot = gate.slot().await?;
     let mut tx = project_tx(pool, project).await?;
     let row = sqlx::query!(
         "SELECT id, email, display_name, role, created_at, last_sign_in_at, disabled_at,
@@ -425,8 +431,9 @@ pub async fn sign_in(
     .await
     .map_err(DbError::from_query)?;
     let Some(row) = row else {
+        drop(tx);
         // No such account: the same verify work runs anyway, so the answer can't be told apart.
-        let _ = crate::passwords::verify_in(password, None).await;
+        let _ = slot.verify(password, None).await;
         return Ok(SignIn::Refused);
     };
     if row.disabled_at.is_some() {
@@ -440,29 +447,7 @@ pub async fn sign_in(
             row.locked_until.unwrap_or_else(OffsetDateTime::now_utc),
         ));
     }
-    let right = crate::passwords::verify_in(password, Some(&row.password_hash)).await;
-    if right {
-        sqlx::query!(
-            "UPDATE site_users SET failed_sign_ins = 0, locked_until = NULL, last_sign_in_at = now()
-             WHERE project_id = $1 AND id = $2",
-            project,
-            row.id
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(DbError::from_query)?;
-        tx.commit().await.map_err(DbError::from_query)?;
-        return Ok(SignIn::SignedIn(SiteUser {
-            id: row.id,
-            email: row.email,
-            display_name: row.display_name,
-            role: row.role,
-            created_at: row.created_at,
-            last_sign_in_at: Some(OffsetDateTime::now_utc()),
-            disabled_at: None,
-        }));
-    }
-    let outcome = sqlx::query_scalar!(
+    let locks = sqlx::query_scalar!(
         "UPDATE site_users
          SET failed_sign_ins = least(failed_sign_ins + 1, 32767),
              locked_until = CASE WHEN failed_sign_ins + 1 >= $3 THEN now() + make_interval(secs => $4) END
@@ -477,10 +462,38 @@ pub async fn sign_in(
     .await
     .map_err(DbError::from_query)?;
     tx.commit().await.map_err(DbError::from_query)?;
-    Ok(match outcome {
-        Some(until) => SignIn::Locked(until),
-        None => SignIn::Refused,
-    })
+    // Argon2 with no transaction open and no connection held.
+    if !slot.verify(password, Some(&row.password_hash)).await {
+        return Ok(match locks {
+            Some(until) => SignIn::Locked(until),
+            None => SignIn::Refused,
+        });
+    }
+    let mut tx = project_tx(pool, project).await?;
+    // A disable that landed during the verify wins: the row is read again under its lock.
+    let enabled = sqlx::query_scalar!(
+        "UPDATE site_users SET failed_sign_ins = 0, locked_until = NULL, last_sign_in_at = now()
+         WHERE project_id = $1 AND id = $2 AND disabled_at IS NULL
+         RETURNING id",
+        project,
+        row.id
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?;
+    tx.commit().await.map_err(DbError::from_query)?;
+    if enabled.is_none() {
+        return Ok(SignIn::Disabled);
+    }
+    Ok(SignIn::SignedIn(SiteUser {
+        id: row.id,
+        email: row.email,
+        display_name: row.display_name,
+        role: row.role,
+        created_at: row.created_at,
+        last_sign_in_at: Some(OffsetDateTime::now_utc()),
+        disabled_at: None,
+    }))
 }
 
 /// A site session as the lookup finds it — the session joined to its user, live or not; the

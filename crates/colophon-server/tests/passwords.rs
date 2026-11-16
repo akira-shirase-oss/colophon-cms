@@ -252,3 +252,120 @@ async fn enough_misses_lock_the_account_even_for_the_right_password() {
         );
     }
 }
+
+/// Password work is bounded and never starves the database (D-150): Argon2id is 19 MiB and
+/// tens of milliseconds of a core that anyone can ask for, so the server runs a fixed number
+/// of password jobs at once, lets a bounded number wait briefly, sheds the rest with `503`
+/// and `Retry-After` — on sign-in for a missing account too, whose dummy verify costs the
+/// same — and verifies outside any transaction, so a flood of sign-ins holds no pooled
+/// connection that delivery needs. A password longer than any account can hold is refused
+/// before any work at all.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_sign_in_flood_is_shed_with_busy_and_leaves_delivery_its_connections() {
+    // One password slot and one pooled connection: the flood and the reads compete for
+    // exactly the resources the bound is about.
+    let _server = Server::start_with(&[
+        ("COLOPHON_PASSWORD_CONCURRENCY", "1"),
+        ("COLOPHON_DB_MAX_CONNECTIONS", "1"),
+    ])
+    .await;
+
+    // Longer than any account's password can be (512 bytes): refused up front.
+    let long = "x".repeat(513);
+    let (status, _, body) = post_auth(
+        "/auth/signin",
+        &json!({"email": an_email(), "password": long}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        body["error"]["details"]["reason"].as_str(),
+        Some("password_too_long"),
+        "{body}"
+    );
+
+    // A flood of sign-ins for nobody — each a full Argon2 verify — while delivery reads
+    // (each a Postgres lookup, a 404 for a project that doesn't exist) keep arriving.
+    let attempts = (0..160)
+        .map(|_| {
+            let body = json!({"email": an_email(), "password": "a guess at nothing"});
+            tokio::spawn(async move {
+                let response = app()
+                    .post(format!("{ORIGIN}/auth/signin"))
+                    .json(&body)
+                    .send()
+                    .await
+                    .expect("request");
+                let retry = response.headers().get(header::RETRY_AFTER).cloned();
+                let status = response.status();
+                let body: Value = response.json().await.unwrap_or(Value::Null);
+                (status, retry, body)
+            })
+        })
+        .collect::<Vec<_>>();
+    let reads = tokio::spawn(async {
+        let mut statuses = Vec::new();
+        for _ in 0..40 {
+            let project = uuid_like();
+            let response = app()
+                .get(format!("{ORIGIN}/content/v1/{project}/production/articles"))
+                .send()
+                .await
+                .expect("request");
+            statuses.push(response.status());
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        statuses
+    });
+    let mut refused = 0;
+    let mut busy = 0;
+    for attempt in attempts {
+        let (status, retry, body) = attempt.await.expect("joined");
+        match status {
+            StatusCode::BAD_REQUEST => {
+                assert_eq!(
+                    body["error"]["code"].as_str(),
+                    Some("sign_in_failed"),
+                    "{body}"
+                );
+                refused += 1;
+            }
+            StatusCode::SERVICE_UNAVAILABLE => {
+                assert!(retry.is_some(), "a shed request says when to retry: {body}");
+                busy += 1;
+            }
+            other => panic!("unexpected {other}: {body}"),
+        }
+    }
+    let reads = reads.await.expect("joined");
+    assert!(
+        reads.iter().all(|status| *status == StatusCode::NOT_FOUND),
+        "delivery kept its connection through the flood: {reads:?}"
+    );
+    assert!(
+        busy > 0,
+        "with one slot, a flood of 160 is shed in part ({refused} refused)"
+    );
+    assert!(refused > 0, "and the slot still serves ({busy} busy)");
+
+    // The server is still itself afterwards: a real account signs up and in.
+    let email = an_email();
+    let (status, _, body) = post_auth(
+        "/auth/signup",
+        &json!({"email": email, "password": "the right password"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, _, body) = post_auth(
+        "/auth/signin",
+        &json!({"email": email, "password": "the right password"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+}
+
+/// A project id the server has never seen.
+fn uuid_like() -> String {
+    uuid::Uuid::now_v7().to_string()
+}

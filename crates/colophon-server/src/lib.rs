@@ -201,6 +201,7 @@ fn api_services(
         assets: asset_store(config)?,
         events,
         mcp: colophon_api::mcp::Shared::new(config.mcp),
+        passwords: colophon_db::passwords::PasswordGate::new(config.password_concurrency),
     })
 }
 
@@ -276,8 +277,10 @@ pub async fn run(
         supervisor.spawn(Dependency::Cache, probe, config.probe_interval);
     }
 
+    // Said once at start, at INFO: the load runs treat any WARN as a defect, and the setting is
+    // the development stack's own (deploy/local.env).
     if config.allow_private_destinations {
-        tracing::warn!(
+        tracing::info!(
             "COLOPHON_ALLOW_PRIVATE_DESTINATIONS is on: destinations may reach private, \
              loopback and link-local addresses — a development setting, never for production"
         );

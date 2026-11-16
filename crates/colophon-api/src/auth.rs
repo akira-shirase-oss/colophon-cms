@@ -285,11 +285,25 @@ pub(crate) fn check_password(password: &str) -> Result<(), ApiError> {
             message: "pick at least eight characters".to_owned(),
         });
     }
-    if password.len() > 512 {
+    if password.len() > colophon_db::passwords::MAX_PASSWORD_BYTES {
         return Err(ApiError::InvalidField {
             reason: "weak_password",
             pointer: "/password",
             message: "keep it under 512 bytes".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Refuses a sign-in password longer than any account can hold (D-150) before any work: no
+/// sign-up, staff seat or CLI account takes more than 512 bytes, so a longer one can never
+/// match, and Argon2 never sees a body-sized input. Shared with the audience routes.
+pub(crate) fn check_sign_in_password(password: &str) -> Result<(), ApiError> {
+    if password.len() > colophon_db::passwords::MAX_PASSWORD_BYTES {
+        return Err(ApiError::InvalidField {
+            reason: "password_too_long",
+            pointer: "/password",
+            message: "no password here is longer than 512 bytes".to_owned(),
         });
     }
     Ok(())
@@ -304,7 +318,9 @@ pub(crate) async fn sign_up(
     let services = services(&state)?;
     let email = clean_email(&body.email)?;
     check_password(&body.password)?;
-    let phc = colophon_db::passwords::hashed(&body.password)
+    let phc = services
+        .passwords
+        .hash(&body.password)
         .await
         .map_err(ApiError::from_db)?;
     let name = body
@@ -342,7 +358,10 @@ pub(crate) async fn sign_in(
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
     let email = clean_email(&body.email)?;
-    match identity::password_sign_in(&services.pool, &email, &body.password).await {
+    check_sign_in_password(&body.password)?;
+    match identity::password_sign_in(&services.pool, &services.passwords, &email, &body.password)
+        .await
+    {
         Ok(identity::PasswordSignIn::SignedIn(id)) => {
             let (session_token, csrf_token) = issue_session(services, id).await?;
             let mut response = StatusCode::NO_CONTENT.into_response();

@@ -48,7 +48,7 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
 
     // The right password signs in; the same email can't sign up twice.
     assert_eq!(
-        identity::password_sign_in(&db.app, "bob@example.com", password)
+        identity::password_sign_in(&db.app, &common::gate(), "bob@example.com", password)
             .await
             .expect("sign-in"),
         PasswordSignIn::SignedIn(bob)
@@ -64,7 +64,7 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
     // A wrong password and an email with no account answer alike.
     for email in ["bob@example.com", "carol@example.com"] {
         assert_eq!(
-            identity::password_sign_in(&db.app, email, "wrong password")
+            identity::password_sign_in(&db.app, &common::gate(), email, "wrong password")
                 .await
                 .expect("sign-in"),
             PasswordSignIn::Refused,
@@ -99,22 +99,23 @@ async fn enough_misses_pause_the_account_even_for_the_right_password() {
 
     for miss in 1..LOCK_AFTER {
         assert_eq!(
-            identity::password_sign_in(&db.app, "dave@example.com", "a guess")
+            identity::password_sign_in(&db.app, &common::gate(), "dave@example.com", "a guess")
                 .await
                 .expect("sign-in"),
             PasswordSignIn::Refused,
             "miss {miss} should refuse, not lock"
         );
     }
-    let locked = identity::password_sign_in(&db.app, "dave@example.com", "a guess")
-        .await
-        .expect("sign-in");
+    let locked =
+        identity::password_sign_in(&db.app, &common::gate(), "dave@example.com", "a guess")
+            .await
+            .expect("sign-in");
     assert!(
         matches!(locked, PasswordSignIn::Locked(until) if until > OffsetDateTime::now_utc()),
         "miss {LOCK_AFTER} should lock: {locked:?}"
     );
     // While paused, the right password gets the same answer — no way to try more.
-    let still = identity::password_sign_in(&db.app, "dave@example.com", password)
+    let still = identity::password_sign_in(&db.app, &common::gate(), "dave@example.com", password)
         .await
         .expect("sign-in");
     assert!(matches!(still, PasswordSignIn::Locked(_)), "{still:?}");

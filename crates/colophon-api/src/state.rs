@@ -63,6 +63,9 @@ pub struct Services {
     pub events: Arc<EventBus>,
     /// The remote-MCP session registry `{P}/mcp` serves (D-121).
     pub mcp: mcp::Shared,
+    /// The bound on Argon2 work every sign-up and sign-in shares (D-150):
+    /// `COLOPHON_PASSWORD_CONCURRENCY` jobs at once, a short wait, then `503 Busy`.
+    pub passwords: colophon_db::passwords::PasswordGate,
 }
 
 /// The router's state. Cloning is two reference-count increments and a copy.

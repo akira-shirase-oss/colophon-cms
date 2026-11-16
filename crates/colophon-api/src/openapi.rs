@@ -663,6 +663,16 @@ pub(crate) static TABLE: &[Route] = &[
                         "a wrong password and a missing account alike",
                     ),
                     refusal(409, "too_many_attempts", "the account is paused"),
+                    refusal(
+                        422,
+                        "password_too_long",
+                        "longer than any account's (512 bytes)",
+                    ),
+                    refusal(
+                        503,
+                        "unavailable",
+                        "password work at its bound; `Retry-After` says when",
+                    ),
                 ],
                 ..MIN
             },
@@ -3317,6 +3327,16 @@ pub(crate) static TABLE: &[Route] = &[
                     ),
                     refusal(409, "too_many_attempts", "the account is paused"),
                     refusal(403, "account_disabled", "staff disabled the account"),
+                    refusal(
+                        422,
+                        "password_too_long",
+                        "longer than any account's (512 bytes)",
+                    ),
+                    refusal(
+                        503,
+                        "unavailable",
+                        "password work at its bound; `Retry-After` says when",
+                    ),
                 ],
                 ..MIN
             },

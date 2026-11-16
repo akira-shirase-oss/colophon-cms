@@ -125,13 +125,18 @@ pub enum PasswordSignIn {
     Locked(OffsetDateTime),
 }
 
-/// Signs in with an email and a password: the lock check, the verify and the counter all run
-/// under one row lock, so a locked account can't be hammered concurrently.
+/// Signs in with an email and a password (D-150). The slot comes first, so a request the
+/// password bound sheds costs nothing else. Then one short transaction finds the account
+/// under its row lock, refuses a paused one, and counts this attempt *before* any Argon2
+/// runs — concurrent guesses can't outrun the pause, yet none of them holds a row lock or a
+/// pooled connection through the verify. A match resets the count; a miss is already in it.
 pub async fn password_sign_in(
     pool: &PgPool,
+    gate: &crate::passwords::PasswordGate,
     email: &str,
     password: &str,
 ) -> Result<PasswordSignIn, DbError> {
+    let slot = gate.slot().await?;
     let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
     let row = sqlx::query!(
         "SELECT id, password_hash, locked_until FROM identities
@@ -144,8 +149,9 @@ pub async fn password_sign_in(
     .await
     .map_err(DbError::from_query)?;
     let Some(row) = row else {
+        drop(transaction);
         // No such account: the same verify work runs anyway, so the answer can't be told apart.
-        let _ = crate::passwords::verify_in(password, None).await;
+        let _ = slot.verify(password, None).await;
         return Ok(PasswordSignIn::Refused);
     };
     if row
@@ -156,20 +162,7 @@ pub async fn password_sign_in(
             row.locked_until.unwrap_or_else(OffsetDateTime::now_utc),
         ));
     }
-    let right = crate::passwords::verify_in(password, row.password_hash.as_deref()).await;
-    if right {
-        sqlx::query!(
-            "UPDATE identities SET failed_sign_ins = 0, locked_until = NULL, last_sign_in_at = now()
-             WHERE id = $1",
-            row.id
-        )
-        .execute(&mut *transaction)
-        .await
-        .map_err(DbError::from_query)?;
-        transaction.commit().await.map_err(DbError::from_query)?;
-        return Ok(PasswordSignIn::SignedIn(row.id));
-    }
-    let outcome = sqlx::query_scalar!(
+    let locks = sqlx::query_scalar!(
         "UPDATE identities
          SET failed_sign_ins = least(failed_sign_ins + 1, 32767),
              locked_until = CASE WHEN failed_sign_ins + 1 >= $2 THEN now() + make_interval(secs => $3) END
@@ -183,7 +176,19 @@ pub async fn password_sign_in(
     .await
     .map_err(DbError::from_query)?;
     transaction.commit().await.map_err(DbError::from_query)?;
-    Ok(match outcome {
+    // Argon2 with no transaction open and no connection held.
+    if slot.verify(password, row.password_hash.as_deref()).await {
+        sqlx::query!(
+            "UPDATE identities SET failed_sign_ins = 0, locked_until = NULL, last_sign_in_at = now()
+             WHERE id = $1",
+            row.id
+        )
+        .execute(pool)
+        .await
+        .map_err(DbError::from_query)?;
+        return Ok(PasswordSignIn::SignedIn(row.id));
+    }
+    Ok(match locks {
         Some(until) => PasswordSignIn::Locked(until),
         None => PasswordSignIn::Refused,
     })

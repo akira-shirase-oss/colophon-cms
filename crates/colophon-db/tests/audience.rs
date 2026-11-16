@@ -373,9 +373,15 @@ async fn sessions_live_and_die_by_expiry_idle_revocation_and_disable() {
         "disabled: the just-made session {live} is dead"
     );
     assert_eq!(
-        audience::sign_in(&db.app, project, "a@b.c", "correct horse battery")
-            .await
-            .expect("sign_in"),
+        audience::sign_in(
+            &db.app,
+            &common::gate(),
+            project,
+            "a@b.c",
+            "correct horse battery"
+        )
+        .await
+        .expect("sign_in"),
         audience::SignIn::Disabled
     );
     db.drop().await;
@@ -398,21 +404,27 @@ async fn signin_refuses_wrong_passwords_and_locks_after_enough() {
 
     // A wrong password and no account answer alike, and a few wrongs don't lock.
     assert_eq!(
-        audience::sign_in(&db.app, project, "a@b.c", "wrong password")
+        audience::sign_in(&db.app, &common::gate(), project, "a@b.c", "wrong password")
             .await
             .expect("sign_in"),
         audience::SignIn::Refused
     );
     assert_eq!(
-        audience::sign_in(&db.app, project, "nobody@b.c", "wrong password")
-            .await
-            .expect("sign_in"),
+        audience::sign_in(
+            &db.app,
+            &common::gate(),
+            project,
+            "nobody@b.c",
+            "wrong password"
+        )
+        .await
+        .expect("sign_in"),
         audience::SignIn::Refused
     );
     // LOCK_AFTER bad tries pause the account — even the right password is refused then.
     let mut locked = None;
     for _ in 0..audience::LOCK_AFTER {
-        match audience::sign_in(&db.app, project, "a@b.c", "wrong password")
+        match audience::sign_in(&db.app, &common::gate(), project, "a@b.c", "wrong password")
             .await
             .expect("sign_in")
         {
@@ -423,9 +435,15 @@ async fn signin_refuses_wrong_passwords_and_locks_after_enough() {
     }
     assert!(locked.is_some(), "locked after {}", audience::LOCK_AFTER);
     assert_eq!(
-        audience::sign_in(&db.app, project, "a@b.c", "correct horse battery")
-            .await
-            .expect("sign_in"),
+        audience::sign_in(
+            &db.app,
+            &common::gate(),
+            project,
+            "a@b.c",
+            "correct horse battery"
+        )
+        .await
+        .expect("sign_in"),
         audience::SignIn::Locked(locked.expect("locked"))
     );
     db.drop().await;

@@ -12504,8 +12504,26 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description `password_too_long` — longer than any account's (512 bytes) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — password work at its bound; `Retry-After` says when */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13092,8 +13110,26 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            /** @description `password_too_long` — longer than any account's (512 bytes) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — password work at its bound; `Retry-After` says when */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

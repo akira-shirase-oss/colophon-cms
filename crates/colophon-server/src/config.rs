@@ -204,6 +204,10 @@ pub struct Config {
     /// `COLOPHON_MCP_PER_PROJECT` (256) and `COLOPHON_MCP_MAX_SESSIONS` (2048) cap the
     /// sessions; `COLOPHON_MCP_IDLE_MS` (30 min) forgets one untouched for that long.
     pub mcp: colophon_api::mcp::Limits,
+    /// Argon2id jobs that may run at once (D-150): `COLOPHON_PASSWORD_CONCURRENCY`, one a
+    /// core by default (1–256). Past it a password job waits briefly, then the request is
+    /// shed with `503` and `Retry-After`.
+    pub password_concurrency: usize,
     /// Whether destinations may name private, loopback and link-local addresses and plain
     /// http: `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` (D-149). Off by default and never
     /// inferred from the listen address — a production server behind a local reverse proxy
@@ -685,6 +689,11 @@ impl Config {
             );
         }
         let allow_private_destinations = env.flag("COLOPHON_ALLOW_PRIVATE_DESTINATIONS");
+        let password_concurrency = env.ranged(
+            "COLOPHON_PASSWORD_CONCURRENCY",
+            colophon_db::passwords::PasswordGate::default_slots(),
+            1..=256,
+        );
         let mail = env.mail();
         if let Some(database_url) = database_url
             && env.problems.is_empty()
@@ -722,6 +731,7 @@ impl Config {
                 admission,
                 events,
                 mcp,
+                password_concurrency,
                 allow_private_destinations,
                 dev_mail,
                 mail,

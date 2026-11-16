@@ -19133,6 +19133,16 @@
             },
             "description": "`too_many_attempts` — the account is paused"
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`password_too_long` — longer than any account's (512 bytes)"
+          },
           "429": {
             "content": {
               "application/json": {
@@ -19142,6 +19152,16 @@
               }
             },
             "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unavailable` — password work at its bound; `Retry-After` says when"
           },
           "default": {
             "content": {
@@ -19944,6 +19964,16 @@
             },
             "description": "`too_many_attempts` — the account is paused"
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`password_too_long` — longer than any account's (512 bytes)"
+          },
           "429": {
             "content": {
               "application/json": {
@@ -19953,6 +19983,16 @@
               }
             },
             "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unavailable` — password work at its bound; `Retry-After` says when"
           },
           "default": {
             "content": {
