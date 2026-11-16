@@ -25,7 +25,9 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   `colophon_domain::job` (2xx succeeds; 408, 425, 429, 500, 502, 503 and 504 retry with full-jitter backoff up to five
   attempts; the rest fail).
 - **Addresses:** https and public only (`colophon_domain::destination`), checked on save and before every attempt;
-  the worker's resolver keeps only public addresses. A development server on loopback may use private ones.
+  the worker's resolver keeps only public addresses. Only a server started with
+  `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` may use private ones — an explicit, development-only opt-in that
+  `deploy/local.env` sets, never inferred from a loopback listen address (D-149).
 - **The loop:** it claims as soon as a slot is free (eight by default) and sleeps only when there's nothing to do;
   it fails jobs that ran out of time every 10 seconds; on shutdown it stops claiming and lets attempts finish within
   the cleanup deadline.

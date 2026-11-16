@@ -92,6 +92,12 @@ on clean infrastructure and an independent install, so operations are a module w
   counts alone, so a cluster of N admits up to N times the rate until it is back. `scripts/load.sh` and
   `scripts/cluster.sh` raise the limits so far that they never refuse (one machine sends everything), and still
   pay for every check.
+- Destinations (D-149): webhooks, CDN purges and probes reach only https and public addresses, checked when a
+  destination is saved and again before every attempt, with a resolver that drops private answers.
+  `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` lifts that for development (local receivers, the demo-site hook) and
+  logs a warning at start; it is off by default and never inferred from the listen address, because a production
+  server behind a local reverse proxy binds loopback too. `deploy/local.env` sets it; a production environment
+  must not.
 - `colophon doctor [--json]` reports what `/readyz` reports, with the CLI exit codes (0 ready, 5 otherwise).
   - A cache failure can be *degraded* rather than unready when the bounded fallback is available.
   - A database failure makes writes unavailable.

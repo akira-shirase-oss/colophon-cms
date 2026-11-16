@@ -159,3 +159,68 @@ async fn an_older_release_waiting_when_a_newer_commits_is_never_sent() {
         "release 1's announcement never went out (F05)"
     );
 }
+
+/// SSRF (D-149): a loopback listen address is no evidence of a development machine — a
+/// production server behind a local reverse proxy binds loopback too — so private
+/// destinations are an explicit opt-in, `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1`, never
+/// inferred. Without it a loopback-bound server refuses to save a private or plain-http
+/// address, and its worker refuses to send to one saved earlier.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_loopback_server_refuses_private_destinations_unless_told_otherwise() {
+    let receiver = Receiver::start(&[]).await;
+    let owner_project;
+    {
+        // The development stack opts in (deploy/local.env): a local receiver is fine there.
+        let _server = Server::start_with(&[("COLOPHON_ALLOW_PRIVATE_DESTINATIONS", "1")]).await;
+        let owner = sign_in("dev-owner").await;
+        let project = project(&owner).await;
+        destination(&owner, &project, &receiver.url).await;
+        owner_project = project;
+    }
+
+    // The same loopback bind without the opt-in: the production default.
+    let mut strict = FAST.to_vec();
+    strict.push(("COLOPHON_ALLOW_PRIVATE_DESTINATIONS", "0"));
+    let _server = Server::start_with(&strict).await;
+    let owner = sign_in("dev-owner").await;
+    let base = format!("/api/v1/projects/{owner_project}/environments/production/destinations");
+    for url in [
+        receiver.url.as_str(),
+        "https://127.0.0.1/hook",
+        "https://169.254.169.254/latest/meta-data/",
+        "https://10.0.0.5/hook",
+        "https://[::1]/hook",
+        "http://example.com/hook",
+    ] {
+        let reply = call(
+            &owner,
+            Method::POST,
+            &base,
+            Some(&json!({"name": "Private", "url": url})),
+            &[],
+        )
+        .await
+        .expect("request");
+        assert_eq!(
+            reply.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{url}: {}",
+            reply.body
+        );
+        assert_eq!(
+            reply.body["error"]["details"]["reason"], "invalid_url",
+            "{url}"
+        );
+    }
+
+    // The destination saved while private addresses were allowed is never reached: the
+    // worker checks the address again at send time and gives the job up.
+    let generation = publish_article(&owner, &owner_project, "Never sent").await;
+    let job = finished_job(&owner, &owner_project, generation, 15).await;
+    assert_eq!(job["status"].as_str(), Some("failed"), "{job}");
+    assert!(
+        receiver.seen().is_empty(),
+        "nothing reached the private receiver"
+    );
+}

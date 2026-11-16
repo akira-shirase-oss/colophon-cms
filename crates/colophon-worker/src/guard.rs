@@ -1,8 +1,8 @@
 //! Where the worker may connect (D-046). The address checks live in
 //! `colophon_domain::destination`; this adds the resolver that keeps them true at connection
 //! time: it hands reqwest only public addresses, so a name can't resolve to a private one, then
-//! or later. A development server bound to loopback may reach private addresses, such as a test
-//! receiver on 127.0.0.1.
+//! or later. A server that opts in with `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` (development,
+//! D-149) may reach private addresses, such as a test receiver on 127.0.0.1.
 
 use std::{future::Future, net::SocketAddr, pin::Pin};
 

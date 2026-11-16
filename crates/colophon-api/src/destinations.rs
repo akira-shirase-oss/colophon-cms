@@ -8,7 +8,8 @@
 //! - `GET {P}/jobs?generation=`: delivery jobs, newest first, for any member.
 //!
 //! An address must be https and public (`colophon_domain::destination::check_url`); a
-//! development server on loopback may also use http and private addresses.
+//! server started with `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` (development only, D-149) may also
+//! use http and private addresses.
 
 use axum::{
     Json,

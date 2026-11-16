@@ -204,6 +204,11 @@ pub struct Config {
     /// `COLOPHON_MCP_PER_PROJECT` (256) and `COLOPHON_MCP_MAX_SESSIONS` (2048) cap the
     /// sessions; `COLOPHON_MCP_IDLE_MS` (30 min) forgets one untouched for that long.
     pub mcp: colophon_api::mcp::Limits,
+    /// Whether destinations may name private, loopback and link-local addresses and plain
+    /// http: `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` (D-149). Off by default and never
+    /// inferred from the listen address — a production server behind a local reverse proxy
+    /// binds loopback too. The development stack opts in (`deploy/local.env`).
+    pub allow_private_destinations: bool,
     /// Whether a magic-link request hands the link back in `dev_link` instead of emailing it:
     /// `COLOPHON_DEV_MAIL=1` (D-140). A development affordance, off by default.
     pub dev_mail: bool,
@@ -397,6 +402,22 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         }
 
         (public_origin, extra_trusted_origins, oidc)
+    }
+
+    /// An opt-in switch: `1` or `true` (any case) turns it on; unset, `0` or `false` leave it
+    /// off, and anything else is a problem rather than a silent default.
+    fn flag(&mut self, key: &str) -> bool {
+        match self.raw(key) {
+            None => false,
+            Some(value) if value == "1" || value.eq_ignore_ascii_case("true") => true,
+            Some(value) if value == "0" || value.eq_ignore_ascii_case("false") => false,
+            Some(_) => {
+                self.problems.push(format!(
+                    "{key} is 1 or true to turn it on, 0 or false to leave it off"
+                ));
+                false
+            }
+        }
     }
 
     /// Transactional mail (D-145): `COLOPHON_MAIL_PROVIDER=resend` with its key and a `From`,
@@ -652,9 +673,7 @@ impl Config {
                     .to_owned(),
             );
         }
-        let dev_mail = env
-            .raw("COLOPHON_DEV_MAIL")
-            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+        let dev_mail = env.flag("COLOPHON_DEV_MAIL");
         // Development mail answers a sign-in link in the response itself: on an address others
         // can reach it is an account-takeover switch, so like the dev client's secret it is a
         // loopback-only affordance (D-140).
@@ -665,6 +684,7 @@ impl Config {
                     .to_owned(),
             );
         }
+        let allow_private_destinations = env.flag("COLOPHON_ALLOW_PRIVATE_DESTINATIONS");
         let mail = env.mail();
         if let Some(database_url) = database_url
             && env.problems.is_empty()
@@ -702,6 +722,7 @@ impl Config {
                 admission,
                 events,
                 mcp,
+                allow_private_destinations,
                 dev_mail,
                 mail,
             })
@@ -922,6 +943,34 @@ mod tests {
         public.push(("COLOPHON_LISTEN_ADDR", "0.0.0.0:58000"));
         let error = load(&public).expect_err("refused on 0.0.0.0");
         assert!(error.to_string().contains("COLOPHON_DEV_MAIL"), "{error}");
+    }
+
+    #[test]
+    fn private_destinations_are_an_explicit_opt_in_never_the_listen_address() {
+        // Loopback is the default listen address, and still no private destinations: a
+        // server behind a local reverse proxy binds loopback in production too.
+        let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
+        assert!(config.listen_addr.ip().is_loopback());
+        assert!(!config.allow_private_destinations);
+        for (value, expected) in [("1", true), ("true", true), ("0", false), ("false", false)] {
+            let config = load(&[
+                ("COLOPHON_DATABASE_URL", DB),
+                ("COLOPHON_ALLOW_PRIVATE_DESTINATIONS", value),
+            ])
+            .expect("valid");
+            assert_eq!(config.allow_private_destinations, expected, "{value}");
+        }
+        let error = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_ALLOW_PRIVATE_DESTINATIONS", "yes"),
+        ])
+        .expect_err("not a flag");
+        assert!(
+            error
+                .to_string()
+                .contains("COLOPHON_ALLOW_PRIVATE_DESTINATIONS"),
+            "{error}"
+        );
     }
 
     #[test]

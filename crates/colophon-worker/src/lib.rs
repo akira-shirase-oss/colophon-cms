@@ -58,7 +58,8 @@ pub struct Settings {
     pub attempt: Duration,
     /// The most attempts in flight at once.
     pub slots: usize,
-    /// Whether destinations may be private addresses (a development server on loopback only).
+    /// Whether destinations may be private addresses: `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1`
+    /// only (D-149), never inferred from the listen address.
     pub allow_private: bool,
     /// Where it runs, as probes report it (`COLOPHON_WORKER_LOCATION`); it only runs probes pinned
     /// to this location, or to none.

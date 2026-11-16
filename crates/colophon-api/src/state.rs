@@ -40,8 +40,9 @@ pub struct Services {
     /// Exact origins (`scheme://host[:port]`) whose pages may send cookie-authenticated writes.
     /// The first is this server's public origin.
     pub trusted_origins: Vec<String>,
-    /// Whether delivery destinations may be private addresses: only for a development server
-    /// bound to loopback (D-046).
+    /// Whether delivery destinations may be private addresses: only when the operator opts in
+    /// with `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` (D-046, D-149) — never inferred from the
+    /// listen address.
     pub allow_private_destinations: bool,
     /// Whether a magic-link request also hands the link back in `dev_link` instead of emailing
     /// it: `COLOPHON_DEV_MAIL=1`, a development affordance (D-140).
