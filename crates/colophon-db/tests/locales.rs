@@ -93,6 +93,7 @@ async fn group(tx: &mut ProjectTransaction, entry: Uuid) -> Vec<(Uuid, Option<St
 }
 
 #[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn entry_locales() {
     let db = TestDb::new().await;
     let (alice, project) = alice_with_a_project(&db).await;
@@ -157,6 +158,7 @@ async fn entry_locales() {
 }
 
 #[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn localizations() {
     let db = TestDb::new().await;
     let (alice, project) = alice_with_a_project(&db).await;
@@ -253,6 +255,7 @@ async fn localizations() {
 }
 
 #[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn tombstoned_sibling_frees_its_locale() {
     let db = TestDb::new().await;
     let (alice, project) = alice_with_a_project(&db).await;
