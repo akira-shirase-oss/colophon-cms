@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/installation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether anyone is an administrator of this Colophon yet */
+        get: operations["installation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/invitations/accept": {
         parameters: {
             query?: never;
@@ -73,6 +90,112 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/audience/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The project's audience roles */
+        get: operations["audienceRoles"];
+        put?: never;
+        /** Make an audience role */
+        post: operations["audienceRoleCreate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/audience/roles/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete the audience role */
+        delete: operations["audienceRoleDelete"];
+        options?: never;
+        head?: never;
+        /** Open the role to signup, or close it */
+        patch: operations["audienceRoleUpdate"];
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/audience/sessions/{session}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke one site session */
+        delete: operations["audienceSessionRevoke"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/audience/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The project's site users, newest first */
+        get: operations["audienceUsers"];
+        put?: never;
+        /** Make a site user, in any audience role */
+        post: operations["audienceUserCreate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/audience/users/{user}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One site user */
+        get: operations["audienceUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change a site user's role, or disable it */
+        patch: operations["audienceUserUpdate"];
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/audience/users/{user}/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The site user's sessions, live and dead */
+        get: operations["audienceUserSessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/audit": {
         parameters: {
             query?: never;
@@ -115,7 +238,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One asset: state, detected type, dimensions, derivatives */
+        /** One asset with every verified version, oldest first */
         get: operations["getAsset"];
         put?: never;
         post?: never;
@@ -137,6 +260,23 @@ export interface paths {
         get: operations["assetReferences"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/environments/{environment}/assets/{asset}/replace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** New bytes for a usable asset — a new version, the old one keeps its objects */
+        post: operations["replaceAsset"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1172,6 +1312,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/audience/v1/{project}/magic-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask for a single-use sign-in link by email */
+        post: operations["audienceMagicLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audience/v1/{project}/magic-link/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign in with the token a magic link carried */
+        post: operations["audienceMagicLinkSignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audience/v1/{project}/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The site user the session belongs to */
+        get: operations["audienceMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audience/v1/{project}/signin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign a site user in with email and password */
+        post: operations["audienceSignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audience/v1/{project}/signout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** End the site session and clear its cookies */
+        post: operations["audienceSignOut"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/audience/v1/{project}/signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make a site-user account and start its session */
+        post: operations["audienceSignUp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/callback": {
         parameters: {
             query?: never;
@@ -1291,6 +1533,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What sign-in methods this server offers (whether an external provider is configured) */
+        get: operations["authProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/signin": {
         parameters: {
             query?: never;
@@ -1319,6 +1578,23 @@ export interface paths {
         put?: never;
         /** Make an email-and-password account and start its session */
         post: operations["signUp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/content/v1/{project}/{environment}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Live change hints for published content, anonymously */
+        get: operations["streamDeliveryEvents"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1434,8 +1710,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** A rendition the worker wrote, such as `w320` */
+        /** A rendition the worker wrote — or, when `name` is a 64-hex sha, that pinned version's original */
         get: operations["serveRendition"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/v1/{project}/{environment}/{asset}/{sha}/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A rendition of a pinned version: the worker wrote it under the version's key */
+        get: operations["serveVersionedRendition"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1516,6 +1809,10 @@ export interface components {
             /** @description `sha256:<hex>` of it */
             query_hash?: string;
         };
+        AssetDetailView: {
+            data?: components["schemas"]["AssetView"];
+            versions?: components["schemas"]["AssetVersionView"][];
+        };
         AssetUploadView: {
             declared_type?: string;
             file_name?: string;
@@ -1524,6 +1821,19 @@ export interface components {
             size_bytes?: number;
             /** @enum {string} */
             state?: "quarantined";
+        };
+        AssetVersionView: {
+            /** Format: date-time */
+            created_at?: string;
+            declared_type?: string;
+            derivatives?: string[];
+            detected_type?: string;
+            height?: number;
+            seq?: number;
+            /** @description the content digest the pinned URL names */
+            sha256?: string;
+            size_bytes?: number;
+            width?: number;
         };
         AssetView: {
             /** Format: date-time */
@@ -1537,10 +1847,48 @@ export interface components {
             /** Format: uuid */
             id?: string;
             rejected_reason?: string | null;
+            /** @description the current version's digest; `/media/v1/…/{asset}/{sha256}` pins it (D-136) */
+            sha256?: string | null;
             size_bytes?: number;
             /** @enum {string} */
             state?: "quarantined" | "live" | "rejected" | "deleted";
             width?: number | null;
+        };
+        AudienceRole: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description what `role:<name>` visibility and a site user's `role` hold */
+            name: string;
+            /** @description whether public signup may choose it */
+            self_assign: boolean;
+        };
+        AudienceRoleChange: {
+            self_assign: boolean;
+        };
+        AudienceSession: {
+            /** @description the CSRF token — cookie-carried writes echo it in `X-CSRF-Token` */
+            csrf: string;
+            /** @description the session token — `Authorization: Bearer` it, or let the `Set-Cookie` pair carry it */
+            session: string;
+            user: components["schemas"]["SiteUser"];
+        };
+        AudienceSignIn: {
+            email: string;
+            password: string;
+        };
+        AudienceSignUp: {
+            /** @description a name to show; optional */
+            display_name?: string;
+            /** @description the account's email — trimmed, lowered */
+            email: string;
+            /** @description at least 8 characters */
+            password: string;
+            /** @description an audience role open to signup; left out, the project's single open role is taken */
+            role?: string;
+        };
+        AuthProviders: {
+            /** @description an external identity provider is configured */
+            sso: boolean;
         };
         BulkAppendView: {
             appended?: number;
@@ -1988,6 +2336,11 @@ export interface components {
             id?: string;
             locale?: string | null;
         };
+        MagicLinkRequest: {
+            email: string;
+            /** @description the site's absolute http(s) landing page; the token is appended to it */
+            return_to: string;
+        };
         /** @description one JSON-RPC 2.0 message under MCP protocol 2025-11-25: a request, a notification or a response — never a batch */
         McpMessage: {
             /** @description `{code, message, data?}`, on a client's own refusal */
@@ -2084,6 +2437,12 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
+        NewAudienceRole: {
+            /** @description 1–63 of a–z, 0–9 and '-', starting with a letter */
+            name: string;
+            /** @description whether signup may choose it; false unless said */
+            self_assign?: boolean;
+        };
         NewBulkJob: {
             collection: string;
             items: components["schemas"]["BulkItemInput"][];
@@ -2168,6 +2527,14 @@ export interface components {
             local_time: string;
             /** @description an IANA zone, such as `Europe/Berlin` */
             time_zone: string;
+        };
+        NewSiteUser: {
+            display_name?: string;
+            email: string;
+            /** @description at least 8 characters */
+            password: string;
+            /** @description any audience role the project has, open or not */
+            role: string;
         };
         NewStages: {
             stages: {
@@ -2534,6 +2901,43 @@ export interface components {
         SignedOut: {
             provider_sign_out?: string | null;
         };
+        SiteSession: {
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description its absolute end, use or not
+             */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_seen_at: string;
+            revoked: boolean;
+        };
+        SiteUser: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description staff disabled it: its sessions are dead and sign-in says so */
+            disabled: boolean;
+            display_name: string | null;
+            email: string;
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: date-time
+             * @description present once it has signed in
+             */
+            last_sign_in_at?: string;
+            /** @description the audience role it holds — the label `role:<name>` visibility grants to */
+            role: string;
+        };
+        /** @description a role and/or a disable — at least one */
+        SiteUserChange: {
+            /** @description true disables and revokes its sessions, false re-enables */
+            disabled?: boolean;
+            role?: string;
+        };
         StageListView: {
             stages?: components["schemas"]["StageView"][];
         };
@@ -2688,6 +3092,46 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    installation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description says yes or no, never who; `Cache-Control: no-store` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["Installation"];
+                    };
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     acceptInvitation: {
         parameters: {
             query?: never;
@@ -3020,6 +3464,787 @@ export interface operations {
             };
         };
     };
+    audienceRoles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description by name */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AudienceRole"][];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceRoleCreate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewAudienceRole"];
+            };
+        };
+        responses: {
+            /** @description created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AudienceRole"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `role_exists` — the project has this role already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_role` — the name refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceRoleDelete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description a rendition name the worker wrote, such as `w320`; or an audience role's */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `role_in_use` — site users hold it — change their roles first */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceRoleUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description a rendition name the worker wrote, such as `w320`; or an audience role's */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AudienceRoleChange"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AudienceRole"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceSessionRevoke: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the session's id */
+                session: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceUsers: {
+        parameters: {
+            query?: {
+                /** @description page size: 1–100, default 20 */
+                limit?: number;
+                /** @description the `next_cursor` a previous page answered */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SiteUser"][];
+                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceUserCreate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewSiteUser"];
+            };
+        };
+        responses: {
+            /** @description created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SiteUser"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `email_taken` — an account with this email exists; `audience_full` — the project is at its site-user bound */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_email, weak_password, unknown_audience_role` — the fields refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the site user's id */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SiteUser"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceUserUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the site user's id */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SiteUserChange"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SiteUser"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unknown_audience_role, empty_change` — the change refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceUserSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the site user's id */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SiteSession"][];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listAuditEvents: {
         parameters: {
             query?: {
@@ -3300,15 +4525,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description `data` is the asset; `versions` its byte history (D-136) */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        data: components["schemas"]["AssetView"];
-                    };
+                    "application/json": components["schemas"]["AssetDetailView"];
                 };
             };
             /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
@@ -3491,6 +4714,128 @@ export interface operations {
             };
             /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceAsset: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
+                "idempotency-key": string;
+                /** @description the file's name */
+                "x-colophon-file-name": string;
+                /** @description the claimed image type, verified by the worker */
+                "content-type": string;
+            };
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the asset's id */
+                asset: string;
+            };
+            cookie?: never;
+        };
+        /** @description the file's bytes */
+        requestBody: {
+            content: {
+                "application/octet-stream": components["schemas"]["UploadBody"];
+            };
+        };
+        responses: {
+            /** @description the reverify job swings the current version only if the bytes verify */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AssetView"];
+                    };
+                };
+            };
+            /** @description `bad_request` — a malformed `If-Match` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `asset_quarantined, asset_rejected, already_deleted` — its first verdict is still out, it has no version to replace, or it is gone; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_upload` — the name, type or size refused */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `precondition_required` — a required `If-Match` or `Idempotency-Key` is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — uploads are not configured on this server */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4891,6 +6236,8 @@ export interface operations {
             query?: {
                 /** @description the entry's locale; absent or empty leaves it unlocalized */
                 locale?: string;
+                /** @description `public`, `authenticated` or `role:<name>` — who may read it once published; absent keeps the draft's gate */
+                visibility?: string;
             };
             header: {
                 /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
@@ -5177,6 +6524,8 @@ export interface operations {
             query?: {
                 /** @description a tag sets the locale; an empty value clears it; absent leaves it alone */
                 locale?: string;
+                /** @description `public`, `authenticated` or `role:<name>` — who may read it once published; absent keeps the draft's gate */
+                visibility?: string;
             };
             header: {
                 /** @description the resource's `ETag`, exactly as a response carried it */
@@ -5864,6 +7213,8 @@ export interface operations {
             query: {
                 /** @description the sibling's locale tag, such as `fr` */
                 locale: string;
+                /** @description `public`, `authenticated` or `role:<name>` — who may read it once published; absent keeps the draft's gate */
+                visibility?: string;
             };
             header: {
                 /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
@@ -10764,6 +12115,349 @@ export interface operations {
             };
         };
     };
+    audienceMagicLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MagicLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description the same answer whether or not the email has an account; a configured mail provider emails the link, `dev_link` only with COLOPHON_DEV_MAIL=1 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceMagicLinkSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the token's id */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the session's `Set-Cookie` pair; an unknown email is created in the open self-assign role */
+            200: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AudienceSession"];
+                    };
+                };
+            };
+            /** @description `magic_link_invalid` — used, expired or unknown; `no_open_role` — no role a new account may take */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SiteUser"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AudienceSignIn"];
+            };
+        };
+        responses: {
+            /** @description the session's `Set-Cookie` pair */
+            200: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AudienceSession"];
+                    };
+                };
+            };
+            /** @description `sign_in_failed` — a wrong password and a missing account alike */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `account_disabled` — staff disabled the account */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `too_many_attempts` — the account is paused */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceSignOut: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description the session's CSRF token — required when it arrives as the `colophon_audience` cookie, unneeded on `Authorization: Bearer` */
+                "x-csrf-token"?: string;
+            };
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the cleared `Set-Cookie` pair; signing out twice answers the same */
+            204: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `csrf_token_invalid` — a cookie-carried session asked for the CSRF header */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceSignUp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AudienceSignUp"];
+            };
+        };
+        responses: {
+            /** @description the session's `Set-Cookie` pair: `colophon_audience` and its CSRF sibling */
+            201: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AudienceSession"];
+                    };
+                };
+            };
+            /** @description `email_taken` — an account with this email exists; `audience_full` — the project is at its site-user bound */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_email, weak_password, invalid_role, unavailable_role` — the fields refused — a role not open to signup among them */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     callback: {
         parameters: {
             query?: {
@@ -11135,6 +12829,46 @@ export interface operations {
             };
         };
     };
+    authProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description never cached: it is configuration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AuthProviders"];
+                    };
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     signIn: {
         parameters: {
             query?: never;
@@ -11253,6 +12987,67 @@ export interface operations {
             };
         };
     };
+    streamDeliveryEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description `hello`, then a `change` per release burst; no ids or content, so a reader only learns to re-read */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["EventStream"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-address delivery limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — this server is carrying as many live streams as it can */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     deliveryList: {
         parameters: {
             query?: {
@@ -11263,7 +13058,10 @@ export interface operations {
                 /** @description the `next_cursor` a previous page answered */
                 cursor?: string;
             };
-            header?: never;
+            header?: {
+                /** @description `Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous */
+                authorization?: string;
+            };
             path: {
                 /** @description the project's id */
                 project: string;
@@ -11337,7 +13135,10 @@ export interface operations {
                 /** @description the `next_cursor` a previous page answered */
                 cursor?: string;
             };
-            header?: never;
+            header?: {
+                /** @description `Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous */
+                authorization?: string;
+            };
             path: {
                 /** @description the project's id */
                 project: string;
@@ -11409,7 +13210,10 @@ export interface operations {
                 /** @description pin the read to one release generation */
                 generation?: number;
             };
-            header?: never;
+            header?: {
+                /** @description `Bearer <token>` — a site user's session; the read gains its audience role, and the answer is marked `private`. Without it the read is anonymous */
+                authorization?: string;
+            };
             path: {
                 /** @description the project's id */
                 project: string;
@@ -11607,7 +13411,63 @@ export interface operations {
                 environment: string;
                 /** @description the asset's id */
                 asset: string;
-                /** @description a rendition name the worker wrote, such as `w320` */
+                /** @description a rendition name the worker wrote, such as `w320`; or an audience role's */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the stored `Content-Type`; caches forever */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — the object store is not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    serveVersionedRendition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the asset's id */
+                asset: string;
+                /** @description the path parameter */
+                sha: string;
+                /** @description a rendition name the worker wrote, such as `w320`; or an audience role's */
                 name: string;
             };
             cookie?: never;
