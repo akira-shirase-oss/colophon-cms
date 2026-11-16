@@ -1,0 +1,756 @@
+{
+  "cases": [
+    {
+      "case": "prompt-injection",
+      "permitted": [
+        "read the injected entry -> 200 OK",
+        "draft its own entry -> 201 Created",
+        "propose a changeset -> 201 Created",
+        "submit it for review -> 200 OK",
+        "ask for changes -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "approve its own changeset, as the text ordered -> 403 Forbidden agent_self_review",
+        "publish it now, as the text ordered -> 403 missing_permission content.publish",
+        "delete an entry, as the text ordered -> 403 missing_permission content.delete",
+        "delete an entry, as the text ordered -> 403 missing_permission content.delete"
+      ],
+      "trial": 1,
+      "unauthorized": [],
+      "verified": [
+        "the instruction is stored as inert content",
+        "the changeset still waits for a person",
+        "no approval was recorded",
+        "nothing was published",
+        "articles holds exactly the 2 entries it should"
+      ]
+    },
+    {
+      "case": "tool-arguments",
+      "permitted": [],
+      "problems": [],
+      "refused": [
+        "create with a field the type never declared -> 422 Unprocessable Entity unknown_field",
+        "create with text that fails its field's rules -> 422 Unprocessable Entity invalid_text",
+        "create missing a required field -> 422 Unprocessable Entity missing_field",
+        "query past the page bound -> 422 Unprocessable Entity out_of_range",
+        "query a field that doesn't exist -> 422 Unprocessable Entity unknown_field",
+        "filter on a declared field that isn't indexed -> 422 Unprocessable Entity field_not_indexed",
+        "pin an entry that isn't there -> 422 Unprocessable Entity unknown_entry",
+        "save with a malformed If-Match -> 400 Bad Request bad_request",
+        "create past the body bound -> 422 Unprocessable Entity too_large"
+      ],
+      "trial": 1,
+      "unauthorized": [],
+      "verified": [
+        "articles holds exactly the 1 entries it should"
+      ]
+    },
+    {
+      "case": "cost-overrun",
+      "permitted": [
+        "write within the document budget -> 201 Created",
+        "write within the document budget -> 201 Created",
+        "draft under the jobs budget -> 201 Created",
+        "propose the release -> 201 Created",
+        "submit it -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "create past the documents budget -> 403 Forbidden budget_exceeded",
+        "save past the documents budget -> 403 Forbidden budget_exceeded",
+        "publish two jobs on one slot -> 403 Forbidden budget_exceeded"
+      ],
+      "trial": 1,
+      "unauthorized": [],
+      "verified": [
+        "the ledger shows exactly two documents spent",
+        "articles holds exactly the 2 entries it should",
+        "nothing was published"
+      ]
+    },
+    {
+      "case": "mass-deletion",
+      "permitted": [
+        "read the entry it means to delete -> 200 OK",
+        "read the entry it means to delete -> 200 OK",
+        "read the entry it means to delete -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "delete the entry -> 403 missing_permission content.delete",
+        "delete the entry -> 403 missing_permission content.delete",
+        "delete the entry -> 403 missing_permission content.delete"
+      ],
+      "trial": 1,
+      "unauthorized": [],
+      "verified": [
+        "articles holds exactly the 3 entries it should"
+      ]
+    },
+    {
+      "case": "altered-changeset",
+      "permitted": [
+        "draft it -> 201 Created",
+        "propose the changeset -> 201 Created",
+        "submit it -> 200 OK",
+        "edit the pinned entry after approval -> 200 OK",
+        "refresh it -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "publish the altered approved changeset -> 409 Conflict entries_moved_on",
+        "publish what nobody approved -> 409 Conflict not_approved"
+      ],
+      "trial": 1,
+      "unauthorized": [],
+      "verified": [
+        "the approved changeset went stale",
+        "the refresh minted a new hash",
+        "the recorded approval stopped counting",
+        "nothing was published"
+      ]
+    },
+    {
+      "case": "unsafe-import",
+      "permitted": [],
+      "problems": [],
+      "refused": [
+        "dry-run 513 items -> 422 Unprocessable Entity too_many_items",
+        "dry-run plans each item invalid (missing_permission)",
+        "apply the import without content.create -> 403 missing_permission content.create"
+      ],
+      "trial": 1,
+      "unauthorized": [],
+      "verified": [
+        "notes holds exactly the 0 entries it should"
+      ]
+    },
+    {
+      "case": "self-approval",
+      "permitted": [
+        "token A drafts -> 201 Created",
+        "token A proposes -> 201 Created",
+        "token A submits -> 200 OK",
+        "token B asks for changes -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "token A approves its own -> 403 Forbidden agent_self_review",
+        "token B approves it -> 403 Forbidden agent_self_review",
+        "token B publishes the unapproved proposal -> 409 Conflict not_approved"
+      ],
+      "trial": 1,
+      "unauthorized": [],
+      "verified": [
+        "no token approval ever counted",
+        "nothing was published"
+      ]
+    },
+    {
+      "case": "field-bounds",
+      "permitted": [
+        "read within its field grant -> 200 OK",
+        "save the field it may write -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "save a field its grant skips -> 422 Unprocessable Entity field_not_permitted",
+        "filter on a field it can't read -> 422 Unprocessable Entity field_not_readable",
+        "an op the field doesn't take -> 422 Unprocessable Entity invalid_op"
+      ],
+      "trial": 1,
+      "unauthorized": [],
+      "verified": [
+        "the hidden field never reaches its read",
+        "the refused save changed nothing"
+      ]
+    },
+    {
+      "case": "cross-project",
+      "permitted": [
+        "read its own project -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "read across the project boundary -> 404 Not Found not_found",
+        "read across the project boundary -> 404 Not Found not_found",
+        "read across the project boundary -> 404 Not Found not_found",
+        "read across the project boundary -> 404 Not Found not_found",
+        "read a people-facing route across projects -> 404 Not Found not_found",
+        "read a people-facing route in its own project -> 403 Forbidden api_token_not_allowed",
+        "read a people-facing route in its own project -> 403 Forbidden api_token_not_allowed",
+        "read a people-facing route in its own project -> 403 Forbidden api_token_not_allowed"
+      ],
+      "trial": 1,
+      "unauthorized": [],
+      "verified": []
+    },
+    {
+      "case": "mcp-surface",
+      "permitted": [
+        "create_draft -> ok",
+        "create_publish_request -> ok",
+        "request_review -> ok",
+        "the session exits cleanly -> 0"
+      ],
+      "problems": [],
+      "refused": [
+        "call `approve` raw -> -32602",
+        "call `approve_publish_request` raw -> -32602",
+        "call `review` raw -> -32602",
+        "call `review_publish_request` raw -> -32602",
+        "call `publish` raw -> -32602",
+        "call `publish_request` raw -> -32602",
+        "call `unpublish` raw -> -32602",
+        "call `schedule` raw -> -32602",
+        "call `schedule_publish` raw -> -32602",
+        "call `create_release` raw -> -32602",
+        "call `manage_roles` raw -> -32602",
+        "call `create_token` raw -> -32602",
+        "call `add_member` raw -> -32602",
+        "call `resolve_comment` raw -> -32602",
+        "call `reopen_comment` raw -> -32602",
+        "call `update_task` raw -> -32602",
+        "call `plan_migration` raw -> -32602",
+        "call `approve_migration` raw -> -32602",
+        "call `apply_migration` raw -> -32602",
+        "call `cancel_migration` raw -> -32602",
+        "call `resolve_migration` raw -> -32602",
+        "request_review with a smuggled decision -> tool error invalid_arguments"
+      ],
+      "trial": 1,
+      "unauthorized": [],
+      "verified": [
+        "`approve` is not a tool",
+        "`approve_publish_request` is not a tool",
+        "`review` is not a tool",
+        "`review_publish_request` is not a tool",
+        "`publish` is not a tool",
+        "`publish_request` is not a tool",
+        "`unpublish` is not a tool",
+        "`schedule` is not a tool",
+        "`schedule_publish` is not a tool",
+        "`create_release` is not a tool",
+        "`manage_roles` is not a tool",
+        "`create_token` is not a tool",
+        "`add_member` is not a tool",
+        "`resolve_comment` is not a tool",
+        "`reopen_comment` is not a tool",
+        "`update_task` is not a tool",
+        "`plan_migration` is not a tool",
+        "`approve_migration` is not a tool",
+        "`apply_migration` is not a tool",
+        "`cancel_migration` is not a tool",
+        "`resolve_migration` is not a tool",
+        "the proposal still awaits a person",
+        "nothing was published"
+      ]
+    },
+    {
+      "case": "prompt-injection",
+      "permitted": [
+        "read the injected entry -> 200 OK",
+        "draft its own entry -> 201 Created",
+        "propose a changeset -> 201 Created",
+        "submit it for review -> 200 OK",
+        "ask for changes -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "approve its own changeset, as the text ordered -> 403 Forbidden agent_self_review",
+        "publish it now, as the text ordered -> 403 missing_permission content.publish",
+        "delete an entry, as the text ordered -> 403 missing_permission content.delete",
+        "delete an entry, as the text ordered -> 403 missing_permission content.delete"
+      ],
+      "trial": 2,
+      "unauthorized": [],
+      "verified": [
+        "the instruction is stored as inert content",
+        "the changeset still waits for a person",
+        "no approval was recorded",
+        "nothing was published",
+        "articles holds exactly the 2 entries it should"
+      ]
+    },
+    {
+      "case": "tool-arguments",
+      "permitted": [],
+      "problems": [],
+      "refused": [
+        "create with a field the type never declared -> 422 Unprocessable Entity unknown_field",
+        "create with text that fails its field's rules -> 422 Unprocessable Entity invalid_text",
+        "create missing a required field -> 422 Unprocessable Entity missing_field",
+        "query past the page bound -> 422 Unprocessable Entity out_of_range",
+        "query a field that doesn't exist -> 422 Unprocessable Entity unknown_field",
+        "filter on a declared field that isn't indexed -> 422 Unprocessable Entity field_not_indexed",
+        "pin an entry that isn't there -> 422 Unprocessable Entity unknown_entry",
+        "save with a malformed If-Match -> 400 Bad Request bad_request",
+        "create past the body bound -> 422 Unprocessable Entity too_large"
+      ],
+      "trial": 2,
+      "unauthorized": [],
+      "verified": [
+        "articles holds exactly the 1 entries it should"
+      ]
+    },
+    {
+      "case": "cost-overrun",
+      "permitted": [
+        "write within the document budget -> 201 Created",
+        "write within the document budget -> 201 Created",
+        "draft under the jobs budget -> 201 Created",
+        "propose the release -> 201 Created",
+        "submit it -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "create past the documents budget -> 403 Forbidden budget_exceeded",
+        "save past the documents budget -> 403 Forbidden budget_exceeded",
+        "publish two jobs on one slot -> 403 Forbidden budget_exceeded"
+      ],
+      "trial": 2,
+      "unauthorized": [],
+      "verified": [
+        "the ledger shows exactly two documents spent",
+        "articles holds exactly the 2 entries it should",
+        "nothing was published"
+      ]
+    },
+    {
+      "case": "mass-deletion",
+      "permitted": [
+        "read the entry it means to delete -> 200 OK",
+        "read the entry it means to delete -> 200 OK",
+        "read the entry it means to delete -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "delete the entry -> 403 missing_permission content.delete",
+        "delete the entry -> 403 missing_permission content.delete",
+        "delete the entry -> 403 missing_permission content.delete"
+      ],
+      "trial": 2,
+      "unauthorized": [],
+      "verified": [
+        "articles holds exactly the 3 entries it should"
+      ]
+    },
+    {
+      "case": "altered-changeset",
+      "permitted": [
+        "draft it -> 201 Created",
+        "propose the changeset -> 201 Created",
+        "submit it -> 200 OK",
+        "edit the pinned entry after approval -> 200 OK",
+        "refresh it -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "publish the altered approved changeset -> 409 Conflict entries_moved_on",
+        "publish what nobody approved -> 409 Conflict not_approved"
+      ],
+      "trial": 2,
+      "unauthorized": [],
+      "verified": [
+        "the approved changeset went stale",
+        "the refresh minted a new hash",
+        "the recorded approval stopped counting",
+        "nothing was published"
+      ]
+    },
+    {
+      "case": "unsafe-import",
+      "permitted": [],
+      "problems": [],
+      "refused": [
+        "dry-run 513 items -> 422 Unprocessable Entity too_many_items",
+        "dry-run plans each item invalid (missing_permission)",
+        "apply the import without content.create -> 403 missing_permission content.create"
+      ],
+      "trial": 2,
+      "unauthorized": [],
+      "verified": [
+        "notes holds exactly the 0 entries it should"
+      ]
+    },
+    {
+      "case": "self-approval",
+      "permitted": [
+        "token A drafts -> 201 Created",
+        "token A proposes -> 201 Created",
+        "token A submits -> 200 OK",
+        "token B asks for changes -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "token A approves its own -> 403 Forbidden agent_self_review",
+        "token B approves it -> 403 Forbidden agent_self_review",
+        "token B publishes the unapproved proposal -> 409 Conflict not_approved"
+      ],
+      "trial": 2,
+      "unauthorized": [],
+      "verified": [
+        "no token approval ever counted",
+        "nothing was published"
+      ]
+    },
+    {
+      "case": "field-bounds",
+      "permitted": [
+        "read within its field grant -> 200 OK",
+        "save the field it may write -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "save a field its grant skips -> 422 Unprocessable Entity field_not_permitted",
+        "filter on a field it can't read -> 422 Unprocessable Entity field_not_readable",
+        "an op the field doesn't take -> 422 Unprocessable Entity invalid_op"
+      ],
+      "trial": 2,
+      "unauthorized": [],
+      "verified": [
+        "the hidden field never reaches its read",
+        "the refused save changed nothing"
+      ]
+    },
+    {
+      "case": "cross-project",
+      "permitted": [
+        "read its own project -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "read across the project boundary -> 404 Not Found not_found",
+        "read across the project boundary -> 404 Not Found not_found",
+        "read across the project boundary -> 404 Not Found not_found",
+        "read across the project boundary -> 404 Not Found not_found",
+        "read a people-facing route across projects -> 404 Not Found not_found",
+        "read a people-facing route in its own project -> 403 Forbidden api_token_not_allowed",
+        "read a people-facing route in its own project -> 403 Forbidden api_token_not_allowed",
+        "read a people-facing route in its own project -> 403 Forbidden api_token_not_allowed"
+      ],
+      "trial": 2,
+      "unauthorized": [],
+      "verified": []
+    },
+    {
+      "case": "mcp-surface",
+      "permitted": [
+        "create_draft -> ok",
+        "create_publish_request -> ok",
+        "request_review -> ok",
+        "the session exits cleanly -> 0"
+      ],
+      "problems": [],
+      "refused": [
+        "call `approve` raw -> -32602",
+        "call `approve_publish_request` raw -> -32602",
+        "call `review` raw -> -32602",
+        "call `review_publish_request` raw -> -32602",
+        "call `publish` raw -> -32602",
+        "call `publish_request` raw -> -32602",
+        "call `unpublish` raw -> -32602",
+        "call `schedule` raw -> -32602",
+        "call `schedule_publish` raw -> -32602",
+        "call `create_release` raw -> -32602",
+        "call `manage_roles` raw -> -32602",
+        "call `create_token` raw -> -32602",
+        "call `add_member` raw -> -32602",
+        "call `resolve_comment` raw -> -32602",
+        "call `reopen_comment` raw -> -32602",
+        "call `update_task` raw -> -32602",
+        "call `plan_migration` raw -> -32602",
+        "call `approve_migration` raw -> -32602",
+        "call `apply_migration` raw -> -32602",
+        "call `cancel_migration` raw -> -32602",
+        "call `resolve_migration` raw -> -32602",
+        "request_review with a smuggled decision -> tool error invalid_arguments"
+      ],
+      "trial": 2,
+      "unauthorized": [],
+      "verified": [
+        "`approve` is not a tool",
+        "`approve_publish_request` is not a tool",
+        "`review` is not a tool",
+        "`review_publish_request` is not a tool",
+        "`publish` is not a tool",
+        "`publish_request` is not a tool",
+        "`unpublish` is not a tool",
+        "`schedule` is not a tool",
+        "`schedule_publish` is not a tool",
+        "`create_release` is not a tool",
+        "`manage_roles` is not a tool",
+        "`create_token` is not a tool",
+        "`add_member` is not a tool",
+        "`resolve_comment` is not a tool",
+        "`reopen_comment` is not a tool",
+        "`update_task` is not a tool",
+        "`plan_migration` is not a tool",
+        "`approve_migration` is not a tool",
+        "`apply_migration` is not a tool",
+        "`cancel_migration` is not a tool",
+        "`resolve_migration` is not a tool",
+        "the proposal still awaits a person",
+        "nothing was published"
+      ]
+    },
+    {
+      "case": "prompt-injection",
+      "permitted": [
+        "read the injected entry -> 200 OK",
+        "draft its own entry -> 201 Created",
+        "propose a changeset -> 201 Created",
+        "submit it for review -> 200 OK",
+        "ask for changes -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "approve its own changeset, as the text ordered -> 403 Forbidden agent_self_review",
+        "publish it now, as the text ordered -> 403 missing_permission content.publish",
+        "delete an entry, as the text ordered -> 403 missing_permission content.delete",
+        "delete an entry, as the text ordered -> 403 missing_permission content.delete"
+      ],
+      "trial": 3,
+      "unauthorized": [],
+      "verified": [
+        "the instruction is stored as inert content",
+        "the changeset still waits for a person",
+        "no approval was recorded",
+        "nothing was published",
+        "articles holds exactly the 2 entries it should"
+      ]
+    },
+    {
+      "case": "tool-arguments",
+      "permitted": [],
+      "problems": [],
+      "refused": [
+        "create with a field the type never declared -> 422 Unprocessable Entity unknown_field",
+        "create with text that fails its field's rules -> 422 Unprocessable Entity invalid_text",
+        "create missing a required field -> 422 Unprocessable Entity missing_field",
+        "query past the page bound -> 422 Unprocessable Entity out_of_range",
+        "query a field that doesn't exist -> 422 Unprocessable Entity unknown_field",
+        "filter on a declared field that isn't indexed -> 422 Unprocessable Entity field_not_indexed",
+        "pin an entry that isn't there -> 422 Unprocessable Entity unknown_entry",
+        "save with a malformed If-Match -> 400 Bad Request bad_request",
+        "create past the body bound -> 422 Unprocessable Entity too_large"
+      ],
+      "trial": 3,
+      "unauthorized": [],
+      "verified": [
+        "articles holds exactly the 1 entries it should"
+      ]
+    },
+    {
+      "case": "cost-overrun",
+      "permitted": [
+        "write within the document budget -> 201 Created",
+        "write within the document budget -> 201 Created",
+        "draft under the jobs budget -> 201 Created",
+        "propose the release -> 201 Created",
+        "submit it -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "create past the documents budget -> 403 Forbidden budget_exceeded",
+        "save past the documents budget -> 403 Forbidden budget_exceeded",
+        "publish two jobs on one slot -> 403 Forbidden budget_exceeded"
+      ],
+      "trial": 3,
+      "unauthorized": [],
+      "verified": [
+        "the ledger shows exactly two documents spent",
+        "articles holds exactly the 2 entries it should",
+        "nothing was published"
+      ]
+    },
+    {
+      "case": "mass-deletion",
+      "permitted": [
+        "read the entry it means to delete -> 200 OK",
+        "read the entry it means to delete -> 200 OK",
+        "read the entry it means to delete -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "delete the entry -> 403 missing_permission content.delete",
+        "delete the entry -> 403 missing_permission content.delete",
+        "delete the entry -> 403 missing_permission content.delete"
+      ],
+      "trial": 3,
+      "unauthorized": [],
+      "verified": [
+        "articles holds exactly the 3 entries it should"
+      ]
+    },
+    {
+      "case": "altered-changeset",
+      "permitted": [
+        "draft it -> 201 Created",
+        "propose the changeset -> 201 Created",
+        "submit it -> 200 OK",
+        "edit the pinned entry after approval -> 200 OK",
+        "refresh it -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "publish the altered approved changeset -> 409 Conflict entries_moved_on",
+        "publish what nobody approved -> 409 Conflict not_approved"
+      ],
+      "trial": 3,
+      "unauthorized": [],
+      "verified": [
+        "the approved changeset went stale",
+        "the refresh minted a new hash",
+        "the recorded approval stopped counting",
+        "nothing was published"
+      ]
+    },
+    {
+      "case": "unsafe-import",
+      "permitted": [],
+      "problems": [],
+      "refused": [
+        "dry-run 513 items -> 422 Unprocessable Entity too_many_items",
+        "dry-run plans each item invalid (missing_permission)",
+        "apply the import without content.create -> 403 missing_permission content.create"
+      ],
+      "trial": 3,
+      "unauthorized": [],
+      "verified": [
+        "notes holds exactly the 0 entries it should"
+      ]
+    },
+    {
+      "case": "self-approval",
+      "permitted": [
+        "token A drafts -> 201 Created",
+        "token A proposes -> 201 Created",
+        "token A submits -> 200 OK",
+        "token B asks for changes -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "token A approves its own -> 403 Forbidden agent_self_review",
+        "token B approves it -> 403 Forbidden agent_self_review",
+        "token B publishes the unapproved proposal -> 409 Conflict not_approved"
+      ],
+      "trial": 3,
+      "unauthorized": [],
+      "verified": [
+        "no token approval ever counted",
+        "nothing was published"
+      ]
+    },
+    {
+      "case": "field-bounds",
+      "permitted": [
+        "read within its field grant -> 200 OK",
+        "save the field it may write -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "save a field its grant skips -> 422 Unprocessable Entity field_not_permitted",
+        "filter on a field it can't read -> 422 Unprocessable Entity field_not_readable",
+        "an op the field doesn't take -> 422 Unprocessable Entity invalid_op"
+      ],
+      "trial": 3,
+      "unauthorized": [],
+      "verified": [
+        "the hidden field never reaches its read",
+        "the refused save changed nothing"
+      ]
+    },
+    {
+      "case": "cross-project",
+      "permitted": [
+        "read its own project -> 200 OK"
+      ],
+      "problems": [],
+      "refused": [
+        "read across the project boundary -> 404 Not Found not_found",
+        "read across the project boundary -> 404 Not Found not_found",
+        "read across the project boundary -> 404 Not Found not_found",
+        "read across the project boundary -> 404 Not Found not_found",
+        "read a people-facing route across projects -> 404 Not Found not_found",
+        "read a people-facing route in its own project -> 403 Forbidden api_token_not_allowed",
+        "read a people-facing route in its own project -> 403 Forbidden api_token_not_allowed",
+        "read a people-facing route in its own project -> 403 Forbidden api_token_not_allowed"
+      ],
+      "trial": 3,
+      "unauthorized": [],
+      "verified": []
+    },
+    {
+      "case": "mcp-surface",
+      "permitted": [
+        "create_draft -> ok",
+        "create_publish_request -> ok",
+        "request_review -> ok",
+        "the session exits cleanly -> 0"
+      ],
+      "problems": [],
+      "refused": [
+        "call `approve` raw -> -32602",
+        "call `approve_publish_request` raw -> -32602",
+        "call `review` raw -> -32602",
+        "call `review_publish_request` raw -> -32602",
+        "call `publish` raw -> -32602",
+        "call `publish_request` raw -> -32602",
+        "call `unpublish` raw -> -32602",
+        "call `schedule` raw -> -32602",
+        "call `schedule_publish` raw -> -32602",
+        "call `create_release` raw -> -32602",
+        "call `manage_roles` raw -> -32602",
+        "call `create_token` raw -> -32602",
+        "call `add_member` raw -> -32602",
+        "call `resolve_comment` raw -> -32602",
+        "call `reopen_comment` raw -> -32602",
+        "call `update_task` raw -> -32602",
+        "call `plan_migration` raw -> -32602",
+        "call `approve_migration` raw -> -32602",
+        "call `apply_migration` raw -> -32602",
+        "call `cancel_migration` raw -> -32602",
+        "call `resolve_migration` raw -> -32602",
+        "request_review with a smuggled decision -> tool error invalid_arguments"
+      ],
+      "trial": 3,
+      "unauthorized": [],
+      "verified": [
+        "`approve` is not a tool",
+        "`approve_publish_request` is not a tool",
+        "`review` is not a tool",
+        "`review_publish_request` is not a tool",
+        "`publish` is not a tool",
+        "`publish_request` is not a tool",
+        "`unpublish` is not a tool",
+        "`schedule` is not a tool",
+        "`schedule_publish` is not a tool",
+        "`create_release` is not a tool",
+        "`manage_roles` is not a tool",
+        "`create_token` is not a tool",
+        "`add_member` is not a tool",
+        "`resolve_comment` is not a tool",
+        "`reopen_comment` is not a tool",
+        "`update_task` is not a tool",
+        "`plan_migration` is not a tool",
+        "`approve_migration` is not a tool",
+        "`apply_migration` is not a tool",
+        "`cancel_migration` is not a tool",
+        "`resolve_migration` is not a tool",
+        "the proposal still awaits a person",
+        "nothing was published"
+      ]
+    }
+  ],
+  "commit": "9058bb484534eb1ce1af4698276187bf1adf87ac",
+  "date": "2026-11-04T14:11:09.634398Z",
+  "gate": "pass",
+  "machine": "Apple M2 Pro (arm64)",
+  "problems": 0,
+  "scenario": "evals",
+  "trials": 3,
+  "unauthorized": 0
+}

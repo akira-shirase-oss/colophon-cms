@@ -1,0 +1,43 @@
+---
+import { site, entry, me, richText } from '@colophon/site-kit';
+import Base from '../../../layouts/Base.astro';
+import { sessionToken } from '../../../lib/session.ts';
+
+// Rendered per request: a gated post is the visitor's own read, so the page asks delivery as
+// their session's role. Anonymous readers of the same URL get the sign-in page instead.
+export const prerender = false;
+
+const cms = site();
+const token = cms === null ? null : sessionToken(Astro.request);
+if (cms !== null && token === null) return Astro.redirect('/signin/');
+const user = cms !== null && token !== null ? await me(cms, token) : null;
+if (cms === null || user === null) return Astro.redirect('/signin/');
+
+const id = Astro.params.id ?? '';
+const post = await entry(cms, 'posts', id, token ?? undefined);
+if (post === null) return Astro.redirect('/members/');
+const body = richText(cms, post.content['body']);
+const tags = Array.isArray(post.content['tags'])
+	? post.content['tags'].filter((tag): tag is string => typeof tag === 'string')
+	: [];
+---
+
+<Base title={`${post.title} · The Draft`}>
+	<article class="post">
+		<p class="gate-banner">
+			Members only — this post is published as <code>{post.visibility}</code>; your session reads it as{' '}
+			<code>role:{user.role}</code>.
+		</p>
+		<span class="meta">
+			{typeof post.content['published_on'] === 'string' && post.content['published_on']}
+			{typeof post.content['author'] === 'string' && ` · ${post.content['author']}`}
+		</span>
+		<h1>{post.title}</h1>
+		{typeof post.content['excerpt'] === 'string' && <p class="lede">{post.content['excerpt']}</p>}
+		<div class="tags">
+			{tags.map((tag) => <span class="tag">{tag}</span>)}
+		</div>
+		<div class="prose" set:html={body} />
+		<p><a href="/members/">← Back to the members area</a></p>
+	</article>
+</Base>

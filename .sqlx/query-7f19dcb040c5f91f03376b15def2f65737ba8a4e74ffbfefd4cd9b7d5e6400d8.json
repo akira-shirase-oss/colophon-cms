@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE entries SET locale = $5\n         WHERE project_id = $1 AND environment_id = $2 AND collection = $3 AND id = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7f19dcb040c5f91f03376b15def2f65737ba8a4e74ffbfefd4cd9b7d5e6400d8"
+}

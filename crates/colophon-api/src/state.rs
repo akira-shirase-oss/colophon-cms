@@ -6,7 +6,10 @@ use axum::extract::FromRef;
 use colophon_auth::OidcClient;
 use colophon_db::PgPool;
 
-use crate::{BuildInfo, ContentTypeCache, DeliveryCache, Readiness, admission::SharedAdmission};
+use crate::{
+    BuildInfo, ContentTypeCache, DeliveryCache, Readiness, admission::SharedAdmission,
+    events::EventBus, mcp,
+};
 
 /// Session lifetimes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,10 +43,25 @@ pub struct Services {
     /// Whether delivery destinations may be private addresses: only for a development server
     /// bound to loopback (D-046).
     pub allow_private_destinations: bool,
+    /// Whether a magic-link request also hands the link back in `dev_link` instead of emailing
+    /// it: `COLOPHON_DEV_MAIL=1`, a development affordance (D-140).
+    pub dev_mail: bool,
+    /// The transactional mailer sign-in links go out through (D-145); `None` without
+    /// `COLOPHON_MAIL_PROVIDER`, and a magic-link request then records the link it cannot
+    /// deliver.
+    pub mail: Option<Arc<dyn crate::mail::Mail>>,
     /// The public delivery cache (D-048); [`DeliveryCache::disabled`] without `COLOPHON_CACHE_URL`.
     pub cache: DeliveryCache,
     /// Parsed content types by their definition's hash (D-078).
     pub content_types: ContentTypeCache,
+    /// The object store uploads are quarantined in and served from (07-media); `None` without
+    /// `COLOPHON_S3_*`, and upload endpoints say so.
+    pub assets: Option<colophon_media::Shared>,
+    /// The live-hint bus `{P}/events` streams subscribe to (D-108), fed by the server's own
+    /// `LISTEN` connection.
+    pub events: Arc<EventBus>,
+    /// The remote-MCP session registry `{P}/mcp` serves (D-121).
+    pub mcp: mcp::Shared,
 }
 
 /// The router's state. Cloning is two reference-count increments and a copy.

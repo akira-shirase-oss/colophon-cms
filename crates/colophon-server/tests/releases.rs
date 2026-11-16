@@ -710,3 +710,320 @@ async fn an_entry_says_whether_and_where_it_is_live_and_lists_say_whose() {
         requests.body
     );
 }
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story, told in order: publish, edit, publish, restore, read every generation"
+)]
+async fn a_rollback_restores_the_release_as_a_new_generation() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let editor = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    join(&owner, &editor, &project, "editor").await;
+    let entry = new_article(&editor, &project, "Rollback", "version one").await;
+    let (first, first_hash) = approved(&editor, &owner, &project, &[&entry]).await;
+    let released = publish(&owner, &first, &first_hash, 0, &key()).await;
+    assert_eq!(released.status, StatusCode::CREATED, "{}", released.body);
+    assert_eq!(released.body["data"]["generation"], 1);
+    edit(&editor, &project, &entry, "Rollback", "version two").await;
+    let (second, second_hash) = approved(&editor, &owner, &project, &[&entry]).await;
+    let released = publish(&owner, &second, &second_hash, 1, &key()).await;
+    assert_eq!(released.body["data"]["generation"], 2);
+    let content = format!("/content/v1/{project}/production/articles/{entry}");
+    let (status, body, _) = deliver(&format!("{content}?generation=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body, _) = deliver(&content).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The bad generations and a body carrying entries are refused before anything is built.
+    for generation in ["0", "2", "99"] {
+        let reply = call(
+            &owner,
+            Method::POST,
+            &format!("{}/releases/{generation}/rollback", base(&project)),
+            Some(&json!({"title": "Back"})),
+            &[("idempotency-key", &key())],
+        )
+        .await
+        .expect("request");
+        assert_eq!(
+            reply.body["error"]["details"]["reason"], "invalid_generation",
+            "{generation}: {}",
+            reply.body
+        );
+    }
+    let with_entries = call(
+        &owner,
+        Method::POST,
+        &format!("{}/releases/1/rollback", base(&project)),
+        Some(&json!({"title": "Back", "entries": [entry.clone()]})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        with_entries.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        with_entries.body
+    );
+
+    // The rollback is a changeset like any other: built once, replayed by key, reviewed, published.
+    let rollback_key = key();
+    let created = call(
+        &editor,
+        Method::POST,
+        &format!("{}/releases/1/rollback", base(&project)),
+        Some(&json!({"title": "Back to one"})),
+        &[("idempotency-key", &rollback_key)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    assert_eq!(
+        created.body["data"]["items"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(created.body["data"]["status"]["state"], "open");
+    // A restore says which release it restores, in its view and the list's.
+    let changeset = created.body["data"]["id"].as_str().expect("an id");
+    assert_eq!(created.body["data"]["rollback_generation"], 1);
+    let listed = call(
+        &owner,
+        Method::GET,
+        &format!("{}/changesets", base(&project)),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    let row = listed.body["data"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == changeset))
+        .expect("the restore in the list");
+    assert_eq!(row["rollback_generation"], 1, "{}", listed.body);
+    let path = format!("{}/changesets/{}", base(&project), changeset);
+    let hash = created.body["data"]["hash"]
+        .as_str()
+        .expect("a hash")
+        .to_owned();
+    let replay = call(
+        &editor,
+        Method::POST,
+        &format!("{}/releases/1/rollback", base(&project)),
+        Some(&json!({"title": "Back to one"})),
+        &[("idempotency-key", &rollback_key)],
+    )
+    .await
+    .expect("request");
+    assert!(replay.replayed());
+    let if_match = format!("\"{hash}\"");
+    let submitted = call(
+        &editor,
+        Method::POST,
+        &format!("{path}/submit"),
+        None,
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(submitted.status, StatusCode::OK, "{}", submitted.body);
+    let approval = call(
+        &owner,
+        Method::POST,
+        &format!("{path}/reviews"),
+        Some(&json!({"decision": "approve"})),
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(approval.body["data"]["status"]["state"], "approved");
+    let released = publish(&owner, &path, &hash, 2, &key()).await;
+    assert_eq!(released.status, StatusCode::CREATED, "{}", released.body);
+    assert_eq!(released.body["data"]["generation"], 3);
+
+    // Generation 3 serves what generation 1 served; the past is still there to read.
+    assert_eq!(read_text(&content, "").await, "version one");
+    assert_eq!(read_text(&content, "?generation=1").await, "version one");
+    assert_eq!(read_text(&content, "?generation=2").await, "version two");
+    assert_eq!(read_text(&content, "?generation=3").await, "version one");
+
+    // Restoring what is already live builds nothing.
+    let again = call(
+        &owner,
+        Method::POST,
+        &format!("{}/releases/1/rollback", base(&project)),
+        Some(&json!({"title": "Again"})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        again.body["error"]["details"]["reason"], "already_at",
+        "{}",
+        again.body
+    );
+}
+
+/// The text a published article's first paragraph reads at `generation`.
+async fn read_text(content: &str, generation: &str) -> String {
+    let (status, body, _) = deliver(&format!("{content}{generation}")).await;
+    assert_eq!(status, StatusCode::OK, "{generation}: {body}");
+    body["data"]["content"]["body"]["doc"]["content"][0]["content"][0]["text"]
+        .as_str()
+        .expect("text")
+        .to_owned()
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one story, told in order: publish, re-publish, narrow the type, refuse the restore"
+)]
+/// A pin made before a type change is re-checked at publish: the type-change check looks at
+/// drafts and open publications only (D-055), so a closed publication can slip under a later
+/// definition — and a rollback pins exactly those (D-097). Publishing that restore refuses
+/// `revision_outdated`, naming the entry and the field.
+async fn a_rollback_pin_must_still_fit_the_type() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+
+    // A collection whose `code` field is free text at version 1.
+    let types = format!("{}/content-types", base(&project));
+    let definition = |patterned: bool| {
+        let mut next = json!({"name": "Codes", "title_field": "title", "fields": [
+            {"id": "title", "label": "Title", "type": "text", "required": true},
+            {"id": "code", "label": "Code", "type": "text"}
+        ]});
+        if patterned {
+            next["fields"][1]["pattern"] = json!("[0-9]+");
+        }
+        next
+    };
+    let made = call(
+        &owner,
+        Method::POST,
+        &types,
+        Some(&json!({"slug": "codes", "definition": definition(false)})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+
+    // Release 1 publishes "abc"; release 2 publishes "123", closing the first publication.
+    let codes = format!("{}/collections/codes/entries", base(&project));
+    let created = call(
+        &owner,
+        Method::POST,
+        &codes,
+        Some(&json!({"title": "One", "code": "abc"})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let entry = created.body["data"]["id"].as_str().expect("an id");
+    let (first, first_hash) = approved(&owner, &owner, &project, &[entry]).await;
+    let released = publish(&owner, &first, &first_hash, 0, &key()).await;
+    assert_eq!(released.status, StatusCode::CREATED, "{}", released.body);
+
+    let entry_path = format!("{codes}/{entry}");
+    let current = call(&owner, Method::GET, &entry_path, None, &[])
+        .await
+        .expect("request");
+    let edited = call(
+        &owner,
+        Method::PUT,
+        &entry_path,
+        Some(&json!({"title": "One", "code": "123"})),
+        &[
+            ("if-match", &current.etag().expect("an ETag")),
+            ("idempotency-key", &key()),
+        ],
+    )
+    .await
+    .expect("request");
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+    let (second, second_hash) = approved(&owner, &owner, &project, &[entry]).await;
+    let released = publish(&owner, &second, &second_hash, 1, &key()).await;
+    assert_eq!(released.status, StatusCode::CREATED, "{}", released.body);
+
+    // Narrow `code` to digits: the live revision ("123") fits, so the change is allowed; the
+    // closed release-1 publication ("abc") is not checked and no longer fits.
+    let narrowed = call(
+        &owner,
+        Method::PUT,
+        &format!("{types}/codes"),
+        Some(&definition(true)),
+        &[("if-match", "\"v1\""), ("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(narrowed.status, StatusCode::OK, "{}", narrowed.body);
+
+    // Rolling back to release 1 builds a changeset pinning the outdated revision…
+    let rollback = call(
+        &owner,
+        Method::POST,
+        &format!("{}/releases/1/rollback", base(&project)),
+        Some(&json!({"title": "Back to abc"})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(rollback.status, StatusCode::CREATED, "{}", rollback.body);
+    let path = format!(
+        "{}/changesets/{}",
+        base(&project),
+        rollback.body["data"]["id"].as_str().expect("an id")
+    );
+    let hash = rollback.body["data"]["hash"].as_str().expect("a hash");
+    let if_match = format!("\"{hash}\"");
+    let submitted = call(
+        &owner,
+        Method::POST,
+        &format!("{path}/submit"),
+        None,
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(submitted.status, StatusCode::OK, "{}", submitted.body);
+    let approval = call(
+        &owner,
+        Method::POST,
+        &format!("{path}/reviews"),
+        Some(&json!({"decision": "approve"})),
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        approval.body["data"]["status"]["state"], "approved",
+        "{}",
+        approval.body
+    );
+
+    // …and publishing it refuses: the pin predates the type's version and no longer fits.
+    let refused = publish(&owner, &path, hash, 2, &key()).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    let details = &refused.body["error"]["details"];
+    assert_eq!(details["reason"], "revision_outdated", "{details}");
+    assert_eq!(details["entries"][0]["state"], "pinned");
+    assert_eq!(
+        details["entries"][0]["problem"]["reason"], "pattern_mismatch",
+        "{details}"
+    );
+
+    // Nothing moved: release 2 is still the latest, and "123" is still live.
+    let (status, _, generation) =
+        deliver(&format!("/content/v1/{project}/production/codes/{entry}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(generation, Some(2));
+}

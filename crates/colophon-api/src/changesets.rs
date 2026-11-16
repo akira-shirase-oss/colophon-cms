@@ -11,12 +11,19 @@
 //!   entries that moved on (edited, or published anew), which gives the changeset a new hash;
 //!   reviews are for owners and publishers;
 //! - `POST {P}/changesets/{changeset}/publish`: `{"base_generation"}` (`If-Match` and
-//!   `Idempotency-Key` required): commits an approved changeset as the next release (D-045).
+//!   `Idempotency-Key` required): commits an approved changeset as the next release (D-045);
+//! - `GET {P}/review-stages` and `PUT {P}/review-stages` (`{"stages": [{"key", "name",
+//!   "different_reviewer"}]}`, `If-Match` and `Idempotency-Key` required): the environment's
+//!   ordered review stages (D-104). With none configured a changeset publishes on one approval,
+//!   as it always did; with a list, every stage needs an approval on the changeset's current
+//!   hash — in any order — and a `request_changes` at any stage blocks it. A review's body may
+//!   name its `"stage"`; where stages are configured it must.
 //!
-//! A review is stored with the hash it was made on, under a lock on the changeset, and counts only
-//! while the changeset keeps that hash (`colophon_domain::changeset::status`).
+//! A review is stored with the hash it was made on and the stage it decided, under a lock on
+//! the changeset, and counts only while the changeset keeps that hash and the stage its key
+//! (`colophon_domain::changeset::status`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json,
@@ -25,7 +32,7 @@ use axum::{
     response::Response,
 };
 use colophon_db::{
-    DbError,
+    DbError, audit,
     changesets::{self, Head, Pin},
     idempotency::{self, Claim},
     publish::{self, Base, Refusal},
@@ -46,7 +53,7 @@ use crate::{
     ApiError, AppState,
     entries::{content_hash, idempotency_key, json, open, request_hash, rfc3339, sha256},
     members::require,
-    session::SignedIn,
+    session::{Credential, SignedIn},
     shape::{Data, Page},
 };
 
@@ -64,6 +71,13 @@ pub(crate) struct OnePath {
     project: String,
     environment: String,
     changeset: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RollbackPath {
+    project: String,
+    environment: String,
+    generation: i64,
 }
 
 /// `{"title": "Launch posts", "entries": ["…", "…"], "unpublish": ["…"]}`: entries to publish and
@@ -85,13 +99,34 @@ pub(crate) struct NewRelease {
     base_generation: i64,
 }
 
-/// `{"decision": "approve", "comment": "…"}`.
+/// `{"decision": "approve", "comment": "…"}`; `"stage"` names the review stage it decides where
+/// the environment configures them (D-104).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NewReview {
     decision: String,
     #[serde(default)]
     comment: String,
+    #[serde(default)]
+    stage: Option<String>,
+}
+
+/// `{"stages": [{"key": "editorial", "name": "Editorial", "different_reviewer": true}]}`: the
+/// whole list, in order. `different_reviewer` may be left out (it is `false` then).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NewStages {
+    stages: Vec<NewStage>,
+}
+
+/// One stage of [`NewStages`].
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NewStage {
+    key: String,
+    name: String,
+    #[serde(default)]
+    different_reviewer: bool,
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -154,11 +189,37 @@ pub(crate) struct ReviewView {
     reviewer_id: Uuid,
     reviewer_name: Option<String>,
     decision: String,
+    /// The review stage it decided for; `null` for the implicit review (D-104).
+    stage: Option<String>,
     changeset_hash: String,
     /// Made on the changeset's current hash, so it still counts.
     current: bool,
     comment: String,
     created_at: String,
+}
+
+/// A review stage as the API shows it (D-104).
+#[derive(Serialize, Deserialize)]
+pub(crate) struct StageView {
+    key: String,
+    name: String,
+    /// Its approval must come from someone other than the submitter.
+    different_reviewer: bool,
+}
+
+/// Where one configured stage stands on a changeset, in stage order (D-104).
+#[derive(Serialize)]
+pub(crate) struct StageStateView {
+    key: String,
+    name: String,
+    different_reviewer: bool,
+    /// `pending`, `changes_requested`, `approved` or `approval_expired`.
+    state: &'static str,
+    /// Who made the stage's latest counting decision, if anyone did.
+    by: Option<Uuid>,
+    by_name: Option<String>,
+    /// When.
+    at: Option<String>,
 }
 
 /// Where a changeset stands, as the API writes it.
@@ -189,7 +250,9 @@ impl StatusView {
             Status::Stale { .. } => ("stale", None, false),
             Status::AwaitingReview => ("awaiting_review", None, false),
             Status::ChangesRequested { by } => ("changes_requested", Some(by), false),
-            Status::Approved { by, self_review } => ("approved", Some(by), self_review),
+            Status::Approved {
+                by, self_review, ..
+            } => ("approved", Some(by), self_review),
             Status::ApprovalExpired => ("approval_expired", None, false),
         };
         Self {
@@ -213,8 +276,13 @@ pub(crate) struct ChangesetView {
     submitted_by: Option<Uuid>,
     submitted_at: Option<String>,
     updated_at: String,
+    /// The release its publication set restores, when a rollback built it (D-097).
+    rollback_generation: Option<i64>,
     items: Vec<ItemView>,
     reviews: Vec<ReviewView>,
+    /// Each configured review stage and where it stands, in order; empty where none are
+    /// configured and the single implicit review decides (D-104).
+    stages: Vec<StageStateView>,
 }
 
 #[derive(Serialize)]
@@ -232,11 +300,19 @@ pub(crate) struct SummaryView {
     submitted_by: Option<Uuid>,
     submitted_at: Option<String>,
     updated_at: String,
+    /// The release it restores, when a rollback built it (D-097).
+    rollback_generation: Option<i64>,
 }
 
-/// The domain's decision for `head`, from its reviews on its current hash (newest first).
-fn decide(head: &Head, edited: usize, reviews: &[colophon_db::changesets::Review]) -> Status {
-    publish::status(head, edited, reviews, OffsetDateTime::now_utc())
+/// The domain's decision for `head`, from its reviews on its current hash (newest first) and
+/// the environment's `stages`.
+fn decide(
+    head: &Head,
+    edited: usize,
+    reviews: &[colophon_db::changesets::Review],
+    stages: &[colophon_db::changesets::Stage],
+) -> Status {
+    publish::status(head, edited, reviews, stages, OffsetDateTime::now_utc())
 }
 
 /// Names the approver or requester by display name where the database knows it.
@@ -250,12 +326,67 @@ fn named(status: Status, reviews: &[colophon_db::changesets::Review]) -> Status 
     };
     match status {
         Status::ChangesRequested { by } => Status::ChangesRequested { by: name(&by) },
-        Status::Approved { by, self_review } => Status::Approved {
+        Status::Approved {
+            by,
+            self_review,
+            seq,
+        } => Status::Approved {
             by: name(&by),
             self_review,
+            seq,
         },
         other => other,
     }
+}
+
+/// Each configured stage of `stages` with where it stands on `head`, in order (D-104).
+fn stage_states(
+    head: &Head,
+    reviews: &[colophon_db::changesets::Review],
+    stages: &[colophon_db::changesets::Stage],
+) -> Result<Vec<StageStateView>, ApiError> {
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+    stages
+        .iter()
+        .zip(publish::counting(head, reviews, stages))
+        .map(|(stage, (_, decided))| {
+            let (state, by, by_name, at) = match decided {
+                None => ("pending", None, None, None),
+                Some(review) if review.decision == Decision::RequestChanges.as_str() => (
+                    "changes_requested",
+                    Some(review.reviewer_id),
+                    review.reviewer_name.clone(),
+                    Some(rfc3339(review.created_at)?),
+                ),
+                Some(review)
+                    if now - review.created_at.unix_timestamp()
+                        > changeset::APPROVAL_LIFETIME_SECS =>
+                {
+                    (
+                        "approval_expired",
+                        Some(review.reviewer_id),
+                        review.reviewer_name.clone(),
+                        Some(rfc3339(review.created_at)?),
+                    )
+                }
+                Some(review) => (
+                    "approved",
+                    Some(review.reviewer_id),
+                    review.reviewer_name.clone(),
+                    Some(rfc3339(review.created_at)?),
+                ),
+            };
+            Ok(StageStateView {
+                key: stage.key.clone(),
+                name: stage.name.clone(),
+                different_reviewer: stage.different_reviewer,
+                state,
+                by,
+                by_name,
+                at,
+            })
+        })
+        .collect()
 }
 
 /// The full view of the changeset `head`, read in `tx`.
@@ -266,8 +397,10 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
     let reviews = changesets::reviews(tx, head.id, None)
         .await
         .map_err(ApiError::from_db)?;
+    let stages = changesets::stages(tx).await.map_err(ApiError::from_db)?;
     let edited = items.iter().filter(|item| item.moved()).count();
-    let status = named(decide(&head, edited, &reviews), &reviews);
+    let status = named(decide(&head, edited, &reviews, &stages), &reviews);
+    let stage_states = stage_states(&head, &reviews, &stages)?;
     Ok(ChangesetView {
         id: head.id,
         title: head.title,
@@ -278,6 +411,7 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
         submitted_by: head.submitted_by,
         submitted_at: head.submitted_at.map(rfc3339).transpose()?,
         updated_at: rfc3339(head.updated_at)?,
+        rollback_generation: head.rollback,
         items: items
             .into_iter()
             .map(|item| ItemView {
@@ -303,6 +437,7 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
                     reviewer_id: review.reviewer_id,
                     reviewer_name: review.reviewer_name,
                     decision: review.decision,
+                    stage: review.stage,
                     current: review.changeset_hash == head.hash,
                     changeset_hash: content_hash(&review.changeset_hash),
                     comment: review.comment,
@@ -310,6 +445,7 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
                 })
             })
             .collect::<Result<_, ApiError>>()?,
+        stages: stage_states,
     })
 }
 
@@ -414,13 +550,32 @@ pub(crate) async fn list(
 ) -> Result<Json<Page<SummaryView>>, ApiError> {
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     let rows = changesets::list(&mut tx).await.map_err(ApiError::from_db)?;
+    let stages = changesets::stages(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
+    // With stages configured every one's decision counts, which one `latest` review can't say;
+    // without them the lateral join's is exactly what the status needs (D-104).
+    let mut current: HashMap<Uuid, Vec<colophon_db::changesets::Review>> = HashMap::new();
+    if !stages.is_empty() {
+        let ids: Vec<Uuid> = rows.iter().map(|row| row.head.id).collect();
+        for (changeset, review) in changesets::current_reviews(&mut tx, &ids)
+            .await
+            .map_err(ApiError::from_db)?
+        {
+            current.entry(changeset).or_default().push(review);
+        }
+    }
     tx.commit().await.map_err(ApiError::from_db)?;
     let data = rows
         .into_iter()
         .map(|row| {
             let edited = usize::try_from(row.stale).unwrap_or(usize::MAX);
-            let latest: Vec<_> = row.latest.into_iter().collect();
-            let status = named(decide(&row.head, edited, &latest), &latest);
+            let reviews = if stages.is_empty() {
+                row.latest.into_iter().collect::<Vec<_>>()
+            } else {
+                current.remove(&row.head.id).unwrap_or_default()
+            };
+            let status = named(decide(&row.head, edited, &reviews, &stages), &reviews);
             Ok(SummaryView {
                 id: row.head.id,
                 title: row.head.title,
@@ -432,6 +587,7 @@ pub(crate) async fn list(
                 submitted_by: row.head.submitted_by,
                 submitted_at: row.head.submitted_at.map(rfc3339).transpose()?,
                 updated_at: rfc3339(row.head.updated_at)?,
+                rollback_generation: row.head.rollback,
             })
         })
         .collect::<Result<_, ApiError>>()?;
@@ -443,14 +599,7 @@ pub(crate) async fn list(
 
 /// A new changeset's title, entries to publish and entries to unpublish, checked for shape.
 fn checked(new: &NewChangeset) -> Result<(&str, Vec<Uuid>, Vec<Uuid>), ApiError> {
-    let title = new.title.trim();
-    if !(1..=200).contains(&title.chars().count()) || title.chars().any(char::is_control) {
-        return Err(ApiError::InvalidField {
-            reason: "invalid_title",
-            pointer: "/title",
-            message: "a title is 1 to 200 characters, without control characters".to_owned(),
-        });
-    }
+    let title = title(&new.title)?;
     let ids = |list: &[String], pointer: &'static str| {
         list.iter()
             .map(|id| Uuid::try_parse(id))
@@ -476,6 +625,19 @@ fn checked(new: &NewChangeset) -> Result<(&str, Vec<Uuid>, Vec<Uuid>), ApiError>
         });
     }
     Ok((title, entries, unpublish))
+}
+
+/// A changeset title: 1 to 200 characters, no control characters.
+fn title(raw: &str) -> Result<&str, ApiError> {
+    let title = raw.trim();
+    if !(1..=200).contains(&title.chars().count()) || title.chars().any(char::is_control) {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_title",
+            pointer: "/title",
+            message: "a title is 1 to 200 characters, without control characters".to_owned(),
+        });
+    }
+    Ok(title)
 }
 
 /// 422 `unknown_entry`: an entry to publish isn't one in this environment (or is deleted).
@@ -545,13 +707,99 @@ pub(crate) async fn create(
     let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
     may_change_entries(&mut tx, &pinned).await?;
     let id = Uuid::now_v7();
-    changesets::create(&mut tx, id, title, &pins, &hash_of(&pins))
+    changesets::create(&mut tx, id, title, &pins, &hash_of(&pins), None)
         .await
         .map_err(|error| match error {
             // Deleted after the pins were read (D-080): as if it had never been there.
             DbError::EntryDeleted { .. } => unknown_entry(),
             other => ApiError::from_db(other),
         })?;
+    let head = changesets::get(&mut tx, id)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or_else(|| ApiError::internal(std::io::Error::other("a changeset vanished")))?;
+    let created = view(&mut tx, head).await?;
+    let text = body(&created)?;
+    idempotency::complete(&mut tx, CREATE, key, StatusCode::CREATED.as_u16(), &text)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(respond(StatusCode::CREATED, text, &created.hash, false))
+}
+
+/// `POST {P}/releases/{generation}/rollback` with `{"title": "…"}`: builds a changeset that
+/// restores the publication set as it was at `generation` — publish pins for what was live then,
+/// unpublish pins for what is live now that wasn't — and leaves it open for the usual review and
+/// publish flow. Restoring the past is a new release, not a step back: the generation moves
+/// forward either way (module 01, D4). A release the pin set wouldn't change is refused.
+pub(crate) async fn rollback(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<RollbackPath>,
+    headers: HeaderMap,
+    body_json: Result<Json<NewChangeset>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let key = idempotency_key(&headers)?;
+    let Json(new) = body_json?;
+    if !new.entries.is_empty() || !new.unpublish.is_empty() {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_field",
+            pointer: "/entries",
+            message: "a rollback takes no entries: it restores what the release published"
+                .to_owned(),
+        });
+    }
+    let title = title(&new.title)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let (_, latest) = releases::generation(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
+    if !(1..latest).contains(&path.generation) {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_generation",
+            pointer: "/generation",
+            message: format!("this environment's releases are generations 1 to {latest}"),
+        });
+    }
+    let request = request_hash(&[CREATE, title, &path.generation.to_string()]);
+    match idempotency::claim(&mut tx, CREATE, key, &request)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Claim::Fresh => {}
+        Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+        Claim::Replay { status, response } => {
+            let status = StatusCode::from_u16(status).map_err(ApiError::internal)?;
+            let hash = serde_json::from_str::<Value>(&response)
+                .ok()
+                .and_then(|body| body["data"]["hash"].as_str().map(str::to_owned))
+                .unwrap_or_default();
+            return Ok(respond(status, response, &hash, true));
+        }
+    }
+    let pins = changesets::rollback_pins(&mut tx, path.generation)
+        .await
+        .map_err(ApiError::from_db)?;
+    if pins.is_empty() {
+        return Err(ApiError::InvalidField {
+            reason: "already_at",
+            pointer: "/generation",
+            message: "this environment already publishes what that release published".to_owned(),
+        });
+    }
+    let pinned: Vec<Uuid> = pins.iter().map(|pin| pin.entry_id).collect();
+    may_change_entries(&mut tx, &pinned).await?;
+    let id = Uuid::now_v7();
+    changesets::create(
+        &mut tx,
+        id,
+        title,
+        &pins,
+        &hash_of(&pins),
+        Some(path.generation),
+    )
+    .await
+    .map_err(ApiError::from_db)?;
     let head = changesets::get(&mut tx, id)
         .await
         .map_err(ApiError::from_db)?
@@ -620,14 +868,22 @@ pub(crate) async fn refresh(
             .map(|item| item.pin.entry_id)
             .collect()
     };
-    let mut pins = changesets::pins(&mut tx, &of_kind(Kind::Publish))
-        .await
-        .map_err(ApiError::from_db)?;
-    pins.extend(
-        changesets::published_pins(&mut tx, &of_kind(Kind::Unpublish))
+    let mut pins = if let Some(generation) = head.rollback {
+        // A rollback changeset refreshes to its release's set, not to the drafts (D-097).
+        changesets::rollback_pins(&mut tx, generation)
             .await
-            .map_err(ApiError::from_db)?,
-    );
+            .map_err(ApiError::from_db)?
+    } else {
+        let mut pins = changesets::pins(&mut tx, &of_kind(Kind::Publish))
+            .await
+            .map_err(ApiError::from_db)?;
+        pins.extend(
+            changesets::published_pins(&mut tx, &of_kind(Kind::Unpublish))
+                .await
+                .map_err(ApiError::from_db)?,
+        );
+        pins
+    };
     // An entry to unpublish that is no longer published keeps its pin and leaves the changeset
     // stale: there's nothing left for it to take down.
     for item in &items {
@@ -645,7 +901,9 @@ pub(crate) async fn refresh(
 }
 
 /// `POST {P}/changesets/{changeset}/reviews`: approves or asks for changes to the exact hash in
-/// `If-Match`.
+/// `If-Match`. An API token may ask for changes like anyone with `content.review`, but it may
+/// never approve a changeset an API token submitted — that would greenlight a proposal with no
+/// person in the loop (D-111).
 pub(crate) async fn review(
     State(state): State<AppState>,
     caller: SignedIn,
@@ -684,6 +942,22 @@ pub(crate) async fn review(
             "this changeset hasn't been submitted for review yet",
         ));
     }
+    // D-111: a token approving any token's proposal is the same personless greenlight — minting
+    // a second token is free, so the check is token-ness on both sides, not identity equality.
+    // Only approvals are refused; a token may still ask for changes, and may approve a person's
+    // changeset when its grant says so.
+    if decision == Decision::Approve
+        && caller.credential == Credential::ApiToken
+        && let Some(submitter) = head.submitted_by
+        && changesets::is_token_identity(&mut tx, submitter)
+            .await
+            .map_err(ApiError::from_db)?
+    {
+        return Err(ApiError::forbidden(
+            "agent_self_review",
+            "an API token can't approve a changeset an API token submitted; it needs a person's approval",
+        ));
+    }
     let edited = changesets::items(&mut tx, head.id)
         .await
         .map_err(ApiError::from_db)?
@@ -695,12 +969,38 @@ pub(crate) async fn review(
             "an entry moved on after this changeset pinned it; refresh the changeset, then review it",
         ));
     }
+    // The stage list this review names its stage from can't move under it: a stage-list change
+    // waits for this transaction, so a review never lands on a stage that is gone (D-104).
+    let stages = changesets::stages_locked(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
+    let for_stage = match new.stage.as_deref().map(str::trim).unwrap_or_default() {
+        "" if stages.is_empty() => None,
+        "" => {
+            return Err(ApiError::InvalidField {
+                reason: "stage_required",
+                pointer: "/stage",
+                message:
+                    "this environment's reviews each decide one review stage; name it by its key"
+                        .to_owned(),
+            });
+        }
+        key if stages.iter().any(|stage| stage.key == key) => Some(key),
+        _ => {
+            return Err(ApiError::InvalidField {
+                reason: "unknown_stage",
+                pointer: "/stage",
+                message: "stage is the key of one of this environment's review stages".to_owned(),
+            });
+        }
+    };
     changesets::review(
         &mut tx,
         head.id,
         &head.hash,
         decision.as_str(),
         new.comment.trim(),
+        for_stage,
     )
     .await
     .map_err(ApiError::from_db)?;
@@ -790,11 +1090,34 @@ fn refused(refusal: Refusal) -> ApiError {
             "still_referenced",
             "an entry this changeset takes down is named by a published entry; change or take down that entry first, or in the same changeset",
         ),
+        // Media M1: only a verified asset can reach readers.
+        Refusal::UnusableAsset { ref state, .. } if state == "quarantined" => ApiError::conflict(
+            "asset_not_usable",
+            "an entry in this changeset names an asset that is still being verified; publish when it is usable",
+        ),
+        Refusal::UnusableAsset { ref state, .. } if state == "deleting" || state == "deleted" => {
+            ApiError::conflict(
+                "asset_not_usable",
+                "an entry in this changeset names an asset that was deleted; replace it",
+            )
+        }
+        Refusal::UnusableAsset { .. } => ApiError::conflict(
+            "asset_not_usable",
+            "an entry in this changeset names an asset that was rejected; replace it",
+        ),
         // Only a pin made while the entry was being deleted can get here (D-080).
         Refusal::EntryDeleted { .. } => ApiError::conflict(
             "entry_deleted",
             "an entry in this changeset has been deleted; make a new changeset without it",
         ),
+        // A rollback can pin a revision a later type change left behind (D-055, D-097).
+        Refusal::Outdated {
+            entry,
+            title,
+            reason,
+            pointer,
+            message,
+        } => ApiError::revision_outdated(entry, title, reason, pointer, message),
     }
 }
 
@@ -956,4 +1279,239 @@ async fn finish(mut tx: ProjectTransaction, id: Uuid) -> Result<Response, ApiErr
     let shown = view(&mut tx, head).await?;
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(respond(StatusCode::OK, body(&shown)?, &shown.hash, false))
+}
+
+/// The environment's review stages as the API writes them (D-104).
+#[derive(Serialize)]
+pub(crate) struct StageListView {
+    stages: Vec<StageView>,
+}
+
+impl From<&changesets::Stage> for StageView {
+    fn from(stage: &changesets::Stage) -> Self {
+        Self {
+            key: stage.key.clone(),
+            name: stage.name.clone(),
+            different_reviewer: stage.different_reviewer,
+        }
+    }
+}
+
+const STAGES: &str = "stages.update";
+
+/// The canonical form a stage list's `ETag` hashes: one stage a line, fields separated by NUL
+/// so no two different lists ever read the same (keys and names can't hold control characters).
+fn canonical_stages(stages: &[StageView]) -> String {
+    use std::fmt::Write as _;
+    stages.iter().fold(String::new(), |mut text, stage| {
+        // Writing to a String can't fail.
+        let _ = writeln!(
+            text,
+            "{}\u{0}{}\u{0}{}",
+            stage.key, stage.name, stage.different_reviewer
+        );
+        text
+    })
+}
+
+/// A stage list's `ETag`: `sha256:<hex>` of its canonical form.
+fn stages_etag(stages: &[StageView]) -> String {
+    content_hash(&sha256(canonical_stages(stages).as_bytes()))
+}
+
+/// The stage-list hash `If-Match` names, as `sha256:<hex>`; parsing the same way as a
+/// changeset's, since both etags are hashes of what the route answered.
+fn stages_if_match(headers: &HeaderMap) -> Result<String, ApiError> {
+    let value = headers
+        .get(header::IF_MATCH)
+        .ok_or(ApiError::PreconditionRequired(
+            "changing the review stages needs an If-Match header with the ETag of the list you saw, so you act on what you looked at",
+        ))?;
+    value
+        .to_str()
+        .ok()
+        .and_then(|text| text.trim().strip_prefix('"')?.strip_suffix('"'))
+        .filter(|hash| {
+            hash.strip_prefix("sha256:").is_some_and(|hex| {
+                hex.len() == 64
+                    && hex
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+        })
+        .map(str::to_owned)
+        .ok_or(ApiError::InvalidHeader(
+            "If-Match must be one review-stages ETag, such as \"sha256:…\"",
+        ))
+}
+
+/// The stage list `body` asks for, checked; the first problem is named by its position.
+fn checked_stages(body: &NewStages) -> Result<Vec<StageView>, ApiError> {
+    if body.stages.len() > changeset::MAX_STAGES {
+        return Err(ApiError::InvalidField {
+            reason: "too_many_stages",
+            pointer: "/stages",
+            message: format!(
+                "an environment's review workflow has at most {} stages",
+                changeset::MAX_STAGES
+            ),
+        });
+    }
+    let mut seen = HashSet::new();
+    body.stages
+        .iter()
+        .enumerate()
+        .map(|(index, stage)| {
+            let invalid = |reason: &'static str, message: String| ApiError::InvalidField {
+                reason,
+                pointer: "/stages",
+                message: format!("stage {}: {message}", index + 1),
+            };
+            if !changeset::is_stage_key(&stage.key) {
+                return Err(invalid(
+                    "invalid_stage_key",
+                    "a key is a lowercase letter, then letters, digits and hyphens".to_owned(),
+                ));
+            }
+            let name = stage.name.trim();
+            if !(1..=100).contains(&name.chars().count()) || name.chars().any(char::is_control) {
+                return Err(invalid(
+                    "invalid_stage_name",
+                    "a name is 1 to 100 characters, without control characters".to_owned(),
+                ));
+            }
+            if !seen.insert(stage.key.clone()) {
+                return Err(invalid(
+                    "duplicate_stage",
+                    "no two stages share a key".to_owned(),
+                ));
+            }
+            Ok(StageView {
+                key: stage.key.clone(),
+                name: name.to_owned(),
+                different_reviewer: stage.different_reviewer,
+            })
+        })
+        .collect()
+}
+
+/// `GET {P}/review-stages`: the environment's ordered review stages, `ETag`'d as a list so a
+/// `PUT` can name what it saw (D-104). Any member may look.
+pub(crate) async fn stages_list(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<ListPath>,
+) -> Result<Response, ApiError> {
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let stages = changesets::stages(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    let stages: Vec<StageView> = stages.iter().map(StageView::from).collect();
+    let etag = stages_etag(&stages);
+    let text = serde_json::to_string(&Data {
+        data: StageListView { stages },
+    })
+    .map_err(ApiError::internal)?;
+    Ok(respond(StatusCode::OK, text, &etag, false))
+}
+
+/// `PUT {P}/review-stages`: replaces the whole list, in the body's order. Needs `If-Match` with
+/// the `ETag` of the list last seen, an `Idempotency-Key`, and `schema.change` — the project's
+/// permission for shaping how an environment's content is worked with, of which the review
+/// workflow is part (D-104). Reviews recorded for a stage that keeps its key still count;
+/// removing a stage drops its gate.
+pub(crate) async fn stages_replace(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<ListPath>,
+    headers: HeaderMap,
+    body_json: Result<Json<NewStages>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let expected = stages_if_match(&headers)?;
+    let key = idempotency_key(&headers)?;
+    let Json(body) = body_json?;
+    let stages = checked_stages(&body)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    require(
+        &tx.policy,
+        Action::SchemaChange,
+        None,
+        "your role can't change this environment's review stages",
+    )?;
+    let canonical = canonical_stages(&stages);
+    let request = request_hash(&[STAGES, &expected, &canonical]);
+    match idempotency::claim(&mut tx, STAGES, key, &request)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        Claim::Fresh => {}
+        Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+        Claim::Replay { status, response } => {
+            let status = StatusCode::from_u16(status).map_err(ApiError::internal)?;
+            let etag = serde_json::from_str::<Value>(&response)
+                .ok()
+                .and_then(|body| {
+                    serde_json::from_value::<Vec<StageView>>(body["data"]["stages"].clone()).ok()
+                })
+                .map(|stages| stages_etag(&stages))
+                .unwrap_or_default();
+            return Ok(respond(status, response, &etag, true));
+        }
+    }
+    // The environment's lock serializes replaces: two of them can never interleave a delete
+    // with an insert at the same position (D-104).
+    changesets::lock_environment(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
+    let current: Vec<StageView> = changesets::stages(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?
+        .iter()
+        .map(StageView::from)
+        .collect();
+    let etag = stages_etag(&current);
+    if etag != expected {
+        return Err(ApiError::StaleStages { current: etag });
+    }
+    let stored = stages
+        .iter()
+        .enumerate()
+        .map(|(index, stage)| {
+            Ok(changesets::Stage {
+                key: stage.key.clone(),
+                name: stage.name.clone(),
+                position: i32::try_from(index).map_err(ApiError::internal)?,
+                different_reviewer: stage.different_reviewer,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    changesets::set_stages(&mut tx, &stored)
+        .await
+        .map_err(ApiError::from_db)?;
+    let detail = serde_json::json!({
+        "environment": path.environment,
+        "before": current,
+        "after": stages,
+    });
+    audit::record_in(
+        &mut tx.transaction,
+        tx.project,
+        tx.identity,
+        "stages.replaced",
+        "review-stages",
+        &detail.to_string(),
+    )
+    .await
+    .map_err(ApiError::from_db)?;
+    let text = serde_json::to_string(&Data {
+        data: StageListView { stages },
+    })
+    .map_err(ApiError::internal)?;
+    let etag = content_hash(&sha256(canonical.as_bytes()));
+    idempotency::complete(&mut tx, STAGES, key, StatusCode::OK.as_u16(), &text)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(respond(StatusCode::OK, text, &etag, false))
 }

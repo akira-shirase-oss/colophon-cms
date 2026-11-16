@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH counts AS (\n             SELECT count(*) FILTER (WHERE outcome = 'pending') AS pending,\n                    count(*) FILTER (WHERE outcome IN ('applied', 'skipped')) AS done,\n                    count(*) FILTER (WHERE outcome IN ('conflict', 'refused')) AS blocked\n             FROM bulk_items\n             WHERE project_id = $1 AND environment_id = $2 AND job_id = $3\n         )\n         UPDATE bulk_jobs j\n         SET done_items = counts.done, blocked_items = counts.blocked,\n             state = CASE WHEN j.state <> 'running' THEN j.state\n                          WHEN counts.pending > 0 THEN 'running'\n                          WHEN counts.blocked > 0 THEN 'blocked' ELSE 'done' END,\n             finished_at = CASE WHEN counts.pending = 0 AND j.state = 'running'\n                                THEN now() ELSE j.finished_at END,\n             error = CASE WHEN counts.pending = 0 AND counts.blocked > 0 AND j.state = 'running'\n                          THEN 'the run finished with items to look at' ELSE j.error END,\n             updated_at = now()\n         FROM counts\n         WHERE j.project_id = $1 AND j.environment_id = $2 AND j.id = $3\n         RETURNING (j.state IN ('done', 'blocked', 'cancelled'))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "?column?",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "be526254d3239c7663b658ce62036048483cfc7a96332c7efeaf66a920946de9"
+}

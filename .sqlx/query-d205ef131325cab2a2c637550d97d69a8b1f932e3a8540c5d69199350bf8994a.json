@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM content_type_versions WHERE project_id = $1 AND environment_id = $2 AND collection = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d205ef131325cab2a2c637550d97d69a8b1f932e3a8540c5d69199350bf8994a"
+}

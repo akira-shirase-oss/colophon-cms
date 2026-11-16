@@ -1,0 +1,37 @@
+---
+export const prerender = false;
+import { site, entries, entryPath, richText, type Entry, type Site } from '@colophon/site-kit';
+import Base from '../../layouts/Base.astro';
+
+const cms = site();
+if (cms === null) return new Response('not seeded', { status: 503 });
+const slug = Astro.params.slug ?? '';
+const { items, generation } = await entries(cms, 'posts');
+const post = items.find((item) => entryPath(item) === slug);
+if (post === undefined) return new Response('not found', { status: 404 });
+const tags = Array.isArray(post.content['tags'])
+	? post.content['tags'].filter((tag): tag is string => typeof tag === 'string')
+	: [];
+const body = richText(cms, post.content['body']);
+---
+
+<Base title={`${post.title} · The Draft`} generation={generation}>
+	<article class="post">
+		<span class="meta">
+			{typeof post.content['published_on'] === 'string' && post.content['published_on']}
+			{typeof post.content['author'] === 'string' && ` · ${post.content['author']}`}
+		</span>
+		<h1>{post.title}</h1>
+		{typeof post.content['excerpt'] === 'string' && <p class="lede">{post.content['excerpt']}</p>}
+		<div class="tags">
+			{
+				tags.map((tag) => (
+					<a class="tag" href={`/tags/${encodeURIComponent(tag)}/`}>
+						{tag}
+					</a>
+				))
+			}
+		</div>
+		<div class="prose" set:html={body} />
+	</article>
+</Base>

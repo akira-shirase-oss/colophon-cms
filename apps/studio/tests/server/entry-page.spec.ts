@@ -2,7 +2,7 @@
 // panel says where it stands in one line (not "Live in" and "Readers see this version" both);
 // "Save now" shows only with something to save; the public address and "See what readers get" wait
 // in Technical details; and on a phone the status and Publish share one bar at the bottom. The
-// fields follow the type's order, rich text included (D-082).
+// fields follow the type's order, rich text included (D-147).
 
 import { expect, test } from '@playwright/test';
 import { api, env, key, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';

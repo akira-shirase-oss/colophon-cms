@@ -4,6 +4,8 @@
 //! rather than in `main.rs`, so tests can drive it.
 
 pub mod config;
+pub mod events;
+mod mail;
 pub mod probes;
 pub mod setup_code;
 pub mod shutdown;
@@ -26,8 +28,9 @@ use shutdown::ShutdownTiming;
 const CLEANUP_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Starts the worker for the worker and all roles (D-046): it claims delivery jobs from the same
-/// database, and runs schedules as they fall due (D-060), until `cancel` fires. Private destinations are only reachable from a development
-/// server bound to loopback.
+/// database, runs schedules as they fall due (D-060), and, with an object store, sweeps expired
+/// assets and orphaned quarantine objects (D-099), until `cancel` fires. Private destinations
+/// are only reachable from a development server bound to loopback.
 fn start_worker(
     config: &Config,
     cancel: &CancellationToken,
@@ -39,6 +42,7 @@ fn start_worker(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
+    let assets = asset_store(config)?;
     let settings = colophon_worker::Settings {
         owner: format!("colophon-{}-{started}", std::process::id()),
         poll: config.worker_poll,
@@ -47,6 +51,7 @@ fn start_worker(
         slots: config.worker_slots,
         allow_private: config.listen_addr.ip().is_loopback(),
         location: config.worker_location.clone(),
+        assets: assets.clone(),
     };
     // Its own pool: deliveries can never take the connections editors' requests need.
     let worker_pool = colophon_db::connect_lazy(
@@ -59,12 +64,35 @@ fn start_worker(
     .context("configuring the worker's database pool")?;
     let worker = colophon_worker::Worker::new(worker_pool.clone(), settings)
         .context("starting the worker")?;
-    // Schedules (D-060) run beside the deliveries, on the same pool and poll.
+    // Schedules (D-060) run beside the deliveries, on the same pool and poll; the media
+    // retention sweep (D-099) beside both, only where there is a store to keep; and the
+    // table-retention sweep (D-135) on the same pool, always — the bounds it keeps live in
+    // the database, not the object store.
     let scheduler =
         colophon_worker::schedules::Scheduler::new(worker_pool.clone(), config.worker_poll);
+    let sweeper = assets.map(|store| {
+        colophon_worker::retention::Sweeper::new(
+            worker_pool.clone(),
+            store,
+            config.asset_sweep,
+            config.asset_expiry,
+        )
+    });
+    let tables = colophon_worker::tables::Sweeper::new(worker_pool.clone(), config.table_sweep);
     let cancel = cancel.clone();
     Ok(Some(tokio::spawn(async move {
-        tokio::join!(Arc::new(worker).run(cancel.clone()), scheduler.run(cancel));
+        let sweep_cancel = cancel.clone();
+        let sweep = async move {
+            if let Some(sweeper) = sweeper {
+                sweeper.run(sweep_cancel).await;
+            }
+        };
+        tokio::join!(
+            Arc::new(worker).run(cancel.clone()),
+            scheduler.run(cancel.clone()),
+            sweep,
+            tables.run(cancel.clone())
+        );
         worker_pool.close().await;
     })))
 }
@@ -106,14 +134,92 @@ async fn stop_setup_code(cancel: &CancellationToken, task: Option<tokio::task::J
     }
 }
 
-/// The public delivery cache (D-048): Valkey at `COLOPHON_CACHE_URL`, or none.
+/// Starts the change-hint listener for the api and all roles (D-108): one `LISTEN` connection
+/// feeding the bus the `{P}/events` streams subscribe to. The worker role alone has no streams
+/// to serve and gets none.
+fn start_events(
+    config: &Config,
+    bus: &Arc<colophon_api::events::EventBus>,
+    cancel: &CancellationToken,
+) -> Option<tokio::task::JoinHandle<()>> {
+    matches!(config.role, Role::Api | Role::All).then(|| {
+        tokio::spawn(events::run(
+            bus.clone(),
+            config.database_url.expose().to_owned(),
+            cancel.clone(),
+        ))
+    })
+}
+
+/// Stops the listener; open streams end when the process does anyway, so there is no drain.
+async fn stop_events(cancel: &CancellationToken, task: Option<tokio::task::JoinHandle<()>>) {
+    cancel.cancel();
+    if let Some(task) = task
+        && tokio::time::timeout(CLEANUP_DEADLINE, task).await.is_err()
+    {
+        tracing::warn!("the change-hint listener did not stop in time");
+    }
+}
+
+/// The public delivery cache (D-048): Valkey at `COLOPHON_CACHE_URL`, or none. The entry
+/// lifetimes come from `COLOPHON_CACHE_TTL_MS`/`COLOPHON_CACHE_JITTER_MS` — the production
+/// defaults unless a load run shortens them to watch expiries (L04, D-128).
 fn delivery_cache(config: &Config) -> anyhow::Result<colophon_api::DeliveryCache> {
     match &config.cache_url {
         Some(url) => colophon_api::DeliveryCache::new(url.expose())
+            .map(|cache| cache.with_lifetime(config.cache_ttl, config.cache_jitter))
             .map_err(|error| anyhow::anyhow!(error))
             .context("configuring the delivery cache"),
         None => Ok(colophon_api::DeliveryCache::disabled()),
     }
+}
+
+/// The API's `Services`, from the validated configuration.
+fn api_services(
+    config: &Config,
+    pool: &colophon_db::PgPool,
+    events: Arc<colophon_api::events::EventBus>,
+) -> anyhow::Result<colophon_api::Services> {
+    let mut trusted_origins = vec![config.public_origin.clone()];
+    trusted_origins.extend(config.extra_trusted_origins.iter().cloned());
+    Ok(colophon_api::Services {
+        pool: pool.clone(),
+        oidc: oidc_client(config)?,
+        sessions: colophon_api::SessionSettings::default(),
+        trusted_origins,
+        allow_private_destinations: config.listen_addr.ip().is_loopback(),
+        dev_mail: config.dev_mail,
+        mail: config.mail.as_ref().map(|settings| {
+            Arc::new(mail::Resend::new(
+                settings.api_key.clone(),
+                settings.from.clone(),
+                settings.endpoint.clone(),
+            )) as Arc<dyn colophon_api::mail::Mail>
+        }),
+        cache: delivery_cache(config)?,
+        content_types: colophon_api::ContentTypeCache::new(),
+        assets: asset_store(config)?,
+        events,
+        mcp: colophon_api::mcp::Shared::new(config.mcp),
+    })
+}
+
+/// The uploads' object store (07-media): the S3 endpoint in `COLOPHON_S3_*`, or `None` — uploads
+/// then answer "not configured" and the worker has no asset jobs to run.
+fn asset_store(config: &Config) -> anyhow::Result<Option<colophon_media::Shared>> {
+    let Some(settings) = &config.s3 else {
+        return Ok(None);
+    };
+    let store = object_store::aws::AmazonS3Builder::new()
+        .with_endpoint(&settings.endpoint)
+        .with_region(&settings.region)
+        .with_bucket_name(&settings.bucket)
+        .with_access_key_id(&settings.access_key)
+        .with_secret_access_key(settings.secret_key.expose())
+        .with_allow_http(settings.allow_http)
+        .build()
+        .context("configuring the object store")?;
+    Ok(Some(std::sync::Arc::new(store)))
 }
 
 /// The OpenID Connect client, when sign-in is configured.
@@ -180,17 +286,8 @@ pub async fn run(
         "listening"
     );
 
-    let mut trusted_origins = vec![config.public_origin.clone()];
-    trusted_origins.extend(config.extra_trusted_origins.iter().cloned());
-    let services = colophon_api::Services {
-        pool: pool.clone(),
-        oidc: oidc_client(&config)?,
-        sessions: colophon_api::SessionSettings::default(),
-        trusted_origins,
-        allow_private_destinations: config.listen_addr.ip().is_loopback(),
-        cache: delivery_cache(&config)?,
-        content_types: colophon_api::ContentTypeCache::new(),
-    };
+    let event_bus = colophon_api::events::EventBus::new(config.events);
+    let services = api_services(&config, &pool, event_bus.clone())?;
     let admission = colophon_api::admission::Admission::new(
         config.admission.clone(),
         config.cache_url.as_ref().map(config::Secret::expose),
@@ -215,6 +312,7 @@ pub async fn run(
             request_timeout: config.request_timeout,
             max_body_bytes: config.max_body_bytes,
         },
+        build,
     );
     let timing = ShutdownTiming {
         drain_delay: config.drain_delay,
@@ -229,6 +327,8 @@ pub async fn run(
     let worker = start_worker(&config, &worker_cancel)?;
     let setup_cancel = cancel.child_token();
     let setup = start_setup_code(&config, &pool, &setup_cancel);
+    let events_cancel = cancel.child_token();
+    let hints = start_events(&config, &event_bus, &events_cancel);
 
     let outcome = tokio::select! {
         outcome = shutdown::serve(listener, app, readiness, timing, trigger) => outcome.context("serving")?,
@@ -237,6 +337,7 @@ pub async fn run(
 
     stop_worker(&worker_cancel, worker).await;
     stop_setup_code(&setup_cancel, setup).await;
+    stop_events(&events_cancel, hints).await;
     supervisor.shutdown(CLEANUP_DEADLINE).await;
     if tokio::time::timeout(CLEANUP_DEADLINE, pool.close())
         .await

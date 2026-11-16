@@ -1,20 +1,23 @@
 <!--
   One collection as a table: search by the field that names each entry (its title, or what the
-  type calls it, D-082), on the server, so it finds beyond the first page;
+  type calls it, D-147), on the server, so it finds beyond the first page;
   narrow it to the entries one started (also on the server), filter by where each entry stands
   for readers, and start a new entry.
 -->
 <script lang="ts">
 	import CopyIcon from '@lucide/svelte/icons/copy';
+	import DownloadIcon from '@lucide/svelte/icons/download';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SearchIcon from '@lucide/svelte/icons/search';
+	import UploadIcon from '@lucide/svelte/icons/upload';
 	import UserIcon from '@lucide/svelte/icons/user';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { createInfiniteQuery, createQuery, keepPreviousData, useQueryClient } from '@tanstack/svelte-query';
 	import { toast } from 'svelte-sonner';
+	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import * as InputGroup from '@colophon/ui/ui/input-group';
@@ -22,7 +25,7 @@
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
 	import { Toggle } from '@colophon/ui/ui/toggle';
-	import { ApiError, type Content, createEntry, type EntryState, entryState, getContentType, getEntry, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
+	import { ApiError, type Content, createEntry, type EntryState, entryState, exportUrl, getContentType, getEntry, importEntries, may, mayOn, newKey, searchEntries } from '#lib/api.ts';
 	import { applies, blockingProblem, type FormValue, formValue, slugify, starter, storedValue, titleLabel } from '#lib/content.ts';
 	import { plainError } from '#lib/errors.ts';
 	import FieldInputs from '#lib/FieldInputs.svelte';
@@ -57,6 +60,32 @@
 	let onlyMine = $state(false);
 	const readsOthers = $derived(mayOn(mine.data, 'content.read', collection, false));
 	const creator = $derived(onlyMine && readsOthers ? (who.data?.id ?? null) : null);
+	// Transfer (D-086): the file has to come back whole, so export asks for a role that reads
+	// every field (of anyone's entries or of its own — the server scopes it the same way).
+	const exportable = $derived(
+		(mine.data?.permissions ?? []).some(
+			(grant) =>
+				grant.action === 'content.read' && (grant.subject === '*' || grant.subject === collection) && grant.fields === undefined
+		)
+	);
+	let fileInput: HTMLInputElement | undefined = $state();
+	let importing = $state(false);
+	async function importFile(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (file === undefined) return;
+		importing = true;
+		try {
+			const imported = await importEntries(project, collection, await file.text());
+			toast.success(`Imported ${imported} ${imported === 1 ? 'entry' : 'entries'}`);
+			await entries.refetch();
+		} catch (failure) {
+			toast.error(plainError(failure, 'import this file'));
+		} finally {
+			importing = false;
+			input.value = '';
+		}
+	}
 	// Pages of 100, newest first, followed with the server's cursor when someone asks for more. Keyed
 	// under the collection's entries, so saving and publishing refresh it.
 	const entries = createInfiniteQuery(() => ({
@@ -285,7 +314,7 @@
 		}
 	}
 
-	// A single type (D-067, D-082) opens its one entry. The first visit makes it, named after the type
+	// A single type (D-067, D-147) opens its one entry. The first visit makes it, named after the type
 	// ("Homepage"), with no dialog; only required fields that need an answer bring the dialog up,
 	// with that name filled in. Once per visit to this type, so a refusal doesn't repeat.
 	let madeFor = $state<string | null>(null);
@@ -313,7 +342,12 @@
 	<PageHeader title={type.data.definition.name}>
 		{#snippet description()}Everything here saves as you type and stays a draft until it is published.{/snippet}
 		{#snippet actions()}
-			{#if writes && !single}<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>{/if}
+			{#if exportable}<Button variant="outline" href={exportUrl(project, collection)} download="{collection}.jsonl" data-testid="export-entries"><DownloadIcon data-icon="inline-start" />Export</Button>{/if}
+			{#if writes && !single}
+				<Button variant="outline" onclick={() => fileInput?.click()} disabled={importing} data-testid="import-entries"><UploadIcon data-icon="inline-start" />{importing ? 'Importing…' : 'Import'}</Button>
+				<input type="file" accept=".jsonl,.txt,.json" class="hidden" bind:this={fileInput} onchange={importFile} data-testid="import-file" />
+				<Button onclick={() => (creating = true)}><PlusIcon data-icon="inline-start" />New entry</Button>
+			{/if}
 		{/snippet}
 	</PageHeader>
 
@@ -449,6 +483,7 @@
 									href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}
 									class:text-muted-foreground={entry.revision.title.trim() === ''}>{shownTitle(entry.revision.title)}</a
 								>
+								{#if entry.locale !== null}<Badge variant="outline" class="ml-1.5 font-mono">{entry.locale}</Badge>{/if}
 							</Table.Cell>
 							<Table.Cell><StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} /></Table.Cell>
 							<Table.Cell class="hidden text-sm text-muted-foreground tabular md:table-cell">

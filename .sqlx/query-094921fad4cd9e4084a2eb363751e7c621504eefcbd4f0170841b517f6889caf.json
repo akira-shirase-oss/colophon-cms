@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO migration_items\n           (project_id, environment_id, plan_id, entry_id, expected_revision_id, outcome, problem)\n         SELECT $1, $2, $3, (item->>'entry')::uuid, (item->>'revision')::uuid,\n                item->>'outcome', item->'problem'\n         FROM jsonb_array_elements($4::jsonb) AS item",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "094921fad4cd9e4084a2eb363751e7c621504eefcbd4f0170841b517f6889caf"
+}

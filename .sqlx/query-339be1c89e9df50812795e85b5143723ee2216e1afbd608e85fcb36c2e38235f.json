@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(max(id), 0) AS \"mark!\" FROM deletion_ledger",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "mark!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "339be1c89e9df50812795e85b5143723ee2216e1afbd608e85fcb36c2e38235f"
+}

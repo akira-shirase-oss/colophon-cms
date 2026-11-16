@@ -11,7 +11,9 @@
 //! ([`Policy::covers`]). Since step R.3, a permission can be narrowed to some fields and to the
 //! member's own entries ([`Permission::parse_narrowed`], [`Policy::fields`]).
 
-use crate::project::Slug;
+use serde_json::{Map, Value};
+
+use crate::{project::Slug, schema::Refusal};
 
 /// The most permissions one role holds: every action on every collection of a large project.
 pub const MAX_PERMISSIONS: usize = 500;
@@ -180,11 +182,13 @@ pub enum Action {
     TokensManage,
     /// Read the project's audit log: who changed roles, members and tokens (step R.4).
     AuditRead,
+    /// Manage a project's audience: its site users and the roles they hold (P7, D-137).
+    AudienceManage,
 }
 
 impl Action {
     /// Every action, in the order the Studio lists them.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::ContentRead,
         Self::ContentCreate,
         Self::ContentUpdate,
@@ -197,6 +201,7 @@ impl Action {
         Self::DestinationsManage,
         Self::TokensManage,
         Self::AuditRead,
+        Self::AudienceManage,
     ];
 
     /// The name stored with permissions and used in the API.
@@ -214,6 +219,7 @@ impl Action {
             Self::DestinationsManage => "destinations.manage",
             Self::TokensManage => "tokens.manage",
             Self::AuditRead => "audit.read",
+            Self::AudienceManage => "audience.manage",
         }
     }
 
@@ -459,9 +465,10 @@ impl Policy {
         &self.permissions
     }
 
-    /// The permissions of a built-in role: D-042's table, unchanged.
+    /// The permissions of a built-in role: D-042's table, plus `audit.read` (R.4) and
+    /// `audience.manage` (P7) for owners.
     ///
-    /// | | read, create, update | schema, destinations | members, roles, tokens | review, publish |
+    /// | | read, create, update | schema, destinations | members, roles, tokens, audit, audience | review, publish |
     /// |---|---|---|---|---|
     /// | owner | ✓ | ✓ | ✓ | ✓ |
     /// | developer | ✓ | ✓ | | |
@@ -469,9 +476,9 @@ impl Policy {
     /// | publisher | ✓ | | | ✓ |
     pub fn builtin(role: Role) -> Self {
         use Action::{
-            AuditRead, ContentCreate, ContentDelete, ContentPublish, ContentRead, ContentReview,
-            ContentUpdate, DestinationsManage, MembersManage, RolesManage, SchemaChange,
-            TokensManage,
+            AudienceManage, AuditRead, ContentCreate, ContentDelete, ContentPublish, ContentRead,
+            ContentReview, ContentUpdate, DestinationsManage, MembersManage, RolesManage,
+            SchemaChange, TokensManage,
         };
         let mut actions = vec![ContentRead, ContentCreate, ContentUpdate];
         if matches!(role, Role::Owner | Role::Developer) {
@@ -484,6 +491,7 @@ impl Policy {
                 RolesManage,
                 TokensManage,
                 AuditRead,
+                AudienceManage,
                 ContentDelete,
             ]);
         }
@@ -554,14 +562,16 @@ impl Policy {
     }
 }
 
-/// Actions no API token may hold (D-063): managing who has access, and reading the record of
-/// what was done. People keep them, so a leaked token can't hand itself or anyone else more
-/// power, and can't read the audit log of what it did.
-pub const TOKEN_FORBIDDEN: [Action; 4] = [
+/// Actions no API token may hold (D-063): managing who has access — members, roles, tokens
+/// and the audience — and reading the record of what was done. People keep them, so a leaked
+/// token can't hand itself or anyone else more power, and can't read the audit log of what
+/// it did.
+pub const TOKEN_FORBIDDEN: [Action; 5] = [
     Action::MembersManage,
     Action::RolesManage,
     Action::TokensManage,
     Action::AuditRead,
+    Action::AudienceManage,
 ];
 
 /// What an API token may do, as its creator chose it (step R.4, D-058; Strapi's three kinds).
@@ -622,6 +632,82 @@ impl TokenKind {
 
 /// The longest an API token may live: a year and a day, so a yearly rotation never lapses.
 pub const MAX_TOKEN_DAYS: u16 = 366;
+
+/// A stored content document as a mutable object — stored content is always a JSON object;
+/// a non-object is a `not_an_object` refusal for the caller to report.
+pub fn content_object(content: &str) -> Result<Map<String, Value>, Refusal> {
+    match serde_json::from_str(content).map_err(|_| Refusal {
+        code: "not_an_object",
+        pointer: String::new(),
+        message: "stored content is not JSON".to_owned(),
+    })? {
+        Value::Object(fields) => Ok(fields),
+        _ => Err(Refusal {
+            code: "not_an_object",
+            pointer: String::new(),
+            message: "stored content is not a JSON object".to_owned(),
+        }),
+    }
+}
+
+fn field_not_permitted(field: &str) -> Refusal {
+    Refusal {
+        code: "field_not_permitted",
+        pointer: format!("/{field}"),
+        message: format!("your role can't change the field {field}"),
+    }
+}
+
+/// A save's `submitted` content with every field its author can't `read` put back as
+/// `stored` (D-058): they never saw those fields, so leaving them out of a save mustn't
+/// erase them, and sending one with a different value is refused — `field_not_permitted`
+/// at `/{field}` — not dropped (R.3). Shared by the API's save path and the bulk worker's
+/// per-item write (D-116), so both enforce the same rule.
+pub fn restore_hidden(submitted: Value, stored: &str, read: &Fields) -> Result<Value, Refusal> {
+    if *read == Fields::All {
+        return Ok(submitted);
+    }
+    let Value::Object(mut fields) = submitted else {
+        // Not an object: validation refuses it, with its own words.
+        return Ok(submitted);
+    };
+    let stored = content_object(stored)?;
+    if let Some(field) = fields
+        .iter()
+        .find(|(field, value)| !read.includes(field) && stored.get(*field) != Some(*value))
+        .map(|(field, _)| field.clone())
+    {
+        return Err(field_not_permitted(&field));
+    }
+    for (field, value) in stored {
+        if !read.includes(&field) {
+            fields.insert(field, value);
+        }
+    }
+    Ok(Value::Object(fields))
+}
+
+/// Refuses a write that changes a field `update` doesn't allow, naming the first such
+/// field — `field_not_permitted` at `/{field}` — where `saved` and `stored` are canonical
+/// documents (R.3). Shared by the API's save path and the bulk worker's per-item write
+/// (D-116).
+pub fn only_permitted_changes(saved: &str, stored: &str, update: &Fields) -> Result<(), Refusal> {
+    if *update == Fields::All {
+        return Ok(());
+    }
+    let (saved, stored) = (content_object(saved)?, content_object(stored)?);
+    let mut changed: Vec<&String> = saved
+        .keys()
+        .chain(stored.keys())
+        .filter(|field| saved.get(*field) != stored.get(*field))
+        .collect();
+    changed.sort();
+    changed.dedup();
+    match changed.into_iter().find(|field| !update.includes(field)) {
+        None => Ok(()),
+        Some(field) => Err(field_not_permitted(field)),
+    }
+}
 
 #[cfg(test)]
 mod tests {

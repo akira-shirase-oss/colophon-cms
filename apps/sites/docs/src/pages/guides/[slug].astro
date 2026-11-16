@@ -1,0 +1,33 @@
+---
+import { site, entries, entryPath, richText, type Entry, type Site } from '@colophon/site-kit';
+import Base from '../../layouts/Base.astro';
+
+interface Props {
+	guide: Entry;
+	guides: Entry[];
+	generation: number;
+	cms: Site;
+}
+
+export async function getStaticPaths() {
+	const cms = site();
+	if (cms === null) return [];
+	const { items, generation } = await entries(cms, 'guides');
+	return items.map((guide) => ({
+		params: { slug: entryPath(guide) },
+		props: { guide, guides: items, generation, cms }
+	}));
+}
+
+const { guide, guides, generation, cms } = Astro.props;
+const body = richText(cms, guide.content['body']);
+---
+
+<Base title={`${guide.title} · Fieldnotes Docs`} generation={generation} guides={guides}>
+	<article>
+		{typeof guide.content['section'] === 'string' && <p class="meta">{guide.content['section']}</p>}
+		<h1>{guide.title}</h1>
+		{typeof guide.content['summary'] === 'string' && <p class="summary">{guide.content['summary']}</p>}
+		<div class="prose" set:html={body} />
+	</article>
+</Base>

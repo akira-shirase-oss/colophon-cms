@@ -1,6 +1,6 @@
 // Words for a release's label (D-051, spec §05), shared by the Releases page and a release's
 // receipt. "Verified" always says where: a probe proves what it saw, from where it looked.
-// Spec §05's "Published in CMS" is said "Published in Colophon" (D-082): an editor knows the
+// Spec §05's "Published in CMS" is said "Published in Colophon" (D-147): an editor knows the
 // product's name, not the acronym.
 
 import type { Delivery, Release } from './api.ts';

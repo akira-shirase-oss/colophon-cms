@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bulk_jobs SET state = 'blocked', finished_at = now(),\n                error = 'corrupt_job', updated_at = now()\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND state = 'running'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d6a7ed255ffb8ace07030d48d11f48a8738fa20024a25290ad0e8b63762c64a7"
+}

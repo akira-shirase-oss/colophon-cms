@@ -7,25 +7,38 @@
 
 pub mod access;
 pub mod administrators;
+pub mod assets;
+pub mod audience;
 pub mod audit;
+pub mod budgets;
+pub mod bulk;
 pub mod changesets;
+pub mod collaboration;
 pub mod components;
 pub mod content_types;
 pub mod delivery;
 pub mod destinations;
 pub mod entries;
+pub mod events;
 pub mod idempotency;
 pub mod identity;
 pub mod jobs;
+pub mod ledger;
 pub mod members;
+pub mod migrations;
+pub mod passwords;
 pub mod projects;
 pub mod publish;
+pub mod query;
 pub mod releases;
+pub mod restore;
+pub mod retention;
 pub mod roles;
 pub mod schedules;
 pub mod scope;
 pub mod setup;
 pub mod tokens;
+pub mod work;
 
 use std::{str::FromStr, time::Duration};
 
@@ -34,7 +47,8 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 
-pub use sqlx::postgres::PgPool;
+pub use sqlx::postgres::{PgConnection, PgListener, PgPool};
+pub use sqlx::{Postgres, Transaction};
 
 /// The schema migrations, embedded at compile time from `migrations/`.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -110,6 +124,18 @@ pub enum DbError {
         /// Whether the field holds a list.
         many: bool,
     },
+    /// An asset field names an upload the environment doesn't have (migration 0036, media M1):
+    /// the id was never an asset of this project or its upload failed before the row existed.
+    /// Nothing was written.
+    #[error("an asset field names no asset of the environment")]
+    MissingAsset {
+        /// The field.
+        field: String,
+        /// The place in its list.
+        position: u16,
+        /// Whether the field holds a list.
+        many: bool,
+    },
     /// A changeset pin or a publication names an entry that is deleted (migration 0030, D-080):
     /// a deletion committed while it waited for the entry. Nothing was written; the transaction is
     /// aborted and the caller rolls it back.
@@ -117,6 +143,41 @@ pub enum DbError {
     EntryDeleted {
         /// The entry, as the database reported it.
         entry: Option<uuid::Uuid>,
+    },
+    /// The caller's budget for this kind of work is exhausted (migration 0045, D-113): the
+    /// reservation was refused under the limits lock, and the transaction is aborted and the
+    /// caller rolls it back.
+    #[error("the {kind} budget is exhausted ({used} held or spent of {limit})")]
+    BudgetExceeded {
+        /// What was refused.
+        kind: colophon_domain::budget::Kind,
+        /// What the principal already held or spent.
+        used: i64,
+        /// Its ceiling.
+        limit: i64,
+    },
+    /// The project already retains all the unfinished work its bound allows (spec §33,
+    /// D-131): [`work::admit`] refused the job row this transaction would have added, under
+    /// the admission lock. The transaction is aborted and the caller rolls it back.
+    #[error("the project's pending work is at its bound ({open} of {limit} jobs open)")]
+    WorkFull {
+        /// Unfinished jobs the project retains across the job tables.
+        open: i64,
+        /// Its bound.
+        limit: i64,
+    },
+    /// The installation already retains all the pending payload metadata its bound allows
+    /// (spec §33, D-135): [`work::check_payload`] refused this transaction's stored bytes,
+    /// under the install-wide byte lock. The transaction is aborted and the caller rolls it
+    /// back.
+    #[error(
+        "the installation's pending payload is over its bound ({pending} of {limit} bytes held)"
+    )]
+    PayloadFull {
+        /// Payload bytes pending across every project.
+        pending: i64,
+        /// The bound.
+        limit: i64,
     },
     /// Applying migrations failed.
     #[error("applying migrations failed")]
@@ -149,7 +210,9 @@ impl DbError {
                 }
             }
             _ => match deleted_entry(&error) {
-                Some(("changeset_items" | "publications", entry)) => Self::EntryDeleted { entry },
+                Some(("changeset_items" | "publications" | "comments" | "tasks", entry)) => {
+                    Self::EntryDeleted { entry }
+                }
                 _ => Self::from_query(error),
             },
         }
@@ -171,6 +234,23 @@ pub(crate) fn deleted_entry(error: &sqlx::Error) -> Option<(&str, Option<uuid::U
         .and_then(|postgres| postgres.detail())
         .and_then(|detail| uuid::Uuid::try_parse(detail).ok());
     Some((table, entry))
+}
+
+/// The asset a violation of migration 0039's `<table>_asset_live` rule names: a new reference
+/// to an asset that is `deleting` or `deleted` — or has a delete or expire job on the way —
+/// answered like a name for an asset that isn't there.
+pub(crate) fn deleted_asset(error: &sqlx::Error) -> Option<uuid::Uuid> {
+    let sqlx::Error::Database(database) = error else {
+        return None;
+    };
+    if !database.is_foreign_key_violation() {
+        return None;
+    }
+    database.constraint()?.strip_suffix("_asset_live")?;
+    database
+        .try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+        .and_then(|postgres| postgres.detail())
+        .and_then(|detail| uuid::Uuid::try_parse(detail).ok())
 }
 
 /// Builds the pool without connecting. Connections open on first use, so the server starts

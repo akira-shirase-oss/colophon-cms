@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE site_sessions SET revoked_at = now()\n         WHERE project_id = $1 AND site_user_id = $2 AND revoked_at IS NULL AND id IN (\n             SELECT id FROM site_sessions\n             WHERE project_id = $1 AND site_user_id = $2\n               AND revoked_at IS NULL AND expires_at > now()\n             ORDER BY last_seen_at DESC OFFSET $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ee97edf12573add2d9175d2eb32e8c5c785ecd797e088840d9e6ddb33ce3cfa7"
+}

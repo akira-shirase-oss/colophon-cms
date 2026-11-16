@@ -1,0 +1,64 @@
+---
+import { site, entries, me } from '@colophon/site-kit';
+import Base from '../../layouts/Base.astro';
+import Unseeded from '../../components/Unseeded.astro';
+import { sessionToken } from '../../lib/session.ts';
+
+// Rendered per request: the page is the visitor's own — who they are decides what it lists.
+export const prerender = false;
+
+const cms = site();
+const token = cms === null ? null : sessionToken(Astro.request);
+if (cms !== null && token === null) return Astro.redirect('/signin/');
+
+const user = cms !== null && token !== null ? await me(cms, token) : null;
+if (cms !== null && user === null) return Astro.redirect('/signin/');
+
+// A member's delivery read: every row the database lets their role see, asked for with the
+// bearer form of their session — answered `private`, never through the anonymous cache.
+const posts =
+	cms !== null && token !== null ? await entries(cms, 'posts', token) : { items: [], generation: 0 };
+const gated = posts.items.filter((post) => post.visibility !== 'public');
+const open = posts.items.length;
+---
+
+<Base title="Members · The Draft" generation={posts.generation}>
+	{
+		cms === null ? (
+			<Unseeded />
+		) : (
+			<section class="account">
+				<h1>Members</h1>
+				<p class="account-line">
+					Signed in as <strong>{user?.display_name ?? user?.email}</strong> — role <code>{user?.role}</code>.
+					Your session reads delivery as <code>role:{user?.role}</code>, so this list shows the {gated.length}{' '}
+					gated {gated.length === 1 ? 'post' : 'posts'} anonymous readers can’t see (they get{' '}
+					{open - gated.length}).
+				</p>
+				<form method="post" action="/api/signout" class="signout">
+					<button type="submit">Sign out</button>
+				</form>
+				<ul class="posts">
+					{gated.map((post) => (
+						<li>
+							<a href={`/members/posts/${post.id}/`}>
+								<span class="meta">
+									{typeof post.content['published_on'] === 'string' && post.content['published_on']}
+									{typeof post.content['author'] === 'string' && ` · ${post.content['author']}`}
+								</span>
+								<h2>
+									{post.title}
+									<span class={`gate ${post.visibility === 'authenticated' ? 'gate-auth' : 'gate-role'}`}>
+										{post.visibility}
+									</span>
+								</h2>
+								{typeof post.content['excerpt'] === 'string' && <p class="excerpt">{post.content['excerpt']}</p>}
+							</a>
+						</li>
+					))}
+				</ul>
+				{gated.length === 0 && <p>Nothing gated is published yet — check back after the next release.</p>}
+			</section>
+		)
+	}
+</Base>

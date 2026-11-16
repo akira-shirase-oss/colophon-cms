@@ -1,0 +1,73 @@
+---
+import { site, entries, entryPath, type Entry } from '@colophon/site-kit';
+import Base from '../../layouts/Base.astro';
+
+interface Ingredient {
+	item?: unknown;
+	amount?: unknown;
+}
+
+interface Props {
+	recipe: Entry;
+	generation: number;
+}
+
+export async function getStaticPaths() {
+	const cms = site();
+	if (cms === null) return [];
+	const { items, generation } = await entries(cms, 'recipes');
+	return items.map((recipe) => ({
+		params: { slug: entryPath(recipe) },
+		props: { recipe, generation }
+	}));
+}
+
+const { recipe, generation } = Astro.props;
+const ingredients = Array.isArray(recipe.content['ingredients']) ? (recipe.content['ingredients'] as Ingredient[]) : [];
+const steps = Array.isArray(recipe.content['steps']) ? recipe.content['steps'].filter((s): s is string => typeof s === 'string') : [];
+---
+
+<Base title={`${recipe.title} · Butter & Thyme`} generation={generation}>
+	<article class="recipe">
+		{typeof recipe.content['category'] === 'string' && <span class="badge">{recipe.content['category']}</span>}
+		<h1>{recipe.title}</h1>
+		{typeof recipe.content['intro'] === 'string' && <p class="intro">{recipe.content['intro']}</p>}
+		<dl class="facts">
+			<div>
+				<dt>Prep</dt>
+				<dd>{String(recipe.content['prep_minutes'] ?? '–')} min</dd>
+			</div>
+			<div>
+				<dt>Cook</dt>
+				<dd>{String(recipe.content['cook_minutes'] ?? '–')} min</dd>
+			</div>
+			<div>
+				<dt>Serves</dt>
+				<dd>{String(recipe.content['servings'] ?? '–')}</dd>
+			</div>
+			<div>
+				<dt>Difficulty</dt>
+				<dd>{typeof recipe.content['difficulty'] === 'string' ? recipe.content['difficulty'] : '–'}</dd>
+			</div>
+		</dl>
+		<section class="ingredients">
+			<h2>Ingredients</h2>
+			<ul>
+				{
+					ingredients.map((ingredient) => (
+						<li>
+							<span>{typeof ingredient.item === 'string' ? ingredient.item : ''}</span>
+							<span class="amount">{typeof ingredient.amount === 'string' ? ingredient.amount : ''}</span>
+						</li>
+					))
+				}
+			</ul>
+		</section>
+		<section class="method">
+			<h2>Method</h2>
+			<ol>
+				{steps.map((step) => <li>{step}</li>)}
+			</ol>
+		</section>
+	</article>
+</Base>

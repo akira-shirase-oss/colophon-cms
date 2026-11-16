@@ -1,12 +1,11 @@
 // Load scenario for the signed-in path (step 1.1): every request is authenticated by session
 // cookie, so each one looks the session up in Postgres and reads through row-level security.
-// setup() signs in once through the real OpenID Connect flow, Keycloak's login form included.
-// Requests alternate between GET /me and GET /api/v1/projects. Same settings as health.js,
-// with the defaults scripts/load.sh gives this endpoint: RATE 2000 and P99_MS 100.
+// setup() signs in once on the built-in password card (D-146). Requests alternate between
+// GET /me and GET /api/v1/projects. Same settings as health.js, with the defaults
+// scripts/load.sh gives this endpoint: RATE 2000 and P99_MS 100.
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
-import { parseHTML } from 'k6/html';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -43,13 +42,9 @@ export const options = {
 };
 
 export function setup() {
-  // Start the sign-in on the public origin (the registered redirect URI), follow to Keycloak.
-  const page = http.get(`${PUBLIC_URL}/auth/login?return_to=/me`);
-  const action = parseHTML(page.body).find('#kc-form-login').attr('action');
-  if (!action) fail('no Keycloak login form');
-  // Posting the credentials follows Keycloak's redirect to the callback, then to /me.
-  const me = http.post(action.replace(/&amp;/g, '&'), { username: 'dev-owner', password: 'colophon-dev' });
-  if (me.status !== 200 || me.json('data.display_name') !== 'Dev Owner') fail(`sign-in failed: HTTP ${me.status}`);
+  // The built-in password card (D-146): one POST, the session cookie lands in the jar.
+  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
+  if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
   const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
   return { cookie: `colophon_session=${jar.colophon_session[0]}` };
 }

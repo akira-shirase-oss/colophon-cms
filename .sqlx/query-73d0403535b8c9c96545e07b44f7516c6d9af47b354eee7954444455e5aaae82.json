@@ -1,0 +1,63 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT entry_id AS entry, expected_revision_id AS expected_revision, outcome,\n                  resolution::text AS resolution\n           FROM migration_items\n           WHERE project_id = $1 AND environment_id = $2 AND plan_id = $3\n             AND outcome IN ('ok', 'migrates', 'needs_input', 'resolved') AND entry_id > $4\n           ORDER BY entry_id\n           LIMIT $5",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entry",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "migration_items",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "expected_revision",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "migration_items",
+            "name": "expected_revision_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "migration_items",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "resolution",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "73d0403535b8c9c96545e07b44f7516c6d9af47b354eee7954444455e5aaae82"
+}

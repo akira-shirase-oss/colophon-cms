@@ -26,6 +26,9 @@
 	let slug = $state('');
 	let name = $state('');
 	let message = $state('');
+	let email = $state('');
+	let password = $state('');
+	let passwordMessage = $state('');
 
 	async function refresh() {
 		const reply = await call('GET', '/me');
@@ -48,13 +51,33 @@
 		await refresh();
 	}
 
+	// Email-and-password accounts (D-084): the response itself sets the same session and CSRF
+	// cookies an OIDC callback sets, on this host.
+	async function passwordAuth(event: SubmitEvent) {
+		event.preventDefault();
+		const signingUp = (event.submitter as HTMLButtonElement | null)?.value === 'signup';
+		const reply = await call('POST', signingUp ? '/auth/signup' : '/auth/signin', {
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email, password })
+		});
+		if (reply.status === 201 || reply.status === 204) {
+			passwordMessage = '';
+			password = '';
+			await refresh();
+		} else {
+			const envelope = envelopeOf(reply.body);
+			passwordMessage = `${reply.status} ${envelope?.code ?? ''}: ${envelope?.message ?? ''}`;
+		}
+	}
+
 	onMount(refresh);
 </script>
 
 <h1>Session</h1>
 <p class="lede">
-	Sign-in through the server's real OpenID Connect flow (Keycloak in the local stack), then the projects API as that person:
-	every write carries the CSRF token and comes from a trusted origin.
+	Sign-in through the server's own password card (D-146) — or the "Sign in" link, which the
+	server sends to the Studio's card when no identity provider is configured — then the projects
+	API as that person: every write carries the CSRF token and comes from a trusted origin.
 </p>
 
 {#if me}
@@ -80,6 +103,15 @@
 {:else}
 	<p data-testid="signed-out">Not signed in{status === null ? '' : ` (HTTP ${status})`}.</p>
 	<p><a href="{SERVER}/auth/login?return_to=/me" data-testid="sign-in">Sign in</a></p>
+	<h2>Email and password</h2>
+	<p class="lede">An account this Colophon keeps itself (D-084), beside the organisation's sign-in.</p>
+	<form onsubmit={passwordAuth}>
+		<label>Email <input bind:value={email} name="email" type="email" required /></label>
+		<label>Password <input bind:value={password} name="password" type="password" required minlength="8" /></label>
+		<button type="submit" name="way" value="signin">Sign in</button>
+		<button type="submit" name="way" value="signup">Create account</button>
+	</form>
+	{#if passwordMessage}<p data-testid="password-message">{passwordMessage}</p>{/if}
 {/if}
 
 <style>
@@ -96,7 +128,7 @@
 	label {
 		display: grid;
 		gap: 0.25rem;
-		font-size: 0.85rem;
+		font-size: 0.875rem;
 		color: var(--muted);
 	}
 	input {

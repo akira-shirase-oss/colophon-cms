@@ -20,6 +20,7 @@ measurements. A milestone is done when its **proof gate** passes with stored evi
 | V | Versions and distribution | One version across server, CLI, SDK and MCP; the CLI installs from npm, Cargo, Homebrew and a script on a clean machine (D-062) | 1–2 weeks |
 | P5 | Safe automation | Zero unauthorized actions in the eval set; interrupted bulk job resumes (X12) | 3–4 weeks |
 | P6 | Operate it | F09–F14, L05–L13, 24-hour soak, restore drill; **v0.1 release** | 3–4 weeks |
+| P7 | The audience | Site visitors sign up, sign in and read gated content — enforced by Postgres RLS, proven end to end on a real site | 2–3 weeks |
 
 Total: about **10–13 months** to v0.1 at the pace these estimates assumed, with the first public demo at the end of P3.
 
@@ -34,7 +35,7 @@ Total: about **10–13 months** to v0.1 at the pace these estimates assumed, wit
 - Cargo workspace with `colophon-domain`, `colophon-db`, `colophon-api`, `colophon-cli`, `colophon-server`; shared
   `[workspace.dependencies]` and `[workspace.lints]`.
 - Frontend workspace with `apps/studio`, `packages/ui`, `packages/content-renderer`.
-- `deploy/compose.yaml`: PostgreSQL 18, Valkey (D-015), Garage (D-016, replacing MinIO), Keycloak; started and checked by `scripts/stack.sh` (D-017).
+- `deploy/compose.yaml`: PostgreSQL 18, Valkey (D-015), Garage (D-016, replacing MinIO); Keycloak only behind the opt-in `oidc` profile since D-146; started and checked by `scripts/stack.sh` (D-017).
 - API error envelope, request IDs, `/livez` and `/readyz`.
 - The testing rule (D-018) in place: `apps/testbed` with Playwright, and the k6 harness in `perf/` with committed
   results and per-machine baselines. Every later step adds its own checks and scenarios.
@@ -56,7 +57,7 @@ rich-text format and editor · 0.5 the Rust validator · 0.6 the renderer · 0.7
 - `domain`: IDs, scopes, schema model and validation, entries, immutable revisions, locales, slug rules, save rule.
 - `db`: core tables, composite foreign keys, slug claims, insert-only revisions, expected-revision save, idempotency
   records, database roles with row-level security.
-- `auth`: OIDC login (Keycloak), sessions, CSRF/Origin checks, owner bootstrap, roles, invitations, cross-project denial.
+- `auth`: built-in password login (OIDC optional, D-146), sessions, CSRF/Origin checks, owner bootstrap, roles, invitations, cross-project denial.
 - `api`: projects, environments, schemas, entries, revisions; `If-Match`, `Idempotency-Key`, cursor pagination; the
   generated OpenAPI document (D-027).
 - `cli`: `login`, `content create`, `content list`, `--json`, exit codes.
@@ -193,7 +194,18 @@ checked by the database on save and by every release, with "referenced by" (buil
 objects, lists and page-builder blocks, references inside them (built: D-066, migration 0025) · M.4 single types
 (built: D-067, migration 0026), patterns (built: D-069), uniqueness (built: D-070, migration 0027), defaults (built:
 D-071), conditional fields (built: D-072) and shared components (built: D-073, migration 0029) · M.5 migrations with a plan, a dry run and per-entry outcomes; the simulator racing
-schema changes and saves. What is built has its tests, a testbed page (`/modelling`) and a load scenario
+schema changes and saves. M.5a is built (D-100, migration 0040, `{P}/migrations`): a plan is computed under
+the collection's change lock, dry-runs every draft and open publication into per-entry items, is approved and
+applied against its hash, blocks schema writes while it runs, and takes resolutions for entries that need
+input; M.5b is built too (D-101, migration 0041): the worker drives a `running` plan under an advisory-lock
+claim, `fill`/`move` operations transform or a stored `resolution` replaces each item, per-item outcomes
+commit durably (crash-resumable; F-05b proves it), and the plan ends `done` or `blocked` with
+`republish_required` pinning open publications to republish. M.5c is built too: the Studio's Migrations
+section (a list of plans and a plan's page — counters, a filterable item table, a resolution dialog, and
+hash-bound approve/apply/cancel gated on `schema.change`), the "Plan a migration" affordance on the type
+builder's `needs_migration` refusal, the testbed's `/migrations` page, `perf/k6/migrations.js`, and the
+simulator's schema/save races (invariant V: no revision is written against a superseded version, with the
+`stamp-seen-version` mutation proving it's checked). What is built has its tests, a testbed page (`/modelling`) and a load scenario
 (`perf/k6/modelling.js`) whose million-request runs wait for a quiet machine; the Studio's builder and editor cover
 M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 
@@ -203,7 +215,9 @@ M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 
 - `domain`/`delivery`: rollback as a new generation, release history queries, revocation through historical URLs.
 - `studio`: release slider, history and compare, restore as a new revision, media picker.
-- `media`: upload intents, quarantine, signature and decoder checks, derivatives, reference tracking, cleanup.
+- `media`: upload intents, quarantine, signature and decoder checks, derivatives, reference tracking, cleanup —
+  built through staged deletion with tombstones and the retention sweep (D-098, D-099); the CDN purge path for
+  deleted bytes is the remaining gap.
 - Preview capabilities on a separate origin; sitemaps and feeds from one generation; scheduled publishing with time
   zones and daylight-saving handling.
 
@@ -222,9 +236,30 @@ expired-approval scheduling).
   edges chosen explicitly, run as their author by the worker with every publish check, published once or blocked
   with the reason, delayed when late, cancellable.
 - Review stages (Strapi's review workflows) on top of changesets; assignees; comments on fields and entries; tasks.
+  Comments and tasks' backend built in step E1 (D-102, branch `e1-comments-tasks`, migration 0042): comments
+  bind immutable revisions — never moving anchors — verbatim forever with a resolve/reopen pair; tasks carry
+  title, assignee, status and a done pair; both answer the entries' `content.read`/`content.update` with the
+  `own` condition, survive their entry's deletion readable, and write idempotently with audits. Their surfaces
+  are built too (branch `e1-surfaces`): a Comments tab on the entry editor binds the version on screen and
+  answers or reopens comments on their etags, and a project Tasks page lists, makes and edits them — nobody
+  sent as `assignee: null`; the testbed's Collaboration page and `perf/k6/collaboration.js` exercise the loop.
+  E2 builds the review stages (D-104, branch `e2-stages`, migration 0043): an environment may name an
+  ordered list of them (`GET`/`PUT {P}/review-stages`, `schema.change`-gated, `ETag`'d, idempotent and
+  audited), each needs an approval on the changeset's current hash — in any order — for it to publish, a
+  request for changes at any stage blocks it, a stage's `different_reviewer` narrows who may approve, and
+  an environment with no list keeps the single implicit review exactly as before. Their surfaces are built
+  too (branch `e2-surfaces`): the changeset page lists each stage in order with its state and approver, every
+  review names the stage it decides, and Settings' Review stages page edits the list under its ETag; the
+  testbed's Review stages page and `perf/k6/stages.js` exercise the gated publish.
 - Live presence and collaboration (O-017); duplicate, bulk actions, saved views, the history slider.
-- Live queries, after Convex: the Studio's lists, drafts, changesets and receipts update as PostgreSQL commits, from one
-  listener per server fanned out to bounded sessions, every page read at one snapshot (COMPARISON.md).
+- Live queries, after Convex: the Studio's lists, drafts, changesets and receipts update live as PostgreSQL commits,
+  from one listener per server fanned out to bounded sessions, every page read at one snapshot (COMPARISON.md). E3's
+  backend half is built (D-108, branch `e3-live-lists`, migration 0044): commit-time triggers `pg_notify` compact hints
+  on `colophon_events`, each API process holds one `LISTEN` connection that fans them out to `{P}/events` SSE streams
+  (per-credential/per-project/per-server bounds, resync-not-replay). The Studio's wiring is built too (branch
+  `e3-surfaces`): the project shell holds one stream and turns each hint's kind into the invalidations a fresh visit
+  would run, so a member's save lands in an owner's list without a reload or a poll — and a save on an entry being
+  edited stays a conflict, never a silent overwrite.
 - Visual preview: the site renders a draft through a short-lived capability (spec §06), with click-to-edit.
 
 **Proof gate:** two editors editing at once never lose an acknowledged edit; a schedule missed during downtime is
@@ -237,8 +272,39 @@ reported as delayed, never on time; locale variants publish independently; comme
 - Query API: filters, sorting, pagination, field selection and reference population on drafts (for permitted callers)
   and on published content; Sanity-style perspectives (published, drafts, a release). Queries use only indexes the
   content type declares, and Studio and draft reads get the delivery cache's always-consistent rule (after Convex).
-- GraphQL over the same queries and permissions; OpenAPI for REST; the TypeScript SDK with generated types.
+  DX.1–DX.6 are built (D-103, D-105, D-107, D-109): the bounded document (`colophon_domain::query`), the hash-bound
+  cursor, `POST {P}/collections/{collection}/entries/query` running it over current drafts with `content.read`
+  scoping, `POST /content/v1/{project}/{environment}/{collection}/query` running the same document over the
+  published projection — the release `?generation=` pins — with the canonical query echoed and hashed into
+  every cache key, `depth` reference population on both perspectives: batched per level, narrowed to the
+  caller's `content.read` on drafts, pinned to the page's generation on delivery, an unresolved target
+  honestly keeping its stored id, and the information leak closed: a draft query is refused where a filter or
+  sort names a field the role can't read on every row its page could hold, while `fields` still narrows freely
+  with `hidden_fields` disclosing the rest. Still to come: the perspectives the drafts and previews take.
+- GraphQL over the same queries and permissions; the TypeScript SDK with generated types. The `OpenAPI` 3.1
+  document for REST is built (DX.7, D-110): emitted from the one route table the router is built from, served
+  at `GET /openapi.json` unauthenticated with `ETag`/304, committed byte-for-byte as `docs/api/openapi.json`
+  (80 paths, 104 operations, 110 schemas). The TypeScript SDK is built (DX.8, D-112): `@colophon-cms/sdk` in
+  `packages/sdk` — `src/api.types.ts` generated from the committed document by `openapi-typescript` and
+  drift-checked the same way, plus a hand-written `Client` (typed methods over the core surface, the error
+  envelope parsed into `ApiError`, `If-Match`/`Idempotency-Key` required by the types, bounded reads,
+  generation-pinned delivery via `atGeneration`); no second auth surface — a credential is attached, never
+  minted. GraphQL is built (DX.10, D-115): `POST {P}/collections/{collection}/graphql` builds an `async-graphql`
+  dynamic schema per request from the project's content types — `entries(where, orderBy, first, after)` and
+  `entry(id)`, a node type per collection the role may read — and every call's arguments and selection compile
+  to the same canonical document `entries/query` runs, validated and executed by the shared `run_query`
+  pipeline in one transaction (`applied.query`/`queryHash` byte-equal to REST's echo), refusals surfacing as
+  GraphQL errors carrying the document's own `code`/`pointer` in `extensions`. Read-only: mutations stay REST,
+  delivery stays `/content/v1`.
 - Webhooks by event (entry, release, media, schema), import from Strapi and Sanity exports with a dry run, export.
+  Import parity is built (DX.9, D-114): `POST …/collections/{collection}/import` reads native JSONL and JSON
+  arrays, marked Strapi envelopes, Strapi v4 `{id, attributes}` and v5 `documentId` documents, and Sanity NDJSON —
+  `colophon_domain::transfer::map` normalizes each against the declared fields — and `?dry_run=true` plans the
+  same pipeline under savepoints in a transaction that never commits, so the plan writes nothing, needs no
+  `Idempotency-Key`, and answers a per-item outcome (`created`/`updated`/`skipped`, or `would_create`/
+  `would_update`/`skipped`/`invalid`, with `source`, `unmapped` metadata and refusals pointer-prefixed by the
+  item's place). `?type=` filters a mixed Sanity export; a source UUID updates a live entry's draft or names a new
+  one's id. Still bounded at 512 and one transaction; resumable staging is P5's. Webhooks stay to come.
 - Extension points instead of plugins (D-057): custom field types as data, Studio panels in sandboxed iframes.
 
 **Proof gate:** every query is permission-filtered (no field or entry leaks across roles); GraphQL and REST answer the
@@ -329,25 +395,219 @@ evidence".
 edit resumes without duplicates or overwrites); L08 (a noisy agent is throttled; editors keep their latency).
 
 **Steps:** the MCP adapter over local stdio (built: D-068, closing O-013 with a thin JSON-RPC layer;
-`crates/colophon-mcp`, MCP 2025-11-25, eight typed tools over `/api/v1` with a project API token: read content, write
-drafts from the revision read, make a publish request and ask for its review; nothing approves or publishes; tool
-discovery follows the token's permissions; unit tests and a stack test over stdio) · not built: remote MCP with its
-authorization, service-account quotas and budgets, bulk manifests and jobs (X12), the CLI's full JSON contract and a
-`colophon mcp` subcommand, the evaluation suite, L08. The proof gate is not met.
+`crates/colophon-mcp`, MCP 2025-11-25, eighteen typed tools over `/api/v1` with a project API token: read and query
+content, releases, migration plans, comments and tasks; write drafts from the revision read, comments and tasks,
+make a publish request and ask for its review; nothing approves, publishes, resolves, reassigns or drives a
+migration — D-106; tool discovery follows the token's permissions; unit tests and a stack test over stdio) ·
+the first piece of the enforcement itself (built: D-111 — `POST {P}/changesets/{id}/reviews` refuses
+`agent_self_review` whenever an API token would approve a changeset a token submitted, on the implicit review and
+every named stage alike, so no credential can greenlight a proposal with no person in the loop; a token may still
+ask for changes, approve a person's changeset under `content.review`, and publish a person-approved changeset under
+`content.publish`; covered by `tests/tokens.rs`) ·
+the budget substrate (built: P5.2, D-113, migration 0045 — `api_token_limits` ceilings per token and the
+`budget_reservations` ledger: the accepting transaction locks the limits row, counts `held`/`settled`/`uncertain`
+allowance and writes `held` or refuses `budget_exceeded` (403); documents reserve at `entries::create`/`save`/
+`create_localization`, a publish reserves one `jobs` slot per outbox dispatch, `jobs::finish` settles or releases it
+with the outcome, superseded pending jobs' reservations release with the supersede, and the worker's sweep closes
+reservations whose outcomes are on record and flags stale held rows `uncertain` as `budget.discrepancy` audit
+events; limits and usage are managed and read only on the people-facing `POST`/`PATCH`/`GET …/tokens/{token}`
+routes; `requests_per_minute` is consumed at request time by D-118's quota); ·
+bulk manifests and jobs (built: P5.3, D-116, migration 0046 — `{P}/bulk` keyed chunks of exact entry ids and
+base revisions, at most 100 items and 1 MiB a chunk, executed one transaction per item by the worker as the
+original submitter: outcomes `applied`/`conflict`/`refused`/`skipped`, a resumable `v1:`-sealed item cursor,
+per-item `documents` reservations with the `jobs` slot on accept, revocation and membership removal stopping
+work mid-run; covered by `tests/bulk.rs`) ·
+the evaluation suite (built: D-117 — `crates/colophon-server/tests/evals.rs`, one ignored, serial stack test
+with a scoped API token — or a real `colophon-mcp` stdio session — as the adversary: the six §27 abuse cases
+plus the token-privilege and MCP refusal surfaces, every call classified `refused`/`permitted`/`unauthorized`
+against typed-refusal oracles and owner-read end state, `COLOPHON_EVAL_TRIALS` repetitions and the
+`UNAUTHORIZED: 0` gate; `scripts/check.sh` runs it at three trials, `COLOPHON_EVAL_RESULTS` stores the
+artifact) ·
+the request-time quota (built: D-118 — `requests_per_minute` consumed as a rolling window in the
+admission limiter, keyed `colophon:quota:{project}:{token}`, checked where the token's scoped
+transaction opens: 429 `rate_limited` with `Retry-After`, `token.rate_limited` audited once per
+throttle episode, members untouched, Valkey-outage semantics the shared limiter's own,
+`COLOPHON_QUOTA_WINDOW_MS` shortening the window for tests; covered by `tests/quotas.rs` and
+`perf/k6/quotas.js`) ·
+the CLI's machine contract and the MCP entry point inside it (built: D-119 — every command's `--json` is
+one versioned `{"version", "command", "data"|"error"}` envelope carrying API refusals whole, the seven list
+commands stream one envelope per item on `--jsonl` following `next_cursor` within a 1,000-page bound, and
+`colophon mcp` links the `colophon-mcp` library into the binary: same configuration, protocol, eighteen safe
+tools and refusal boundary, proved end to end in `tests/cli.rs` including a live `initialize`/`tools/list`
+session and a 403 arriving `missing_permission`-whole on stdout) ·
+L08's load evidence (built: D-120 — `perf/k6/noisy-agent.js`, one run in two sequential
+phases: editorial traffic alone, then the same traffic at the same rate beside a
+60-a-minute token attempting ~600/s and an editor in a second project, every request
+tagged by arm so `handleSummary()` computes the spec's 2x-p95 comparison from the numbers
+the run just measured into the stored `l08` object, which `scripts/load.sh` carries into
+the result file and fails the run on; the stored run
+`perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json` shows the agent
+99.7% refused with `Retry-After`, editorial p95 x1.83 of its baseline and project-B's
+x1.86 of its own) ·
+remote MCP (built: D-121 — `POST|DELETE {P}/mcp` on the API speaks MCP's Streamable HTTP transport, the same
+`colophon-mcp` session logic as stdio over a shared `Backend`; a project API token is the only credential —
+a person's is 403 `api_token_required`, another project's 404 — sessions are minted on `initialize`, bounded
+per token (429), project and server (503), expire idle and cancel their in-flight requests on `DELETE` or
+expiry; a tool's call is dispatched in-process through the server's own router under the same token, so
+dispatch is never authorization and the D-106 boundary is unchanged, proved in `tests/mcp.rs` by the
+lifecycle, the credential refusals, the transport's `Origin`/`Accept`/protocol-version door checks and
+byte-identical parity with stdio) ·
+provider `tokens`/`cost` budgets (built: D-122, migration 0047 — `api_token_limits` gains
+`tokens_per_day` (1…1,000,000,000) and `cost_per_day_micros` (1…100,000,000,000 micros of the
+accounting unit, a fixed-point integer), `Kind::Tokens`/`Cost` wire to their columns, and
+`reserve` admits under the ceiling or refuses `budget_exceeded` with the day counted as
+`coalesce(settled, reserved)` — open reservations at their allowance, settled outcomes at what
+they consumed; the ceilings ride the same `POST`/`PATCH`/`GET …/tokens/{token}` surface and the
+usage read gains `tokens_last_day`/`cost_last_day`; covered by `tests/budgets.rs` in
+`colophon-db` and `colophon-server`; what still waits on the assistant is a call site that
+reserves them) ·
+the CLI's import and export (built: D-123 — `content import` sends the file the API accepts verbatim,
+checked only the way the API will read it (every JSONL line or array element parses, the file isn't
+empty, at most 512 items, a `--file` within the largest request body); `--dry-run` plans each item and
+sends no key, an applied import sends one `cli-<uuid>` or `--idempotency-key`'s; `content export`
+streams `GET …/export` a line at a time — the file itself on text, one envelope a document on `--jsonl`,
+the bounded `{"collection", "entries"}` on `--json`, no `--cursor` since the endpoint doesn't page;
+proved end to end in `tests/cli.rs`, the file checks unit-tested in `src/content.rs`) ·
+not built: nothing — the milestone is closed, the optional assistant aside. The proof gate is met — X12's resume proof is in
+`tests/bulk.rs`, the eval gate's stored run is `perf/results/2026-11-04T141109.623685Z-evals.json`, and
+L08's is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json`.
 
 ## P6: Operate it (≈ spec M5)
 
 **Goal:** someone other than the maintainer can install, upgrade, back up, restore and diagnose Colophon.
 
 - `operations`: encrypted base backups and WAL archiving, the restore procedure (new epoch, deletion ledger replay,
-  reconciliation before dispatch), the upgrade runbook, budgets, runbooks, observability.
+  reconciliation before dispatch), the upgrade runbook, budgets, runbooks, observability. Built so far: the
+  deletion ledger itself (D-124 — append-only `deletion_ledger` written inside every governed delete's transaction;
+  `admin ledger export`/`replay` as the off-host copy and the restore primitive; stack-proven in
+  `colophon-db/tests/ledger.rs`), encrypted cluster backups (D-125), the restore procedure (D-126), and the
+  operate-it slice (D-130): `scripts/backup.sh daily` (create + verify + the ledger export inside the backup's own
+  directory + retention + an audit line, launched by the platform's own scheduler), `retention [--apply]` (newest
+  verified of the newest 7 capture days and 4 ISO weeks; the newest verified always kept; unverified never pruned)
+  proven by `retention-drill`, `admin migrate-status` (current/behind/unknown at exit 4) gating
+  `deploy/runbooks/upgrade.md` and `scripts/upgrade-rehearsal.sh`, `deploy/runbooks/observability.md` auditing what
+  exists and what does not, and deployment `version`/`commit` on every request-attributed log line. The
+  bounded tables and spec §33's second budget joined them (D-135, migration 0050): the worker's table-retention
+  sweep (`colophon_db::retention`, `COLOPHON_TABLE_SWEEP_MS`, default hourly) deletes dead state in 500-row
+  batches, oldest first — terminal work and its receipts at 30 days, the settled ledger and the audit log at 90,
+  dead sessions, invitations and setup state on their own ages — through `colophon_retention`'s definer
+  functions where the tables are private to the sign-in flows, never touching `deletion_ledger`, content
+  history or an `uncertain` reservation; and `colophon_pending_payload` counts the installation's pending
+  payload metadata (job keys, recorded asset sizes, bulk manifests and items, plan definitions and
+  resolutions) under a new install-wide byte lock, so `work::admit` and a post-write `check_payload` refuse
+  expensive work over 1 GiB with 503 `payload_full`. Asset versioning landed too (D-136, migration
+  0051): every verified landing promotes to a content-addressed key `public/{project}/{env}/{asset}/{sha}` —
+  a replace is a new object, never an overwrite — recorded immutably in `asset_versions`, swung onto the asset in
+  the landing transaction, served at `/media/v1/…/{asset}` (current) and `…/{asset}/{sha}` (pinned) through the
+  `media_object` delivery read, replaced via `POST {P}/assets/{asset}/replace` + the `reverify` job, deleted by
+  whole-prefix listing, and swept when a `public/` object has no recording row — so a retained or previously
+  published release's media bytes can never be silently replaced or collected while pinned.
 - `verification`: the full fault and load matrix, a 24-hour soak, the benchmark report, the requirements matrix.
+  Built so far: the L11–L13 dependency-failure runs (D-127) — `perf/k6/{cache-down,postgres-trouble,purge-trouble}.js`
+  inject real faults through the receiver's `/control` (container pauses on Postgres/Valkey, a SIGKILLed and
+  respawned worker, a 503-ing purge sink with `Retry-After`, a frozen site generation) while traffic arms measure
+  baseline/margin/outage/recovery windows; each exported summary carries its `l11`/`l12`/`l13` verdict, gated by
+  `scripts/load.sh`, with stored evidence under `perf/results/`. The L01–L06, L09, L10 and L14 cases joined them
+  (D-128) — `perf/k6/{smoke,warm-baseline,cold-cache,stampede,mixed,spike,import-scale,cdn-warm,media-load}.js`,
+  each `handleSummary()` computing its `lNN` verdict that `scripts/load.sh` extracts and gates on generically,
+  the delivery cache's TTL/jitter configurable (`COLOPHON_CACHE_TTL_MS`/`COLOPHON_CACHE_JITTER_MS`, production
+  defaults unchanged) so L04's expiries land inside the run, and every result now carrying resource samples
+  (RSS/CPU/Postgres connections) and `database_transactions_during_run`; stored HELD evidence under
+  `perf/results/` for all nine. The benchmark report is committed as `docs/BENCHMARKS.md` (regenerated by
+  `scripts/benchmark-report.sh`). Still owed here: L07's genuine 24-hour soak and L02's full 30-minute run
+  (the stored pass is 90 s), then the complete matrix. Also in: F10's schema halves and
+  F12's delivery half on the real stack (D-129) — concurrent schema edits from one base make one winner and one
+  `stale_version`, a schema change racing an entry write resolves to exactly one committed side, a schema `PUT`
+  killed at its commit boundary rolls back or replays (`content_type.update:*` fault points), and a delivery
+  repeated by crash/resume, refusal or attempt timeout keeps one idempotency key, so a deduplicating destination
+  applies exactly one effect. F09 and F11 joined them (D-131): `colophon_db::work` bounds a project's open jobs at
+  spec §33's 10,000 across `jobs`/`asset_jobs`/`bulk_jobs`/`migration_plans`, every transaction that adds a durable
+  work row admits under the project's advisory lock first and a refused admission aborts the whole transaction —
+  503 `unavailable` + `work_full` + `Retry-After` for capacity, a 500 for the outbox write that cannot commit —
+  proven in `tests/faults.rs` by filling a project to the bound, refusing then freeing, and by revoking the
+  outbox's `INSERT` grant as the honest disk-failure stand-in; F11's citation is `tests/evals.rs` (D-117), where
+  hostile model output is refused and owner-oracle-verified at `UNAUTHORIZED: 0`.
 - `docs`: complete guides; every example runs in CI.
 - `oss`: release process, SBOM, signed artifacts, security policy.
-- Usability test with five editors; one independent install.
+- Usability test with five editors; one independent install. Prepared (D-132): `scripts/clean-install.sh`
+  rehearses the README path verbatim in a throwaway clone on an isolated stack, `docs/usability-protocol.md`
+  scripts the five sessions, and `deploy/runbooks/install-feedback.md` is the installer's friction record; the
+  gates themselves tick only when the people run them. The sessions' real sites are built (D-133): five Astro
+  apps under `apps/sites/` — a blog, a docs set, a recipe box, a newspaper and a photo portfolio — each reading
+  its collection of one `demo-sites` project through the anonymous delivery API and media origin, seeded and
+  published for real by `scripts/seed-demo-sites.sh` and served on ports 58110–58114 by
+  `scripts/serve-demo-sites.sh`.
+- built: backups' capture half (D-125) — `archive_mode=on`, `wal_level=replica`, `archive_timeout=60s`, WAL segments
+  into the `postgres-wal-archive` volume through `deploy/postgres/archive-wal.sh` (the local stand-in for object
+  storage; the stock image has no S3 tooling), `scripts/backup.sh` capturing the cluster by `pg_basebackup` as the
+  REPLICATION-only `colophon_backup` role, gpg-symmetric encryption from a passphrase file, `manifest.json` recording
+  commit/Postgres/migrations/key-reference/ledger mark, and `verify` re-running `pg_verifybackup` on the decrypted
+  bytes — the drill's stored run is `perf/results/2026-11-04T173702Z-backup-drill-apple-m2-pro-12c.json` (capture
+  252 s, verify 138 s) · the restore procedure (D-126, migration 0049): `scripts/restore.sh`'s six marker-gated
+  stages — decrypt and unpack onto a scratch cluster (`prepare`), `pg_verifybackup` plus the manifest/binary schema
+  check (`verify`), one recovery epoch (`epoch`), the deletion-ledger interval anti-joined onto the restored
+  watermark (`ledger`), every unfinished job frozen `held` with an operator's inventory and an explicit
+  `--resume-jobs` enable (`reconcile`), and `/readyz` on scratch only then (`serve`) — `admin restore
+  verify|epoch|hold|jobs|resume` as the migrator-side primitives, `deploy/runbooks/restore.md`, the stack
+  regression `colophon-db/tests/restore.rs` (F13's held-outbox and epoch advance on a template clone), and the
+  dated drill record in `perf/results/` · the schedule and retention (D-130): `backup.sh daily` proven end to end on
+  the live stack (capture 283 s, verify 123 s, ledger export @837 inside the backup directory, audit line in
+  `backups/daily.jsonl`), `retention` proven by `retention-drill` on synthetic fixtures
+  (`perf/results/2026-11-04T204618Z-retention-drill-apple-m2-pro-12c.json`, 9 checks), `admin migrate-status` +
+  `colophon-server/tests/migrate_status.rs`, `deploy/runbooks/upgrade.md` rehearsed by `scripts/upgrade-rehearsal.sh`
+  (`perf/results/2026-11-04T205013Z-upgrade-rehearsal-apple-m2-pro-12c.json`, 8 checks), the observability audit in
+  `deploy/runbooks/observability.md` with request-span `version`/`commit` proven live, `SECURITY.md`, `CHANGELOG.md`
+  · the bounded tables and the 1 GiB payload bound (D-135, migration 0050): the worker's hourly table-retention
+  sweep and its `colophon_retention`-owned definer deletes, proven against real Postgres in
+  `colophon-db/tests/retention.rs` (aged rows gone, pinned and recent rows kept, an empty second pass) and the
+  byte bound in `colophon-db/tests/work.rs` (stored bytes counted, admission refused over the bound, room
+  restored as open work drains) · asset versioning is built (D-136, migration 0051). The proof gate's usability sessions
+  and independent install are prepared (D-132: rehearsal script, protocol, friction record) and still owed by the
+  people who must run them.
 
 **Proof gate:** F09–F14, L05–L13, the 24-hour soak, a restore drill on clean infrastructure, the usability gate, one
 independent install. **v0.1 release.**
+
+---
+
+## P7: The audience
+
+**Goal:** a project publishes for named visitors, not only the anonymous web — the membership half of "a site
+with a members area", with billing and entitlements deliberately left to a later milestone (D-137).
+
+- `auth` ([module 03](modules/03-auth.md), "The audience"): project-scoped **site users** — email+password
+  accounts at `POST /audience/v1/{project}/signup|signin` (Argon2id hashes only), opaque sessions (`signout`,
+  `me`; bearer or `colophon_audience` cookie, CSRF-echoed on its one write) with expiry, idle death, revocation,
+  a 16-session bound and an 8-miss/15-minute lock, and a `MAX_SITE_USERS` cap, all inside migration 0052's
+  `site_users`/`site_sessions`. Public signup takes a `self_assign` **audience role** (`site_roles`) — a label,
+  never a plan. Staff manage roles, users and their sessions under `audience.manage`. Passwordless too
+  (D-140, migration 0053): `POST …/magic-link` records a single-use, hashed, 15-minute link behind the same
+  202 either way, and `POST …/magic-link/{token}` spends it — signing an account in or creating one in the
+  open role with an unusable password; `COLOPHON_MAIL_PROVIDER=resend` + `COLOPHON_MAIL_FROM` +
+  `COLOPHON_RESEND_API_KEY` deliver the link through a `Mail` provider seam (D-145), and the loopback-only
+  `COLOPHON_DEV_MAIL` still stands in on the development stack.
+- `delivery` ([module 06](modules/06-delivery.md), "Gated content"): every published projection carries
+  `visibility` — `public`, `authenticated` or `role:<name>` — set on editorial writes by `?visibility=` and
+  pinned with the revision. `colophon_delivery`'s RLS reads `app.audience_role`: anonymous sees public only, a
+  member sees public + authenticated + its role's rows, and a gated row it can't read is the same 404 as an
+  unpublished one. Member reads resolve before the generation-keyed cache and bypass it (`private, no-cache`,
+  `Colophon-Cache: bypass`).
+- `verification`: six Postgres-level RLS/lifecycle stack tests (`colophon-db/tests/audience.rs`), four
+  black-box HTTP tests (`colophon-server/tests/audience.rs`), the testbed's Audience page with
+  `tests/audience.spec.ts` (roles, a closed-role user, gated delivery counted anonymous-vs-member, session
+  revocation, a disabled sign-in, a magic link spent exactly once), and `perf/k6/audience.js` wired into
+  `scripts/load.sh` and `scripts/check.sh` (a 3,000-iteration smoke held 0 failures, 3,080 requests, signin
+  p99 1.74 s under Argon2 cost).
+- `sites`: The Draft's members area (`apps/sites/blog`) is the end-to-end demo — SSR signin/members pages under
+  the node adapter, the session in a first-party `draft_session` cookie sent to the CMS as a bearer credential,
+  gated reads answered `private` — seeded with `member`/`vip` roles, gated posts and a demo member by
+  `scripts/seed-demo-sites.sh`. The other four sites stay fully static and can only ever read public rows.
+
+**Proof gate:** anonymous delivery provably cannot see a gated row (RLS stack test, not an application check),
+a member provably sees its role's rows and no other's, gated content provably never enters the anonymous
+generation-keyed cache, and a visitor can sign up on The Draft and read a members-only post. Billing,
+subscriptions and entitlements are explicitly out of scope — `role:<name>` names who may read, not what they
+paid for.
 
 ---
 

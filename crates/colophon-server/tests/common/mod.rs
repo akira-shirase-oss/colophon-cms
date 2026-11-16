@@ -1,17 +1,19 @@
-//! The real binary over real HTTP, with sign-in through the local stack's Keycloak.
+//! The real binary over real HTTP, signed in on the built-in password card (D-146); the OIDC
+//! helpers stay for the `COLOPHON_TEST_OIDC=1` compatibility suite.
 #![allow(
     dead_code,
     reason = "each test file uses a different subset of these helpers"
 )]
 
 use std::{
+    collections::HashMap,
     path::PathBuf,
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
 
 use reqwest::{Method, StatusCode, header};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// The server's public origin: `http://localhost:58092`, or `COLOPHON_TEST_ORIGIN` when these
 /// tests were compiled with it set, so two checkouts can run them at once on different ports.
@@ -64,10 +66,16 @@ impl Server {
     /// [`Self::start_with`] on another port of loopback: a second server beside the first,
     /// sharing its database and Valkey. Sign-in needs [`PORT`]'s registered origin.
     pub(crate) async fn start_on(port: u16, extra: &[(&str, &str)]) -> Self {
+        assert_no_foreign_server();
         let mut command = Command::new(env!("CARGO_BIN_EXE_colophon-server"));
+        // The server logs on stdout: COLOPHON_TEST_VERBOSE keeps it for a debugging run.
+        let log = match std::env::var_os("COLOPHON_TEST_VERBOSE") {
+            Some(_) => Stdio::inherit(),
+            None => Stdio::null(),
+        };
         command
             .env_clear()
-            .stdout(Stdio::null())
+            .stdout(log)
             .stderr(Stdio::inherit())
             .envs(local_env());
         command
@@ -87,12 +95,24 @@ impl Server {
         server
     }
 
-    /// Waits up to five seconds for the process to exit on its own; its exit code.
+    /// The server's exit code if it already finished, without waiting.
+    pub(crate) fn exited(&mut self) -> Option<i32> {
+        self.0
+            .try_wait()
+            .expect("wait")
+            .and_then(|status| status.code())
+    }
+
+    /// Waits up to five seconds for the process to exit on its own; its exit code. The
+    /// caller is expected to have waited on what the exit is *about* already — an
+    /// announcement at the receiver, a committed outcome — so the five seconds only ever
+    /// bound the gap between the observable and `fault::point`, never how long the
+    /// worker takes to reach it.
     pub(crate) async fn exit_code(&mut self) -> Option<i32> {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
-            if let Some(status) = self.0.try_wait().expect("wait") {
-                return status.code();
+            if let Some(code) = self.exited() {
+                return Some(code);
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -104,6 +124,36 @@ impl Drop for Server {
     fn drop(&mut self) {
         let _already_gone = self.0.kill();
         let _reaped = self.0.wait();
+    }
+}
+
+/// Stops a stack service and starts it again when dropped, whatever the test did.
+pub(crate) struct Stopped(&'static str);
+
+impl Stopped {
+    fn compose(args: &[&str]) {
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
+        let status = Command::new("docker")
+            .args(["compose", "-f"])
+            .arg(file)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("docker compose runs");
+        assert!(status.success(), "docker compose {args:?} failed");
+    }
+
+    /// `docker compose stop <service>`; the service comes back on drop.
+    pub(crate) fn new(service: &'static str) -> Self {
+        Self::compose(&["stop", service]);
+        Self(service)
+    }
+}
+
+impl Drop for Stopped {
+    fn drop(&mut self) {
+        Self::compose(&["start", self.0]);
     }
 }
 
@@ -131,6 +181,65 @@ pub(crate) fn local_env() -> Vec<(String, String)> {
         .collect()
 }
 
+/// The suite shares the dev database with any `colophon-server` already running: its
+/// worker claims the same delivery jobs the test's servers do, and the 2026-11-10 run
+/// lost two faults tests to exactly that race (a dev server on :58000 was up). Before
+/// spawning a test server, refuse while a `colophon-server` runs that this test process
+/// did not start — ours are told apart by walking each candidate's parent chain back
+/// to us. `COLOPHON_TEST_DATABASE` naming another database opts out: the suite then
+/// shares nothing with a dev server on `colophon`.
+pub(crate) fn assert_no_foreign_server() {
+    if std::env::var("COLOPHON_TEST_DATABASE").is_ok_and(|db| db != "colophon") {
+        return;
+    }
+    let output = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,ucomm="])
+        .output()
+        .expect("ps runs");
+    assert!(output.status.success(), "ps failed");
+    let table = String::from_utf8_lossy(&output.stdout);
+    let mut parents = HashMap::new();
+    let mut servers = Vec::new();
+    for line in table.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(process), Some(parent), Some(comm)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let (Ok(process), Ok(parent)) = (process.parse::<u32>(), parent.parse::<u32>()) else {
+            continue;
+        };
+        parents.insert(process, parent);
+        if comm == "colophon-server" {
+            servers.push(process);
+        }
+    }
+    let me = std::process::id();
+    let foreign: Vec<u32> = servers
+        .into_iter()
+        .filter(|pid| {
+            // Ours when any ancestor is this test process; foreign when the chain
+            // reaches the root (or a hole) without passing through us.
+            let mut at = *pid;
+            for _ in 0..64 {
+                match parents.get(&at) {
+                    Some(&up) if up == me => return false,
+                    Some(&up) if up > 1 => at = up,
+                    _ => return true,
+                }
+            }
+            true
+        })
+        .collect();
+    assert!(
+        foreign.is_empty(),
+        "colophon-server pid(s) {foreign:?} are running outside this test — the suite \
+         shares the dev database and their worker would claim the tests' jobs. Stop the \
+         dev server first (or set COLOPHON_TEST_DATABASE to an isolated database)."
+    );
+}
+
 /// The stack database's owner (the migrator), which row-level security doesn't apply to: for tests
 /// that set up or inspect rows directly. Follows `COLOPHON_TEST_DATABASE`, like the server.
 pub(crate) async fn owner_database() -> sqlx::PgPool {
@@ -141,6 +250,72 @@ pub(crate) async fn owner_database() -> sqlx::PgPool {
     sqlx::PgPool::connect(&url)
         .await
         .expect("the stack's database")
+}
+
+/// Ends every unfinished row the shared test database's worker could pick up — delivery
+/// jobs, asset jobs, bulk runs, migration plans and due schedules — so a test starting a
+/// fault-armed server sees only the work it makes itself. Tests run one at a time, so the
+/// rows these statements touch all belong to servers long dead; each lands the terminal
+/// state its own sweep or finish would have given it eventually. Without this, a stale
+/// job's dispatch fires the same `COLOPHON_FAULT` and the process exits on work that was
+/// never the test's — the reported flake.
+pub(crate) async fn clear_unfinished_work(database: &sqlx::PgPool) {
+    sqlx::query(
+        "UPDATE jobs SET status = 'failed', last_error = 'cleared by a later test',
+                          lease_owner = NULL, lease_expires_at = NULL,
+                          updated_at = now(), finished_at = coalesce(finished_at, now())
+         WHERE status IN ('pending', 'retrying', 'running')",
+    )
+    .execute(database)
+    .await
+    .expect("clear delivery jobs");
+    sqlx::query(
+        "UPDATE asset_jobs SET status = 'failed', last_error = 'cleared by a later test',
+                          lease_owner = NULL, lease_expires_at = NULL,
+                          updated_at = now(), finished_at = coalesce(finished_at, now())
+         WHERE status IN ('pending', 'retrying', 'running')",
+    )
+    .execute(database)
+    .await
+    .expect("clear asset jobs");
+    sqlx::query(
+        "UPDATE bulk_jobs SET state = 'cancelled',
+                          started_at = coalesce(started_at, now()),
+                          finished_at = now(), updated_at = now()
+         WHERE state IN ('accepting', 'running')",
+    )
+    .execute(database)
+    .await
+    .expect("clear bulk jobs");
+    sqlx::query(
+        "UPDATE migration_plans SET state = 'cancelled', finished_at = now(), updated_at = now()
+         WHERE state IN ('proposed', 'approved', 'running')",
+    )
+    .execute(database)
+    .await
+    .expect("clear migration plans");
+    sqlx::query(
+        "UPDATE schedules SET state = 'blocked', reason = 'cleared by a later test',
+                          finished_at = now()
+         WHERE state = 'scheduled'",
+    )
+    .execute(database)
+    .await
+    .expect("clear schedules");
+}
+
+/// Polls `check` until it holds or `seconds` pass; whether it held in time. Waits belong
+/// on observable state — an arrival at a receiver, a committed outcome, a dead process —
+/// never on how long the worker should take to reach it.
+pub(crate) async fn until(seconds: u64, mut check: impl AsyncFnMut() -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    while Instant::now() < deadline {
+        if check().await {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    check().await
 }
 
 /// Colophon's client: no redirects followed, no cookie store (cookies are checked by hand).
@@ -176,13 +351,34 @@ pub(crate) fn cookie(cookies: &[(String, String)], name: &str) -> String {
 }
 
 /// A signed-in browser: its cookies and the CSRF token writes must echo.
+#[derive(Clone)]
 pub(crate) struct Session {
     pub(crate) cookie: String,
     pub(crate) csrf: String,
 }
 
+/// Whether the OIDC compatibility suite may run: `COLOPHON_TEST_OIDC=1` with the compose
+/// `oidc` profile up (`docker compose -f deploy/compose.yaml --profile oidc up -d`), since
+/// D-146 took the provider out of the default stack.
+pub(crate) fn oidc_enabled() -> bool {
+    std::env::var("COLOPHON_TEST_OIDC").ok().as_deref() == Some("1")
+}
+
+/// The `COLOPHON_OIDC_*` environment the OIDC tests give their server: what `deploy/oidc.env`
+/// carries, against the compose profile's realm.
+pub(crate) fn oidc_env() -> [(&'static str, &'static str); 3] {
+    [
+        (
+            "COLOPHON_OIDC_ISSUER",
+            "http://localhost:58080/realms/colophon",
+        ),
+        ("COLOPHON_OIDC_CLIENT_ID", "colophon-server"),
+        ("COLOPHON_OIDC_CLIENT_SECRET", "colophon-dev-client-secret"),
+    ]
+}
+
 /// Starts a sign-in and logs in on Keycloak's form; returns the callback URL and the binding
-/// cookie, without completing the callback.
+/// cookie, without completing the callback. OIDC tests only — see [`oidc_enabled`].
 pub(crate) async fn reach_callback(user: &str) -> (String, String) {
     let response = app()
         .get(format!("{ORIGIN}/auth/login?return_to=/me"))
@@ -247,11 +443,33 @@ pub(crate) async fn complete(callback: &str, binding: &str) -> reqwest::Response
         .expect("callback")
 }
 
+/// Signs `user` in on the built-in password card (D-146) as `<user>@colophon.test` with the
+/// development password. A database that hasn't provisioned the account gets it through
+/// `/auth/signup` first — the public endpoint does the same thing `admin account` would.
 pub(crate) async fn sign_in(user: &str) -> Session {
-    let (callback, binding) = reach_callback(user).await;
-    let response = complete(&callback, &binding).await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers()[header::LOCATION], "/me");
+    let email = format!("{user}@colophon.test");
+    let attempt = app()
+        .post(format!("{ORIGIN}/auth/signin"))
+        .json(&json!({"email": email, "password": "colophon-dev"}))
+        .send()
+        .await
+        .expect("sign in");
+    let response = if attempt.status() == StatusCode::NO_CONTENT {
+        attempt
+    } else {
+        let created = app()
+            .post(format!("{ORIGIN}/auth/signup"))
+            .json(&json!({"email": email, "password": "colophon-dev"}))
+            .send()
+            .await
+            .expect("sign up");
+        assert_eq!(
+            created.status(),
+            StatusCode::CREATED,
+            "a missing account signs up"
+        );
+        created
+    };
     let set = cookies_from(&response);
     let (session, csrf) = (
         cookie(&set, "colophon_session"),
@@ -440,14 +658,31 @@ pub(crate) struct Received {
     pub(crate) key: String,
     /// Its `Colophon-Generation`.
     pub(crate) generation: String,
+    /// Its `Authorization` — the Resend-mail tests read the bearer back through it (D-145).
+    pub(crate) authorization: String,
     /// Its JSON body.
     pub(crate) body: Value,
 }
 
-type ReceiverState = std::sync::Arc<(
-    std::sync::Mutex<Vec<Received>>,
-    std::sync::Mutex<std::collections::VecDeque<u16>>,
-)>;
+/// What the receiver answers a request: a status after this long (the request is recorded
+/// when it arrives, however slowly the answer goes out — a destination that is slow to
+/// acknowledge), then the plain `200` once the script runs out.
+#[derive(Debug, Clone, Copy)]
+struct Answer {
+    status: u16,
+    hold: Duration,
+}
+
+/// What one receiver keeps: every request in order, the answers still to give, and the
+/// idempotency keys already seen — the last is what a deduplicating destination applies an
+/// effect for once and only once (F12's "exactly one logical effect").
+struct Shared {
+    received: std::sync::Mutex<Vec<Received>>,
+    script: std::sync::Mutex<std::collections::VecDeque<Answer>>,
+    applied: std::sync::Mutex<std::collections::HashSet<String>>,
+}
+
+type ReceiverState = std::sync::Arc<Shared>;
 
 /// A webhook destination for the worker tests, on 127.0.0.1: it records every request and
 /// answers with the next status in its script, then 200 once the script runs out.
@@ -473,29 +708,56 @@ async fn receive(
     let received = Received {
         key: header("idempotency-key"),
         generation: header("colophon-generation"),
+        authorization: header("authorization"),
         body: serde_json::from_slice(&body).unwrap_or(Value::Null),
     };
-    state.0.lock().expect("not poisoned").push(received);
-    let status = state
-        .1
+    // A repeat of a seen key is acknowledged but applies no second effect (F12).
+    state
+        .applied
+        .lock()
+        .expect("not poisoned")
+        .insert(received.key.clone());
+    state.received.lock().expect("not poisoned").push(received);
+    let answer = state
+        .script
         .lock()
         .expect("not poisoned")
         .pop_front()
-        .unwrap_or(200);
-    axum::http::StatusCode::from_u16(status).unwrap_or(axum::http::StatusCode::OK)
+        .unwrap_or(Answer {
+            status: 200,
+            hold: Duration::ZERO,
+        });
+    tokio::time::sleep(answer.hold).await;
+    axum::http::StatusCode::from_u16(answer.status).unwrap_or(axum::http::StatusCode::OK)
 }
 
 impl Receiver {
     /// Starts a receiver that answers with `script`, in order, then 200.
     pub(crate) async fn start(script: &[u16]) -> Self {
+        let timed: Vec<(u16, u64)> = script.iter().map(|status| (*status, 0)).collect();
+        Self::start_timed(&timed).await
+    }
+
+    /// Starts a receiver whose scripted answers are `(status, hold_ms)` pairs: each request
+    /// is recorded when it arrives; its answer goes out `hold_ms` later.
+    pub(crate) async fn start_timed(script: &[(u16, u64)]) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("a free port");
         let address = listener.local_addr().expect("an address");
-        let state: ReceiverState = std::sync::Arc::new((
-            std::sync::Mutex::new(Vec::new()),
-            std::sync::Mutex::new(script.iter().copied().collect()),
-        ));
+        let state: ReceiverState = std::sync::Arc::new(Shared {
+            received: std::sync::Mutex::new(Vec::new()),
+            script: std::sync::Mutex::new(
+                script
+                    .iter()
+                    .map(|&(status, hold)| Answer {
+                        status,
+                        hold: Duration::from_millis(hold),
+                    })
+                    .collect(),
+            ),
+            applied: std::sync::Mutex::new(std::collections::HashSet::new()),
+        });
         let app = axum::Router::new()
             .route("/hook", axum::routing::post(receive))
             .with_state(std::sync::Arc::clone(&state));
@@ -511,7 +773,13 @@ impl Receiver {
 
     /// Every request so far, in order.
     pub(crate) fn seen(&self) -> Vec<Received> {
-        self.state.0.lock().expect("not poisoned").clone()
+        self.state.received.lock().expect("not poisoned").clone()
+    }
+
+    /// How many distinct idempotency keys have arrived: the count of effects a destination
+    /// that deduplicates on them has applied — a repeat is acknowledged, never re-applied.
+    pub(crate) fn effects(&self) -> usize {
+        self.state.applied.lock().expect("not poisoned").len()
     }
 }
 

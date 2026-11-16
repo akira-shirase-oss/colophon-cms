@@ -8,6 +8,7 @@
 	import GlobeIcon from '@lucide/svelte/icons/globe';
 	import HistoryIcon from '@lucide/svelte/icons/history';
 	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
+	import ListChecksIcon from '@lucide/svelte/icons/list-checks';
 	import ShieldCheckIcon from '@lucide/svelte/icons/shield-check';
 	import SlidersHorizontalIcon from '@lucide/svelte/icons/sliders-horizontal';
 	import type { Snippet } from 'svelte';
@@ -16,7 +17,7 @@
 	import { may } from './api.ts';
 	import { projectQuery } from './queries.ts';
 
-	type Place = 'general' | 'roles' | 'connections' | 'tokens' | 'activity';
+	type Place = 'general' | 'roles' | 'stages' | 'connections' | 'tokens' | 'activity';
 
 	let { project, current, children }: { project: string; current: Place; children: Snippet } = $props();
 
@@ -28,6 +29,14 @@
 				{ place: 'general', label: 'General', href: resolve('/projects/[project]/settings', { project }), icon: SlidersHorizontalIcon, testid: 'settings-general-link', shown: true },
 				// Every member may read the roles, so anyone in Settings sees them.
 				{ place: 'roles', label: 'Roles', href: resolve('/projects/[project]/settings/roles', { project }), icon: ShieldCheckIcon, testid: 'roles-link', shown: true },
+				{
+					place: 'stages',
+					label: 'Review stages',
+					href: resolve('/projects/[project]/settings/stages', { project }),
+					icon: ListChecksIcon,
+					testid: 'stages-link',
+					shown: may(mine.data, 'schema.change')
+				},
 				{
 					place: 'connections',
 					label: 'Website connections',

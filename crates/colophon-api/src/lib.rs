@@ -5,11 +5,15 @@
 //! Design: `docs/modules/04-api.md`.
 
 pub mod admission;
+mod assets;
+mod audience;
 mod audit;
 mod auth;
 mod body;
+mod bulk;
 mod cache;
 mod changesets;
+mod collaboration;
 mod components;
 mod content_types;
 mod delivery;
@@ -17,10 +21,17 @@ mod destinations;
 mod device;
 mod entries;
 pub mod error;
+pub mod events;
 mod fault;
+mod graphql;
 pub mod health;
+pub mod mail;
+pub mod mcp;
 mod members;
 pub mod middleware;
+mod migrations;
+mod openapi;
+mod populate;
 mod projects;
 mod receipts;
 mod rich_text;
@@ -37,10 +48,7 @@ mod valkey;
 pub mod version;
 mod visibility;
 
-use axum::{
-    Router,
-    routing::{get, post},
-};
+use axum::{Router, http::HeaderMap, routing::get};
 
 pub use cache::{DeliveryCache, InvalidCacheUrl};
 pub use colophon_version::BuildInfo;
@@ -54,175 +62,34 @@ pub use version::API_VERSIONS;
 /// The complete router: the routes, a fallback that answers with the error envelope, and the
 /// middleware stack around all of them.
 pub fn app(state: AppState, limits: HttpLimits) -> Router {
-    middleware::apply(routes(state), limits)
+    let build = state.build;
+    middleware::apply(routes(state), limits, build)
 }
 
 /// The routes without the middleware stack, for tests that add their own routes before
 /// applying it.
+///
+/// The whole router is `openapi::TABLE`: the same table emits the `OpenAPI` document, so
+/// the served routes and the published contract cannot drift (D-110).
 pub fn routes(state: AppState) -> Router {
     let admission = axum::middleware::from_fn_with_state(state.clone(), admission::admit);
-    Router::new()
-        .route("/livez", get(health::livez))
-        .route("/readyz", get(health::readyz))
-        .route("/version", get(version::get))
-        .route("/auth/login", get(auth::login))
-        .route("/auth/callback", get(auth::callback))
-        .route("/auth/logout", post(auth::logout))
-        .route("/auth/device", post(device::start))
-        .route("/auth/device/approve", post(device::approve))
-        .route("/auth/device/token", post(device::token))
-        .route("/auth/device/{code}", get(device::show))
-        .route("/me", get(auth::me))
-        .route("/api/v1/installation", get(setup::installation))
-        .route("/api/v1/setup", post(setup::claim))
+    let served = std::sync::Arc::new(openapi::Served::new(&state.build));
+    let mut router = Router::new();
+    for route in openapi::TABLE {
+        router = router.route(&route.path(), route.router());
+    }
+    router
         .route(
-            "/api/v1/projects",
-            get(projects::list).post(projects::create),
+            openapi::SELF_PATH,
+            get(move |headers: HeaderMap| {
+                let served = served.clone();
+                async move { served.respond(&headers) }
+            }),
         )
-        .route("/api/v1/projects/{project}", get(projects::get))
-        .route("/api/v1/projects/{project}/members", get(members::list))
-        .route(
-            "/api/v1/projects/{project}/members/{identity}",
-            axum::routing::put(members::change).delete(members::remove),
-        )
-        .route(
-            "/api/v1/projects/{project}/invitations",
-            get(members::invitations).post(members::invite),
-        )
-        .route(
-            "/api/v1/projects/{project}/invitations/{invitation}",
-            axum::routing::delete(members::revoke),
-        )
-        .route(
-            "/api/v1/projects/{project}/roles",
-            get(roles::list).post(roles::create),
-        )
-        .route(
-            "/api/v1/projects/{project}/roles/{role}",
-            get(roles::get).put(roles::update).delete(roles::delete),
-        )
-        .route(
-            "/api/v1/projects/{project}/tokens",
-            get(tokens::list).post(tokens::create),
-        )
-        .route(
-            "/api/v1/projects/{project}/tokens/{token}",
-            axum::routing::delete(tokens::revoke),
-        )
-        .route("/api/v1/projects/{project}/audit", get(audit::list))
-        .route("/api/v1/invitations/lookup", post(members::lookup))
-        .route("/api/v1/invitations/accept", post(members::accept))
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/permissions",
-            get(roles::own),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/components",
-            get(components::list).post(components::create),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/components/{slug}",
-            get(components::get).put(components::update),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/content-types",
-            get(content_types::list).post(content_types::create),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/content-types/{slug}",
-            get(content_types::get).put(content_types::update),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries",
-            get(entries::list).post(entries::create),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}",
-            get(entries::get).put(entries::save).delete(entries::delete),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions",
-            get(entries::history),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/collections/{collection}/entries/{entry}/revisions/{revision}",
-            get(entries::revision),
-        )
-        .route("/api/v1/rich-text/validate", post(rich_text::validate))
-        .merge(publishing())
         .fallback(fallback)
         // Rate limits (D-076): inside the error envelope, before any handler does work.
         .layer(admission)
         .with_state(state)
-}
-
-/// Changesets, releases, their deliveries and public delivery (P2).
-fn publishing() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/changesets",
-            get(changesets::list).post(changesets::create),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}",
-            get(changesets::get),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/submit",
-            post(changesets::submit),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/refresh",
-            post(changesets::refresh),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/reviews",
-            post(changesets::review),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/schedule",
-            post(schedules::create),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/schedules",
-            get(schedules::list),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/schedules/{schedule}",
-            axum::routing::delete(schedules::cancel),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/changesets/{changeset}/publish",
-            post(changesets::publish),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/releases",
-            get(changesets::releases),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/releases/{generation}",
-            get(receipts::get),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/destinations",
-            get(destinations::list).post(destinations::create),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/destinations/{destination}",
-            axum::routing::put(destinations::set_enabled),
-        )
-        .route(
-            "/api/v1/projects/{project}/environments/{environment}/jobs",
-            get(destinations::jobs),
-        )
-        .route(
-            "/content/v1/{project}/{environment}/{collection}",
-            get(delivery::list),
-        )
-        .route(
-            "/content/v1/{project}/{environment}/{collection}/{entry}",
-            get(delivery::get),
-        )
 }
 
 async fn fallback() -> ApiError {

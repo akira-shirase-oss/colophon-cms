@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bulk_items SET outcome = 'skipped',\n            problem = jsonb_build_object('reason', 'cancelled', 'pointer', '',\n                                         'message', 'the job was cancelled before this item ran')\n         WHERE project_id = $1 AND environment_id = $2 AND job_id = $3 AND outcome = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "143c394a0cc8a66fce83e401c51b5e15b8e1846303762c558a32d51f25b0310c"
+}

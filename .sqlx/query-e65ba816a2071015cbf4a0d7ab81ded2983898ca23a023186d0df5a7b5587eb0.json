@@ -1,0 +1,115 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT key, entry_id, expected_revision_id, input, outcome, problem, new_revision_id,\n                applied_at\n         FROM bulk_items\n         WHERE project_id = $1 AND environment_id = $2 AND job_id = $3 AND key = $4\n         FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "bulk_items",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "entry_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "bulk_items",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "expected_revision_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "bulk_items",
+            "name": "expected_revision_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "input",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "bulk_items",
+            "name": "input"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "bulk_items",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "problem",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "bulk_items",
+            "name": "problem"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "new_revision_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "bulk_items",
+            "name": "new_revision_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "applied_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "bulk_items",
+            "name": "applied_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "e65ba816a2071015cbf4a0d7ab81ded2983898ca23a023186d0df5a7b5587eb0"
+}

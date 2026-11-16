@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO budget_reservations (project_id, environment_id, id, principal_id, kind, reserved, state, job_id)\n         SELECT $1, $2, uuidv7(), $3, 'jobs', 1, 'held', job\n         FROM unnest($4::uuid[]) AS job",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2624caaa33d93b067210abe517b69fea485cd7c7415a7a70ee3307a724b37cf8"
+}

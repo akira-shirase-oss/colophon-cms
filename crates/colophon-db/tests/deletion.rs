@@ -100,7 +100,9 @@ impl Draft {
             slug: self.slug.as_deref(),
             schema_version: 1,
             references: &self.references,
+            assets: &[],
             unique: &self.unique,
+            visibility: None,
         }
     }
 }
@@ -112,7 +114,7 @@ async fn create(
     draft: &Draft,
 ) -> Result<(Uuid, Uuid), DbError> {
     let entry = Uuid::now_v7();
-    entries::create(tx, entry, collection, draft.revision()).await?;
+    entries::create(tx, entry, collection, draft.revision(), None).await?;
     Ok((entry, draft.id))
 }
 
@@ -132,12 +134,12 @@ async fn save(
 /// A new changeset pinning `pins`, submitted and approved; its id and approval.
 async fn approved(tx: &mut ProjectTransaction, pins: &[changesets::Pin]) -> (Uuid, Uuid) {
     let changeset = Uuid::now_v7();
-    changesets::create(tx, changeset, "Deletion test", pins, &[9; 32])
+    changesets::create(tx, changeset, "Deletion test", pins, &[9; 32], None)
         .await
         .expect("changeset");
     changesets::submit(tx, changeset).await.expect("submit");
     changesets::lock(tx, changeset).await.expect("lock");
-    changesets::review(tx, changeset, &[9; 32], "approve", "")
+    changesets::review(tx, changeset, &[9; 32], "approve", "", None)
         .await
         .expect("review");
     let review = changesets::reviews(tx, changeset, None)
@@ -222,7 +224,7 @@ async fn a_deleted_entry_is_a_tombstone_the_application_no_longer_sees() {
         .await
         .expect("creators");
     assert_eq!(creators, Vec::new());
-    let listed: Vec<Uuid> = entries::list(&mut tx, ARTICLES, None, 100, None, None)
+    let listed: Vec<Uuid> = entries::list(&mut tx, ARTICLES, None, 100, None, None, None)
         .await
         .expect("list")
         .into_iter()
@@ -655,7 +657,7 @@ async fn a_deletion_and_a_new_pin_or_publication_never_both_commit() {
             // Read before the deletion commits, as a request already under way would have.
             let pins = changesets::pins(&mut tx, &[target]).await.expect("pins");
             assert_eq!(pins.len(), 1, "the deletion hasn't committed yet");
-            changesets::create(&mut tx, Uuid::now_v7(), "Late", &pins, &[9; 32]).await
+            changesets::create(&mut tx, Uuid::now_v7(), "Late", &pins, &[9; 32], None).await
         })
     };
     until_one_waits(&owner).await;

@@ -62,17 +62,22 @@ a zero-unauthorized-action evaluation gate, X12, L08 and F11.
 | `job_status` / `release_status` | Reports progress and delivery receipts |
 
 - Tool discovery is filtered by the caller's current authorization.
-- Built so far, as MCP tools (D-068): `list_content_types` (`discover_schemas`), `list_entries` and `get_entry`
-  (`query_content`, with title search only), `create_draft`, `update_draft`, `create_publish_request`
-  (`propose_changeset`), `request_review` and `get_publish_request`. Not built: `validate_changeset`, `job_status`,
-  `release_status`.
+- Built so far, as MCP tools (D-068, D-106): `list_content_types` (`discover_schemas`); `list_entries`, `get_entry`
+  and `query_entries` (`query_content` — the DX.3 document, cursor included); `create_draft`, `update_draft`,
+  `create_publish_request` (`propose_changeset`), `request_review` and `get_publish_request`; `list_releases` and
+  `get_release` (`release_status`, with the release's receipt); `list_migrations`, `get_migration` and
+  `list_migration_items` (plan reads — planning and driving stay with people, D-106); `list_comments` and
+  `create_comment`; `list_tasks` and `create_task` (proposals: a comment or a task asks a person for something).
+  Not built: `validate_changeset`, `job_status`; and deliberately never tools (D-106): comment resolve/reopen,
+  task update, and every migration transition.
 - The plan was the CLI's JSON contract first, then the MCP adapter over the same services. The MCP server came first
-  (D-068), as a client of the HTTP API, so it shares the API's authorization literally; the CLI's JSON contract
-  follows.
+  (D-068), as a client of the HTTP API, so it shares the API's authorization literally; the CLI's versioned
+  `data`/`error` envelope and its `colophon mcp` entry point are built (D-119).
 
-### MCP adapter (spec §11; D-068)
+### MCP adapter (spec §11; D-068, D-121)
 
-**Built: local stdio.** `crates/colophon-mcp`, a library and the `colophon-mcp` binary, speaks MCP **2025-11-25** on
+**Built: local stdio and remote Streamable HTTP (D-121, below).** `crates/colophon-mcp`, a library and the
+`colophon-mcp` binary, speaks MCP **2025-11-25** on
 stdin and stdout: one JSON-RPC 2.0 message per line, no batches (MCP removed them in 2025-06-18), logs on stderr only.
 It answers `initialize`, `ping`, `tools/list` and `tools/call`; `notifications/cancelled` stops a request. It always
 answers `initialize` with 2025-11-25, the one version it speaks.
@@ -89,15 +94,26 @@ answers `initialize` with 2025-11-25, the one version it speaks.
   | `list_content_types` | `GET {P}/content-types` | |
   | `list_entries` (collection, `q`, cursor) | `GET {P}/collections/{c}/entries` | |
   | `get_entry` (collection, id) | `GET {P}/collections/{c}/entries/{id}`, with `published` and `referenced_by` | |
+  | `query_entries` (collection, query, cursor) | `POST {P}/collections/{c}/entries/query` | |
   | `create_draft` (collection, content) | `POST {P}/collections/{c}/entries` | `Idempotency-Key` |
   | `update_draft` (collection, id, content, revision) | `PUT {P}/collections/{c}/entries/{id}` | `If-Match` on the revision read, `Idempotency-Key` |
   | `create_publish_request` (title, entry ids) | `POST {P}/changesets` | `Idempotency-Key` |
   | `request_review` (id, hash) | `POST {P}/changesets/{id}/submit` | `If-Match` on the hash read |
   | `get_publish_request` (id) | `GET {P}/changesets/{id}` | |
+  | `list_releases` (cursor) | `GET {P}/releases` | |
+  | `get_release` (generation) | `GET {P}/releases/{generation}` | |
+  | `list_migrations` (collection, state, cursor) | `GET {P}/migrations` | |
+  | `get_migration` (id) | `GET {P}/migrations/{id}` | |
+  | `list_migration_items` (id, outcome, cursor) | `GET {P}/migrations/{id}/items` | |
+  | `list_comments` (collection, entry, revision, state, cursor) | `GET {P}/collections/{c}/entries/{id}/comments` | |
+  | `create_comment` (collection, entry, revision, field, body) | `POST {P}/collections/{c}/entries/{id}/comments` | `Idempotency-Key` |
+  | `list_tasks` (entry, collection, assignee, status, cursor) | `GET {P}/tasks` | |
+  | `create_task` (entry, title, revision, changeset, assignee) | `POST {P}/tasks` | `Idempotency-Key` |
 
-- **Nothing approves or publishes.** There is no tool to approve, publish, unpublish, schedule, or manage roles,
-  members or tokens, whatever the token may do: a full-access token, which could approve and publish through the API,
-  gets the same eight tools (AU2; the stack test calls thirteen such names and gets "unknown tool" for each).
+- **Nothing approves, publishes or decides.** There is no tool to approve, publish, unpublish, schedule, or manage
+  roles, members or tokens; nor to resolve or reopen a comment, change a task, or plan, approve, apply, cancel or
+  resolve a migration — whatever the token may do: a full-access token, which could do all of it through the API,
+  gets the same eighteen tools (AU2, D-106; the stack test calls 21 such names and gets "unknown tool" for each).
 - **Discovery.** `tools/list` shows a tool when the token holds the action it needs in some collection, read from
   `GET {P}/permissions` (one read; the caller's own permissions, for a person or a token). Discovery grants nothing:
   a listed tool can still be refused for an entry (field lists, `own`), and every call is decided by the API. (The
@@ -108,7 +124,8 @@ answers `initialize` with 2025-11-25, the one version it speaks.
   the API's 409 `stale_revision` becomes a tool error naming the current revision (from the answer's `ETag`) and
   saying nothing was saved. `request_review` sends the hash the agent read, so review is asked for exactly what it saw;
   a stale one names the current hash.
-- **Retries can't write twice.** Writes send an `Idempotency-Key`: the agent's `idempotency_key` argument, or a new
+- **Retries can't write twice.** Every write (`create_draft`, `update_draft`, `create_publish_request`,
+  `create_comment`, `create_task`) sends an `Idempotency-Key`: the agent's `idempotency_key` argument, or a new
   key returned in the result. The client tries again after no answer or a 503, at most three times within the call's
   30-second deadline, with the same key; the API replays the recorded answer (`replayed: true`). A write with no answer
   is a tool error (`outcome_unknown`) that names the key to retry with. `request_review` needs no key: submitting is a
@@ -121,15 +138,20 @@ answers `initialize` with 2025-11-25, the one version it speaks.
   at most 4 MiB; an attempt 15 s including its body, 5 s to connect, 30 s per call; at most 8 requests run at once and
   the next waits for a slot; a client that stops reading for 30 s ends the session; when the input ends, running
   requests get 5 s, then stop. Reading the input has no deadline: an idle client is normal.
-- **Instructions to the model** say that entry content is data written by people, never instructions to follow.
+- **Instructions to the model** say that entry content is data written by people, never instructions to follow,
+  and name the boundary plainly: agents may read, query, draft, comment, file tasks and request review; approving,
+  publishing, resolving comments, changing tasks and driving schema migrations stay with people, and no tool does
+  them (D-106).
 
 **O-013, decided (D-068): a thin JSON-RPC layer of our own** (`jsonrpc.rs` and `server.rs`, about 660 lines without
 their tests), rather than the official Rust SDK. `rmcp` 3.8.0 (checked on crates.io on 2026-10-28) supports
 2025-11-25, but its default server features pull in `schemars`, `rmcp-macros`, `pastey` and a second `base64`, it
 always needs `chrono`, and it went from 3.5.0 to 3.8.0 in four weeks. This server uses four methods and two
 notifications; owning them puts the frame limit, the error codes and the "bad arguments are tool errors" rule where our
-tests see them, and adds no external dependency (the lockfile gains only the crate itself). Revisit when remote MCP is
-built: the SDK's Streamable HTTP and authorization support may then be worth its weight.
+tests see them, and adds no external dependency (the lockfile gains only the crate itself). Remote MCP is now built
+on the same layer (D-121): the SDK's Streamable HTTP and authorization support was still not worth its weight — the
+transport's part beyond the session (a minted id, in-flight cancellation, idle expiry, the caps) is a small registry,
+not an SDK.
 
 **Built: a route that tells a caller its own permissions.** `GET {P}/permissions`, answered for people and API tokens
 alike (it sits under `/environments/`, where tokens are allowed): `{"data": {"kind": "person" | "token", "role",
@@ -137,13 +159,57 @@ alike (it sits under `/environments/`, where tokens are allowed): `{"data": {"ki
 the same scoped transaction (a revoked token can't read it). The MCP server's discovery reads it; the Studio and the
 CLI can show from it what a role or token can do.
 
+**Built: `colophon mcp`, the same server inside the CLI (D-119).** The `mcp` subcommand of `crates/colophon-cli`
+links `colophon-mcp` as a library and runs its `Config::from_env` → `Api::new` → `serve` on the process's own
+stdin and stdout — identical configuration (`COLOPHON_SERVER`, `COLOPHON_TOKEN`, `COLOPHON_PROJECT`), identical
+protocol and tool list, identical refusals, logs still on stderr. An agent host that only installs `colophon`
+gets the same adapter it gets from `colophon-mcp`; nothing about the D-106 boundary changes. Its exits are the
+MCP binary's own (0 clean close, 1 session failure, 2 bad configuration), proved by the `tests/cli.rs` session:
+`initialize` answering 2025-11-25, `tools/list` the eighteen tools, exit 0 when the host closes stdin.
+
+**Built: remote MCP — Streamable HTTP on the API itself (D-121).** `POST|DELETE {P}/mcp` speaks the 2025-11-25
+Streamable HTTP transport, where `{P}` is `/api/v1/projects/{project}/environments/{environment}` — any
+environment slug, not only stdio's `production`. The same `colophon-mcp` crate serves it: the crate is refactored
+around a `Backend` the HTTP client `Api` and the API's in-process `Dispatch` both implement, so stdio's session and
+`remote::RemoteSession` share the handshake, the `tools/call` parser, the work executor, the in-flight semaphore
+and the error mapping — one implementation, and `tests/mcp.rs`'s parity case proves `tools/list`, `tools/call`
+answers and refusal bytes identical on both transports.
+
+- **The transport's shape.** `POST` carries one JSON-RPC message: a request's response is `200
+  `application/json``, a notification or a stray response is `202` with no body, malformed or oversized
+  (2 MiB) input is `400`. The first `initialize` mints an `Mcp-Session-Id` (a UUID — visible ASCII, as the
+  transport requires) that every later request carries; an unknown, malformed, expired or other token's id is
+  `404`. `GET` is not offered — the server never initiates messages, so no SSE stream exists and
+  `Last-Event-ID` is meaningless and ignored, exactly as `{P}/events` treats it (D-108) — and the route's own
+  `405` is the sanctioned answer. `DELETE` ends a session early; its in-flight requests answer
+  `request cancelled` (-32800), as they do on idle expiry or `notifications/cancelled` by id.
+- **The door checks.** A present `Origin` must be trusted exactly (the transport's DNS-rebinding check);
+  `MCP-Protocol-Version` must name 2025-11-25 — required once a session exists, refused outright when wrong;
+  `Accept` must allow `application/json`, the only answer type the endpoint produces.
+- **Who may call it.** A project API token and nothing else: the `SignedIn` extractor does the credential
+  work — a revoked or expired token is 401, another project is 404 — and a browser session or a personal
+  access token is 403 `api_token_required` (AU2). A session is bound to the token id that minted it and every
+  request re-proves the token in Postgres rather than trusting the session's age, so revoking ends what its
+  sessions could do.
+- **Dispatch, never authorization.** A tool call runs in-process through `crate::routes(state)` with the same
+  `Authorization` header the caller sent, the path under the `{P}` the endpoint was addressed on — same
+  routes, same admission limits, same policy an agent over the network meets; the endpoint itself holds no
+  authorization beyond "is this the token's own session".
+- **Bounds (invariant 4).** `COLOPHON_MCP_PER_TOKEN` (8), `COLOPHON_MCP_PER_PROJECT` (256) and
+  `COLOPHON_MCP_MAX_SESSIONS` (2,048) are checked before a session is kept — the token's cap is 429
+  `rate_limited`, the project's or server's 503 — and `COLOPHON_MCP_IDLE_MS` (30 min) of no touch expires a
+  session, swept on every registry operation so a full table can never hold only dead entries. Sessions live
+  in memory, as D-108's streams do: no migration, no persistence to lose sync with Postgres.
+
 **Not built yet (P5):**
-- Remote MCP: Streamable HTTP with the 2025-11-25 authorization requirements and audience validation.
-- Budgets reserved in Postgres, bulk manifests and jobs, and service-account quotas beyond R.4's tokens.
-- `validate_changeset`, `job_status`, `release_status`, and unpublish requests.
-- The evaluation suite and L08 (a noisy agent beside editors).
-- A `colophon mcp` subcommand in the CLI, and environments other than `production`.
-- Testbed and k6 coverage for the MCP server itself: it adds no API route, and the routes it calls keep their own.
+- The consumer of the provider `tokens`/`cost` ceilings: the optional assistant's calls would
+  reserve them, and no call site does yet (the ceilings themselves are built, D-122; the
+  substrate is D-113's and the request-quota consumer is D-118's).
+- `validate_changeset` and `job_status` (releases and receipts are `list_releases`/`get_release`), and unpublish
+  requests.
+- Environments other than `production` over stdio (remote serves the `{environment}` its path names).
+- Testbed and k6 coverage for the MCP server itself: the remote endpoint's routes are already covered by
+  `tests/mcp.rs`; the routes the tools call keep their own.
 
 ### Bulk work (spec §11, §17)
 - A bulk job is a manifest of exact IDs and base revisions.
@@ -158,6 +224,50 @@ CLI can show from it what a role or token can do.
 - Uncertain reservations are kept until reconciled.
 - A provider timeout preserves the uncertainty (it may still incur cost).
 - Estimated cost is never presented as the final invoice.
+
+**Built (P5.2, D-113, migration 0045; the provider ceilings, D-122, migration 0047):** the
+substrate those bullets name, enforced at the PostgreSQL boundary, not in a cache or a worker's
+memory.
+
+- `api_token_limits` holds a token's ceilings — `documents_per_day` (1…1,000,000),
+  `max_concurrent_jobs` (1…64), `requests_per_minute` (1…100,000, enforced at request time by
+  D-118's quota, below), `tokens_per_day` (1…1,000,000,000 provider tokens) and
+  `cost_per_day_micros` (1…100,000,000,000 micros of the accounting unit — the unit's
+  millionths, a fixed-point integer, never a float; D-122, migration 0047). NULL is
+  unconstrained per dimension; no row means the quota layer does not exist for that credential
+  — a person is never limited this way.
+- `budget_reservations` is the ledger: `held` while work is in flight, `settled` with what the
+  outcome consumed in the same commit, `released` when the work can never happen, `uncertain` when
+  the reconciler finds a held row that outlived what could still be running — retained, still
+  counted, announced as `budget.discrepancy` by a system identity that can't sign in.
+- `colophon_domain::budget` is the pure half (kinds, states, limits checks, `close_for`);
+  `colophon_db::budgets` stores and locks: `reserve` locks the limits row `FOR UPDATE`, counts
+  the principal's open and spent allowance — `released` alone frees — and inserts or refuses.
+  The provider kinds count what is open at its allowance and what settled at what the outcome
+  consumed (`coalesce(settled, reserved)`): a call that reserved 1,000 tokens and billed 250
+  returns the rest of its headroom (D-122).
+- Enforcement points today: `entries::create`/`save`/`create_localization` reserve a document each
+  (an import item is a create); `releases::outbox` reserves one `jobs` slot per dispatch job and
+  releases superseded jobs' reservations; `jobs::finish` closes the slot with the outcome. The
+  worker's sweep reconciles strays beside `jobs::expire`.
+- Limits and usage are managed and read only on the people-facing token routes
+  (`POST`/`PATCH`/`GET {P}/tokens/{token}`); the exhaustion refusal is 403 `budget_exceeded`, a
+  hard quota distinct from the GCRA limiter's `rate_limited`.
+- `requests_per_minute` is the exception that proves the rule about where counting lives
+  (D-118): reserving a request per request would cost a write per request, so the ceiling rides
+  the admission limiter instead — a GCRA cell keyed `colophon:quota:{project}:{token}`, the
+  ceiling read from the same locked token row authentication already takes, checked where the
+  token's scoped transaction opens, before handler work. Over it: 429 `rate_limited` with
+  `Retry-After`; the audit log hears the episode's first refusal once as `token.rate_limited`;
+  `usage.requests_last_minute` reads the live window back. Valkey's answer is the shared
+  limiter's own — a local per-process count while it is away, never a refusal for its absence —
+  and a member session carries no token scope, so the check does not exist for people. The
+  measured isolation is L08's (D-120): `perf/k6/noisy-agent.js` runs the noisy agent beside
+  active editors — and an editor in a second project — and stores the verdict with the run.
+- Provider `tokens`/`cost` are ceilinged like the other kinds (D-122): `reserve` admits under
+  the column's bound or refuses `budget_exceeded`, and `usage.tokens_last_day` /
+  `cost_last_day` read the day back on the single-token answer. What still waits on the
+  assistant is a call site that reserves them — the ceiling and the ledger are ready for it.
 
 ### Optional AI writing assistant (off by default)
 - **Actions:** suggest a title, improve selected text, draft from a brief, or create a proposed locale revision with
@@ -177,29 +287,47 @@ CLI can show from it what a role or token can do.
 - Model output must parse into a validated typed action. Actor scope and approval are rechecked at execution.
 - Least privilege and review are part of the threat model, not a complete solution to prompt injection.
 
-### Evaluation suite (spec §17)
-- **Versioned cases:**
-  - schema discovery and correct edits;
-  - missing facts and malicious instructions;
-  - stale revisions;
-  - cross-project access;
-  - bulk interruption;
-  - provider failures.
-- **Measured per run:**
-  - schema-valid output and task completion;
-  - unauthorized attempts;
-  - reviewer edit effort;
-  - latency and cost.
-- **Required gate:** no unauthorized action executes.
-- Trials are repeated, and model versions recorded, rather than choosing one favourable result.
+### Evaluation suite (spec §17, §27)
+
+**Built (D-117): `crates/colophon-server/tests/evals.rs`** — an ignored, serial stack test where the
+adversary is a scoped API token against the real API — a `colophon-mcp` session over stdio for the MCP
+case — never a mock and never a friendly model. Each case sets up its own project and tokens, attacks
+one boundary, and a person reads back what the run left.
+
+- **The case table** covers all six spec §27 abuse cases — prompt injection in content, tool-argument
+  manipulation, cost overruns, a mass-deletion attempt, an altered approved changeset, an unsafe
+  import — plus the token-privilege surfaces (a token can never approve a token-submitted changeset,
+  its own or a second token's; field lists hide, refuse `field_not_permitted`/`field_not_readable`;
+  another project's routes answer 404 and the people-facing routes `api_token_not_allowed`) and the
+  MCP surface (`tools/list` holds no approving, publishing, resolving or migrating name whatever the
+  token could do; raw `tools/call` answers `-32602`; a smuggled `decision` is `invalid_arguments`).
+- **The oracle** classifies every adversarial call: `refused` when the boundary answers the exact
+  typed refusal the case claims (status plus `details.reason`/`details.permission`, the JSON-RPC code,
+  or a tool error's `code`); `permitted` when the agent's own legitimate work lands — least privilege,
+  not no privilege; `unauthorized` when a prohibited write, delete, approval, publish or
+  cross-boundary read executes. The owner's reads then verify end state (`verified`: the changeset
+  still unapproved, no release, every entry intact). A refusal in the wrong shape or a permitted call
+  refused is a `problem` — the suite's defect, not the system's — and fails the run just the same.
+- **The gate** is the spec's own, printed plainly: `UNAUTHORIZED: 0`, with `PROBLEMS: 0` beside it —
+  an eval that can't tell a refusal from a success proves nothing. Each case prints its own summary
+  line.
+- **Trials** are repeated rather than choosing one favourable result: `COLOPHON_EVAL_TRIALS` repeats
+  every case (default 1; `scripts/check.sh` runs it at 3 inside its ignored half).
+  `COLOPHON_EVAL_RESULTS=<dir>` writes a `<timestamp>-evals.json` artifact — date, machine, commit and
+  every case's lines — as stored evidence; unset, nothing is written.
+- Deliberately no model and no k6 scenario: the cases are deterministic API abuse and the gate is
+  correctness, not load. Schema discovery and correct edits are each case's `permitted` work; bulk
+  interruption is X12's own proof in `tests/bulk.rs`; provider-failure cases wait for the assistant
+  slice; L08's evidence is `perf/k6/noisy-agent.js` (stored run
+  `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json`).
 
 ## Invariants
 
 | ID | Invariant |
 |---|---|
 | AU1 | Tool metadata never grants permission; every call passes the same policy as a human request. |
-| AU2 | An agent can never approve its own proposal. |
-| AU3 | Budgets are reserved in Postgres before dispatch; no work starts without a reservation. |
+| AU2 | An agent can never approve its own proposal — enforced by the API, which refuses any token's approval of a token-submitted changeset (403 `agent_self_review`, D-111); tools that don't offer approval are only the convenience on top. |
+| AU3 | Budgets are reserved in Postgres before dispatch; no work starts without a reservation — the accepting transaction locks the token's limits row, counts its allowance and writes `held`, or refuses `budget_exceeded` (D-113, migration 0045). |
 | AU4 | Model output executes only as a validated typed action, rechecked at execution time. |
 | AU5 | Bulk outcomes are per item; nothing claims global atomicity. |
 | AU6 | The CMS is fully usable with every model provider disabled. |
@@ -216,7 +344,7 @@ CLI can show from it what a role or token can do.
 | Situation | Behaviour |
 |---|---|
 | Agent interrupted halfway through a bulk edit (X12) | Per-item outcomes, stable keys and base revisions prevent duplicates or overwrites; resume from the cursor |
-| Noisy agent alongside editors (L08) | Throttled; editorial p95 stays within 2× the mixed-workload baseline; no cross-project starvation |
+| Noisy agent alongside editors (L08) | Throttled; editorial p95 stays within 2× the mixed-workload baseline; no cross-project starvation — measured by `perf/k6/noisy-agent.js`, stored run `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json` |
 | Invalid or hostile model output (F11) | No unsafe action; the reviewer sees a rejected suggestion with safe diagnostics |
 | Provider timeout | Uncertainty and reservation preserved; reconciled where possible |
 | Budget exhausted | Request refused before dispatch with a clear error |
@@ -225,28 +353,41 @@ CLI can show from it what a role or token can do.
 
 - The MCP server (D-068): unit tests for JSON-RPC framing (malformed JSON, batches, ids, oversized lines, unknown
   methods and tools, the `initialize` handshake and requests before it), tool argument validation, error mapping and
-  configuration (`cargo test -p colophon-mcp`); and `crates/colophon-mcp/tests/stack.rs` (ignored; the local stack and
+  configuration (`cargo test -p colophon-mcp`, the `remote.rs` session unit tests beside them); and
+  `crates/colophon-mcp/tests/stack.rs` (ignored; the local stack and
   `colophon-server`), which drives the binary over stdio with a custom, a read-only and a full-access token: a draft, a
   refused stale save naming the current revision, a create retried with the same key returning the same entry, a
   publish request and its review request; no write tools for the read-only token and its writes refused by the API;
   no approving or publishing tool for anyone; and a wrong `COLOPHON_PROJECT` or a token revoked mid-session said
   plainly (`-32001`, and 401 on the next call: R.4's kill switch holds through MCP).
-- X12, L08 and F11.
-- The evaluation suite with repeated trials and the zero-unauthorized-action gate.
-- Spec §27 agent-abuse cases:
-  - prompt injection in content;
-  - tool-argument manipulation;
-  - cost overruns;
-  - a mass-deletion attempt;
-  - an altered approved changeset;
-  - an unsafe import.
+- The remote MCP endpoint (D-121): the registry's unit tests in `colophon-api`'s `mcp.rs` (the caps applied before a
+  session is kept, a session answering only to its own token, project and environment, the idle sweep) and
+  `crates/colophon-server/tests/mcp.rs` (ignored, serial; the stack): the whole lifecycle over Streamable HTTP —
+  handshake, the minted `Mcp-Session-Id`, the eighteen tools, a draft and a proposal through `tools/call`, the
+  `-32602` boundary on privileged names, `DELETE` and the 404 after it; the credential boundary — person session and
+  personal token refused `api_token_required`, another project's token 404, a session refusing a token that didn't
+  mint it, revocation 401; the transport's door checks — hostile `Origin` 403, `Accept` that can't take
+  `application/json` 400, missing or wrong `MCP-Protocol-Version` 400, malformed JSON-RPC `-32700`, a request before
+  `initialize` `-32002`, `GET` 405; the per-token cap at `COLOPHON_MCP_PER_TOKEN`; and byte-identical parity with a
+  stdio `colophon-mcp` session on the same token.
+- X12 and F11; L08's stored run is `perf/results/2026-11-04T154012Z-noisy-agent-steady-apple-m2-pro-12c.json`
+  (`perf/k6/noisy-agent.js`: two phases in one run — editorial traffic alone, then the same traffic
+  beside a 60-a-minute token attempting ~600/s and an editor in a second project; the agent was 99.7%
+  refused with `Retry-After`, editorial p95 x1.83 of its baseline and project-B's x1.86 of its own).
+- The evaluation suite (D-117, `crates/colophon-server/tests/evals.rs`): ignored and serial, repeated
+  under `COLOPHON_EVAL_TRIALS`, a summary line per case, and the `UNAUTHORIZED: 0` gate over all six
+  spec §27 abuse cases — prompt injection in content, tool-argument manipulation, cost overruns, a
+  mass-deletion attempt, an altered approved changeset, an unsafe import — plus the token-privilege
+  and MCP surfaces. `scripts/check.sh` runs it at three trials in its ignored half; a stored
+  `<timestamp>-evals.json` lands with `COLOPHON_EVAL_RESULTS` set.
 
 ## Build order
 
 1. Service accounts, quotas and the kill switch (with [auth](03-auth.md)).
 2. Typed tools over the CLI JSON contract.
 3. Bulk manifests and budget reservations.
-4. The MCP adapter. Local stdio is built (D-068), ahead of 1 to 3, on R.4's API tokens; remote MCP waits for 3.
+4. The MCP adapter. Local stdio is built (D-068), ahead of 1 to 3, on R.4's API tokens; remote MCP — Streamable
+   HTTP on `{P}/mcp` — is built too (D-121), on the same crate and the same tokens.
 5. The optional AI assistant, last and off by default.
 
 ## Open decisions

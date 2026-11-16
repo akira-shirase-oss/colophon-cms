@@ -60,6 +60,47 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
 - Step 3.1 (D-048) adds a strong `ETag` (304 for a matching `If-None-Match`), the cache policies below,
   `Cache-Tag`, and `Colophon-Cache: hit | miss | coalesced | bypass`.
 - Step 3.2 (D-049): revoked publications are never delivered; an unpublished entry is 410 `gone`.
+- P7 (D-139) adds the public live-hint stream:
+  `GET /content/v1/{project}/{environment}/events` is an anonymous server-sent-events stream that says
+  only *that* published content changed — no ids, kinds or collections, so a gated entry's existence
+  cannot leak through it. Only `releases` hints are forwarded (a publish inserts a release row; draft
+  saves and delivery-job churn stay off the stream), a burst coalesces into one `change` frame, and the
+  stream is bounded by the same per-project and per-server caps as the staff bus (D-108), ending at its
+  lifetime. A site reacts by re-reading through the delivery API at the new generation: The Draft renders
+  its public pages per request and fans one upstream connection out to every open tab, so a publish
+  reaches a browser with no rebuild.
+- DX.4 (D-103, D-105) adds `POST /content/v1/{project}/{environment}/{collection}/query?generation=&cursor=`:
+  the bounded query language of [domain](01-domain.md) over the published projection, still anonymous. The
+  body is the query document the draft route takes; `?generation=` pins the release, `?cursor=` a page
+  boundary sealed `q1:<generation>:<v1 token>` — the generation of its first page, then the query-bound
+  `v1:` token, so paging never mixes two releases (DL2). Rows are the `publications` projection pinned by
+  delivery's own predicate — `valid_from` open at the generation, never revoked — so unpublished and
+  tombstoned entries never answer at any generation (DL5). `fields` narrows the returned content; `depth`
+  populates (DX.5, D-107): each level's targets resolve from `publications` under the page's own pin,
+  inside the fill's transaction — so a populated reference reads exactly the release its row does, and a
+  publication revoked or taken down since resolves to nothing, staying the stored id at any generation.
+  `applied` echoes the canonical
+  document and its `query_hash`, and publications carry no locale, so every answer is in the stored one until
+  locale lands on the projection.
+
+### Gated content (P7, D-137)
+- Every draft, revision and publication carries a `visibility`: `public` (the default), `authenticated` (any
+  signed-in site user) or `role:<name>` (a site user whose [audience](03-auth.md) role is `<name>`). Editorial
+  writes take it as `?visibility=`; `role:` validates against the project's live audience roles, so a gate can
+  never name a role that doesn't exist. The gate pins with the revision like the content itself — a release
+  publishes whatever gate the pinned revision carries.
+- Enforcement is row-level security, not a filter the code could forget: a delivery transaction `SET LOCAL ROLE
+  colophon_delivery` and names the reader as `app.audience_role` — unset for anonymous, the live session's role
+  for a member. The `publications` policy answers `visibility = 'public'` rows to anyone, and
+  `visibility = 'authenticated'` or `visibility = 'role:' || current_setting('app.audience_role')` rows to a
+  member; a gated row the caller's role doesn't match is the same 404 as an unpublished one, to them and to
+  their `?generation=` pins.
+- A request's audience resolves *before* the cache: a live site session (bearer or `colophon_audience` cookie)
+  makes the read a member's — answered `Cache-Control: private, no-cache` with `Colophon-Cache: bypass`
+  straight from Postgres (its own ETag still earns a 304), and **never** through the generation-keyed cache,
+  whose keys name no role and whose audience is anonymous by construction. A dead or absent credential is
+  simply anonymous — delivery never 401s a public collection, it answers the public rows, and the member
+  answer's `Vary: Authorization, Cookie` keeps any shared cache between the two honest.
 
 ### Cache keys (spec §15)
 - A key includes:
@@ -76,6 +117,11 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   resolves its generation from Postgres in one statement, before and apart from the cache: `delivery_environment`
   (migration 0011) runs as `colophon_delivery` in the project's context and returns only the environment's id, epoch
   and generation. As a delivery transaction (five round trips) the lookup cost as much as the cache saved.
+- DX.4 (D-105): a query page keys on `Scope::query_key` — the normalized query's own `query_hash` and the page
+  boundary's SHA-256, both fixed-width hex, the collection last as always — so two different queries can never
+  share an answer (§15) and a key stays short however long a cursor is. The boundary names the canonical
+  position re-sealed, not the request's token: one page, one key. A query page takes the list's tags, so a
+  purge finds it like any listing.
 
 ### Cache layer (Redis-compatible)
 - Disposable, generation-keyed public results: 300 seconds with jitter, a 1 GiB reference budget, explicit eviction.
@@ -195,7 +241,14 @@ These are policies to test, not a global 30-second consistency guarantee.
   delivered, a pinned read of generation 1 after release 2, a cursor that keeps its generation across a release);
   `crates/colophon-db/tests/releases.rs` (the delivery role refused drafts, entries, changesets, members, sessions,
   identities and every write); `perf/k6/delivery.js` (anonymous latest, pinned and single-entry reads, at least
-  1,000,000 per full run).
+  1,000,000 per full run); `perf/k6/audience-sites.js` (the five demo sites' real read mix —
+  `/media/v1` thumbs, renditions and originals beside collection lists with cursor paging,
+  latest and pinned entries, `If-None-Match` revalidation and a made-up 404 — against the
+  seeded `demo-sites` project, which is what found the media origin's per-request environment
+  lookup D-134 memoises). DX.4: `crates/colophon-server/tests/delivery_query.rs` (filter, sort and page parity
+  with the draft route, a pinned release unmoved by a newer one, unpublished and tombstoned entries absent at
+  every generation, anonymous and credentialed reads, foreign and uncommitted-generation cursors refused,
+  `fields` narrowing and the `applied` echo, ETag revalidation).
 
 ## Build order
 

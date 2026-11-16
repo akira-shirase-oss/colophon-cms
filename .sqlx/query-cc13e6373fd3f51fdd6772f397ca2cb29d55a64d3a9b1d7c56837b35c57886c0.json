@@ -1,0 +1,229 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO bulk_jobs (project_id, environment_id, id, kind, operation, manifest_hash,\n                                state, created_by, principal, expected_items, started_at)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,\n                 CASE WHEN $7 = 'running' THEN now() ELSE NULL END)\n         RETURNING project_id, environment_id, id, kind, operation, manifest_hash, state, created_by, principal,\n                   expected_items, done_items, blocked_items, started_at, finished_at, error,\n                   created_at, updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "project_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "project_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "environment_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "environment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "operation",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "operation"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "manifest_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "manifest_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "principal",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "principal"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "expected_items",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "expected_items"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "done_items",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "done_items"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "blocked_items",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "blocked_items"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "started_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "finished_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "finished_at"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "bulk_jobs",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Jsonb",
+        "Bytea",
+        "Text",
+        "Uuid",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "cc13e6373fd3f51fdd6772f397ca2cb29d55a64d3a9b1d7c56837b35c57886c0"
+}

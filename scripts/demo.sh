@@ -68,6 +68,8 @@ trap cleanup EXIT
   # shellcheck source=scripts/local-env.sh
   . scripts/local-env.sh
   export COLOPHON_STUDIO_DIR="$PWD/apps/studio/build" COLOPHON_LOG=warn
+  # Loopback-only: the demo sites exercise the magic-link flow without a mail server (D-140).
+  export COLOPHON_DEV_MAIL=1
   exec target/release/colophon-server
 ) >"$state/server.log" 2>&1 &
 server_pid=$!
@@ -103,7 +105,7 @@ cat <<EOF
 Colophon is running locally (database $COLOPHON_TEST_DATABASE).
 
   Studio        http://localhost:$server_port/studio/
-                sign in as dev-owner or dev-editor, password colophon-dev
+                sign in as dev-owner@colophon.test or dev-editor@colophon.test, password colophon-dev
   Demo project  http://localhost:$server_port/studio/projects/$project
   Live site     http://127.0.0.1:$site_port/   (rebuilt on every release)
   Public API    http://localhost:$server_port/content/v1/$project/production/articles

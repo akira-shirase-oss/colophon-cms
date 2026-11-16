@@ -1,0 +1,135 @@
+{
+  "scenario": "steady",
+  "endpoint": "warm-baseline",
+  "date": "2026-11-04T22:02:39Z",
+  "commit": "09217ad",
+  "dirty": false,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 300,
+    "duration": "30m",
+    "vus": 256
+  },
+  "requests": 540063,
+  "rps": 299,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 2.509,
+    "p50": 1.556,
+    "p90": 3.788,
+    "p95": 6.436,
+    "p99": 19.607,
+    "p999": 47.637,
+    "max": 130.352
+  },
+  "database_transactions_during_run": 625251,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 350,
+    "server_rss_kb": {
+      "first": 27104,
+      "last": 25248,
+      "max": 41984
+    },
+    "server_cpu_percent": {
+      "avg": 6.9,
+      "max": 13.1
+    },
+    "postgres_connections": {
+      "last": 23,
+      "max": 29
+    }
+  },
+  "l02": {
+    "run_seconds": 1800,
+    "windows_seconds": 300,
+    "rps": 299.96717575507745,
+    "latency_ms": {
+      "max": 130.352,
+      "p50": 1.556,
+      "p95": 6.435899999999976,
+      "p99": 19.607379999999996
+    },
+    "windows_p99": [
+      {
+        "window": "w0",
+        "p95_ms": 3.093949999999996,
+        "p99_ms": 4.354,
+        "max_ms": 30.843
+      },
+      {
+        "window": "w1",
+        "p95_ms": 3.403,
+        "p99_ms": 6.7840599999999975,
+        "max_ms": 113.607
+      },
+      {
+        "window": "w2",
+        "p95_ms": 3.178099999999996,
+        "p99_ms": 4.889,
+        "max_ms": 46.05
+      },
+      {
+        "max_ms": 130.352,
+        "window": "w3",
+        "p95_ms": 5.446149999999996,
+        "p99_ms": 18.807629999999982
+      },
+      {
+        "max_ms": 128.715,
+        "window": "w4",
+        "p95_ms": 6.318849999999988,
+        "p99_ms": 18.221869999999992
+      },
+      {
+        "window": "w5",
+        "p95_ms": 17.199,
+        "p99_ms": 34.398199999999996,
+        "max_ms": 123.717
+      },
+      {
+        "window": "w6",
+        "p95_ms": 4.529599999999999,
+        "p99_ms": 5.6738,
+        "max_ms": 10.961
+      }
+    ],
+    "cache": {
+      "hit_share": 0.9997531590499091,
+      "served": {
+        "hit": 485976,
+        "miss": 119,
+        "coalesced": 47,
+        "bypass": 1
+      }
+    },
+    "gates": {
+      "failures_under_0_1_pct": true,
+      "hits_at_least_95_pct": true,
+      "every_window_within_p99_gate": true,
+      "windows_measured": true,
+      "p95_within_gate": true,
+      "p99_within_gate": true
+    },
+    "held": true,
+    "spec": "L02: warm read baseline — warm-origin gates: p95 <=150 ms, p99 <=350 ms, unexpected failures <0.1%; record hits, pools, CPU, RSS",
+    "gate": "overall p95 <150 ms and p99 <350 ms, failure share <0.1%, cache-hit share >95%, and every five-minute window's p99 inside the same gate",
+    "requests": 540063,
+    "failures": 0
+  }
+}

@@ -1,6 +1,6 @@
 <!--
   A project's first-run checklist (step 3.7, D-059 rule 4): decide what you'll write (content types,
-  D-082), write, review or publish, connect the website, invite a teammate, see a receipt. Each item is worked out from the project's real
+  D-147), write, review or publish, connect the website, invite a teammate, see a receipt. Each item is worked out from the project's real
   state, never ticked by hand, and links to the place that does it. Items a role can't do are
   left out (rule 5). Hidden, it stays hidden in this browser.
 -->

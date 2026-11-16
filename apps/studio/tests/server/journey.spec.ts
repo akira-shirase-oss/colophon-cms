@@ -1,4 +1,4 @@
-// The first-run journey (step 3.7, D-059, D-061, D-082), on a brand-new installation: its own
+// The first-run journey (step 3.7, D-059, D-061, D-147), on a brand-new installation: its own
 // database, migrated and never bootstrapped, and its own server, whose setup link is read from its
 // terminal as an operator would. A new person opens it, makes an account, becomes the administrator
 // with the code the link filled in,
@@ -15,7 +15,7 @@ import { type Browser, expect, type Page, test } from '@playwright/test';
 import { internalTerms, violations } from './helpers.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
-// Its callback must be registered in deploy/keycloak's realm (58400 to 58405 are).
+// Its own port — sign-in is the built-in password card (D-146), so any port works.
 const PORT = Number(process.env['COLOPHON_JOURNEY_PORT'] ?? 58402);
 const ORIGIN = `http://localhost:${PORT}`;
 const SHOTS = process.env['STUDIO_SHOTS_DIR'];
@@ -80,7 +80,7 @@ function setupCode(): string {
 	return code;
 }
 
-/** The link the server printed beside it, which fills the code in (D-082). */
+/** The link the server printed beside it, which fills the code in (D-147). */
 function setupLink(): string {
 	const link = /(\S+#setup=\S+)/.exec(printed)?.[1];
 	if (link === undefined) throw new Error('no setup link');
@@ -107,18 +107,13 @@ async function screen(page: Page, name: string, { words = true }: { words?: bool
 	if (words) expect(await internalTerms(page), `${name}: internal terms`).toEqual([]);
 }
 
-/** Keycloak's sign-up form, filled in for a new person; back in the Studio afterwards. */
-async function signUp(page: Page, first: string, last: string): Promise<string> {
-	const username = `${first.toLowerCase()}-${Date.now().toString(36)}`;
-	await expect(page.locator('#kc-register-form')).toBeVisible();
-	await page.locator('#username').fill(username);
-	await page.locator('#email').fill(`${username}@example.test`);
-	await page.locator('#firstName').fill(first);
-	await page.locator('#lastName').fill(last);
-	await page.locator('#password').fill('a-long-passphrase-1');
-	await page.locator('#password-confirm').fill('a-long-passphrase-1');
-	await page.locator('#kc-form-buttons input[type=submit], #kc-form-buttons button[type=submit]').click();
-	return username;
+/** The Studio's own account form, already in create-account mode: filled in and sent; the
+ *  answer signs the new account in itself (D-084). */
+async function makeAccount(page: Page, name: string): Promise<void> {
+	await page.getByLabel('Your name').fill(name);
+	await page.getByLabel('Email').fill(`${name.split(' ').at(0)?.toLowerCase() ?? 'someone'}-${Date.now().toString(36)}@example.test`);
+	await page.getByLabel('Password').fill('a-long-passphrase-1');
+	await page.getByRole('button', { name: 'Create account and continue' }).click();
 }
 
 async function fresh(browser: Browser): Promise<Page> {
@@ -134,10 +129,10 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 	await test.step('a new installation greets a signed-out visitor', async () => {
 		await owner.goto('/studio/');
 		await expect(owner.getByTestId('signed-out')).toBeVisible();
-		// Without the setup link too: GET /api/v1/installation says nobody runs it yet (D-082).
+		// Without the setup link too: GET /api/v1/installation says nobody runs it yet (D-147).
 		await expect(owner.getByTestId('new-installation')).toContainText('This Colophon is new');
 		await expect(owner.getByTestId('new-installation')).toContainText('The server printed the setup code');
-		await expect(owner.getByTestId('create-account')).toHaveText(/Create an account/);
+		await expect(owner.getByTestId('password-submit')).toHaveText('Create account and continue');
 		await screen(owner, 'welcome');
 	});
 
@@ -147,25 +142,24 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await expect(owner.getByTestId('new-installation')).toContainText(
 			"This Colophon is new. Create the first account; you'll become its administrator with the setup code the server printed."
 		);
-		await expect(owner.getByTestId('create-account')).toHaveClass(/\bbg-primary\b/);
-		await expect(owner.getByTestId('sign-in')).not.toHaveClass(/\bbg-primary\b/);
+		// The account form opens on creating one: that is the first visitor's one job (D-147).
+		await expect(owner.getByTestId('password-submit')).toHaveText('Create account and continue');
+		await expect(owner.getByTestId('new-installation')).toContainText('Your link carries the setup code');
 		// The code leaves the address bar (and the history) and waits in this tab for the sign-up.
 		await expect(owner).toHaveURL(`${ORIGIN}/studio/`);
 		expect(await owner.evaluate(() => sessionStorage.getItem('colophon-setup-code'))).toBe(setupCode());
 		await screen(owner, 'welcome-setup-link');
 	});
 
-	await test.step('they make an account at the identity provider', async () => {
-		await owner.getByTestId('create-account').click();
-		await expect(owner.locator('#kc-register-form')).toBeVisible();
+	await test.step('they make an account right here', async () => {
 		await screen(owner, 'sign-up', { words: false });
-		await signUp(owner, 'Ada', 'Owner');
+		await makeAccount(owner, 'Ada Owner');
 		await expect(owner.getByTestId('setup')).toBeVisible();
 	});
 
 	await test.step('nobody runs this Colophon yet: the code the link carried makes them its administrator', async () => {
 		await expect(owner.getByRole('heading', { level: 1 })).toHaveText('Finish setting up Colophon');
-		// The identity provider's redirect dropped the fragment; the tab kept the code.
+		// The fragment left the address bar when the link opened; the tab kept the code.
 		await expect(owner.getByLabel('Setup code')).toHaveValue(setupCode());
 		await expect(owner.getByTestId('setup-from-link')).toHaveText('Code filled in from your link.');
 		await screen(owner, 'setup');
@@ -193,7 +187,7 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await expect(owner.getByRole('radio', { name: 'A small blog' })).toBeChecked();
 		await owner.getByRole('button', { name: 'Create project' }).click();
 		await expect(owner.getByTestId('first-run')).toBeVisible();
-		// The blog starting point decided what they'll write: Articles, with URL names (D-082).
+		// The blog starting point decided what they'll write: Articles, with URL names (D-147).
 		await expect(owner.getByTestId('first-run-item').first()).toHaveAttribute('data-item', 'types');
 		await expect(owner.getByTestId('first-run-count')).toHaveText('1 of 6 done');
 		await screen(owner, 'overview-checklist');
@@ -222,7 +216,7 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 
 	await test.step('they see its receipt', async () => {
 		await owner.getByTestId('publish-outcome').getByRole('link', { name: 'Release 1' }).click();
-		// Spec §05's "Published in CMS", in the product's name (D-082); no "CDN" either.
+		// Spec §05's "Published in CMS", in the product's name (D-147); no "CDN" either.
 		await expect(owner.getByTestId('receipt-label')).toHaveText('Published in Colophon');
 		await expect(owner.locator('main')).not.toContainText(/\bCDN\b|\bCMS\b/);
 		await expect(owner.getByTestId('receipt-explainer')).toContainText('Nothing checks your website yet');
@@ -241,11 +235,13 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await owner.getByTestId('members-link').click();
 		await expect(owner.getByTestId('members-alone')).toBeVisible();
 		await screen(owner, 'members');
+		await owner.getByTestId('invite-member').click();
 		await owner.getByLabel('Who is it for?').fill('Sam, writer');
 		await owner.getByRole('button', { name: 'Create invitation link' }).click();
 		invitation = await owner.getByRole('textbox', { name: 'Invitation link' }).inputValue();
 		expect(invitation).toContain('/studio/invite#');
 		await screen(owner, 'invited');
+		await owner.getByRole('button', { name: 'Done' }).click();
 	});
 
 	await test.step('the checklist follows what happened', async () => {
@@ -267,8 +263,8 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 	const teammate = await fresh(browser);
 	await test.step('the teammate makes an account first, and learns they need an invitation', async () => {
 		await teammate.goto('/studio/');
-		await teammate.getByTestId('create-account').click();
-		await signUp(teammate, 'Sam', 'Writer');
+		await teammate.getByRole('button', { name: 'Create one' }).click();
+		await makeAccount(teammate, 'Sam Writer');
 		await expect(teammate.getByTestId('not-administrator')).toContainText('invitation link');
 		await screen(teammate, 'not-in-a-project');
 	});
@@ -278,7 +274,7 @@ test('a new person sets up Colophon, publishes a first article, and brings in a 
 		await expect(teammate.getByTestId('invite-ask')).toContainText('Field notes');
 		await screen(teammate, 'invitation');
 		await teammate.getByRole('button', { name: 'Join', exact: true }).click();
-		// Straight to their work there, with a note that says so (D-082).
+		// Straight to their work there, with a note that says so (D-147).
 		await expect(teammate.getByText('You joined Field notes as Editor', { exact: true })).toBeVisible();
 		await expect(teammate.getByTestId('work-project')).toHaveText('Field notes');
 		await screen(teammate, 'joined');

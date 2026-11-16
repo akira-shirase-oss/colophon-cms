@@ -2,7 +2,7 @@
 // readers get it, the delivery read anyone can make without signing in, with a way to open and
 // copy it, in Technical details (D-081); while there are newer changes it says readers get the
 // version live in a release, not them; a draft that was never published shows no address. A
-// visible Copy public link copies it without opening the drawer (D-082).
+// visible Copy public link copies it without opening the drawer (D-147).
 
 import { expect, test } from '@playwright/test';
 import { internalTerms, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
@@ -22,7 +22,7 @@ test('a published entry says where readers get it, and the address answers witho
 	await page.reload();
 	const address = `${baseURL}/content/v1/${project}/production/articles/${entry}`;
 	const shown = page.getByTestId('public-address');
-	// Copying the public link is one visible click, above Technical details (D-082).
+	// Copying the public link is one visible click, above Technical details (D-147).
 	const copyLink = page.getByTestId('copy-public-link');
 	await expect(copyLink).toBeVisible();
 	await expect(page.getByTestId('entry-details')).toContainText('Anyone can read it.');
@@ -36,7 +36,7 @@ test('a published entry says where readers get it, and the address answers witho
 	await expect(shown).toBeHidden();
 	await page.getByTestId('entry-details').getByTestId('technical-details').locator('summary').click();
 	await expect(shown.getByRole('link')).toHaveAttribute('href', address);
-	// Even the drawer says how readers get an entry without the internal word (D-082).
+	// Even the drawer says how readers get an entry without the internal word (D-147).
 	await expect(page.getByTestId('entry-details').getByTestId('technical-details')).toContainText('Readers get an entry only once a release with it is published.');
 	await expect(page.getByTestId('entry-details').getByTestId('technical-details')).not.toContainText(/changeset/i);
 	await expect(shown).toContainText('Anyone can read the published version at this address, without signing in.');

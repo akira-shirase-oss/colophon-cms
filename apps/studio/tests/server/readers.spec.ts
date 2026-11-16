@@ -4,7 +4,7 @@
 // says plainly when the entry has been taken down meanwhile.
 
 import { expect, test } from '@playwright/test';
-import { internalTerms, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
+import { env, internalTerms, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
 
 test('a published entry shows what readers get, as the website receives it, and says when that is behind or gone', async ({ page, context, request }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -47,6 +47,17 @@ test('a published entry shows what readers get, as the website receives it, and 
 	await view.getByRole('button', { name: 'Close' }).click();
 
 	// Taken down meanwhile (by someone else, while this page was open): it says readers get nothing.
+	// The page's own read freezes where it stood — a tab the stream's hint never reached — so the
+	// button still offers the read; the view itself asks readers' API and finds nothing there.
+	const frozen = await page.evaluate(
+		async (path) => (await (await fetch(path)).text()),
+		`${env(project)}/collections/articles/entries/${entry}`
+	);
+	await page.route(`**/collections/articles/entries/${entry}`, (route) =>
+		route.request().method() === 'GET'
+			? route.fulfill({ status: 200, contentType: 'application/json', body: frozen })
+			: route.continue()
+	);
 	await publishThroughApi(page, project, 'Taken down', [], [entry]);
 	await page.getByTestId('see-what-readers-get').click();
 	await expect(view.getByTestId('reader-outcome')).toContainText('Readers get nothing for it now: it was taken down.');

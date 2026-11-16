@@ -1,0 +1,293 @@
+/* Butter & Thyme, a recipe-site look: cream, terracotta, compact cards and a method layout. */
+:root {
+	--cream: #fbf6ee;
+	--ink: #33302a;
+	--muted: #7d7468;
+	--line: #eadfd0;
+	--accent: #b3552e;
+	--accent-soft: #f7e8de;
+	--green: #5d7a4a;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: var(--cream);
+	color: var(--ink);
+	font: 1rem/1.6 "Avenir Next", "Segoe UI", system-ui, sans-serif;
+}
+
+.wrap {
+	max-width: 62rem;
+	margin: 0 auto;
+	padding: 0 1.25rem;
+}
+
+a {
+	color: var(--accent);
+}
+
+.site-header {
+	background: #fffdf8;
+	border-bottom: 1px solid var(--line);
+}
+
+.site-header .wrap {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	padding-top: 1rem;
+	padding-bottom: 1rem;
+}
+
+.brand {
+	font-size: 1.5rem;
+	font-weight: 700;
+	font-style: italic;
+	color: var(--accent);
+	text-decoration: none;
+}
+
+.site-nav a {
+	color: var(--muted);
+	text-decoration: none;
+	font-size: 0.9rem;
+}
+
+.hero {
+	padding: 2.25rem 0 1.5rem;
+}
+
+.hero h1 {
+	margin: 0 0 0.35rem;
+	font-size: 2.2rem;
+}
+
+.hero p {
+	margin: 0;
+	color: var(--muted);
+	max-width: 44rem;
+}
+
+.grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+	gap: 1.25rem;
+	padding-bottom: 2rem;
+}
+
+.card {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--line);
+	border-radius: 0.75rem;
+	background: #fffdf8;
+	overflow: hidden;
+	text-decoration: none;
+	color: var(--ink);
+}
+
+.card:hover {
+	border-color: var(--accent);
+}
+
+.card .swatch {
+	height: 7rem;
+	display: flex;
+	align-items: flex-end;
+	padding: 0.75rem 1rem;
+}
+
+.card .swatch span {
+	background: rgba(255, 255, 255, 0.85);
+	border-radius: 999px;
+	font-size: 0.72rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	padding: 0.15rem 0.7rem;
+}
+
+.card .body {
+	padding: 1rem 1.15rem 1.15rem;
+}
+
+.card h2 {
+	margin: 0 0 0.35rem;
+	font-size: 1.15rem;
+}
+
+.card .intro {
+	margin: 0;
+	font-size: 0.9rem;
+	color: var(--muted);
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.meta-row {
+	display: flex;
+	gap: 0.5rem;
+	flex-wrap: wrap;
+	margin-top: 0.75rem;
+}
+
+.badge {
+	font-size: 0.74rem;
+	font-weight: 600;
+	border-radius: 999px;
+	padding: 0.15rem 0.65rem;
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+
+.badge.green {
+	background: #e9f0e2;
+	color: var(--green);
+}
+
+.recipe {
+	max-width: 46rem;
+	margin: 0 auto;
+	padding: 2rem 0;
+}
+
+.recipe h1 {
+	font-size: 2.2rem;
+	margin: 0 0 0.4rem;
+}
+
+.recipe .intro {
+	font-size: 1.1rem;
+	color: var(--muted);
+}
+
+.facts {
+	display: flex;
+	gap: 0;
+	margin: 1.5rem 0;
+	border: 1px solid var(--line);
+	border-radius: 0.75rem;
+	overflow: hidden;
+	background: #fffdf8;
+}
+
+.facts div {
+	flex: 1;
+	padding: 0.85rem 1rem;
+	border-right: 1px solid var(--line);
+	text-align: center;
+}
+
+.facts div:last-child {
+	border-right: none;
+}
+
+.facts dt {
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.07em;
+	color: var(--muted);
+}
+
+.facts dd {
+	margin: 0.15rem 0 0;
+	font-weight: 700;
+	font-size: 1.05rem;
+}
+
+.ingredients {
+	background: #fffdf8;
+	border: 1px solid var(--line);
+	border-radius: 0.75rem;
+	padding: 1.25rem 1.5rem;
+}
+
+.ingredients h2,
+.method h2 {
+	font-size: 1.25rem;
+	margin-top: 0;
+}
+
+.ingredients ul {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.ingredients li {
+	display: flex;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.45rem 0;
+	border-bottom: 1px dashed var(--line);
+}
+
+.ingredients li:last-child {
+	border-bottom: none;
+}
+
+.ingredients .amount {
+	color: var(--muted);
+	white-space: nowrap;
+}
+
+.method {
+	margin-top: 1.75rem;
+}
+
+.method ol {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	counter-reset: step;
+}
+
+.method li {
+	counter-increment: step;
+	display: flex;
+	gap: 1rem;
+	padding: 0.9rem 0;
+	border-bottom: 1px solid var(--line);
+}
+
+.method li::before {
+	content: counter(step);
+	flex-shrink: 0;
+	width: 1.75rem;
+	height: 1.75rem;
+	border-radius: 50%;
+	background: var(--accent);
+	color: #fff;
+	font-weight: 700;
+	font-size: 0.9rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin-top: 0.1rem;
+}
+
+.site-footer {
+	margin-top: 3rem;
+	border-top: 1px solid var(--line);
+	color: var(--muted);
+	font-size: 0.85rem;
+	padding: 1rem 0 2rem;
+}
+
+.unseeded {
+	max-width: 40rem;
+	margin: 3rem auto;
+}
+
+.unseeded pre {
+	background: #33302a;
+	color: #f5efe6;
+	padding: 1rem 1.2rem;
+	border-radius: 0.5rem;
+}

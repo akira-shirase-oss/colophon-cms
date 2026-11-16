@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO deletion_ledger (kind, project_id, project_slug, environment_id, detail)\n           VALUES ($1, $2, (SELECT slug FROM projects WHERE id = $2), $3, $4::text::jsonb)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e4ada3947619ca795ddced35515bb6201edee01fd7985d54933c7f0c46b52cb9"
+}

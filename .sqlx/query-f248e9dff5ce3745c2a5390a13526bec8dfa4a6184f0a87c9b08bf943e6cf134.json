@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH doomed AS (\n             SELECT project_id, environment_id, id FROM schedules\n             WHERE finished_at < $1\n             ORDER BY finished_at\n             LIMIT $2)\n         DELETE FROM schedules s USING doomed d\n         WHERE s.project_id = d.project_id AND s.environment_id = d.environment_id\n           AND s.id = d.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f248e9dff5ce3745c2a5390a13526bec8dfa4a6184f0a87c9b08bf943e6cf134"
+}

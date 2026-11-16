@@ -37,6 +37,9 @@ pub struct Config {
     pub crash: u16,
     /// How often an editor in a conflict takes their version instead of keeping its own.
     pub take_theirs: u16,
+    /// How often a step is a content-type change on some project instead of an editor's act,
+    /// per thousand: what makes a save race a schema change (step M.5c, D-100).
+    pub schema_change: u16,
 }
 
 impl Default for Config {
@@ -50,6 +53,7 @@ impl Default for Config {
             lose_answer: 100,
             crash: 30,
             take_theirs: 300,
+            schema_change: 30,
         }
     }
 }
@@ -82,6 +86,18 @@ pub struct Stats {
     pub crashes: u64,
     /// Reads of another project's entry ids.
     pub probes: u64,
+    /// Content-type changes that landed while saves were in flight or settled.
+    pub schema_changes: u64,
+}
+
+/// One thing the store did, in the run's order: what the differential test replays against
+/// Postgres.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Op {
+    /// A save the store applied, with its answer.
+    Save(Save, Reply),
+    /// A content-type change that landed: the project, and the version it reached.
+    Change(ProjectId, u64),
 }
 
 /// A finished run.
@@ -99,9 +115,8 @@ pub struct Report {
     pub stats: Stats,
     /// The entries created before the run: project, entry, first revision, content.
     pub setup: Vec<(ProjectId, EntryId, RevisionId, String)>,
-    /// Every save the store applied, with its answer, in order: what the differential test
-    /// replays against Postgres.
-    pub log: Vec<(Save, Reply)>,
+    /// Every operation the store applied, in order.
+    pub log: Vec<Op>,
 }
 
 /// A request waiting in the network, or one whose request or answer went missing.
@@ -147,7 +162,7 @@ struct Run<'a> {
     trace: Vec<String>,
     violations: Vec<Violation>,
     stats: Stats,
-    log: Vec<(Save, Reply)>,
+    log: Vec<Op>,
 }
 
 /// Runs one seed.
@@ -253,7 +268,7 @@ impl Run<'_> {
         });
     }
 
-    /// One step: an orphaned request arrives, or one editor acts.
+    /// One step: an orphaned request arrives, a content-type change lands, or one editor acts.
     fn act(&mut self) {
         if !self.orphans.is_empty() && self.rng.chance(200) {
             let index = self.rng.below(self.orphans.len());
@@ -263,6 +278,22 @@ impl Run<'_> {
                 "orphan from i{} arrives: {reply:?}",
                 save.identity
             ));
+            return;
+        }
+        // Someone changes a content type while saves are in flight: the version their drafts
+        // were written against moves. A change too unsafe for a plain update is refused in
+        // the API and never gets here, so every change lands.
+        if self.rng.chance(self.config.schema_change) {
+            let project = u64::try_from(
+                self.rng
+                    .below(usize::try_from(self.config.projects).unwrap_or(usize::MAX)),
+            )
+            .unwrap_or_default()
+                + 1;
+            let version = self.store.change_type(project);
+            self.stats.schema_changes += 1;
+            self.log.push(Op::Change(project, version));
+            self.note(&format!("p{project}'s type moves to v{version}"));
             return;
         }
         let index = self.rng.below(self.editors.len());
@@ -325,6 +356,7 @@ impl Run<'_> {
             entry: editor.entry,
             expected: editor.base,
             key,
+            seen_version: self.store.version(editor.project),
             content: format!("p{}-i{}-n{}", editor.project, editor.identity, editor.edits),
         };
         let line = format!(
@@ -342,14 +374,31 @@ impl Run<'_> {
             revision,
             replayed: false,
         } = reply
-            && !self.stored.insert(save.content.clone())
         {
-            self.fail(
-                "S1",
-                format!("{:?} was stored twice (now as r{revision})", save.content),
-            );
+            if !self.stored.insert(save.content.clone()) {
+                self.fail(
+                    "S1",
+                    format!("{:?} was stored twice (now as r{revision})", save.content),
+                );
+            }
+            // V: the revision names the content-type version current when the save committed,
+            // read under the collection's lock — never one a schema change already moved past.
+            let stamped = self
+                .store
+                .revision(revision)
+                .map_or(0, |stored| stored.schema_version);
+            let current = self.store.version(save.project);
+            if stamped != current {
+                self.fail(
+                    "V",
+                    format!(
+                        "r{revision} was written against v{stamped} of p{}'s type, but the type was already v{current}: a save landed on a superseded version",
+                        save.project
+                    ),
+                );
+            }
         }
-        self.log.push((save.clone(), reply.clone()));
+        self.log.push(Op::Save(save.clone(), reply.clone()));
         reply
     }
 
@@ -446,6 +495,7 @@ impl Run<'_> {
                 entry: editor.entry,
                 expected: current,
                 key,
+                seen_version: self.store.version(editor.project),
                 content,
             };
             self.note(&format!(

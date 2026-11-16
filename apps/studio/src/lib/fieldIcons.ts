@@ -12,6 +12,7 @@ import ComponentIcon from '@lucide/svelte/icons/component';
 import FileCodeIcon from '@lucide/svelte/icons/file-code';
 import GlobeIcon from '@lucide/svelte/icons/globe';
 import HashIcon from '@lucide/svelte/icons/hash';
+import ImageIcon from '@lucide/svelte/icons/image';
 import LayoutTemplateIcon from '@lucide/svelte/icons/layout-template';
 import LinkIcon from '@lucide/svelte/icons/link';
 import ListIcon from '@lucide/svelte/icons/list';
@@ -37,6 +38,7 @@ export const FIELD_ICONS: Record<FieldType | 'component', typeof TypeIcon> = {
 	color: PaletteIcon,
 	json: BracesIcon,
 	reference: LinkIcon,
+	asset: ImageIcon,
 	object: BoxIcon,
 	list: ListIcon,
 	blocks: LayoutTemplateIcon,

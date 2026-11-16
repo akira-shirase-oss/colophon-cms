@@ -1,0 +1,120 @@
+migrations up to date (54 known)
+dev-owner@colophon.test is provisioned and is an administrator
+dev-editor@colophon.test is provisioned
+building the release binaries
+running k6: mixed steady
+time="2026-11-08T16:54:28-05:00" level=warning msg="Insufficient VUs, reached 64 active VUs and cannot initialize more" executor=constant-arrival-rate scenario=reads
+
+  L05 — mixed reads, writes and publishing
+    14688381 reads (p99 6.0 ms, gate 350), 863983 saves + 863983 verified read-backs (p95 10.2 ms), 3600 publishes (0 conflicts retried, p99 119.4 ms)
+    stale 0, torn 0, errors 867613
+    verdict: BROKE
+time="2026-11-08T19:46:08-05:00" level=error msg="thresholds on metrics 'checks, http_req_failed, l05_errors' have been crossed"
+{
+  "scenario": "steady",
+  "endpoint": "mixed",
+  "date": "2026-11-09T00:46:10Z",
+  "commit": "88ef666",
+  "dirty": false,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 200,
+    "duration": "1440m",
+    "vus": 256
+  },
+  "requests": 19903948,
+  "rps": 230,
+  "failed": 3458766,
+  "checks_failed": 6049935,
+  "dropped": 471,
+  "latency_ms": {
+    "avg": 2.403,
+    "p50": 1.649,
+    "p90": 4.465,
+    "p95": 6.669,
+    "p99": 10.014,
+    "p999": 20.086,
+    "max": 1696.667
+  },
+  "database_transactions_during_run": 27270118,
+  "server_warnings": 0,
+  "thresholds_passed": false,
+  "resources": {
+    "samples": 16799,
+    "server_rss_kb": {
+      "first": 27776,
+      "last": 21728,
+      "max": 54224
+    },
+    "server_cpu_percent": {
+      "avg": 9.1,
+      "max": 21.9
+    },
+    "postgres_connections": {
+      "last": 38,
+      "max": 39
+    }
+  },
+  "l05": {
+    "served": {
+      "hit": 14608595,
+      "miss": 77507,
+      "coalesced": 1425,
+      "bypass": 854
+    },
+    "gates": {
+      "reads_held": true,
+      "writes_held": true,
+      "publishes_held": true,
+      "no_stale_refills": true,
+      "no_torn_pages": true,
+      "no_errors": false
+    },
+    "held": false,
+    "spec": "L05: mixed reads, writes and publishing — each operation class meets its target; content stays consistent",
+    "gate": "read arm p99 <350 ms (warm gate), write arm p95 <700 ms, publish requests p99 <700 ms — all with reads, saves, read-backs and publishes actually counted; zero stale refills, torn pages or errors",
+    "requests": {
+      "publish_conflicts_retried": 0,
+      "reads": 14688381,
+      "saves": 863983,
+      "write_backs": 863983,
+      "publishes": 3600
+    },
+    "latency_ms": {
+      "read": {
+        "p50": 1.59,
+        "p95": 4.147,
+        "p99": 6.023
+      },
+      "write": {
+        "p50": 4.557,
+        "p95": 10.167,
+        "p99": 12.597
+      },
+      "publish": {
+        "p50": 5.511,
+        "p95": 36.961649999999956,
+        "p99": 119.41955999999998
+      }
+    },
+    "consistency": {
+      "stale_refills": 0,
+      "torn_pages": 0,
+      "errors": 867613
+    }
+  }
+}
+saved perf/results/2026-11-09T004610Z-mixed-steady-apple-m2-pro-12c.json
+FAIL: the l05 gate did not hold: {"served":{"hit":14608595,"miss":77507,"coalesced":1425,"bypass":854},"gates":{"reads_held":true,"writes_held":true,"publishes_held":true,"no_stale_refills":true,"no_torn_pages":true,"no_errors":false},"held":false,"spec":"L05: mixed reads, writes and publishing — each operation class meets its target; content stays consistent","gate":"read arm p99 <350 ms (warm gate), write arm p95 <700 ms, publish requests p99 <700 ms — all with reads, saves, read-backs and publishes actually counted; zero stale refills, torn pages or errors","requests":{"publish_conflicts_retried":0,"reads":14688381,"saves":863983,"write_backs":863983,"publishes":3600},"latency_ms":{"read":{"p50":1.59,"p95":4.147,"p99":6.023},"write":{"p50":4.557,"p95":10.167,"p99":12.597},"publish":{"p50":5.511,"p95":36.961649999999956,"p99":119.41955999999998}},"consistency":{"stale_refills":0,"torn_pages":0,"errors":867613}}

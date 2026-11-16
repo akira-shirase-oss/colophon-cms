@@ -4,7 +4,8 @@
 //! colophon-sim --seed 42 [--trace]          one run; --trace prints every step
 //! colophon-sim --seeds 1000 [--from 1]      a sweep; stops at the first failing seed
 //! ... [--steps 400] [--mutation NAME]       NAME: none, skip-base-check, forget-keys,
-//!                                           leak-across-projects, new-key-after-crash
+//!                                           leak-across-projects, new-key-after-crash,
+//!                                           stamp-seen-version
 //! ... --scenario publishing                 releases, the outbox and workers (step 2.4);
 //!                                           NAME: none, ignore-base, keep-open-interval,
 //!                                           stale-lease-finalizes, parallel-sends,
@@ -122,12 +123,13 @@ fn main() -> ExitCode {
         totals.lost_answers += stats.lost_answers;
         totals.crashes += stats.crashes;
         totals.probes += stats.probes;
+        totals.schema_changes += stats.schema_changes;
         if args.seeds == 1 {
             println!("seed {seed}: trace {:016x}", report.trace_hash);
         }
     }
     println!(
-        "{} seed(s) x {} steps held S1, S8 and K (mutation: {}): {} acknowledged saves, {} replayed, {} stale, {} lost requests, {} lost answers, {} crashes, {} probes",
+        "{} seed(s) x {} steps held S1, S8, K and V (mutation: {}): {} acknowledged saves, {} replayed, {} stale, {} lost requests, {} lost answers, {} crashes, {} probes, {} type changes",
         args.seeds,
         args.config.steps,
         args.mutation.name(),
@@ -137,7 +139,8 @@ fn main() -> ExitCode {
         totals.lost_requests,
         totals.lost_answers,
         totals.crashes,
-        totals.probes
+        totals.probes,
+        totals.schema_changes
     );
     ExitCode::SUCCESS
 }

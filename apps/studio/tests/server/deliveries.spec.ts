@@ -131,7 +131,7 @@ test('a CDN added in Settings is asked to purge what each release changed', asyn
 		expect(cdn.purges[0]?.some((tag) => tag.endsWith(`:n:${entry.replaceAll('-', '')}`))).toBe(true);
 		expect(cdn.purges[0]?.some((tag) => tag.endsWith(':c:articles'))).toBe(true);
 
-		// Its receipt says so in plain words (D-082): no "CDN" outside Technical details.
+		// Its receipt says so in plain words (D-147): no "CDN" outside Technical details.
 		await page.goto(`/studio/projects/${project}/releases/1`);
 		await expect(page.getByTestId('deliveries')).toContainText('Edge cache');
 		await expect(page.getByTestId('deliveries')).toContainText('Cache clear: clearing accepted');

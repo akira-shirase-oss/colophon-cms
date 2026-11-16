@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT i.entry_id AS \"entry!\", r.field AS \"field!\", r.asset_id AS \"asset!\",\n                  a.state AS \"state!\"\n           FROM changeset_items i\n           JOIN asset_references r\n             ON r.project_id = i.project_id AND r.environment_id = i.environment_id\n            AND r.revision_id = i.revision_id\n           JOIN assets a\n             ON a.project_id = r.project_id AND a.environment_id = r.environment_id\n            AND a.id = r.asset_id\n           WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3\n             AND i.kind = 'publish' AND a.state <> 'usable'\n           LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entry!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "changeset_items",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "field!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "asset_references",
+            "name": "field"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "asset!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "asset_references",
+            "name": "asset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "state!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "state"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f1d02bf91c3c08ab059d64dfabbbd5742b9eac8af7d4ff2786cdfb36ca43d8f3"
+}

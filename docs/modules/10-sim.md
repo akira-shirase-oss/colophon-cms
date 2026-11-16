@@ -89,6 +89,7 @@ Crash injection can stop any actor before or after any step, including between a
 | S7 | Only the current lease holder finalizes a job. |
 | S8 | No read crosses a project boundary. |
 | S9 | An uncertain outcome is never relabelled success without reconciliation evidence. |
+| V | No revision is written against a content-type version a schema change already superseded (step M.5c, D-100): a save is stamped with the version current at its commit, read under the collection's lock. |
 
 These mirror domain invariants D1–D11 ([domain](01-domain.md)) and worker invariants W1–W7 ([worker](05-worker.md)).
 
@@ -162,6 +163,14 @@ These mirror domain invariants D1–D11 ([domain](01-domain.md)) and worker inva
    K (no key reused for a different request), four mutations each caught on the first seed, and
    `crates/colophon-db/tests/differential.rs`, which replays runs against Postgres and requires the same answers. The
    virtual clock arrives with leases and schedules (P2), the first thing that needs time.
+   Step M.5c added schema changes racing saves (D-100): a `schema_change` step (per mille, 30 by default) bumps a
+   project's collection version while editors' saves are in flight, each `Save` records the version its client saw,
+   and the store stamps the version current at commit — the same interleaving the real save path settles under
+   `lock_for_write`. Invariant V flags a revision stamped with anything but the current version; the
+   `stamp-seen-version` mutation models a save validated outside the lock and is caught on the first seed. The run's
+   log is now `Op`s (`Save` or `Change`), and the differential test replays a `Change` as a real
+   `content_types::update` under `lock_for_change` — a display-name change, which always applies — then reads each
+   written revision's `schema_version` back as the owner and requires it to be the version the real update reached.
 2. **P2:** releases, outbox, workers, faulty adapters, S2–S4, S6, S7; first crash loop (step 2.4, done: D-047). Built:
    `colophon_sim::run_publishing` (`--scenario publishing`): publishers on the generation they saw, retried
    publishes, an outbox, workers under leases on a virtual clock that crash at any step, and a webhook receiver

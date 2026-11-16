@@ -8,6 +8,7 @@ by hand, and for Playwright in CI. It is not the Studio. Every feature Colophon 
 |---|---|
 | Health | `/readyz` polled every second, each dependency, and a log of state changes |
 | API contract | The step 0.3 contract checked from the browser: health answers, the error envelope, request ids |
+| Migrations | Plan a content-schema migration, resolve its `needs_input` items, approve and apply on the plan's hash, and follow the worker's run to `done` (D-100, D-101) |
 | Load tests | Every committed `scripts/load.sh` run, failures included |
 
 ```sh

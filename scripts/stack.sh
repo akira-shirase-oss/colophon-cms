@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Colophon's local stack (deploy/compose.yaml): PostgreSQL, Valkey, Garage and Keycloak.
+# Colophon's local stack (deploy/compose.yaml): PostgreSQL, Valkey and Garage. Keycloak stays
+# in the file behind the `oidc` profile (D-146) — the OIDC tests opt in; nothing else needs it.
 #
 #   scripts/stack.sh up      start everything, wait until healthy, then run the checks
 #   scripts/stack.sh check   prove that each service really works
@@ -83,6 +84,29 @@ SQL
   )
   expect "major version 18, data checksums on, a write reads back" \
     "18 on colophon" "$(printf '%s' "$out" | tr '\n' ' ' | sed 's/ $//')"
+
+  # WAL archiving (D-125): the settings say archiving is on and bounded, and the only honest
+  # proof is a segment actually landing in the archive volume after a switch.
+  # pg_settings reports archive_timeout in seconds; current_setting pretty-prints it as 1min.
+  out=$(compose exec -T postgres psql "$PG_URL_IN_CONTAINER" -XAtqc \
+    "select current_setting('archive_mode') || ' ' || setting from pg_settings where name = 'archive_timeout'" 2>/dev/null || true)
+  expect "WAL archiving is on and forces a switch every 60 s" "on 60" "$out"
+
+  before=$(compose exec -T postgres sh -c \
+    "find /wal-archive -type f ! -name '.*' 2>/dev/null | wc -l" | tr -d '[:space:]')
+  compose exec -T postgres psql "$PG_URL_IN_CONTAINER" -XAtqc 'select pg_switch_wal()' >/dev/null 2>&1 || true
+  archived=0
+  for _ in $(seq 1 40); do
+    after=$(compose exec -T postgres sh -c \
+      "find /wal-archive -type f ! -name '.*' 2>/dev/null | wc -l" | tr -d '[:space:]')
+    if [ "${after:-0}" -gt "${before:-0}" ]; then archived=1; break; fi
+    sleep 0.5
+  done
+  if [ "$archived" = 1 ]; then
+    pass "a switched WAL segment lands in the archive volume"
+  else
+    fail "a switched WAL segment lands in the archive volume: none within 20 s"
+  fi
 }
 
 # Valkey speaks a line protocol, so the checks talk to the published port directly.
@@ -208,7 +232,9 @@ oidc_token() {
 
 check_keycloak() {
   local addr issuer discovery jar verifier challenge state nonce action location code reply payload
-  if ! addr=$(published keycloak 8080); then fail "keycloak is not running"; return; fi
+  # Opt-in since D-146: absent is fine — the built-in accounts are the default sign-in. When
+  # the `oidc` profile brought Keycloak up, its checks run as they always did.
+  if ! addr=$(published keycloak 8080); then echo "keycloak  (off — the oidc profile is opt-in)"; return; fi
   echo "keycloak  $addr"
   issuer="http://localhost:${addr##*:}/realms/colophon"
   if ! discovery=$(curl -fsS "$issuer/.well-known/openid-configuration"); then
@@ -291,6 +317,8 @@ case "${1:-}" in
     compose up --detach --wait --wait-timeout 300
     # Database roles for colophon-server (idempotent; see deploy/postgres/roles.sql).
     compose exec -T postgres psql -U colophon -d colophon -q -v ON_ERROR_STOP=1 <deploy/postgres/roles.sql
+    # A fresh named volume is created root-owned; the archive_command runs as postgres.
+    compose exec -T postgres sh -c 'chown postgres:postgres /wal-archive && chmod 700 /wal-archive'
     check
     ;;
   check) check ;;

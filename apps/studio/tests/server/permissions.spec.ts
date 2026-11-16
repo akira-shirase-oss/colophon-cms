@@ -4,7 +4,7 @@
 // deleted, and the owner role is shown but never edited.
 
 import { expect, test } from '@playwright/test';
-import { env, internalTerms, key, keycloak, newProject, signIn, violations } from './helpers.ts';
+import { env, internalTerms, key, newProject, password, signIn, violations } from './helpers.ts';
 
 test('an owner makes a role, chooses what it may do, and someone invited with it holds exactly that', async ({ page, browser }) => {
 	await signIn(page);
@@ -53,6 +53,7 @@ test('an owner makes a role, chooses what it may do, and someone invited with it
 
 	// Invite someone with it; the invitation names it and says what it's for.
 	await page.goto(`/studio/projects/${project}/members`);
+	await page.getByTestId('invite-member').click();
 	await page.getByLabel('Who is it for?').fill('A copy editor');
 	await page.getByLabel('Role', { exact: true }).selectOption('copy-desk');
 	await expect(page.getByText('Edits articles before they go out.')).toBeVisible();
@@ -60,8 +61,7 @@ test('an owner makes a role, chooses what it may do, and someone invited with it
 	const link = await page.getByRole('textbox', { name: 'Invitation link' }).inputValue();
 	const guest = await (await browser.newContext()).newPage();
 	await guest.goto(new URL(link).pathname + new URL(link).hash);
-	await guest.getByRole('link', { name: 'Sign in' }).click();
-	await keycloak(guest, 'dev-editor');
+	await password(guest, 'dev-editor');
 	await expect(guest.getByTestId('invite-ask')).toContainText('as Copy desk: Edits articles before they go out.');
 	await guest.getByRole('button', { name: 'Join', exact: true }).click();
 	await expect(guest.getByText('You joined Studio test as Copy desk', { exact: true })).toBeVisible();
@@ -150,7 +150,7 @@ test('an author retitles someone else’s article without seeing or erasing its 
 	await signIn(author, 'dev-editor');
 	expect((await api(author, 'POST', '/api/v1/invitations/accept', { token })).status).toBe(200);
 	await author.goto(`/studio/projects/${project}/articles/${entryId}`);
-	// Fields are named by their labels, never their code names (D-082).
+	// Fields are named by their labels, never their code names (D-147).
 	await expect(author.getByTestId('role-limits')).toContainText('doesn’t show Body');
 	await expect(author.getByRole('textbox', { name: 'Body' })).toHaveCount(0);
 	await author.getByLabel('Title', { exact: true }).fill('Owner’s note, retitled');
@@ -194,7 +194,7 @@ test('the role editor names the activity log in plain words, and says what manag
 	expect(await violations(page)).toEqual([]);
 });
 
-// D-082: the grid's words a first-time owner can read without help, and limits named by labels.
+// D-147: the grid's words a first-time owner can read without help, and limits named by labels.
 test('the role grid explains See, Approve, Publish and Change its fields, and limits name fields by their labels', async ({ page }) => {
 	await signIn(page);
 	const project = await newProject(page);

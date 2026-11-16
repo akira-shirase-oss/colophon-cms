@@ -9,7 +9,7 @@
 use serde_json::Value;
 
 use crate::{
-    api::{self, Api, ApiError, Request},
+    api::{self, ApiError, Backend, Request},
     tools::{Needs, Tool},
 };
 
@@ -62,7 +62,7 @@ impl Allowed {
 /// Asks the API what the token may do. An error means the token or the server couldn't be
 /// used at all (revoked, wrong project, unreachable); the caller reports it rather than listing
 /// nothing.
-pub async fn discover(api: &Api) -> Result<Allowed, ApiError> {
+pub async fn discover<B: Backend>(api: &B) -> Result<Allowed, ApiError> {
     let answer = api.send(&Request::get("/permissions")).await?;
     let permissions = api::data(&answer)?["permissions"]
         .as_array()
@@ -113,7 +113,15 @@ mod tests {
                 "list_content_types",
                 "list_entries",
                 "get_entry",
-                "get_publish_request"
+                "query_entries",
+                "get_publish_request",
+                "list_releases",
+                "get_release",
+                "list_migrations",
+                "get_migration",
+                "list_migration_items",
+                "list_comments",
+                "list_tasks"
             ]
         );
     }
@@ -132,7 +140,16 @@ mod tests {
         };
         assert_eq!(
             names(create_only),
-            ["list_content_types", "create_draft", "get_publish_request"]
+            [
+                "list_content_types",
+                "create_draft",
+                "get_publish_request",
+                "list_releases",
+                "get_release",
+                "list_migrations",
+                "get_migration",
+                "list_migration_items"
+            ]
         );
         let update_only = Allowed {
             update: true,
@@ -145,7 +162,14 @@ mod tests {
                 "update_draft",
                 "create_publish_request",
                 "request_review",
-                "get_publish_request"
+                "get_publish_request",
+                "list_releases",
+                "get_release",
+                "list_migrations",
+                "get_migration",
+                "list_migration_items",
+                "create_comment",
+                "create_task"
             ]
         );
     }

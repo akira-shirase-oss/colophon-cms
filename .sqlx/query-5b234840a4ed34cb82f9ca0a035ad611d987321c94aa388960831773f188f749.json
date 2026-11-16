@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT set_config('app.project_id', $1, true) AS project_scope,\n                set_config('app.audience_role', $2, true) AS audience_scope",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "project_scope",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "audience_scope",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "5b234840a4ed34cb82f9ca0a035ad611d987321c94aa388960831773f188f749"
+}

@@ -1,13 +1,15 @@
 //! Colophon's deterministic simulator (docs/modules/10-sim.md; D-005, D-039).
 //!
 //! A run is a seed plus a [`Config`]: editors in several projects save shared articles through a
-//! network that loses requests and answers, crash and reopen, and after every step the
-//! invariants are checked:
+//! network that loses requests and answers, crash and reopen, content-type changes land while
+//! saves are in flight (step M.5c), and after every step the invariants are checked:
 //!
 //! - **S1**, no acknowledged save is lost: every save an editor was told succeeded is stored as
 //!   sent and is still in its article's history from the draft back, and no edit is stored twice;
 //! - **S8**, no read crosses a project;
-//! - **K**, no client ever reuses a key for a different request.
+//! - **K**, no client ever reuses a key for a different request;
+//! - **V**, no revision is written against a content-type version a schema change already
+//!   superseded: a save is stamped with the version current at commit (D-100).
 //!
 //! A second scenario, [`run_publishing`] (step 2.4), drives releases, the outbox and workers under
 //! leases on a virtual clock, against a webhook receiver behind a faulty network.
@@ -24,7 +26,7 @@ mod store;
 
 pub use publish::{PublishConfig, PublishMutation, PublishReport, PublishStats, run_publishing};
 pub use rng::Rng;
-pub use sim::{Config, Report, Stats, Violation, run};
+pub use sim::{Config, Op, Report, Stats, Violation, run};
 pub use store::{
     EntryId, IdentityId, Mutation, ProjectId, Reply, Revision, RevisionId, Save, Store,
 };

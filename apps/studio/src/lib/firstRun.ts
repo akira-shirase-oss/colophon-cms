@@ -32,7 +32,7 @@ export const receiptSeen = (project: string) => read(`${SEEN}:${project}`);
 export const markReceiptSeen = (project: string) => write(`${SEEN}:${project}`);
 
 /**
- * Where a first entry goes (D-082): the first collection the person made, never a one-entry type
+ * Where a first entry goes (D-147): the first collection the person made, never a one-entry type
  * (Homepage), else the built-in Articles, else any collection. "First made" is read from each
  * type's `created_at`, which is its current version's: a collection changed after a later one was
  * made can lose its place. The API doesn't say when a type was first made.

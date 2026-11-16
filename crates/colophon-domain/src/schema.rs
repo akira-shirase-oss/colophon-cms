@@ -164,6 +164,19 @@ pub enum FieldKind {
         many: bool,
         /// The most a list holds (1 to [`MAX_REFERENCES`]; 1 for one).
         max: u16,
+        /// A top-level reference field on the target collection that mirrors this link (D-085):
+        /// a write to this entry adds it to (or removes it from) that field on every target, in
+        /// the same transaction. `None` is a plain one-way reference.
+        inverse: Option<String>,
+    },
+    /// An uploaded asset, by id (M.1): one, or a list of distinct ones. A draft may name an
+    /// asset still in quarantine — verification finishes while the draft does — but a release
+    /// may not publish one that isn't usable (the media lifecycle's M1).
+    Asset {
+        /// A list rather than one.
+        many: bool,
+        /// The most a list holds (1 to [`MAX_REFERENCES`]; 1 for one).
+        max: u16,
     },
     /// Fields nested in one value (step M.3, D-066): Strapi's component, Sanity's object.
     Object {
@@ -238,6 +251,30 @@ impl FieldKind {
         )
     }
 
+    /// Whether a field of this kind may be `index`ed (DX.1, D-103): a scalar the query
+    /// language can compare as written — a single-line text, number, boolean, choice,
+    /// date, time, date-time, email, URL, slug or single reference. Rich text, JSON,
+    /// structures, lists and assets hold no comparable scalar, and multi-line text isn't
+    /// worth an index.
+    pub const fn may_be_indexed(&self) -> bool {
+        matches!(
+            self,
+            Self::Text {
+                multiline: false,
+                ..
+            } | Self::Number { .. }
+                | Self::Boolean
+                | Self::Enum { .. }
+                | Self::DateTime
+                | Self::Slug { .. }
+                | Self::Email
+                | Self::Url
+                | Self::Date
+                | Self::Time
+                | Self::Reference { many: false, .. }
+        )
+    }
+
     /// The name in definitions.
     pub const fn name(&self) -> &'static str {
         match self {
@@ -256,6 +293,7 @@ impl FieldKind {
             Self::Markdown { .. } => "markdown",
             Self::Color => "color",
             Self::Reference { .. } => "reference",
+            Self::Asset { .. } => "asset",
             Self::Object { .. } => "object",
             Self::List { .. } => "list",
             Self::Blocks { .. } => "blocks",
@@ -290,6 +328,11 @@ pub struct Field {
     /// Whether no two entries may hold the same value: top-level scalar fields only (step M.4,
     /// D-070). The database enforces it; see [`ContentType::unique_fields`].
     pub unique: bool,
+    /// Whether the query language may filter and sort on the field (step DX.1, D-103):
+    /// top-level fields of a kind that compares as written only; see
+    /// [`ContentType::indexed_fields`]. Which database index serves a query is the
+    /// engine's choice, not the definition's.
+    pub index: bool,
     /// The value a new entry gets when it leaves the field out, in canonical JSON (step M.4,
     /// D-071): top-level scalar fields only, checked against the field's own rules.
     pub default: Option<String>,
@@ -335,6 +378,7 @@ pub struct Content {
     title: String,
     slug: Option<String>,
     references: Vec<ContentReference>,
+    assets: Vec<ContentAsset>,
 }
 
 /// One entry a reference field names, at its place in the field (step M.2).
@@ -352,11 +396,30 @@ pub struct ContentReference {
     pub entry: String,
 }
 
+/// One asset an asset field names, at its place in the field (M.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentAsset {
+    /// The field's id.
+    pub field: String,
+    /// Its place in a list (0 for a single asset).
+    pub position: u16,
+    /// Whether the field holds a list (so its place is part of where it is).
+    pub many: bool,
+    /// The asset's id, a lowercase UUID.
+    pub asset: String,
+}
+
 impl Content {
     /// Every entry the content's reference fields name, in field order: what the database
     /// checks and keeps (D-065).
     pub fn references(&self) -> &[ContentReference] {
         &self.references
+    }
+
+    /// Every asset the content's asset fields name, in field order: what the database keeps
+    /// for the publish check (media M1).
+    pub fn assets(&self) -> &[ContentAsset] {
+        &self.assets
     }
 
     /// The canonical JSON: the exact text stored and hashed.
@@ -461,7 +524,7 @@ fn bound(
 /// Whether `number` is a value content may hold: a safe integer, or a decimal with at most six
 /// places below 10^9.
 #[expect(clippy::float_cmp, reason = "exactness is what is being checked")]
-fn check_number(number: f64, integer: bool) -> Result<(), String> {
+pub(crate) fn check_number(number: f64, integer: bool) -> Result<(), String> {
     if !number.is_finite() {
         return Err("numbers must be finite".to_owned());
     }
@@ -490,7 +553,7 @@ fn check_number(number: f64, integer: bool) -> Result<(), String> {
 }
 
 /// A number as `JSON.stringify` writes it, for values [`check_number`] accepts.
-fn write_number(out: &mut String, number: f64, integer: bool) {
+pub(crate) fn write_number(out: &mut String, number: f64, integer: bool) {
     // -0 is written as 0 by JavaScript.
     let number = if number == 0.0 { 0.0 } else { number };
     if integer {
@@ -584,6 +647,33 @@ fn write_text_options(
     }
 }
 
+/// A reference's options: the collection, whether one or a bounded list, and an optional
+/// `inverse` naming the target's field that mirrors the link (D-085).
+fn write_many_max(out: &mut String, many: bool, max: u16) {
+    if many {
+        out.push_str(r#","many":true,"max":"#);
+        out.push_str(&max.to_string());
+    } else {
+        out.push_str(r#","many":false"#);
+    }
+}
+
+fn write_reference_options(
+    out: &mut String,
+    to: &str,
+    many: bool,
+    max: u16,
+    inverse: Option<&str>,
+) {
+    out.push_str(r#","to":"#);
+    write_string(out, to);
+    write_many_max(out, many, max);
+    if let Some(back) = inverse {
+        out.push_str(r#","inverse":"#);
+        write_string(out, back);
+    }
+}
+
 /// Writes a field kind's options, each as `,"key":value`, in a fixed order.
 fn write_options(out: &mut String, kind: &FieldKind) {
     match kind {
@@ -631,16 +721,13 @@ fn write_options(out: &mut String, kind: &FieldKind) {
             out.push_str(r#","max_chars":"#);
             out.push_str(&max_chars.to_string());
         }
-        FieldKind::Reference { to, many, max } => {
-            out.push_str(r#","to":"#);
-            write_string(out, to);
-            if *many {
-                out.push_str(r#","many":true,"max":"#);
-                out.push_str(&max.to_string());
-            } else {
-                out.push_str(r#","many":false"#);
-            }
-        }
+        FieldKind::Reference {
+            to,
+            many,
+            max,
+            inverse,
+        } => write_reference_options(out, to, *many, *max, inverse.as_deref()),
+        FieldKind::Asset { many, max } => write_many_max(out, *many, *max),
         FieldKind::Object { fields, component } => {
             if let Some(component) = component {
                 out.push_str(r#","component":"#);
@@ -712,6 +799,11 @@ fn write_fields(out: &mut String, fields: &[Field]) {
         // (migration 0027), which a quote inside a string can't form: it is written `\"`.
         if field.unique {
             out.push_str(r#","unique":true"#);
+        }
+        // Only when set, like `unique` (D-103): definitions from before DX.1 keep their
+        // bytes and hash.
+        if field.index {
+            out.push_str(r#","index":true"#);
         }
         write_options(out, &field.kind);
         // Only when set, like `description`: already canonical, checked when parsed.
@@ -794,6 +886,29 @@ fn reference_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<Fiel
             )
         })?
         .to_owned();
+    let (many, max) = many_max(object, pointer)?;
+    let inverse = match object.get("inverse") {
+        None => None,
+        Some(Value::String(back)) if is_field_id(back) => Some(back.clone()),
+        Some(_) => {
+            return Err(refuse(
+                "invalid_inverse",
+                &at(pointer, "inverse"),
+                "`inverse` names a reference field on the target collection",
+            ));
+        }
+    };
+    Ok(FieldKind::Reference {
+        to,
+        many,
+        max,
+        inverse,
+    })
+}
+
+/// `many` (default false) and, for a list, `max` (1 to [`MAX_REFERENCES`], default
+/// [`MAX_REFERENCES`]) — the list options reference and asset fields share.
+fn many_max(object: &Map<String, Value>, pointer: &Pointer) -> Result<(bool, u16), Refusal> {
     let many = bool_or(object, "many", false, pointer)?;
     let max = match (many, object.get("max")) {
         (_, None) => {
@@ -807,7 +922,7 @@ fn reference_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<Fiel
             return Err(refuse(
                 "out_of_range",
                 &at(pointer, "max"),
-                "`max` is for a list of references (`many`)",
+                "`max` is for a list (`many`)",
             ));
         }
         (true, Some(value)) => value
@@ -822,7 +937,7 @@ fn reference_kind(object: &Map<String, Value>, pointer: &Pointer) -> Result<Fiel
                 )
             })?,
     };
-    Ok(FieldKind::Reference { to, many, max })
+    Ok((many, max))
 }
 
 /// A UUID in its canonical spelling: 36 characters, lowercase hexadecimal, hyphens at 8, 13, 18
@@ -1172,26 +1287,74 @@ fn check_text(
     }
 }
 
+/// How [`ContentType::ids`] words its refusals for one kind of id-holding field.
+#[derive(Debug, Clone, Copy)]
+struct Words {
+    /// The code a malformed id or an empty list reports (`invalid_reference`, `invalid_asset`).
+    invalid: &'static str,
+    /// The code a repeated id reports (`duplicate_reference`, `duplicate_asset`).
+    duplicate: &'static str,
+    /// What one named thing is called ("an entry", "an asset").
+    one: &'static str,
+    /// What the named things are called ("entries", "assets").
+    plural: &'static str,
+}
+
+/// A reference field's words.
+const ENTRY_WORDS: Words = Words {
+    invalid: "invalid_reference",
+    duplicate: "duplicate_reference",
+    one: "an entry",
+    plural: "entries",
+};
+
+/// An asset field's words.
+const ASSET_WORDS: Words = Words {
+    invalid: "invalid_asset",
+    duplicate: "duplicate_asset",
+    one: "an asset",
+    plural: "assets",
+};
+
+/// What a valid value names, collected while it is checked: the entries its reference fields
+/// point at (D-065) and the assets its asset fields hold (M.1).
+#[derive(Debug, Default)]
+struct Found {
+    references: Vec<ContentReference>,
+    assets: Vec<ContentAsset>,
+}
+
 /// Notes the entries a valid reference value names, with its path (the pointer without its
 /// leading slash) for the database (D-065).
-fn collect(
-    to: &str,
-    many: bool,
-    value: &Value,
-    pointer: &Pointer,
-    references: &mut Vec<ContentReference>,
-) {
+fn collect(to: &str, many: bool, value: &Value, pointer: &Pointer, found: &mut Found) {
     let field = pointer.as_str().trim_start_matches('/');
     let ids = value
         .as_array()
         .map_or_else(|| vec![value], |list| list.iter().collect());
     for (position, id) in ids.into_iter().enumerate() {
-        references.push(ContentReference {
+        found.references.push(ContentReference {
             field: field.to_owned(),
             collection: to.to_owned(),
             position: u16::try_from(position).unwrap_or(u16::MAX),
             many,
             entry: id.as_str().unwrap_or_default().to_owned(),
+        });
+    }
+}
+
+/// Notes the assets a valid asset value names, with its path, for the database (media M1):
+/// [`collect`] minus the target collection — an asset names only its own id.
+fn collect_asset(many: bool, value: &Value, pointer: &Pointer, found: &mut Found) {
+    let field = pointer.as_str().trim_start_matches('/');
+    let ids = value
+        .as_array()
+        .map_or_else(|| vec![value], |list| list.iter().collect());
+    for (position, id) in ids.into_iter().enumerate() {
+        found.assets.push(ContentAsset {
+            field: field.to_owned(),
+            position: u16::try_from(position).unwrap_or(u16::MAX),
+            many,
+            asset: id.as_str().unwrap_or_default().to_owned(),
         });
     }
 }
@@ -1272,18 +1435,18 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         | (FieldKind::Time, FieldKind::Time)
         | (FieldKind::Json, FieldKind::Json)
         | (FieldKind::Color, FieldKind::Color) => true,
+        // `inverse` is sync metadata, not a shape: changing it neither widens nor narrows.
+        (FieldKind::Reference { .. }, FieldKind::Reference { .. }) => reference_widens(old, new),
         (
-            FieldKind::Reference {
-                to: old_to,
+            FieldKind::Asset {
                 many: old_many,
                 max: old_max,
             },
-            FieldKind::Reference {
-                to: new_to,
+            FieldKind::Asset {
                 many: new_many,
                 max: new_max,
             },
-        ) => old_to == new_to && old_many == new_many && new_max >= old_max,
+        ) => old_many == new_many && new_max >= old_max,
         (FieldKind::Object { fields: old, .. }, FieldKind::Object { fields: new, .. }) => {
             fields_widen(old, new)
         }
@@ -1336,6 +1499,29 @@ fn widens(old: &FieldKind, new: &FieldKind) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether a reference's shape widened: same target and cardinality, a bound no smaller.
+/// `inverse` (D-085) is sync metadata, not a shape: it is ignored here.
+fn reference_widens(old: &FieldKind, new: &FieldKind) -> bool {
+    let (
+        FieldKind::Reference {
+            to: old_to,
+            many: old_many,
+            max: old_max,
+            ..
+        },
+        FieldKind::Reference {
+            to: new_to,
+            many: new_many,
+            max: new_max,
+            ..
+        },
+    ) = (old, new)
+    else {
+        return false;
+    };
+    old_to == new_to && old_many == new_many && new_max >= old_max
 }
 
 /// An enum field's options: distinct, plain, 1 to [`MAX_ENUM_OPTIONS`].
@@ -1536,6 +1722,7 @@ impl ContentType {
                     description: String::new(),
                     required: true,
                     unique: false,
+                    index: false,
                     default: None,
                     when: None,
                     kind: FieldKind::Text {
@@ -1551,6 +1738,7 @@ impl ContentType {
                     description: String::new(),
                     required: true,
                     unique: false,
+                    index: false,
                     default: None,
                     when: None,
                     kind: FieldKind::RichText,
@@ -1846,6 +2034,7 @@ impl ContentType {
             .to_owned();
         let required = bool_or(object, "required", false, pointer)?;
         let unique = bool_or(object, "unique", false, pointer)?;
+        let index = bool_or(object, "index", false, pointer)?;
         let description = description(object, pointer)?;
         let common = [
             "id",
@@ -1854,6 +2043,7 @@ impl ContentType {
             "type",
             "required",
             "unique",
+            "index",
             "default",
             "when",
         ];
@@ -1863,6 +2053,24 @@ impl ContentType {
                 "invalid_unique",
                 &at(pointer, "unique"),
                 "only a top-level single-line text, email, URL, number, date, time or date-time field can be unique",
+            ));
+        }
+        if index && (depth > 0 || !kind.may_be_indexed()) {
+            return Err(refuse(
+                "invalid_index",
+                &at(pointer, "index"),
+                "only a top-level single-line text, number, boolean, choice, date, time, date-time, email, URL, slug or single reference field can be indexed",
+            ));
+        }
+        if depth > 0
+            && let FieldKind::Reference {
+                inverse: Some(_), ..
+            } = kind
+        {
+            return Err(refuse(
+                "invalid_inverse",
+                &at(pointer, "inverse"),
+                "only a content type's own fields can mirror a link",
             ));
         }
         let default = match object.get("default") {
@@ -1885,6 +2093,7 @@ impl ContentType {
             description,
             required,
             unique,
+            index,
             default,
             when,
             kind,
@@ -1908,17 +2117,39 @@ impl ContentType {
             ));
         }
         let mut out = String::new();
-        Self::value(kind, label, value, pointer, &mut out, &mut Vec::new()).map_err(|refusal| {
-            refuse(
-                "invalid_default",
-                pointer,
-                format!(
-                    "the default isn't a value this field accepts: {}",
-                    refusal.message
-                ),
-            )
-        })?;
+        Self::value(kind, label, value, pointer, &mut out, &mut Found::default()).map_err(
+            |refusal| {
+                refuse(
+                    "invalid_default",
+                    pointer,
+                    format!(
+                        "the default isn't a value this field accepts: {}",
+                        refusal.message
+                    ),
+                )
+            },
+        )?;
         Ok(out)
+    }
+
+    /// A literal `value` of `field`'s kind, in canonical JSON: the field's own checks,
+    /// without a document around it. The query language checks its filter values this way
+    /// (DX.1, D-103): a filter compares, so nothing is collected — a `reference` value is
+    /// checked for its shape, not recorded.
+    pub(crate) fn literal(
+        field: &Field,
+        value: &Value,
+        pointer: &Pointer,
+        out: &mut String,
+    ) -> Result<(), Refusal> {
+        Self::value(
+            &field.kind,
+            &field.label,
+            value,
+            pointer,
+            out,
+            &mut Found::default(),
+        )
     }
 
     /// What a field holds: its `type` and that type's options, refusing any other key.
@@ -1985,8 +2216,17 @@ impl ContentType {
                 markdown_kind(object, pointer)?
             }
             Some("reference") => {
-                only(object, &[common, &["to", "many", "max"]].concat(), pointer)?;
+                only(
+                    object,
+                    &[common, &["to", "many", "max", "inverse"]].concat(),
+                    pointer,
+                )?;
                 reference_kind(object, pointer)?
+            }
+            Some("asset") => {
+                only(object, &[common, &["many", "max"]].concat(), pointer)?;
+                let (many, max) = many_max(object, pointer)?;
+                FieldKind::Asset { many, max }
             }
             Some("object") => {
                 only(
@@ -2016,7 +2256,7 @@ impl ContentType {
                 return Err(refuse(
                     "invalid_type",
                     &at(pointer, "type"),
-                    "`type` is one of text, rich_text, number, boolean, enum, datetime, slug, email, url, date, time, json, markdown, color, reference, object, list, blocks",
+                    "`type` is one of text, rich_text, number, boolean, enum, datetime, slug, email, url, date, time, json, markdown, color, reference, asset, object, list, blocks",
                 ));
             }
         })
@@ -2081,6 +2321,16 @@ impl ContentType {
         (Cow::Owned(Value::Object(filled)), ids)
     }
 
+    /// The ids of the fields the query language may filter and sort on (DX.1, D-103),
+    /// in order.
+    pub fn indexed_fields(&self) -> Vec<String> {
+        self.fields
+            .iter()
+            .filter(|field| field.index)
+            .map(|field| field.id.clone())
+            .collect()
+    }
+
     /// The ids of the fields no two entries may share a value of (D-070), in order.
     pub fn unique_fields(&self) -> Vec<String> {
         self.fields
@@ -2088,6 +2338,14 @@ impl ContentType {
             .filter(|field| field.unique)
             .map(|field| field.id.clone())
             .collect()
+    }
+
+    /// Every reference field's (path, target collection), at any depth: a list's items are
+    /// `*`, a block's fields sit under its name. Deleting a collection checks these.
+    pub fn reference_targets(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        targets(&self.fields, "", &mut out);
+        out
     }
 
     /// The definition in canonical form, every default written out: the bytes stored and hashed.
@@ -2112,8 +2370,8 @@ impl ContentType {
     pub fn validate(&self, value: &Value) -> Result<Content, Refusal> {
         let root = Pointer::new();
         let mut out = String::with_capacity(256);
-        let mut references = Vec::new();
-        Self::fields_value(&self.fields, value, &root, &mut out, &mut references)?;
+        let mut found = Found::default();
+        Self::fields_value(&self.fields, value, &root, &mut out, &mut found)?;
         // The title and the slug are top-level fields, already checked.
         let title = value
             .get(&self.title_field)
@@ -2131,7 +2389,8 @@ impl ContentType {
             canonical: out,
             title,
             slug,
-            references,
+            references: found.references,
+            assets: found.assets,
         })
     }
 
@@ -2143,7 +2402,7 @@ impl ContentType {
         value: &Value,
         pointer: &Pointer,
         out: &mut String,
-        references: &mut Vec<ContentReference>,
+        found: &mut Found,
     ) -> Result<(), Refusal> {
         let object = value.as_object().ok_or_else(|| {
             let what = if pointer.as_str().is_empty() {
@@ -2191,7 +2450,7 @@ impl ContentType {
             first = false;
             write_string(out, &field.id);
             out.push(':');
-            Self::value(&field.kind, &field.label, value, &at_field, out, references)?;
+            Self::value(&field.kind, &field.label, value, &at_field, out, found)?;
         }
         out.push('}');
         Ok(())
@@ -2244,7 +2503,7 @@ impl ContentType {
         value: &Value,
         pointer: &Pointer,
         out: &mut String,
-        references: &mut Vec<ContentReference>,
+        found: &mut Found,
     ) -> Result<(), Refusal> {
         let object = value
             .as_object()
@@ -2268,7 +2527,7 @@ impl ContentType {
             &Value::Object(rest),
             pointer,
             &mut fields,
-            references,
+            found,
         )?;
         out.push_str(r#"{"_block":"#);
         write_string(out, &block.name);
@@ -2282,14 +2541,17 @@ impl ContentType {
         Ok(())
     }
 
-    /// A reference value: one entry id, or (`many`) a list of 1 to `max` distinct ones. Whether
-    /// they name entries of the target collection is the database's to check (D-065).
-    fn reference(
+    /// A reference or asset value: one id, or (`many`) a list of 1 to `max` distinct ones.
+    /// Whether they name entries of the target collection or assets of the environment is the
+    /// database's to check (D-065, media M1). `words` words the refusals: a reference's say an
+    /// "entry"/"entries", an asset's an "asset"/"assets".
+    fn ids(
         label: &str,
         value: &Value,
         (many, max): (bool, u16),
         pointer: &Pointer,
         out: &mut String,
+        words: Words,
     ) -> Result<(), Refusal> {
         let id = |value: &Value, pointer: &Pointer| -> Result<String, Refusal> {
             value
@@ -2298,9 +2560,9 @@ impl ContentType {
                 .map(str::to_owned)
                 .ok_or_else(|| {
                     refuse(
-                        "invalid_reference",
+                        words.invalid,
                         pointer,
-                        format!("{label} names an entry by its id, in lowercase"),
+                        format!("{label} names {} by its id, in lowercase", words.one),
                     )
                 })
         };
@@ -2312,12 +2574,12 @@ impl ContentType {
             refuse(
                 "wrong_type",
                 pointer,
-                format!("{label} is a list of entries"),
+                format!("{label} is a list of {}", words.plural),
             )
         })?;
         if list.is_empty() {
             return Err(refuse(
-                "invalid_reference",
+                words.invalid,
                 pointer,
                 format!("{label} is empty; leave it out instead"),
             ));
@@ -2326,7 +2588,7 @@ impl ContentType {
             return Err(refuse(
                 "too_many",
                 pointer,
-                format!("{label} names at most {max} entries"),
+                format!("{label} names at most {max} {}", words.plural),
             ));
         }
         let mut seen: Vec<String> = Vec::with_capacity(list.len());
@@ -2337,9 +2599,9 @@ impl ContentType {
             let entry = id(item, &at)?;
             if seen.contains(&entry) {
                 return Err(refuse(
-                    "duplicate_reference",
+                    words.duplicate,
                     &at,
-                    format!("{label} names this entry twice"),
+                    format!("{label} names this {} twice", words.one),
                 ));
             }
             if index > 0 {
@@ -2507,7 +2769,7 @@ impl ContentType {
         value: &Value,
         pointer: &Pointer,
         out: &mut String,
-        references: &mut Vec<ContentReference>,
+        found: &mut Found,
     ) -> Result<(), Refusal> {
         match kind {
             FieldKind::Text {
@@ -2533,21 +2795,25 @@ impl ContentType {
             | FieldKind::Color => Self::formatted(kind, label, value, pointer, out)?,
             FieldKind::Json => Self::json(label, value, pointer, out)?,
             FieldKind::Object { fields, .. } => {
-                Self::fields_value(fields, value, pointer, out, references)?;
+                Self::fields_value(fields, value, pointer, out, found)?;
             }
             FieldKind::List { of, max } => {
                 Self::items(label, value, *max, pointer, out, |item, at_item, out| {
-                    Self::value(of, label, item, at_item, out, references)
+                    Self::value(of, label, item, at_item, out, found)
                 })?;
             }
             FieldKind::Blocks { blocks, max } => {
                 Self::items(label, value, *max, pointer, out, |item, at_item, out| {
-                    Self::block(blocks, label, item, at_item, out, references)
+                    Self::block(blocks, label, item, at_item, out, found)
                 })?;
             }
-            FieldKind::Reference { to, many, max } => {
-                Self::reference(label, value, (*many, *max), pointer, out)?;
-                collect(to, *many, value, pointer, references);
+            FieldKind::Reference { to, many, max, .. } => {
+                Self::ids(label, value, (*many, *max), pointer, out, ENTRY_WORDS)?;
+                collect(to, *many, value, pointer, found);
+            }
+            FieldKind::Asset { many, max } => {
+                Self::ids(label, value, (*many, *max), pointer, out, ASSET_WORDS)?;
+                collect_asset(*many, value, pointer, found);
             }
             FieldKind::RichText => {
                 let document = rich_text::validate(value).map_err(|rejection| Refusal {
@@ -2596,19 +2862,17 @@ impl ContentType {
                 let text = value
                     .as_str()
                     .filter(|text| is_slug(text))
-                    .ok_or_else(|| {
-                        refuse(
-                            "invalid_slug",
-                            pointer,
-                            format!(
-                                "{label} is 1 to {MAX_SLUG_CHARS} lowercase letters and digits, in groups joined by single hyphens, like my-first-post"
-                            ),
-                        )
-                    })?;
+                    .ok_or_else(|| refuse("invalid_slug", pointer, Self::slug_example(label)))?;
                 write_string(out, text);
             }
         }
         Ok(())
+    }
+
+    fn slug_example(label: &str) -> String {
+        format!(
+            "{label} is 1 to {MAX_SLUG_CHARS} lowercase letters and digits, in groups joined by single hyphens, like my-first-post"
+        )
     }
 
     /// What it takes for `next` to replace this definition.
@@ -3777,6 +4041,103 @@ mod tests {
     }
 
     #[test]
+    fn assets_name_uploads_by_id_and_report_them_in_order() {
+        let gallery_type = |image: &Value| {
+            ContentType::parse(&json!({
+                "name": "Galleries",
+                "title_field": "title",
+                "fields": [
+                    {"id": "title", "label": "Title", "type": "text", "required": true},
+                    {"id": "cover", "label": "Cover", "type": "asset"},
+                    image
+                ]
+            }))
+            .expect("a valid definition")
+        };
+        let galleries = gallery_type(
+            &json!({"id": "photos", "label": "Photos", "type": "asset", "many": true, "max": 3}),
+        );
+        let content = galleries
+            .validate(&json!({"title": "Hi", "cover": A, "photos": [B, A]}))
+            .expect("valid");
+        assert_eq!(
+            content.canonical_json(),
+            format!(r#"{{"title":"Hi","cover":"{A}","photos":["{B}","{A}"]}}"#)
+        );
+        let named: Vec<(&str, u16, bool, &str)> = content
+            .assets()
+            .iter()
+            .map(|a| (a.field.as_str(), a.position, a.many, a.asset.as_str()))
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("cover", 0, false, A),
+                ("photos", 0, true, B),
+                ("photos", 1, true, A)
+            ]
+        );
+        assert!(galleries.canonical_json().contains(
+            r#"{"id":"cover","label":"Cover","type":"asset","required":false,"many":false}"#
+        ));
+        assert!(
+            galleries
+                .canonical_json()
+                .contains(r#""type":"asset","required":false,"many":true,"max":3}"#)
+        );
+
+        for (field, value, code) in [
+            ("cover", json!(A.to_uppercase()), "invalid_asset"),
+            ("cover", json!("not-an-id"), "invalid_asset"),
+            ("cover", json!([A]), "invalid_asset"),
+            ("photos", json!(A), "wrong_type"),
+            ("photos", json!([]), "invalid_asset"),
+            ("photos", json!([A, A]), "duplicate_asset"),
+            (
+                "photos",
+                json!([
+                    A,
+                    B,
+                    "01a18f43-a955-755e-ab9c-1ded4406683e",
+                    "01a18f43-a955-755e-ab9c-1ded4406683f"
+                ]),
+                "too_many",
+            ),
+        ] {
+            let mut content = json!({"title": "Hi"});
+            content[field] = value.clone();
+            let refused = galleries.validate(&content).expect_err("refused");
+            assert_eq!(refused.code, code, "{field} = {value}");
+        }
+
+        // Options: `many` and `max` only, `to` and `inverse` are a reference's.
+        let parse = |field: Value| {
+            ContentType::parse(&json!({
+                "name": "T", "title_field": "t",
+                "fields": [{"id": "t", "label": "T", "type": "text", "required": true}, field]
+            }))
+            .map(|_| ())
+            .map_err(|refused| (refused.code, refused.pointer))
+        };
+        let base = |extra: Value| {
+            let mut field = json!({"id": "x", "label": "X", "type": "asset"});
+            for (key, value) in extra.as_object().expect("object") {
+                field[key] = value.clone();
+            }
+            parse(field)
+        };
+        assert_eq!(
+            base(json!({"to": "tags"})),
+            Err(("unknown_field", "/fields/1/to".to_owned()))
+        );
+        assert_eq!(
+            base(json!({"max": 5})),
+            Err(("out_of_range", "/fields/1/max".to_owned()))
+        );
+        assert_eq!(base(json!({"many": true, "max": 3})), Ok(()));
+    }
+
+    #[test]
     fn pointing_a_reference_elsewhere_needs_a_migration() {
         let with = |field: Value| story_type(&field);
         let tags = |max: u16| {
@@ -4596,5 +4957,76 @@ mod tests {
             (unexpanded.code, unexpanded.pointer.as_str()),
             ("unexpanded_component", "/fields/1/type")
         );
+    }
+
+    #[test]
+    fn an_inverse_names_a_field_id_and_only_on_top_level_fields() {
+        let definition = |extra: Value| {
+            let mut field =
+                json!({"id": "writer", "label": "Writer", "type": "reference", "to": "writers"});
+            for (key, value) in extra.as_object().expect("object") {
+                field[key] = value.clone();
+            }
+            json!({
+                "name": "Posts",
+                "title_field": "title",
+                "fields": [
+                    {"id": "title", "label": "Title", "type": "text", "required": true},
+                    field
+                ]
+            })
+        };
+        let posts = ContentType::parse(&definition(json!({"inverse": "posts"}))).expect("valid");
+        assert!(
+            posts.canonical_json().contains(
+                r#"{"id":"writer","label":"Writer","type":"reference","required":false,"to":"writers","many":false,"inverse":"posts"}"#
+            ),
+            "{}",
+            posts.canonical_json()
+        );
+        // Round-trips: parsing the canonical form keeps the inverse.
+        let again =
+            ContentType::parse(&serde_json::from_str(&posts.canonical_json()).expect("JSON"))
+                .expect("valid");
+        assert_eq!(again.canonical_json(), posts.canonical_json());
+
+        for (inverse, code) in [
+            (json!("Not A Field"), "invalid_inverse"),
+            (json!(42), "invalid_inverse"),
+            (json!(true), "invalid_inverse"),
+        ] {
+            let refused =
+                ContentType::parse(&definition(json!({"inverse": inverse}))).expect_err("refused");
+            assert_eq!(
+                (refused.code, refused.pointer.as_str()),
+                (code, "/fields/1/inverse")
+            );
+        }
+
+        // Only a type's own fields can mirror a link — not nested ones.
+        let nested = json!({
+            "name": "Posts",
+            "title_field": "title",
+            "fields": [
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "hero", "label": "Hero", "type": "object", "fields": [
+                    {"id": "writer", "label": "Writer", "type": "reference", "to": "writers", "inverse": "posts"}
+                ]}
+            ]
+        });
+        let refused = ContentType::parse(&nested).expect_err("nested inverse refused");
+        assert_eq!(
+            (refused.code, refused.pointer.as_str()),
+            ("invalid_inverse", "/fields/1/fields/0/inverse")
+        );
+
+        // Sync metadata, not a shape: adding, changing or dropping it needs no migration.
+        let bare = ContentType::parse(&definition(json!({}))).expect("valid");
+        let with = ContentType::parse(&definition(json!({"inverse": "posts"}))).expect("valid");
+        let renamed =
+            ContentType::parse(&definition(json!({"inverse": "articles"}))).expect("valid");
+        assert_eq!(bare.successor(&with), Successor::Compatible);
+        assert_eq!(with.successor(&bare), Successor::Compatible);
+        assert_eq!(with.successor(&renamed), Successor::Compatible);
     }
 }

@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE asset_jobs SET status = 'superseded', last_error = 'the asset is being deleted',\n                               lease_owner = NULL, lease_expires_at = NULL,\n                               updated_at = now(), finished_at = now()\n         WHERE project_id = $1 AND environment_id = $2 AND asset_id = $3\n           AND kind IN ('verify', 'reverify') AND status IN ('pending', 'retrying')\n           AND quarantine_key IS NOT NULL\n         RETURNING quarantine_key",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "quarantine_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "asset_jobs",
+            "name": "quarantine_key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "58ebeae34dd6c247d22ef063ccdaad3d66352ec4361ff39d27210b30470b04de"
+}

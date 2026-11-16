@@ -1,0 +1,81 @@
+---
+import { site } from '@colophon/site-kit';
+import Base from '../layouts/Base.astro';
+import Unseeded from '../components/Unseeded.astro';
+import { sessionToken } from '../lib/session.ts';
+
+// Rendered per request: a signed-in visitor goes straight to the members area.
+export const prerender = false;
+
+const cms = site();
+const token = sessionToken(Astro.request);
+if (cms !== null && token !== null) return Astro.redirect('/members/');
+
+const ERROR: Record<string, string> = {
+	sign_in_failed: 'That email and password don’t match an account.',
+	too_many_attempts: 'Too many tries — wait a few minutes and sign in again.',
+	account_disabled: 'This account has been disabled.',
+	email_taken: 'That email already has an account — sign in instead.',
+	unavailable_role: 'Signing up isn’t offered right now.',
+	magic_link_invalid: 'That sign-in link is used, expired or unknown — ask for a new one.',
+	failed: 'Something went wrong — try again.'
+};
+const reason = Astro.url.searchParams.get('error') ?? '';
+const message = ERROR[reason] ?? (reason === '' ? null : ERROR.failed);
+const sent = Astro.url.searchParams.get('sent') === '1';
+---
+
+<Base title="Sign in · The Draft">
+	{
+		cms === null ? (
+			<Unseeded />
+		) : (
+			<section class="account">
+				<h1>Members</h1>
+				<p>
+					Some posts on The Draft are for members only: they’re published with <code>role:member</code>{' '}
+					visibility, and the delivery API answers them only for a live audience session that holds the
+					<code>member</code> role. Sign in — or make an account — to read them. The seeded demo account is{' '}
+					<code>member@draft.test</code> with password <code>member-of-the-draft</code>.
+				</p>
+				{message !== null && <p class="form-error">{message}</p>}
+				{sent && <p class="form-ok">If that address has an account, a sign-in link is on its way.</p>}
+				<div class="account-forms">
+					<form method="post" action="/api/signin" class="card">
+						<h2>Sign in</h2>
+						<label>
+							Email
+							<input type="email" name="email" required autocomplete="email" />
+						</label>
+						<label>
+							Password
+							<input type="password" name="password" required autocomplete="current-password" />
+						</label>
+						<button type="submit">Sign in</button>
+					</form>
+					<form method="post" action="/api/signup" class="card">
+						<h2>Sign up</h2>
+						<label>
+							Email
+							<input type="email" name="email" required autocomplete="email" />
+						</label>
+						<label>
+							Password <small>(8+ characters)</small>
+							<input type="password" name="password" required minlength="8" autocomplete="new-password" />
+						</label>
+						<button type="submit">Create account</button>
+					</form>
+					<form method="post" action="/api/magic" class="card">
+						<h2>Email me a link</h2>
+						<p>No password: we’ll send a single-use link that signs you in.</p>
+						<label>
+							Email
+							<input type="email" name="email" required autocomplete="email" />
+						</label>
+						<button type="submit">Send the link</button>
+					</form>
+				</div>
+			</section>
+		)
+	}
+</Base>

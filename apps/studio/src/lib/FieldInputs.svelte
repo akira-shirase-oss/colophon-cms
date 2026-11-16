@@ -1,8 +1,8 @@
 <!--
   Inputs for a content type's plain fields (everything but rich text, which has its own
-  editor), each with a visible label, its help text, and what is wrong with it, if anything. In
-  the editor each field is a row: label left, field right, a dotted rule under; `stacked` puts the
-  label above, for dialogs. Since D-064: native inputs for email, web address, date, time and
+  editor), each with a visible label, its help text, and what is wrong with it, if anything. Each
+  field is a column — label, help and hint above the control — the editor's ruled with a dotted
+  line under, `stacked` without, for dialogs. Since D-064: native inputs for email, web address, date, time and
   colour, a counted textarea for markdown, and a monospaced one for JSON. The checks here mirror
   the server's (lib/content.ts); the server still decides, and a refusal it names a field for is
   shown under that field.
@@ -11,6 +11,7 @@
 	import { Input } from '@colophon/ui/ui/input';
 	import { Textarea } from '@colophon/ui/ui/textarea';
 	import { Button } from '@colophon/ui/ui/button';
+	import AssetPicker from './AssetPicker.svelte';
 	import ReferencePicker from './ReferencePicker.svelte';
 	import RichTextInput from './RichTextInput.svelte';
 	import StructureInput from './StructureInput.svelte';
@@ -123,7 +124,7 @@
 		<div
 			class={stacked
 				? 'grid gap-1.5'
-				: 'rule-dotted grid gap-x-10 gap-y-2 py-5 first:pt-1 sm:grid-cols-[minmax(0,13rem)_minmax(0,1fr)]'}
+				: 'rule-dotted grid gap-y-2 py-5 first:pt-1'}
 		>
 			{#if structure(field) || field.type === 'rich_text'}
 				<!-- A structure has no one input to label: its name heads it, and it groups its own. -->
@@ -151,7 +152,7 @@
 					{/if}
 				</div>
 			{:else if field.type === 'boolean'}
-				<span class="text-sm font-medium" class:sr-only={stacked} aria-hidden="true">{field.label}</span>
+				<span class="sr-only text-sm font-medium" aria-hidden="true">{field.label}</span>
 				<label for={input} class="flex items-center gap-2.5 text-sm">
 					<input id={input} disabled={locked.includes(field.id)} type="checkbox" class="size-4 accent-primary" bind:checked={form[field.id] as boolean} {onchange} />
 					{field.label}
@@ -320,6 +321,18 @@
 					</p>
 				{:else if field.type === 'reference'}
 					<ReferencePicker
+						{project}
+						{field}
+						input={input}
+						bind:value={form[field.id] as string | string[]}
+						disabled={locked.includes(field.id)}
+						describedBy={describedBy(input, field)}
+						refusedAt={refusedPlace(field)}
+						refusal={refusedPlace(field) === null ? '' : (refused?.message ?? '')}
+						{onchange}
+					/>
+				{:else if field.type === 'asset'}
+					<AssetPicker
 						{project}
 						{field}
 						input={input}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH doomed AS (\n             SELECT i.project_id, i.environment_id, i.plan_id, i.entry_id\n             FROM migration_items i\n             JOIN migration_plans p\n               ON p.project_id = i.project_id AND p.environment_id = i.environment_id\n              AND p.id = i.plan_id\n             WHERE p.finished_at < $1\n             ORDER BY i.plan_id, i.entry_id\n             LIMIT $2)\n         DELETE FROM migration_items i USING doomed d\n         WHERE i.project_id = d.project_id AND i.environment_id = d.environment_id\n           AND i.plan_id = d.plan_id AND i.entry_id = d.entry_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "efda1841e286d4bf1cbc563d8f00be254a7279f7e9a5f023d028815ae3a2c66b"
+}

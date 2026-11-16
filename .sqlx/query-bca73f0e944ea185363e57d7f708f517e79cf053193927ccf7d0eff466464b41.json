@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE identities SET failed_sign_ins = 0, locked_until = NULL, last_sign_in_at = now()\n             WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bca73f0e944ea185363e57d7f708f517e79cf053193927ccf7d0eff466464b41"
+}

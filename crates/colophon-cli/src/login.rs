@@ -7,24 +7,21 @@
 use std::time::{Duration, Instant};
 
 use reqwest::Method;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::{
     Exit,
     client::{Client, Failure},
     credentials::{self, Profile},
+    out::Out,
 };
-
-fn print_json(value: &Value) {
-    println!("{value}");
-}
 
 /// Runs `colophon login`.
 pub(crate) async fn login(
     server: &str,
     profile: &str,
     name: &str,
-    json: bool,
+    out: Out,
 ) -> Result<(), Failure> {
     let client = Client::new(server, None)?;
     client.check_server().await?;
@@ -107,9 +104,9 @@ pub(crate) async fn login(
             .as_str()
             .or_else(|| who["data"]["id"].as_str())
             .unwrap_or("you");
-        if json {
-            print_json(&json!({
-                "version": 1, "command": "login", "status": "signed_in", "server": server,
+        if out.format.machine() {
+            out.print_data(&json!({
+                "status": "signed_in", "server": server,
                 "profile": profile, "person": person, "expires_at": expires_at
             }));
         } else {
@@ -122,7 +119,7 @@ pub(crate) async fn login(
 /// Runs `colophon logout`: revokes the token on the server, then forgets it here. It skips the
 /// version check on purpose: signing out must work even against a server this colophon can't
 /// otherwise use, and `/auth/logout` predates version reports.
-pub(crate) async fn logout(profile: &str) -> Result<(), Failure> {
+pub(crate) async fn logout(profile: &str, out: Out) -> Result<(), Failure> {
     let saved = credentials::profile(profile).await?;
     let client = Client::new(&saved.server, Some(saved.token))?;
     match client.send(Method::POST, "/auth/logout", None, &[]).await {
@@ -132,20 +129,24 @@ pub(crate) async fn logout(profile: &str) -> Result<(), Failure> {
         Err(failure) => return Err(failure),
     }
     credentials::forget(profile).await?;
-    println!("Signed out of {} (profile {profile}).", saved.server);
+    if out.format.machine() {
+        out.print_data(&json!({
+            "status": "signed_out", "server": saved.server, "profile": profile
+        }));
+    } else {
+        println!("Signed out of {} (profile {profile}).", saved.server);
+    }
     Ok(())
 }
 
 /// Runs `colophon whoami`.
-pub(crate) async fn whoami(profile: &str, json: bool) -> Result<(), Failure> {
+pub(crate) async fn whoami(profile: &str, out: Out) -> Result<(), Failure> {
     let saved = credentials::profile(profile).await?;
     let client = Client::new(&saved.server, Some(saved.token))?;
     client.check_server().await?;
     let me = client.send(Method::GET, "/me", None, &[]).await?.body;
-    if json {
-        print_json(
-            &json!({ "version": 1, "command": "whoami", "server": saved.server, "me": me["data"] }),
-        );
+    if out.format.machine() {
+        out.print_data(&json!({ "server": saved.server, "me": me["data"] }));
     } else {
         let name = me["data"]["display_name"].as_str().unwrap_or("(no name)");
         let administrator = if me["data"]["administrator"] == true {

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH doomed AS (\n             SELECT project_id, environment_id, id FROM migration_plans p\n             WHERE p.finished_at < $1\n               AND NOT EXISTS (\n                   SELECT 1 FROM migration_items i\n                   WHERE i.project_id = p.project_id AND i.environment_id = p.environment_id\n                     AND i.plan_id = p.id)\n             ORDER BY p.finished_at\n             LIMIT $2)\n         DELETE FROM migration_plans p USING doomed d\n         WHERE p.project_id = d.project_id AND p.environment_id = d.environment_id\n           AND p.id = d.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d9254cb59033492f61911cea89e3a1e4bafe1adc4e6e52578f3c2480dec3c1b5"
+}

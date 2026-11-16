@@ -1,0 +1,43 @@
+---
+import '../styles/site.css';
+
+interface Props {
+	title: string;
+	generation?: number;
+}
+const { title, generation } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		{generation !== undefined && generation > 0 && <meta name="colophon-generation" content={String(generation)} />}
+		<title>{title}</title>
+	</head>
+	<body>
+		<header class="site-header">
+			<div class="wrap">
+				<a class="brand" href="/">Butter &amp; Thyme</a>
+				<nav class="site-nav">
+					<a href="/">All recipes</a>
+				</nav>
+			</div>
+		</header>
+		<main class="wrap">
+			<slot />
+		</main>
+		<footer class="site-footer">
+			<div class="wrap">
+				{
+					generation !== undefined && generation > 0 && (
+						<p>
+							Every recipe was published through Colophon as release {generation} of the demo-sites project.
+						</p>
+					)
+				}
+			</div>
+		</footer>
+	</body>
+</html>

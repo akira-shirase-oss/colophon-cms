@@ -7,13 +7,14 @@
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
-	import { type Delivery, getReceipt, may } from '#lib/api.ts';
+	import { ApiError, type Delivery, getReceipt, may, newKey, rollbackRelease } from '#lib/api.ts';
 	import { markReceiptSeen } from '#lib/firstRun.ts';
 	import { deliveryText, failureText } from '#lib/receipts.ts';
-	import { ago, projectQuery } from '#lib/queries.ts';
+	import { ago, projectQuery, releasesQuery } from '#lib/queries.ts';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
 	import ReleaseLabel from '#lib/shell/ReleaseLabel.svelte';
@@ -22,16 +23,35 @@
 
 	const project = $derived(page.params.project ?? '');
 	const generation = $derived(Number(page.params.generation ?? '0'));
-	// A pending receipt settles on its own: look again every few seconds until it does.
+	// A pending receipt settles on its own: jobs and probes commit as `releases` hints, and the
+	// live stream refreshes this receipt (D-108) — nothing to poll for.
 	const receipt = createQuery(() => ({
 		queryKey: ['receipt', project, generation],
-		queryFn: () => getReceipt(project, generation),
-		refetchInterval: (query) => (query.state.data?.label === 'pending' ? 2_000 : false)
+		queryFn: () => getReceipt(project, generation)
 	}));
 
 	const when = (at: string) => new Date(at).toLocaleString();
 	const mine = createQuery(() => projectQuery(project));
+	const releases = createQuery(() => releasesQuery(project));
 	const fixes = $derived(may(mine.data, 'destinations.manage'));
+	// Restoring is a changeset like any other: it goes through review, never around it (D-097).
+	const latest = $derived(releases.data?.generation ?? 0);
+	const restores = $derived(may(mine.data, 'content.update') && generation < latest);
+	const at = (n: number) => resolve('/projects/[project]/releases/[generation]', { project, generation: String(n) });
+	let rolling = $state(false);
+	let rollError = $state<string | null>(null);
+	async function rollback() {
+		rolling = true;
+		rollError = null;
+		try {
+			const changeset = await rollbackRelease(project, generation, `Rollback to release ${generation}`, newKey());
+			await goto(resolve('/projects/[project]/changesets/[changeset]', { project, changeset: changeset.id }));
+		} catch (error) {
+			rollError = error instanceof ApiError ? error.message : 'the rollback could not be built';
+		} finally {
+			rolling = false;
+		}
+	}
 	const failed = $derived((receipt.data?.deliveries ?? []).filter((delivery) => delivery.state === 'failed'));
 	const named = (id: string) => receipt.data?.deliveries.find((delivery) => delivery.destination_id === id)?.name ?? 'a site check';
 	const deliveryTextShort = (delivery: Delivery) => (delivery.last_error ? failureText(delivery.last_error) : 'it failed');
@@ -57,11 +77,38 @@
 			<span>{shown.entries} {shown.entries === 1 ? 'entry' : 'entries'} changed{#if shown.unpublished > 0}, {shown.unpublished} taken down{/if}</span>
 		{/snippet}
 		{#snippet actions()}
+			{#if restores}
+				<Button variant="outline" size="sm" onclick={rollback} disabled={rolling} data-testid="rollback">
+					{rolling ? 'Building the restore…' : 'Roll back to this release'}
+				</Button>
+			{/if}
 			<a class="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground" href={resolve('/projects/[project]/changesets/[changeset]', { project, changeset: shown.changeset_id })}
 				>The {PUBLISH_REQUEST}</a
 			>
 		{/snippet}
 	</PageHeader>
+
+	{#if rollError}
+		<p class="mb-8 rounded-lg border border-attention/40 bg-attention-soft/60 px-4 py-3 text-sm text-attention-ink" data-testid="rollback-error">{rollError}</p>
+	{/if}
+
+	{#if latest > 1}
+		<div class="mb-8 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-3" data-testid="release-slider">
+			<Button variant="ghost" size="sm" href={generation > 1 ? at(generation - 1) : undefined} disabled={generation <= 1} aria-label="Older release">← Older</Button>
+			<input
+				type="range"
+				min="1"
+				max={latest}
+				value={generation}
+				aria-label="Release"
+				class="min-w-0 flex-1 accent-foreground"
+				onchange={(event) => goto(at(Number(event.currentTarget.value)))}
+				data-testid="slider"
+			/>
+			<span class="shrink-0 text-sm text-muted-foreground">Release <strong class="font-medium text-foreground">{generation}</strong> of {latest}</span>
+			<Button variant="ghost" size="sm" href={generation < latest ? at(generation + 1) : undefined} disabled={generation >= latest} aria-label="Newer release">Newer →</Button>
+		</div>
+	{/if}
 
 	<div class="mb-8 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-4">
 		<div class="text-[0.9375rem]"><ReleaseLabel release={shown} testid="receipt-label" /></div>

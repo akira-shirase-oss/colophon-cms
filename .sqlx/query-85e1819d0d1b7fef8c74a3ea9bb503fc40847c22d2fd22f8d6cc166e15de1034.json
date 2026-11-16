@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE assets SET state = 'deleted'\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND state <> 'deleted'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "85e1819d0d1b7fef8c74a3ea9bb503fc40847c22d2fd22f8d6cc166e15de1034"
+}

@@ -6,22 +6,27 @@
 <script lang="ts">
 	import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
+	import ImageIcon from '@lucide/svelte/icons/image';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
+	import ListTodoIcon from '@lucide/svelte/icons/list-todo';
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
+	import RouteIcon from '@lucide/svelte/icons/route';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import ShapesIcon from '@lucide/svelte/icons/shapes';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
+	import UserRoundIcon from '@lucide/svelte/icons/user-round';
 	import UsersIcon from '@lucide/svelte/icons/users';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { createQueries, createQuery } from '@tanstack/svelte-query';
+	import { createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import * as Breadcrumb from '@colophon/ui/ui/breadcrumb';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as DropdownMenu from '@colophon/ui/ui/dropdown-menu';
 	import * as Sidebar from '@colophon/ui/ui/sidebar';
 	import { getEntry, may, mayAny, SETTINGS_ACTIONS } from '#lib/api.ts';
 	import { rememberProject } from '#lib/lastProject.ts';
+	import { watchProject } from '#lib/live.ts';
 	import { ago, changesetsQuery, entriesQuery, meQuery, projectQuery, releasesQuery, rolesQuery, typesQuery } from '#lib/queries.ts';
 	import AccountMenu from '#lib/shell/AccountMenu.svelte';
 	import AppearanceMenu from '#lib/shell/AppearanceMenu.svelte';
@@ -62,18 +67,29 @@
 		if (who.data && mine.data) rememberProject(who.data.id, mine.data.id);
 	});
 
+	// Lists move as PostgreSQL commits (D-108): one events stream per open project turns each
+	// hint into the queries it makes stale. Another project (or leaving these pages) closes it.
+	const queryClient = useQueryClient();
+	$effect(() => watchProject(project, 'production', queryClient));
+
 	const SECTION: Record<string, string> = {
 		'/projects/[project]/changesets': 'Publish requests',
 		'/projects/[project]/changesets/[changeset]': 'Publish requests',
 		'/projects/[project]/releases': 'Releases',
 		'/projects/[project]/releases/[generation]': 'Releases',
+		'/projects/[project]/migrations': 'Migrations',
+		'/projects/[project]/migrations/[migration]': 'Migrations',
+		'/projects/[project]/tasks': 'Tasks',
+		'/projects/[project]/media': 'Media',
 		'/projects/[project]/members': 'Members',
+		'/projects/[project]/audience': 'Audience',
 		'/projects/[project]/settings': 'Settings',
 		'/projects/[project]/settings/types': 'Content types',
 		'/projects/[project]/settings/types/[type]': 'Content types',
 		'/projects/[project]/settings/components/[component]': 'Content types',
 		'/projects/[project]/settings/roles': 'Settings',
 		'/projects/[project]/settings/roles/[role]': 'Settings',
+		'/projects/[project]/settings/stages': 'Settings',
 		'/projects/[project]/settings/connections': 'Settings',
 		'/projects/[project]/settings/tokens': 'Settings',
 		'/projects/[project]/settings/activity': 'Settings'
@@ -82,6 +98,7 @@
 	const SETTINGS_PAGE: Record<string, string> = {
 		'/projects/[project]/settings/roles': 'Roles',
 		'/projects/[project]/settings/roles/[role]': 'Roles',
+		'/projects/[project]/settings/stages': 'Review stages',
 		'/projects/[project]/settings/connections': 'Website connections',
 		'/projects/[project]/settings/tokens': 'API tokens',
 		'/projects/[project]/settings/activity': 'Activity'
@@ -119,10 +136,13 @@
 						? resolve('/projects/[project]/settings', { project })
 						: section === 'Content types'
 							? resolve('/projects/[project]/settings/types', { project })
-							: resolve('/projects/[project]/releases', { project });
+							: section === 'Migrations'
+								? resolve('/projects/[project]/migrations', { project })
+								: resolve('/projects/[project]/releases', { project });
 			trail.push({ label: section, href: detail ? href : undefined });
 			if (route.endsWith('[generation]')) trail.push({ label: `Release ${page.params.generation}` });
 			if (route.endsWith('[changeset]')) trail.push({ label: 'Publish request' });
+			if (route.endsWith('[migration]')) trail.push({ label: 'Migration' });
 			const settingsPage = SETTINGS_PAGE[route];
 			if (settingsPage !== undefined) {
 				trail.push({ label: settingsPage, href: route.endsWith('[role]') ? resolve('/projects/[project]/settings/roles', { project }) : undefined });
@@ -232,6 +252,26 @@
 			</Sidebar.Group>
 
 			<Sidebar.Group>
+				<Sidebar.GroupLabel>Work</Sidebar.GroupLabel>
+				<Sidebar.Menu>
+					<Sidebar.MenuItem>
+						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/media')} tooltipContent="Media">
+							{#snippet child({ props })}
+								<a href={resolve('/projects/[project]/media', { project })} data-testid="media-link" {...props}><ImageIcon /><span>Media</span></a>
+							{/snippet}
+						</Sidebar.MenuButton>
+					</Sidebar.MenuItem>
+					<Sidebar.MenuItem>
+						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/tasks')} tooltipContent="Tasks">
+							{#snippet child({ props })}
+								<a href={resolve('/projects/[project]/tasks', { project })} data-testid="tasks-link" {...props}><ListTodoIcon /><span>Tasks</span></a>
+							{/snippet}
+						</Sidebar.MenuButton>
+					</Sidebar.MenuItem>
+				</Sidebar.Menu>
+			</Sidebar.Group>
+
+			<Sidebar.Group>
 				<Sidebar.GroupLabel>Publishing</Sidebar.GroupLabel>
 				<Sidebar.Menu>
 					<Sidebar.MenuItem>
@@ -258,7 +298,7 @@
 			</Sidebar.Group>
 
 			<Sidebar.Group>
-				<Sidebar.GroupLabel>Project</Sidebar.GroupLabel>
+				<Sidebar.GroupLabel>People</Sidebar.GroupLabel>
 				<Sidebar.Menu>
 					<Sidebar.MenuItem>
 						<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/members')} tooltipContent="Members">
@@ -267,11 +307,34 @@
 							{/snippet}
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
-					{#if builds}
+					{#if may(mine.data, 'audience.manage')}
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/audience')} tooltipContent="Audience">
+								{#snippet child({ props })}
+									<a href={resolve('/projects/[project]/audience', { project })} data-testid="audience-link" {...props}><UserRoundIcon /><span>Audience</span></a>
+								{/snippet}
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
+					{/if}
+				</Sidebar.Menu>
+			</Sidebar.Group>
+
+			{#if builds || settings}
+				<Sidebar.Group>
+					<Sidebar.GroupLabel>Structure</Sidebar.GroupLabel>
+					<Sidebar.Menu>
+						{#if builds}
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton isActive={inBuilder} tooltipContent="Content types">
 								{#snippet child({ props })}
 									<a href={resolve('/projects/[project]/settings/types', { project })} data-testid="builder-link" {...props}><ShapesIcon /><span>Content types</span></a>
+								{/snippet}
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton isActive={route.startsWith('/projects/[project]/migrations')} tooltipContent="Migrations">
+								{#snippet child({ props })}
+									<a href={resolve('/projects/[project]/migrations', { project })} data-testid="migrations-link" {...props}><RouteIcon /><span>Migrations</span></a>
 								{/snippet}
 							</Sidebar.MenuButton>
 						</Sidebar.MenuItem>
@@ -286,7 +349,8 @@
 						</Sidebar.MenuItem>
 					{/if}
 				</Sidebar.Menu>
-			</Sidebar.Group>
+				</Sidebar.Group>
+			{/if}
 		</Sidebar.Content>
 
 		<Sidebar.Footer class="group-data-[collapsible=icon]:hidden">
@@ -355,5 +419,6 @@
 	connections={may(mine.data, 'destinations.manage')}
 	tokens={may(mine.data, 'tokens.manage')}
 	activity={may(mine.data, 'audit.read')}
+	stages={may(mine.data, 'schema.change')}
 	bind:open={searching}
 />

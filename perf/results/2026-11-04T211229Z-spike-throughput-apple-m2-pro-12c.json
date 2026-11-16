@@ -1,0 +1,92 @@
+{
+  "scenario": "throughput",
+  "endpoint": "spike",
+  "date": "2026-11-04T21:12:29Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 1000000,
+    "vus": 64
+  },
+  "requests": 34512,
+  "rps": 582,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 1.673,
+    "p50": 1.307,
+    "p90": 2.404,
+    "p95": 3.203,
+    "p99": 8.637,
+    "p999": 37.287,
+    "max": 104.735
+  },
+  "database_transactions_during_run": 30155,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 12,
+    "server_rss_kb": {
+      "first": 27296,
+      "last": 41024,
+      "max": 41024
+    },
+    "server_cpu_percent": {
+      "avg": 12,
+      "max": 26.7
+    },
+    "postgres_connections": {
+      "last": 29,
+      "max": 29
+    }
+  },
+  "l06": {
+    "spike_per_second": 1500,
+    "phases_seconds": {
+      "baseline": 20,
+      "gap": 2,
+      "spike": 15,
+      "recovery": 20
+    },
+    "latency_ms": {
+      "before_p99": 11.285,
+      "spike_p99": 7.067069999999998,
+      "after_p99": 11.376739999999996,
+      "recovery_bound": 18.927500000000002
+    },
+    "recovery_windows": [],
+    "recovered_after_seconds": null,
+    "held": false,
+    "spec": "L06: spike from 1x to 5x load for 2 min — controlled 429/503, bounded queues; back to baseline within 2 min after load ends",
+    "answers": {
+      "refused_429": 5512,
+      "refused_503": 0,
+      "other": 0,
+      "errors": 0,
+      "served": 28989
+    },
+    "gates": {
+      "no_errors": true,
+      "spike_p99_bounded": true,
+      "recovery_within_2_minutes": false,
+      "baseline_held": true,
+      "refusals_controlled": true
+    },
+    "gate": "every spike answer a served read or a shaped 429/503 (some 429s must occur — the limiter set real); spike p99 <15000 ms; first recovery window inside 1.5x baseline p99 +2 ms by second 120, holding after",
+    "baseline_per_second": 300
+  }
+}

@@ -21,6 +21,7 @@ cargo test -p colophon-bench --benches --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 scripts/check-architecture.sh
 scripts/check-architecture.sh colophon-sim
+scripts/check-typography.sh
 # The simulator: 2,000 seeded runs of editors, lost answers and crashes (docs/modules/10-sim.md).
 cargo run --quiet --release --locked -p colophon-sim -- --seeds 2000
 cargo run --quiet --release --locked -p colophon-sim -- --scenario publishing --seeds 1000
@@ -71,6 +72,9 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
   scripts/migrate.sh
   # These stop and restart stack services, so one at a time.
   cargo test --workspace --locked -- --ignored --test-threads=1
+  # The P5 evaluation suite (D-117): adversarial cases against the same stack, gated on
+  # UNAUTHORIZED: 0 across COLOPHON_EVAL_TRIALS repetitions of every case.
+  COLOPHON_EVAL_TRIALS=3 cargo test -p colophon-server --test evals --locked -- --ignored --test-threads=1
   # F01, F02 and F03: the server killed before and after a commit, the worker after announcing (needs the fault points).
   cargo test -p colophon-server --features fault-injection --test faults --locked -- --ignored --test-threads=1
   if command -v npm >/dev/null; then
@@ -87,14 +91,43 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh members throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh roles throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh tokens throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh quotas throughput
+    # L08's smoke: its arms are time-boxed, so DURATION (per phase) is the knob, not TOTAL.
+    PATH="$PATH:$HOME/.local/bin" DURATION=8s P99_MS=500 KEEP=0 scripts/load.sh noisy-agent throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh schedules throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh projects throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh changesets throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=200 KEEP=0 scripts/load.sh stages throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh migrations throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=200 KEEP=0 scripts/load.sh collaboration throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh live throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=50000 P99_MS=200 KEEP=0 scripts/load.sh delivery throughput
+    # USERS bounds the audience the smoke signs up, not the traffic share it drives.
+    PATH="$PATH:$HOME/.local/bin" TOTAL=10000 USERS=64 P99_MS=700 KEEP=0 scripts/load.sh audience throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=20000 P99_MS=500 KEEP=0 scripts/load.sh publishing throughput
+    # The dependency-failure evidence runs (L11-L13, D-127): each pauses or kills a real
+    # stack dependency mid-run, so they run here one at a time like everywhere else.
+    PATH="$PATH:$HOME/.local/bin" DURATION=10s P99_MS=500 KEEP=0 scripts/load.sh cache-down throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=10s P99_MS=500 KEEP=0 scripts/load.sh postgres-trouble throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=10s P99_MS=500 KEEP=0 scripts/load.sh purge-trouble throughput
+    # The load-matrix evidence runs (D-128): their arms are time-boxed or job-sized, so
+    # DURATION, SPIKE_SECONDS, PUBLISH_SECONDS, CORPUS and TOTAL_RECORDS — not TOTAL —
+    # shape their smokes. import-scale and media-load also run reduced corpora.
+    PATH="$PATH:$HOME/.local/bin" DURATION=10s P99_MS=700 KEEP=0 scripts/load.sh smoke throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=50000 P99_MS=350 KEEP=0 scripts/load.sh warm-baseline throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=5000 CORPUS=512 P99_MS=750 KEEP=0 scripts/load.sh cold-cache throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=15s P99_MS=250 KEEP=0 scripts/load.sh stampede throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=15s RATE=50 PUBLISH_SECONDS=5 P99_MS=700 KEEP=0 scripts/load.sh mixed throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=8s RATE=300 SPIKE_SECONDS=10 P99_MS=250 KEEP=0 scripts/load.sh spike throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL_RECORDS=1024 P99_MS=15000 KEEP=0 scripts/load.sh import-scale throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=10s RATE=300 PUBLISH_SECONDS=5 P99_MS=400 KEEP=0 scripts/load.sh cdn-warm throughput
+    PATH="$PATH:$HOME/.local/bin" DURATION=10s MEDIA_VUS=2 P99_MS=700 KEEP=0 scripts/load.sh media-load throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh entries throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh content-types throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh modelling throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh site-starter throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh assets throughput
+    PATH="$PATH:$HOME/.local/bin" TOTAL=10000 P99_MS=500 KEEP=0 scripts/load.sh bulk throughput
     PATH="$PATH:$HOME/.local/bin" TOTAL=50000 P99_MS=50 KEEP=0 scripts/load.sh studio throughput
   else
     echo "note: k6 is not installed here (scripts/install-k6.sh); CI runs the load smoke test" >&2

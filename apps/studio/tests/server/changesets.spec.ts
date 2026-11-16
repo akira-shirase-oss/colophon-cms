@@ -3,7 +3,7 @@
 // see a second tab's approval refused because the version it shows is no longer current.
 
 import { type Page, expect, test } from '@playwright/test';
-import { newProject, signIn, violations } from './helpers.ts';
+import { env, newProject, signIn, violations } from './helpers.ts';
 
 /** Creates an article through the API as the signed-in page; its id. */
 async function article(page: Page, project: string, title: string): Promise<string> {
@@ -90,17 +90,28 @@ test('a changeset is approved as the exact version on screen, and an edit makes 
 	await expect(page.getByTestId('changeset-reviews')).toContainText('on an earlier version');
 
 	// A second tab still shows this version when the first edits and refreshes again: its
-	// approval is refused, and it shows the current version instead.
+	// approval is refused, and it shows the current version instead. The read freezes where
+	// it stood — a tab the stream's changesets hint never reached — so approving it still
+	// names the version on screen, not the one the first tab moved it to.
 	const other = await (await browser.newContext()).newPage();
 	await signIn(other);
 	await other.goto(changesetPath);
 	await expect(status(other)).toHaveAttribute('data-state', 'awaiting_review');
+	const changesetId = changesetPath.split('/').pop();
+	const frozen = await other.evaluate(async (path) => (await (await fetch(path)).text()), `${env(project)}/changesets/${changesetId}`);
+	await other.route(`**/changesets/${changesetId}`, (route) =>
+		route.request().method() === 'GET'
+			? route.fulfill({ status: 200, contentType: 'application/json', body: frozen })
+			: route.continue()
+	);
 	await retitle(page, project, first, 'Spring launch, really final');
 	await page.reload();
 	await page.getByRole('button', { name: 'Update to the latest versions' }).click();
 	await expect(status(page)).toHaveAttribute('data-state', 'awaiting_review');
 	await other.getByRole('button', { name: 'Approve this version' }).click();
 	await expect(other.getByTestId('changeset-notice')).toContainText('changed since you loaded it');
+	await other.unroute(`**/changesets/${changesetId}`);
+	await other.reload();
 	await expect(other.getByTestId('changeset-items')).toContainText('Spring launch, really final');
 	await expect(status(other)).toHaveAttribute('data-state', 'awaiting_review');
 });

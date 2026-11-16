@@ -52,7 +52,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   far: Projects (`/studio/`), a project's content types (`/studio/projects/{project}`), a collection
   (`…/{collection}`), the editor (`…/{collection}/{entry}`), Members (`…/members`), joining a project
   (`/studio/invite`), approving a terminal (`/studio/device`), and the editor playground (`/studio/playground`).
-  Content-type slugs `members` and `settings` are reserved, so these pages can sit beside collections (D-042).
+  Content-type slugs `members`, `settings`, `changesets`, `releases` and `migrations` are reserved, so these pages can sit beside collections (D-042).
   Since step 1.8 (D-043), the home page lets an administrator create a project, with the slug following the name
   until edited, and tells everyone else to ask a project's owner for an invitation.
   Since step 2.1 (D-044): `/studio/projects/{project}/changesets` lists changesets with their state and makes new ones
@@ -73,13 +73,42 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   the playground's formatting toolbar, shows save status and live state beside the fields, and compares any revision
   with the draft. A changeset shows, for every item, what changes for readers: a word-level comparison from the live
   revision to the pinned one (new entries are all additions; unpublishing shows what goes). Destinations moved to
-  `…/settings` (since D-081, `…/settings/connections`).
+  `…/settings` (since D-081, `…/settings/connections`). Since step E1 (D-102): the editor's Comments tab writes a
+  comment bound to the version on screen, answers or reopens each on its etag (a moved answer refetches first), and
+  on a deleted entry keeps the comments while the composer closes with why; and `…/tasks` lists the project's
+  tasks by status and who they're waiting on, makes one on an entry with an optional version or publish request,
+  and edits title, status and who it's waiting on — Unassigned sent as `assignee: null`, never an omitted field.
+  Since step E2 (D-104): a publish request on an environment with review stages lists them in order with each one's
+  state, who approved and when, and whether it asks for someone other than the sender; the Review panel's *Deciding*
+  names the stage every approval or request for changes counts for (the first one still waiting is picked), history
+  names it too, and one-click publishing approves each stage the sender's approval counts for and says which remain.
+  `…/settings/stages` edits the ordered list — add, rename, reorder, remove, and whether a stage needs someone other
+  than the sender — for roles that may `schema.change`, under the list's ETag so a moved list is refused and offers
+  the latest; every member reads it, so other roles see it without the controls. Tests:
+  `tests/server/stages.spec.ts`, `tests/server/collaboration.spec.ts`.
+  Since step E3 (D-108, branch `e3-surfaces`): the project shell holds one `GET {P}/events` stream per open project
+  (`lib/live.ts`, `watchProject`, mounted in the project layout) and turns each `change` hint — a kind and a scope,
+  never content — into the query invalidations a fresh visit would run: entries, drafts, history, changesets, stages,
+  releases and their jobs and receipts, schedules, tasks, comments, migrations and their items, assets, members and
+  invitations, roles, tokens, destinations and the audit trail all move as PostgreSQL commits, without a reload or a
+  poll. A `resync` event and every reconnect invalidates every key in the project; the stream closes on teardown,
+  EventSource reopens it on its own, and a hidden tab that becomes visible resyncs (and reconnects if its stream
+  died). The polling the hints replace — releases and their deliveries, a release's receipt, a running migration's
+  plan and items, the schedule panel's due times, an upload waiting out quarantine — is gone; only a bounded fallback
+  backs the asset wait while a stream is down. There is still no co-editing, presence or cursor synchronization (spec
+  §01): a save on an entry being edited refreshes its read but leaves the form alone, and the next save opens the
+  conflict screen, never a silent overwrite. The role editor answers the same way: its form keeps editing the
+  version it opened while the page tracks the newest, so a version moved under it says "someone changed this role
+  while you were editing it" and loads the latest only when asked — and an untouched form or a read-only view
+  simply follows. Tests: `tests/server/live.spec.ts` (two contexts: a member's commit
+  lands in the owner's list; a moved draft refuses the stale save); the testbed's `/live` page and spec exercise the
+  stream through the real API, and `perf/k6/live.js` holds streams open under steady writes.
 - Finishing the Studio (branch `studio/dashboard`, 2026-10-27), slice by slice:
   - **Sign out from any screen** (`shell/AccountMenu.svelte`, in the project shell's header and the plain frame's):
     who is signed in, *Your work and projects*, *About Colophon* (which version this is, below), and *Sign out*, which calls `POST /auth/logout` and only then
     reloads at the front door with a note that says so. If the server can't be reached it says you're still signed
     in. Since f4338a7 the answer names the identity provider's sign-out address, and the browser follows it
-    (Keycloak asks to confirm, then returns to `/studio/`), so signing in again asks for a password; only when the
+    (the provider asks to confirm, then returns to `/studio/`), so signing in again asks for a password; only when the
     provider gives no address does the front door say to close the browser on a shared computer. Test:
     `tests/server/signout.spec.ts`.
   - **Honest states and permission-aware navigation**: the sidebar, the Overview, the command palette and the new
@@ -256,6 +285,22 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   structures still fit three deep (`componentFits`), shows its fields read-only with a link to its page, and the
   entry editor fills it like any group. Changing one takes `schema.change` everywhere; a role without it reads it,
   and the server refuses its change too. Tests: `tests/components.spec.ts`, `tests/server/components.spec.ts`.
+- D-100 and D-101 in the Studio: **content-schema migrations** (step M.5c). *Migrations* in the main navigation
+  (shown to roles with `schema.change` anywhere, beside *Content types*) opens `…/migrations`: every plan with its
+  state badge, entries done and in the way, and the versions it moves between. A plan's page
+  (`…/migrations/{migration}`) says the collection, the definition it moves to (in the Technical details with the
+  plan's hash and its history), the progress the worker is driving — `migrations` hints keep it moving while a plan
+  runs — and an
+  outcome-filtered table of its items with each `needs_input` problem. *Resolve* on one opens a dialog holding the
+  entry's document to fix; the page checks it's JSON, the server checks it against the target, and a refusal is
+  said in the dialog. *Approve plan* and *Apply* send the hash on screen (a plan that moved says so and shows the
+  current one), *Cancel plan* while it hasn't run, and Apply is answered `running`, never `done` — the badge lands
+  there when the worker finishes. `republish_required` says, plainly, that applied drafts still serve their old
+  shape until published. Mutating actions show only to a role with `schema.change` on the collection. The one
+  affordance that makes a plan is on the refusal that earns it: the type builder's `needs_migration` answer lists
+  the entries in the way as before, and *Plan a migration for this change* plans the very definition the save sent
+  and opens the new plan. Test: `tests/server/migrations.spec.ts` (refusal → plan → item → resolve → approve →
+  apply → `done` through the real worker).
 - **The content-type builder, rebuilt as a CMS builder** (D-079, 2026-10-28; notes in
   [research/cms-ui-patterns.md](../research/cms-ui-patterns.md)). *Content types* in the main navigation (shown to roles
   with `schema.change` anywhere) opens `…/settings/types`: a left panel (`BuilderFrame.svelte`) of collections, single
@@ -311,7 +356,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   site check's URL is one page, and a site's paths are its own), so it waits on a route that says where each content
   type's entries live. Tests: `tests/server/entry-page.spec.ts`; `address.spec.ts` and `readers.spec.ts` open the
   drawer first.
-- **Where Strapi was easier, fixed** (D-082, 2026-10-28; [research/strapi-vs-colophon-hands-on.md](../research/strapi-vs-colophon-hands-on.md)).
+- **Where Strapi was easier, fixed** (D-147, 2026-10-28; [research/strapi-vs-colophon-hands-on.md](../research/strapi-vs-colophon-hands-on.md)).
   Both products were used for the same seven first-day tasks; each change removes a place where Strapi was easier.
   - **First run from the setup link**: the server prints `<studio>#setup=<code>`. Opened signed out, the front door
     says "This Colophon is new. Create the first account; you'll become its administrator with the setup code the
@@ -376,7 +421,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 - As built in step 3.7 (D-059, D-061), from sign-up to a first release:
   - **The front door** (`/studio/`): signed out, *Sign in* and *Create an account* (the identity provider's own
     sign-up form, `/auth/login?start=create`); opened from the setup link, *Create an account* first, and the code
-    filled in after signing in (D-082). On an installation with no administrator, a signed-in person sees
+    filled in after signing in (D-147). On an installation with no administrator, a signed-in person sees
     *Finish setting up Colophon*: a field for the setup code the server printed to its terminal, and, in Technical
     details, `colophon admin bootstrap --subject <their subject>`. An administrator with no project gets *Create your
     first project*; anyone else, *You're not in a project yet*, with the name to give and the role to ask for. The
@@ -385,7 +430,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
     from the title), a documentation site (a Pages type: title, URL name, body) or blank. Applied right after the
     project is made, as its owner, through the content-type API; if that part fails, the project exists and a toast
     says how to finish it in Settings.
-  - **The first-run checklist** on the overview (`FirstRun.svelte`): since D-082, decide what you'll write (Content
+  - **The first-run checklist** on the overview (`FirstRun.svelte`): since D-147, decide what you'll write (Content
     types) first; write the first article (or page), publish it
     (or ask for review, when the role can't approve and publish), connect the website, invite a teammate, see the
     first receipt. Each item is derived from real state (entries, publish requests, releases, website connections,
@@ -417,7 +462,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
 
 ### Publishing labels (spec §05)
 - **Saved**
-- **Published in CMS** (said *Published in Colophon* in the Studio, D-082)
+- **Published in CMS** (said *Published in Colophon* in the Studio, D-147)
 - **Website update pending**
 - **Verified at configured locations** (with the actual location count)
 - **Needs attention** (with a safe next action)
@@ -557,7 +602,10 @@ and unpublish from a list, and duplicate.
 Needs a backend route first (each M unless said): deleting content types and components; renaming or
 removing a project; changing or removing a website connection (only on and off today); rotating a token; seeing and
 ending one's sessions; defaults and conditions inside structures; geopoint fields. Later milestones (L): media
-library (P4), localization, comments and tasks, presence, visual preview (E), query filters and webhooks by event (D).
+library (P4), localization, presence, visual preview (E), query filters and webhooks by event (D). Comments and
+tasks are built (step E1, D-102): the editor's Comments tab and the project Tasks page cover what the API offers —
+review stages are too (step E2, D-104): the changeset's stage list and the Settings page cover the API's ordered
+workflow, per-stage decisions and someone-else constraints.
 
 ## Open decisions
 

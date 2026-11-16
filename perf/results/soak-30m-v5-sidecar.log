@@ -1,0 +1,41 @@
+2026-11-11T19:34:12Z sidecar armed: drills every 300s for 1h -> perf/results/soak-30m-v5-sidecar.log, windows -> perf/results/soak-30m-v5-windows.jsonl
+2026-11-11T19:39:12Z drill 1: pause valkey 60s
+ Container colophon-valkey-1 Paused 
+ Container colophon-valkey-1 Unpaused 
+2026-11-11T19:40:13Z drill 1: valkey resumed (state: running)
+2026-11-11T19:45:13Z drill 2: pause postgres 30s
+ Container colophon-postgres-1 Paused 
+ Container colophon-postgres-1 Unpaused 
+2026-11-11T19:45:43Z drill 2: postgres resumed (state: running)
+2026-11-11T19:50:43Z drill 3: pause valkey 60s
+ Container colophon-valkey-1 Paused 
+ Container colophon-valkey-1 Unpaused 
+2026-11-11T19:51:44Z drill 3: valkey resumed (state: running)
+2026-11-11T19:56:44Z drill 4: pause postgres 30s
+ Container colophon-postgres-1 Paused 
+ Container colophon-postgres-1 Unpaused 
+2026-11-11T19:57:14Z drill 4: postgres resumed (state: running)
+2026-11-11T20:02:14Z drill 5: pause valkey 60s
+ Container colophon-valkey-1 Paused 
+ Container colophon-valkey-1 Unpaused 
+2026-11-11T20:03:14Z drill 5: valkey resumed (state: running)
+2026-11-11T20:08:14Z drill 6: expire all sessions in colophon
+2026-11-11T20:08:15Z drill 6: sessions expired
+2026-11-11T20:13:15Z drill 7: pause valkey 60s
+ Container colophon-valkey-1 Paused 
+ Container colophon-valkey-1 Unpaused 
+2026-11-11T20:14:16Z drill 7: valkey resumed (state: running)
+2026-11-11T20:19:16Z drill 8: pause postgres 30s
+ Container colophon-postgres-1 Paused 
+ Container colophon-postgres-1 Unpaused 
+2026-11-11T20:19:46Z drill 8: postgres resumed (state: running)
+2026-11-11T20:24:46Z drill 9: pause valkey 60s
+ Container colophon-valkey-1 Paused 
+ Container colophon-valkey-1 Unpaused 
+2026-11-11T20:25:47Z drill 9: valkey resumed (state: running)
+2026-11-11T20:30:47Z drill 10: pause postgres 30s
+ Container colophon-postgres-1 Paused 
+ Container colophon-postgres-1 Unpaused 
+2026-11-11T20:31:18Z drill 10: postgres resumed (state: running)
+2026-11-11T20:34:12Z sidecar: 0s of run left — last drill skipped
+2026-11-11T20:34:12Z sidecar done after 10 drills

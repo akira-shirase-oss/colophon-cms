@@ -16,6 +16,21 @@ pub const BACKOFF_BASE_MS: u64 = 1_000;
 /// No retry waits longer than this, whatever a `Retry-After` asks for.
 pub const BACKOFF_CAP_MS: u64 = 60_000;
 
+/// The most unfinished jobs a project may retain (spec §33): delivery `jobs`, `asset_jobs`,
+/// `bulk_jobs` and `migration_plans` counted together — the same "open work" a restore's
+/// inventory counts (O3). `colophon_db::work` enforces it at admission: every transaction that
+/// inserts such a row admits first, and over the bound new work is refused before acceptance
+/// (D-131, F09).
+pub const MAX_PENDING: i64 = 10_000;
+
+/// The most pending payload metadata an installation may retain, in bytes (spec §33's second
+/// bound, D-135): the stored variable-size bytes of every open unit of work — job idempotency
+/// keys, pending asset jobs' recorded object sizes, open bulk manifests' operation and pending
+/// item inputs, open plans' definitions and stored resolutions. `colophon_db::work` counts it
+/// through `colophon_pending_payload` under an install-wide admission lock; over the bound new
+/// expensive work is refused before acceptance.
+pub const MAX_PENDING_PAYLOAD: i64 = 1 << 30;
+
 /// Where a job stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -25,6 +40,9 @@ pub enum Status {
     Running,
     /// Waiting to be tried again.
     Retrying,
+    /// Frozen by a restore until the operator reconciles external effects and resumes it
+    /// (migration 0049, O3, F13): nobody may dispatch it, and nobody holds its lease.
+    Held,
     /// Delivered.
     Succeeded,
     /// Given up: refused for good, out of attempts or out of time.
@@ -35,10 +53,11 @@ pub enum Status {
 
 impl Status {
     /// Every status, for listings and tests.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Pending,
         Self::Running,
         Self::Retrying,
+        Self::Held,
         Self::Succeeded,
         Self::Failed,
         Self::Superseded,
@@ -50,6 +69,7 @@ impl Status {
             Self::Pending => "pending",
             Self::Running => "running",
             Self::Retrying => "retrying",
+            Self::Held => "held",
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::Superseded => "superseded",

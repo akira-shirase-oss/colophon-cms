@@ -41,7 +41,7 @@ load tests justify it (spec §03).
 | Redis-compatible cache | Generation-keyed public query results, expendable rate counters, optional worker wake-ups | Holds the only copy of anything, decides conflicts, or enforces a hard budget |
 | CDN | Cached public responses and public assets | Caches drafts, previews, sessions, or personalized responses |
 | Object storage | Uploaded originals (quarantine and approved), derivatives, build artifacts | Is written to before an upload intent exists |
-| Identity provider (Keycloak via OIDC) | Login and MFA | Decides CMS permissions (Rust and Postgres do) |
+| Built-in password accounts (OIDC provider optional) | Login | Decides CMS permissions (Rust and Postgres do) |
 
 ## The core model
 
@@ -85,8 +85,10 @@ Evidence: generation marker or response hash, location, time, errors  →  deliv
 | Editor save | Studio → `PUT …/entries/{id}` with `If-Match` → authorize → validate (schema, rich text, references) → one transaction: compare draft pointer, insert revision, move pointer, audit → `200` with the new revision, or `409` with the current one |
 | Publish | Studio/CLI → `POST …/releases/{id}/publish` with an idempotency key → recheck approval, authority and base generation → one transaction (above) → `202 accepted` with an operation ID → the worker delivers → receipts update |
 | Public read | Reader → CDN → `/content/v1/…` → resolve the active generation from Postgres on an origin miss → Redis (keyed by epoch + generation + query) → published projection in Postgres on a miss |
+| Asset read (media M.1) | Reader → CDN → `/media/v1/{project}/{env}/{asset}` → the environment slug resolves to its id through a per-process memo (D-134; immutable mapping, misses still ask Postgres) → stream `public/{project}/{env}/{asset}` straight from the object store → object existence is proof of verification; the detected `Content-Type` is read from object attributes; `immutable` caching, `nosniff`, ETag — no sign-in, no asset-row read |
 | Pinned read (time travel) | `/content/v1/…?generation=N` → publication-history intervals map each entry to the revision live at N → revocation rules still apply |
 | Preview | Studio issues a 15-minute capability scoped to the exact revision set → separate preview origin validates it on every fetch → `no-store`, `noindex` |
+| Live hint (E3, D-108) | Studio → `GET {P}/events` (SSE) ← committed writes `pg_notify` → the server's own `LISTEN` connection → per-project bounded broadcast → `change`/`resync` hint (kind and scope only, never content) → the client refetches through the authorized API |
 
 ## Process topology
 
@@ -110,7 +112,7 @@ colophon/
 ├── crates/
 │   ├── colophon-domain/        # rules, state machines, port traits; no I/O dependencies
 │   ├── colophon-db/            # SQLx adapter: transactions, outbox, RLS context
-│   ├── colophon-auth/          # OIDC, sessions, roles, machine credentials, policy
+│   ├── colophon-auth/          # passwords + OIDC, sessions, roles, machine credentials, policy
 │   ├── colophon-api/           # Axum management API /api/v1
 │   ├── colophon-delivery/      # public read API /content/v1, cache, CDN adapter, probes
 │   ├── colophon-worker/        # outbox dispatcher, leases, retries, reconciliation, schedules
@@ -124,7 +126,9 @@ colophon/
 ├── packages/
 │   ├── sdk/                    # generated TypeScript client + pinned-read helpers
 │   ├── ui/                     # Material 3 tokens and shared Svelte components (Bits UI)
-│   └── content-renderer/       # Tiptap JSON → safe output, shared by Studio and web
+│   ├── content-renderer/       # Tiptap JSON → safe output, shared by Studio and web
+│   ├── site-renderer/          # site JSON → CSP-safe HTML: sections, nav, theme → CSS vars (W.1)
+│   └── site-template/          # the website starter manifest: pages + navigation + theme (W.0)
 ├── migrations/                 # reviewed SQL migrations
 ├── schemas/                    # versioned content-schema definitions and fixtures
 ├── templates/blog/             # blog template manifest, schemas, fixtures
@@ -181,7 +185,7 @@ tested set at P0 (spec §02).
 | CLI | `clap` 4 (derive) |
 | Outbound HTTP | one shared `reqwest` 0.13 client (rustls) with connect and request timeouts |
 | Secrets / tokens | Redacting newtypes for in-memory secrets (no `Display`, redacted `Debug`); `aws-lc-rs` for random tokens, SHA-256 and constant-time comparison |
-| Sign-in | An OpenID Connect relying party on `reqwest` and `jsonwebtoken` (`aws-lc-rs` backend), not an OIDC crate (D-031) |
+| Sign-in | Built-in password accounts by default; OIDC an optional relying party on `reqwest` and `jsonwebtoken` (`aws-lc-rs` backend), not an OIDC crate (D-031, D-146) |
 | Testing | `proptest`, `insta`, real PostgreSQL from the local stack (a fresh database per test), `cargo-nextest`, `cargo-deny` |
 | Frontend | SvelteKit + TypeScript + Vite, scoped Svelte CSS over M3 tokens (Tailwind deferred, D-025), Bits UI, Tiptap, mdsvex, Pagefind, Vitest, Playwright |
 | Design system | Colophon's own (D-053): OKLCH tokens in one stylesheet, Tailwind CSS v4, owned shadcn-svelte components on Bits UI primitives, Inter (self-hosted); contrast tested from the tokens |

@@ -77,7 +77,7 @@ flowchart LR
   PG[("PostgreSQL 18: the only authority")]
   RC[("Redis-compatible cache: disposable")]
   OS[("Object storage")]
-  IDP[Keycloak via OIDC]
+  IDP[OIDC provider, optional]
   CDN[Cloudflare CDN]
   SITE[Static site host]
 
@@ -372,7 +372,7 @@ added. A release is simpler: `prepared → committed`, and a committed release n
 | Separate semaphores: 8 delivery (≤ 2 per destination), 4 image, 2 AI | worker | Expensive work can't starve editorial saves |
 | One active publication stream per project and environment | worker | Ordered delivery, and supersession instead of backlog |
 | Budget reservations in Postgres before agent work | automation | Cost and volume caps that Redis loss can't bypass |
-| Pending-job caps (10,000 per project) | worker | Durable capacity is reserved before work is accepted |
+| Pending-job caps (10,000 per project, D-131) | db, api | `work::admit` counts open `jobs`/`asset_jobs`/`bulk_jobs`/`migration_plans` under the project's advisory lock before a durable row is inserted; over the bound the transaction aborts and the API refuses 503 `work_full` + `Retry-After` |
 
 ## 10. Failure handling and degraded modes
 
@@ -432,8 +432,8 @@ added. A release is simpler: `prepared → committed`, and a committed release n
 | Concurrency | Optimistic revisions with a conflict screen | CRDT live co-editing: much more complex; an explicit non-goal |
 | Cache | Disposable, generation-keyed Redis-compatible store | Making the cache authoritative: loses correctness when the cache does |
 | Studio rendering | Static SPA served by Rust | SvelteKit server rendering: a second backend with its own authority |
-| API style | REST + OpenAPI | GraphQL: unbounded query shapes conflict with strict cost limits; a non-goal |
-| Identity | OIDC with Keycloak | A home-grown password system: a large security surface with no differentiation |
+| API style | REST + OpenAPI | Ad-hoc GraphQL: unbounded query shapes conflict with strict cost limits — so the GraphQL built (DX.10, D-115) is per-collection, read-only and compiles to the same bounded document |
+| Identity | Built-in password accounts; OIDC optional | An OIDC-only design: every install and every test harness would depend on an external provider — the platform's own auth is the product's stated shape (D-141, D-146) |
 | Testing | Deterministic simulation + real-process crash loop + integration tests | Integration tests alone: rare races stay rare and unreproducible |
 | Design system | Material 3 tokens on Bits UI (D-011) | `@material/web` (maintenance mode), MUI (React-only) |
 

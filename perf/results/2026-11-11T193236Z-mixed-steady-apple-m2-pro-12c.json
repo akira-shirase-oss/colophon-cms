@@ -1,0 +1,127 @@
+{
+  "scenario": "steady",
+  "endpoint": "mixed",
+  "date": "2026-11-11T19:32:36Z",
+  "commit": "abe9652",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 300,
+    "duration": "2m",
+    "vus": 256
+  },
+  "requests": 43273,
+  "rps": 354,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 42,
+  "latency_ms": {
+    "avg": 9.116,
+    "p50": 3.937,
+    "p90": 19.906,
+    "p95": 32.459,
+    "p99": 81.291,
+    "p999": 234.78,
+    "max": 1191.888
+  },
+  "database_transactions_during_run": 54553,
+  "server_warnings": 0,
+  "thresholds_passed": false,
+  "resources": {
+    "samples": 24,
+    "server_rss_kb": {
+      "first": 27840,
+      "last": 27072,
+      "max": 45824
+    },
+    "server_cpu_percent": {
+      "avg": 18.6,
+      "max": 21.7
+    },
+    "postgres_connections": {
+      "last": 29,
+      "max": 29
+    },
+    "client": {
+      "samples": 24,
+      "k6_rss_kb": {
+        "first": 50816,
+        "last": 94704,
+        "max": 94704
+      },
+      "k6_cpu_percent": {
+        "avg": 33.3,
+        "max": 41.1
+      },
+      "readyz": {
+        "first": "200",
+        "last": "200",
+        "non_200": 0
+      }
+    }
+  },
+  "l05": {
+    "drills_announced": true,
+    "drills": null,
+    "served": {
+      "hit": 34413,
+      "miss": 510,
+      "coalesced": 962,
+      "bypass": 74
+    },
+    "gates": {
+      "reads_held": true,
+      "writes_held": true,
+      "publishes_held": true,
+      "no_stale_refills": true,
+      "no_torn_pages": true,
+      "no_errors": true
+    },
+    "spec": "L05: mixed reads, writes and publishing — each operation class meets its target; content stays consistent",
+    "gate": "read arm p99 <350 ms (warm gate), write arm p95 <700 ms, publish requests p99 <700 ms — all with reads, saves, read-backs and publishes actually counted; zero stale refills, torn pages or failed assertions — drills announced: load.sh re-weighs error_buckets against the windows and requires zero failures outside them",
+    "requests": {
+      "publishes": 11,
+      "publish_conflicts_retried": 0,
+      "session_reauths": 0,
+      "reads": 35959,
+      "saves": 3601,
+      "write_backs": 3601
+    },
+    "latency_ms": {
+      "write": {
+        "p50": 14.401499999999999,
+        "p95": 63.1241,
+        "p99": 134.81017999999978
+      },
+      "publish": {
+        "p50": 21.542,
+        "p95": 124.4328,
+        "p99": 135.86123999999998
+      },
+      "read": {
+        "p50": 3.118,
+        "p95": 19.054699999999972,
+        "p99": 58.23363999999999
+      }
+    },
+    "consistency": {
+      "stale_refills": 0,
+      "torn_pages": 0,
+      "errors": 0
+    },
+    "error_events": 0,
+    "held": true
+  }
+}

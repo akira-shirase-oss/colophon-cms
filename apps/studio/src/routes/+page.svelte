@@ -4,7 +4,7 @@
   then your projects. An administrator with none is offered their first; anyone else learns that
   projects are joined by invitation, and what to ask for. On an installation with no administrator
   yet (`GET /api/v1/installation`), or opened from the server's setup link (`#setup=<code>`), it
-  says this Colophon is new and makes Create an account the first choice (D-082); the link's code
+  says this Colophon is new and makes Create an account the first choice (D-147); the link's code
   is filled in after signing in.
 -->
 <script lang="ts">
@@ -22,11 +22,13 @@
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
-	import { ApiError, claimSetup, installation, me, signInUrl, signUpUrl } from '#lib/api.ts';
+	import { ApiError, claimSetup, installation, me } from '#lib/api.ts';
+	import { providersQuery } from '#lib/queries.ts';
 	import { lastProject } from '#lib/lastProject.ts';
 	import { forgetSetupCode, keepSetupCode, keptSetupCode, setupCodeFrom } from '#lib/setupLink.ts';
 	import MyWork from '#lib/MyWork.svelte';
 	import NewProject from '#lib/NewProject.svelte';
+	import AuthForm from '#lib/shell/AuthForm.svelte';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -36,10 +38,13 @@
 	const who = createQuery(() => ({ queryKey: ['me'], queryFn: me }));
 	// Signed out, whether anyone runs this Colophon yet: nobody does on a fresh installation.
 	const install = createQuery(() => ({ queryKey: ['installation'], queryFn: installation, enabled: who.data === null }));
+	// Whether a provider exists — the signed-out note's "close the browser" advice only makes
+	// sense when sign-in could live somewhere else too (D-146).
+	const providers = createQuery(providersQuery);
 	let creating = $state(false);
 
 	// The setup code (D-061): typed or pasted from the server's terminal, or filled in from the setup
-	// link the server printed beside it (D-082). The link's code is kept in this tab through signing
+	// link the server printed beside it (D-147). The link's code is kept in this tab through signing
 	// in, and out of the address bar, so it isn't left in the history or a bookmark.
 	// Read whenever the address's fragment changes, since a link pasted into a tab already on this
 	// page changes only the fragment and doesn't open the page afresh.
@@ -99,6 +104,17 @@
 	const current = $derived(
 		projects.find((project) => project.id === chosen) ?? projects.find((project) => project.id === remembered) ?? projects[0]
 	);
+
+	// "All projects" grows without bound on a busy installation, so it can be filtered by name —
+	// and even unfiltered it is capped: hundreds of rows hide the project someone wants, not show it.
+	const SHOWN = 24;
+	let filter = $state('');
+	const matching = $derived(
+		filter.trim() === ''
+			? projects
+			: projects.filter((project) => project.name.toLowerCase().includes(filter.trim().toLowerCase()))
+	);
+	const shown = $derived(matching.slice(0, SHOWN));
 </script>
 
 <svelte:head><title>{who.data && who.data.projects.length > 0 ? 'Your work' : 'Projects'} · Colophon Studio</title></svelte:head>
@@ -112,19 +128,19 @@
 	<div class="mx-auto max-w-md py-16 text-center">
 		{#if page.url.searchParams.get('signed-out') === '1'}
 			<p role="status" class="mb-8 rounded-xl border border-border bg-card px-4 py-3 text-sm text-pretty" data-testid="signed-out-note">
-				You're signed out of Colophon. The sign-in page may still remember you, so on a shared computer, close the browser.
+				You're signed out of Colophon.{#if providers.data?.sso !== false} The sign-in page may still remember you, so on a shared computer, close the browser.{/if}
 			</p>
 		{/if}
 		<h1 class="text-3xl font-semibold tracking-tight">Welcome to Colophon</h1>
 		{#if kept !== null || install.data?.has_administrator === false}
-			<!-- Nobody is an administrator yet, or opened from the setup link the server prints only then. -->
+			<!-- Nobody is an administrator yet, or opened from the setup link the server prints only then:
+				the card opens on creating an account, the first visitor's one job (D-147). -->
 			<div data-testid="new-installation">
 				<p class="mt-3 text-pretty text-muted-foreground" data-testid="signed-out">
 					This Colophon is new. Create the first account; you'll become its administrator with the setup code the server printed.
 				</p>
-				<div class="mt-8 flex flex-wrap justify-center gap-3">
-					<Button href={signUpUrl(resolve('/'))} data-sveltekit-reload data-testid="create-account">Create an account<ArrowRightIcon data-icon="inline-end" /></Button>
-					<Button variant="outline" href={signInUrl(resolve('/'))} data-sveltekit-reload data-testid="sign-in">Sign in</Button>
+				<div class="mt-8 text-left">
+					<AuthForm start="signup" returnTo={page.url.searchParams.get('return_to') ?? resolve('/')} navigateAfter={page.url.searchParams.has('return_to')} />
 				</div>
 				<p class="mt-6 text-sm text-pretty text-muted-foreground">
 					{#if kept !== null}
@@ -136,9 +152,8 @@
 			</div>
 		{:else}
 			<p class="mt-3 text-muted-foreground" data-testid="signed-out">Write, review and publish your website's content, and see what reached your readers.</p>
-			<div class="mt-8 flex flex-wrap justify-center gap-3">
-				<Button href={signInUrl(resolve('/'))} data-sveltekit-reload data-testid="sign-in">Sign in<ArrowRightIcon data-icon="inline-end" /></Button>
-				<Button variant="outline" href={signUpUrl(resolve('/'))} data-sveltekit-reload data-testid="create-account">Create an account</Button>
+			<div class="mt-8 text-left">
+				<AuthForm returnTo={page.url.searchParams.get('return_to') ?? resolve('/')} navigateAfter={page.url.searchParams.has('return_to')} />
 			</div>
 			<p class="mt-6 text-sm text-muted-foreground">New here? Create an account, then ask the person who runs this Colophon to invite you to a project.</p>
 		{/if}
@@ -236,24 +251,44 @@
 			{/key}
 		{/if}
 		{#if projects.length > 1}
-			<h2 class="mt-12 mb-3 text-base font-semibold" id="all-projects">All projects</h2>
-			<ul class="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects" aria-labelledby="all-projects">
-				{#each projects as project, index (project.id)}
-					<li style="--i: {index}">
-						<a
-							href={resolve('/projects/[project]', { project: project.id })}
-							class="lift group flex h-full items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-xs outline-none hover:border-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/40"
-						>
-							<span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-sm font-semibold">{project.name.slice(0, 1).toUpperCase()}</span>
-							<span class="min-w-0 flex-1" data-user-content>
-								<span class="block truncate font-medium">{project.name}</span>
-								<span class="block truncate text-xs text-muted-foreground">{project.role_name}</span>
-							</span>
-							<ArrowRightIcon class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-						</a>
-					</li>
-				{/each}
-			</ul>
+			<div class="mt-12 mb-3 flex flex-wrap items-center justify-between gap-3">
+				<h2 class="text-base font-semibold" id="all-projects">All projects</h2>
+				<Input
+					class="h-9 w-full max-w-64"
+					placeholder="Search projects"
+					aria-label="Search projects"
+					bind:value={filter}
+					data-testid="project-search"
+				/>
+			</div>
+			{#if matching.length === 0}
+				<p class="text-sm text-muted-foreground" data-testid="projects-no-match">
+					No project matches <strong class="font-medium text-foreground">{filter.trim()}</strong>.
+				</p>
+			{:else}
+				<ul class="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="projects" aria-labelledby="all-projects">
+					{#each shown as project, index (project.id)}
+						<li style="--i: {index}">
+							<a
+								href={resolve('/projects/[project]', { project: project.id })}
+								class="lift group flex h-full items-center gap-3 rounded-xl border border-border bg-card p-3 shadow-xs outline-none hover:border-foreground/20 focus-visible:ring-[3px] focus-visible:ring-ring/40"
+							>
+								<span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-sm font-semibold">{project.name.slice(0, 1).toUpperCase()}</span>
+								<span class="min-w-0 flex-1" data-user-content>
+									<span class="block truncate font-medium">{project.name}</span>
+									<span class="block truncate text-xs text-muted-foreground">{project.role_name}</span>
+								</span>
+								<ArrowRightIcon class="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+							</a>
+						</li>
+					{/each}
+				</ul>
+				{#if matching.length > shown.length}
+					<p class="mt-3 text-sm text-muted-foreground" data-testid="projects-capped">
+						Showing {shown.length} of {matching.length} — search by name to find the rest.
+					</p>
+				{/if}
+			{/if}
 		{/if}
 		{#if !who.data.administrator}
 			<p class="mt-8 text-sm text-muted-foreground" data-testid="not-administrator">To work on another project, ask its owner for an invitation link.</p>

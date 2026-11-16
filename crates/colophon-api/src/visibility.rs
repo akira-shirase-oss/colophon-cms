@@ -1,7 +1,8 @@
 //! What a role may see and change of one entry (D-058, step R.3): its fields, on its own entries
 //! or anyone's. A read leaves out what the role can't read and says which fields it left out; a
 //! save keeps those fields exactly as stored, and is refused, naming the field, if it changes one
-//! the role can't change.
+//! the role can't change. A query is refused, naming the field, where a filter or a sort would
+//! read one the role can't (D-109).
 
 use colophon_domain::{
     policy::{Action, Fields, Policy},
@@ -32,7 +33,9 @@ impl Access {
     }
 }
 
-fn object(content: &str) -> Result<Map<String, Value>, ApiError> {
+/// `content` as a mutable document: the draft views' and the query expansion's
+/// shared read — stored content is always a JSON object (an internal error when not).
+pub(crate) fn object(content: &str) -> Result<Map<String, Value>, ApiError> {
     match serde_json::from_str(content).map_err(ApiError::internal)? {
         Value::Object(fields) => Ok(fields),
         _ => Err(ApiError::internal(std::io::Error::other(
@@ -63,6 +66,41 @@ pub(crate) fn project(
     ))
 }
 
+/// Refuses a query document that filters on or sorts by a field `read` doesn't include,
+/// naming the first at its place in the document (D-109). A filter's result presence and
+/// a sort key's order each reveal the stored values they ran against — on every row the
+/// page could hold — so `read` must be the field set that holds on all of them: the
+/// anyone-set when the query may return others' entries, the own-set when it can only
+/// return the caller's. `None` reads nothing, so it refuses every name.
+///
+/// `fields` asks no such check: a selection only narrows the answer, so naming an
+/// unreadable field can't reveal its values — [`project`]'s `hidden_fields` already
+/// reports it, the same disclosure a populated target gives.
+pub(crate) fn refuse_unreadable(document: &Value, read: Option<&Fields>) -> Result<(), ApiError> {
+    for (key, verb) in [("filters", "filter on"), ("sort", "sort by")] {
+        // `document` already validated: each of these, when present, is a list of
+        // objects carrying a `field` string; the walk simply can't match otherwise.
+        let Some(list) = document.get(key).and_then(Value::as_array) else {
+            continue;
+        };
+        for (index, item) in list.iter().enumerate() {
+            let Some(field) = item.get("field").and_then(Value::as_str) else {
+                continue;
+            };
+            if read.is_none_or(|read| !read.includes(field)) {
+                return Err(ApiError::Invalid(Refusal {
+                    code: "field_not_readable",
+                    pointer: format!("/{key}/{index}/field"),
+                    message: format!(
+                        "your role can't read the field `{field}`, so a query can't {verb} it"
+                    ),
+                }));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The type's `fields` the role can read but not change: the editor shows them, locked.
 pub(crate) fn locked(access: &Access, fields: &[String]) -> Vec<String> {
     fields
@@ -86,55 +124,26 @@ pub(crate) fn locked(access: &Access, fields: &[String]) -> Vec<String> {
 /// A save's `submitted` content with every field its author can't read put back as `stored`: they
 /// never saw those fields, so leaving them out of a save mustn't erase them. Sending one with a
 /// different value is refused, not dropped (D11): the role can't change what it can't read.
+/// The rule itself is `colophon_domain::policy::restore_hidden`, shared with the bulk
+/// worker's per-item write (D-116).
 pub(crate) fn restore_hidden(
     submitted: Value,
     stored: &str,
     read: &Fields,
 ) -> Result<Value, ApiError> {
-    if *read == Fields::All {
-        return Ok(submitted);
-    }
-    let Value::Object(mut fields) = submitted else {
-        // Not an object: validation refuses it, with its own words.
-        return Ok(submitted);
-    };
-    let stored = object(stored)?;
-    if let Some(field) = fields
-        .iter()
-        .find(|(field, value)| !read.includes(field) && stored.get(*field) != Some(*value))
-        .map(|(field, _)| field.clone())
-    {
-        return Err(not_permitted(&field));
-    }
-    for (field, value) in stored {
-        if !read.includes(&field) {
-            fields.insert(field, value);
-        }
-    }
-    Ok(Value::Object(fields))
+    colophon_domain::policy::restore_hidden(submitted, stored, read).map_err(ApiError::Invalid)
 }
 
 /// Refuses a save that changes a field `update` doesn't allow, naming the first such field.
+/// The rule itself is `colophon_domain::policy::only_permitted_changes`, shared with the
+/// bulk worker (D-116).
 pub(crate) fn only_permitted_changes(
     saved: &str,
     stored: &str,
     update: &Fields,
 ) -> Result<(), ApiError> {
-    if *update == Fields::All {
-        return Ok(());
-    }
-    let (saved, stored) = (object(saved)?, object(stored)?);
-    let mut changed: Vec<&String> = saved
-        .keys()
-        .chain(stored.keys())
-        .filter(|field| saved.get(*field) != stored.get(*field))
-        .collect();
-    changed.sort();
-    changed.dedup();
-    match changed.into_iter().find(|field| !update.includes(field)) {
-        None => Ok(()),
-        Some(field) => Err(not_permitted(field)),
-    }
+    colophon_domain::policy::only_permitted_changes(saved, stored, update)
+        .map_err(ApiError::Invalid)
 }
 
 /// Refuses content for a new entry that sets a field `create` doesn't allow, other than those
@@ -248,6 +257,66 @@ mod tests {
             .is_ok()
         );
         assert!(only_permitted_fields(r#"{"price":3}"#, &Fields::All, &[]).is_ok());
+    }
+
+    #[test]
+    fn a_query_is_refused_where_it_reads_a_field_the_role_cant() {
+        let read = only(&["title", "body"]);
+        let refused = |document: Value| {
+            refuse_unreadable(&document, Some(&read))
+                .expect_err("refused")
+                .to_string()
+        };
+        // A filter on an unreadable field is refused where the document names it.
+        let document = serde_json::json!({"filters": [
+            {"field": "title", "op": "eq", "value": "Menu"},
+            {"field": "price", "op": "lt", "value": 10}
+        ]});
+        let error = refuse_unreadable(&document, Some(&read)).expect_err("refused");
+        assert!(
+            matches!(&error, ApiError::Invalid(refusal)
+                if refusal.code == "field_not_readable"
+                    && refusal.pointer == "/filters/1/field"
+                    && refusal.message.contains("`price`")),
+            "{error:?}"
+        );
+        // A sort key on one is refused the same way, at its own place.
+        let document = serde_json::json!({"sort": [{"field": "price", "dir": "desc"}]});
+        assert!(refused(document).contains("sort by"));
+        let error = refuse_unreadable(
+            &serde_json::json!({"sort": [{"field": "price"}]}),
+            Some(&read),
+        )
+        .expect_err("refused");
+        assert!(
+            matches!(&error, ApiError::Invalid(refusal) if refusal.pointer == "/sort/0/field"),
+            "{error:?}"
+        );
+        // Every name readable, or none named: the query stands.
+        assert!(
+            refuse_unreadable(
+                &serde_json::json!({"filters": [{"field": "title", "op": "eq", "value": "M"}],
+                                    "sort": [{"field": "body"}], "fields": ["price"]}),
+                Some(&read),
+            )
+            .is_ok(),
+            "readable names and a `fields` selection pass"
+        );
+        // `Fields::All` reads every name; `None` reads none.
+        assert!(
+            refuse_unreadable(
+                &serde_json::json!({"filters": [{"field": "price", "op": "eq", "value": 1}]}),
+                Some(&Fields::All),
+            )
+            .is_ok()
+        );
+        assert!(
+            refuse_unreadable(
+                &serde_json::json!({"filters": [{"field": "title", "op": "eq", "value": "M"}]}),
+                None,
+            )
+            .is_err()
+        );
     }
 
     #[test]

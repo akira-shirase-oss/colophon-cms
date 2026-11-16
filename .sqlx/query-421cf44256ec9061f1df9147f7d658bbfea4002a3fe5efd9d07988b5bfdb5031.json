@@ -1,0 +1,83 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT project_id AS project, environment_id AS environment, id, collection,\n                  target_definition, operations::text AS operations\n           FROM migration_plans WHERE state = 'running' ORDER BY id LIMIT $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "project",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "project_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "environment",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "environment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "collection",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "collection"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "target_definition",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "target_definition"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "operations",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "421cf44256ec9061f1df9147f7d658bbfea4002a3fe5efd9d07988b5bfdb5031"
+}

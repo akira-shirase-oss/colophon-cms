@@ -1,0 +1,67 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH at AS (\n               SELECT p.entry_id, p.revision_id\n               FROM publications p\n               WHERE p.project_id = $1 AND p.environment_id = $2\n                 AND p.valid_from <= $3 AND coalesce(p.valid_to, $3 + 1) > $3\n                 AND p.revoked_in IS NULL\n           ), now AS (\n               SELECT p.entry_id, p.revision_id\n               FROM publications p\n               WHERE p.project_id = $1 AND p.environment_id = $2 AND p.valid_to IS NULL\n           )\n           SELECT 'publish' AS \"kind!\", at.entry_id AS \"entry_id!\", r.id AS \"revision_id!\",\n                  r.collection AS \"collection!\", r.content_hash AS \"content_hash!\",\n                  r.schema_version AS \"schema_version!\", v.definition_hash AS \"definition_hash!\"\n           FROM at\n           JOIN revisions r ON r.project_id = $1 AND r.environment_id = $2\n                           AND r.id = at.revision_id\n           JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id\n                                       AND v.collection = r.collection AND v.version = r.schema_version\n           WHERE NOT EXISTS (\n               SELECT 1 FROM now WHERE now.entry_id = at.entry_id AND now.revision_id = at.revision_id\n           )\n           UNION ALL\n           SELECT 'unpublish', now.entry_id, r.id, r.collection, r.content_hash,\n                  r.schema_version, v.definition_hash\n           FROM now\n           JOIN revisions r ON r.project_id = $1 AND r.environment_id = $2\n                           AND r.id = now.revision_id\n           JOIN content_type_versions v ON v.project_id = r.project_id AND v.environment_id = r.environment_id\n                                       AND v.collection = r.collection AND v.version = r.schema_version\n           WHERE NOT EXISTS (SELECT 1 FROM at WHERE at.entry_id = now.entry_id)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "kind!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "entry_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "revision_id!",
+        "type_info": "Uuid",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "collection!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "content_hash!",
+        "type_info": "Bytea",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "schema_version!",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "definition_hash!",
+        "type_info": "Bytea",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "003f112e5094cea395a6a7861cded9107a32664dd18f009a588262ca7da80bb1"
+}

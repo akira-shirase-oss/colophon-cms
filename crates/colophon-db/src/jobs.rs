@@ -399,6 +399,21 @@ pub async fn finish(
     if updated.rows_affected() != 1 {
         return Ok(false);
     }
+    // The job's budget reservation closes with its outcome (D-113): delivered or given up
+    // settles the slot it held; superseded releases it — the job can never run now. A retry
+    // keeps it held: the job is still in flight.
+    if let Some(close) = colophon_domain::job::Status::parse(finish.status)
+        .and_then(colophon_domain::budget::close_for)
+    {
+        crate::budgets::close_job(
+            &mut transaction,
+            job.project_id,
+            job.environment_id,
+            job.id,
+            close,
+        )
+        .await?;
+    }
     if let Some(seen) = &finish.observation {
         let error: Option<String> = seen.error.map(|text| text.chars().take(500).collect());
         sqlx::query!(

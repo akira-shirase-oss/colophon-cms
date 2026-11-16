@@ -296,7 +296,14 @@ async fn readiness_follows_real_outages_and_recoveries() {
 fn oversized_uploads_get_the_413_envelope_not_a_connection_reset() {
     use std::{io::Write as _, net::TcpStream};
 
-    let server = Server::start(&[], &[("COLOPHON_DATABASE_URL", DEAD_DATABASE)]);
+    let server = Server::start(
+        &[],
+        &[
+            ("COLOPHON_DATABASE_URL", DEAD_DATABASE),
+            // 1 MiB here, so the 2 and 16 MiB probes stay oversized whatever the default is.
+            ("COLOPHON_MAX_BODY_BYTES", "1048576"),
+        ],
+    );
     let mut failures = Vec::new();
     for megabytes in [2_usize, 16] {
         let body = vec![0_u8; megabytes << 20];

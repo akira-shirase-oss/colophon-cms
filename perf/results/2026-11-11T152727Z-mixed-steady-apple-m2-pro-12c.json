@@ -1,0 +1,144 @@
+{
+  "scenario": "steady",
+  "endpoint": "mixed",
+  "date": "2026-11-11T15:27:27Z",
+  "commit": "7476bf2",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 200,
+    "duration": "90s",
+    "vus": 256
+  },
+  "requests": 15880,
+  "rps": 174,
+  "failed": 2709,
+  "checks_failed": 4425,
+  "dropped": 5255,
+  "latency_ms": {
+    "avg": 185.202,
+    "p50": 4.22,
+    "p90": 58.285,
+    "p95": 2002.839,
+    "p99": 2006.238,
+    "p999": 3010.157,
+    "max": 10005.279
+  },
+  "database_transactions_during_run": 19678,
+  "server_warnings": 0,
+  "thresholds_passed": false,
+  "resources": {
+    "samples": 18,
+    "server_rss_kb": {
+      "first": 28048,
+      "last": 31520,
+      "max": 34976
+    },
+    "server_cpu_percent": {
+      "avg": 9.7,
+      "max": 21.0
+    },
+    "postgres_connections": {
+      "last": 29,
+      "max": 29
+    },
+    "client": {
+      "samples": 18,
+      "k6_rss_kb": {
+        "first": 51392,
+        "last": 99840,
+        "max": 99840
+      },
+      "k6_cpu_percent": {
+        "avg": 16.3,
+        "max": 28.1
+      },
+      "readyz": {
+        "first": "200",
+        "last": "200",
+        "non_200": 6
+      }
+    }
+  },
+  "drills": {
+    "windows_file": "/tmp/bucket-windows2.jsonl",
+    "warnings_in_windows": 1307,
+    "warnings_outside_windows": 0
+  },
+  "l05": {
+    "drills_announced": true,
+    "gates": {
+      "publishes_held": false,
+      "no_stale_refills": true,
+      "no_torn_pages": true,
+      "no_errors": false,
+      "reads_held": false,
+      "writes_held": false
+    },
+    "held": false,
+    "gate": "read arm p99 <350 ms (warm gate), write arm p95 <700 ms, publish requests p99 <700 ms — all with reads, saves, read-backs and publishes actually counted; zero stale refills, torn pages or failed assertions — drills announced: load.sh re-weighs error_buckets against the windows and requires zero failures outside them — drill-aware: zero failures outside the announced windows",
+    "requests": {
+      "reads": 10613,
+      "saves": 1228,
+      "write_backs": 1228,
+      "publishes": 5,
+      "publish_conflicts_retried": 0,
+      "session_reauths": 0
+    },
+    "latency_ms": {
+      "read": {
+        "p50": 3.2,
+        "p95": 2002.384,
+        "p99": 2005.89284
+      },
+      "write": {
+        "p50": 11.7905,
+        "p95": 2004.0761499999999,
+        "p99": 2007.82787
+      },
+      "publish": {
+        "p50": 18.4575,
+        "p95": 2003.0411000000001,
+        "p99": 2003.0889
+      }
+    },
+    "consistency": {
+      "stale_refills": 0,
+      "torn_pages": 0,
+      "errors": 433
+    },
+    "drills": {
+      "windows_file": "/tmp/bucket-windows2.jsonl",
+      "windows": [
+        {
+          "dep": "postgres",
+          "kind": "pause",
+          "start": "2026-11-11T15:26:39Z",
+          "end": "2026-11-11T15:27:39Z"
+        }
+      ],
+      "errors_in_windows": 2361,
+      "errors_outside_windows": 2048
+    },
+    "served": {
+      "hit": 10397,
+      "miss": 107,
+      "coalesced": 109,
+      "bypass": 0
+    },
+    "spec": "L05: mixed reads, writes and publishing — each operation class meets its target; content stays consistent",
+    "error_events": 4409
+  }
+}

@@ -115,6 +115,7 @@ struct Worker(Child);
 
 impl Worker {
     fn start(location: &str) -> Self {
+        common::assert_no_foreign_server();
         let child = Command::new(env!("CARGO_BIN_EXE_colophon-server"))
             .args(["--role", "worker"])
             .env_clear()

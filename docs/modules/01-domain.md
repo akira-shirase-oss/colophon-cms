@@ -87,6 +87,15 @@ invariant. Production adapters and the simulator both run this code unchanged.
   hold entry ids as canonical lowercase UUIDs, distinct in a list. `Content::references` reports each with its field,
   collection, place and whether the field is a list; whether an id names an entry is the database's to check.
   Pointing a field at another collection is `Refused`.
+- Since D-085 (ported): a top-level `reference` field may name an `inverse` — a field id, validated like one — which the
+  API checks is a reference on `to` that points back here. It serializes after `many`/`max`; it is synchronization
+  metadata, not a shape, so adding, changing or dropping one is always `Compatible`. Only a content type's own fields
+  carry one: `inverse` nested in an object, item, block or component is `invalid_inverse` where it sits.
+- Built in media step M.1 (D-094): `asset` fields (one upload, or `many` with `max` up to 100) hold upload ids as
+  canonical lowercase UUIDs, distinct in a list — a `reference` without `to` or `inverse`, since uploads are not
+  entries of a collection. `Content::assets` reports each with its field, place and whether the field is a list;
+  whether an id names an upload is the database's to check (an entry may draft a quarantined upload; only publishing
+  requires `usable`).
 - Built in step M.3 (D-066): `object` (nested `fields`), `list` (`of` one kind, never a list or blocks; up to 100) and
   `blocks` (a page builder: up to 20 named kinds of block with their own fields; items carry `_block`, written first).
   Structures nest at most three deep; slugs stay top-level. Validation, the canonical form and the change rules recurse;
@@ -116,6 +125,18 @@ invariant. Production adapters and the simulator both run this code unchanged.
   definition uses; `expand_components` gives each component field, and each marked object, the component's fields
   (`unknown_component`, or, for a stored definition when one component changes, `Unlisted::Keep`). A definition
   that still holds `"type": "component"` is refused (`unexpanded_component`): the server expands first.
+- Since step M.5a (D-100): a change `successor` answers `CheckContent` for, and that stored content fails, no
+  longer ends at `needs_migration` — the API plans it: every draft and open publication is checked against the
+  target (`ContentType::accepts`), each named a plan item `ok` or `needs_input` with its refusal, and a person may
+  store a `resolution` document the target accepts (`ContentType::validate`). The plans, items, approval and
+  apply live in the database (module 02) behind migration routes (module 04). Since step M.5b (D-101)
+  `colophon_domain::migrate` is the transform machinery: `parse` takes a plan's declared `operations`
+  (`fill` sets a path, creating the field but never missing parents; `move` relocates a value without
+  overwriting — a missing source is a no-op, an occupied destination refuses, and same-path or descendant
+  moves are rejected at parse, as is any malformed path) into `Op`s in declared order, and `apply` runs them
+  on a document, refusing rather than producing anything it can't justify. The API parses them at plan time
+  and the worker parses them again to drive the run (module 05); a run's transform and target-validation
+  refusals land on the item as `blocked` problems.
 
 ### Rich text (spec §05)
 - Versioned Tiptap JSON is validated against an allowlist of nodes, marks, link schemes and embeds: the
@@ -150,6 +171,89 @@ invariant. Production adapters and the simulator both run this code unchanged.
 - Locale fallback is an explicit project policy, none by default. A fallback resolves only to published revisions and
   labels the resolved locale.
 
+### Transfer — import mapping
+- Built in step DX.9 (D-114): `colophon_domain::transfer::map` turns one imported item into the entry document it
+  stores, by shape: a native document — the export's own JSONL line — passes through; a marked envelope
+  (`{"type": "api::…", "data": {…}}`, `{"version": N, "data": {…}}`, or a Strapi response's
+  `{"data": […], "meta": {…}}`) unwraps to its `data`; a Strapi v4 `{id, attributes}` maps its attributes; a v5
+  flat document's `documentId`/`document_id`, and a Sanity document's `_id`/`_type`/`_createdAt`/`_rev`/`_updatedAt`,
+  are the source id and source type rather than content. A `{"_ref": …}`, `{"data": {"id": …}}` or
+  `{"documentId": …}` reference value normalizes to the stored id. Source metadata consumed but not stored is
+  named, sorted, in `unmapped`; keys the content type never declared stay in the document for schema validation to
+  refuse by name — a declared field literally called `id` stays content. The API side checks `_type` against the
+  target collection, checks a Strapi `locale` is a tag, adopts or follows a UUID source id, and writes.
+
+### The query language (spec §07, §10)
+- A query is one JSON document sent in a `POST` body, like a definition or a changeset — never a spray of URL
+  parameters: one parser, one canonical form, one hash. The shape is
+  `{"filters": [{"field", "op", "value"}], "sort": [{"field", "dir"}], "limit", "fields", "depth"}` and nothing
+  else; every refusal is a `Refusal` with a code and a JSON Pointer into the document, like a definition's own.
+- Bounds (§26): at most 8 filters and 4 sort keys; `in` compares against 1 to 100 different values; a page is 20
+  entries unless asked, never over 100; `depth` expands references at most 2 deep.
+- Operators stay within what a kind can say: `eq` and `in` on every indexable kind; `lt`, `lte`, `gt`, `gte` on the
+  kinds whose stored spellings order (single-line text, number, date, time, date-time, slug); `contains` on
+  single-line text only, where a substring search reads naturally. Boolean, choice, email, URL and single
+  reference stay at equality: ordering them would compare a spelling, not a meaning.
+- A filter's value is checked by the field's own rules and kept in canonical JSON — the exact bytes stored content
+  uses — so a query can never compare against something the field couldn't hold. `in` takes a set: its values are
+  sorted and must be distinct. A `contains` needle instead searches inside values, so it needs only be non-empty,
+  free of control characters and no longer than the field allows.
+- Built in step DX.1 (D-103): `colophon_domain::query::Query` (`validate`, then `filters`, `sort`, `limit`,
+  `fields`, `depth`, `order`, `canonical_json`, `query_hash`). Filters AND together, so the canonical form sorts
+  them by their own text; `fields` is kept in definition order and `null` when the whole document is kept.
+  `order()` appends the entry id in the last key's direction — the stable tie-break every page boundary needs
+  (§10). `query_hash` is SHA-256 over the canonical form: the "normalized query" a cache key names (§15) and the
+  shape a cursor binds to.
+- Built in step DX.2 (D-103): cursors bound to the query hash itself, still in the domain. A `Position` names
+  one place in the ordering — one canonical-JSON literal per `order()` key, a field's stored value (`null`
+  allowed and significant: an entry that doesn't set the field sorts by `null`), the entry id as a non-empty
+  JSON string. `Query::cursor` seals it as `v1:<query_hash_hex>:<position array>` in base64url;
+  `Query::after_cursor` refuses what doesn't parse (`invalid_cursor`), what isn't this query's own — another
+  version's line or a different hash (`foreign_cursor`, "this cursor is not valid for this query") — a position
+  that doesn't fit the order (`position_mismatch`), and anything over `MAX_CURSOR_BYTES` (8 KiB decoded)
+  before it parses (`too_large`). Validation stays structural — the literal is a scalar or `null`, a number a
+  field could hold — because the definition isn't re-fetched here; whether it's one the field accepts is the
+  SQL layer's compare (DX.3), where a `Position` becomes the lexicographic OR-of-ANDs a row-value tuple can't
+  spell across mixed directions.
+- Built in step DX.3 (D-103): the same `Query` runs over each entry's current draft —
+  `colophon_db::query::page` translates it to one statement (docs/modules/02-db.md, "Query translation") and
+  `POST {P}/collections/{collection}/entries/query` serves it (docs/modules/04-api.md).
+- Built in step DX.4 (D-103, D-105): the published perspective. `colophon_db::query::published_page` runs the
+  same `Query` and `Position` over `publications` — the interval open at a generation, never revoked — and
+  `POST /content/v1/{project}/{environment}/{collection}/query` serves it to anyone, echoing `applied` and
+  keying the delivery cache on the query's own hash (docs/modules/06-delivery.md).
+- Built in step DX.5 (D-103, D-107): `depth` applies. `colophon_domain::populate` is the pure half —
+  `collect_ids` names the entries a document's top-level single `reference` fields point at, `expand`
+  rewrites each resolved one to its bounded object
+  `{"id", "collection", "revision_id", "title", "content", "hidden_fields"?}` — one call, one level, so a
+  cycle of references can only run to `MAX_DEPTH`. The applied half is `colophon_api::populate`: level by
+  level, one batched `ANY` read per level and never one per row or field — the draft perspective resolves
+  current drafts inside the page's own transaction and shows of each target only what the caller's
+  `content.read` allows on its collection (`own` included, `hidden_fields` reporting the rest, `title`
+  blanked when its field is unreadable); the published perspective resolves publications pinned at the
+  page's own generation inside the fill's transaction. A reference that resolves to nothing — an unreadable
+  target on drafts, a revoked one on the public side — keeps its stored id, the codebase's "not found, not
+  named" rule; a `many` list and a reference nested in an object, a list or a block keep their stored
+  spellings. `applied`, `query_hash` and cursors are untouched: `depth` was already in the canonical
+  document they name.
+- Built in step DX.6 (D-109): the draft query is refused — `field_not_readable`, at the name's own pointer —
+  where a filter or a sort key names a field the caller's `content.read` doesn't allow on every row the
+  page could hold: a filter's result presence and a sort's order would reveal the stored values they ran
+  against. The field set is the anyone-set on mixed rows, and the own-set when the page can only hold the
+  caller's own entries — where a field readable only on `own` stays legal, since no row can forbid it.
+  `fields` still names any declared field: a selection can only narrow, and an unreadable one is disclosed
+  in `hidden_fields`, the same report a draft view or a populated target gives. The published perspective
+  asks no check: everything published is public.
+- `fields` only narrows the returned document — never widens it — so it may name any declared field and carries no
+  permission risk; indexing governs filters and sorts, not selection. Readability governs them instead (D-109):
+  a filter or a sort on a field the role can't read is refused, where the document names it.
+- Schema side: `"index": true` opts a top-level field of an indexable kind (`FieldKind::may_be_indexed`) into
+  filtering and sorting — a single-line text, number, boolean, choice, date, time, date-time, email, URL, slug or
+  single reference; anywhere else `invalid_index`, and a query that touches a non-indexed field is refused
+  `field_not_indexed`. The flag writes only when set, so a definition from before DX.1 keeps its bytes and hash,
+  and adding or dropping it is `Compatible` (it changes no stored value). `ContentType::indexed_fields` lists the
+  ids in order; which database index serves a query is the engine's choice, not the definition's.
+
 ### Editorial workflow (spec §06)
 - Editorial states: `draft → submitted → changes_requested | approved`. Publication is a separate state.
 - `Changeset`: the exact entry, revision, schema and asset hashes.
@@ -161,6 +265,16 @@ invariant. Production adapters and the simulator both run this code unchanged.
   per item, sorted by entry id); `status` decides `Open`, `Stale`, `AwaitingReview`, `ChangesRequested`,
   `Approved { self_review }` or `ApprovalExpired` from the facts: only decisions on the current hash count, the
   highest sequence number wins, approvals last seven days, and a project may require a different reviewer.
+- Named review stages come in step E2 (D-104): `Facts.stages` carries the environment's ordered list of
+  `Stage { key, name, different_reviewer }` (`is_stage_key` takes a role key's shape; `MAX_STAGES` is 20), and each
+  `Review` names the `stage` it decided — `None` for the single implicit review an empty list keeps, so an
+  environment that never configures stages behaves exactly as before. `counting` keeps the newest decision per
+  stage on the current hash (self-approvals excluded where the stage's or the project's different-reviewer rule
+  says so), and `status` is `Approved { self_review, seq }` only when every stage's counting decision approves:
+  approvals land in any order — the list's order is for people reading it — while a request for changes at any
+  stage blocks the whole changeset until a newer approval clears it. `seq` names the review that completed the
+  set, so a publish binds its release to it; `stage_status` reports each stage `Pending`, `ChangesRequested` or
+  `Approved { by, self_review, at, expired }` for the API's per-stage view, with the seven-day expiry per stage.
 
 ### Releases (spec §14)
 - `Release`: `prepared → committed`, identified by `(epoch, generation)`.

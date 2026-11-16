@@ -1,4 +1,4 @@
-// The setup link (D-061, D-082). While nobody is an administrator, the server prints
+// The setup link (D-061, D-147). While nobody is an administrator, the server prints
 // `<studio>#setup=<code>` beside the setup code: a fragment, which browsers never send, so the code
 // reaches no server or proxy log. The front door reads it, takes it out of the address bar, and
 // keeps it in this tab's session storage, because signing in or making an account goes through the

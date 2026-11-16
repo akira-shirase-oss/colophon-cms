@@ -47,6 +47,7 @@ fn a_sweep_holds_every_invariant_and_exercises_every_fault() {
         totals.lost_answers += stats.lost_answers;
         totals.crashes += stats.crashes;
         totals.probes += stats.probes;
+        totals.schema_changes += stats.schema_changes;
     }
     // A sweep that never lost an answer or hit a conflict would prove nothing.
     for (what, count) in [
@@ -57,6 +58,7 @@ fn a_sweep_holds_every_invariant_and_exercises_every_fault() {
         ("lost answers", totals.lost_answers),
         ("crashes", totals.crashes),
         ("cross-project probes", totals.probes),
+        ("content-type changes", totals.schema_changes),
     ] {
         assert!(count >= 100, "only {count} {what} in {SWEEP} seeds");
     }
@@ -92,6 +94,7 @@ fn each_planted_bug_breaks_the_invariant_it_should() {
     expect(Mutation::ForgetKeys, "S1", "stored twice");
     expect(Mutation::LeakAcrossProjects, "S8", "another project");
     expect(Mutation::NewKeyAfterCrash, "S1", "stored twice");
+    expect(Mutation::StampSeenVersion, "V", "superseded");
 }
 
 #[test]

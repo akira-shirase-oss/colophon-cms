@@ -1,0 +1,87 @@
+{
+  "scenario": "throughput",
+  "endpoint": "import-scale",
+  "date": "2026-11-04T21:23:02Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 1000000,
+    "vus": 64
+  },
+  "requests": 31,
+  "rps": 3,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 521.675,
+    "p50": 765.138,
+    "p90": 790.637,
+    "p95": 796.716,
+    "p99": 843.318,
+    "p999": 860.05,
+    "max": 861.909
+  },
+  "database_transactions_during_run": 297,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 2,
+    "server_rss_kb": {
+      "first": 27264,
+      "last": 33024,
+      "max": 33024
+    },
+    "server_cpu_percent": {
+      "avg": 7,
+      "max": 13.9
+    },
+    "postgres_connections": {
+      "last": 17,
+      "max": 17
+    }
+  },
+  "l09": {
+    "gates": {
+      "nothing_published": true,
+      "no_errors": true,
+      "corpus_imported": true,
+      "per_item_outcomes": true,
+      "resumable": true,
+      "exact_final_count": true
+    },
+    "held": true,
+    "records": 10000,
+    "outcomes": {
+      "created": 10000,
+      "updated": 512,
+      "skipped": 0,
+      "invalid": 0
+    },
+    "delivery_answers_empty": 1,
+    "chunk_latency_ms": {
+      "p99": 798.7136399999999,
+      "max": 799.938,
+      "p50": 772.7270000000001,
+      "p95": 793.8162
+    },
+    "spec": "L09: 10,000-record draft import — resumable chunks, per-item outcomes, stable memory; no accidental publication",
+    "gate": "10000 records in 20 chunks of <=512, every outcome 'created'; same-key replay verbatim, fresh-key replay 'updated'; export count == 10000; delivery empty at generation 0; memory held by the result's resources samples",
+    "chunks": 20,
+    "exported": 10000,
+    "errors": 0
+  }
+}

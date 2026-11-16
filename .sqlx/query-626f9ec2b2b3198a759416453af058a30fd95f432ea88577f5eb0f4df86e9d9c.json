@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH closing AS (\n             SELECT r.project_id, r.id, j.status\n             FROM budget_reservations r\n             JOIN jobs j ON j.project_id = r.project_id AND j.environment_id = r.environment_id\n                        AND j.id = r.job_id\n             WHERE r.state IN ('held', 'uncertain')\n               AND j.status IN ('succeeded', 'failed', 'superseded')\n             LIMIT $1\n         )\n         UPDATE budget_reservations r\n         SET state = CASE WHEN closing.status = 'superseded' THEN 'released' ELSE 'settled' END,\n             settled = CASE WHEN closing.status = 'superseded' THEN NULL ELSE r.reserved END,\n             settled_at = now()\n         FROM closing WHERE r.project_id = closing.project_id AND r.id = closing.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "626f9ec2b2b3198a759416453af058a30fd95f432ea88577f5eb0f4df86e9d9c"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE audience_magic_links SET used_at = now()\n         WHERE project_id = $1 AND email = $2 AND used_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5b15964bb8f3cf4a963e619a555a91ff51ab06cc875253c819df3172582911b4"
+}

@@ -1,0 +1,178 @@
+{
+  "kind": "micro-benchmarks",
+  "note": "Criterion timings of single functions on one machine (crates/colophon-bench): evidence about the code, not a capacity claim",
+  "date": "2026-11-04T14:28:04Z",
+  "commit": "ca7adf7",
+  "dirty": false,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "criterion": "0.8.2",
+  "profile": "bench (the release defaults)",
+  "params": {
+    "warm_up_s": 3,
+    "measurement_s": 5,
+    "filter": ""
+  },
+  "load_average_1m": {
+    "start": 14.08,
+    "end": 5.52
+  },
+  "benchmarks": [
+    {
+      "id": "auth/csrf_check",
+      "median_ns": 35.694861439976464,
+      "low_ns": 35.59514667448279,
+      "high_ns": 35.943810452846776
+    },
+    {
+      "id": "auth/session_token_hash",
+      "median_ns": 36.70449870515566,
+      "low_ns": 36.373222667069804,
+      "high_ns": 36.928590052488246
+    },
+    {
+      "id": "changeset/canonical_100",
+      "median_ns": 8069.500660099317,
+      "low_ns": 8051.72056123787,
+      "high_ns": 8081.876509914817
+    },
+    {
+      "id": "content_type/cached_articles",
+      "median_ns": 114.51848960568802,
+      "low_ns": 114.44741912881,
+      "high_ns": 114.68779597917751
+    },
+    {
+      "id": "content_type/cached_big",
+      "median_ns": 6307.391669420805,
+      "low_ns": 6296.682484182485,
+      "high_ns": 6316.560616485483
+    },
+    {
+      "id": "content_type/cached_page",
+      "median_ns": 575.0631183669068,
+      "low_ns": 573.7355628554794,
+      "high_ns": 576.3470366066241
+    },
+    {
+      "id": "content_type/canonical_json_big",
+      "median_ns": 13637.76363249882,
+      "low_ns": 13620.615193026151,
+      "high_ns": 13655.911371513452
+    },
+    {
+      "id": "content_type/expand_components_page",
+      "median_ns": 6279.910262206148,
+      "low_ns": 6271.789425105485,
+      "high_ns": 6284.619131532179
+    },
+    {
+      "id": "content_type/load_articles",
+      "median_ns": 1814.9088717793336,
+      "low_ns": 1812.3653136531366,
+      "high_ns": 1818.6085608856088
+    },
+    {
+      "id": "content_type/load_big",
+      "median_ns": 282840.5229166667,
+      "low_ns": 279041.6647058824,
+      "high_ns": 289101.2725191475
+    },
+    {
+      "id": "content_type/load_page",
+      "median_ns": 20214.594362278127,
+      "low_ns": 20183.82032221491,
+      "high_ns": 20262.639261180077
+    },
+    {
+      "id": "delivery/cache_key_and_tags",
+      "median_ns": 1063.0577967268277,
+      "low_ns": 1060.2460827300229,
+      "high_ns": 1065.9035562833271
+    },
+    {
+      "id": "entry/parse_body_page",
+      "median_ns": 1746.7608414830208,
+      "low_ns": 1743.4680832401377,
+      "high_ns": 1749.727412670219
+    },
+    {
+      "id": "entry/sha256_page",
+      "median_ns": 169.85697136043314,
+      "low_ns": 168.973570865266,
+      "high_ns": 170.2136091058401
+    },
+    {
+      "id": "entry/validate_article",
+      "median_ns": 6264.412409575658,
+      "low_ns": 6248.084140744518,
+      "high_ns": 6272.674474083713
+    },
+    {
+      "id": "entry/validate_page",
+      "median_ns": 4814.253229681561,
+      "low_ns": 4803.7559372666165,
+      "high_ns": 4822.910124159821
+    },
+    {
+      "id": "near_limit/parse_body",
+      "median_ns": 1330589.737179487,
+      "low_ns": 1311962.076923077,
+      "high_ns": 1331762.0192307692
+    },
+    {
+      "id": "near_limit/rich_text_validate",
+      "median_ns": 853395.4876033058,
+      "low_ns": 846345.3884297521,
+      "high_ns": 864136.3636363636
+    },
+    {
+      "id": "near_limit/sha256",
+      "median_ns": 92990.30919220056,
+      "low_ns": 91914.73166202415,
+      "high_ns": 96047.72144846796
+    },
+    {
+      "id": "near_limit/validate_article",
+      "median_ns": 822221.8151260505,
+      "low_ns": 821778.8865546219,
+      "high_ns": 822852.5882352941
+    },
+    {
+      "id": "policy/allows_custom_500",
+      "median_ns": 560.1431774360467,
+      "low_ns": 557.5535077846558,
+      "high_ns": 567.0039235915713
+    },
+    {
+      "id": "policy/fields_custom_500",
+      "median_ns": 1905.0979632990523,
+      "low_ns": 1897.832250379034,
+      "high_ns": 1915.079390908834
+    },
+    {
+      "id": "policy/new_builtin_owner",
+      "median_ns": 107.8423418105096,
+      "low_ns": 106.25598818342729,
+      "high_ns": 108.2495316514233
+    },
+    {
+      "id": "policy/new_custom_500",
+      "median_ns": 14260.756591530055,
+      "low_ns": 14216.251923076923,
+      "high_ns": 14349.10430107527
+    },
+    {
+      "id": "rich_text/validate_blog_post",
+      "median_ns": 5908.969720496894,
+      "low_ns": 5892.947510822511,
+      "high_ns": 5921.426625457875
+    }
+  ]
+}

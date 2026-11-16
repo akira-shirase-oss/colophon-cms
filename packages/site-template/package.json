@@ -1,0 +1,18 @@
+{
+  "name": "@colophon/site-template",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The website starter bundle: the pages collection with its section library, the navigation and theme single types, and the seed entries — installed through the ordinary schema and entry APIs.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

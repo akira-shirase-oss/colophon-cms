@@ -129,7 +129,7 @@
 		border-radius: 999px;
 		padding: 0.15rem 0.6rem;
 		font-weight: 600;
-		font-size: 0.85rem;
+		font-size: 0.875rem;
 	}
 	.ok {
 		color: var(--ok);

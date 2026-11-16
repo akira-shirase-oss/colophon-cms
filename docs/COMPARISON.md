@@ -5,7 +5,7 @@ what each does, how Colophon does or will do it, and where Colophon's invariants
 [parity backlog](#parity-backlog) at the end is the list the lettered milestones in [ROADMAP.md](ROADMAP.md) work
 through.
 
-**Evidence, checked 2026-10-27.** Strapi: a local Strapi 5.59.0 project in `references/strapi-demo` (its schema files
+**Evidence, checked 2026-10-27.** Strapi: a local Strapi 5.59.0 project in `docs/references/strapi-demo` in the workspace (its schema files
 and installed packages) and docs.strapi.io. Sanity: sanity.io/docs only; there is no local Sanity project. Pricing and
 plan tiers are the vendors' own claims and change often. Where a cell says *not checked*, nobody has looked.
 
@@ -56,7 +56,7 @@ and revisions that block the change, so an owner can fix them or keep the old sh
 | Knowing it reached the site | Not offered | Not offered | Probes look for the release's generation marker; receipts say *verified at N locations* or *pending* (3.3) |
 | Taking content back | Unpublish | Unpublish | Tombstones, origin revocation through historical URLs, CDN purge jobs, remaining exposure shown (3.2) |
 | Reading drafts and releases | Preview | Perspectives: `drafts`, `published`, or a stack of releases | Reads pinned to a generation (2.2); preview links are v0.1 core |
-| Query language | REST, GraphQL plugin | GROQ, GraphQL | REST (`/content/v1`) and a TypeScript SDK; GraphQL is a non-goal |
+| Query language | REST, GraphQL plugin | GROQ, GraphQL | REST (`/content/v1`), a generated-types TypeScript SDK (DX.8), and a per-collection GraphQL read surface that compiles to the same bounded document (DX.10, D-115) |
 
 ## Done differently, on purpose
 
@@ -84,7 +84,7 @@ and revisions that block the change, so an owner can fix them or keep the old sh
 
 Convex is not a CMS, but its engine is built for fast, always-consistent reads, and several of its ideas fit
 Colophon's invariants. Source: "How Convex Works" (stack.convex.dev) and docs.convex.dev, read 2026-10-27, plus the
-self-hosted demo in `references/convex-demo`. What Convex does, what Colophon takes, and where:
+self-hosted demo in `docs/references/convex-demo` in the workspace. What Convex does, what Colophon takes, and where:
 
 | Convex | Colophon | Where |
 |---|---|---|
@@ -139,10 +139,10 @@ that builds them.
 | Field-level and "own entries" permissions | ✓ | ✓ (by plan) | done (R.3; D-058) |
 | API tokens: read-only, full, custom | ✓ | ✓ | built in R.4 (D-063): read-only, full access and custom; device sign-in for the CLI since D-041 |
 | Audit log | Paid | ✓ (by plan) | built in R.4 (D-063): roles, members, invitations and tokens, append-only |
-| SSO / OpenID Connect | Paid | ✓ (by plan) | done (Keycloak, D-031) |
+| SSO / OpenID Connect | Paid | ✓ (by plan) | done (optional provider, D-031; built-in password accounts are the default, D-146) |
 | REST delivery with caching | ✓ | ✓ | done (P2, P3) |
 | Query API: filters, sort, populate, field selection, perspectives | ✓ | GROQ | D |
-| GraphQL | Plugin | ✓ | D |
+| GraphQL | Plugin | ✓ | built (DX.10, D-115): per-collection, read-only, compiling to the bounded query document |
 | Webhooks | ✓ | ✓ | done (P2); by event in D |
 | TypeScript SDK and generated types | ✓ | ✓ | D |
 | Import and export, from Strapi and Sanity | Transfer | CLI | D |

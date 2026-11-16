@@ -8,15 +8,18 @@
 //!
 //! - [`jsonrpc`]: JSON-RPC 2.0 framing, one message per line, with a size limit.
 //! - [`server`]: the session: the `initialize` handshake, `tools/list`, `tools/call`, cancellation.
+//! - [`remote`]: the same session on the server itself, behind the Streamable HTTP endpoint (D-121).
 //! - [`tools`]: each tool, its input schema, argument checks and error mapping.
 //! - [`discovery`]: which tools to list, from what the API says the token may do.
-//! - [`api`]: the HTTP client, with deadlines, size limits and safe retries.
+//! - [`api`]: the HTTP client, with deadlines, size limits and safe retries — and [`api::Backend`],
+//!   the seam a tool's request travels, HTTP client or in-process dispatch.
 //! - [`config`]: `COLOPHON_SERVER`, `COLOPHON_TOKEN` and `COLOPHON_PROJECT`.
 
 pub mod api;
 pub mod config;
 pub mod discovery;
 pub mod jsonrpc;
+pub mod remote;
 pub mod server;
 pub mod tools;
 

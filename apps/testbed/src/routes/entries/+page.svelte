@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { call, csrfToken, detailsOf, envelopeOf, type Reply } from '#lib/api.ts';
+	import { call, csrfToken, detailsOf, envelopeOf, listProjects, type Reply } from '#lib/api.ts';
 
 	interface Project {
 		id: string;
@@ -94,9 +94,9 @@
 	}
 
 	async function loadProjects() {
-		const reply = await call('GET', '/api/v1/projects');
+		const reply = await listProjects<Project>();
 		signedIn = reply.status === 200;
-		projects = signedIn ? (reply.body as { data: Project[] }).data : [];
+		projects = reply.projects;
 		if (projectId === '' && projects.length > 0) projectId = projects[0]?.id ?? '';
 		if (projectId !== '') await loadEntries();
 	}
@@ -333,7 +333,7 @@
 	label {
 		display: grid;
 		gap: 0.25rem;
-		font-size: 0.85rem;
+		font-size: 0.875rem;
 		color: var(--muted);
 	}
 	input,
@@ -367,7 +367,7 @@
 		text-decoration: underline;
 	}
 	.meta {
-		font-size: 0.85rem;
+		font-size: 0.875rem;
 		color: var(--muted);
 	}
 </style>

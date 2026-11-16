@@ -43,7 +43,9 @@ fn revision<'a>(title: &'a str, slug: Option<&'a str>) -> NewRevision<'a> {
         slug,
         schema_version: 1,
         references: &[],
+        assets: &[],
         unique: &[],
+        visibility: None,
     }
 }
 
@@ -55,7 +57,7 @@ async fn create(
 ) -> Result<(Uuid, Uuid), DbError> {
     let entry = Uuid::now_v7();
     let new = revision(title, slug);
-    entries::create(tx, entry, collection, new).await?;
+    entries::create(tx, entry, collection, new, None).await?;
     Ok((entry, new.id))
 }
 
@@ -77,10 +79,10 @@ async fn save(
 async fn publish(tx: &mut ProjectTransaction, entries: &[Uuid]) -> Result<Committed, DbError> {
     let pins = changesets::pins(tx, entries).await?;
     let changeset = Uuid::now_v7();
-    changesets::create(tx, changeset, "Slugs", &pins, &[9; 32]).await?;
+    changesets::create(tx, changeset, "Slugs", &pins, &[9; 32], None).await?;
     changesets::submit(tx, changeset).await?;
     changesets::lock(tx, changeset).await?;
-    changesets::review(tx, changeset, &[9; 32], "approve", "").await?;
+    changesets::review(tx, changeset, &[9; 32], "approve", "", None).await?;
     let review = changesets::reviews(tx, changeset, None).await?[0].id;
     let (_, base) = releases::generation(tx).await?;
     releases::commit(tx, base, changeset, &[9; 32], review, HOUR).await

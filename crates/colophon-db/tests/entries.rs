@@ -48,7 +48,9 @@ impl Content {
             slug: None,
             schema_version: 1,
             references: &[],
+            assets: &[],
             unique: &[],
+            visibility: None,
         }
     }
 }
@@ -70,7 +72,7 @@ async fn alice_with_an_entry(db: &TestDb) -> (Uuid, Uuid, Uuid, Uuid) {
     let mut tx = enter(&db.app, alice, project).await;
     let first = Content::new("First");
     let entry = Uuid::now_v7();
-    let draft = entries::create(&mut tx, entry, ARTICLES, first.revision())
+    let draft = entries::create(&mut tx, entry, ARTICLES, first.revision(), None)
         .await
         .expect("created");
     assert_eq!(draft.revision.base_revision_id, None);
@@ -112,18 +114,18 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
         .map(|revision| (revision.id, revision.base_revision_id))
         .collect();
     assert_eq!(history, [(second.id, Some(first)), (first, None)]);
-    let listed = entries::list(&mut tx, ARTICLES, None, 20, None, None)
+    let listed = entries::list(&mut tx, ARTICLES, None, 20, None, None, None)
         .await
         .expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].revision.title, "Second");
     // Search reads the entry's copy of its draft's title (migration 0015), which moved with it.
-    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"), None)
+    let found = entries::list(&mut tx, ARTICLES, None, 20, Some("ECON"), None, None)
         .await
         .expect("search");
     assert_eq!(found.len(), 1);
     assert!(
-        entries::list(&mut tx, ARTICLES, None, 20, Some("First"), None)
+        entries::list(&mut tx, ARTICLES, None, 20, Some("First"), None, None)
             .await
             .expect("search")
             .is_empty(),
@@ -142,6 +144,57 @@ async fn a_save_on_the_current_draft_moves_it_and_keeps_the_history() {
     .expect("count");
     assert_eq!(mismatched, 0, "draft_title always copies the draft's title");
     owner.close().await;
+    db.drop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_collection_exports_each_draft_as_a_line() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "alpha", "Alpha")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = enter(&db.app, alice, project).await;
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("First").revision(),
+        None,
+    )
+    .await
+    .expect("created");
+    entries::create(
+        &mut tx,
+        Uuid::now_v7(),
+        ARTICLES,
+        Content::new("Second").revision(),
+        None,
+    )
+    .await
+    .expect("created");
+    tx.commit().await.expect("commit");
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let lines = entries::export(&mut tx, ARTICLES, None)
+        .await
+        .expect("exported");
+    assert_eq!(lines.len(), 2);
+    // Newest first: each line is the draft's canonical content.
+    assert!(lines[0].contains(r#""title":"Second""#), "{}", lines[0]);
+    assert!(lines[1].contains(r#""title":"First""#), "{}", lines[1]);
+    // Scoped to one creator when asked: Alice made both, so an unknown creator sees none.
+    let own = entries::export(&mut tx, ARTICLES, Some(alice))
+        .await
+        .expect("exported");
+    assert_eq!(own.len(), 2);
+    let nobody = entries::export(&mut tx, ARTICLES, Some(Uuid::now_v7()))
+        .await
+        .expect("exported");
+    assert_eq!(nobody, Vec::<String>::new());
+    tx.commit().await.expect("commit");
     db.drop().await;
 }
 
@@ -251,7 +304,7 @@ async fn revisions_cannot_be_changed_or_deleted_and_pointers_cannot_cross_entrie
     // A second entry; then try to point the first entry's draft at the second's revision.
     let mut tx = enter(&db.app, alice, project).await;
     let other = Content::new("Other");
-    entries::create(&mut tx, Uuid::now_v7(), ARTICLES, other.revision())
+    entries::create(&mut tx, Uuid::now_v7(), ARTICLES, other.revision(), None)
         .await
         .expect("created");
     tx.commit().await.expect("commit");

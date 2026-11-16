@@ -1,0 +1,67 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE migration_plans p\n              SET state = 'blocked', error = $4, finished_at = now(), updated_at = now()\n            WHERE p.project_id = $1 AND p.environment_id = $2 AND p.id = $3\n              AND p.state = 'running'\n            RETURNING p.state, p.done_items AS done, p.blocked_items AS blocked, p.error",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "done",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "done_items"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "blocked",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "blocked_items"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "migration_plans",
+            "name": "error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "8e30976af4b39794635aa02d41c84ae92e550ad51ed7c483573f9988b9e4081e"
+}

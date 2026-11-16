@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH doomed AS (\n             SELECT o.project_id, o.environment_id, o.id FROM observations o\n             LEFT JOIN jobs j\n               ON j.project_id = o.project_id AND j.environment_id = o.environment_id\n              AND j.id = o.job_id\n             WHERE o.observed_at < $1\n                OR (j.finished_at < $1 AND NOT EXISTS (\n                        SELECT 1 FROM budget_reservations r\n                        WHERE r.project_id = j.project_id\n                          AND r.environment_id = j.environment_id AND r.job_id = j.id))\n             ORDER BY o.observed_at\n             LIMIT $2)\n         DELETE FROM observations o USING doomed d\n         WHERE o.project_id = d.project_id AND o.environment_id = d.environment_id\n           AND o.id = d.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8c859b7908d980be09c34ede3e6a26213bffbf4dfe4a80e75b80d9d3a538e9b0"
+}

@@ -1,0 +1,84 @@
+{
+  "scenario": "steady",
+  "endpoint": "purge-trouble",
+  "date": "2026-11-04T19:47:31Z",
+  "commit": "e06ae75",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 8,
+    "duration": "60s",
+    "vus": 256
+  },
+  "requests": 8000,
+  "rps": 41,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 10.919,
+    "p50": 7.388,
+    "p90": 15.201,
+    "p95": 23.529,
+    "p99": 77.98,
+    "p999": 226.526,
+    "max": 653.285
+  },
+  "database_transactions_during_run": 28918,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "l13": {
+    "sentinel": {
+      "pending_while_down": 1,
+      "recovered": 1,
+      "stuck": 0,
+      "outage_published": 1
+    },
+    "gates": {
+      "controlled": true,
+      "publishes_ran": true,
+      "no_false_purge": true,
+      "no_false_verified": true,
+      "pending_then_recovered": true,
+      "backoff_honored": true,
+      "retries_bounded": true
+    },
+    "held": true,
+    "spec": "L13: CDN purge 429/5xx and a delayed site rebuild — bounded retries/backoff, pending/uncertain while failing, no claim of global success, truthful recovery",
+    "gate": "zero accepted-purge/verified growth during the outage; sentinel release pending then recovered; per-job retry gaps >= 4000 ms; post job attempts <= 5, probe attempts <= 10",
+    "windows_seconds": {
+      "phase": 60,
+      "margins": 2,
+      "outage_spans": [
+        62,
+        122
+      ],
+      "injected": "receiver /purge -> 503 + Retry-After: 5s, /site frozen at ~60s; healed at ~124s"
+    },
+    "publishes": {
+      "baseline": 474,
+      "outage": 480,
+      "recovery": 487,
+      "failed": 0
+    },
+    "retry": {
+      "failed_attempts": 175,
+      "min_per_job_gap_ms": 5237,
+      "max_post_attempts": 5,
+      "max_probe_attempts": 7,
+      "asked_seconds": 5
+    }
+  }
+}

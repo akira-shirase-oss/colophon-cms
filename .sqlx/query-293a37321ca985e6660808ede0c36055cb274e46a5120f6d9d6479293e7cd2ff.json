@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE migration_items SET outcome = $5, problem = $6\n         WHERE project_id = $1 AND environment_id = $2 AND plan_id = $3 AND entry_id = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "293a37321ca985e6660808ede0c36055cb274e46a5120f6d9d6479293e7cd2ff"
+}

@@ -36,7 +36,7 @@ operation, and the cross-project and identity test families from spec §27 pass.
 
 ## Not its job
 
-- Storing passwords or running MFA. The identity provider does that.
+- Running MFA. The identity provider does that; password accounts keep only an Argon2id hash (D-084).
 - Domain rules such as "an agent cannot approve its own proposal". The domain enforces them using the actor that auth
   supplies.
 - Hostile-tenant open registration (spec §01 non-goal).
@@ -46,8 +46,10 @@ operation, and the cross-project and identity test families from spec §27 pass.
 ### Sign-in (spec §13; built in step 1.1, D-031)
 - Authorization Code flow with PKCE, `state` and `nonce` checks.
 - Exact redirect URIs and exact callback origins.
-- **Keycloak** is the reference provider, behind an adapter boundary. Another provider can replace it once it passes the
-  same contract tests (spec §04).
+- **The built-in password card is the default and needs nothing external** (D-146); OIDC is an optional adapter
+  behind the same boundary — `COLOPHON_OIDC_*` configured adds an SSO provider, unset means the card alone. Keycloak
+  is the reference provider for that adapter (an opt-in compose profile); another provider can replace it once it
+  passes the same contract tests (spec §04).
 - A person's identity is `(issuer, subject)`. An email claim is never used to establish identity or pick an owner.
 - `colophon_auth::OidcClient` is the relying party, built on `reqwest` and `jsonwebtoken` rather than an OIDC crate:
   - discovery is lazy and checked: the document's `issuer` must equal the configured issuer;
@@ -59,6 +61,33 @@ operation, and the cross-project and identity test families from spec §27 pass.
   row keyed by the hash of its `state`, bound to the starting browser by the `colophon_signin` cookie, valid for 10
   minutes and usable once. `return_to` accepts only a path on this site.
 
+### Email and password (D-084, ported from the content-cards line)
+- Beside the provider, an account this Colophon keeps itself: issuer `password`, subject the person's email, so
+  `UNIQUE (issuer, subject)` — one account per normalized email — needs no new machinery. The same identity,
+  session, CSRF, `/me` and logout machinery serves it, so a password account is indistinguishable below the routes.
+- `POST /auth/signup`: the email is trimmed, lowered and checked for `a@b` (≤254 bytes), the password checked for
+  ≥8 characters and ≤512 bytes (bounded so a giant body can't keep Argon2 busy); the hash is made on the blocking
+  pool (Argon2id, PHC string, its parameters inside the stored text) and the identity is created and signed in in
+  one answer (201 + the usual session and CSRF cookies), so an invited person lands able to join. 409
+  `email_taken` for an existing account in any casing.
+- `POST /auth/signin`: 204 with the same cookies. A wrong password and a missing account get the same 400
+  `sign_in_failed` after the same verify work — a parseable dummy hash stands in for a missing account's. The
+  email is normalized the same way before the lookup.
+- Bounded guessing: eight consecutive misses pause the account for fifteen minutes (409 `too_many_attempts`).
+  The row's lock, the verify and the counter all run under `SELECT … FOR UPDATE`, so concurrent guesses serialize;
+  a success resets the counter and the pause. `last_sign_in_at` updates only on a success.
+- Migration 0032 adds `email` (normalized form enforced by CHECK, one partial unique index), `password_hash`
+  (≤255), `failed_sign_ins` and `locked_until`, and grants the application role UPDATE on them. A hash is
+  selected only to verify against — never returned; `/me` doesn't read it.
+- The Studio's welcome page and `/studio/invite` share `AuthForm`: email and password, sign-in or create-account
+  mode, and "Sign in with your organisation" for the provider. Signing up grants nothing — a project still needs
+  an invitation, and only an administrator creates projects.
+- The provider itself is optional (D-141): the built-in accounts carry an installation on their own.
+  `GET /auth/providers` is public and answers `{sso}` — whether an external provider is configured — so
+  `AuthForm` hides the organisation button instead of offering a route that can only answer 503.
+- The endpoints are open (a person arrives without a session); they still sit under the `/auth/` per-address
+  rate limit like every management route.
+
 ### Owner bootstrap (spec §04)
 - A one-time, local `colophon admin bootstrap` command binds the first owner to an authenticated issuer and subject.
 - Bootstrap is then permanently disabled.
@@ -66,8 +95,10 @@ operation, and the cross-project and identity test families from spec §27 pass.
   - the first owner is the installation's first **administrator**: the only kind of person who can create projects.
     Signing in grants nothing by itself; people reach a project by invitation;
   - `colophon admin bootstrap --subject S [--issuer I]` runs as the migrator, finds or creates the identity, claims
-    the single `installation` row and records the administrator, in one transaction. Again for the same identity it
-    changes nothing; for anyone else it exits 4. Migration 0006 makes the installation row permanent (no update,
+    the single `installation` row and records the administrator, in one transaction. The issuer is an https (or
+    loopback http) provider URL, or `password` for the built-in accounts — its subject is then the account's email
+    (D-141). Again for the same identity it changes nothing; for anyone else it exits 4. Migration 0006 makes the
+    installation row permanent (no update,
     delete or truncate, even by the table owner) and gives the application role read-only access to both tables;
   - `POST /api/v1/projects` checks `colophon_db::administrators::standing` (403 for a non-administrator, with a
     different message before any bootstrap), and the restrictive policy `projects_created_by_administrators` refuses
@@ -92,13 +123,13 @@ operation, and the cross-project and identity test families from spec §27 pass.
     ever issued;
   - the Studio's home page shows a signed-in person on such an installation where to find the code, a field for
     it, and the bootstrap command with their own subject.
-- Sign-up belongs to the identity provider: `GET /auth/login?start=create` asks it for its sign-up form
-  (`prompt=create`, when its discovery document lists it; its sign-in page otherwise). The development realm allows
-  self-registration since step 3.7. A new account grants nothing: it has no projects until someone invites it, and
-  creates none unless it is an administrator.
-- A development-only identity exists for local work and refuses to run on a publicly bound install: the Keycloak
-  realm in `deploy/keycloak` has a public client secret, and the server refuses to start with it on a non-loopback
-  listen address (D-031).
+- Sign-up is built in: `POST /auth/signup` makes a password account, and `/auth/login?start=create` with an OIDC
+  provider asks it for its sign-up form instead (`prompt=create`, when its discovery document lists it). A new
+  account grants nothing either way: it has no projects until someone invites it, and creates none unless it is an
+  administrator.
+- A development-only OIDC identity exists for the opt-in profile and refuses to run on a publicly bound install:
+  the Keycloak realm in `deploy/keycloak` has a public client secret, and the server refuses to start with it on a
+  non-loopback listen address (D-031).
 
 ### Sessions (built in step 1.1, D-032)
 - Rust issues opaque, random, revocable session tokens and stores only their hash in Postgres.
@@ -115,7 +146,8 @@ operation, and the cross-project and identity test families from spec §27 pass.
   to; `null` if the provider has none or can't be reached). Without it, the next person at a shared computer was
   signed straight back in without a password. No ID token hint is sent, so the provider asks the person to confirm.
   The development realm lists each local port's `/studio/` as a post-logout address. Built after R.4, from a gap
-  the Studio's sign-out showed; tested end to end against Keycloak (a provider without an end-session page is not).
+  the Studio's sign-out showed; tested end to end against Keycloak under `COLOPHON_TEST_OIDC=1` (a provider
+  without an end-session page is not).
 - CORS is narrowly scoped, and no secrets ever appear in URLs.
 - Sensitive actions require fresh authentication: deleting a project, export, credential and role changes.
 
@@ -251,18 +283,82 @@ Built in step 1.7 (D-042), for people:
   update lock, so it waits for requests already running under the token, and none starts once it has committed: the
   kill switch is exact (A4; tested by removing the lock, which fails the test). Last use is written at most once a
   minute, in a transaction of its own, so requests never queue on it.
+- A token's work can be bounded (step P5.2, D-113, migration 0045): `api_token_limits` holds
+  `documents_per_day`, `max_concurrent_jobs` and `requests_per_minute` ceilings — NULL per field
+  means unconstrained, no row means the quota layer does not exist. The accepting transaction
+  counts against `budget_reservations` under the limits row's lock and refuses `budget_exceeded`
+  (403) before any work starts ([automation](09-automation.md), "Budgets"). `requests_per_minute`
+  is enforced at request time instead (D-118): the token check's locked row hands the ceiling to
+  the transaction, and the admission limiter's rolling window — one GCRA cell per token, counted
+  in Valkey with the same per-process fallback the rate limits have — answers 429 `rate_limited`
+  with `Retry-After` before handler work begins. The audit log hears an episode once, as
+  `token.rate_limited`. Limits and the usage
+  read-back live only on the people-facing token routes — set at creation or replaced/removed by
+  `PATCH /api/v1/projects/{project}/tokens/{token}`, read with usage on `GET` of the same path —
+  so a token can neither see nor change its own bounds, and every change is `token.limits_changed`
+  in the log. A person is never a limits row's subject: members are bounded by their roles, not
+  quotas.
 
 ### Audit log (step R.4, D-063)
 - `audit_events` records every change to roles, memberships, invitations and API tokens, in the transaction that makes
   it: `role.created`, `role.updated` (before and after), `role.deleted`, `member.role_changed` (from and to),
   `member.removed`, `member.left`, `invitation.created` (role and label), `invitation.revoked`,
-  `invitation.accepted`, `token.created`, `token.revoked` (name, kind, permissions, expiry). Never a secret: not a
+  `invitation.accepted`, `token.created`, `token.revoked` (name, kind, permissions, expiry and, since P5.2,
+  limits), `token.limits_changed` (before and after, D-113) and `budget.discrepancy` (a held reservation that
+  outlived its work, written by the worker's system identity — the only event no request actor can write). Never a secret: not a
   token's, not an invitation's link.
 - Append-only: the API's database role may insert and read, never update or delete, and a trigger refuses `UPDATE`,
   `DELETE` and `TRUNCATE` from anyone, the table owner included. Retention (90 days by default, spec §21) arrives with
   operations in P6, as a separate, audited purge.
 - Read at `/api/v1/projects/{project}/audit` with `audit.read` (owners, by default): newest first, cursor pages,
   filtered by `?action=` and `?actor=`; each event names its actor as a person or a token.
+
+### The audience (P7, D-137)
+- A project's **site users** are its visitors — the people a published site is for, never staff. They get no
+  membership, no `/api/v1` and no policy: the only thing a site user ever authorizes is a delivery read.
+- Everything is project-scoped and lives in migration 0052's three tables: `site_roles` (a label, `self_assign`
+  when public signup may take it), `site_users` (normalized email unique per project, Argon2id hash, lock counter,
+  `disabled_at`, `last_sign_in_at`) and `site_sessions` (SHA-256 hashes of the token and its CSRF sibling,
+  `expires_at`, `revoked_at`, `last_seen_at`). The app role never reads `password_hash` except to verify, and no
+  API answer carries one.
+- The public routes are unauthenticated and rate-limited per address: `POST /audience/v1/{project}/signup` (201;
+  `email`, `password`, optional `display_name` and `role` — only a `self_assign` role may be chosen, and with
+  none given the project must have exactly one open role to default to), `POST …/signin` (200; a wrong password,
+  a missing account and an unverifiable one answer alike with 401 `sign_in_failed`, eight misses pause it fifteen
+  minutes with 409 `too_many_attempts`, a disabled one is 403 `account_disabled`), `POST …/signout` (204 whether
+  the session was live or not) and `GET …/me` (200 or 401). Signup and sign-in answer the user plus the session:
+  the token and its CSRF sibling in the body and as the `colophon_audience` / `colophon_audience_csrf` cookie
+  pair (session cookie `HttpOnly` + `SameSite=Lax`, CSRF sibling readable + `SameSite=Strict`).
+- A request carries the credential as `Authorization: Bearer <token>` or the cookie pair. Cookie-authenticated
+  writes (signout is the only one) echo the CSRF sibling in `X-CSRF-Token`; bearer credentials are not ambient
+  and need none — the form a cross-origin site uses, which is exactly what the demo sites do.
+- Sessions are opaque random tokens, only hashed at rest; they bound at 16 live per user (the oldest evicts),
+  expire at 30 days, and die after 7 days idle — `last_seen_at` advances at most once a minute and only while the
+  session is still inside its idle window, so a session can never be kept alive past death by traffic. Disabling
+  a user revokes its sessions; `colophon_audience_session` resolves a live one with its fresh role and disabled
+  flag in one statement.
+- Staff manage the audience under a new action, `audience.manage` (every owner role, migration 0052 backfills
+  existing ones): `GET|POST {P}/audience/roles`, `PATCH|DELETE {P}/audience/roles/{name}` (a role users hold is
+  refused), `GET|POST {P}/audience/users` (staff may seat a user in a closed role), `GET|PATCH
+  {P}/audience/users/{user}` (role change or disable/enable), `GET {P}/audience/users/{user}/sessions` and
+  `DELETE {P}/audience/sessions/{session}`. Answers show users and sessions, never hashes; every staff-side
+  change writes its audit event in the same transaction (`audience.role_created`/`_updated`/`_deleted`,
+  `audience.user_created`/`_updated`, `audience.session_revoked`), like every other governed change.
+- Passwordless sign-in (D-140, migration 0053): `POST /audience/v1/{project}/magic-link` records a link in
+  `audience_magic_links` — only its token's SHA-256, a 15-minute life, superseded by the next request for the
+  same email — and answers `202 {"sent": true}` whether or not the email has an account; `return_to` is the
+  site's own absolute http(s) URL the link lands on. `POST …/magic-link/{token}` spends it once: an existing,
+  enabled account signs in; an unknown email is created in the project's open `self_assign` role with a
+  password nobody knows (a later password sign-in must set one deliberately); used, expired, superseded and
+  unknown tokens all answer one `403 magic_link_invalid`. Delivery is a provider seam (D-145):
+  `COLOPHON_MAIL_PROVIDER=resend` with `COLOPHON_MAIL_FROM` and `COLOPHON_RESEND_API_KEY` sends the link
+  through `colophon-server::mail::Resend` (one `POST`, bearer key, ten-second deadline, failure logged but
+  never changing the 202), and `COLOPHON_RESEND_ENDPOINT` moves the provider's address. With no provider the
+  link is recorded but nothing carries it; the loopback-only `COLOPHON_DEV_MAIL` hands it back as `dev_link`,
+  refused off loopback like the development client's secret, which is how the demo sites and the testbed run
+  the whole flow.
+- What the session buys is on the delivery side: [delivery](06-delivery.md). Billing, subscriptions and
+  entitlements are explicitly out of scope — a role is a label, not a plan.
 
 ### The policy function
 - `authorize(principal, action, resource) -> Decision`, deny by default.
@@ -360,8 +456,9 @@ Built in step 1.7 (D-042), for people:
     cookie without CSRF 403; an expired code 422; the sixth attempt 429 with `Retry-After`, even with the right code,
     while someone else within their limit succeeds; the code appears exactly once in all the process's output
     (its banner) and in no response or structured log line, at `debug`;
-  - `crates/colophon-server/tests/sign_in.rs`: an account made through `/auth/login?start=create` on Keycloak's
-    sign-up form signs in with no projects, isn't an administrator, and can't create a project;
+  - `crates/colophon-server/tests/sign_in.rs` under `COLOPHON_TEST_OIDC=1` (the `oidc` compose profile up): an
+    account made through `/auth/login?start=create` on Keycloak's sign-up form signs in with no projects, isn't an
+    administrator, and can't create a project — the equivalent password-account proof lives in passwords.rs;
   - unit tests: codes are four groups of Crockford characters and read back however they are typed; only an exact
     hash matches, comparing every live code; the banner names the code once, the Studio and the expiry in UTC.
 - **Since step 1.8 (D-043):**
@@ -377,14 +474,15 @@ Built in step 1.7 (D-042), for people:
     in the Studio, others see how to join one instead, and the testbed shows the refusal;
   - `perf/k6/projects.js`: refused creations and `/me` for both people, at least 1,000,000 requests per full run,
     checking that no refusal created anything.
-- **Contract tests** for the identity-provider adapter against Keycloak.
+- **Contract tests** for the identity-provider adapter against Keycloak, opt-in under `COLOPHON_TEST_OIDC=1`.
 - **In place since step 1.1:**
   - `crates/colophon-auth/tests/id_token.rs`: every forged or mismatched ID token is refused, with keys generated per
     run (another key under the provider's key id, nonce, issuer, audience, expiry, `nbf`, subject, `azp`, key id,
     HS256 signed with the public key, `alg: none`);
-  - `crates/colophon-server/tests/sign_in.rs`, against the real binary and Keycloak's login form: sign-in, `/me`,
-    writes refused without CSRF or a trusted `Origin`, logout and 401 afterwards; a project invisible to non-members;
-    a callback that works once and only in the browser that started it;
+  - `crates/colophon-server/tests/sign_in.rs`, against the real binary and the built-in `/auth/signin`: sign-in,
+    `/me`, writes refused without CSRF or a trusted `Origin`, logout and 401 afterwards; a project invisible to
+    non-members; the OIDC callback checks (a callback that works once and only in the browser that started it) run
+    under `COLOPHON_TEST_OIDC=1` against the `oidc` profile's Keycloak;
   - the server's configuration tests: the development client secret is refused off loopback;
   - `apps/testbed/tests/session.spec.ts`: two browsers; a project created by one is invisible to the other;
   - `perf/k6/session.js`: every request authenticated by cookie, at least 1,000,000 requests per full run.
@@ -409,7 +507,7 @@ Built in step 1.7 (D-042), for people:
     each other at the same moment leave one owner; an owner demoted while their request runs can neither promote nor
     remove anyone; another project's owner can neither see nor revoke these
     invitations;
-  - `crates/colophon-server/tests/members.rs`, against the real binary with two people signed in through Keycloak:
+  - `crates/colophon-server/tests/members.rs`, against the real binary with two people signed in on the password card:
     invite, look up, accept once; an owner can't join their own project twice; revoked links are gone; an editor
     writes content but can't change types, invite or promote themselves; a developer can change types; the last
     owner can't step down until there's a second; leaving hides the project;
@@ -420,7 +518,8 @@ Built in step 1.7 (D-042), for people:
 
 ## Build order
 
-1. **P1:** OIDC with Keycloak, sessions, CSRF/Origin and cross-project denial for projects (step 1.1, done); roles,
+1. **P1:** built-in password sign-in with OIDC optional, sessions, CSRF/Origin and cross-project denial for
+   projects (step 1.1, done; provider-free since D-146); roles,
    invitations and the policy function (step 1.7, done); the owner bootstrap (step 1.8, done).
 2. **R:** roles as data (R.1, done), custom roles and the Studio's role editor (R.2, done), field-level permissions and `own`
    conditions (R.3, done), API tokens and the audit log (R.4, done: D-063); docs/ROADMAP.md, D-058.

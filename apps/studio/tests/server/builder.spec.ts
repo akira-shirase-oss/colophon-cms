@@ -5,7 +5,7 @@
 // code name set only before the first save, Cancel leaving things as they were, a clash refused
 // before saving); rows reordered with the keyboard and by dragging; a deleted field brought back;
 // the type renamed in Edit type; one save bar; and leaving with unsaved changes asked about first.
-// A new type asks what each entry is called (D-082), and that label names entries everywhere.
+// A new type asks what each entry is called (D-147), and that label names entries everywhere.
 
 import { expect, type Page, test } from '@playwright/test';
 import { FIELD_TYPES } from '../../src/lib/api.ts';

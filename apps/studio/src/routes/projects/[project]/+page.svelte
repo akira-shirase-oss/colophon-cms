@@ -137,7 +137,7 @@
 		</div>
 		<div class="stat" style="--i: 3">
 			<span class="stat-label">Last published</span>
-			<span class="stat-value">{live ? ago(live.published_at) : '—'}</span>
+			<span class="stat-value">{live ? ago(live.published_at) : 'Never'}</span>
 			<span class="truncate text-xs text-muted-foreground">{live ? `by ${live.published_by_name ?? live.published_by}` : 'No releases yet'}</span>
 		</div>
 	</section>

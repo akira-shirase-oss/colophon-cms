@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE jobs SET status = 'pending', next_attempt_at = now(),\n                        deadline_at = greatest(deadline_at, now() + $1::int * interval '1 second'),\n                        updated_at = now()\n         WHERE status = 'held'\n         RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "784e75dc1fee1286f4a1caec8362c875f40bce028032980b860d74502044a767"
+}

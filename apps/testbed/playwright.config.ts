@@ -5,7 +5,7 @@ import { defineConfig, devices } from '@playwright/test';
 // Playwright starts its own colophon-server (release build, local stack) and a preview of the
 // built testbed, on ports of their own so they never collide with a dev server.
 // COLOPHON_TESTBED_SERVER_PORT and COLOPHON_TESTBED_PORT move them, so two checkouts can run at
-// once (the server port's callback must be registered in deploy/keycloak's realm, and the testbed
+// once (the server port can be anything — the password card has no registered callback — and the testbed
 // built with VITE_COLOPHON_SERVER_ORIGIN naming it).
 const SERVER_PORT = Number(process.env['COLOPHON_TESTBED_SERVER_PORT'] ?? 58091);
 const TESTBED_PORT = Number(process.env['COLOPHON_TESTBED_PORT'] ?? 58101);
@@ -17,7 +17,7 @@ function localEnv(): Record<string, string> {
 	const env: Record<string, string> = {};
 	const database = process.env['COLOPHON_TEST_DATABASE'];
 	for (const line of readFileSync(`${repo}deploy/local.env`, 'utf8').split('\n')) {
-		const match = /^([A-Z_]+)=(.*)$/.exec(line.trim());
+		const match = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
 		if (match?.[1] === undefined || match[2] === undefined) continue;
 		const named = database !== undefined && match[1].endsWith('DATABASE_URL') && match[2].endsWith('/colophon');
 		env[match[1]] = named ? `${match[2].slice(0, -'colophon'.length)}${database}` : match[2];
@@ -51,6 +51,9 @@ export default defineConfig({
 				// The testbed's pages make cookie-authenticated writes through its proxy.
 				COLOPHON_TRUSTED_ORIGINS: `http://localhost:${TESTBED_PORT}`,
 				COLOPHON_LOG_FORMAT: 'json',
+				// The audience page exercises the whole magic-link flow without a mail
+				// server: the link comes back in the response (loopback-only, D-140).
+				COLOPHON_DEV_MAIL: '1',
 				COLOPHON_PROBE_INTERVAL_MS: '250',
 				COLOPHON_PROBE_TIMEOUT_MS: '200'
 			},

@@ -20,6 +20,7 @@ export const NAMES: Record<FieldType, string> = {
 	color: 'Colour',
 	json: 'Structured data (JSON)',
 	reference: 'Link to entries',
+	asset: 'Uploaded file',
 	object: 'Group of fields',
 	list: 'List',
 	blocks: 'Page sections',
@@ -42,6 +43,7 @@ export const ABOUT: Record<FieldType | 'component', string> = {
 	color: 'A colour, like a brand accent.',
 	json: 'Any structured data, for developers.',
 	reference: 'Points to entries of another type, like an author.',
+	asset: 'An uploaded image: usable once checked, publishable only then.',
 	object: 'Fields kept together, like an address.',
 	list: 'Several values of one kind, like tags or questions.',
 	blocks: 'Pick and order blocks while writing, like a page builder.',
@@ -53,7 +55,7 @@ export const ABOUT: Record<FieldType | 'component', string> = {
 export const PICKER_GROUPS: { name: string; kinds: (FieldType | 'component')[] }[] = [
 	{ name: 'Basics', kinds: ['text', 'rich_text', 'number', 'boolean', 'enum', 'datetime', 'date', 'time'] },
 	{ name: 'Links', kinds: ['email', 'url'] },
-	{ name: 'Structure', kinds: ['reference', 'object', 'list', 'blocks', 'component'] },
+	{ name: 'Structure', kinds: ['reference', 'asset', 'object', 'list', 'blocks', 'component'] },
 	{ name: 'Advanced', kinds: ['markdown', 'json', 'color', 'slug'] }
 ];
 
@@ -81,7 +83,7 @@ export function refusalAt(pointer: string, at: string): string | null {
 export const STRUCTURES: FieldType[] = ['object', 'list', 'blocks'];
 
 /** What a list's items can be: any field kind but a list, page sections or a URL name. */
-export const ITEM_TYPES: FieldType[] = ['text', 'markdown', 'rich_text', 'number', 'boolean', 'enum', 'datetime', 'date', 'time', 'email', 'url', 'color', 'json', 'reference', 'object'];
+export const ITEM_TYPES: FieldType[] = ['text', 'markdown', 'rich_text', 'number', 'boolean', 'enum', 'datetime', 'date', 'time', 'email', 'url', 'color', 'json', 'reference', 'asset', 'object'];
 
 /** A field id (or a section kind's name) from a label: lowercase letters, digits and underscores,
  *  starting with a letter. */
@@ -108,6 +110,8 @@ export function blankKind(type: FieldType, target: string): ItemKind | FieldDefi
 			return { type: 'markdown', max_chars: 100_000 };
 		case 'reference':
 			return { type: 'reference', to: target, many: false };
+		case 'asset':
+			return { type: 'asset', many: false };
 		case 'object':
 			return { type: 'object', fields: [] };
 		case 'list':

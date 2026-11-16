@@ -3,7 +3,7 @@
   Content-Type Builder): a left panel listing the project's collections, single types and shared
   components, with New content type and New component, beside the one being built. Making one asks
   only for a name (its address name is made from it) and, for a content type, what each entry is
-  called (D-082: "Title", "Name", "Dish"; that field names entries in lists and search) and whether
+  called (D-147: "Title", "Name", "Dish"; that field names entries in lists and search) and whether
   it holds many entries or just one; it starts with that one field and opens, ready for more.
 -->
 <script lang="ts">

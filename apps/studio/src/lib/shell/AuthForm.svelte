@@ -1,0 +1,119 @@
+<!--
+  Signing in with an email and a password, or creating that account (D-084). One card, two
+  modes; the session cookie comes back in the response itself, and a successful answer makes
+  the parent's `me` query refetch, so the page moves on without a redirect. The provider button
+  shows only when this server actually has one configured (D-141) — an installation on the
+  built-in accounts alone never offers a button that can only fail.
+-->
+<script lang="ts">
+	import { untrack } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+	import { Button } from '@colophon/ui/ui/button';
+	import { Input } from '@colophon/ui/ui/input';
+	import { ApiError, signInPassword, signInUrl, signUp } from '#lib/api.ts';
+	import { providersQuery } from '#lib/queries.ts';
+
+	/**
+	 * `returnTo`: where the single sign-on button comes back to afterwards — and where the
+	 * password card navigates when `navigateAfter` is set, which is how `/auth/login`
+	 * degrades with no provider (D-146): the front door signs you in, then sends you on.
+	 * `start`: the mode the card opens in. A new installation's front door opens it on
+	 * creating an account, because that is what its first visitor has to do (D-147).
+	 */
+	let {
+		returnTo = '/',
+		navigateAfter = false,
+		start = 'signin'
+	}: { returnTo?: string; navigateAfter?: boolean; start?: 'signin' | 'signup' } = $props();
+
+	const queryClient = useQueryClient();
+	// Until the answer arrives the button stays: a slow fetch should not flash it away from a
+	// server that does have a provider; only an explicit `false` hides it.
+	const providers = createQuery(providersQuery);
+	// Only the opening mode comes from `start`; after that the card's own links switch it.
+	let mode = $state<'signin' | 'signup'>(untrack(() => start));
+	let name = $state('');
+	let email = $state('');
+	let password = $state('');
+	let error = $state('');
+	let busy = $state(false);
+
+	function words(failure: unknown): string {
+		// The server's sign-in failure is generic by design; for a password it means one thing.
+		if (failure instanceof ApiError && failure.status === 400) {
+			return 'That email and password did not match.';
+		}
+		return failure instanceof ApiError ? failure.message : String(failure);
+	}
+
+	async function submit(event: SubmitEvent) {
+		event.preventDefault();
+		busy = true;
+		error = '';
+		try {
+			if (mode === 'signup') await signUp(email, password, name.trim() || undefined);
+			else await signInPassword(email, password);
+			await queryClient.invalidateQueries({ queryKey: ['me'] });
+			// Only same-site paths, ever (the server's safe_return_path makes the same rule).
+			if (navigateAfter && returnTo.startsWith('/') && !returnTo.startsWith('//')) await goto(returnTo);
+		} catch (failure) {
+			error = words(failure);
+		} finally {
+			busy = false;
+		}
+	}
+
+	function swap(next: typeof mode) {
+		mode = next;
+		error = '';
+	}
+</script>
+
+<form onsubmit={submit} data-testid="password-auth" class="space-y-3">
+	{#if mode === 'signup'}
+		<div class="space-y-1">
+			<label for="auth-name" class="text-sm font-medium">Your name</label>
+			<Input id="auth-name" bind:value={name} maxlength={200} autocomplete="name" />
+			<p class="text-sm text-muted-foreground">Shown to the people you work with.</p>
+		</div>
+	{/if}
+	<div class="space-y-1">
+		<label for="auth-email" class="text-sm font-medium">Email</label>
+		<Input id="auth-email" type="email" bind:value={email} required maxlength={254} autocomplete="email" />
+	</div>
+	<div class="space-y-1">
+		<label for="auth-password" class="text-sm font-medium">Password</label>
+		<Input
+			id="auth-password"
+			type="password"
+			bind:value={password}
+			required
+			minlength={8}
+			maxlength={512}
+			autocomplete={mode === 'signup' ? 'new-password' : 'current-password'}
+		/>
+		{#if mode === 'signup'}<p class="text-sm text-muted-foreground">At least 8 characters.</p>{/if}
+	</div>
+	{#if error}<p role="alert" class="pt-2 text-sm text-destructive">{error}</p>{/if}
+	<div class="pt-4">
+		<Button type="submit" class="w-full" disabled={busy} data-testid="password-submit">
+			{mode === 'signup' ? 'Create account and continue' : 'Sign in'}
+		</Button>
+	</div>
+</form>
+<p class="pt-4 text-center text-sm text-muted-foreground">
+	{#if mode === 'signin'}
+		No account yet? <button type="button" class="underline underline-offset-2 hover:text-foreground" onclick={() => swap('signup')}>Create one</button>
+	{:else}
+		Already have an account? <button type="button" class="underline underline-offset-2 hover:text-foreground" onclick={() => swap('signin')}>Sign in</button>
+	{/if}
+</p>
+{#if providers.data?.sso !== false}
+	<div class="my-6 flex items-center gap-3 text-sm text-muted-foreground" aria-hidden="true">
+		<span class="h-px flex-1 bg-border"></span>or<span class="h-px flex-1 bg-border"></span>
+	</div>
+	<Button variant="outline" class="w-full" href={signInUrl(returnTo)} data-sveltekit-reload data-testid="sign-in">
+		Sign in with your organisation
+	</Button>
+{/if}

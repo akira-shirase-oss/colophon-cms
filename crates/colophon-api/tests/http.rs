@@ -32,10 +32,12 @@ fn app(readiness: Readiness) -> Router {
             }),
         )
         .route("/test/echo", post(|body: String| async move { body }));
+    let state = colophon_api::AppState::without_services(readiness);
+    let build = state.build;
     middleware::apply(
-        colophon_api::routes(colophon_api::AppState::without_services(readiness))
-            .merge(test_routes),
+        colophon_api::routes(state).merge(test_routes),
         LIMITS,
+        build,
     )
 }
 
@@ -189,7 +191,7 @@ async fn version_reports_the_build_and_the_api_versions_to_anyone() {
         build,
         ..AppState::without_services(ready())
     };
-    let app = middleware::apply(colophon_api::routes(state), LIMITS);
+    let app = middleware::apply(colophon_api::routes(state), LIMITS, build);
     // No session, no token: a client checks this before it signs in.
     let reply = send(app, get_request("/version")).await;
     assert_eq!(reply.status, StatusCode::OK);

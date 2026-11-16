@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO jobs (project_id, environment_id, id, destination_id, generation, idempotency_key, deadline_at)\n         SELECT project_id, environment_id, uuidv7(), id, $3,\n                format('colophon:%s:%s:%s:%s', project_id, environment_id, $3::bigint, id),\n                now() + make_interval(secs => $4::bigint)\n         FROM destinations\n         WHERE project_id = $1 AND environment_id = $2 AND enabled\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d4453b6a23cad8df64b23aa67dfe9f8c4857bde4766e54b7e39bba4073568354"
+}

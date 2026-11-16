@@ -16,14 +16,26 @@
 		{ href: resolve('/entries'), label: 'Entries' },
 		{ href: resolve('/content-types'), label: 'Content types' },
 		{ href: resolve('/modelling'), label: 'Content modelling' },
+		{ href: resolve('/migrations'), label: 'Migrations' },
+		{ href: resolve('/bulk'), label: 'Bulk' },
+		{ href: resolve('/inverses'), label: 'Mirrored references' },
+		{ href: resolve('/locales'), label: 'Locales' },
+		{ href: resolve('/site'), label: 'Website starter' },
+		{ href: resolve('/assets'), label: 'Assets' },
+		{ href: resolve('/transfer'), label: 'Import & export' },
+		{ href: resolve('/graphql'), label: 'GraphQL' },
 		{ href: resolve('/device'), label: 'Device sign-in' },
 		{ href: resolve('/members'), label: 'Members' },
 		{ href: resolve('/roles'), label: 'Roles' },
+		{ href: resolve('/audience'), label: 'Audience' },
 		{ href: resolve('/tokens'), label: 'API tokens' },
 		{ href: resolve('/schedules'), label: 'Schedules' },
 		{ href: resolve('/changesets'), label: 'Changesets' },
+		{ href: resolve('/stages'), label: 'Review stages' },
+		{ href: resolve('/collaboration'), label: 'Collaboration' },
 		{ href: resolve('/releases'), label: 'Releases' },
 		{ href: resolve('/deliveries'), label: 'Deliveries' },
+		{ href: resolve('/live'), label: 'Live lists' },
 		{ href: resolve('/load'), label: 'Load tests' }
 	];
 </script>
@@ -90,7 +102,7 @@
 	:global(code),
 	:global(pre) {
 		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-		font-size: 0.85em;
+		font-size: 0.875rem;
 	}
 	header {
 		display: flex;

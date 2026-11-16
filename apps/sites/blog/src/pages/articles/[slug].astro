@@ -1,0 +1,21 @@
+---
+export const prerender = false;
+import { site, entries, entryPath, richText, type Entry, type Site } from '@colophon/site-kit';
+import Base from '../../layouts/Base.astro';
+
+const cms = site();
+if (cms === null) return new Response('not seeded', { status: 503 });
+const slug = Astro.params.slug ?? '';
+// A project that has no `articles` collection simply has no article pages.
+const { items, generation } = await entries(cms, 'articles').catch(() => ({ items: [] as Entry[], generation: 0 }));
+const article = items.find((item) => entryPath(item) === slug);
+if (article === undefined) return new Response('not found', { status: 404 });
+const body = richText(cms, article.content['body']);
+---
+
+<Base title={`${article.title} · The Draft`} generation={generation}>
+	<article class="post">
+		<h1>{article.title}</h1>
+		<div class="prose" set:html={body} />
+	</article>
+</Base>

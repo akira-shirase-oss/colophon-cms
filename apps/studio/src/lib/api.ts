@@ -36,7 +36,8 @@ export type Action =
 	| 'roles.manage'
 	| 'destinations.manage'
 	| 'tokens.manage'
-	| 'audit.read';
+	| 'audit.read'
+	| 'audience.manage';
 
 /** Actions only people hold: no API token may (step R.4), so a leaked token can't change who has
  *  access or read the record of it. */
@@ -146,9 +147,14 @@ export type FieldDefinition = {
 	/** `#rrggbb`, lowercase. */
 	| { type: 'color' }
 	/** Step M.2 (D-065): entries of the collection `to`, by id: one, or a list of up to `max`
-	 *  distinct ones. The database keeps them from dangling. */
-	| { type: 'reference'; to: string; many: false }
-	| { type: 'reference'; to: string; many: true; max: number }
+	 *  distinct ones. The database keeps them from dangling. `inverse` (D-085) names a
+	 *  reference field on `to` that points back here: writes to this field mirror into it. */
+	| { type: 'reference'; to: string; many: false; inverse?: string }
+	| { type: 'reference'; to: string; many: true; max: number; inverse?: string }
+	/** M.1: an uploaded asset by id — one, or a list of up to `max` distinct ones. A draft may
+	 *  name an upload still in quarantine; a release may not publish one that isn't usable. */
+	| { type: 'asset'; many: false }
+	| { type: 'asset'; many: true; max: number }
 	/** Step M.3 (D-066): structures, at most three deep, written in definition order. Nested
 	 *  fields: a group of fields (Strapi's component). */
 	| {
@@ -198,6 +204,7 @@ export const FIELD_TYPES = [
 	'color',
 	'json',
 	'reference',
+	'asset',
 	'object',
 	'list',
 	'blocks',
@@ -256,6 +263,16 @@ export interface Draft {
 	/** On a read: entries that link to this one (at most 100, only in collections the role reads),
 	 *  by field, and whether their draft and what readers get of them link to it (D-065). */
 	referenced_by?: Referrer[];
+	/** The entry's locale tag, or null for the project's default (D-087). */
+	locale: string | null;
+	/** Its localization group, itself included; empty when unlocalized (D-087). */
+	localizations: Localization[];
+}
+
+/** A sibling in a localization group (D-087). */
+export interface Localization {
+	id: string;
+	locale: string | null;
 }
 
 /** An entry that links to another (D-065). */
@@ -277,6 +294,8 @@ export interface Summary {
 	revision: Revision;
 	/** What readers get now, if published, and the release it went out in. */
 	published: { revision_id: string; generation: number } | null;
+	/** The entry's locale tag, or null for the project's default (D-087). */
+	locale: string | null;
 }
 
 /** Where an entry stands for readers: never published (or taken down), live as drafted, or
@@ -356,6 +375,9 @@ export interface Details {
 	/** For a refused component change (D-073): the content type that couldn't take it; `reason`
 	 *  and `entries` are that type's. */
 	content_type?: string;
+	/** For a refused deletion (409 `still_referenced`, D-080): who still names it, in
+	 *  collections the caller reads. */
+	referenced_by?: AssetReference[];
 }
 
 /** The session's CSRF token, which every cookie-authenticated write echoes. */
@@ -369,10 +391,21 @@ export function signInUrl(returnTo: string): string {
 	return `/auth/login?return_to=${encodeURIComponent(returnTo)}`;
 }
 
-/** Where "Create an account" goes: the identity provider's own sign-up form, then back here
- *  signed in. An account grants nothing by itself (D-043). */
-export function signUpUrl(returnTo: string): string {
-	return `/auth/login?start=create&return_to=${encodeURIComponent(returnTo)}`;
+/** Creates an email-and-password account and starts its session in one step (D-084). */
+export async function signUp(email: string, password: string, display_name?: string): Promise<void> {
+	await send('POST', '/auth/signup', { email, password, ...(display_name ? { display_name } : {}) });
+}
+
+/** Signs in with an email and a password; the session cookie is set by the response itself. */
+export async function signInPassword(email: string, password: string): Promise<void> {
+	await send('POST', '/auth/signin', { email, password });
+}
+
+/** What sign-in methods this server offers (D-141): `sso` — an external provider is configured. */
+export async function authProviders(): Promise<{ sso: boolean }> {
+	return ((await (await send('GET', '/auth/providers')).json()) as {
+		data: { sso: boolean };
+	}).data;
 }
 
 /** Every request gives up after this long and counts as "no answer": a save is then retried with
@@ -437,7 +470,7 @@ async function send(method: string, path: string, body?: unknown, headers: Recor
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
 			throw new ApiError('not-found', message, 404);
-		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version' || reason === 'stale_role'):
+		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version' || reason === 'stale_role' || reason === 'stale_stages'):
 			throw new ApiError('conflict', message, 409, reason, response.headers.get('etag'), details);
 		case response.status >= 500 || response.status === 429:
 			throw new ApiError('retry', message, response.status, reason);
@@ -483,7 +516,7 @@ export async function signOut(): Promise<string | null> {
 	}
 }
 
-/** Whether anyone is this installation's administrator yet (`GET /api/v1/installation`, D-082):
+/** Whether anyone is this installation's administrator yet (`GET /api/v1/installation`, D-147):
  *  answered without signing in, so the signed-out front door can say a new Colophon is new. */
 export async function installation(): Promise<{ has_administrator: boolean }> {
 	return ((await (await send('GET', '/api/v1/installation')).json()) as { data: { has_administrator: boolean } }).data;
@@ -562,6 +595,14 @@ export async function updateContentType(
 	);
 }
 
+/** Deletes the content type for good, on top of the version `etag` names (D-083). Refused while
+ *  another type links to entries here (`still_referenced`), while it still has entries
+ *  (`collection_not_empty`), and while deleted entries keep their history here
+ *  (`collection_has_history`). */
+export async function deleteContentType(project: string, slug: string, etag: string, key: string): Promise<void> {
+	await send('DELETE', `${base(project)}/content-types/${slug}`, undefined, { 'If-Match': etag, 'Idempotency-Key': key });
+}
+
 export async function listEntries(project: string, collection: string): Promise<Summary[]> {
 	return (await searchEntries(project, collection)).data;
 }
@@ -573,12 +614,14 @@ export async function searchEntries(
 	collection: string,
 	q = '',
 	cursor: string | null = null,
-	createdBy: string | null = null
+	createdBy: string | null = null,
+	locale: string | null = null
 ): Promise<Page<Summary>> {
 	const query = new URLSearchParams({ limit: '100' });
 	if (q.trim() !== '') query.set('q', q.trim());
 	if (cursor !== null) query.set('cursor', cursor);
 	if (createdBy !== null) query.set('created_by', createdBy);
+	if (locale !== null) query.set('locale', locale);
 	return (await (await send('GET', `${entries(project, collection)}?${query}`)).json()) as Page<Summary>;
 }
 
@@ -601,17 +644,183 @@ export async function createEntry(project: string, collection: string, content: 
 	return loaded(await send('POST', entries(project, collection), content, { 'Idempotency-Key': key }));
 }
 
-/** Saves `content` on top of the revision `etag` names. Sending the same key again is safe. */
+/** An upload's record (M.0, D-093): `usable` once the worker has proved its bytes; `rejected`
+ *  carries its reason; `deleting` and `deleted` are a delete or expire job's work (D-098,
+ *  D-099) — the row stays as a tombstone. */
+export interface Asset {
+	id: string;
+	state: 'quarantined' | 'usable' | 'rejected' | 'deleting' | 'deleted' | string;
+	file_name: string;
+	declared_type: string;
+	detected_type: string | null;
+	size_bytes: number;
+	width: number | null;
+	height: number | null;
+	rejected_reason: string | null;
+	derivatives: string[];
+	created_at: string;
+}
+
+const assetsPath = (project: string) => `${base(project)}/assets`;
+
+/** The project's uploads, newest first. */
+export async function listAssets(project: string): Promise<Asset[]> {
+	return ((await (await send('GET', assetsPath(project))).json()) as { data: Asset[] }).data;
+}
+
+/** One upload's record — polled until it leaves `quarantined`. */
+export async function getAsset(project: string, asset: string): Promise<Asset> {
+	return ((await (await send('GET', `${assetsPath(project)}/${asset}`)).json()) as { data: Asset }).data;
+}
+
+/** The public media origin's path for a verified upload (D-094): served to anyone, cached
+ *  forever, 404 for anything not usable yet. */
+export function assetUrl(project: string, asset: string): string {
+	return `/media/v1/${project}/production/${asset}`;
+}
+
+/** An entry still naming the asset — through a live draft, or any publication of it, which
+ *  pins it forever (D-098): what must let go before a delete is accepted. */
+export interface AssetReference {
+	entry_id: string;
+	collection: string;
+	field: string;
+	in_draft: boolean;
+	published: boolean;
+}
+
+/** The entries still naming the asset (D-098). */
+export async function listAssetReferences(project: string, asset: string): Promise<AssetReference[]> {
+	return ((await (await send('GET', `${assetsPath(project)}/${asset}/references`)).json()) as {
+		data: AssetReference[];
+	}).data;
+}
+
+/** Asks for the asset to go (D-098): accepted means requested, not gone — the delete job lands
+ *  `deleting`, then the `deleted` tombstone. Refused with `still_referenced` while anything
+ *  names it; a quarantined upload is refused too. */
+export async function deleteAsset(project: string, asset: string, key: string): Promise<Asset> {
+	return ((await (await send('DELETE', `${assetsPath(project)}/${asset}`, undefined, {
+		'Idempotency-Key': key
+	})).json()) as { data: Asset }).data;
+}
+
+/** Uploads `file` into quarantine (M.0). `send` can't carry it because the body is the file,
+ *  not a JSON document — same shape as `importEntries`. */
+export async function uploadAsset(project: string, file: File): Promise<Asset> {
+	let response: Response;
+	try {
+		response = await fetch(assetsPath(project), {
+			method: 'POST',
+			cache: 'no-store',
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+			headers: {
+				'Content-Type': file.type || 'application/octet-stream',
+				'X-CSRF-Token': csrfToken(),
+				'X-Colophon-File-Name': file.name,
+				'Idempotency-Key': newKey()
+			},
+			body: file
+		});
+	} catch {
+		throw new ApiError('retry', 'no answer from the server');
+	}
+	if (response.ok) {
+		return ((await response.json()) as { data: Asset }).data;
+	}
+	const envelope = ((await response.json().catch(() => ({}))) as Envelope).error;
+	const message = envelope?.message ?? `HTTP ${response.status}`;
+	const details = envelope?.details ?? null;
+	const reason = details?.reason ?? null;
+	switch (true) {
+		case response.status === 401:
+			throw new ApiError('signed-out', message, 401);
+		case response.status === 404:
+			throw new ApiError('not-found', message, 404);
+		case response.status >= 500 || response.status === 429:
+			throw new ApiError('retry', message, response.status, reason);
+		default:
+			throw new ApiError('refused', message, response.status, reason, null, details);
+	}
+}
+
+/** The URL that downloads a collection's drafts as JSONL — one entry's content per line (D-086). */
+export function exportUrl(project: string, collection: string): string {
+	return `${base(project)}/collections/${collection}/export`;
+}
+
+/** Uploads an import file: one entry's content per JSONL line, or one JSON array of the same
+ *  (Strapi export entities unwrap to their `data`). The whole file lands or nothing does —
+ *  `send` can't carry it because the body is the file, not a JSON document. Answers the number
+ *  of entries created. */
+export async function importEntries(project: string, collection: string, body: string): Promise<number> {
+	let response: Response;
+	try {
+		response = await fetch(`${base(project)}/collections/${collection}/import`, {
+			method: 'POST',
+			cache: 'no-store',
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+			headers: {
+				'Content-Type': 'application/jsonlines',
+				'X-CSRF-Token': csrfToken(),
+				'Idempotency-Key': newKey()
+			},
+			body
+		});
+	} catch {
+		throw new ApiError('retry', 'no answer from the server');
+	}
+	if (response.ok) {
+		return ((await response.json()) as { data: { imported: number } }).data.imported;
+	}
+	const envelope = ((await response.json().catch(() => ({}))) as Envelope).error;
+	const message = envelope?.message ?? `HTTP ${response.status}`;
+	const details = envelope?.details ?? null;
+	const reason = details?.reason ?? null;
+	switch (true) {
+		case response.status === 401:
+			throw new ApiError('signed-out', message, 401);
+		case response.status === 404:
+			throw new ApiError('not-found', message, 404);
+		case response.status >= 500 || response.status === 429:
+			throw new ApiError('retry', message, response.status, reason);
+		default:
+			throw new ApiError('refused', message, response.status, reason, null, details);
+	}
+}
+
+/** Saves `content` on top of the revision `etag` names; `locale` rides the same write, an empty
+ *  tag clearing to the default (D-087). Sending the same key again is safe. */
 export async function saveEntry(
 	project: string,
 	collection: string,
 	entry: string,
 	content: Content,
 	etag: string,
-	key: string
+	key: string,
+	locale?: string
+): Promise<Loaded> {
+	const query = locale === undefined ? '' : `?locale=${encodeURIComponent(locale)}`;
+	return loaded(
+		await send('PUT', `${entries(project, collection)}/${entry}${query}`, content, { 'If-Match': etag, 'Idempotency-Key': key })
+	);
+}
+
+/** Adds a sibling to the entry's localization group in `locale`, starting from its draft; the
+ *  answer is the new entry's loaded draft (D-087). */
+export async function createLocalization(
+	project: string,
+	collection: string,
+	entry: string,
+	locale: string
 ): Promise<Loaded> {
 	return loaded(
-		await send('PUT', `${entries(project, collection)}/${entry}`, content, { 'If-Match': etag, 'Idempotency-Key': key })
+		await send(
+			'POST',
+			`${entries(project, collection)}/${entry}/localizations?locale=${encodeURIComponent(locale)}`,
+			undefined,
+			{ 'Idempotency-Key': newKey() }
+		)
 	);
 }
 
@@ -790,11 +999,33 @@ export interface ChangesetReview {
 	reviewer_id: string;
 	reviewer_name: string | null;
 	decision: 'approve' | 'request_changes';
+	/** The review stage it decided for, by key; null for the implicit review (D-104). */
+	stage: string | null;
 	changeset_hash: string;
 	/** Made on the changeset's current hash, so it still counts. */
 	current: boolean;
 	comment: string;
 	created_at: string;
+}
+
+/** One stage of an environment's review workflow (D-104): a review names it by `key`. */
+export interface ReviewStage {
+	key: string;
+	name: string;
+	/** Its approval must come from someone other than who sent the request for review. */
+	different_reviewer: boolean;
+}
+
+/** Where a stage stands on a changeset (D-104). */
+export type StageState = 'pending' | 'changes_requested' | 'approved' | 'approval_expired';
+
+/** A configured stage and where it stands on one changeset, in stage order (D-104). */
+export interface ChangesetStage extends ReviewStage {
+	state: StageState;
+	/** Who made its latest counting decision, if anyone did, and when. */
+	by: string | null;
+	by_name: string | null;
+	at: string | null;
 }
 
 export interface Changeset {
@@ -807,8 +1038,13 @@ export interface Changeset {
 	submitted_by: string | null;
 	submitted_at: string | null;
 	updated_at: string;
+	/** The release it restores, when a rollback built it (D-097). */
+	rollback_generation: number | null;
 	items: ChangesetItem[];
 	reviews: ChangesetReview[];
+	/** Each configured review stage and where it stands, in order; empty when the environment
+	 *  names none and the single implicit review decides (D-104). */
+	stages: ChangesetStage[];
 }
 
 export interface ChangesetSummary {
@@ -824,6 +1060,8 @@ export interface ChangesetSummary {
 	unpublish: number;
 	submitted_at: string | null;
 	updated_at: string;
+	/** The release it restores, when a rollback built it (D-097). */
+	rollback_generation: number | null;
 }
 
 const changesets = (project: string) => `${base(project)}/changesets`;
@@ -849,14 +1087,26 @@ export async function createChangeset(
 	return ((await (await send('POST', changesets(project), body, { 'Idempotency-Key': key })).json()) as { data: Changeset }).data;
 }
 
+/** Builds a changeset that restores what `generation` published — publish pins for what was live
+ *  then, unpublish pins for what is live now and wasn't (D-097). It is a changeset like any other
+ *  from here: submitted, reviewed on its hash, published on a base generation. Refused with
+ *  `invalid_generation`, `already_at`, or 422 if a body carries entries. */
+export async function rollbackRelease(project: string, generation: number, title: string, key: string): Promise<Changeset> {
+	const body = { title };
+	return ((await (await send('POST', `${base(project)}/releases/${generation}/rollback`, body, { 'Idempotency-Key': key })).json()) as { data: Changeset })
+		.data;
+}
+
 /** Submits, refreshes or reviews the changeset whose hash the caller saw; a changed hash is refused
- *  with reason `stale_changeset`. */
+ *  with reason `stale_changeset`. A review names the `stage` it decides where the environment
+ *  configures them — required then (`stage_required`), refused for any other key (`unknown_stage`,
+ *  D-104). */
 export async function changesetAction(
 	project: string,
 	id: string,
 	hash: string,
 	action: 'submit' | 'refresh' | 'reviews',
-	body?: { decision: 'approve' | 'request_changes'; comment: string }
+	body?: { decision: 'approve' | 'request_changes'; comment: string; stage?: string }
 ): Promise<Changeset> {
 	const path = `${changesets(project)}/${id}/${action}`;
 	return ((await (await send('POST', path, body, { 'If-Match': `"${hash}"` })).json()) as { data: Changeset }).data;
@@ -945,6 +1195,29 @@ export async function publishChangeset(
 	return ((await response.json()) as { data: { generation: number; entries_changed: number; entries_unpublished: number } }).data;
 }
 
+/** The environment's review stages and the ETag that names the list read (`"sha256:…"`, kept as
+ *  the header sent it): any member may look (D-104). */
+export async function listReviewStages(project: string): Promise<{ stages: ReviewStage[]; etag: string }> {
+	const response = await send('GET', `${base(project)}/review-stages`);
+	const { data } = (await response.json()) as { data: { stages: ReviewStage[] } };
+	return { stages: data.stages, etag: response.headers.get('etag') ?? '' };
+}
+
+/** Replaces the environment's whole review-stage list, in the order given (D-104), under
+ *  `schema.change`: `If-Match` names the list read — a changed one is refused `stale_stages` —
+ *  and the idempotency key makes sending again safe. Removing a stage drops its gate; reviews
+ *  recorded for a stage that keeps its key still count. */
+export async function replaceReviewStages(
+	project: string,
+	stages: ReviewStage[],
+	etag: string,
+	key: string
+): Promise<{ stages: ReviewStage[]; etag: string }> {
+	const response = await send('PUT', `${base(project)}/review-stages`, { stages }, { 'If-Match': etag, 'Idempotency-Key': key });
+	const { data } = (await response.json()) as { data: { stages: ReviewStage[] } };
+	return { stages: data.stages, etag: response.headers.get('etag') ?? '' };
+}
+
 /** A scheduled publish (D-060): what its author chose, the instant that resolves to, and how it
  *  went. */
 export interface Schedule {
@@ -1015,7 +1288,7 @@ export interface Job {
 	destination_id: string;
 	destination_name: string;
 	generation: number;
-	status: 'pending' | 'running' | 'retrying' | 'succeeded' | 'failed' | 'superseded';
+	status: 'pending' | 'running' | 'retrying' | 'held' | 'succeeded' | 'failed' | 'superseded';
 	attempts: number;
 	last_http_status: number | null;
 	last_error: string | null;
@@ -1130,6 +1403,49 @@ export async function revokeToken(project: string, id: string): Promise<ApiToken
 	return ((await (await send('DELETE', `${tokens(project)}/${id}`)).json()) as { data: ApiToken }).data;
 }
 
+/** An audience role (D-137): the label `role:<name>` visibility grants to. `self_assign`
+ *  means public signup and sign-in links may take it. */
+export interface AudienceRole {
+	name: string;
+	self_assign: boolean;
+	created_at: string;
+}
+
+/** A project's site visitor, as staff see one (`GET {P}/audience/users`). */
+export interface SiteUser {
+	id: string;
+	email: string;
+	display_name: string | null;
+	/** The audience role it holds. */
+	role: string;
+	created_at: string;
+	last_sign_in_at?: string;
+	/** `true` once staff disabled it: its sessions are dead and sign-in says so. */
+	disabled: boolean;
+}
+
+const audience = (project: string) => `/api/v1/projects/${project}/audience`;
+
+/** The project's audience roles. Needs `audience.manage`. */
+export async function listAudienceRoles(project: string): Promise<AudienceRole[]> {
+	return ((await (await send('GET', `${audience(project)}/roles`)).json()) as { data: AudienceRole[] }).data;
+}
+
+/** A page of the project's site visitors, newest first. Needs `audience.manage`. */
+export async function listSiteUsers(project: string, limit = 100): Promise<Page<SiteUser>> {
+	return (await (await send('GET', `${audience(project)}/users?limit=${limit}`)).json()) as Page<SiteUser>;
+}
+
+/** Changes a site user's role, or disables (`disabled: true`, revoking its sessions) or
+ *  re-enables it. Needs `audience.manage`. */
+export async function updateSiteUser(
+	project: string,
+	user: string,
+	change: { role?: string; disabled?: boolean }
+): Promise<void> {
+	await send('PATCH', `${audience(project)}/users/${user}`, change);
+}
+
 /** One change in a project's audit log (step R.4). */
 export interface AuditEvent {
 	id: string;
@@ -1192,4 +1508,286 @@ export async function createComponent(project: string, slug: string, definition:
 export async function updateComponent(project: string, slug: string, definition: ComponentDefinition, etag: string, key: string): Promise<Component> {
 	const response = await send('PUT', `${components(project)}/${slug}`, definition, { 'If-Match': etag, 'Idempotency-Key': key });
 	return ((await response.json()) as { data: Component }).data;
+}
+
+// ---- Migrations: plans for content-type changes that stored entries can't take as they are
+// (step M.5, D-100, D-101). ----
+
+/** Where a migration plan stands (D-100). */
+export type MigrationState = 'proposed' | 'approved' | 'running' | 'done' | 'blocked' | 'superseded' | 'cancelled';
+
+/** What the dry run found for one entry, or what a run did with it (D-101). */
+export type MigrationOutcome = 'ok' | 'migrates' | 'needs_input' | 'blocked' | 'resolved' | 'applied' | 'skipped';
+
+/** A plan's item counts: `done` covers every finished outcome, `blocked` what still needs a
+ *  person. */
+export interface MigrationItems {
+	expected: number;
+	done: number;
+	blocked: number;
+}
+
+/** A migration plan as a list names it. */
+export interface MigrationSummary {
+	id: string;
+	collection: string;
+	base_version: number;
+	target_version: number | null;
+	state: MigrationState;
+	/** The plan's hash — what `If-Match` names on its writes. */
+	hash: string;
+	items: MigrationItems;
+	created_by: string;
+	approved_by: string | null;
+	approved_at: string | null;
+	started_at: string | null;
+	finished_at: string | null;
+	error: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+/** A migration plan in full: the definition it would move the collection to. */
+export interface MigrationPlan extends MigrationSummary {
+	target_definition: Definition;
+	target_definition_hash: string;
+	operations: unknown | null;
+	/** Whether an applied item still publishes a revision from before the run's target version:
+	 *  those entries stay live on the old shape until republished. */
+	republish_required: boolean;
+}
+
+/** One entry in a plan. */
+export interface MigrationItem {
+	entry_id: string;
+	/** The draft at plan time: what the run rewrites. */
+	expected_revision_id: string;
+	title: string | null;
+	outcome: MigrationOutcome;
+	problem: { reason: string; pointer: string; message: string } | null;
+	/** The replacement document a person gave it, if any. */
+	resolution: unknown | null;
+	new_revision_id: string | null;
+	applied_at: string | null;
+	/** Whether this applied item still publishes a pre-run revision until republished. */
+	republish_required: boolean;
+}
+
+const migrations = (project: string) => `${base(project)}/migrations`;
+
+/** The project's newest 100 plans, `collection`/`state` filtered. Any member may read them. */
+export async function listMigrations(project: string, collection?: string, state?: MigrationState): Promise<MigrationSummary[]> {
+	const query = new URLSearchParams();
+	if (collection) query.set('collection', collection);
+	if (state) query.set('state', state);
+	return ((await (await send('GET', `${migrations(project)}?${query}`)).json()) as { data: MigrationSummary[] }).data;
+}
+
+export async function getMigration(project: string, id: string): Promise<MigrationPlan> {
+	return ((await (await send('GET', `${migrations(project)}/${id}`)).json()) as { data: MigrationPlan }).data;
+}
+
+/** One page of a plan's items, `outcome` filtered; `after` is the last page's cursor. */
+export async function migrationItems(project: string, id: string, outcome?: MigrationOutcome, after?: string): Promise<Page<MigrationItem>> {
+	const query = new URLSearchParams();
+	if (outcome) query.set('outcome', outcome);
+	if (after) query.set('after', after);
+	return (await (await send('GET', `${migrations(project)}/${id}/items?${query}`)).json()) as Page<MigrationItem>;
+}
+
+/** Computes the plan for `definition` — the change a plain `PUT` was refused for. Dry-run is
+ *  the POST: the answer names every entry in the way. `no_migration_needed` when the change
+ *  could have applied plainly, `migration_in_progress` while a run holds the collection. */
+export async function planMigration(project: string, collection: string, definition: Definition, key: string): Promise<MigrationPlan> {
+	return ((await (await send('POST', migrations(project), { collection, definition }, { 'Idempotency-Key': key })).json()) as { data: MigrationPlan }).data;
+}
+
+/** Stores `resolution` — a full replacement document the target accepts — for a `needs_input`
+ *  item, bound to the plan hash the caller saw. The response's `hash` is the plan's. */
+export async function resolveMigrationItem(
+	project: string,
+	id: string,
+	entry: string,
+	resolution: unknown,
+	hash: string,
+	key: string
+): Promise<{ hash: string; item: MigrationItem }> {
+	return ((await (
+		await send('PUT', `${migrations(project)}/${id}/items/${entry}`, { resolution }, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key })
+	).json()) as { data: { hash: string; item: MigrationItem } }).data;
+}
+
+/** Approves the plan whose hash the caller saw (`plan_moved` names the current one when it
+ *  isn't). */
+export async function approveMigration(project: string, id: string, hash: string, key: string): Promise<MigrationPlan> {
+	return ((await (await send('POST', `${migrations(project)}/${id}/approve`, undefined, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key })).json()) as { data: MigrationPlan }).data;
+}
+
+/** What `apply` answers: the plan started (202) — a worker drives it to `done` or `blocked`
+ *  (D-101); refetch for where it stands. */
+export interface MigrationStarted {
+	id: string;
+	state: MigrationState;
+	hash: string;
+	started_at: string | null;
+}
+
+/** Starts the run on the approved plan whose hash the caller saw. */
+export async function applyMigration(project: string, id: string, hash: string, key: string): Promise<MigrationStarted> {
+	return ((await (await send('POST', `${migrations(project)}/${id}/apply`, undefined, { 'If-Match': `"${hash}"`, 'Idempotency-Key': key })).json()) as { data: MigrationStarted }).data;
+}
+
+/** Cancels a plan that hasn't run; a running one is refused (`cannot_cancel_running`). */
+export async function cancelMigration(project: string, id: string, key: string): Promise<MigrationPlan> {
+	return ((await (await send('POST', `${migrations(project)}/${id}/cancel`, undefined, { 'Idempotency-Key': key })).json()) as { data: MigrationPlan }).data;
+}
+
+// ---- Collaboration: comments on an entry's revisions, and editorial tasks (step E1, D-102). ----
+
+/** A comment on one immutable version of an entry (E1, D-102): written once and kept verbatim
+ *  forever — never edited, never deleted — so what it says about stays exactly what its author
+ *  saw. A resolved pair answers it; a deleted entry's comments stay readable. */
+export interface EntryComment {
+	id: string;
+	entry_id: string;
+	collection: string;
+	revision_id: string;
+	/** Where in the content it points, as a field path; `null` for the version as a whole. */
+	field: string | null;
+	/** What the author wrote, verbatim. Render it as text, never markup. */
+	body: string;
+	author_id: string;
+	resolved_by: string | null;
+	resolved_at: string | null;
+	created_at: string;
+	/** What `If-Match` binds: the hash of the resolution pair (`sha256:…`). */
+	etag: string;
+}
+
+/** An editorial task on an entry (E1, D-102): what has to be done, who it's waiting on, and where
+ *  it stands — optionally bound to one version of the entry or to a publish request. */
+export interface EditorialTask {
+	id: string;
+	entry_id: string;
+	collection: string;
+	revision_id: string | null;
+	changeset_id: string | null;
+	title: string;
+	assignee_id: string | null;
+	status: 'open' | 'done' | 'cancelled' | (string & {});
+	created_by: string;
+	done_by: string | null;
+	done_at: string | null;
+	created_at: string;
+	updated_at: string;
+	/** What `If-Match` binds: the hash of everything an update may change (`sha256:…`). */
+	etag: string;
+}
+
+/** What of a task a `PATCH` changes. Each field present changes and each absent field stays —
+ *  except `assignee`, where `null` is a real value meaning nobody, so leave the key out (or set it
+ *  `undefined`) to keep the current assignee and pass `null` to unassign. */
+export interface TaskUpdate {
+	title?: string;
+	assignee?: string | null;
+	status?: 'open' | 'done' | 'cancelled';
+}
+
+const commentsPath = (project: string, collection: string, entry: string) => `${entries(project, collection)}/${entry}/comments`;
+
+/** The entry's comments, newest first, `state` narrowing to the open or the answered ones. Needs
+ *  `content.read` on the entry; a deleted entry's comments stay readable. */
+export async function listComments(
+	project: string,
+	collection: string,
+	entry: string,
+	options: { revision?: string; state?: 'open' | 'resolved'; limit?: number } = {}
+): Promise<Page<EntryComment>> {
+	const query = new URLSearchParams({ limit: String(options.limit ?? 100) });
+	if (options.revision !== undefined) query.set('revision', options.revision);
+	if (options.state !== undefined) query.set('state', options.state);
+	return (await (await send('GET', `${commentsPath(project, collection, entry)}?${query}`)).json()) as Page<EntryComment>;
+}
+
+/** Writes a comment bound to `comment.revision` — the version on screen. Needs `content.update` on
+ *  the entry; refused `revision_not_found` when it isn't this entry's, `invalid_field_path`,
+ *  `empty_body` or `body_too_long`, and not-found when the entry is gone or unseen. */
+export async function createComment(
+	project: string,
+	collection: string,
+	entry: string,
+	comment: { revision: string; field?: string; body: string },
+	key: string
+): Promise<EntryComment> {
+	return (
+		(await (await send('POST', commentsPath(project, collection, entry), comment, { 'Idempotency-Key': key })).json()) as {
+			data: EntryComment;
+		}
+	).data;
+}
+
+/** Resolves (`resolved` true) or reopens (false) the comment as it stood when `etag` was read;
+ *  refused `comment_moved` when it changed meanwhile, `already_resolved`/`already_open` on a no-op. */
+export async function setCommentResolution(
+	project: string,
+	collection: string,
+	entry: string,
+	comment: string,
+	etag: string,
+	resolved: boolean,
+	key: string
+): Promise<EntryComment> {
+	const action = resolved ? 'resolve' : 'reopen';
+	return (
+		(await (
+			await send('POST', `${commentsPath(project, collection, entry)}/${comment}/${action}`, undefined, {
+				'If-Match': `"${etag}"`,
+				'Idempotency-Key': key
+			})
+		).json()) as { data: EntryComment }
+	).data;
+}
+
+const tasksPath = (project: string) => `${base(project)}/tasks`;
+
+/** The environment's tasks, newest first — only those on entries the role may read (the `own`
+ *  condition included). `assignee` filters by `me`, `none`, or an identity id. */
+export async function listTasks(
+	project: string,
+	filter: { entry?: string; collection?: string; assignee?: string; status?: 'open' | 'done' | 'cancelled'; limit?: number } = {}
+): Promise<Page<EditorialTask>> {
+	const query = new URLSearchParams({ limit: String(filter.limit ?? 100) });
+	if (filter.entry !== undefined) query.set('entry', filter.entry);
+	if (filter.collection !== undefined) query.set('collection', filter.collection);
+	if (filter.assignee !== undefined) query.set('assignee', filter.assignee);
+	if (filter.status !== undefined) query.set('status', filter.status);
+	return (await (await send('GET', `${tasksPath(project)}?${query}`)).json()) as Page<EditorialTask>;
+}
+
+/** One task, fresh — its `etag` names the state an update's `If-Match` binds. */
+export async function getTask(project: string, task: string): Promise<EditorialTask> {
+	return ((await (await send('GET', `${tasksPath(project)}/${task}`)).json()) as { data: EditorialTask }).data;
+}
+
+/** Creates a task on `task.entry`; needs `content.update` on that entry, and refused not-found for
+ *  an entry the role can't see. `revision` and `changeset` optionally name the exact version or
+ *  publish request the task is about (`revision_not_found`/`changeset_not_found`);
+ *  `assignee_not_member` for someone outside the project. */
+export async function createTask(
+	project: string,
+	task: { entry: string; title: string; revision?: string; changeset?: string; assignee?: string },
+	key: string
+): Promise<EditorialTask> {
+	return ((await (await send('POST', tasksPath(project), task, { 'Idempotency-Key': key })).json()) as { data: EditorialTask }).data;
+}
+
+/** Changes the task as it stood when `etag` was read; refused `task_moved` when it changed
+ *  meanwhile and `nothing_to_change` with no fields. `update.assignee` `null` unassigns; leaving
+ *  `done` clears the done pair, entering it records who and when. */
+export async function updateTask(project: string, task: string, etag: string, update: TaskUpdate, key: string): Promise<EditorialTask> {
+	return (
+		(await (await send('PATCH', `${tasksPath(project)}/${task}`, update, { 'If-Match': `"${etag}"`, 'Idempotency-Key': key })).json()) as {
+			data: EditorialTask;
+		}
+	).data;
 }

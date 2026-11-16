@@ -615,3 +615,184 @@ async fn a_pattern_is_checked_against_stored_content_and_holds_new_content_to_it
         (&json!("pattern_mismatch"), &json!("/tag"))
     );
 }
+
+fn reason(reply: &common::Reply) -> &Value {
+    &reply.body["error"]["details"]["reason"]
+}
+
+/// `DELETE path` as `session`, confirming the type's `version`, with `key` as its
+/// `Idempotency-Key`.
+async fn remove_type(session: &Session, path: &str, version: i64, key: &str) -> common::Reply {
+    call(
+        session,
+        Method::DELETE,
+        path,
+        None,
+        &[
+            ("if-match", &format!("\"v{version}\"")),
+            ("idempotency-key", key),
+        ],
+    )
+    .await
+    .expect("request")
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn an_empty_collection_is_deleted_with_its_etag_and_replayed() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    create_posts(&owner, &project).await;
+    let path = format!("{}/posts", types(&project));
+
+    // Deleting needs the version the caller looked at and an idempotency key.
+    let plain = call(&owner, Method::DELETE, &path, None, &[])
+        .await
+        .expect("request");
+    assert_eq!(plain.status, StatusCode::PRECONDITION_REQUIRED);
+    let no_key = call(
+        &owner,
+        Method::DELETE,
+        &path,
+        None,
+        &[("if-match", "\"v1\"")],
+    )
+    .await
+    .expect("request");
+    assert_eq!(
+        no_key.status,
+        StatusCode::PRECONDITION_REQUIRED,
+        "{}",
+        no_key.body
+    );
+
+    // An empty collection goes, and a retry after a lost answer replays the recorded one.
+    let once = key();
+    let removed = remove_type(&owner, &path, 1, &once).await;
+    assert_eq!(removed.status, StatusCode::OK, "{}", removed.body);
+    assert_eq!(removed.body["data"]["removed"], json!(true));
+    let gone = call(&owner, Method::GET, &path, None, &[])
+        .await
+        .expect("request");
+    assert_eq!(gone.status, StatusCode::NOT_FOUND);
+    let again = remove_type(&owner, &path, 1, &once).await;
+    assert_eq!(again.status, StatusCode::OK);
+    assert!(again.replayed());
+    // With a new key the same request is a 404: the collection is gone.
+    let fresh = remove_type(&owner, &path, 1, &key()).await;
+    assert_eq!(fresh.status, StatusCode::NOT_FOUND);
+    // And its slug is free to take again.
+    let recreated = create_posts(&owner, &project).await;
+    assert_eq!(recreated.status, StatusCode::CREATED, "{}", recreated.body);
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_collection_with_entries_or_their_history_stays() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    create_posts(&owner, &project).await;
+    let path = format!("{}/posts", types(&project));
+
+    // While an entry lives in it, it stays.
+    let entry = call(
+        &owner,
+        Method::POST,
+        &entries(&project, "posts"),
+        Some(&json!({"headline": "Still here", "minutes": 3, "section": "News"})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(entry.status, StatusCode::CREATED, "{}", entry.body);
+    let kept = remove_type(&owner, &path, 1, &key()).await;
+    assert_eq!(kept.status, StatusCode::CONFLICT);
+    assert_eq!(reason(&kept), &json!("collection_not_empty"));
+
+    // The entry deleted, its history remains: the collection stays too (D-083).
+    let entry_path = format!(
+        "{}/{}",
+        entries(&project, "posts"),
+        entry.body["data"]["id"].as_str().expect("id")
+    );
+    let deleted = call(
+        &owner,
+        Method::DELETE,
+        &entry_path,
+        None,
+        &[
+            ("if-match", &entry.etag().expect("an ETag")),
+            ("idempotency-key", &key()),
+        ],
+    )
+    .await
+    .expect("request");
+    assert_eq!(deleted.status, StatusCode::OK, "{}", deleted.body);
+    let history = remove_type(&owner, &path, 1, &key()).await;
+    assert_eq!(history.status, StatusCode::CONFLICT);
+    assert_eq!(reason(&history), &json!("collection_has_history"));
+
+    // And a type looked at before an update can't be deleted on the old version.
+    let stale = remove_type(&owner, &format!("{}/articles", types(&project)), 99, &key()).await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
+    assert_eq!(reason(&stale), &json!("stale_version"));
+}
+
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn a_collection_which_another_type_links_to_is_still_referenced() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+
+    // `posts` links to entries of `people`; while it does, `people` stays.
+    call(
+        &owner,
+        Method::POST,
+        &types(&project),
+        Some(&json!({"slug": "people", "definition": {
+            "name": "People",
+            "title_field": "name",
+            "fields": [{"id": "name", "label": "Name", "type": "text", "required": true}]
+        }})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    call(
+        &owner,
+        Method::POST,
+        &types(&project),
+        Some(&json!({"slug": "posts", "definition": {
+            "name": "Posts",
+            "title_field": "headline",
+            "fields": [
+                {"id": "headline", "label": "Headline", "type": "text", "required": true},
+                {"id": "writer", "label": "Writer", "type": "reference", "to": "people"}
+            ]
+        }})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    let refused = remove_type(&owner, &format!("{}/people", types(&project)), 1, &key()).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(reason(&refused), &json!("still_referenced"));
+    assert!(
+        refused.body["error"]["message"]
+            .as_str()
+            .expect("a message")
+            .contains("posts"),
+        "{}",
+        refused.body
+    );
+
+    // It can link to itself or be linked after the field is gone: delete `people` once `posts`
+    // points elsewhere — here, `posts` is deleted first.
+    let posts = remove_type(&owner, &format!("{}/posts", types(&project)), 1, &key()).await;
+    assert_eq!(posts.status, StatusCode::OK, "{}", posts.body);
+    let people = remove_type(&owner, &format!("{}/people", types(&project)), 1, &key()).await;
+    assert_eq!(people.status, StatusCode::OK, "{}", people.body);
+}

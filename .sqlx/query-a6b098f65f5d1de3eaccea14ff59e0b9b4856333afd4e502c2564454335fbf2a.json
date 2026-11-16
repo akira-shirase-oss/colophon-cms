@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.id, s.locale FROM entries s\n         JOIN entries e ON e.project_id = s.project_id AND e.environment_id = s.environment_id\n                       AND e.localization_id = s.localization_id\n         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3\n           AND e.id = $4 AND e.deleted_at IS NULL AND s.deleted_at IS NULL\n         ORDER BY s.locale",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "locale",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "locale"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "a6b098f65f5d1de3eaccea14ff59e0b9b4856333afd4e502c2564454335fbf2a"
+}

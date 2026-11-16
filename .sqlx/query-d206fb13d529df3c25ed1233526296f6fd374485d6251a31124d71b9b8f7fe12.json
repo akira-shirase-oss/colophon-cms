@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE entries SET draft_revision_id = $4, draft_slug = $6, draft_title = $7,\n                            draft_visibility = $8, updated_at = now()\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND draft_revision_id = $5\n         RETURNING updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d206fb13d529df3c25ed1233526296f6fd374485d6251a31124d71b9b8f7fe12"
+}

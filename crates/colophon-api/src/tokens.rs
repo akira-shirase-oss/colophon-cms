@@ -14,10 +14,11 @@ use axum::{
 };
 use colophon_auth::tokens as secrets;
 use colophon_db::tokens::{self, Created, NewToken, Revoked, StoredToken};
+use colophon_domain::budget::{self, LimitError, Limits};
 use colophon_domain::policy::{
     Action, MAX_TOKEN_DAYS, Policy, RoleError, TokenKind, role_description, role_name,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -30,6 +31,74 @@ use crate::{
     session::{API_TOKEN_PREFIX, SignedIn},
     shape::{Data, Page},
 };
+
+/// A token's budget ceilings (D-113): every field optional, an absent one unconstrained at the
+/// quota layer. Bounded by the same maxima the columns' CHECKs enforce.
+#[derive(Deserialize, Serialize, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LimitsBody {
+    /// Entry writes per rolling day: creates, saves, localizations, import items and the
+    /// mirror writes their references cause.
+    #[serde(default)]
+    documents_per_day: Option<i64>,
+    /// Delivery jobs held at once.
+    #[serde(default)]
+    max_concurrent_jobs: Option<i64>,
+    /// Management requests per rolling minute, throttled with 429 over it (D-118).
+    #[serde(default)]
+    requests_per_minute: Option<i64>,
+    /// Provider tokens per rolling day (D-122): the assistant's calls, as the provider bills
+    /// them.
+    #[serde(default)]
+    tokens_per_day: Option<i64>,
+    /// Provider cost per rolling day in micros of the accounting unit — the unit's
+    /// millionths, a fixed-point integer, never a float (D-122).
+    #[serde(default)]
+    cost_per_day_micros: Option<i64>,
+}
+
+impl LimitsBody {
+    /// The checked [`Limits`], or the field's refusal.
+    fn limits(&self) -> Result<Limits, ApiError> {
+        Limits {
+            documents_per_day: self.documents_per_day,
+            max_concurrent_jobs: self.max_concurrent_jobs,
+            requests_per_minute: self.requests_per_minute,
+            tokens_per_day: self.tokens_per_day,
+            cost_per_day_micros: self.cost_per_day_micros,
+        }
+        .check()
+        .map_err(|error| match error {
+            LimitError::Range(field) => ApiError::InvalidField {
+                reason: "invalid_limit",
+                pointer: match field {
+                    "documents_per_day" => "/limits/documents_per_day",
+                    "max_concurrent_jobs" => "/limits/max_concurrent_jobs",
+                    "requests_per_minute" => "/limits/requests_per_minute",
+                    "tokens_per_day" => "/limits/tokens_per_day",
+                    _ => "/limits/cost_per_day_micros",
+                },
+                message: format!(
+                    "a token's {field} is between 1 and {}",
+                    match field {
+                        "documents_per_day" => budget::MAX_DOCUMENTS_PER_DAY,
+                        "max_concurrent_jobs" => budget::MAX_CONCURRENT_JOBS,
+                        "requests_per_minute" => budget::MAX_REQUESTS_PER_MINUTE,
+                        "tokens_per_day" => budget::MAX_TOKENS_PER_DAY,
+                        _ => budget::MAX_COST_PER_DAY_MICROS,
+                    }
+                ),
+            },
+            LimitError::Empty => ApiError::InvalidField {
+                reason: "limits_empty",
+                pointer: "/limits",
+                message:
+                    "limits must bound something: name at least one limit, or leave `limits` out"
+                        .to_owned(),
+            },
+        })
+    }
+}
 
 /// `POST` body.
 #[derive(Deserialize)]
@@ -45,6 +114,42 @@ pub(crate) struct NewTokenBody {
     permissions: Option<Vec<PermissionBody>>,
     /// 1 to 366.
     expires_in_days: u16,
+    /// Budget ceilings (D-113): absent means unconstrained at the quota layer.
+    #[serde(default)]
+    limits: Option<LimitsBody>,
+}
+
+/// `PATCH` body: only `limits` changes. `null` removes the token's ceilings; an object
+/// replaces them.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PatchTokenBody {
+    /// `Missing` when the key is left out (nothing asked); a present key says which way.
+    #[serde(default)]
+    limits: LimitsUpdate,
+}
+
+/// The three answers `limits` can give in a patch: absent, `null` (clear the ceilings)
+/// or an object (replace them). `Option<…>` alone couldn't tell `null` from absent —
+/// both deserialize to `None`.
+#[derive(Default)]
+pub(crate) enum LimitsUpdate {
+    #[default]
+    Missing,
+    Clear,
+    Set(LimitsBody),
+}
+
+impl<'de> Deserialize<'de> for LimitsUpdate {
+    fn deserialize<D>(de: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match Option::<LimitsBody>::deserialize(de)? {
+            Some(body) => Self::Set(body),
+            None => Self::Clear,
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -75,13 +180,41 @@ pub(crate) struct TokenView {
     expires_at: String,
     last_used_at: Option<String>,
     revoked_at: Option<String>,
+    /// Its budget ceilings, `null` when it has none (D-113).
+    limits: Option<LimitsBody>,
+    /// What it holds or spent, from `budget_reservations`; only on the single-token answer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<UsageView>,
     /// Only in the answer that creates it: `colophon_api_…`.
     #[serde(skip_serializing_if = "Option::is_none")]
     secret: Option<String>,
 }
 
+/// What the token holds or spent now: `budget_reservations`'s counts, and the limiter's own
+/// window for requests (D-118).
+#[derive(Serialize)]
+pub(crate) struct UsageView {
+    /// Documents written in the last day (settled, held and uncertain reservations).
+    documents_last_day: i64,
+    /// Jobs reservations still open (held or uncertain).
+    jobs_open: i64,
+    /// Management requests in the current rolling minute (0 without the ceiling, or when
+    /// the count isn't reachable — never an overstatement).
+    requests_last_minute: i64,
+    /// Provider tokens in the last day: settled outcomes at what they consumed, open
+    /// reservations at their allowance (D-122).
+    tokens_last_day: i64,
+    /// Provider cost in the last day, in micros of the accounting unit — settled outcomes at
+    /// what they consumed, open reservations at their allowance (D-122).
+    cost_last_day: i64,
+}
+
 impl TokenView {
-    fn new(token: StoredToken, secret: Option<String>) -> Result<Self, ApiError> {
+    fn new(
+        token: StoredToken,
+        secret: Option<String>,
+        usage: Option<colophon_db::budgets::Usage>,
+    ) -> Result<Self, ApiError> {
         let state = if token.revoked_at.is_some() {
             "revoked"
         } else if token.expires_at <= OffsetDateTime::now_utc() {
@@ -105,6 +238,20 @@ impl TokenView {
             expires_at: rfc3339(token.expires_at)?,
             last_used_at: token.last_used_at.map(rfc3339).transpose()?,
             revoked_at: token.revoked_at.map(rfc3339).transpose()?,
+            limits: token.limits.map(|limits| LimitsBody {
+                documents_per_day: limits.documents_per_day,
+                max_concurrent_jobs: limits.max_concurrent_jobs,
+                requests_per_minute: limits.requests_per_minute,
+                tokens_per_day: limits.tokens_per_day,
+                cost_per_day_micros: limits.cost_per_day_micros,
+            }),
+            usage: usage.map(|usage| UsageView {
+                documents_last_day: usage.documents_last_day,
+                jobs_open: usage.jobs_open,
+                requests_last_minute: usage.requests_last_minute,
+                tokens_last_day: usage.tokens_last_day,
+                cost_last_day: usage.cost_last_day,
+            }),
             secret,
         })
     }
@@ -117,6 +264,13 @@ fn recorded(token: &StoredToken) -> serde_json::Value {
         "kind": token.kind.as_str(),
         "permissions": permission_views(&token.policy),
         "expires_at": rfc3339(token.expires_at).unwrap_or_default(),
+        "limits": token.limits.map(|limits| json!({
+            "documents_per_day": limits.documents_per_day,
+            "max_concurrent_jobs": limits.max_concurrent_jobs,
+            "requests_per_minute": limits.requests_per_minute,
+            "tokens_per_day": limits.tokens_per_day,
+            "cost_per_day_micros": limits.cost_per_day_micros,
+        })),
     })
 }
 
@@ -132,6 +286,28 @@ async fn may_manage(tx: &mut colophon_db::scope::MemberTransaction) -> Result<Po
     Ok(fresh)
 }
 
+/// `budget_reservations`'s counts for the token, with `requests_last_minute` from the
+/// limiter's own window when the token has the ceiling and the count is reachable (D-118):
+/// the ledger records no requests — admission's counter does — so the ledger's number only
+/// stands in for an unreachable one, and is 0 either way.
+async fn usage(
+    state: &AppState,
+    tx: &mut colophon_db::scope::MemberTransaction,
+    token: &StoredToken,
+) -> Result<colophon_db::budgets::Usage, ApiError> {
+    let mut usage = colophon_db::budgets::usage(tx, token.identity_id)
+        .await
+        .map_err(ApiError::from_db)?;
+    if let (Some(admission), Some(rpm)) = (
+        &state.admission,
+        token.limits.and_then(|limits| limits.requests_per_minute),
+    ) && let Some(spent) = admission.quota_spent(tx.project, token.id, rpm).await
+    {
+        usage.requests_last_minute = spent;
+    }
+    Ok(usage)
+}
+
 /// `GET /api/v1/projects/{project}/tokens`.
 pub(crate) async fn list(
     State(state): State<AppState>,
@@ -144,11 +320,102 @@ pub(crate) async fn list(
     tx.commit().await.map_err(ApiError::from_db)?;
     let data = stored
         .into_iter()
-        .map(|token| TokenView::new(token, None))
+        .map(|token| TokenView::new(token, None, None))
         .collect::<Result<_, _>>()?;
     Ok(Json(Page {
         data,
         next_cursor: None,
+    }))
+}
+
+/// `GET /api/v1/projects/{project}/tokens/{token}`: the token's view, its limits and its
+/// usage — what `budget_reservations` says it holds or spent (D-113).
+pub(crate) async fn get(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<TokenPath>,
+) -> Result<Json<Data<TokenView>>, ApiError> {
+    let id = Uuid::try_parse(&path.token).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project).await?;
+    may_manage(&mut tx).await?;
+    let Some(token) = tokens::get(&mut tx, id).await.map_err(ApiError::from_db)? else {
+        return Err(ApiError::NotFound);
+    };
+    let usage = usage(&state, &mut tx, &token).await?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(Json(Data {
+        data: TokenView::new(token, None, Some(usage))?,
+    }))
+}
+
+/// `PATCH /api/v1/projects/{project}/tokens/{token}`: replaces its budget ceilings
+/// (`{"limits": {…}}`), or removes them (`{"limits": null}`). Recorded as
+/// `token.limits_changed` (D-113).
+pub(crate) async fn update(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<TokenPath>,
+    body: Result<Json<PatchTokenBody>, JsonRejection>,
+) -> Result<Json<Data<TokenView>>, ApiError> {
+    let Json(body) = body?;
+    let id = Uuid::try_parse(&path.token).map_err(|_| ApiError::NotFound)?;
+    let limits = match body.limits {
+        LimitsUpdate::Missing => {
+            return Err(ApiError::InvalidField {
+                reason: "nothing_to_change",
+                pointer: "/limits",
+                message: "patch names `limits`: an object replaces it, `null` removes it"
+                    .to_owned(),
+            });
+        }
+        LimitsUpdate::Set(body) => Some(body.limits()?),
+        LimitsUpdate::Clear => None,
+    };
+    let mut tx = open(&state, caller, &path.project).await?;
+    may_manage(&mut tx).await?;
+    let before = tokens::get(&mut tx, id)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    match &limits {
+        Some(limits) => colophon_db::budgets::set_limits(&mut tx, id, limits).await,
+        None => colophon_db::budgets::remove_limits(&mut tx, id).await,
+    }
+    .map_err(ApiError::from_db)?;
+    let token = tokens::get(&mut tx, id)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    if token.limits != before.limits {
+        audit::record(
+            &mut tx,
+            "token.limits_changed",
+            &token.id.to_string(),
+            &json!({
+                "limits": {
+                    "before": before.limits.map(|limits| json!({
+                        "documents_per_day": limits.documents_per_day,
+                        "max_concurrent_jobs": limits.max_concurrent_jobs,
+                        "requests_per_minute": limits.requests_per_minute,
+                        "tokens_per_day": limits.tokens_per_day,
+                        "cost_per_day_micros": limits.cost_per_day_micros,
+                    })),
+                    "after": token.limits.map(|limits| json!({
+                        "documents_per_day": limits.documents_per_day,
+                        "max_concurrent_jobs": limits.max_concurrent_jobs,
+                        "requests_per_minute": limits.requests_per_minute,
+                        "tokens_per_day": limits.tokens_per_day,
+                        "cost_per_day_micros": limits.cost_per_day_micros,
+                    })),
+                }
+            }),
+        )
+        .await?;
+    }
+    let usage = usage(&state, &mut tx, &token).await?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(Json(Data {
+        data: TokenView::new(token, None, Some(usage))?,
     }))
 }
 
@@ -159,6 +426,7 @@ struct Requested<'a> {
     kind: TokenKind,
     granted: Policy,
     days: u16,
+    limits: Option<Limits>,
 }
 
 /// Checks a `POST` body without touching the database.
@@ -208,12 +476,14 @@ fn requested(body: &NewTokenBody) -> Result<Requested<'_>, ApiError> {
     let granted = kind
         .policy(custom)
         .map_err(|error: RoleError| invalid(error, "/permissions"))?;
+    let limits = body.limits.map(|limits| limits.limits()).transpose()?;
     Ok(Requested {
         name,
         description,
         kind,
         granted,
         days: body.expires_in_days,
+        limits,
     })
 }
 
@@ -231,6 +501,7 @@ pub(crate) async fn create(
         kind,
         granted,
         days,
+        limits,
     } = requested(&body)?;
     let mut tx = open(&state, caller, &path.project).await?;
     let fresh = may_manage(&mut tx).await?;
@@ -253,6 +524,7 @@ pub(crate) async fn create(
         policy: &granted,
         hash: secrets::hash(&secret),
         expires_at,
+        limits: limits.as_ref(),
     };
     let stored = match tokens::create(&mut tx, &token)
         .await
@@ -281,7 +553,7 @@ pub(crate) async fn create(
     Ok((
         StatusCode::CREATED,
         Json(Data {
-            data: TokenView::new(stored, Some(secret))?,
+            data: TokenView::new(stored, Some(secret), None)?,
         }),
     ))
 }
@@ -315,6 +587,6 @@ pub(crate) async fn revoke(
     };
     tx.commit().await.map_err(ApiError::from_db)?;
     Ok(Json(Data {
-        data: TokenView::new(token, None)?,
+        data: TokenView::new(token, None, None)?,
     }))
 }

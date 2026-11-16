@@ -1,0 +1,57 @@
+---
+import { site, entries, entryPath, type Entry } from '@colophon/site-kit';
+import Base from '../layouts/Base.astro';
+import Unseeded from '../components/Unseeded.astro';
+
+const cms = site();
+const stories = cms === null ? { items: [], generation: 0 } : await entries(cms, 'stories');
+
+const SECTIONS = ['World', 'Technology', 'Culture', 'Science', 'Sport'];
+const featured = stories.items.find((story) => story.content['featured'] === true) ?? stories.items[0];
+const rest = stories.items.filter((story) => story !== featured);
+const bySection = new Map<string, Entry[]>(SECTIONS.map((section) => [section, []]));
+for (const story of rest) {
+	const section = typeof story.content['category'] === 'string' ? story.content['category'] : 'World';
+	bySection.set(section, [...(bySection.get(section) ?? []), story]);
+}
+---
+
+<Base title="The Meridian Post" generation={stories.generation}>
+	{
+		cms === null ? (
+			<Unseeded />
+		) : (
+			<>
+				{featured !== undefined && (
+					<a class="top-story" href={`/stories/${entryPath(featured)}/`}>
+						<span class="kicker">{typeof featured.content['category'] === 'string' ? featured.content['category'] : 'News'}</span>
+						<h1>{featured.title}</h1>
+						{typeof featured.content['lede'] === 'string' && <p class="lede">{featured.content['lede']}</p>}
+						<span class="byline">
+							{typeof featured.content['byline'] === 'string' ? featured.content['byline'] : 'Meridian staff'}
+							{typeof featured.content['dateline'] === 'string' && ` · ${featured.content['dateline']}`}
+						</span>
+					</a>
+				)}
+				<div class="columns">
+					{[...bySection].map(([section, list]) => (
+						<section class="column" id={section.toLowerCase()}>
+							<h2>{section}</h2>
+							<ul class="briefs">
+								{list.map((story) => (
+									<li>
+										<a href={`/stories/${entryPath(story)}/`}>
+											<h3>{story.title}</h3>
+											{typeof story.content['lede'] === 'string' && <p class="lede">{story.content['lede']}</p>}
+										</a>
+									</li>
+								))}
+								{list.length === 0 && <li>Nothing filed yet.</li>}
+							</ul>
+						</section>
+					))}
+				</div>
+			</>
+		)
+	}
+</Base>

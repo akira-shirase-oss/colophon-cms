@@ -3,9 +3,9 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
 // The Studio against a real colophon-server: the release build serves the built Studio at
-// /studio on its own origin (D-037), with the local stack's Postgres and Keycloak behind it.
+// /studio on its own origin (D-037), with the local stack's Postgres behind it.
 // Run by scripts/studio.sh. COLOPHON_STUDIO_PORT moves it, so two checkouts can run at once (the
-// port's callback must be registered in deploy/keycloak's realm).
+// port can be anything now sign-in is the password card).
 const PORT = Number(process.env['COLOPHON_STUDIO_PORT'] ?? 58093);
 const repo = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -15,7 +15,7 @@ function localEnv(): Record<string, string> {
 	const env: Record<string, string> = {};
 	const database = process.env['COLOPHON_TEST_DATABASE'];
 	for (const line of readFileSync(`${repo}deploy/local.env`, 'utf8').split('\n')) {
-		const match = /^([A-Z_]+)=(.*)$/.exec(line.trim());
+		const match = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
 		if (match?.[1] === undefined || match[2] === undefined) continue;
 		const named = database !== undefined && match[1].endsWith('DATABASE_URL') && match[2].endsWith('/colophon');
 		env[match[1]] = named ? `${match[2].slice(0, -'colophon'.length)}${database}` : match[2];

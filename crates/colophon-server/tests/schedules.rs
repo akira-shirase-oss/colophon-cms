@@ -29,6 +29,91 @@ async fn send(
         .expect("request")
 }
 
+/// A local time the clocks show twice within `days` days of `now` (seconds), across zones that
+/// fall back sometime in the year: (zone, `YYYY-MM-DDTHH:MM`, both instants as RFC 3339). `None`
+/// when no backward clock change fits the window.
+fn next_ambiguous(now: i64, days: i64) -> Option<(String, String, String, String)> {
+    use jiff::{Timestamp, tz::TimeZone};
+    const ZONES: &[&str] = &[
+        "America/New_York",
+        "America/Santiago",
+        "Australia/Lord_Howe",
+        "Pacific/Auckland",
+        "Pacific/Fiji",
+        "Africa/Casablanca",
+        "Europe/London",
+        "America/Nuuk",
+        "America/Havana",
+        "Asia/Gaza",
+        "Australia/Sydney",
+        "America/Asuncion",
+    ];
+    let horizon = now + days * 24 * 60 * 60;
+    for zone in ZONES {
+        let tz = TimeZone::get(zone).expect("a known zone");
+        let start = Timestamp::from_second(now).expect("in range");
+        for transition in tz.following(start) {
+            let at = transition.timestamp().as_second();
+            if at > horizon {
+                break;
+            }
+            let after = transition.offset().seconds();
+            let before = tz
+                .to_offset(Timestamp::from_second(at - 1).expect("in range"))
+                .seconds();
+            if after >= before {
+                continue;
+            }
+            // The clocks go back: local times [at + after, at + before) happen twice. A whole
+            // minute inside is the local time asked for; the two instants it can mean are it
+            // minus each offset.
+            let gap = i64::from(before - after);
+            let mid = at + i64::from(after) + gap / 2;
+            let local_at = mid - mid % 60;
+            let local = Timestamp::from_second(local_at)
+                .expect("in range")
+                .to_zoned(TimeZone::UTC)
+                .datetime()
+                .strftime("%Y-%m-%dT%H:%M")
+                .to_string();
+            let instant = |at| Timestamp::from_second(at).expect("in range").to_string();
+            return Some((
+                (*zone).to_owned(),
+                local,
+                instant(local_at - i64::from(before)),
+                instant(local_at - i64::from(after)),
+            ));
+        }
+    }
+    None
+}
+
+/// `next_ambiguous` over a year finds a real repeated local time, and its two instants are the
+/// ones disambiguation would give.
+#[test]
+fn next_ambiguous_finds_a_real_fold() {
+    use jiff::tz::{AmbiguousOffset, Disambiguation, TimeZone};
+    let now = jiff::Timestamp::now().as_second();
+    let (zone, local, earlier, later) = next_ambiguous(now, 364).expect("some zone falls back");
+    let civil: jiff::civil::DateTime = local.parse().expect("a civil time");
+    let tz = TimeZone::get(&zone).expect("a known zone");
+    let ambiguous = tz.to_ambiguous_zoned(civil);
+    assert!(
+        matches!(ambiguous.offset(), AmbiguousOffset::Fold { .. }),
+        "{local} in {zone} is not a repeated local time"
+    );
+    let at = |how| {
+        ambiguous
+            .clone()
+            .disambiguate(how)
+            .expect("a fold disambiguates")
+            .timestamp()
+            .to_string()
+    };
+    assert_eq!(at(Disambiguation::Earlier), earlier);
+    assert_eq!(at(Disambiguation::Later), later);
+}
+
 /// An approved publish request for a new article: (its path, its If-Match).
 async fn approved(owner: &Session, project: &str, title: &str) -> (String, String) {
     let base = format!("/api/v1/projects/{project}/environments/production");
@@ -125,47 +210,59 @@ async fn a_scheduled_publish_request_goes_live_once_at_its_time() {
         Some("1")
     );
 
-    // New York's clocks go back on 1 November 2026: 01:30 happens twice. Refused, with both.
+    // A local time the clocks show twice needs a choice: refused with both candidates, then the
+    // later taken. The window is the approval's week and no clock change may fall inside it; when
+    // none does that part is skipped, and a plain pending schedule takes the cancel.
     let (path, if_match) = approved(&owner, &project, "Opening hours").await;
-    let ambiguous = json!({"local_time": "2026-11-01T01:30", "time_zone": "America/New_York"});
-    let refused = send(
-        &owner,
-        Method::POST,
-        &format!("{path}/schedule"),
-        Some(&ambiguous),
-        &[("if-match", &if_match)],
-    )
-    .await;
-    assert_eq!(
-        refused.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        refused.body
-    );
-    let details = &refused.body["error"]["details"];
-    assert_eq!(details["reason"], "ambiguous_local_time");
-    assert_eq!(
-        details["candidates"],
-        json!(["2026-11-01T05:30:00Z", "2026-11-01T06:30:00Z"])
-    );
-    let chosen = send(
-        &owner,
-        Method::POST,
-        &format!("{path}/schedule"),
-        Some(&json!({"local_time": "2026-11-01T01:30", "time_zone": "America/New_York", "choice": "later"})),
-        &[("if-match", &if_match)],
-    )
-    .await;
-    assert_eq!(chosen.status, StatusCode::CREATED, "{}", chosen.body);
-    assert_eq!(chosen.body["data"]["run_at"], "2026-11-01T06:30:00Z");
-    assert_eq!(chosen.body["data"]["local_time"], "2026-11-01T01:30:00");
-    assert_eq!(chosen.body["data"]["choice"], "later");
+    let pending = if let Some((zone, local, earlier, later)) =
+        next_ambiguous(jiff::Timestamp::now().as_second(), 6)
+    {
+        let refused = send(
+            &owner,
+            Method::POST,
+            &format!("{path}/schedule"),
+            Some(&json!({"local_time": local, "time_zone": zone})),
+            &[("if-match", &if_match)],
+        )
+        .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            refused.body
+        );
+        let details = &refused.body["error"]["details"];
+        assert_eq!(details["reason"], "ambiguous_local_time");
+        assert_eq!(details["candidates"], json!([earlier, later]));
+        let chosen = send(
+            &owner,
+            Method::POST,
+            &format!("{path}/schedule"),
+            Some(&json!({"local_time": local, "time_zone": zone, "choice": "later"})),
+            &[("if-match", &if_match)],
+        )
+        .await;
+        assert_eq!(chosen.status, StatusCode::CREATED, "{}", chosen.body);
+        assert_eq!(chosen.body["data"]["run_at"], later);
+        assert_eq!(chosen.body["data"]["local_time"], format!("{local}:00"));
+        assert_eq!(chosen.body["data"]["choice"], "later");
+        chosen.body["data"]["id"].clone()
+    } else {
+        eprintln!("no backward clock change within a week: the ambiguous-time part is skipped");
+        let pending = send(
+            &owner,
+            Method::POST,
+            &format!("{path}/schedule"),
+            Some(&json!({"local_time": utc_in(5 * 24 * 60 * 60), "time_zone": "UTC"})),
+            &[("if-match", &if_match)],
+        )
+        .await;
+        assert_eq!(pending.status, StatusCode::CREATED, "{}", pending.body);
+        pending.body["data"]["id"].clone()
+    };
 
     // Cancelled once; a second cancel says so.
-    let schedule = format!(
-        "{base}/schedules/{}",
-        chosen.body["data"]["id"].as_str().expect("an id")
-    );
+    let schedule = format!("{base}/schedules/{}", pending.as_str().expect("an id"));
     let cancelled = send(&owner, Method::DELETE, &schedule, None, &[]).await;
     assert_eq!(cancelled.status, StatusCode::OK, "{}", cancelled.body);
     assert_eq!(cancelled.body["data"]["state"], "cancelled");

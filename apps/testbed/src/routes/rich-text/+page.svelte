@@ -96,7 +96,7 @@
 	table {
 		border-collapse: collapse;
 		width: 100%;
-		font-size: 0.85rem;
+		font-size: 0.875rem;
 	}
 	th,
 	td {
@@ -140,6 +140,6 @@
 		border: 1px solid var(--line);
 		border-radius: 8px;
 		padding: 0.6rem;
-		font-size: 0.75rem;
+		font-size: 0.875rem;
 	}
 </style>

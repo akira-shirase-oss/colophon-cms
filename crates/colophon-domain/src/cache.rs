@@ -17,6 +17,8 @@
 //! the collection (a listing is tagged with its collection even when a newly published entry
 //! wasn't in it, F06) and, for a single entry, the entry.
 
+use sha2::{Digest, Sha256};
+
 /// Changes whenever the shape of a delivery answer does, so an entry cached for the old shape is
 /// never served as the new one.
 pub const RENDER_VERSION: u32 = 1;
@@ -92,6 +94,20 @@ impl Scope {
         format!("{}:entry:{entry:032x}:{collection}", self.prefix())
     }
 
+    /// The key for a page a query on `collection` answered (DX.4): `query`, the canonical
+    /// document's hash, names the normalized query (spec §15) so no two queries ever
+    /// share an entry, and `cursor` reduces to the page boundary's hash — `-` for the
+    /// first page — so a key stays short however long a token is. Both digests are
+    /// fixed-width hex; the collection stays the only free text, last as always.
+    pub fn query_key(&self, collection: &str, query: &[u8; 32], cursor: Option<&str>) -> String {
+        let boundary = cursor.map_or_else(|| "-".to_owned(), hex_of);
+        format!(
+            "{}:query:{}:{boundary}:{collection}",
+            self.prefix(),
+            hex(query)
+        )
+    }
+
     /// The tags for a page of `collection`.
     pub fn list_tags(&self, collection: &str) -> Vec<String> {
         let mut tags = vec![self.project_tag(), self.environment_tag()];
@@ -124,6 +140,23 @@ impl Scope {
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_');
         plausible.then(|| format!("{}:c:{collection}", self.environment_tag()))
     }
+}
+
+/// `bytes` as lowercase hex, the fixed width a key's digest fields take.
+fn hex(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(64);
+    for byte in bytes {
+        text.push(char::from(HEX[usize::from(byte >> 4)]));
+        text.push(char::from(HEX[usize::from(byte & 0xf)]));
+    }
+    text
+}
+
+/// SHA-256 of `text`, hex: a cursor's boundary for a query key, so the key names the
+/// page without holding the token.
+fn hex_of(text: &str) -> String {
+    hex(&Sha256::digest(text.as_bytes()).into())
 }
 
 #[cfg(test)]
@@ -184,6 +217,31 @@ mod tests {
             at_3.entry_key("articles", 7),
             at_3.list_key("articles", 20, Some(7))
         );
+    }
+
+    #[test]
+    fn a_query_key_names_the_normalized_query_and_the_page_boundary() {
+        let at_3 = scope(3);
+        let query = [0x5a; 32];
+        let other = [0x5b; 32];
+        let first = at_3.query_key("articles", &query, None);
+        // Query hash, then the boundary hash or `-`, then the collection — the only free
+        // text stays last.
+        let (head, tail) = first.rsplit_once(':').expect("the collection");
+        assert_eq!(tail, "articles");
+        assert!(
+            head.ends_with(&format!(":query:{}:-", hex(&query))),
+            "{first}"
+        );
+        // A different query, a different page, a different collection: different keys.
+        assert_ne!(first, at_3.query_key("articles", &other, None));
+        assert_ne!(first, at_3.query_key("articles", &query, Some("a-cursor")));
+        assert_ne!(first, at_3.query_key("events", &query, None));
+        // And the boundary is a digest, not the token: fixed width however it came.
+        let after = at_3.query_key("articles", &query, Some(&"x".repeat(11_000)));
+        assert_eq!(after.len(), first.len() + 63, "{after}");
+        // A query page never names a list or entry page.
+        assert_ne!(first, at_3.list_key("articles", 20, None));
     }
 
     #[test]

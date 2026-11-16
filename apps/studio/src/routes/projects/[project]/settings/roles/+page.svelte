@@ -3,7 +3,7 @@
   them, so the list shows to anyone in Settings; New role, for roles that manage roles, opens a
   dialog that asks only for a name and the short name memberships use, then opens the new role's
   page to choose what it may do. `?new=1` opens the dialog at once; `for=invite` (Members' "Make a
-  new role…", D-082) carries on to the role's page, which goes back to the invitation once saved.
+  new role…", D-147) carries on to the role's page, which goes back to the invitation once saved.
 -->
 <script lang="ts">
 	import PlusIcon from '@lucide/svelte/icons/plus';

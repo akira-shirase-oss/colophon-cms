@@ -84,6 +84,24 @@ pub struct OidcSettings {
     pub client_secret: Secret,
 }
 
+/// The S3-compatible object store for uploads (Garage locally, a managed bucket live; D-016).
+/// Only the S3 API is spoken, so the store can be swapped.
+#[derive(Debug, Clone)]
+pub struct S3Settings {
+    /// `COLOPHON_S3_ENDPOINT`: the API's URL, e.g. `http://127.0.0.1:53900`.
+    pub endpoint: String,
+    /// `COLOPHON_S3_REGION`, default `garage`.
+    pub region: String,
+    /// `COLOPHON_S3_BUCKET`.
+    pub bucket: String,
+    /// `COLOPHON_S3_ACCESS_KEY`.
+    pub access_key: String,
+    /// `COLOPHON_S3_SECRET_KEY`.
+    pub secret_key: Secret,
+    /// Plain HTTP rather than HTTPS: only for a loopback endpoint (the local stack's Garage).
+    pub allow_http: bool,
+}
+
 /// The development realm's public client secret (deploy/keycloak). Refused off loopback.
 const DEV_CLIENT_SECRET: &str = "colophon-dev-client-secret";
 
@@ -99,13 +117,21 @@ pub struct Config {
     /// Redis-protocol cache URL. `COLOPHON_CACHE_URL`, optional: without it, readiness reports
     /// the cache as `not_configured`.
     pub cache_url: Option<Secret>,
+    /// A cached delivery answer's lifetime (`COLOPHON_CACHE_TTL_MS`, default five minutes) and
+    /// the bound on the jitter added to each entry (`COLOPHON_CACHE_JITTER_MS`, default one
+    /// minute; `0` makes every entry live exactly the TTL — what a stampede load run needs for
+    /// its expiries to be deterministic, L04).
+    pub cache_ttl: Duration,
+    /// See `cache_ttl`.
+    pub cache_jitter: Duration,
     /// `COLOPHON_LOG_FORMAT`: `json` (default) or `pretty`.
     pub log_format: LogFormat,
     /// `EnvFilter` directives. `COLOPHON_LOG`, default `info`.
     pub log_filter: String,
     /// `COLOPHON_REQUEST_TIMEOUT_MS`, default 10 s.
     pub request_timeout: Duration,
-    /// `COLOPHON_MAX_BODY_BYTES`, default 1 MiB.
+    /// `COLOPHON_MAX_BODY_BYTES`, default 21 MiB: JSON requests stay small, but the upload
+    /// endpoint legitimately carries a 20 MiB image (its own intent check bounds it tighter).
     pub max_body_bytes: usize,
     /// `COLOPHON_DB_MAX_CONNECTIONS`, default 16.
     pub db_max_connections: u32,
@@ -123,6 +149,9 @@ pub struct Config {
     pub public_origin: String,
     /// Sign-in; `None` when the three `COLOPHON_OIDC_*` settings are absent.
     pub oidc: Option<OidcSettings>,
+    /// The object store uploads are quarantined in and served from (07-media); `None` when the
+    /// `COLOPHON_S3_*` settings are absent.
+    pub s3: Option<S3Settings>,
     /// More origins allowed to send cookie-authenticated writes (`COLOPHON_TRUSTED_ORIGINS`,
     /// comma-separated), after the public origin.
     pub extra_trusted_origins: Vec<String>,
@@ -146,12 +175,63 @@ pub struct Config {
     /// run (D-051). `COLOPHON_WORKER_LOCATION`: 1 to 63 lowercase letters, digits and dashes,
     /// default `local`.
     pub worker_location: String,
+    /// How old an unreferenced upload must be before the retention sweep expires it (07-media,
+    /// spec §18's 24 hours; D-099). `COLOPHON_ASSET_EXPIRY_MS`, default `86_400_000`.
+    pub asset_expiry: Duration,
+    /// How often the retention sweep looks for collectable assets and orphaned quarantine
+    /// objects (D-099). `COLOPHON_ASSET_SWEEP_MS`, default `300_000` (five minutes).
+    pub asset_sweep: Duration,
+    /// How often the table-retention sweep runs its bounded deletes over finished work,
+    /// the settled ledger, dead flow state and the audit log (spec §27, D-135).
+    /// `COLOPHON_TABLE_SWEEP_MS`, default `3_600_000` (one hour).
+    pub table_sweep: Duration,
     /// Rate limits (D-076): `COLOPHON_RATE_LIMIT_PER_ADDRESS` (default `300/600`, requests a
     /// second and burst, or `off`), `COLOPHON_RATE_LIMIT_PER_CREDENTIAL` (default `150/300`),
     /// `COLOPHON_RATE_LIMIT_DELIVERY` (public delivery per address, default `1000/2000`), and
     /// `COLOPHON_TRUSTED_PROXIES` (comma-separated addresses or networks whose
-    /// `X-Forwarded-For` names the client; default none).
+    /// `X-Forwarded-For` names the client; default none). The per-token request quota's
+    /// window (D-118) is `COLOPHON_QUOTA_WINDOW_MS`, default `60_000` — the minute
+    /// `requests_per_minute` names; a test shortens it rather than waiting a minute.
     pub admission: colophon_api::admission::AdmissionSettings,
+    /// Live-hint stream bounds (D-108): `COLOPHON_EVENTS_PER_CREDENTIAL` (8),
+    /// `COLOPHON_EVENTS_PER_PROJECT` (256) and `COLOPHON_EVENTS_MAX_STREAMS` (2048) cap the
+    /// streams; `COLOPHON_EVENTS_CHANNEL_CAPACITY` (256) buffers hints per project;
+    /// `COLOPHON_EVENTS_KEEPALIVE_MS` (15 s) warms idle connections;
+    /// `COLOPHON_EVENTS_LIFETIME_MS` (30 min) ends a stream; and
+    /// `COLOPHON_EVENTS_REVALIDATE_MS` (5 min; `0` disables) re-runs the membership check.
+    pub events: colophon_api::events::EventLimits,
+    /// Remote-MCP session bounds (D-121): `COLOPHON_MCP_PER_TOKEN` (8),
+    /// `COLOPHON_MCP_PER_PROJECT` (256) and `COLOPHON_MCP_MAX_SESSIONS` (2048) cap the
+    /// sessions; `COLOPHON_MCP_IDLE_MS` (30 min) forgets one untouched for that long.
+    pub mcp: colophon_api::mcp::Limits,
+    /// Whether a magic-link request hands the link back in `dev_link` instead of emailing it:
+    /// `COLOPHON_DEV_MAIL=1` (D-140). A development affordance, off by default.
+    pub dev_mail: bool,
+    /// Transactional mail for sign-in links (D-145): `COLOPHON_MAIL_PROVIDER=resend` with
+    /// `COLOPHON_MAIL_FROM` and `COLOPHON_RESEND_API_KEY`; `COLOPHON_RESEND_ENDPOINT` overrides
+    /// the API address (a deployment's own relay, or a test receiver). `None` without a
+    /// provider — links are then recorded but not delivered, as before.
+    pub mail: Option<MailSettings>,
+}
+
+/// Transactional mail configuration (D-145); `provider` is the seam further providers hang off.
+#[derive(Debug, Clone)]
+pub struct MailSettings {
+    /// The provider this delivers through.
+    pub provider: MailProvider,
+    /// The `From` header, as the provider wants it (`The Draft <hello@thedraft.example>`).
+    pub from: String,
+    /// The provider's API key.
+    pub api_key: Secret,
+    /// The endpoint mails POST to.
+    pub endpoint: String,
+}
+
+/// A mail provider this build knows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MailProvider {
+    /// Resend: one `POST /emails` with a bearer key.
+    Resend,
 }
 
 /// Whether `text` can name a worker's location: what destinations.location accepts.
@@ -319,6 +399,166 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         (public_origin, extra_trusted_origins, oidc)
     }
 
+    /// Transactional mail (D-145): `COLOPHON_MAIL_PROVIDER=resend` with its key and a `From`,
+    /// or nothing at all. `COLOPHON_RESEND_ENDPOINT` moves the API address — a deployment's
+    /// own relay, or a test's receiver.
+    fn mail(&mut self) -> Option<MailSettings> {
+        let provider = self.raw("COLOPHON_MAIL_PROVIDER");
+        let from = self.raw("COLOPHON_MAIL_FROM");
+        let api_key = self.secret("COLOPHON_RESEND_API_KEY", false);
+        let endpoint = self.raw("COLOPHON_RESEND_ENDPOINT");
+        match (provider.as_deref(), from, api_key, endpoint) {
+            (None, None, None, None) => None,
+            (Some("resend"), Some(from), Some(api_key), endpoint) => Some(MailSettings {
+                provider: MailProvider::Resend,
+                from,
+                api_key,
+                endpoint: endpoint.unwrap_or_else(|| "https://api.resend.com/emails".to_owned()),
+            }),
+            (Some(other), _, _, _) => {
+                self.problems.push(format!(
+                    "COLOPHON_MAIL_PROVIDER: {other:?} is not one this build knows ('resend')"
+                ));
+                None
+            }
+            _ => {
+                self.problems.push(
+                    "COLOPHON_MAIL_PROVIDER, COLOPHON_MAIL_FROM and COLOPHON_RESEND_API_KEY go \
+                     together: set all three or none (COLOPHON_RESEND_ENDPOINT only moves \
+                     the provider's address)"
+                        .to_owned(),
+                );
+                None
+            }
+        }
+    }
+
+    /// The upload store's settings; all five `COLOPHON_S3_*` values or none, and plain HTTP only
+    /// when the endpoint is loopback (a public store over plain HTTP would leak uploads and keys).
+    fn s3(&mut self) -> Option<S3Settings> {
+        let endpoint = self.raw("COLOPHON_S3_ENDPOINT");
+        let bucket = self.raw("COLOPHON_S3_BUCKET");
+        let access_key = self.raw("COLOPHON_S3_ACCESS_KEY");
+        let secret_key = self.secret("COLOPHON_S3_SECRET_KEY", false);
+        let any =
+            endpoint.is_some() || bucket.is_some() || access_key.is_some() || secret_key.is_some();
+        let (Some(endpoint), Some(bucket), Some(access_key), Some(secret_key)) =
+            (endpoint, bucket, access_key, secret_key)
+        else {
+            if any {
+                self.problems.push(
+                    "COLOPHON_S3_ENDPOINT, COLOPHON_S3_BUCKET, COLOPHON_S3_ACCESS_KEY and \
+                     COLOPHON_S3_SECRET_KEY go together: set all four or none"
+                        .to_owned(),
+                );
+            }
+            return None;
+        };
+        let mut allow_http = false;
+        match url::Url::parse(&endpoint) {
+            Err(_) => self
+                .problems
+                .push(format!("COLOPHON_S3_ENDPOINT: cannot parse {endpoint:?}")),
+            Ok(parsed) if parsed.scheme() == "http" => {
+                allow_http = parsed.host_str().is_some_and(|host| {
+                    host == "localhost"
+                        || host.ends_with(".localhost")
+                        || host
+                            .parse::<std::net::IpAddr>()
+                            .is_ok_and(|ip| ip.is_loopback())
+                });
+                if !allow_http {
+                    self.problems.push(
+                        "COLOPHON_S3_ENDPOINT may be plain HTTP only for a loopback address"
+                            .to_owned(),
+                    );
+                }
+            }
+            Ok(parsed) if parsed.scheme() != "https" => self.problems.push(format!(
+                "COLOPHON_S3_ENDPOINT: unsupported scheme {:?}",
+                parsed.scheme()
+            )),
+            _ => {}
+        }
+        let region = self
+            .raw("COLOPHON_S3_REGION")
+            .unwrap_or_else(|| "garage".to_owned());
+        Some(S3Settings {
+            endpoint,
+            region,
+            bucket,
+            access_key,
+            secret_key,
+            allow_http,
+        })
+    }
+
+    /// The rate limits (D-076) and the token quota's window (D-118).
+    fn admission(&mut self) -> colophon_api::admission::AdmissionSettings {
+        colophon_api::admission::AdmissionSettings {
+            per_address: self.rate("COLOPHON_RATE_LIMIT_PER_ADDRESS", "300/600"),
+            per_credential: self.rate("COLOPHON_RATE_LIMIT_PER_CREDENTIAL", "150/300"),
+            delivery_per_address: self.rate("COLOPHON_RATE_LIMIT_DELIVERY", "1000/2000"),
+            trusted_proxies: self.prefixes("COLOPHON_TRUSTED_PROXIES"),
+            // A window under 10 ms is a broken test, not a configuration: the floor keeps
+            // one; the ceiling is an hour, far past the minute the column names.
+            quota_window_ms: self.ranged("COLOPHON_QUOTA_WINDOW_MS", 60_000, 10..=3_600_000),
+        }
+    }
+
+    /// The delivery probe's cadence and deadline; `from_lookup` refuses a timeout at or over
+    /// the interval.
+    fn probe(&mut self) -> (Duration, Duration) {
+        (
+            self.millis("COLOPHON_PROBE_INTERVAL_MS", 2_000, 100..=60_000),
+            self.millis("COLOPHON_PROBE_TIMEOUT_MS", 1_000, 50..=30_000),
+        )
+    }
+
+    /// The post-listen drain delay and the shutdown grace; `from_lookup` refuses a delay at
+    /// or over the grace.
+    fn drain(&mut self) -> (Duration, Duration) {
+        (
+            self.millis("COLOPHON_DRAIN_DELAY_MS", 5_000, 0..=60_000),
+            self.millis("COLOPHON_SHUTDOWN_GRACE_MS", 25_000, 1_000..=600_000),
+        )
+    }
+
+    /// A cached delivery answer's TTL and jitter bound. A one-second TTL floor keeps `EX`
+    /// valid; the hour ceiling is far past module 06's five minutes. Zero jitter is allowed —
+    /// a stampede run's expiries must be exact (L04).
+    fn cache_lifetimes(&mut self) -> (Duration, Duration) {
+        (
+            self.millis("COLOPHON_CACHE_TTL_MS", 300_000, 1_000..=3_600_000),
+            self.millis("COLOPHON_CACHE_JITTER_MS", 60_000, 0..=600_000),
+        )
+    }
+
+    /// The live-hint stream bounds (D-108); `COLOPHON_EVENTS_REVALIDATE_MS` of `0` turns the
+    /// membership re-check off.
+    fn events(&mut self) -> colophon_api::events::EventLimits {
+        let revalidate = self.ranged("COLOPHON_EVENTS_REVALIDATE_MS", 300_000, 0..=3_600_000);
+        colophon_api::events::EventLimits {
+            per_credential: self.ranged("COLOPHON_EVENTS_PER_CREDENTIAL", 8, 1..=1_024),
+            per_project: self.ranged("COLOPHON_EVENTS_PER_PROJECT", 256, 1..=16_384),
+            max_streams: self.ranged("COLOPHON_EVENTS_MAX_STREAMS", 2_048, 1..=65_536),
+            channel_capacity: self.ranged("COLOPHON_EVENTS_CHANNEL_CAPACITY", 256, 8..=8_192),
+            keep_alive: self.millis("COLOPHON_EVENTS_KEEPALIVE_MS", 15_000, 1_000..=120_000),
+            lifetime: self.millis("COLOPHON_EVENTS_LIFETIME_MS", 1_800_000, 1_000..=86_400_000),
+            revalidate: (revalidate > 0).then(|| Duration::from_millis(revalidate)),
+        }
+    }
+
+    /// The remote-MCP session bounds (D-121).
+    fn mcp(&mut self) -> colophon_api::mcp::Limits {
+        colophon_api::mcp::Limits {
+            per_token: self.ranged("COLOPHON_MCP_PER_TOKEN", 8, 1..=1_024),
+            per_project: self.ranged("COLOPHON_MCP_PER_PROJECT", 256, 1..=16_384),
+            max_sessions: self.ranged("COLOPHON_MCP_MAX_SESSIONS", 2_048, 1..=65_536),
+            idle: self.millis("COLOPHON_MCP_IDLE_MS", 1_800_000, 60_000..=86_400_000),
+        }
+    }
+
     /// A secret: the value is never echoed, not even in problems.
     fn secret(&mut self, key: &str, required: bool) -> Option<Secret> {
         let value = self.raw(key);
@@ -339,6 +579,11 @@ impl Config {
     }
 
     /// Builds a configuration from any lookup (the environment, or a map in tests).
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one stanza per environment variable; the function's length is the count \
+                  of settings, not complexity"
+    )]
     pub fn from_lookup(
         role: Role,
         lookup: impl Fn(&str) -> Option<String>,
@@ -353,28 +598,23 @@ impl Config {
         );
         let database_url = env.secret("COLOPHON_DATABASE_URL", true);
         let cache_url = env.secret("COLOPHON_CACHE_URL", false);
+        let (cache_ttl, cache_jitter) = env.cache_lifetimes();
         let log_format = env.parse("COLOPHON_LOG_FORMAT", LogFormat::Json);
         let log_filter = env.raw("COLOPHON_LOG").unwrap_or_else(|| "info".to_owned());
         let request_timeout = env.millis("COLOPHON_REQUEST_TIMEOUT_MS", 10_000, 100..=120_000);
-        let max_body_bytes = env.ranged("COLOPHON_MAX_BODY_BYTES", MIB, KIB..=16 * MIB);
+        let max_body_bytes = env.ranged("COLOPHON_MAX_BODY_BYTES", 21 * MIB, KIB..=64 * MIB);
         let db_max_connections = env.ranged("COLOPHON_DB_MAX_CONNECTIONS", 16, 1..=1_000);
-        let probe_interval = env.millis("COLOPHON_PROBE_INTERVAL_MS", 2_000, 100..=60_000);
-        let probe_timeout = env.millis("COLOPHON_PROBE_TIMEOUT_MS", 1_000, 50..=30_000);
-        let drain_delay = env.millis("COLOPHON_DRAIN_DELAY_MS", 5_000, 0..=60_000);
-        let shutdown_grace = env.millis("COLOPHON_SHUTDOWN_GRACE_MS", 25_000, 1_000..=600_000);
+        let (probe_interval, probe_timeout) = env.probe();
+        let (drain_delay, shutdown_grace) = env.drain();
         let (public_origin, extra_trusted_origins, oidc) = env.sign_in(listen_addr);
+        let s3 = env.s3();
         let studio_dir = env.raw("COLOPHON_STUDIO_DIR").map(std::path::PathBuf::from);
         let worker_poll = env.millis("COLOPHON_WORKER_POLL_MS", 500, 10..=60_000);
         let worker_lease = env.millis("COLOPHON_WORKER_LEASE_MS", 30_000, 1_000..=600_000);
         let worker_slots = env.ranged("COLOPHON_WORKER_SLOTS", 8, 1..=64);
         let worker_attempt = env.millis("COLOPHON_WORKER_ATTEMPT_MS", 10_000, 100..=60_000);
         let worker_db_connections = env.ranged("COLOPHON_WORKER_DB_CONNECTIONS", 4, 1..=100);
-        let admission = colophon_api::admission::AdmissionSettings {
-            per_address: env.rate("COLOPHON_RATE_LIMIT_PER_ADDRESS", "300/600"),
-            per_credential: env.rate("COLOPHON_RATE_LIMIT_PER_CREDENTIAL", "150/300"),
-            delivery_per_address: env.rate("COLOPHON_RATE_LIMIT_DELIVERY", "1000/2000"),
-            trusted_proxies: env.prefixes("COLOPHON_TRUSTED_PROXIES"),
-        };
+        let admission = env.admission();
         let worker_location = env
             .raw("COLOPHON_WORKER_LOCATION")
             .unwrap_or_else(|| "local".to_owned());
@@ -385,7 +625,15 @@ impl Config {
                     .to_owned(),
             );
         }
-
+        // A year of headroom over the spec's 24 h; the sweep itself can run as often as the
+        // tests need and as rarely as an hourly pass.
+        let asset_expiry = env.millis("COLOPHON_ASSET_EXPIRY_MS", 86_400_000, 1..=31_536_000_000);
+        let asset_sweep = env.millis("COLOPHON_ASSET_SWEEP_MS", 300_000, 50..=3_600_000);
+        // Hourly by default: retention is a bound, not a latency promise, so a pass an hour
+        // keeps every table's size where the ages say without spending worker time on it.
+        let table_sweep = env.millis("COLOPHON_TABLE_SWEEP_MS", 3_600_000, 1_000..=86_400_000);
+        let events = env.events();
+        let mcp = env.mcp();
         if probe_timeout >= probe_interval {
             env.problems.push(
                 "COLOPHON_PROBE_TIMEOUT_MS must be shorter than COLOPHON_PROBE_INTERVAL_MS"
@@ -404,7 +652,20 @@ impl Config {
                     .to_owned(),
             );
         }
-
+        let dev_mail = env
+            .raw("COLOPHON_DEV_MAIL")
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+        // Development mail answers a sign-in link in the response itself: on an address others
+        // can reach it is an account-takeover switch, so like the dev client's secret it is a
+        // loopback-only affordance (D-140).
+        if dev_mail && !listen_addr.ip().is_loopback() {
+            env.problems.push(
+                "COLOPHON_DEV_MAIL hands sign-in links back in responses: it may only run on a \
+                 loopback COLOPHON_LISTEN_ADDR"
+                    .to_owned(),
+            );
+        }
+        let mail = env.mail();
         if let Some(database_url) = database_url
             && env.problems.is_empty()
         {
@@ -413,6 +674,8 @@ impl Config {
                 listen_addr,
                 database_url,
                 cache_url,
+                cache_ttl,
+                cache_jitter,
                 log_format,
                 log_filter,
                 request_timeout,
@@ -424,6 +687,7 @@ impl Config {
                 shutdown_grace,
                 public_origin,
                 oidc,
+                s3,
                 extra_trusted_origins,
                 studio_dir,
                 worker_poll,
@@ -432,7 +696,14 @@ impl Config {
                 worker_attempt,
                 worker_db_connections,
                 worker_location,
+                asset_expiry,
+                asset_sweep,
+                table_sweep,
                 admission,
+                events,
+                mcp,
+                dev_mail,
+                mail,
             })
         } else {
             Err(ConfigError {
@@ -463,11 +734,36 @@ mod tests {
         let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
         assert_eq!(config.listen_addr.to_string(), "127.0.0.1:58000");
         assert_eq!(config.request_timeout, Duration::from_secs(10));
-        assert_eq!(config.max_body_bytes, MIB);
+        assert_eq!(config.max_body_bytes, 21 * MIB);
         assert_eq!(config.probe_interval, Duration::from_secs(2));
         assert!(config.cache_url.is_none());
+        assert_eq!(config.cache_ttl, Duration::from_secs(300));
+        assert_eq!(config.cache_jitter, Duration::from_secs(60));
         assert_eq!(config.log_format, LogFormat::Json);
         assert_eq!(config.worker_location, "local");
+    }
+
+    #[test]
+    fn cache_lifetimes_parse_and_floor() {
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_CACHE_TTL_MS", "4000"),
+            ("COLOPHON_CACHE_JITTER_MS", "0"),
+        ])
+        .expect("a stampede run's lifetimes");
+        assert_eq!(config.cache_ttl, Duration::from_secs(4));
+        assert_eq!(config.cache_jitter, Duration::ZERO);
+        for (key, value) in [
+            ("COLOPHON_CACHE_TTL_MS", "500"),
+            ("COLOPHON_CACHE_TTL_MS", "x"),
+        ] {
+            let error = load(&[("COLOPHON_DATABASE_URL", DB), (key, value)])
+                .expect_err("below the floor or not a number");
+            assert!(
+                error.to_string().contains(key),
+                "{key} missing from: {error}"
+            );
+        }
     }
 
     #[test]
@@ -566,6 +862,40 @@ mod tests {
     }
 
     #[test]
+    fn the_upload_store_is_all_or_none_and_https_only_off_loopback() {
+        // Unset: no store, no problem.
+        let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
+        assert!(config.s3.is_none());
+        // One without the rest: a problem, still no store.
+        let error = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_S3_BUCKET", "colophon-dev"),
+        ])
+        .expect_err("a lone bucket");
+        assert!(
+            error
+                .to_string()
+                .contains("go together: set all four or none")
+        );
+        // Plain HTTP off loopback is refused; on loopback it is the local stack's Garage.
+        let base = [
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_S3_BUCKET", "colophon-dev"),
+            ("COLOPHON_S3_ACCESS_KEY", "GK-test"),
+            ("COLOPHON_S3_SECRET_KEY", "s3cret"),
+        ];
+        let mut public = Vec::from(base);
+        public.push(("COLOPHON_S3_ENDPOINT", "http://s3.example.test"));
+        let error = load(&public).expect_err("plain http off loopback");
+        assert!(error.to_string().contains("loopback"));
+        let mut local = Vec::from(base);
+        local.push(("COLOPHON_S3_ENDPOINT", "http://127.0.0.1:53900"));
+        let config = load(&local).expect("loopback http");
+        assert!(config.s3.as_ref().is_some_and(|s3| s3.allow_http));
+        assert!(!format!("{config:?}").contains("s3cret"));
+    }
+
+    #[test]
     fn the_public_development_client_refuses_to_run_off_loopback() {
         let base = [
             ("COLOPHON_DATABASE_URL", DB),
@@ -581,6 +911,17 @@ mod tests {
         public.push(("COLOPHON_LISTEN_ADDR", "0.0.0.0:58000"));
         let error = load(&public).expect_err("refused on 0.0.0.0");
         assert!(error.to_string().contains("loopback"), "{error}");
+    }
+
+    #[test]
+    fn development_mail_refuses_to_run_off_loopback() {
+        let base = [("COLOPHON_DATABASE_URL", DB), ("COLOPHON_DEV_MAIL", "1")];
+        let config = load(&base).expect("fine on loopback");
+        assert!(config.dev_mail);
+        let mut public = base.to_vec();
+        public.push(("COLOPHON_LISTEN_ADDR", "0.0.0.0:58000"));
+        let error = load(&public).expect_err("refused on 0.0.0.0");
+        assert!(error.to_string().contains("COLOPHON_DEV_MAIL"), "{error}");
     }
 
     #[test]
@@ -624,5 +965,67 @@ mod tests {
                 .to_string()
                 .contains("COLOPHON_DRAIN_DELAY_MS must be shorter")
         );
+    }
+
+    #[test]
+    fn mail_needs_the_whole_resend_setup_or_nothing() {
+        // Nothing set: no mail, like before.
+        let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
+        assert!(config.mail.is_none());
+
+        // The complete setup, endpoint defaulted.
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_MAIL_PROVIDER", "resend"),
+            ("COLOPHON_MAIL_FROM", "The Draft <hello@thedraft.example>"),
+            ("COLOPHON_RESEND_API_KEY", "re_live_secret"),
+        ])
+        .expect("a full resend setup");
+        let mail = config.mail.as_ref().expect("mail configured");
+        assert_eq!(mail.provider, MailProvider::Resend);
+        assert_eq!(mail.from, "The Draft <hello@thedraft.example>");
+        assert_eq!(mail.endpoint, "https://api.resend.com/emails");
+        // The key is a secret: it never shows in a Debug dump.
+        assert!(!format!("{mail:?}").contains("re_live_secret"));
+        assert!(!format!("{config:?}").contains("re_live_secret"));
+
+        // The endpoint override moves the provider's address.
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_MAIL_PROVIDER", "resend"),
+            ("COLOPHON_MAIL_FROM", "hello@thedraft.example"),
+            ("COLOPHON_RESEND_API_KEY", "re_test"),
+            ("COLOPHON_RESEND_ENDPOINT", "http://127.0.0.1:9999/hook"),
+        ])
+        .expect("an endpoint override");
+        assert_eq!(
+            config.mail.expect("mail").endpoint,
+            "http://127.0.0.1:9999/hook"
+        );
+
+        // Every partial combination refuses, and so does a provider this build
+        // doesn't know.
+        for extra in [
+            vec![("COLOPHON_MAIL_PROVIDER", "resend")],
+            vec![
+                ("COLOPHON_MAIL_PROVIDER", "resend"),
+                ("COLOPHON_MAIL_FROM", "hello@thedraft.example"),
+            ],
+            vec![
+                ("COLOPHON_MAIL_FROM", "hello@thedraft.example"),
+                ("COLOPHON_RESEND_API_KEY", "re_test"),
+            ],
+            vec![("COLOPHON_RESEND_ENDPOINT", "http://127.0.0.1:9/hook")],
+            vec![("COLOPHON_MAIL_PROVIDER", "smtp")],
+        ] {
+            let mut pairs = vec![("COLOPHON_DATABASE_URL", DB)];
+            pairs.extend(extra.iter().copied());
+            let error = load(&pairs).expect_err(&format!("{extra:?}"));
+            assert!(
+                error.to_string().contains("COLOPHON_MAIL_")
+                    || error.to_string().contains("COLOPHON_RESEND_"),
+                "{extra:?}: {error}"
+            );
+        }
     }
 }

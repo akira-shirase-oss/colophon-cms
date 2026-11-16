@@ -334,6 +334,24 @@ pub enum ApiError {
         /// Its current hash, as `sha256:<hex>`.
         current: String,
     },
+    /// A migration action named a hash the plan no longer has (D-100). The response's `ETag`
+    /// names the current one.
+    #[error(
+        "the migration plan has changed since you loaded it; load it again and check what changed"
+    )]
+    StalePlan {
+        /// Its current hash, as `sha256:<hex>`.
+        current: String,
+    },
+    /// A review-stage change named the `ETag` of a list that is no longer current (D-104). The
+    /// response's `ETag` names the list now.
+    #[error(
+        "the review stages changed since you loaded them; load the list again and check what changed"
+    )]
+    StaleStages {
+        /// The current list's `ETag`, as `sha256:<hex>`.
+        current: String,
+    },
     /// A release was prepared on a generation the environment has moved past: another release
     /// committed first. The response's `Colophon-Generation` header names the current one
     /// (D-045).
@@ -450,6 +468,33 @@ pub enum ApiError {
     /// 503 with `Retry-After`, so clients back off instead of piling on.
     #[error("the server is busy; try again shortly")]
     Busy,
+    /// The project already retains all the unfinished work its bound allows (spec §33,
+    /// D-131): the job this request asked to store is refused before acceptance. 503 with
+    /// `Retry-After` — open work drains as workers finish it, so trying again then is the
+    /// recovery. `details.reason` is `work_full`; the numbers are the project's own.
+    #[error(
+        "this project's pending work is at its bound ({open} of {limit} jobs open); try again as they finish"
+    )]
+    WorkFull {
+        /// Unfinished jobs the project retains.
+        open: i64,
+        /// Its bound.
+        limit: i64,
+    },
+    /// The installation already retains all the pending payload metadata its bound allows
+    /// (spec §33, D-135): this request's stored bytes are refused before acceptance. 503
+    /// with `Retry-After` — pending payload drains as workers finish open work, so trying
+    /// again then is the recovery. `details.reason` is `payload_full`; the numbers are the
+    /// installation's, every project's included.
+    #[error(
+        "the installation's pending payload is over its bound ({pending} of {limit} bytes); try again as open work drains"
+    )]
+    PayloadFull {
+        /// Payload bytes pending across every project.
+        pending: i64,
+        /// The bound.
+        limit: i64,
+    },
     /// Sign-in failed. Details are logged, never shown: they can help an attacker.
     #[error("sign-in failed or expired; start again")]
     SignInFailed,
@@ -527,6 +572,29 @@ impl ApiError {
                 },
                 message: "this names no entry of the collection the field points at".to_owned(),
             }),
+            // 403: a hard quota, not a rate — GCRA's shaping owns `rate_limited` (D-113).
+            DbError::BudgetExceeded { .. } => Self::forbidden(
+                "budget_exceeded",
+                "this API token's budget for this work is exhausted; raise its limits, or wait for the window to clear",
+            ),
+            // 503, the project's own bound, not a budget or a pool (D-131); the
+            // installation's payload bound answers the same way (D-135).
+            DbError::WorkFull { open, limit } => Self::WorkFull { open, limit },
+            DbError::PayloadFull { pending, limit } => Self::PayloadFull { pending, limit },
+            // 422, at the very place in the content (media M1).
+            DbError::MissingAsset {
+                field,
+                position,
+                many,
+            } => Self::Invalid(colophon_domain::schema::Refusal {
+                code: "asset_not_found",
+                pointer: if many {
+                    format!("/{field}/{position}")
+                } else {
+                    format!("/{field}")
+                },
+                message: "this names no asset of the environment".to_owned(),
+            }),
             other => Self::internal(other),
         }
     }
@@ -563,6 +631,34 @@ impl ApiError {
         }))
     }
 
+    /// 409 `revision_outdated`: a pinned revision predates its collection's version and no
+    /// longer fits the definition in force (D-055; a rollback pins history on purpose, D-097).
+    pub fn revision_outdated(
+        entry: Uuid,
+        title: String,
+        reason: &'static str,
+        pointer: String,
+        message: String,
+    ) -> Self {
+        Self::Taken(Box::new(InTheWay {
+            reason: "revision_outdated",
+            pointer: String::new(),
+            message: "an entry in this changeset pins a revision that no longer fits its content type; edit it, then try again".to_owned(),
+            entries: vec![EntryInTheWay {
+                entry,
+                title,
+                state: "pinned",
+                problem: Some(Problem {
+                    reason,
+                    pointer,
+                    message,
+                }),
+            }],
+            total: None,
+            content_type: None,
+        }))
+    }
+
     /// HTTP status for this error. Total over the variants, so every new variant must choose.
     pub fn status(&self) -> StatusCode {
         match self {
@@ -586,6 +682,8 @@ impl ApiError {
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
+            | Self::StalePlan { .. }
+            | Self::StaleStages { .. }
             | Self::GenerationMoved { .. }
             | Self::StaleRole { .. }
             | Self::RoleInUse { .. }
@@ -596,7 +694,10 @@ impl ApiError {
             Self::RateLimited { .. } | Self::TooManyRequests { .. } => {
                 StatusCode::TOO_MANY_REQUESTS
             }
-            Self::Unavailable(_) | Self::Busy => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Unavailable(_)
+            | Self::Busy
+            | Self::WorkFull { .. }
+            | Self::PayloadFull { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -623,6 +724,8 @@ impl ApiError {
             | Self::StaleRevision { .. }
             | Self::StaleVersion { .. }
             | Self::StaleChangeset { .. }
+            | Self::StalePlan { .. }
+            | Self::StaleStages { .. }
             | Self::GenerationMoved { .. }
             | Self::StaleRole { .. }
             | Self::RoleInUse { .. }
@@ -631,7 +734,10 @@ impl ApiError {
             | Self::Taken(_)
             | Self::StillNeeded(_) => ErrorCode::Conflict,
             Self::RateLimited { .. } | Self::TooManyRequests { .. } => ErrorCode::RateLimited,
-            Self::Unavailable(_) | Self::Busy => ErrorCode::Unavailable,
+            Self::Unavailable(_)
+            | Self::Busy
+            | Self::WorkFull { .. }
+            | Self::PayloadFull { .. } => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
         }
@@ -650,6 +756,8 @@ impl ApiError {
             Self::StaleRevision { .. } => Some(ErrorDetails::new("stale_revision", "")),
             Self::StaleVersion { .. } => Some(ErrorDetails::new("stale_version", "")),
             Self::StaleChangeset { .. } => Some(ErrorDetails::new("stale_changeset", "")),
+            Self::StalePlan { .. } => Some(ErrorDetails::new("plan_moved", "")),
+            Self::StaleStages { .. } => Some(ErrorDetails::new("stale_stages", "")),
             Self::GenerationMoved { .. } => Some(ErrorDetails::new("generation_moved", "")),
             Self::StaleRole { .. } => Some(ErrorDetails::new("stale_role", "")),
             Self::RoleInUse { .. } => Some(ErrorDetails::new("role_in_use", "")),
@@ -662,6 +770,8 @@ impl ApiError {
                 ..ErrorDetails::new(reason, "")
             }),
             Self::Conflict { reason, .. } => Some(ErrorDetails::new(reason, "")),
+            Self::WorkFull { .. } => Some(ErrorDetails::new("work_full", "")),
+            Self::PayloadFull { .. } => Some(ErrorDetails::new("payload_full", "")),
             Self::TooManyRequests { .. } => Some(ErrorDetails::new("rate_limited", "")),
             Self::InvalidField {
                 reason, pointer, ..
@@ -702,6 +812,24 @@ impl ApiError {
             // Operators need to see saturation. Each of these waited out the acquire timeout,
             // so their rate is bounded by in-flight requests over that timeout.
             tracing::warn!(code, "request refused: no database connection free");
+        } else if let Self::WorkFull { open, limit } = self {
+            // A project at its work bound is saturation too — the kind an operator can act on
+            // (a stuck destination, a runaway import). Bounded by the request rate.
+            tracing::warn!(
+                code,
+                open,
+                limit,
+                "request refused: project work bound full"
+            );
+        } else if let Self::PayloadFull { pending, limit } = self {
+            // The installation's payload bound — saturation an operator can act on the same
+            // way (D-135). Bounded by the request rate.
+            tracing::warn!(
+                code,
+                pending,
+                limit,
+                "request refused: installation payload bound full"
+            );
         } else {
             // A client's mistake: worth a debug line, never a page.
             tracing::debug!(code, error = %self, "request rejected");
@@ -724,6 +852,11 @@ fn error_chain(error: &(dyn StdError + 'static)) -> String {
 /// Seconds a client should wait before retrying a [`ApiError::Busy`] request.
 pub const BUSY_RETRY_AFTER_SECONDS: u32 = 1;
 
+/// Seconds a client should wait before retrying a [`ApiError::WorkFull`] refusal. Longer than
+/// `Busy`'s: a pool's wait is milliseconds, an open job drains in seconds (a wedged
+/// destination up to its 10-second attempt deadline).
+pub const WORK_FULL_RETRY_AFTER_SECONDS: u32 = 5;
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         self.log();
@@ -733,6 +866,12 @@ impl IntoResponse for ApiError {
                 response.headers_mut().insert(
                     header::RETRY_AFTER,
                     HeaderValue::from(BUSY_RETRY_AFTER_SECONDS),
+                );
+            }
+            Self::WorkFull { .. } | Self::PayloadFull { .. } => {
+                response.headers_mut().insert(
+                    header::RETRY_AFTER,
+                    HeaderValue::from(WORK_FULL_RETRY_AFTER_SECONDS),
                 );
             }
             // Nothing keeps a removal: if the entry is published again, no cache must still say
@@ -752,7 +891,9 @@ impl IntoResponse for ApiError {
                     response.headers_mut().insert(header::ETAG, etag);
                 }
             }
-            Self::StaleChangeset { current } => {
+            Self::StaleChangeset { current }
+            | Self::StalePlan { current }
+            | Self::StaleStages { current } => {
                 if let Ok(etag) = HeaderValue::from_str(&format!("\"{current}\"")) {
                     response.headers_mut().insert(header::ETAG, etag);
                 }
@@ -892,6 +1033,26 @@ mod tests {
         let public = conflict.public();
         assert_eq!(public.message, "this changeset has already been published");
         assert_eq!(public.details.expect("details").reason, "already_published");
+    }
+
+    #[test]
+    fn a_full_project_refuses_as_unavailable_work_full() {
+        // The bound's refusal is a typed 503 a client retries after — not a 500, and never a
+        // 2xx with the job dropped (D-131, F09).
+        let error = ApiError::WorkFull {
+            open: 10_000,
+            limit: 10_000,
+        };
+        assert_eq!(error.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(error.code().as_str(), "unavailable");
+        let public = error.public();
+        assert_eq!(public.details.expect("details").reason, "work_full");
+        assert!(public.message.contains("10000 of 10000"));
+        let response = error.into_response();
+        assert_eq!(
+            response.headers()[header::RETRY_AFTER],
+            HeaderValue::from(WORK_FULL_RETRY_AFTER_SECONDS)
+        );
     }
 
     #[test]

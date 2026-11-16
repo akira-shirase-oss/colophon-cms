@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH doomed AS (\n             SELECT project_id, id FROM budget_reservations\n             WHERE state IN ('settled', 'released') AND settled_at < $1\n             ORDER BY settled_at\n             LIMIT $2)\n         DELETE FROM budget_reservations r USING doomed d\n         WHERE r.project_id = d.project_id AND r.id = d.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ba0c52161ba8a2d6ff4345c7ca929193b740eaa61ba733f70b1fc692c47809e8"
+}

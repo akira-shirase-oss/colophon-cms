@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audience_magic_links (project_id, id, email, token_hash, return_to, expires_at)\n         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Bytea",
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4857a89a0cca0ef7934f3d0efe714faa1558ab06aa739a9c620d01f6765a3097"
+}

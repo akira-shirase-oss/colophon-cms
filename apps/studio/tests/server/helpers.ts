@@ -3,32 +3,34 @@
 import AxeBuilder from '@axe-core/playwright';
 import { type Browser, expect, type Page } from '@playwright/test';
 
-/** Completes the local Keycloak's sign-in form, wherever the page sent us to it. */
-export async function keycloak(page: Page, user = 'dev-owner') {
-	await page.locator('#username').fill(user);
-	await page.locator('#password').fill('colophon-dev');
-	await page.locator('#kc-login').click();
+/** Fills the built-in password card on this page and submits it (D-146). */
+export async function password(page: Page, user = 'dev-owner') {
+	await page.locator('#auth-email').fill(`${user}@colophon.test`);
+	await page.locator('#auth-password').fill('colophon-dev');
+	await page.getByTestId('password-submit').click();
 }
 
 /** Signs in from the Studio's home page. */
 export async function signIn(page: Page, user = 'dev-owner') {
 	await page.goto('/studio/');
-	await page.getByTestId('sign-in').click();
-	await keycloak(page, user);
+	await password(page, user);
 	await expect(page.getByTestId('signed-in')).toBeVisible();
 }
 
 /** A fresh project, created through the API as the signed-in page; its id. */
-export async function newProject(page: Page): Promise<string> {
-	return page.evaluate(async (slug) => {
-		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
-		const response = await fetch('/api/v1/projects', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
-			body: JSON.stringify({ slug, name: 'Studio test' })
-		});
-		return ((await response.json()) as { data: { id: string } }).data.id;
-	}, `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`);
+export async function newProject(page: Page, name = 'Studio test'): Promise<string> {
+	return page.evaluate(
+		async ({ slug, name }) => {
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const response = await fetch('/api/v1/projects', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+				body: JSON.stringify({ slug, name })
+			});
+			return ((await response.json()) as { data: { id: string } }).data.id;
+		},
+		{ slug: `st-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, name }
+	);
 }
 
 /** Accessibility problems on the page, one line per rule and element, so a failure says what. */
@@ -193,4 +195,90 @@ export async function newContentType(page: Page, project: string, name: string, 
 	await page.getByTestId('create').click();
 	await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
 	await expect(page.getByTestId('field-title')).toBeVisible();
+}
+
+/** The seconds `zone` sits east of UTC at `instant` (ms), via Intl. */
+function offsetSeconds(zone: string, instant: number): number {
+	const parts = new Intl.DateTimeFormat('en-US', {
+		timeZone: zone,
+		hourCycle: 'h23',
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+	}).formatToParts(new Date(instant));
+	const field = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value);
+	const asUtc = Date.UTC(field('year'), field('month') - 1, field('day'), field('hour'), field('minute'), field('second'));
+	return Math.round((asUtc - instant) / 1000);
+}
+
+/**
+ * A local time the clocks show twice within `days` days of `now` (ms), across zones that fall back
+ * sometime in the year: (zone, date, time, earlier instant, later instant, each one's zone
+ * abbreviation as the Studio renders it). `null` when no backward clock change fits the window —
+ * some stretches of the year have none.
+ */
+export function nextAmbiguous(now: number, days: number): {
+	zone: string;
+	date: string;
+	time: string;
+	earlier: string;
+	later: string;
+	abbreviations: [string, string];
+} | null {
+	const zones = [
+		'America/New_York',
+		'America/Santiago',
+		'Australia/Lord_Howe',
+		'Pacific/Auckland',
+		'Pacific/Fiji',
+		'Africa/Casablanca',
+		'Europe/London',
+		'America/Nuuk',
+		'America/Havana',
+		'Asia/Gaza',
+		'Australia/Sydney',
+		'America/Asuncion',
+	];
+	const horizon = now + days * 24 * 60 * 60 * 1000;
+	for (const zone of zones) {
+		// Probe hour by hour for an offset change, then close in to the minute.
+		for (let at = now; at < horizon; at += 60 * 60 * 1000) {
+			if (offsetSeconds(zone, at) === offsetSeconds(zone, Math.min(at + 60 * 60 * 1000, horizon))) continue;
+			let lo = at;
+			let hi = at + 60 * 60 * 1000;
+			while (hi - lo > 60_000) {
+				const mid = Math.floor((lo + hi) / 2 / 60_000) * 60_000;
+				if (offsetSeconds(zone, mid) === offsetSeconds(zone, lo)) lo = mid;
+				else hi = mid;
+			}
+			if (hi > horizon) break;
+			const before = offsetSeconds(zone, hi - 1000);
+			const after = offsetSeconds(zone, hi);
+			if (after >= before) continue;
+			// The clocks go back at hi: local times [hi + after, hi + before) happen twice. A whole
+			// minute inside is the local time asked for; the two instants it can mean are it minus
+			// each offset.
+			const mid = hi + (after + (before - after) / 2) * 1000;
+			const localAt = mid - (mid % 60_000);
+			const local = new Date(localAt).toISOString();
+			const instant = (at: number) => new Date(at).toISOString().slice(0, 19) + 'Z';
+			const abbreviation = (at: number) =>
+				new Intl.DateTimeFormat('en-US', { timeZone: zone, timeStyle: 'long' })
+					.formatToParts(new Date(at))
+					.find((part) => part.type === 'timeZoneName')?.value ?? '';
+			const [earlier, later] = [localAt - before * 1000, localAt - after * 1000];
+			return {
+				zone,
+				date: local.slice(0, 10),
+				time: local.slice(11, 16),
+				earlier: instant(earlier),
+				later: instant(later),
+				abbreviations: [abbreviation(earlier), abbreviation(later)],
+			};
+		}
+	}
+	return null;
 }

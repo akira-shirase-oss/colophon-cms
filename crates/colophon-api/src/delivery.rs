@@ -3,7 +3,16 @@
 //! at all. No sign-in: published content is public.
 //!
 //! - `GET /content/v1/{project}/{environment}/{collection}?generation=&limit=&cursor=`;
-//! - `GET /content/v1/{project}/{environment}/{collection}/{entry}?generation=`.
+//! - `GET /content/v1/{project}/{environment}/{collection}/{entry}?generation=`;
+//! - `POST /content/v1/{project}/{environment}/{collection}/query?generation=&cursor=`
+//!   (DX.4): the query language over the published projection — the same document the
+//!   draft route takes, the same `applied` echo, answered from `publications`, never
+//!   drafts. `depth` populates references (DX.5, D-107): each level's targets are the
+//!   publications pinned at the page's own generation, resolved inside the fill's
+//!   transaction — so a populated reference reads exactly the release its row does, and
+//!   a publication that doesn't resolve at it stays the stored id. A query page's cache
+//!   key names the query's own hash — the normalized query — so two different queries
+//!   can never share an answer (spec §15).
 //!
 //! Without `generation`, reads are at the latest release; with it, pinned to that release, as it
 //! was. Every answer names its generation in `Colophon-Generation`, and a list's cursor carries
@@ -21,24 +30,29 @@
 //! it out and a read of it is 410 `gone`, uncached. Cache keys name the environment's latest
 //! unpublish, so answers cached before it are never served again.
 
-use std::future::Future;
+use std::{collections::BTreeSet, future::Future};
 
 use axum::{
-    extract::{Path, Query, State},
+    Json,
+    extract::{Path, Query, State, rejection::JsonRejection},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use colophon_db::delivery::{self, Published};
-use colophon_domain::cache::Scope;
+use colophon_db::{
+    content_types,
+    delivery::{self, Audience, Published},
+    query as db_query,
+};
+use colophon_domain::{cache::Scope, query::Query as Document};
 use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
+use serde_json::{Value, value::RawValue};
 use uuid::Uuid;
 
 use crate::{
-    ApiError, AppState, Services,
+    ApiError, AppState, Services, audience,
     cache::{Cached, Filled, Refused},
-    entries::{json, sha256},
+    entries::{AppliedQuery, json, narrow, sha256},
     session::services,
     shape::{Data, Page},
 };
@@ -54,6 +68,10 @@ pub(crate) const CACHE_TAG: HeaderName = HeaderName::from_static("cache-tag");
 const LATEST: &str = "public, max-age=0, must-revalidate, s-maxage=30";
 /// Module 06: generation-pinned content may be shared for 300 seconds.
 const PINNED: &str = "public, max-age=0, must-revalidate, s-maxage=300";
+/// D-137: a member read is theirs alone — the browser may hold it but must revalidate, and no
+/// shared cache may store it. The generation-keyed cache is the anonymous audience's; a gated
+/// row must never enter it.
+const MEMBER: &str = "private, no-cache";
 
 const DEFAULT_PAGE: i64 = 20;
 
@@ -79,6 +97,15 @@ pub(crate) struct ReadQuery {
     cursor: Option<String>,
 }
 
+/// The `?generation=` and `?cursor=` a delivery query takes (DX.4): the release pin and
+/// the page boundary travel outside the document, which the validator holds to its own
+/// keys — `limit` among them, the document's own, not a parameter's.
+#[derive(Deserialize)]
+pub(crate) struct QueryParams {
+    generation: Option<i64>,
+    cursor: Option<String>,
+}
+
 #[derive(Serialize)]
 pub(crate) struct PublishedView {
     id: Uuid,
@@ -92,6 +119,9 @@ pub(crate) struct PublishedView {
     content_hash: String,
     /// The release it was published in.
     published_in: i64,
+    /// Who may read it (D-137): a site that caches pages needs to know which answers are
+    /// member-only even before it signs anyone in.
+    visibility: String,
 }
 
 impl PublishedView {
@@ -105,6 +135,7 @@ impl PublishedView {
             content: RawValue::from_string(row.content).map_err(ApiError::internal)?,
             content_hash: crate::entries::content_hash(&row.content_hash),
             published_in: row.valid_from,
+            visibility: row.visibility,
         })
     }
 }
@@ -176,6 +207,20 @@ fn after_cursor(path: &CollectionPath, project: Uuid, text: &str) -> Result<(i64
         .ok_or(ApiError::InvalidHeader(
             "this cursor is not valid for this list",
         ))
+}
+
+/// A query cursor's envelope `q1:<generation>:<v1 token>`: the release its first page
+/// read at, then the query-bound position the domain sealed — what
+/// `Query::after_cursor` refuses (`foreign_cursor` and the rest) stays this query's own
+/// refusal, inside an envelope that isn't.
+fn after_query_cursor(text: &str) -> Result<(i64, &str), ApiError> {
+    let foreign = || ApiError::InvalidHeader("this cursor is not valid for this query");
+    let Some(rest) = text.strip_prefix("q1:") else {
+        return Err(foreign());
+    };
+    rest.split_once(':')
+        .and_then(|(generation, inner)| generation.parse().ok().map(|g| (g, inner)))
+        .ok_or_else(foreign)
 }
 
 /// A strong `ETag` for `body`: the first half of its SHA-256. The generation isn't part of it,
@@ -281,6 +326,48 @@ where
     Ok(response)
 }
 
+/// A member's answer: `fill` reads Postgres as their role, every time — the shared
+/// generation-keyed cache is the anonymous audience's, so a gated row is never served to,
+/// or stored for, another visitor (D-137). The answer still carries an `ETag` over the
+/// member's own body, and `private` marks what no shared cache may keep.
+async fn serve_member<F, Fut>(
+    request: &HeaderMap,
+    generation: i64,
+    fill: F,
+) -> Result<Response, ApiError>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<Read, ApiError>>,
+{
+    let answer = match fill().await? {
+        Read::Found(answer) => answer,
+        Read::Missing => return Err(ApiError::NotFound),
+        Read::Gone => return Err(ApiError::Gone),
+    };
+    let tag = etag(&answer.body);
+    let unchanged = request
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| none_match(value, &tag));
+    let mut response = if unchanged {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        json(StatusCode::OK, answer.body, None, false)
+    };
+    let headers = response.headers_mut();
+    headers.insert(GENERATION, HeaderValue::from(generation));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(MEMBER));
+    headers.insert(
+        header::VARY,
+        HeaderValue::from_static("Authorization, Cookie"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&tag) {
+        headers.insert(header::ETAG, value);
+    }
+    headers.insert(CACHE, HeaderValue::from_static("bypass"));
+    Ok(response)
+}
+
 /// `GET /content/v1/{project}/{environment}/{collection}`.
 pub(crate) async fn list(
     State(state): State<AppState>,
@@ -311,6 +398,9 @@ pub(crate) async fn list(
             query.generation.is_some(),
         ),
     };
+    // Who the read is for: a live site session makes it a member's, reading as its role
+    // (D-137) — otherwise anonymous, which the generation-keyed cache is for.
+    let audience = audience::reader(services, project, &request).await?;
     let scope = Scope {
         project: project.as_u128(),
         environment: environment.id.as_u128(),
@@ -320,18 +410,13 @@ pub(crate) async fn list(
     };
     let key = scope.list_key(&path.collection, limit, before.as_ref().map(Uuid::as_u128));
     let tags = scope.list_tags(&path.collection);
-    serve(
-        services,
-        &request,
-        &key,
-        &tags,
-        generation,
-        pinned,
-        || async {
+    let fill = || {
+        let audience = &audience;
+        async move {
             let mut rows = if generation == 0 {
                 Vec::new()
             } else {
-                let mut tx = delivery::begin(&services.pool, project)
+                let mut tx = delivery::begin(&services.pool, project, audience)
                     .await
                     .map_err(ApiError::from_db)?;
                 let rows = tx
@@ -364,9 +449,12 @@ pub(crate) async fn list(
             let body =
                 serde_json::to_string(&Page { data, next_cursor }).map_err(ApiError::internal)?;
             Ok(Read::Found(Answer { body, empty }))
-        },
-    )
-    .await
+        }
+    };
+    if matches!(audience, Audience::Member { .. }) {
+        return serve_member(&request, generation, fill).await;
+    }
+    serve(services, &request, &key, &tags, generation, pinned, fill).await
 }
 
 /// `GET /content/v1/{project}/{environment}/{collection}/{entry}`.
@@ -384,6 +472,8 @@ pub(crate) async fn get(
     if generation == 0 {
         return Err(ApiError::NotFound);
     }
+    // Who the read is for (D-137), as in `list`.
+    let audience = audience::reader(services, project, &request).await?;
     let scope = Scope {
         project: project.as_u128(),
         environment: environment.id.as_u128(),
@@ -394,15 +484,10 @@ pub(crate) async fn get(
     let key = scope.entry_key(&path.collection, entry.as_u128());
     let tags = scope.entry_tags(&path.collection, entry.as_u128());
     let pinned = query.generation.is_some();
-    serve(
-        services,
-        &request,
-        &key,
-        &tags,
-        generation,
-        pinned,
-        || async {
-            let mut tx = delivery::begin(&services.pool, project)
+    let fill = || {
+        let audience = &audience;
+        async move {
+            let mut tx = delivery::begin(&services.pool, project, audience)
                 .await
                 .map_err(ApiError::from_db)?;
             let found = tx
@@ -425,9 +510,191 @@ pub(crate) async fn get(
             })
             .map_err(ApiError::internal)?;
             Ok(Read::Found(Answer { body, empty: false }))
-        },
+        }
+    };
+    if matches!(audience, Audience::Member { .. }) {
+        return serve_member(&request, generation, fill).await;
+    }
+    serve(services, &request, &key, &tags, generation, pinned, fill).await
+}
+
+/// The page a `POST …/query` answers with: the published rows, and `applied`, the
+/// query's own name — the canonical document and the hash its cursors and cache key
+/// bind to (D-103).
+#[derive(Serialize)]
+struct QueryPage {
+    data: Vec<PublishedView>,
+    next_cursor: Option<String>,
+    applied: AppliedQuery,
+}
+
+/// `POST /content/v1/{project}/{environment}/{collection}/query` — the query language
+/// over the published projection (DX.4, D-103): the same document the draft route
+/// takes, validated against the collection's content type, answered as
+/// `colophon_delivery` from `publications` pinned at the generation — never drafts.
+/// `depth` populates references (DX.5, D-107): each level's targets resolve under the
+/// same pin, inside the fill's transaction.
+///
+/// A cursor is `q1:<generation>:<v1 token>`: the generation its first page read at —
+/// so paging a query, like paging a list, never mixes two releases — and the position
+/// the domain sealed to this query. `?generation=` names the release without one.
+///
+/// The definition lives outside the delivery role's reach — it must, or the role could
+/// read management tables — so the read that validates the document runs as the API
+/// role in the project's context, before the cache key exists: the query's own hash is
+/// the key's normalized query (spec §15), so validation must precede it.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one request's own sequence: pin, define, validate, key, fill"
+)]
+pub(crate) async fn query(
+    State(state): State<AppState>,
+    Path(path): Path<CollectionPath>,
+    Query(parameters): Query<QueryParams>,
+    request: HeaderMap,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let Json(document) = body?;
+    let services = services(&state)?;
+    let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
+    let environment = resolve(services, project, &path.environment).await?;
+    // A cursor's page is pinned to the generation of its first page, like `?generation=`.
+    let (generation, inner) = match parameters.cursor.as_deref() {
+        Some(text) => {
+            let (generation, inner) = after_query_cursor(text)?;
+            (at(Some(generation), environment.generation)?, Some(inner))
+        }
+        None => (at(parameters.generation, environment.generation)?, None),
+    };
+    let pinned = parameters.generation.is_some() || parameters.cursor.is_some();
+    // The collection's current definition — as the API role, since `colophon_delivery`
+    // may not read it. An unknown collection is 404, like an empty list's.
+    let definition = content_types::current_definition(
+        &services.pool,
+        project,
+        environment.id,
+        &path.collection,
     )
     .await
+    .map_err(ApiError::from_db)?
+    .ok_or(ApiError::NotFound)?;
+    let content_type = services.content_types.parse(&definition)?;
+    let language = Document::validate(&content_type, &document).map_err(ApiError::Invalid)?;
+    let after = inner
+        .map(|token| language.after_cursor(token))
+        .transpose()
+        .map_err(ApiError::Invalid)?;
+    // A position's literals must be ones their fields could hold — checked before the
+    // cache's shared fill, where a refusal would come back as an internal error.
+    if let Some(position) = &after {
+        db_query::check_position(&content_type, &language, position).map_err(
+            |error| match error {
+                db_query::Error::Cursor(refusal) => ApiError::Invalid(refusal),
+                db_query::Error::Db(error) => ApiError::from_db(error),
+            },
+        )?;
+    }
+    // The key's boundary is the canonical position re-sealed into the envelope — not
+    // the request's own spelling — so one page has one key however `?cursor=` came.
+    let cursor = after
+        .as_ref()
+        .map(|position| language.cursor(position))
+        .transpose()
+        .map_err(ApiError::Invalid)?
+        .map(|inner| format!("q1:{generation}:{inner}"));
+    // Who the read is for (D-137), as in `list`.
+    let audience = audience::reader(services, project, &request).await?;
+    let scope = Scope {
+        project: project.as_u128(),
+        environment: environment.id.as_u128(),
+        epoch: environment.epoch,
+        generation,
+        unpublished: environment.last_unpublish,
+    };
+    let key = scope.query_key(&path.collection, &language.query_hash(), cursor.as_deref());
+    let tags = scope.list_tags(&path.collection);
+    let fill = || {
+        let audience = &audience;
+        async move {
+            let depth = language.depth();
+            let keep = language.fields();
+            let mut resolved = crate::populate::Resolved::default();
+            let found = if generation == 0 {
+                db_query::PublishedPage {
+                    rows: Vec::new(),
+                    next_cursor: None,
+                }
+            } else {
+                let mut tx = delivery::begin(&services.pool, project, audience)
+                    .await
+                    .map_err(ApiError::from_db)?;
+                let mut found = db_query::published_page(
+                    &mut tx,
+                    environment.id,
+                    &path.collection,
+                    &content_type,
+                    &language,
+                    after.as_ref(),
+                    generation,
+                )
+                .await
+                .map_err(|error| match error {
+                    db_query::Error::Db(error) => ApiError::from_db(error),
+                    // `check_position` refused a bad cursor above; reaching this is a bug.
+                    db_query::Error::Cursor(refusal) => ApiError::internal(refusal),
+                })?;
+                // Narrow each row to `fields`, then collect the ids `depth` expands and
+                // resolve them — inside the pin's transaction, so every level reads the
+                // same snapshot, pinned at the page's own generation.
+                let mut wanted = BTreeSet::new();
+                for row in &mut found.rows {
+                    if let Some(keep) = keep {
+                        row.content = narrow(&row.content, keep)?;
+                    }
+                    if depth > 0 {
+                        crate::populate::collect_wanted(&content_type, &row.content, &mut wanted)?;
+                    }
+                }
+                if !wanted.is_empty() {
+                    resolved = crate::populate::resolve_publications(
+                        services,
+                        &mut tx,
+                        project,
+                        environment.id,
+                        &wanted,
+                        generation,
+                        depth,
+                    )
+                    .await?;
+                }
+                tx.finish().await.map_err(ApiError::from_db)?;
+                found
+            };
+            let data = found
+                .rows
+                .into_iter()
+                .map(|mut row| {
+                    row.content =
+                        crate::populate::expand_document(&content_type, &row.content, &resolved)?;
+                    PublishedView::new(row)
+                })
+                .collect::<Result<Vec<_>, ApiError>>()?;
+            let empty = data.is_empty();
+            let body = serde_json::to_string(&QueryPage {
+                data,
+                next_cursor: found
+                    .next_cursor
+                    .map(|inner| format!("q1:{generation}:{inner}")),
+                applied: AppliedQuery::of(&language)?,
+            })
+            .map_err(ApiError::internal)?;
+            Ok(Read::Found(Answer { body, empty }))
+        }
+    };
+    if matches!(audience, Audience::Member { .. }) {
+        return serve_member(&request, generation, fill).await;
+    }
+    serve(services, &request, &key, &tags, generation, pinned, fill).await
 }
 
 #[cfg(test)]
@@ -468,6 +735,23 @@ mod tests {
         };
         assert!(after_cursor(&elsewhere, project, &token).is_err());
         assert!(after_cursor(&elsewhere, project, "not-a-cursor").is_err());
+    }
+
+    #[test]
+    fn a_query_cursor_names_its_generation_and_keeps_the_domains_token() {
+        assert_eq!(
+            after_query_cursor("q1:7:v1x2hhc2hlYQ==").ok(),
+            Some((7, "v1x2hhc2hlYQ=="))
+        );
+        for bad in [
+            "v1:abc:W10=",      // the domain's own token, without the envelope
+            "d1:p:e:c:7:entry", // a list's cursor
+            "q1:x:token",       // a generation that isn't a number
+            "q1:7",             // no token at all
+            "",
+        ] {
+            assert!(after_query_cursor(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

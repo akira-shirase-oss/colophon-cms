@@ -29,7 +29,7 @@
 		entry: string;
 		/** The draft has changes since the published version. */
 		changed: boolean;
-		/** What the type calls each entry (D-082): "Title", "Name". */
+		/** What the type calls each entry (D-147): "Title", "Name". */
 		titleLabel?: string;
 	} = $props();
 

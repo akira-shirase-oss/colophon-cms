@@ -5,7 +5,7 @@
 // screenshots of the builder and the editor.
 
 import { expect, type Page, test } from '@playwright/test';
-import { addField, newProject, saveBuilder, signIn, violations } from './helpers.ts';
+import { addField, applyField, newContentType, newProject, saveBuilder, signIn, startField, violations } from './helpers.ts';
 
 const shots = process.env['STUDIO_SHOTS_DIR'];
 async function shot(page: Page, name: string) {
@@ -79,6 +79,72 @@ test('an owner builds a content type in Content types, and its entries get URL n
 	await page.getByLabel('URL name (optional)').fill('lemon-tart');
 	await expect(status(page)).toHaveAttribute('data-status', 'refused');
 	await expect(status(page)).toContainText('another entry already uses this URL name (“Lemon tart”)');
+});
+
+test('an empty collection can be deleted from its page, and a held one says why', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const base = `/api/v1/projects/${project}/environments/production`;
+	const notes = {
+		slug: 'notes',
+		definition: { name: 'Notes', title_field: 'title', fields: [{ id: 'title', label: 'Title', type: 'text', required: true }] }
+	};
+	expect((await api(page, 'POST', `${base}/content-types`, notes)).status).toBe(201);
+	const entry = await api(page, 'POST', `${base}/collections/notes/entries`, { title: 'Kept' });
+	expect(entry.status).toBe(201);
+
+	// While it holds an entry the page says why, and nothing is deleted.
+	await page.goto(`/studio/projects/${project}/settings/types/notes`);
+	await page.getByTestId('delete-type').click();
+	await page.getByTestId('delete-type-confirm').click();
+	await expect(page.getByTestId('delete-type-refusal')).toContainText('still has 1 entry');
+	expect((await api(page, 'GET', `${base}/content-types/notes`)).status).toBe(200);
+
+	// An empty one goes: two clicks, a toast, and the list no longer shows it.
+	const clippings = { slug: 'clippings', definition: { ...notes.definition, name: 'Clippings' } };
+	expect((await api(page, 'POST', `${base}/content-types`, clippings)).status).toBe(201);
+	await page.goto(`/studio/projects/${project}/settings/types/clippings`);
+	await page.getByTestId('delete-type').click();
+	await page.getByTestId('delete-type-confirm').click();
+	await expect(page).toHaveURL(`/studio/projects/${project}/settings/types`);
+	await expect(page.getByText('Deleted Clippings')).toBeVisible();
+	await expect(page.getByTestId('builder-type-clippings')).toHaveCount(0);
+	expect((await api(page, 'GET', `${base}/content-types/clippings`)).status).toBe(404);
+});
+
+test('a reference field can be mirrored by a field on the other side (D-085)', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const base = `/api/v1/projects/${project}/environments/production`;
+	// Writers first, with the field that will keep its side of the link.
+	const writers = {
+		slug: 'writers',
+		definition: {
+			name: 'Writers',
+			title_field: 'name',
+			fields: [
+				{ id: 'name', label: 'Name', type: 'text', required: true },
+				{ id: 'posts', label: 'Posts', type: 'reference', to: 'posts', many: true, max: 10 }
+			]
+		}
+	};
+	expect((await api(page, 'POST', `${base}/content-types`, writers)).status).toBe(201);
+
+	await newContentType(page, project, 'Posts');
+	const dialog = await startField(page, 'Writer', 'reference');
+	await dialog.getByLabel('Links to').selectOption({ label: 'Writers' });
+	// Only the fields that point back are offered: Writers' text field isn't one.
+	const mirror = dialog.getByTestId('inverse');
+	await expect(mirror.getByRole('option')).toHaveText(['No field', 'Posts']);
+	await mirror.selectOption({ label: 'Posts' });
+	await applyField(page);
+	expect(await violations(page)).toEqual([]);
+	await saveBuilder(page);
+	await expect(page.getByText('Saved Posts, version 2')).toBeVisible();
+
+	const saved = await api(page, 'GET', `${base}/content-types/posts`);
+	const fields = (saved.body['data'] as { definition: { fields: Record<string, unknown>[] } }).definition.fields;
+	expect(fields[1]).toMatchObject({ id: 'writer', type: 'reference', to: 'writers', inverse: 'posts' });
 });
 
 test('a change that would break a saved entry is refused naming it, and goes through once it is fixed', async ({ page }) => {

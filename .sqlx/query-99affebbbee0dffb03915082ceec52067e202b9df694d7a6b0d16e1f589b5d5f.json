@@ -1,0 +1,49 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO entries (project_id, environment_id, id, collection, draft_revision_id, draft_slug, draft_title, created_by, single, locale, draft_visibility)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8,\n                 -- Single types (D-067): the current version's flag, held still by the caller's\n                 -- shared lock on the content type. `entries_single` refuses a second entry.\n                 coalesce((SELECT (v.definition::jsonb ->> 'single')::boolean\n                           FROM content_type_versions v\n                           WHERE v.project_id = $1 AND v.environment_id = $2 AND v.collection = $4\n                           ORDER BY v.version DESC LIMIT 1), false),\n                 $9, $10)\n         RETURNING created_at, updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Text",
+        "Text",
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "99affebbbee0dffb03915082ceec52067e202b9df694d7a6b0d16e1f589b5d5f"
+}

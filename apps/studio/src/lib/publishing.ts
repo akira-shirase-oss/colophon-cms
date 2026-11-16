@@ -33,6 +33,9 @@ export interface Keys {
 
 export const newKeys = (): Keys => ({ request: newKey(), publish: newKey() });
 
+/** "a", "a and b", "a, b and c". */
+const join = (names: string[]) => (names.length <= 2 ? names.join(' and ') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
 export async function publishInOneClick(options: {
 	project: string;
 	title: string;
@@ -63,10 +66,31 @@ export async function publishInOneClick(options: {
 		if (!oneClick) return { kind: 'requested', request: made.id, unpublish: takingDown };
 		if (made.status.state === 'awaiting_review') {
 			step('Approving it…');
-			made = await changesetAction(project, made.id, made.hash, 'reviews', {
-				decision: 'approve',
-				comment: 'Approved and published in one step.'
-			});
+			if (made.stages.length === 0) {
+				made = await changesetAction(project, made.id, made.hash, 'reviews', {
+					decision: 'approve',
+					comment: 'Approved and published in one step.'
+				});
+			} else {
+				// With a workflow (D-104) every stage needs an approval on this hash; a
+				// different-reviewer stage never counts the sender's own, so those wait for
+				// someone else rather than collecting a review that can't count.
+				for (const stage of made.stages.filter((stage) => !stage.different_reviewer && stage.state !== 'approved')) {
+					made = await changesetAction(project, made.id, made.hash, 'reviews', {
+						decision: 'approve',
+						comment: 'Approved and published in one step.',
+						stage: stage.key
+					});
+				}
+				if (made.status.state !== 'approved') {
+					const waiting = made.stages.filter((stage) => stage.state !== 'approved').map((stage) => stage.name);
+					return {
+						kind: 'stopped',
+						message: `It still needs approval at ${join(waiting)} — someone other than whoever sent it for review has to decide ${waiting.length === 1 ? 'it' : 'them'}.`,
+						request: made.id
+					};
+				}
+			}
 		}
 		step('Publishing…');
 		const base = options.seenGeneration ?? (await listReleases(project)).generation;

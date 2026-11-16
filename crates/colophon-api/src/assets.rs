@@ -1,0 +1,762 @@
+//! Uploads (docs/modules/07-media.md). `POST …/assets` takes the bytes themselves: the server
+//! writes them to a random quarantine key, then records the asset and its verify job in one
+//! transaction — `202` means accepted for checking, nothing more (truthful states). The object
+//! lands before the transaction opens so no transaction ever spans an object-store call; an
+//! upload whose record never commits leaves an orphan quarantine object, which is never served
+//! and is what the expiry job (P6) exists for.
+//!
+//! `GET …/assets` lists them and `GET …/assets/{asset}` reads one, for the picker's list and
+//! for clients polling `quarantined` → `usable`/`rejected`.
+
+use axum::{
+    body::Bytes,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode, header},
+    response::Response,
+};
+use object_store::ObjectStoreExt;
+use serde::Deserialize;
+use serde_json::json;
+use uuid::Uuid;
+
+use colophon_db::{assets, idempotency, scope::ProjectTransaction};
+use colophon_domain::policy::{Action, Policy};
+use colophon_media::{Intent, IntentError, quarantine_key};
+
+use crate::{
+    ApiError,
+    entries::{idempotency_key, json, open, request_hash},
+    error::StillNeeded,
+    session::{SignedIn, services},
+    state::AppState,
+};
+
+/// Uploads are claimed under this operation.
+const UPLOAD: &str = "asset.upload";
+/// Byte replacements under this one (D-136).
+const REPLACE: &str = "asset.replace";
+/// Deletion requests under this one.
+const DELETE: &str = "asset.delete";
+
+/// The environment segment of an asset path.
+#[derive(Deserialize)]
+pub(crate) struct ListPath {
+    project: String,
+    environment: String,
+}
+
+/// One asset's path.
+#[derive(Deserialize)]
+pub(crate) struct OnePath {
+    project: String,
+    environment: String,
+    asset: String,
+}
+
+/// A rendition's path: the asset's, plus one more segment — a rendition name the worker wrote
+/// (`w320`), or a version's content sha pinning the original under it (D-136).
+#[derive(Deserialize)]
+pub(crate) struct RenditionPath {
+    project: String,
+    environment: String,
+    asset: String,
+    name: String,
+}
+
+/// A pinned version's rendition path: the asset's, the version's content sha, then the
+/// rendition name (D-136).
+#[derive(Deserialize)]
+pub(crate) struct VersionedPath {
+    project: String,
+    environment: String,
+    asset: String,
+    sha: String,
+    name: String,
+}
+
+/// `POST {P}/assets`: the upload's bytes as the body, its name and claimed type in headers.
+/// Answers `202` with the quarantined asset; the verify job decides what it becomes.
+pub(crate) async fn upload(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<ListPath>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let store = services(&state)?
+        .assets
+        .clone()
+        .ok_or(ApiError::Unavailable(
+            "uploads are not configured on this server",
+        ))?;
+    let key = idempotency_key(&headers)?;
+    let intent = read_intent(&headers, body.len() as u64)?;
+    // Who may upload and what the object's key is are reads: done and closed before the store
+    // sees a byte, so a refused call never leaves an object (and no transaction spans the
+    // write). Keys name the environment by id, as the public key does.
+    let seen = open(&state, caller, &path.project, &path.environment).await?;
+    // Assets belong to the project, not one collection: the whole-project form of the grant.
+    crate::members::require(
+        &seen.policy,
+        colophon_domain::policy::Action::ContentCreate,
+        None,
+        "your role can't add assets to this project",
+    )?;
+    let environment = seen.environment;
+    seen.commit().await.map_err(ApiError::from_db)?;
+    let asset = Uuid::now_v7();
+    let storage_name = format!("{asset}-{}", &Uuid::now_v7().simple().to_string()[..8]);
+    let quarantine_key = quarantine_key(&path.project, &environment.to_string(), &storage_name);
+    store
+        .put(
+            &object_store::path::Path::from(quarantine_key.clone()),
+            body.into(),
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error, "quarantine write failed");
+            ApiError::Unavailable("the object store refused the upload")
+        })?;
+    let hash = request_hash(&[
+        UPLOAD,
+        intent.file_name.as_str(),
+        intent.declared_type.as_str(),
+        &intent.size.to_string(),
+    ]);
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    match idempotency::claim(&mut tx, UPLOAD, key, &hash)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        idempotency::Claim::Fresh => {}
+        idempotency::Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+        idempotency::Claim::Replay { status, response } => {
+            return Ok(json(
+                StatusCode::from_u16(status).map_err(ApiError::internal)?,
+                response,
+                None,
+                true,
+            ));
+        }
+    }
+    let job = Uuid::now_v7();
+    let deadline = time::OffsetDateTime::now_utc()
+        + time::Duration::seconds(colophon_domain::job::LIFETIME_SECS);
+    assets::insert(
+        &mut tx,
+        asset,
+        &intent.file_name,
+        &intent.declared_type,
+        i64::try_from(intent.size).unwrap_or(i64::MAX),
+        &quarantine_key,
+        caller.identity,
+        job,
+        key,
+        deadline,
+    )
+    .await
+    .map_err(ApiError::from_db)?;
+    let response = serde_json::to_string(&json!({"data": {
+        "id": asset,
+        "state": "quarantined",
+        "file_name": intent.file_name,
+        "declared_type": intent.declared_type,
+        "size_bytes": intent.size,
+    }}))
+    .map_err(ApiError::internal)?;
+    idempotency::complete(&mut tx, UPLOAD, key, 202, &response)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(json(StatusCode::ACCEPTED, response, None, false))
+}
+
+/// The upload contract's two headers — the file's name and its claimed type — checked into an
+/// [`Intent`] against the body's size; uploads and replacements share it.
+fn read_intent(headers: &HeaderMap, size: u64) -> Result<Intent, ApiError> {
+    let file_name = headers
+        .get("x-colophon-file-name")
+        .and_then(|value| value.to_str().ok())
+        .ok_or(ApiError::InvalidHeader(
+            "uploads need an X-Colophon-File-Name header with the file's name",
+        ))?;
+    let declared = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .ok_or(ApiError::InvalidHeader(
+            "uploads need a Content-Type naming the claimed image type",
+        ))?;
+    Intent::new(file_name, declared, size).map_err(|error| field_error(&error))
+}
+
+/// `POST {P}/assets/{asset}/replace`: new bytes for an existing asset (D-136) — the same
+/// headers and body as an upload, but the verified bytes land at a new content-addressed key
+/// under the asset's prefix and the current version swings; the old version's objects stay
+/// where they are, so what a published release or a pinned URL serves never changes under it.
+/// `202` means the reverify job is queued; the asset keeps serving its current version until
+/// the verdict lands — a refused replacement changes nothing.
+pub(crate) async fn replace(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<OnePath>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let store = services(&state)?
+        .assets
+        .clone()
+        .ok_or(ApiError::Unavailable(
+            "uploads are not configured on this server",
+        ))?;
+    let key = idempotency_key(&headers)?;
+    let intent = read_intent(&headers, body.len() as u64)?;
+    let asset = Uuid::try_parse(&path.asset).map_err(|_| ApiError::NotFound)?;
+    // Same ordering as upload: permission and environment resolved and committed before the
+    // store sees a byte.
+    let seen = open(&state, caller, &path.project, &path.environment).await?;
+    crate::members::require(
+        &seen.policy,
+        colophon_domain::policy::Action::ContentUpdate,
+        None,
+        "your role can't replace assets in this project",
+    )?;
+    let environment = seen.environment;
+    seen.commit().await.map_err(ApiError::from_db)?;
+    // The replacement's quarantine key names the asset it replaces: the object's prefix lists
+    // what to remove if the asset goes first, and the job's row — not the asset's — holds the
+    // key so the first upload's quarantine record stays put.
+    let storage_name = format!("{asset}-{}", &Uuid::now_v7().simple().to_string()[..8]);
+    let quarantine_key = quarantine_key(&path.project, &environment.to_string(), &storage_name);
+    store
+        .put(
+            &object_store::path::Path::from(quarantine_key.clone()),
+            body.into(),
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error, "quarantine write failed");
+            ApiError::Unavailable("the object store refused the upload")
+        })?;
+    let hash = request_hash(&[
+        REPLACE,
+        &asset.to_string(),
+        intent.file_name.as_str(),
+        intent.declared_type.as_str(),
+        &intent.size.to_string(),
+    ]);
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    match idempotency::claim(&mut tx, REPLACE, key, &hash)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        idempotency::Claim::Fresh => {}
+        idempotency::Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+        idempotency::Claim::Replay { status, response } => {
+            return Ok(json(
+                StatusCode::from_u16(status).map_err(ApiError::internal)?,
+                response,
+                None,
+                true,
+            ));
+        }
+    }
+    queue_replace(tx, key, asset, &intent, &quarantine_key).await
+}
+
+/// `replace`'s committed half (D-136): the reverify job inside the idempotency claim, the
+/// audit entry and the recorded response. The asset itself reports why a state can't take a
+/// replacement.
+async fn queue_replace(
+    mut tx: ProjectTransaction,
+    key: &str,
+    asset: Uuid,
+    intent: &Intent,
+    quarantine_key: &str,
+) -> Result<Response, ApiError> {
+    let job = Uuid::now_v7();
+    let deadline = time::OffsetDateTime::now_utc()
+        + time::Duration::seconds(colophon_domain::job::LIFETIME_SECS);
+    match assets::request_replace(
+        &mut tx,
+        asset,
+        &assets::Replace {
+            quarantine_key,
+            declared_type: &intent.declared_type,
+            size_bytes: i64::try_from(intent.size).unwrap_or(i64::MAX),
+            job,
+            idempotency_key: key,
+            deadline_at: deadline,
+        },
+    )
+    .await
+    .map_err(ApiError::from_db)?
+    {
+        assets::ReplaceAsked::Unknown => Err(ApiError::NotFound),
+        assets::ReplaceAsked::Quarantined => Err(ApiError::conflict(
+            "asset_quarantined",
+            "this asset is still being verified; wait for it to settle, then replace it",
+        )),
+        assets::ReplaceAsked::Rejected => Err(ApiError::conflict(
+            "asset_rejected",
+            "a rejected upload has no version to replace — upload a new asset instead",
+        )),
+        assets::ReplaceAsked::Gone => Err(ApiError::conflict(
+            "already_deleted",
+            "this asset is already deleted or on its way out",
+        )),
+        assets::ReplaceAsked::Queued { asset: found } => {
+            let detail = json!({
+                "file_name": found.file_name,
+                "declared_type": intent.declared_type,
+                "size_bytes": intent.size,
+            })
+            .to_string();
+            colophon_db::audit::record_in(
+                &mut tx.transaction,
+                tx.project,
+                tx.identity,
+                "asset.replaced",
+                &asset.to_string(),
+                &detail,
+            )
+            .await
+            .map_err(ApiError::from_db)?;
+            let body = serde_json::to_string(&json!({"data": view(&found)}))
+                .map_err(ApiError::internal)?;
+            idempotency::complete(&mut tx, REPLACE, key, StatusCode::ACCEPTED.as_u16(), &body)
+                .await
+                .map_err(ApiError::from_db)?;
+            tx.commit().await.map_err(ApiError::from_db)?;
+            Ok(json(StatusCode::ACCEPTED, body, None, false))
+        }
+    }
+}
+
+/// `GET {P}/assets`: the environment's assets, newest first.
+pub(crate) async fn list(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<ListPath>,
+) -> Result<Response, ApiError> {
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_read(&tx)?;
+    let items = assets::list(&mut tx).await.map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(json(
+        StatusCode::OK,
+        serde_json::to_string(&json!({
+            "data": items.iter().map(view).collect::<Vec<_>>(),
+        }))
+        .map_err(ApiError::internal)?,
+        None,
+        false,
+    ))
+}
+
+/// `GET /media/v1/{project}/{environment}/{asset}`: the asset origin — the current version's
+/// verified bytes, publicly (media M5, D-136). `media_object` answers which key the row
+/// serves: a usable asset's `public_key`, nothing for anything else — quarantined, rejected,
+/// deleting and deleted assets are 404s even while their objects still sit in the store, and
+/// so is everything that never was. The stored `Content-Type` (written at promote) is served
+/// back, and the object is immutable by construction — a version's bytes never change — so it
+/// caches forever.
+pub(crate) async fn serve(
+    State(state): State<AppState>,
+    Path(path): Path<OnePath>,
+) -> Result<Response, ApiError> {
+    stream(
+        &state,
+        path.project,
+        path.environment,
+        path.asset,
+        None,
+        None,
+    )
+    .await
+}
+
+/// `GET /media/v1/{project}/{environment}/{asset}/{name}`: a rendition under the name the
+/// worker wrote (`w320`, `w1280`) — or, when the segment is a version's content sha, that
+/// pinned version's original (D-136). What a published release references resolves to the
+/// bytes it named, so rolling back serves the media the old release saw.
+pub(crate) async fn serve_rendition(
+    State(state): State<AppState>,
+    Path(path): Path<RenditionPath>,
+) -> Result<Response, ApiError> {
+    let (sha, name) = if colophon_media::is_version_sha(&path.name) {
+        (Some(path.name), None)
+    } else {
+        (None, Some(path.name))
+    };
+    stream(
+        &state,
+        path.project,
+        path.environment,
+        path.asset,
+        sha,
+        name,
+    )
+    .await
+}
+
+/// `GET /media/v1/{project}/{environment}/{asset}/{sha}/{name}`: a rendition of a pinned
+/// version — the worker wrote it under the version's key, and this serves it by the same
+/// address (D-136). `media_object` is the only check the sha needs: a value that isn't a
+/// version's digest matches no row and is a 404 exactly like an unknown asset.
+pub(crate) async fn serve_versioned(
+    State(state): State<AppState>,
+    Path(path): Path<VersionedPath>,
+) -> Result<Response, ApiError> {
+    stream(
+        &state,
+        path.project,
+        path.environment,
+        path.asset,
+        Some(path.sha),
+        Some(path.name),
+    )
+    .await
+}
+
+/// The origin's one read: `media_object` resolves the environment slug and picks the object
+/// key — the usable asset's current version, or the version `sha` pins — then the object
+/// streams back with its stored type and an immutable cache.
+async fn stream(
+    state: &AppState,
+    project: String,
+    environment: String,
+    asset: String,
+    sha: Option<String>,
+    name: Option<String>,
+) -> Result<Response, ApiError> {
+    let services = services(state)?;
+    let store = services.assets.clone().ok_or(ApiError::Unavailable(
+        "uploads are not configured on this server",
+    ))?;
+    let project = Uuid::try_parse(&project).map_err(|_| ApiError::NotFound)?;
+    let asset = Uuid::try_parse(&asset).map_err(|_| ApiError::NotFound)?;
+    // A rendition name is lowercase letters and digits only — anything else can never name an
+    // object the worker wrote.
+    if name.as_ref().is_some_and(|name| {
+        name.len() > 16
+            || !name
+                .chars()
+                .all(|letter| letter.is_ascii_lowercase() || letter.is_ascii_digit())
+    }) {
+        return Err(ApiError::NotFound);
+    }
+    let resolved = colophon_db::delivery::media_object(
+        &services.pool,
+        project,
+        &environment,
+        asset,
+        sha.as_deref(),
+    )
+    .await
+    .map_err(ApiError::from_db)?
+    .ok_or(ApiError::NotFound)?;
+    let mut key = resolved.public_key.ok_or(ApiError::NotFound)?;
+    if let Some(name) = name {
+        key = format!("{key}/{name}");
+    }
+    let object = store
+        .get(&object_store::path::Path::from(key))
+        .await
+        .map_err(|error| match error {
+            object_store::Error::NotFound { .. } => ApiError::NotFound,
+            other => {
+                tracing::warn!(error = %other, "asset origin read failed");
+                ApiError::Unavailable("the object store is unreachable")
+            }
+        })?;
+    let mut headers = HeaderMap::new();
+    let content_type = object
+        .attributes
+        .get(&object_store::Attribute::ContentType)
+        .map_or_else(
+            || "application/octet-stream".to_owned(),
+            |value| value.as_ref().to_owned(),
+        );
+    headers.insert(
+        header::CONTENT_TYPE,
+        content_type.parse().map_err(ApiError::internal)?,
+    );
+    headers.insert(
+        header::CONTENT_LENGTH,
+        object
+            .meta
+            .size
+            .to_string()
+            .parse()
+            .map_err(ApiError::internal)?,
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        "public, max-age=31536000, immutable"
+            .parse()
+            .map_err(ApiError::internal)?,
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        "nosniff".parse().map_err(ApiError::internal)?,
+    );
+    if let Some(etag) = object.meta.e_tag.as_deref() {
+        headers.insert(header::ETAG, etag.parse().map_err(ApiError::internal)?);
+    }
+    let mut response = Response::builder()
+        .status(StatusCode::OK)
+        .body(axum::body::Body::from_stream(object.into_stream()))
+        .map_err(ApiError::internal)?;
+    response.headers_mut().extend(headers);
+    Ok(response)
+}
+
+/// `GET {P}/assets/{asset}`: one asset, or 404.
+pub(crate) async fn get(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<OnePath>,
+) -> Result<Response, ApiError> {
+    let asset = Uuid::try_parse(&path.asset).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_read(&tx)?;
+    let asset = assets::get(&mut tx, asset)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    let versions = assets::versions(&mut tx, asset.id)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(json(
+        StatusCode::OK,
+        serde_json::to_string(&json!({
+            "data": view(&asset),
+            "versions": versions.iter().map(version_view).collect::<Vec<_>>(),
+        }))
+        .map_err(ApiError::internal)?,
+        None,
+        false,
+    ))
+}
+
+/// `GET {P}/assets/{asset}/references`: the entries still naming it — through a live draft, or
+/// through any publication of them, which pins it forever (media M3, D-098). What would have
+/// to let go before `DELETE` accepts it.
+pub(crate) async fn references(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<OnePath>,
+) -> Result<Response, ApiError> {
+    let asset = Uuid::try_parse(&path.asset).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    may_read(&tx)?;
+    assets::get(&mut tx, asset)
+        .await
+        .map_err(ApiError::from_db)?
+        .ok_or(ApiError::NotFound)?;
+    let referrers = assets::references(&mut tx, asset)
+        .await
+        .map_err(ApiError::from_db)?
+        .into_iter()
+        // Only referrers in collections the role reads, as a refusal's `referenced_by` (D-065).
+        .filter(|referrer| {
+            tx.policy
+                .fields(Action::ContentRead, &referrer.collection, false)
+                .is_some()
+        })
+        .map(|referrer| {
+            json!({
+                "entry_id": referrer.entry_id,
+                "collection": referrer.collection,
+                "field": referrer.field,
+                "in_draft": referrer.in_draft,
+                "published": referrer.published,
+            })
+        })
+        .collect::<Vec<_>>();
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(json(
+        StatusCode::OK,
+        serde_json::to_string(&json!({"data": referrers})).map_err(ApiError::internal)?,
+        None,
+        false,
+    ))
+}
+
+/// `DELETE {P}/assets/{asset}`: asks for the asset to go, `Idempotency-Key` required like
+/// every write. `202` means requested, not gone (truthful states): the transaction commits
+/// only the `delete` job and the audit event, and the worker removes the objects and lands
+/// `deleted` — a live draft or any publication that still names it refuses the request
+/// (`still_referenced`, the entry deletion's shape), and the worker rechecks that same rule
+/// under the row lock before a byte is removed (media M3, D-098).
+pub(crate) async fn delete(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<OnePath>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let key = idempotency_key(&headers)?;
+    let asset = Uuid::try_parse(&path.asset).map_err(|_| ApiError::NotFound)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // Assets belong to the project, not one collection: the whole-project form of the grant,
+    // mirroring upload's ContentCreate.
+    crate::members::require(
+        &tx.policy,
+        Action::ContentDelete,
+        None,
+        "your role can't delete assets in this project",
+    )?;
+    // Claimed before the checks: a retry after a lost answer replays the recorded 202 rather
+    // than meeting the now-`deleted` asset's `already_deleted`.
+    let request = request_hash(&[DELETE, &asset.to_string()]);
+    match idempotency::claim(&mut tx, DELETE, key, &request)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        idempotency::Claim::Fresh => {}
+        idempotency::Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+        idempotency::Claim::Replay { status, response } => {
+            return Ok(json(
+                StatusCode::from_u16(status).map_err(ApiError::internal)?,
+                response,
+                None,
+                true,
+            ));
+        }
+    }
+    let job = Uuid::now_v7();
+    let deadline = time::OffsetDateTime::now_utc()
+        + time::Duration::seconds(colophon_domain::job::LIFETIME_SECS);
+    match assets::request_delete(&mut tx, asset, job, key, deadline)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        assets::DeleteAsked::Unknown => Err(ApiError::NotFound),
+        assets::DeleteAsked::Quarantined => Err(ApiError::conflict(
+            "asset_quarantined",
+            "this asset is still being verified; wait for it to settle, then delete it",
+        )),
+        assets::DeleteAsked::Gone => Err(ApiError::conflict(
+            "already_deleted",
+            "this asset is already deleted or on its way out",
+        )),
+        assets::DeleteAsked::Referenced(referrers) => Err(still_referenced(&tx.policy, referrers)),
+        assets::DeleteAsked::Queued { asset: found } => {
+            let detail = json!({
+                "file_name": found.file_name,
+                "declared_type": found.declared_type,
+                "size_bytes": found.size_bytes,
+            })
+            .to_string();
+            colophon_db::audit::record_in(
+                &mut tx.transaction,
+                tx.project,
+                tx.identity,
+                "asset.deleted",
+                &asset.to_string(),
+                &detail,
+            )
+            .await
+            .map_err(ApiError::from_db)?;
+            let body = serde_json::to_string(&json!({"data": view(&found)}))
+                .map_err(ApiError::internal)?;
+            idempotency::complete(&mut tx, DELETE, key, StatusCode::ACCEPTED.as_u16(), &body)
+                .await
+                .map_err(ApiError::from_db)?;
+            tx.commit().await.map_err(ApiError::from_db)?;
+            Ok(json(StatusCode::ACCEPTED, body, None, false))
+        }
+    }
+}
+
+/// A refused deletion, as the entry deletion's answer shapes it (D-080): who still names the
+/// asset, in collections the caller reads.
+fn still_referenced(policy: &Policy, referrers: Vec<assets::AssetReferrer>) -> ApiError {
+    let referenced_by = referrers
+        .into_iter()
+        .filter(|referrer| {
+            policy
+                .fields(Action::ContentRead, &referrer.collection, false)
+                .is_some()
+        })
+        .map(|referrer| crate::error::Referrer {
+            entry_id: referrer.entry_id,
+            collection: referrer.collection,
+            field: referrer.field,
+            in_draft: referrer.in_draft,
+            published: referrer.published,
+        })
+        .collect();
+    ApiError::StillNeeded(Box::new(StillNeeded {
+        reason: "still_referenced",
+        message: "entries still name this asset: remove it from them first, then delete it"
+            .to_owned(),
+        referenced_by,
+        changesets: Vec::new(),
+    }))
+}
+
+/// The read side's permission: project-wide `ContentRead`, matching upload's `ContentCreate`.
+fn may_read(tx: &colophon_db::scope::ProjectTransaction) -> Result<(), ApiError> {
+    crate::members::require(
+        &tx.policy,
+        colophon_domain::policy::Action::ContentRead,
+        None,
+        "your role can't see this project's assets",
+    )
+}
+
+/// An intent error as a field refusal, pointing at what it checked.
+fn field_error(error: &IntentError) -> ApiError {
+    let (pointer, message) = match error {
+        IntentError::FileName => ("/x-colophon-file-name", error.to_string()),
+        IntentError::FileType => ("/content-type", error.to_string()),
+        IntentError::FileSize => ("/body", error.to_string()),
+    };
+    ApiError::InvalidField {
+        reason: "invalid_upload",
+        pointer,
+        message,
+    }
+}
+
+/// The public shape of an asset row. `sha256` is the current version's digest — the hex the
+/// `…/{asset}/{sha}` pinned URL takes (D-136).
+fn view(asset: &assets::Asset) -> serde_json::Value {
+    json!({
+        "id": asset.id,
+        "state": asset.state,
+        "file_name": asset.file_name,
+        "declared_type": asset.declared_type,
+        "detected_type": asset.detected_type,
+        "sha256": asset.sha256.as_deref().map(colophon_media::sha_hex),
+        "size_bytes": asset.size_bytes,
+        "width": asset.width,
+        "height": asset.height,
+        "rejected_reason": asset.rejected_reason,
+        "derivatives": asset.derivatives,
+        "created_at": asset
+            .created_at
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default(),
+    })
+}
+
+/// The public shape of one version row — the asset's byte history (D-136).
+fn version_view(version: &assets::Version) -> serde_json::Value {
+    json!({
+        "seq": version.seq,
+        "declared_type": version.declared_type,
+        "size_bytes": version.size_bytes,
+        "detected_type": version.detected_type,
+        "sha256": colophon_media::sha_hex(&version.sha256),
+        "width": version.width,
+        "height": version.height,
+        "derivatives": version.derivatives,
+        "created_at": version
+            .created_at
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default(),
+    })
+}

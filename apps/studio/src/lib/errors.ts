@@ -82,6 +82,35 @@ const BY_REASON: Record<string, string> = {
 	too_many_tokens: 'A project has at most 100 active tokens. Revoke one you no longer use first.',
 	invalid_token_name: 'A token’s name is 1 to 100 characters.',
 	invalid_token_description: 'A token’s description is at most 500 characters.',
+	// 409s and 422s for comments and tasks (E1, D-102). `revision` is said as "version" and
+	// `changeset` as "publish request" (D-059); the moved pair behaves like a stale save.
+	comment_moved: 'Someone changed this comment since you loaded it. Look at it again, then try once more.',
+	already_resolved: 'This comment is already answered.',
+	already_open: 'This comment isn’t answered yet.',
+	task_moved: 'Someone changed this task since you loaded it. Look at it again, then try once more.',
+	nothing_to_change: 'Nothing was changed: give the task a new title, assignee or status.',
+	assignee_not_member: 'A task can only wait on a member of this project. Choose someone from the list.',
+	revision_not_found: 'That version isn’t part of this entry. Reload the page and try once more.',
+	changeset_not_found: `That ${PUBLISH_REQUEST} isn’t there any more, or isn’t in this project.`,
+	empty_body: 'Write something first.',
+	body_too_long: 'A comment is at most 8,000 characters.',
+	empty_title: 'Give it a title first.',
+	title_too_long: 'A task title is at most 200 characters.',
+	invalid_status: 'A task is open, done or cancelled.',
+	invalid_field_path: 'A comment points at a field, like "author" or "sections/2/byline".',
+	invalid_assignee: 'Choose who it’s waiting on from the list, or nobody.',
+	invalid_entry: 'Choose the entry it’s about.',
+	invalid_revision: 'A comment names one saved version of the entry.',
+	invalid_changeset: `A task may name a ${PUBLISH_REQUEST} of this project.`,
+	// 409s and 422s for review stages (E2, D-104). A stale list behaves like a stale save; the
+	// 422s name the stage's place in the list.
+	stale_stages: 'Someone changed the review stages since you loaded them. Load the latest list, then make your change again.',
+	too_many_stages: 'A review workflow has at most 20 stages.',
+	invalid_stage_key: 'A stage’s short name is a lowercase letter, then letters, digits and hyphens.',
+	invalid_stage_name: 'A stage’s name is 1 to 100 characters.',
+	duplicate_stage: 'No two stages share a short name.',
+	stage_required: 'Each review decides one stage: pick which one you’re deciding.',
+	unknown_stage: 'That stage isn’t part of this project’s review workflow. Load the page again and try once more.',
 	// 403s that aren't about what the role may do.
 	cannot_grant: "That would give powers your own role doesn't have.",
 	api_token_not_allowed: 'An API token can’t do this; a person has to.',
@@ -105,7 +134,8 @@ const DOES: Record<Action, string> = {
 	'roles.manage': 'change roles',
 	'destinations.manage': `manage ${WEBSITE_CONNECTIONS}`,
 	'tokens.manage': 'manage API tokens',
-	'audit.read': 'see the activity log'
+	'audit.read': 'see the activity log',
+	'audience.manage': 'manage the site’s visitors'
 };
 
 /** The server's message as a sentence, if it has no internal words; else `fallback`. */

@@ -64,21 +64,24 @@ async fn ready(db: &TestDb) -> Ready {
             slug: None,
             schema_version: 1,
             references: &[],
+            assets: &[],
             unique: &[],
+            visibility: None,
         },
+        None,
     )
     .await
     .expect("created");
     let pins = changesets::pins(&mut tx, &[entry]).await.expect("pins");
     let changeset = Uuid::now_v7();
-    changesets::create(&mut tx, changeset, "Spring menu", &pins, &[5; 32])
+    changesets::create(&mut tx, changeset, "Spring menu", &pins, &[5; 32], None)
         .await
         .expect("created");
     changesets::submit(&mut tx, changeset)
         .await
         .expect("submitted");
     changesets::lock(&mut tx, changeset).await.expect("lock");
-    changesets::review(&mut tx, changeset, &[5; 32], "approve", "")
+    changesets::review(&mut tx, changeset, &[5; 32], "approve", "", None)
         .await
         .expect("approved");
     let approval = changesets::reviews(&mut tx, changeset, None)
@@ -108,7 +111,7 @@ async fn schedule(db: &TestDb, ready: &Ready, who: Uuid) -> (Uuid, OffsetDateTim
             changeset: ready.changeset,
             hash: &[5; 32],
             approval: ready.review,
-            local_time: "2026-11-03T09:00:00",
+            local_time: "2027-11-03T09:00:00",
             time_zone: "Europe/London",
             choice: None,
             run_at,
@@ -148,7 +151,7 @@ async fn a_schedule_publishes_once_when_its_time_comes() {
             changeset: ready.changeset,
             hash: &[5; 32],
             approval: ready.review,
-            local_time: "2026-11-03T10:00:00",
+            local_time: "2027-11-03T10:00:00",
             time_zone: "Europe/London",
             choice: None,
             run_at: run_at + Duration::hours(1),
@@ -294,7 +297,9 @@ async fn an_edit_or_an_expired_approval_blocks_it_and_nothing_is_published() {
             slug: None,
             schema_version: 1,
             references: &[],
+            assets: &[],
             unique: &[],
+            visibility: None,
         },
     )
     .await

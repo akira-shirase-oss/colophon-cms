@@ -1,0 +1,135 @@
+{
+  "scenario": "clean-install",
+  "date": "2026-11-04T225448Z",
+  "commit": "09217ad02e026e05f065d9197e9bcb212631ba03",
+  "working_tree_files_overlaid": 8,
+  "machine": "apple-m2-pro-12c",
+  "gate": "one person other than the maintainer installs Colophon from the README alone (END_GOAL v0.1)",
+  "what_this_is": "the mechanical rehearsal: the README's own commands in a fresh clone; the gate itself stays human",
+  "isolation": {
+    "compose_project": "colophon-clean-install",
+    "note": "fresh volumes and moved ports; the development stack is never touched",
+    "ports": {
+      "pg": 55532,
+      "valkey": 56479,
+      "s3": 54000,
+      "s3_admin": 54003,
+      "keycloak": 58180,
+      "server": 58090
+    }
+  },
+  "steps": [
+    {
+      "name": "clone",
+      "source": "isolation",
+      "readme": "git clone <the repository>; the overlay adds this checkout's uncommitted changes",
+      "command": "git clone /Users/vinaysandhu/Desktop/Learning/akira-shirase-oss/projects/colophon-cli /var/folders/sb/mn20kb4x125493sdz6s5bbpr0000gn/T//colophon-clean-install.mkgqXS/repo (+ 8 working-tree files)",
+      "seconds": 1,
+      "exit_code": 0,
+      "status": "ok"
+    },
+    {
+      "name": "ports",
+      "source": "isolation",
+      "readme": "ports moved through deploy/compose.yaml's COLOPHON_*_PORT variables",
+      "command": "COLOPHON_{PG,VALKEY,S3,S3_ADMIN,KEYCLOAK}_PORT + deploy/local.env patched to match",
+      "seconds": 0,
+      "exit_code": 0,
+      "status": "ok"
+    },
+    {
+      "name": "toolchain",
+      "source": "isolation",
+      "readme": "rustup installs the pinned toolchain from rust-toolchain.toml (README: Requirements)",
+      "command": "scripts/check-toolchain.sh",
+      "seconds": 0,
+      "exit_code": 0,
+      "status": "ok"
+    },
+    {
+      "name": "stack-up",
+      "source": "readme",
+      "readme": "scripts/stack.sh up",
+      "command": "scripts/stack.sh up",
+      "seconds": 18,
+      "exit_code": 0,
+      "status": "ok"
+    },
+    {
+      "name": "migrate",
+      "source": "readme",
+      "readme": "scripts/migrate.sh",
+      "command": "scripts/migrate.sh",
+      "seconds": 53,
+      "exit_code": 0,
+      "status": "ok"
+    },
+    {
+      "name": "server-build",
+      "source": "readme",
+      "readme": "set -a; . deploy/local.env; set +a; cargo run --release -p colophon-server",
+      "command": "cargo build --quiet --release --locked -p colophon-server",
+      "seconds": 67,
+      "exit_code": 0,
+      "status": "ok"
+    },
+    {
+      "name": "doctor",
+      "source": "readme",
+      "readme": "cargo run --release -p colophon-cli -- doctor",
+      "command": "set -a; . deploy/local.env; set +a; cargo run --quiet --release -p colophon-cli -- doctor",
+      "seconds": 0,
+      "exit_code": 0,
+      "status": "ok"
+    },
+    {
+      "name": "npm-ci",
+      "source": "readme",
+      "readme": "npm ci",
+      "command": "npm ci",
+      "seconds": 7,
+      "exit_code": 0,
+      "status": "ok"
+    },
+    {
+      "name": "studio-build",
+      "source": "readme",
+      "readme": "npm run build -w @colophon/studio",
+      "command": "npm run build -w @colophon/studio",
+      "seconds": 8,
+      "exit_code": 0,
+      "status": "ok"
+    }
+  ],
+  "friction": [
+    {
+      "step": "get-the-source",
+      "detail": "the README never says how to get the repository",
+      "state": "fixed"
+    },
+    {
+      "step": "stack-tools",
+      "detail": "scripts/stack.sh needs curl, jq and openssl; the README's requirements name none of them",
+      "state": "fixed"
+    },
+    {
+      "step": "studio-deps",
+      "detail": "a fresh clone's Studio build needs npm ci first; the README does not say so",
+      "state": "fixed"
+    },
+    {
+      "step": "moved-ports",
+      "detail": "the port-move note does not say deploy/local.env carries the same addresses",
+      "state": "fixed"
+    }
+  ],
+  "aborted_at": null,
+  "not_rehearsed": [
+    "scripts/check.sh (the contributor suite, not the install path)",
+    "colophon login (needs a human at a browser to approve the device)",
+    "a machine with no Rust or Node caches at all"
+  ],
+  "checks": 5,
+  "failures": 0,
+  "verdict": "readme-path-verified"
+}

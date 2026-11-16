@@ -1,0 +1,19 @@
+{
+  "name": "@colophon/site-kit",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The small shared piece of the five Astro demo sites: which Colophon project to read, the anonymous delivery client, and rich-text rendering through the one shared renderer.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@colophon/content-renderer": "0.0.0"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}

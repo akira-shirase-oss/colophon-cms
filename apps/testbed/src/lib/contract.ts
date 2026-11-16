@@ -115,10 +115,10 @@ export const checks: Check[] = [
 	},
 	{
 		id: 'too-large',
-		title: 'A 2 MiB body is refused with the envelope',
-		proves: 'The 1 MiB body limit holds, and tower-http’s plain-text 413 is rewritten into the envelope.',
+		title: 'A 22 MiB body is refused with the envelope',
+		proves: 'The 21 MiB body limit (uploads carry 20 MiB images) holds, and tower-http’s plain-text 413 is rewritten into the envelope.',
 		async run() {
-			const reply = await call('POST', '/api/v1/testbed-upload', { body: new Uint8Array(2 * 1024 * 1024) });
+			const reply = await call('POST', '/api/v1/testbed-upload', { body: new Uint8Array(22 * 1024 * 1024) });
 			return outcome(reply, envelopeProblems(reply, 413, 'payload_too_large'));
 		}
 	},
@@ -132,6 +132,54 @@ export const checks: Check[] = [
 			const problems = envelopeProblems(reply, 404, 'route_not_found');
 			if (reply.requestId !== id) problems.push(`sent ${id}, got ${reply.requestId}`);
 			return outcome(reply, problems);
+		}
+	},
+	{
+		id: 'collaboration-gated',
+		title: 'Comments and tasks answer with the envelope',
+		proves: 'The E1 routes exist and never answer bare: anonymous callers get 401 unauthorized, a signed-in caller with an unseen project 404 not_found — never route_not_found.',
+		async run() {
+			const problems: string[] = [];
+			const project = '00000000-0000-7000-8000-000000000000';
+			const base = `/api/v1/projects/${project}/environments/production`;
+			let last: Reply | null = null;
+			for (const path of [`${base}/collections/articles/entries/${project}/comments`, `${base}/tasks`]) {
+				const reply = await call('GET', path);
+				last = reply;
+				const expected = reply.status === 401 ? envelopeProblems(reply, 401, 'unauthorized') : envelopeProblems(reply, 404, 'not_found');
+				problems.push(...expected.map((problem) => `${path.slice(base.length)}: ${problem}`));
+			}
+			return outcome(last ?? { status: 0, headers: new Headers(), body: null, text: '', requestId: null, ms: 0 }, problems);
+		}
+	},
+	{
+		id: 'stages-gated',
+		title: 'The review-stages route answers with the envelope',
+		proves: 'The E2 route exists and never answers bare: anonymous callers get 401 unauthorized, a signed-in caller with an unseen project 404 not_found — never route_not_found.',
+		async run() {
+			const project = '00000000-0000-7000-8000-000000000000';
+			const reply = await call('GET', `/api/v1/projects/${project}/environments/production/review-stages`);
+			return outcome(reply, reply.status === 401 ? envelopeProblems(reply, 401, 'unauthorized') : envelopeProblems(reply, 404, 'not_found'));
+		}
+	},
+	{
+		id: 'bulk-gated',
+		title: 'The bulk routes answer with the envelope',
+		proves: 'The P5 routes exist and never answer bare: anonymous callers get 401 unauthorized, a signed-in caller with an unseen project 404 not_found — never route_not_found.',
+		async run() {
+			const project = '00000000-0000-7000-8000-000000000000';
+			const reply = await call('GET', `/api/v1/projects/${project}/environments/production/bulk`);
+			return outcome(reply, reply.status === 401 ? envelopeProblems(reply, 401, 'unauthorized') : envelopeProblems(reply, 404, 'not_found'));
+		}
+	},
+	{
+		id: 'live-events',
+		title: 'The events route answers with the envelope',
+		proves: 'The E3 live-hints route exists and never answers bare: anonymous callers get 401 unauthorized, a signed-in caller with an unseen project 404 not_found — never route_not_found.',
+		async run() {
+			const project = '00000000-0000-7000-8000-000000000000';
+			const reply = await call('GET', `/api/v1/projects/${project}/environments/production/events`);
+			return outcome(reply, reply.status === 401 ? envelopeProblems(reply, 401, 'unauthorized') : envelopeProblems(reply, 404, 'not_found'));
 		}
 	},
 	{

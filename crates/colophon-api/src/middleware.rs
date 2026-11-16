@@ -24,7 +24,7 @@ use tower_http::{
 use tracing::{Level, Span};
 
 use crate::{
-    body,
+    BuildInfo, body,
     error::{self, ApiError, PublicError},
 };
 
@@ -92,8 +92,10 @@ async fn sanitize_request_id(mut request: Request) -> Request {
 
 /// The root span of every request. Everything logged while handling the request inherits
 /// these fields. `route` is the matched template (low cardinality); `path` omits the query
-/// string, which can carry tokens.
-fn make_span(request: &Request<Body>) -> Span {
+/// string, which can carry tokens. `version` and `commit` are the deployment identity the
+/// correlation fields call for (module 18, spec §32): every request-attributed line names
+/// the exact build that served it.
+fn make_span(request: &Request<Body>, build: BuildInfo) -> Span {
     let request_id = request
         .headers()
         .get(REQUEST_ID_HEADER)
@@ -109,6 +111,8 @@ fn make_span(request: &Request<Body>) -> Span {
         route,
         path = %request.uri().path(),
         request_id = %request_id,
+        version = build.version,
+        commit = build.commit,
     )
 }
 
@@ -170,8 +174,9 @@ fn panic_response(payload: Box<dyn Any + Send + 'static>) -> Response {
     ApiError::internal(Panicked(message)).into_response()
 }
 
-/// Applies the global stack to a router. Read it top to bottom as the path of a request.
-pub fn apply(router: Router, limits: HttpLimits) -> Router {
+/// Applies the global stack to a router, with `build` recorded on every request span.
+/// Read it top to bottom as the path of a request.
+pub fn apply(router: Router, limits: HttpLimits, build: BuildInfo) -> Router {
     let stack = ServiceBuilder::new()
         // 0. Drop unsafe client ids before anything copies them into logs.
         .layer(axum_mw::map_request(sanitize_request_id))
@@ -184,7 +189,7 @@ pub fn apply(router: Router, limits: HttpLimits) -> Router {
         //    lines would cost more than the requests. Errors are logged where they happen.
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(make_span)
+                .make_span_with(move |request: &Request<Body>| make_span(request, build))
                 .on_response(
                     DefaultOnResponse::new()
                         .level(Level::DEBUG)

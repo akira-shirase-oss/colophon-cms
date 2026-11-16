@@ -290,11 +290,20 @@ pub async fn remove(tx: &mut MemberTransaction, identity: Uuid) -> Result<Change
     .execute(&mut *tx.transaction)
     .await
     .map_err(DbError::from_query)?;
-    Ok(if removed.rows_affected() == 0 {
-        Change::NotFound
-    } else {
-        Change::Done
-    })
+    if removed.rows_affected() == 0 {
+        return Ok(Change::NotFound);
+    }
+    // The membership is gone outright; the deletion ledger's row (migration 0048, D-124) is
+    // what removes it again from a backup that still holds it.
+    crate::ledger::record_in(
+        &mut tx.transaction,
+        crate::ledger::Kind::Member,
+        tx.project,
+        None,
+        &serde_json::json!({"identity": identity}).to_string(),
+    )
+    .await?;
+    Ok(Change::Done)
 }
 
 /// The caller's role, as it is now, and, when one is named, the role they mean to give, each with

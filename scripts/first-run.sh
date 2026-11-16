@@ -8,8 +8,8 @@
 #   scripts/first-run.sh           start (from an empty database the first time)
 #   scripts/first-run.sh --reset   start again from an empty database
 #
-# Needs the stack (scripts/stack.sh up) with the realm that allows sign-up and registers port
-# 58400's callback (deploy/keycloak; recreate Keycloak after changing it), and npm ci.
+# Needs the stack (scripts/stack.sh up) and npm ci. Sign-in is the Studio's built-in password
+# card (D-146) — no identity provider required, on port 58400 or anywhere else.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -49,7 +49,7 @@ npm run build --silent -w @colophon/studio >/dev/null
 . scripts/local-env.sh
 # Migrations only: no `admin bootstrap`, which is the point.
 target/release/colophon admin migrate
-echo "Open http://localhost:$port/studio/ (dev users: dev-owner / dev-editor, password colophon-dev)"
+echo "Open http://localhost:$port/studio/ — create an account on the password card, then enter the setup code"
 exec env \
   COLOPHON_LISTEN_ADDR="127.0.0.1:$port" \
   COLOPHON_PUBLIC_URL="http://localhost:$port" \

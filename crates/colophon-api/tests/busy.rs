@@ -46,18 +46,27 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
             sessions: SessionSettings::default(),
             trusted_origins: vec!["http://localhost:58000".to_owned()],
             allow_private_destinations: true,
+            dev_mail: false,
+            mail: None,
             cache: colophon_api::DeliveryCache::disabled(),
             content_types: colophon_api::ContentTypeCache::new(),
+            assets: None,
+            events: colophon_api::events::EventBus::new(
+                colophon_api::events::EventLimits::default(),
+            ),
+            mcp: colophon_api::mcp::Shared::new(colophon_api::mcp::Limits::default()),
         })),
         build: colophon_api::BuildInfo::unstamped("0.0.0-test"),
         admission: None,
     };
+    let build = state.build;
     let app = middleware::apply(
         colophon_api::routes(state),
         HttpLimits {
             request_timeout: Duration::from_secs(5),
             max_body_bytes: 1024,
         },
+        build,
     );
 
     // A well-formed session cookie, so the request reaches the session lookup.

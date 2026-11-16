@@ -1,4 +1,4 @@
-// Making a role while inviting someone (D-082): Members' Role select ends with "Make a new role…",
+// Making a role while inviting someone (D-147): Members' Role select ends with "Make a new role…",
 // which goes to Settings → Roles, makes the role, lets you choose what it may do, and comes back to
 // the invitation with it chosen. What was typed in "Who is it for?" waits in this tab meanwhile.
 

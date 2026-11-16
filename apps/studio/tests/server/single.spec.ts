@@ -1,6 +1,6 @@
 // Single types (step M.4, D-067) in the Studio, against the real server: the builder's switch makes
 // a content type hold one entry; the sidebar opens that entry directly, and with none yet makes it,
-// named after the type, with no dialog and no list (D-082); a required field that needs an answer
+// named after the type, with no dialog and no list (D-147); a required field that needs an answer
 // brings the dialog instead; a second one is refused in plain words, with a way to the one that
 // exists; and a type that already has two entries can't be made single, said plainly.
 

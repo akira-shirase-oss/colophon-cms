@@ -12,7 +12,7 @@ import { INTERNAL_TERMS } from '../../src/lib/words.ts';
 import { api, env, internalTerms, newEntry, newProject, signIn, violations } from './helpers.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
-// Its own port, whose sign-in callback is registered in deploy/keycloak's realm (58400 to 58405).
+// Its own port — sign-in is the built-in password card (D-146), so any port works.
 const PORT = Number(process.env['COLOPHON_JOURNEY_PORT'] ?? 58402);
 const ORIGIN = `http://localhost:${PORT}`;
 

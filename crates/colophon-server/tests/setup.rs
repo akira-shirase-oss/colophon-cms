@@ -3,7 +3,7 @@
 //! when it starts, and only there; a signed-in person who enters it becomes the first
 //! administrator, once; the code expires, attempts are rate-limited, and once anyone is an
 //! administrator the code and every later start do nothing. The code never appears in a response
-//! or in the structured log. Needs the stack and its Keycloak.
+//! or in the structured log. Needs the stack; sign-in is the built-in password card (D-146).
 #![cfg(unix)]
 #![expect(
     clippy::expect_used,
@@ -306,7 +306,7 @@ async fn installation() -> Value {
 }
 
 #[tokio::test]
-#[ignore = "needs the stack and its Keycloak"]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 #[expect(
     clippy::too_many_lines,
     reason = "one journey from a fresh installation to its first administrator, checked at each step"
@@ -320,7 +320,7 @@ async fn a_setup_code_from_the_terminal_makes_the_first_administrator_once() {
     let editor = sign_in("dev-editor").await;
     let owner = sign_in("dev-owner").await;
 
-    // Signed out, the front door can tell the installation is new (D-082), and not who runs it.
+    // Signed out, the front door can tell the installation is new (D-147), and not who runs it.
     assert_eq!(
         installation().await,
         json!({"data": {"has_administrator": false}})
@@ -434,7 +434,7 @@ async fn a_setup_code_from_the_terminal_makes_the_first_administrator_once() {
 }
 
 #[tokio::test]
-#[ignore = "needs the stack and its Keycloak"]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
 async fn setup_codes_need_a_signed_in_caller_expire_and_are_rate_limited() {
     let database = FreshDatabase::new().await;
     let dir = scratch("setup-limits");

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_events (project_id, id, actor_id, action, subject, detail)\n             SELECT r.project_id, uuidv7(), $3, 'budget.discrepancy', r.id::text,\n                    jsonb_build_object('kind', r.kind, 'reserved', r.reserved,\n                                       'principal_id', r.principal_id, 'job_id', r.job_id,\n                                       'held_at', r.created_at)\n             FROM budget_reservations r\n             JOIN unnest($1::uuid[], $2::uuid[]) AS s (project_id, id)\n               ON s.project_id = r.project_id AND s.id = r.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "UuidArray",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4edb75ea79e61d4d111de0325f8781a3136fc68ff8c7f118b3724c3651e9378a"
+}

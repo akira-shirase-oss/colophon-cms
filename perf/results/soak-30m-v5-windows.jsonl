@@ -1,0 +1,10 @@
+{"dep":"valkey","kind":"pause","start_epoch":1794425952,"end_epoch":1794426133,"start":"2026-11-11T19:39:12Z","end":"2026-11-11T19:42:13Z"}
+{"dep":"postgres","kind":"pause","start_epoch":1794426313,"end_epoch":1794426463,"start":"2026-11-11T19:45:13Z","end":"2026-11-11T19:47:43Z"}
+{"dep":"valkey","kind":"pause","start_epoch":1794426643,"end_epoch":1794426824,"start":"2026-11-11T19:50:43Z","end":"2026-11-11T19:53:44Z"}
+{"dep":"postgres","kind":"pause","start_epoch":1794427004,"end_epoch":1794427154,"start":"2026-11-11T19:56:44Z","end":"2026-11-11T19:59:14Z"}
+{"dep":"valkey","kind":"pause","start_epoch":1794427334,"end_epoch":1794427514,"start":"2026-11-11T20:02:14Z","end":"2026-11-11T20:05:14Z"}
+{"dep":"sessions","kind":"session","start_epoch":1794427694,"end_epoch":1794427815,"start":"2026-11-11T20:08:14Z","end":"2026-11-11T20:10:15Z"}
+{"dep":"valkey","kind":"pause","start_epoch":1794427995,"end_epoch":1794428176,"start":"2026-11-11T20:13:15Z","end":"2026-11-11T20:16:16Z"}
+{"dep":"postgres","kind":"pause","start_epoch":1794428356,"end_epoch":1794428506,"start":"2026-11-11T20:19:16Z","end":"2026-11-11T20:21:46Z"}
+{"dep":"valkey","kind":"pause","start_epoch":1794428686,"end_epoch":1794428867,"start":"2026-11-11T20:24:46Z","end":"2026-11-11T20:27:47Z"}
+{"dep":"postgres","kind":"pause","start_epoch":1794429047,"end_epoch":1794429198,"start":"2026-11-11T20:30:47Z","end":"2026-11-11T20:33:18Z"}

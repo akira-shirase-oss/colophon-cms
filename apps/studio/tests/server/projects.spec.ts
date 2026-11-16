@@ -30,6 +30,9 @@ test('the administrator creates a project from the home page; others are told ho
 	}, project);
 	expect(pages.data.definition.fields.map((field) => field.type)).toEqual(['text', 'slug', 'rich_text']);
 	await page.goto('/studio/');
+	// "All projects" shows at most a page of them; a bigger installation is searched, not scrolled.
+	expect((await page.getByTestId('projects').getByRole('listitem').count())).toBeLessThanOrEqual(24);
+	await page.getByTestId('project-search').fill(name);
 	await expect(page.getByTestId('projects').getByRole('listitem').filter({ hasText: name })).toContainText('Owner');
 
 	// The same URL name again is refused, and says why.

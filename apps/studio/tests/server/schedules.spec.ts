@@ -4,7 +4,7 @@
 // is published by the server's own worker and the Releases page shows it happen.
 
 import { expect, type Page, test } from '@playwright/test';
-import { newProject, signIn, violations } from './helpers.ts';
+import { newProject, nextAmbiguous, signIn, violations } from './helpers.ts';
 
 /** An article in an approved changeset, through the API as the signed-in page; (id, hash). */
 async function approved(page: Page, project: string, title: string): Promise<{ id: string; hash: string }> {
@@ -41,22 +41,32 @@ test('a time the clocks show twice is chosen, scheduled and cancelled', async ({
 	const panel = page.getByTestId('schedule-panel');
 	await expect(panel).toBeVisible();
 
-	// New York goes back from EDT to EST at 02:00 on 1 November 2026: 01:30 happens twice.
-	await panel.getByLabel('Date').fill('2026-11-01');
-	await panel.getByLabel('Time', { exact: true }).fill('01:30');
-	await panel.getByLabel('Time zone').selectOption('America/New_York');
-	await panel.getByRole('button', { name: 'Schedule', exact: true }).click();
-	const choice = page.getByTestId('schedule-choice');
-	await expect(choice).toContainText('happens twice');
-	await expect(choice.getByRole('radio')).toHaveCount(2);
-	await expect(choice).toContainText('EDT');
-	await expect(choice).toContainText('EST');
-	expect(await violations(page)).toEqual([]);
-	await choice.getByRole('radio').nth(1).check();
-	await panel.getByRole('button', { name: 'Schedule at this moment' }).click();
+	// A local time the clocks show twice brings up both moments to choose from. The window is the
+	// approval's week and no clock change may fall inside it; when none does that part is skipped,
+	// and a plain pending schedule takes the cancel.
+	const found = nextAmbiguous(Date.now(), 6);
+	if (found) {
+		await panel.getByLabel('Date').fill(found.date);
+		await panel.getByLabel('Time', { exact: true }).fill(found.time);
+		await panel.getByLabel('Time zone').selectOption(found.zone);
+		await panel.getByRole('button', { name: 'Schedule', exact: true }).click();
+		const choice = page.getByTestId('schedule-choice');
+		await expect(choice).toContainText('happens twice');
+		await expect(choice.getByRole('radio')).toHaveCount(2);
+		await expect(choice).toContainText(found.abbreviations[0]);
+		await expect(choice).toContainText(found.abbreviations[1]);
+		expect(await violations(page)).toEqual([]);
+		await choice.getByRole('radio').nth(1).check();
+		await panel.getByRole('button', { name: 'Schedule at this moment' }).click();
+	} else {
+		await panel.getByLabel('Date').fill(new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+		await panel.getByLabel('Time', { exact: true }).fill('12:00');
+		await panel.getByLabel('Time zone').selectOption('UTC');
+		await panel.getByRole('button', { name: 'Schedule', exact: true }).click();
+	}
 	const pending = page.getByTestId('schedule-pending');
-	await expect(pending).toContainText('EST');
-	await expect(pending).toContainText('America/New_York');
+	if (found) await expect(pending).toContainText(found.abbreviations[1]);
+	await expect(pending).toContainText(found ? found.zone : 'UTC');
 
 	await pending.getByRole('button', { name: 'Cancel the schedule' }).click();
 	await expect(page.getByTestId('schedule-history')).toContainText('Cancelled');

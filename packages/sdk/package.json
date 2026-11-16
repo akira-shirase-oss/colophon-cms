@@ -1,0 +1,53 @@
+{
+  "name": "@colophon-cms/sdk",
+  "version": "0.1.0-alpha.1",
+  "description": "The TypeScript SDK for Colophon CMS: types generated from the served OpenAPI document, a small hand-written client, typed errors and generation-pinned delivery reads.",
+  "keywords": [
+    "colophon",
+    "cms",
+    "headless-cms",
+    "sdk",
+    "typescript"
+  ],
+  "homepage": "https://github.com/akira-shirase-oss/colophon-cms#readme",
+  "bugs": "https://github.com/akira-shirase-oss/colophon-cms/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akira-shirase-oss/colophon-cms.git",
+    "directory": "packages/sdk"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./api.types": {
+      "types": "./dist/api.types.d.ts",
+      "default": "./dist/api.types.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.17"
+  },
+  "scripts": {
+    "gen": "node scripts/gen-types.mjs",
+    "check": "tsc --noEmit && node scripts/gen-types.mjs --check",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

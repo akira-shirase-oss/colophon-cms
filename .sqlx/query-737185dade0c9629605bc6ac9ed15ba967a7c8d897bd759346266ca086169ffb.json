@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE budget_reservations SET state = 'settled', settled = 1, settled_at = now()\n         WHERE id = (SELECT id FROM budget_reservations\n                     WHERE project_id = $1 AND bulk_job_id = $2\n                       AND kind = 'documents' AND state = 'held'\n                     ORDER BY created_at LIMIT 1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "737185dade0c9629605bc6ac9ed15ba967a7c8d897bd759346266ca086169ffb"
+}

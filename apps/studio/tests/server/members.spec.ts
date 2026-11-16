@@ -1,10 +1,10 @@
 // Members and invitations in the Studio against a real server (D-042): an owner invites with a
 // link shown once, the invitee signs in and joins, roles change what each sees, the last owner
-// can't step down, and a member can leave. Inviting reaches Roles (D-082): Manage roles, and Make a
+// can't step down, and a member can leave. Inviting reaches Roles (D-147): Manage roles, and Make a
 // new role…, which comes back to the invitation with the new role chosen.
 
 import { expect, test } from '@playwright/test';
-import { keycloak, newProject, signIn, violations } from './helpers.ts';
+import { newProject, password, signIn, violations } from './helpers.ts';
 
 test('an owner invites with a link, the invitee signs in and joins, and roles decide who manages members', async ({ page, browser }) => {
 	await signIn(page);
@@ -15,6 +15,7 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await expect(page.getByLabel('Role of Dev Owner')).toHaveValue('owner');
 
 	// The link is shown once; the list of pending invitations never shows it again.
+	await page.getByTestId('invite-member').click();
 	await page.getByLabel('Who is it for?').fill('A guest editor');
 	await page.getByLabel('Role', { exact: true }).selectOption('editor');
 	await page.getByRole('button', { name: 'Create invitation link' }).click();
@@ -33,13 +34,12 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await guest.goto(new URL(link).pathname + new URL(link).hash);
 	await expect(guest.getByTestId('signed-out')).toBeVisible();
 	expect(new URL(guest.url()).hash).toBe('');
-	await guest.getByRole('link', { name: 'Sign in' }).click();
-	await keycloak(guest, 'dev-editor');
+	await password(guest, 'dev-editor');
 	await expect(guest.getByTestId('invite-ask')).toContainText('Dev Owner invited you to join Studio test as Editor: Writes and edits content.');
 	expect(new URL(guest.url()).hash).toBe('');
 	expect(await violations(guest)).toEqual([]);
 	await guest.getByRole('button', { name: 'Join', exact: true }).click();
-	// Straight to their work in the project they joined, with a note saying so (D-082).
+	// Straight to their work in the project they joined, with a note saying so (D-147).
 	await expect(guest).toHaveURL(/\/studio\/$/);
 	await expect(guest.getByText('You joined Studio test as Editor', { exact: true })).toBeVisible();
 	await expect(guest.getByTestId('work-project')).toHaveText('Studio test');
@@ -62,7 +62,7 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await guest.getByTestId('members-link').click();
 	await expect(guest.getByTestId('member')).toHaveCount(2);
 	await expect(guest.getByRole('combobox')).toHaveCount(0);
-	await expect(guest.getByRole('button', { name: 'Create invitation link' })).toHaveCount(0);
+	await expect(guest.getByTestId('invite-member')).toHaveCount(0);
 	expect(await violations(guest)).toEqual([]);
 
 	// The owner sees them join, and can't step down while they're the only owner.
@@ -77,9 +77,11 @@ test('an owner invites with a link, the invitee signs in and joins, and roles de
 	await expect(page.getByTestId('members-error')).toHaveCount(0);
 
 	// A revoked invitation stops working at once.
+	await page.getByTestId('invite-member').click();
 	await page.getByLabel('Who is it for?').fill('Changed my mind');
 	await page.getByRole('button', { name: 'Create invitation link' }).click();
 	const revokedLink = await page.getByRole('textbox', { name: 'Invitation link' }).inputValue();
+	await page.getByRole('button', { name: 'Done' }).click();
 	await page.getByRole('button', { name: 'Revoke the invitation for Changed my mind' }).click();
 	await expect(page.getByTestId('invitations')).toContainText('None.');
 	await guest.goto(new URL(revokedLink).pathname + new URL(revokedLink).hash);
@@ -98,8 +100,9 @@ test('Make a new role… from the invitation makes one in Roles and comes back w
 	await signIn(page);
 	const project = await newProject(page);
 	await page.goto(`/studio/projects/${project}/members`);
+	await page.getByTestId('invite-member').click();
 
-	// Manage roles sits beside the Role select.
+	// Manage roles sits beside the Role select, in the invitation's dialog.
 	await expect(page.getByTestId('manage-roles')).toHaveAttribute('href', `/studio/projects/${project}/settings/roles`);
 	const select = page.getByLabel('Role', { exact: true });
 	await expect(select.locator('option').last()).toHaveText('Make a new role…');
@@ -118,8 +121,9 @@ test('Make a new role… from the invitation makes one in Roles and comes back w
 	await page.getByLabel('Edit: Articles').check();
 	await page.getByRole('button', { name: 'Save role' }).click();
 
-	// Back at the invitation, with the new role chosen and what was typed kept.
+	// Back at the invitation, its dialog open, with the new role chosen and what was typed kept.
 	await expect(page).toHaveURL(new RegExp(`/projects/${project}/members\\?role=copy-desk#invite$`));
+	await expect(page.getByRole('dialog')).toContainText('Invite a member');
 	await expect(page.getByLabel('Role', { exact: true })).toHaveValue('copy-desk');
 	await expect(page.getByLabel('Who is it for?')).toHaveValue('Sam, copy editor');
 	await expect(page.getByLabel('Who is it for?')).toBeFocused();

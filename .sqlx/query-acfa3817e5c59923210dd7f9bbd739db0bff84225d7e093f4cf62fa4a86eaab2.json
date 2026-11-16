@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE bulk_jobs SET expected_items = expected_items + $4, updated_at = now()\n             WHERE project_id = $1 AND environment_id = $2 AND id = $3\n               AND state = 'accepting'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "acfa3817e5c59923210dd7f9bbd739db0bff84225d7e093f4cf62fa4a86eaab2"
+}

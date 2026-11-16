@@ -4,7 +4,7 @@
 import type { Action, ContentType, Grant } from './api.ts';
 
 /** Work on content, in the order an article goes through it, each with one line under its
- *  column where the word alone could mislead (D-082), and the verb a sentence uses ("change the
+ *  column where the word alone could mislead (D-147), and the verb a sentence uses ("change the
  *  fields of Articles"). Deleting has no button yet, so it isn't offered; a role that has it keeps it. */
 export const WORK: { action: Action; label: string; hint?: string; verb: string }[] = [
 	{ action: 'content.read', label: 'See', hint: 'read drafts', verb: 'see' },
@@ -15,7 +15,7 @@ export const WORK: { action: Action; label: string; hint?: string; verb: string 
 	{ action: 'schema.change', label: 'Change its fields', hint: 'Add, rename or remove this type’s fields (developers)', verb: 'change the fields of' }
 ];
 
-/** Field labels for code names, in a content type or, for `*`, in any (D-082): what a limited
+/** Field labels for code names, in a content type or, for `*`, in any (D-147): what a limited
  *  permission says ("only Name and Price"). A name no type has stays as it is. */
 export function fieldLabels(ids: string[], subject: string, types: Pick<ContentType, 'slug' | 'definition'>[]): string[] {
 	const where = subject === '*' ? types : types.filter((type) => type.slug === subject);

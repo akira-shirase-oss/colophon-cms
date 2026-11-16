@@ -5,12 +5,12 @@ import { describe, expect, test } from 'vitest';
 
 import { build } from '../src/build.ts';
 import { VerifyFailed, live, liveDir, promote } from '../src/promote.ts';
-import { api, item } from './colophon.ts';
+import { articles, item } from './colophon.ts';
 
 const releases = new Map([1, 2, 3, 4, 5].map((generation) => [generation, [item(`a${generation}`, `Article ${generation}`, generation)]]));
 
 async function built(root: string, generation: number) {
-	return build({ api: 'http://colophon.test', project: 'p', environment: 'production', generation, root, fetch: api(releases).fetch });
+	return build({ api: 'http://colophon.test', project: 'p', environment: 'production', generation, root, fetch: articles(releases).fetch });
 }
 
 describe('promotion', () => {
@@ -42,7 +42,9 @@ describe('promotion', () => {
 		expect(await live(root)).toBe(1);
 	});
 
-	test('promotions that race end on the newest release', async () => {
+	// The promote lock gives a contender ten seconds before refusing: the test's timeout must
+	// outlive that wait or a busy machine fails the test before the code gives up.
+	test('promotions that race end on the newest release', { timeout: 15_000 }, async () => {
 		const root = await mkdtemp(join(tmpdir(), 'site-'));
 		const builds = await Promise.all([5, 4, 3].map((generation) => built(root, generation)));
 		await Promise.all(builds.map((one) => promote(root, one)));

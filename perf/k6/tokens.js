@@ -1,5 +1,5 @@
 // Load scenario for API tokens and the audit log (step R.4, D-063). setup() signs the owner in
-// through Keycloak, makes a project with an article, and two tokens: a read-only one, and a
+// through the password card, makes a project with an article, and two tokens: a read-only one, and a
 // custom one that may read only articles' titles. Every measured request then exercises a token or
 // the log: six in ten list articles with the read-only token (its hash found through the lookup
 // function, then a transaction that re-checks it under a share lock and reads its permissions),
@@ -10,7 +10,6 @@
 
 import http from 'k6/http';
 import { check, fail } from 'k6';
-import { parseHTML } from 'k6/html';
 
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:58000';
 const PUBLIC_URL = __ENV.PUBLIC_URL || 'http://localhost:58000';
@@ -52,11 +51,8 @@ export const options = {
 /** Signs `username` in with a cookie jar of its own; the headers a browser tab would send. */
 function signIn(username) {
   const jar = new http.CookieJar();
-  const page = http.get(`${PUBLIC_URL}/auth/login?return_to=/me`, { jar });
-  const action = parseHTML(page.body).find('#kc-form-login').attr('action');
-  if (!action) fail(`no Keycloak login form for ${username}`);
-  const me = http.post(action.replace(/&amp;/g, '&'), { username, password: 'colophon-dev' }, { jar });
-  if (me.status !== 200) fail(`sign-in as ${username} failed: HTTP ${me.status}`);
+  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: `${username}@colophon.test`, password: 'colophon-dev' }), { jar, headers: { 'Content-Type': 'application/json' } });
+  if (signedIn.status !== 204) fail(`sign-in as ${username} failed: HTTP ${signedIn.status}`);
   const cookies = jar.cookiesForURL(PUBLIC_URL);
   return {
     Cookie: `colophon_session=${cookies.colophon_session[0]}`, 'X-CSRF-Token': cookies.colophon_csrf[0], Origin: PUBLIC_URL,

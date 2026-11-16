@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE migration_plans SET state = 'running', started_at = now(), updated_at = now()\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND state = 'approved'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b143b51f1820c6e04be6aba99d482c1a79f7a01d63b0369c33f42e0d47c85960"
+}

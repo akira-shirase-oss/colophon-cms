@@ -6,9 +6,13 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde_json::json;
 
-use crate::Exit;
+use crate::{
+    Exit,
+    out::{self, Out},
+};
 
 /// The `/readyz` body, read loosely: unknown statuses and checks are shown, not rejected.
 #[derive(Debug, Deserialize)]
@@ -16,22 +20,6 @@ struct Report {
     status: String,
     role: String,
     checks: BTreeMap<String, String>,
-}
-
-/// The one versioned JSON result `--json` prints (module 08: "exactly one versioned JSON
-/// result to stdout").
-#[derive(Debug, Serialize)]
-struct Outcome<'a> {
-    version: u32,
-    command: &'static str,
-    server: &'a str,
-    status: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    role: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    checks: Option<&'a BTreeMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<&'a str>,
 }
 
 /// What went wrong talking to the server, and the exit code it maps to.
@@ -108,7 +96,7 @@ async fn fetch(server: &str, timeout: Duration) -> Result<Report, Failure> {
 }
 
 /// Runs the command; returns the process exit code.
-pub(crate) async fn run(server: &str, timeout: Duration, json: bool) -> Exit {
+pub(crate) async fn run(server: &str, timeout: Duration, out: Out) -> Exit {
     match fetch(server, timeout).await {
         Ok(report) => {
             let code = if report.status == "ready" {
@@ -116,16 +104,13 @@ pub(crate) async fn run(server: &str, timeout: Duration, json: bool) -> Exit {
             } else {
                 Exit::Unavailable
             };
-            if json {
-                print_json(&Outcome {
-                    version: 1,
-                    command: "doctor",
-                    server,
-                    status: &report.status,
-                    role: Some(&report.role),
-                    checks: Some(&report.checks),
-                    error: None,
-                });
+            if out.format.machine() {
+                out.print_data(&json!({
+                    "server": server,
+                    "status": report.status,
+                    "role": report.role,
+                    "checks": report.checks,
+                }));
             } else {
                 println!("server    {server}");
                 println!("role      {}", report.role);
@@ -137,27 +122,9 @@ pub(crate) async fn run(server: &str, timeout: Duration, json: bool) -> Exit {
             code
         }
         Err(failure) => {
-            if json {
-                print_json(&Outcome {
-                    version: 1,
-                    command: "doctor",
-                    server,
-                    status: failure.status(),
-                    role: None,
-                    checks: None,
-                    error: Some(failure.message()),
-                });
-            }
+            out.print_error(&out::cli_error(failure.status(), failure.message()));
             eprintln!("error: {}", failure.message());
             failure.exit_code()
         }
-    }
-}
-
-fn print_json(outcome: &Outcome<'_>) {
-    match serde_json::to_string(outcome) {
-        Ok(text) => println!("{text}"),
-        // Serializing these plain structs cannot fail; if it ever did, say so on stderr.
-        Err(error) => eprintln!("error: could not encode the result: {error}"),
     }
 }

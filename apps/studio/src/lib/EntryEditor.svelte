@@ -6,7 +6,7 @@
   Technical details with where readers get it and what they get.
 -->
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { asset } from '$app/paths';
 	import type { Editor } from '@tiptap/core';
 	import { createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
@@ -23,15 +23,20 @@
 	import LoaderIcon from '@lucide/svelte/icons/loader-circle';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
+	import { Input } from '@colophon/ui/ui/input';
+	import { goto } from '$app/navigation';
 	import {
+		ApiError,
 		type Content,
 		type ContentType,
+		createLocalization,
 		deliveryUrl,
 		type Draft,
 		type FieldDefinition,
 		getRevision,
 		listRevisions,
 		type Loaded,
+		mayOn,
 		type Referrer,
 		signInUrl,
 		type Summary
@@ -41,9 +46,12 @@
 	import { compare, readable } from './diff.ts';
 	import { prettyJson } from './json.ts';
 	import { plainError } from './errors.ts';
+	import CommentsPanel from './CommentsPanel.svelte';
 	import DiffView from './DiffView.svelte';
 	import PublishEntry from './PublishEntry.svelte';
 	import ReaderView from './ReaderView.svelte';
+	import SiteCanvas from './SiteCanvas.svelte';
+	import ThemeLook from './ThemeLook.svelte';
 	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from './queries.ts';
 	import RichTextToolbar from './RichTextToolbar.svelte';
 	import StatusBadge from './shell/StatusBadge.svelte';
@@ -107,11 +115,11 @@
 	// svelte-ignore state_referenced_locally
 	const locked = initial.draft.locked_fields ?? [];
 	const visible = definition.fields.filter((field) => !hidden.has(field.id));
-	/** Fields named by their labels, never their code names (D-082). */
+	/** Fields named by their labels, never their code names (D-147). */
 	const labelsOf = (ids: string[]) => ids.map((id) => definition.fields.find((field) => field.id === id)?.label ?? id).join(', ');
 	const plain = visible.filter((field) => field.type !== 'rich_text');
 	const rich = visible.filter((field) => field.type === 'rich_text');
-	/** The fields in the definition's order, as the builder lists them (D-082): runs of plain
+	/** The fields in the definition's order, as the builder lists them (D-147): runs of plain
 	 *  fields, each a block of rows, between rich-text fields, each full width where it sits. */
 	type Segment = { kind: 'plain'; fields: FieldDefinition[] } | { kind: 'rich'; field: FieldDefinition };
 	const segments: Segment[] = [];
@@ -123,6 +131,12 @@
 	}
 	// svelte-ignore state_referenced_locally
 	let latest = $state.raw<Draft>(initial.draft);
+	// A fresh draft arriving after mount — the entry's query refetched, say a sibling was
+	// added elsewhere — replaces what the status row and details show. The form state is
+	// untouched: edits live in `form` and the editors.
+	$effect(() => {
+		latest = initial.draft;
+	});
 	// svelte-ignore state_referenced_locally
 	const saver = new Saver(project, collection, entry, definition, initial, (loaded) => {
 		latest = loaded.draft;
@@ -146,6 +160,32 @@
 	/** Bumped each time the whole content is (re)shown, so nested controls start from it. */
 	let showings = $state(0);
 	let unopenable = $state('');
+
+	// Locales (D-087): the tag rides every save through `saver.locale`; the Versions card lists
+	// the group and adds a sibling in another locale, which opens as its own entry.
+	let versionLocale = $state('');
+	let addingVersion = $state(false);
+	let versionProblem = $state('');
+
+	async function addVersion() {
+		const tag = versionLocale.trim();
+		if (tag === '' || addingVersion) return;
+		addingVersion = true;
+		versionProblem = '';
+		try {
+			const loaded = await createLocalization(project, collection, entry, tag);
+			toast.success(`Added the ${tag} version.`);
+			// The source's group changed under it: its cached draft (and the collection's
+			// lists) refetch rather than show a Versions card a sibling short.
+			void queryClient.invalidateQueries({ queryKey: ['draft', project, collection] });
+			void queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
+			await goto(resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: loaded.draft.id }));
+		} catch (error) {
+			versionProblem = plainError(error);
+		} finally {
+			addingVersion = false;
+		}
+	}
 
 	// Conditional fields (D-072): a field applies while the field it depends on holds one of its
 	// values, judged from what this editor would save. One that doesn't apply is hidden and left
@@ -269,7 +309,38 @@
 	// "What readers get": the public read of this entry, in a dialog.
 	let readerView = $state(false);
 
-	let tab = $state<'content' | 'history'>('content');
+	// The site canvas (W.2): pages get a Look tab rendering the draft — sections, menu and theme —
+	// through the shared renderer, and the theme entry a design sheet with its contrast checked.
+	// Clicking a section in a page's canvas opens that section's form.
+	// svelte-ignore state_referenced_locally
+	const sitePage = collection === 'pages' && definition.fields.some((field) => field.id === 'sections' && field.type === 'blocks');
+	// svelte-ignore state_referenced_locally
+	const siteTheme = collection === 'theme' && definition.fields.some((field) => field.id === 'light');
+	/** The content the canvas renders: exactly what a save would send right now. */
+	const canvasContent = $derived(sitePage || siteTheme ? current() : null);
+
+	let tab = $state<'content' | 'visual' | 'comments' | 'history'>('content');
+	const tabs = $derived(
+		sitePage || siteTheme
+			? ([['content', 'Content'], ['visual', 'Look'], ['comments', 'Comments'], ['history', 'History']] as const)
+			: ([['content', 'Content'], ['comments', 'Comments'], ['history', 'History']] as const)
+	);
+	// Writing and answering comments asks for `content.update` on this entry (E1); reading asks
+	// for `content.read`, which the route's own read already proved.
+	const commentWrite = $derived(mayOn(mine.data, 'content.update', collection, who.data != null && latest.created_by === who.data.id));
+	/** Open comments, for a count beside the tab; the panel reports it as its list lands. */
+	let commentCount = $state(0);
+	async function editSection(index: number) {
+		tab = 'content';
+		await tick();
+		// The sections list's own items (a nested list's, if a section held one, come under it).
+		const target = document.querySelector<HTMLElement>(`[data-testid="sections-sections"] > [data-testid="section"]:nth-of-type(${index + 1})`);
+		if (target === null) return;
+		const toggle = target.querySelector<HTMLButtonElement>('button[aria-expanded]');
+		if (toggle?.getAttribute('aria-expanded') === 'false') toggle.click();
+		target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+		toggle?.focus({ preventScroll: true });
+	}
 
 	// Restoring a version (spec's History screen): its fields become the draft and are saved as a new
 	// version on top of the current one, so nothing in the history is lost and the restore itself can
@@ -418,7 +489,7 @@
 		{/if}
 
 		<div role="tablist" aria-label="Entry" class="mb-6 inline-flex rounded-lg bg-muted p-1">
-			{#each [['content', 'Content'], ['history', 'History']] as const as [value, name] (value)}
+			{#each tabs as [value, name] (value)}
 				<button
 					role="tab"
 					id="tab-{value}"
@@ -429,12 +500,16 @@
 					onclick={() => (tab = value)}
 					onkeydown={(event) => {
 						if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
-							tab = tab === 'content' ? 'history' : 'content';
-							document.getElementById(`tab-${tab}`)?.focus();
+							const at = tabs.findIndex(([v]) => v === tab);
+							const next = tabs[(at + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+							if (next !== undefined) {
+								tab = next[0];
+								document.getElementById(`tab-${tab}`)?.focus();
+							}
 						}
 					}}
 				>
-					{name}{#if value === 'history' && revisions.data}<span class="ml-1.5 text-xs text-muted-foreground tabular">{revisions.data.length}</span>{/if}
+					{name}{#if value === 'history' && revisions.data}<span class="ml-1.5 text-xs text-muted-foreground tabular">{revisions.data.length}</span>{/if}{#if value === 'comments' && commentCount > 0}<span class="ml-1.5 text-xs text-muted-foreground tabular">{commentCount}</span>{/if}
 				</button>
 			{/each}
 		</div>
@@ -463,7 +538,7 @@
 					</ul>
 				</div>
 			{/if}
-			<!-- In the definition's order (D-082): runs of fields as rows, rich text full width where it sits. -->
+			<!-- In the definition's order (D-147): runs of fields as rows, rich text full width where it sits. -->
 			{#each segments as segment, index (index)}
 				{#if segment.kind === 'plain'}
 					{#key showings}
@@ -503,6 +578,16 @@
 			{/each}
 		</div>
 
+		{#if sitePage || siteTheme}
+			<div role="tabpanel" id="panel-visual" aria-labelledby="tab-visual" hidden={tab !== 'visual'}>
+				{#if siteTheme}
+					<ThemeLook content={canvasContent ?? {}} />
+				{:else}
+					<SiteCanvas {project} content={canvasContent ?? {}} onsection={editSection} />
+				{/if}
+			</div>
+		{/if}
+
 		{#if linkedFrom.length > 0}
 			<section class="mt-8" aria-labelledby="linked-from-heading" data-testid="linked-from">
 				<h2 id="linked-from-heading" class="mb-1 text-sm font-semibold">Linked from</h2>
@@ -536,6 +621,12 @@
 				</ul>
 			</section>
 		{/if}
+
+		<div role="tabpanel" id="panel-comments" aria-labelledby="tab-comments" hidden={tab !== 'comments'}>
+			<!-- Comments (E1, D-102): each one binds the version on screen — the draft's current
+			     version — so what was said stays bound to exactly what its author saw. -->
+			<CommentsPanel {project} {collection} {entry} revision={latest.revision.id} canWrite={commentWrite} oncount={(open) => (commentCount = open)} />
+		</div>
 
 		<div role="tabpanel" id="panel-history" aria-labelledby="tab-history" hidden={tab !== 'history'}>
 			{#if revisions.data}
@@ -672,12 +763,63 @@
 		<div class="min-w-0 text-xs text-muted-foreground xl:mt-4 xl:border-t xl:border-dotted xl:border-border xl:pt-3" data-testid="entry-details">
 			<p title={new Date(latest.created_at).toLocaleString()}>Created {new Date(latest.created_at).toLocaleDateString()}</p>
 			{#if published !== null}
-				<!-- The public link in one click, without opening Technical details (D-082). -->
+				<!-- The public link in one click, without opening Technical details (D-147). -->
 				<p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
 					<span>{standing === 'changed' ? 'Anyone can read the published version.' : 'Anyone can read it.'}</span>
 					<Button variant="outline" size="xs" onclick={() => copyAddress(publicAddress)} data-testid="copy-public-link"><LinkIcon data-icon="inline-start" />Copy public link</Button>
 				</p>
 			{/if}
+
+			<!-- The entry's locale (D-087): saved with the next save like any change; empty is the
+				project's default. A grouped entry's own tag is shown in Versions below. -->
+			<div class="mt-3 space-y-1.5" data-testid="entry-locale">
+				<label class="block font-medium text-foreground" for="entry-locale-input">Locale</label>
+				<Input
+					id="entry-locale-input"
+					class="h-8 text-xs"
+					placeholder="default (e.g. en, pt-BR)"
+					bind:value={saver.locale}
+					onchange={() => saver.edit(current())}
+				/>
+				<p class="text-muted-foreground">Which language this entry is written in, like <span class="font-mono">en</span> or <span class="font-mono">pt-BR</span>. Empty is the project's default.</p>
+			</div>
+
+			<!-- Its localization group (D-087): this entry in bold, siblings as links that open
+				their own editors, and the "add a version" row. -->
+			<section class="mt-3 space-y-1.5" aria-labelledby="versions-heading" data-testid="versions">
+				<h2 id="versions-heading" class="font-medium text-foreground">Versions</h2>
+				{#if latest.localizations.length === 0}
+					<p>No other versions — this entry is its own version.</p>
+				{:else}
+					<ul class="space-y-1" data-testid="version-list">
+						{#each latest.localizations as sibling (sibling.id)}
+							<li class="flex items-center gap-2">
+								{#if sibling.id === entry}
+									<strong>This entry</strong>
+								{:else}
+									<a class="text-foreground underline underline-offset-2" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: sibling.id })}>{sibling.locale ?? 'default'}</a>
+								{/if}
+								<Badge variant="secondary" class="font-mono">{sibling.id === entry ? (sibling.locale ?? 'default') : sibling.id.slice(0, 8)}</Badge>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<div class="flex items-center gap-1.5">
+					<Input
+						class="h-8 w-24 text-xs"
+						placeholder="fr"
+						aria-label="Locale of the new version"
+						bind:value={versionLocale}
+						disabled={addingVersion}
+						data-testid="version-locale"
+					/>
+					<Button variant="outline" size="xs" onclick={addVersion} disabled={addingVersion || versionLocale.trim() === ''} data-testid="add-version">
+						{addingVersion ? 'Adding…' : 'Add version'}
+					</Button>
+				</div>
+				{#if versionProblem !== ''}<p class="text-destructive" role="alert" data-testid="version-problem">{versionProblem}</p>{/if}
+			</section>
+
 			<TechnicalDetails class="mt-3">
 				{#if published !== null}
 					<!-- Where readers get it (the public read, no sign-in): the published version, not the draft. -->

@@ -1,4 +1,4 @@
-// The overview's Get started checklist, after the hands-on comparison with Strapi (D-082): it leads
+// The overview's Get started checklist, after the hands-on comparison with Strapi (D-147): it leads
 // with deciding what you'll write (Content types), done once the project has its own kinds of
 // content; "Write your first …" names the first collection the person made, never a one-entry type
 // or whichever type is first in the alphabet or got an entry first; and a role that can't change

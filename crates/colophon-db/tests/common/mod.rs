@@ -9,13 +9,15 @@ use colophon_db::{PgPool, identity};
 use sqlx::{AssertSqlSafe, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-fn host() -> String {
+pub(crate) fn host() -> String {
     std::env::var("COLOPHON_TEST_PG_HOST").unwrap_or_else(|_| "127.0.0.1:55432".to_owned())
 }
 
 pub(crate) struct TestDb {
-    admin: PgPool,
-    name: String,
+    /// A pool on the `postgres` database: schema-level work like CREATE DATABASE a sibling.
+    pub(crate) admin: PgPool,
+    /// This test's database name; a "restored backup" is a template clone of it.
+    pub(crate) name: String,
     /// The application login's pool: one connection, reused as pooled requests reuse them.
     pub(crate) app: PgPool,
 }
@@ -83,6 +85,17 @@ impl TestDb {
         .execute(&self.admin)
         .await
         .expect("drop database");
+    }
+
+    /// A `LISTEN` connection on the application login, for the change-hint tests (D-108).
+    pub(crate) async fn listener(&self) -> colophon_db::PgListener {
+        colophon_db::PgListener::connect(&format!(
+            "postgres://colophon_app:colophon-dev@{}/{}",
+            host(),
+            self.name
+        ))
+        .await
+        .expect("a listen connection")
     }
 
     /// Records a sign-in for `subject` and returns the identity.

@@ -1,0 +1,37 @@
+{
+  "scenario": "backup-drill",
+  "date": "2026-11-04T173702Z",
+  "commit": "148009b31b86469ae89fa62f161e33ba2f0a4774",
+  "dirty_files": 7,
+  "machine": "apple-m2-pro-12c",
+  "backup_dir": "backups/2026-11-04T173702Z",
+  "backup_seconds": 252,
+  "verify_seconds": 138,
+  "backup_bytes": 2212652088,
+  "backup_sha256": "019a7b38e65758b196ba0870c86af58273137258098a17bf1785732f72fc6f57",
+  "cluster_size_bytes": 12350136024,
+  "database": {
+    "name": "colophon",
+    "size_bytes": 2963289791
+  },
+  "encryption": {
+    "tool": "gpg",
+    "mode": "symmetric",
+    "key_reference": "gpg passphrase file deploy/backup-passphrase.local",
+    "file": "base.tar.gz.gpg"
+  },
+  "wal_archive": {
+    "location": "docker volume colophon_postgres-wal-archive (/wal-archive)",
+    "files": 36,
+    "bytes": 536872282,
+    "newest": "000000010000001800000027"
+  },
+  "migrations": 47,
+  "deletion_ledger": null,
+  "pg_verifybackup_at_capture": true,
+  "pg_verifybackup_after_decrypt": "passed",
+  "verify_checks": 10,
+  "verify_failures": 0,
+  "verdict": "captured-and-verified",
+  "note": "capture + integrity only: the restore drill onto clean infrastructure is a later P6 slice"
+}

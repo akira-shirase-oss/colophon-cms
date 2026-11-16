@@ -1,0 +1,20 @@
+{
+  "name": "@colophon/site-docs",
+  "private": true,
+  "version": "0.0.0",
+  "description": "One of the five Astro demo sites (apps/sites/README.md): the documentation site, statically built from the published `demo-sites` project's delivery API.",
+  "type": "module",
+  "scripts": {
+    "build": "astro build",
+    "preview": "astro preview --port 58111 --host 127.0.0.1",
+    "check": "astro check"
+  },
+  "dependencies": {
+    "@colophon/site-kit": "0.0.0",
+    "astro": "7.4.5"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.12",
+    "typescript": "6.0.3"
+  }
+}

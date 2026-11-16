@@ -1,0 +1,170 @@
+{
+  "scenario": "steady",
+  "endpoint": "postgres-trouble",
+  "date": "2026-11-04T19:38:49Z",
+  "commit": "e06ae75",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 100,
+    "duration": "60s",
+    "vus": 256
+  },
+  "requests": 24064,
+  "rps": 122,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 681.209,
+    "p50": 5.546,
+    "p90": 2003.057,
+    "p95": 2003.51,
+    "p99": 2005.111,
+    "p999": 2022.709,
+    "max": 10001.931
+  },
+  "database_transactions_during_run": 25586,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "l12": {
+    "gate": "outage reads/writes end in 5xx|timeout (<=2 buffered 200s each); zero corrupt read-backs; sentinel ack read back; readyz not_ready then ready; every job terminal; no 429; recovery 99% ok inside p99 budget",
+    "publishes": {
+      "baseline": 8,
+      "outage": 0,
+      "outage_failed": 8,
+      "recovery": 8
+    },
+    "readyz": {
+      "ready_in_recovery": 122,
+      "not_ready_in_outage": 120,
+      "ready_in_outage": 0
+    },
+    "recovery": {
+      "requests": 7267,
+      "ok": 7267,
+      "ok_share": 1
+    },
+    "cache_hit_while_dead": 0,
+    "corrupt_readbacks": 0,
+    "refusals_429": 0,
+    "reads": {
+      "baseline": {
+        "total": 6714,
+        "ok": 6714,
+        "unavailable": 0,
+        "timeout": 0,
+        "refused": 0,
+        "weird": 0
+      },
+      "margin": {
+        "weird": 0,
+        "total": 1826,
+        "ok": 1124,
+        "unavailable": 702,
+        "timeout": 0,
+        "refused": 0
+      },
+      "outage": {
+        "unavailable": 6799,
+        "timeout": 0,
+        "refused": 0,
+        "weird": 0,
+        "total": 6799,
+        "ok": 0
+      },
+      "recovery": {
+        "weird": 0,
+        "total": 6865,
+        "ok": 6865,
+        "unavailable": 0,
+        "timeout": 0,
+        "refused": 0
+      }
+    },
+    "writes": {
+      "baseline": {
+        "total": 420,
+        "ok": 420,
+        "unavailable": 0,
+        "timeout": 0,
+        "refused": 0,
+        "weird": 0
+      },
+      "margin": {
+        "weird": 0,
+        "total": 78,
+        "ok": 63,
+        "unavailable": 15,
+        "timeout": 0,
+        "refused": 0
+      },
+      "outage": {
+        "total": 417,
+        "ok": 0,
+        "unavailable": 417,
+        "timeout": 0,
+        "refused": 0,
+        "weird": 0
+      },
+      "recovery": {
+        "weird": 0,
+        "total": 402,
+        "ok": 402,
+        "unavailable": 0,
+        "timeout": 0,
+        "refused": 0
+      }
+    },
+    "jobs": {
+      "result": {
+        "resumed": 1,
+        "stuck": 0,
+        "failed": 0
+      },
+      "max_attempts": 2
+    },
+    "gates": {
+      "writes_fail_honestly": true,
+      "no_fake_commit": true,
+      "readyz_honest": true,
+      "jobs_resumed": true,
+      "no_refusals": true,
+      "acknowledged_held": true,
+      "recovered": true,
+      "controlled": true,
+      "outage_ran": true,
+      "reads_fail_honestly": true
+    },
+    "spec": "L12: PostgreSQL slow/unavailable and worker kill — writes fail honestly, no fake commit, jobs resume, cache policy stays explicit",
+    "windows_seconds": {
+      "phase": 60,
+      "margins": 4,
+      "outage_spans": [
+        64,
+        124
+      ],
+      "injected": "docker compose pause postgres + SIGKILL worker at ~60s; unpause + respawn at ~128s"
+    },
+    "cache_fill_while_dead": 0,
+    "sentinel": {
+      "published": 1,
+      "acknowledged": 1,
+      "lost": 0,
+      "created": 1
+    },
+    "held": true
+  }
+}

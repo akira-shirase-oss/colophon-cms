@@ -2,7 +2,7 @@
   One role (D-058): what it may do, who holds it, and, for people whose role manages roles, the
   editor. Every member can read it, so anyone can see what a role means before it's given to them.
   It sits in Settings' frame, under Roles (D-081). Made from Members' "Make a new role…" (`for=invite`,
-  D-082), it says so, and saving goes back to the invitation with this role chosen.
+  D-147), it says so, and saving goes back to the invitation with this role chosen.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
@@ -59,7 +59,9 @@
 					<Button variant="outline" size="sm" href={invite}>Back to the invitation</Button>
 				</div>
 			{/if}
-			{#key `${role.key}@${role.version}`}
+			<!-- Keyed on the role, not its version: a refetch that moves the version must not remount
+			     the editor over an open form — the editor says when its version fell behind (E3). -->
+			{#key role.key}
 				<RoleEditor {project} {role} types={types.data} {editable} onsaved={forInvite ? () => goto(invite) : undefined} />
 			{/key}
 		{:else}

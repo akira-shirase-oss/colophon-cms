@@ -15,13 +15,19 @@ v0.1 is done when every box below is checked with stored evidence (commit, comma
 - [ ] The deterministic simulator runs in CI on every pull request; any failing seed replays exactly; a deliberately
       broken invariant is caught (the simulator is shown to have teeth).
 - [ ] All fault cases F01–F14 and load cases L01–L14 pass (L15 is commerce, parked), as defined in
-      [verification](modules/17-verification.md).
-- [ ] A benchmark report on the reference profile is committed with commands, dataset seed and raw results.
-- [ ] A backup-and-restore drill onto clean infrastructure is documented, including a new recovery epoch and the
-      deletion ledger replay.
+      [verification](modules/17-verification.md). In place so far: F01–F03, F05, F09–F15 plus F04's database,
+      Studio and simulator halves (D-129, D-131); still owed F04's remaining half and F06–F08.
+- [x] A benchmark report on the reference profile is committed with commands, dataset seed and raw results:
+      [BENCHMARKS.md](BENCHMARKS.md), over the stored runs in `perf/results/`.
+- [x] A backup-and-restore drill onto clean infrastructure is documented, including a new recovery epoch and the
+      deletion ledger replay — `scripts/restore.sh drill`, evidenced by
+      `perf/results/2026-11-04T194355Z-restore-drill-apple-m2-pro-12c.json` (D-125 capture, D-126 restore).
 - [ ] One person other than the maintainer installs Colophon from the README alone, and the friction is recorded.
+      Prepared (D-132): `scripts/clean-install.sh` rehearses the README mechanically;
+      `deploy/runbooks/install-feedback.md` records the human run.
 - [ ] Five representative editors attempt draft → preview → review → publish; at least four succeed without help
-      (spec §05 usability gate), and the failures are written up.
+      (spec §05 usability gate), and the failures are written up. Prepared (D-132): `docs/usability-protocol.md`
+      is the session script.
 - [ ] v0.1 is released with signed artifacts, an SBOM, a changelog, the docs site, and one technical write-up per hard
       problem (outbox, release generations, the simulator, cache invalidation).
 

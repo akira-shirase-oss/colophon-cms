@@ -1,0 +1,20 @@
+[package]
+name = "colophon-media"
+description = "Colophon's upload lifecycle: intent bounds, signature checks, bounded decode, storage keys."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+image.workspace = true
+object_store.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

@@ -145,7 +145,7 @@ mod tests {
 #[derive(Serialize)]
 struct InstallationView {
     /// Whether anyone is an administrator yet. Until someone is, the Studio's front door says this
-    /// Colophon is new and leads to creating the first account (D-082).
+    /// Colophon is new and leads to creating the first account (D-147).
     has_administrator: bool,
 }
 

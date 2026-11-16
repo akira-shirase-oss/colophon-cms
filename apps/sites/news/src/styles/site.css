@@ -1,0 +1,286 @@
+/* The Meridian Post, a newspaper look: a centred masthead, rules, three-column front page. */
+:root {
+	--paper: #f6f4ee;
+	--ink: #1d1a16;
+	--muted: #6b655c;
+	--line: #d8d2c4;
+	--accent: #9c2b21;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: var(--paper);
+	color: var(--ink);
+	font: 1rem/1.6 Georgia, "Times New Roman", serif;
+}
+
+.wrap {
+	max-width: 66rem;
+	margin: 0 auto;
+	padding: 0 1.25rem;
+}
+
+a {
+	color: inherit;
+}
+
+.masthead {
+	text-align: center;
+	border-bottom: 1px solid var(--ink);
+	padding: 1.25rem 1rem 0;
+	background: #fbf9f4;
+}
+
+.dateline {
+	margin: 0;
+	font-size: 0.8rem;
+	letter-spacing: 0.05em;
+	color: var(--muted);
+	font-variant: small-caps;
+}
+
+.masthead-brand {
+	margin: 0.2rem 0 0.75rem;
+	font-size: 3rem;
+	letter-spacing: -0.02em;
+	font-weight: 700;
+}
+
+.masthead-brand a {
+	text-decoration: none;
+}
+
+.sections {
+	display: flex;
+	justify-content: center;
+	gap: 1.75rem;
+	border-top: 1px solid var(--line);
+	padding: 0.55rem 0;
+}
+
+.sections a {
+	font-size: 0.85rem;
+	font-variant: small-caps;
+	letter-spacing: 0.08em;
+	text-decoration: none;
+	color: var(--muted);
+}
+
+.sections a:hover {
+	color: var(--accent);
+}
+
+.top-story {
+	display: block;
+	text-decoration: none;
+	border-bottom: 3px double var(--line);
+	padding: 1.75rem 0;
+}
+
+.top-story .kicker {
+	font-size: 0.78rem;
+	font-variant: small-caps;
+	letter-spacing: 0.1em;
+	color: var(--accent);
+	font-weight: 700;
+}
+
+.top-story h1 {
+	font-size: 2.6rem;
+	line-height: 1.1;
+	margin: 0.3rem 0 0.5rem;
+	max-width: 48rem;
+}
+
+.top-story .lede {
+	font-size: 1.15rem;
+	color: #3f3a32;
+	max-width: 44rem;
+	margin: 0;
+}
+
+.top-story .byline {
+	font-size: 0.82rem;
+	color: var(--muted);
+	font-variant: small-caps;
+	letter-spacing: 0.05em;
+}
+
+.columns {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 1.75rem;
+	padding: 1.5rem 0;
+}
+
+.column {
+	border-right: 1px solid var(--line);
+	padding-right: 1.75rem;
+}
+
+.column:last-child {
+	border-right: none;
+	padding-right: 0;
+}
+
+.column h2 {
+	font-size: 0.85rem;
+	font-variant: small-caps;
+	letter-spacing: 0.1em;
+	border-bottom: 2px solid var(--ink);
+	padding-bottom: 0.35rem;
+	margin: 0 0 0.75rem;
+}
+
+.briefs {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.briefs li {
+	padding: 0.65rem 0;
+	border-bottom: 1px solid var(--line);
+}
+
+.briefs li:last-child {
+	border-bottom: none;
+}
+
+.briefs a {
+	text-decoration: none;
+	display: block;
+}
+
+.briefs h3 {
+	margin: 0;
+	font-size: 1.02rem;
+	line-height: 1.3;
+	font-weight: 700;
+}
+
+.briefs a:hover h3 {
+	color: var(--accent);
+}
+
+.briefs .lede {
+	font-size: 0.85rem;
+	color: var(--muted);
+	margin: 0.25rem 0 0;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.story {
+	max-width: 44rem;
+	margin: 0 auto;
+	padding: 2.25rem 0;
+}
+
+.story .kicker {
+	font-size: 0.78rem;
+	font-variant: small-caps;
+	letter-spacing: 0.1em;
+	color: var(--accent);
+	font-weight: 700;
+}
+
+.story h1 {
+	font-size: 2.3rem;
+	line-height: 1.15;
+	margin: 0.3rem 0 0.5rem;
+}
+
+.story .lede {
+	font-size: 1.15rem;
+	color: #3f3a32;
+	font-style: italic;
+}
+
+.story .byline {
+	font-size: 0.82rem;
+	color: var(--muted);
+	font-variant: small-caps;
+	letter-spacing: 0.05em;
+	border-top: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
+	padding: 0.4rem 0;
+	margin: 1rem 0 1.75rem;
+}
+
+.prose p {
+	margin: 0 0 1rem;
+}
+
+.prose h2 {
+	font-size: 1.35rem;
+	margin: 1.75rem 0 0.5rem;
+}
+
+.prose blockquote {
+	border-left: 3px solid var(--accent);
+	margin: 1.5rem 0;
+	padding-left: 1rem;
+	font-style: italic;
+	color: #3f3a32;
+}
+
+.prose aside {
+	border: 1px solid var(--line);
+	background: #fbf9f4;
+	padding: 0.75rem 1rem;
+	margin: 1.5rem 0;
+	font-size: 0.92rem;
+}
+
+.prose img {
+	max-width: 100%;
+	height: auto;
+}
+
+.prose pre {
+	background: #2b2620;
+	color: #efe9df;
+	padding: 1rem;
+	border-radius: 0.4rem;
+	overflow-x: auto;
+	font-size: 0.86rem;
+}
+
+.site-footer {
+	margin-top: 2.5rem;
+	border-top: 3px double var(--line);
+	color: var(--muted);
+	font-size: 0.85rem;
+	padding: 1rem 0 2rem;
+}
+
+.unseeded {
+	max-width: 40rem;
+	margin: 3rem auto;
+}
+
+.unseeded pre {
+	background: #2b2620;
+	color: #efe9df;
+	padding: 1rem 1.2rem;
+	border-radius: 0.5rem;
+}
+
+@media (max-width: 46rem) {
+	.columns {
+		grid-template-columns: 1fr;
+	}
+	.column {
+		border-right: none;
+		padding-right: 0;
+		border-bottom: 1px solid var(--line);
+		padding-bottom: 1rem;
+	}
+}

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { call, csrfToken, detailsOf, envelopeOf, type Reply } from '#lib/api.ts';
+	import { call, csrfToken, detailsOf, envelopeOf, listProjects, type Reply } from '#lib/api.ts';
 
 	interface Project {
 		id: string;
@@ -14,6 +14,7 @@
 		kind: string;
 		state: string;
 		permissions: { action: string; subject: string }[];
+		limits?: Record<string, number | null> | null;
 		secret?: string;
 	}
 	interface Event {
@@ -33,6 +34,9 @@
 	let kind = $state('read-only');
 	let permissions = $state('[{"action": "content.read", "subject": "articles"}]');
 	let days = $state('30');
+	let rpm = $state('');
+	let tokensDay = $state('');
+	let costDay = $state('');
 	let secret = $state('');
 	let tokenId = $state('');
 	let used = $state('');
@@ -51,9 +55,9 @@
 	}
 
 	async function loadProjects() {
-		const reply = await call('GET', '/api/v1/projects');
+		const reply = await listProjects<Project>();
 		signedIn = reply.status === 200;
-		projects = signedIn ? (reply.body as { data: Project[] }).data : [];
+		projects = reply.projects;
 		if (projectId === '' && projects.length > 0) projectId = projects[0]?.id ?? '';
 		if (projectId !== '') await load();
 	}
@@ -77,6 +81,11 @@
 
 	async function create() {
 		let body: Record<string, unknown> = { name, kind, expires_in_days: Number(days) };
+		const limits: Record<string, number> = {};
+		if (rpm.trim() !== '') limits.requests_per_minute = Number(rpm);
+		if (tokensDay.trim() !== '') limits.tokens_per_day = Number(tokensDay);
+		if (costDay.trim() !== '') limits.cost_per_day_micros = Number(costDay);
+		if (Object.keys(limits).length > 0) body.limits = limits;
 		if (kind === 'custom') {
 			try {
 				body = { ...body, permissions: JSON.parse(permissions) as unknown };
@@ -105,6 +114,24 @@
 		used = reply.status === 200 ? '200 read articles' : describe(reply);
 	}
 
+	/** Reads until the request quota (D-118) refuses or a dozen requests pass: a noisy agent's shape. */
+	async function keepUsingIt() {
+		const entries = `${base}/environments/production/collections/articles/entries`;
+		const authorization = { Authorization: `Bearer ${secret}` };
+		let ok = 0;
+		let stopped = '';
+		for (let n = 0; n < 12; n += 1) {
+			const reply = await call('GET', entries, { headers: authorization });
+			if (reply.status === 200) ok += 1;
+			else {
+				stopped = describe(reply);
+				break;
+			}
+		}
+		used = stopped === '' ? `${ok}×200 without a refusal` : `${ok}×200 then ${stopped}`;
+		await load(); // a refusal recorded token.rate_limited
+	}
+
 	async function revoke() {
 		const reply = await call('DELETE', `${base}/tokens/${tokenId}`, { headers: headers() });
 		message = reply.status === 200 ? `revoked (${(reply.body as { data: Token }).data.state})` : describe(reply);
@@ -117,8 +144,9 @@
 <h1>API tokens</h1>
 <p class="lede">
 	A project's API tokens and its audit log, through the real API (step R.4, D-063): make a read-only, full-access or custom token
-	(its secret is shown once), use the secret alone to read the project's articles, revoke it, and read back every change to roles,
-	members, invitations and tokens.
+	(its secret is shown once), use the secret alone to read the project's articles, give it a requests-per-minute ceiling and
+	keep using it until the request quota (D-118) refuses it, give it provider token and cost ceilings (D-122), revoke it,
+	and read back every change to roles, members, invitations and tokens.
 </p>
 
 {#if signedIn === false}
@@ -139,6 +167,13 @@
 				{#each tokens as token (token.id)}
 					<li data-id={token.id} data-state={token.state}>
 						{token.name}: {token.kind}, {token.state}{token.secret ? ' (secret listed!)' : ''}
+						{#if token.limits}
+							<span data-testid="token-limits">
+								{#each Object.entries(token.limits) as [field, ceiling] (field)}
+									{#if ceiling !== null}{field}={ceiling} {/if}
+								{/each}
+							</span>
+						{/if}
 					</li>
 				{/each}
 			</ul>
@@ -158,12 +193,16 @@
 				</label>
 				<label class="field">Permissions for custom (JSON) <textarea bind:value={permissions} name="permissions" rows="3"></textarea></label>
 				<label class="field">Expires in days <input bind:value={days} name="days" inputmode="numeric" /></label>
+				<label class="field">Requests per minute (optional) <input bind:value={rpm} name="rpm" inputmode="numeric" placeholder="no ceiling" /></label>
+				<label class="field">Provider tokens per day (optional) <input bind:value={tokensDay} name="tokens_day" inputmode="numeric" placeholder="no ceiling" /></label>
+				<label class="field">Provider cost per day, micros (optional) <input bind:value={costDay} name="cost_day" inputmode="numeric" placeholder="no ceiling" /></label>
 				<p><button type="button" onclick={create}>Create</button></p>
 			</form>
 			{#if secret}
 				<p>Secret, shown once: <code data-testid="secret">{secret}</code></p>
 				<p>
 					<button type="button" onclick={useIt}>Use it</button>
+					<button type="button" onclick={keepUsingIt}>Keep using it</button>
 					<button type="button" onclick={revoke}>Revoke it</button>
 				</p>
 				{#if used}<p data-testid="used">{used}</p>{/if}
@@ -198,7 +237,7 @@
 	.field {
 		display: grid;
 		gap: 0.25rem;
-		font-size: 0.85rem;
+		font-size: 0.875rem;
 		color: var(--muted);
 	}
 	input,

@@ -75,21 +75,24 @@ async fn release(db: &TestDb, alice: Uuid, project: Uuid, base: i64) {
             slug: None,
             schema_version: 1,
             references: &[],
+            assets: &[],
             unique: &[],
+            visibility: None,
         },
+        None,
     )
     .await
     .expect("entry");
     let pins = changesets::pins(&mut tx, &[entry]).await.expect("pins");
     let changeset = Uuid::now_v7();
-    changesets::create(&mut tx, changeset, "One", &pins, &[2; 32])
+    changesets::create(&mut tx, changeset, "One", &pins, &[2; 32], None)
         .await
         .expect("changeset");
     changesets::submit(&mut tx, changeset)
         .await
         .expect("submitted");
     changesets::lock(&mut tx, changeset).await.expect("lock");
-    changesets::review(&mut tx, changeset, &[2; 32], "approve", "")
+    changesets::review(&mut tx, changeset, &[2; 32], "approve", "", None)
         .await
         .expect("approved");
     let review = changesets::reviews(&mut tx, changeset, None)
@@ -219,8 +222,10 @@ async fn a_job_past_its_deadline_fails_and_the_worker_role_sees_no_drafts() {
     owner.close().await;
 
     for statement in [
-        "SELECT count(*) FROM revisions",
-        "SELECT count(*) FROM entries",
+        // The worker reads a few entries columns for retention (0039), and a few revisions
+        // columns for a migration run (0041), which makes count(*) on either legal; a draft's
+        // title is not among them — the worker still sees no drafts.
+        "SELECT draft_title FROM entries",
         "SELECT count(*) FROM memberships",
         "SELECT count(*) FROM sessions",
         "SELECT content FROM publications",

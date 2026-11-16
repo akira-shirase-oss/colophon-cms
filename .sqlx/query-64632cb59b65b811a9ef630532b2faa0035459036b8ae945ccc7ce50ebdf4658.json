@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE budget_reservations SET state = 'released', settled_at = now()\n                 WHERE project_id = $1 AND environment_id = $2 AND job_id = $3\n                   AND state IN ('held', 'uncertain')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "64632cb59b65b811a9ef630532b2faa0035459036b8ae945ccc7ce50ebdf4658"
+}

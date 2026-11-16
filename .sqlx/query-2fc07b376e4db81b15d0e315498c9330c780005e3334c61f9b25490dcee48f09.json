@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO asset_references\n           (project_id, environment_id, revision_id, field, position, asset_id)\n         SELECT $1, $2, $3, field, position, asset_id\n         FROM unnest($4::text[], $5::int2[], $6::uuid[])\n              AS t (field, position, asset_id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "TextArray",
+        "Int2Array",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2fc07b376e4db81b15d0e315498c9330c780005e3334c61f9b25490dcee48f09"
+}

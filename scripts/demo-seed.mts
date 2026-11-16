@@ -1,5 +1,5 @@
-// Seeds the local demo (scripts/demo.sh): signs in as the development realm's dev-owner the way a
-// browser does, then creates a project with a few articles about Colophon itself, points a site
+// Seeds the local demo (scripts/demo.sh): signs in on the built-in password card as dev-owner
+// (D-146), then creates a project with a few articles about Colophon itself, points a site
 // webhook and a probe at the site runner, publishes three articles as release 1 and leaves two
 // more in a changeset waiting for review, so every flow can be tried from the Studio. Run with
 // Node 24: node scripts/demo-seed.mts <server origin> <site origin>. Prints the project's id.
@@ -20,31 +20,14 @@ function cookieHeader(): string {
 	return [...cookies].map(([name, value]) => `${name}=${value}`).join('; ');
 }
 
-/** Follows redirects by hand, keeping cookies for every host on the way. */
-async function visit(url: string, init: RequestInit = {}): Promise<Response> {
-	let next = url;
-	let options: RequestInit = init;
-	for (let hop = 0; hop < 10; hop += 1) {
-		const response = await fetch(next, { ...options, redirect: 'manual', headers: { ...(options.headers ?? {}), cookie: cookieHeader() } });
-		remember(response);
-		const location = response.headers.get('location');
-		if (response.status < 300 || response.status >= 400 || location === null) return response;
-		next = new URL(location, next).toString();
-		options = {};
-	}
-	throw new Error('too many redirects');
-}
-
 async function signIn(): Promise<void> {
-	const form = await visit(`${origin}/auth/login?return_to=/me`);
-	const action = /<form[^>]*id="kc-form-login"[^>]*action="([^"]+)"/.exec(await form.text())?.[1];
-	if (action === undefined) throw new Error('no Keycloak sign-in form');
-	const signedIn = await visit(action.replaceAll('&amp;', '&'), {
+	const response = await fetch(`${origin}/auth/signin`, {
 		method: 'POST',
-		headers: { 'content-type': 'application/x-www-form-urlencoded' },
-		body: new URLSearchParams({ username: 'dev-owner', password: 'colophon-dev' })
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' })
 	});
-	if (signedIn.status !== 200) throw new Error(`sign-in failed: HTTP ${signedIn.status}`);
+	remember(response);
+	if (response.status !== 204) throw new Error(`sign-in failed: HTTP ${response.status}`);
 }
 
 async function api<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; data: T }> {

@@ -1,0 +1,63 @@
+{
+  "scenario": "throughput",
+  "endpoint": "smoke",
+  "date": "2026-11-04T20:42:02Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "total": 1000000,
+    "vus": 64
+  },
+  "requests": 139,
+  "rps": 3,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 7.986,
+    "p50": 7.152,
+    "p90": 13.276,
+    "p95": 16.06,
+    "p99": 21.447,
+    "p999": 26.679,
+    "max": 27.496
+  },
+  "database_transactions_during_run": 1130,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "l01": {
+    "gates": {
+      "steps_done": true,
+      "nothing_bad": true
+    },
+    "held": true,
+    "spec": "L01: one-user smoke — correct bodies, authorization, revisions and release IDs; no load before basic correctness",
+    "gate": "one VU walks reads, saves, revision reads, publishes (new release id, generation +1), pinned reads and refused anonymous access; every answer checked; no step may fail",
+    "steps": {
+      "reads": 54,
+      "saves": 12,
+      "revision_reads": 12,
+      "publishes": 4,
+      "delivery_reads": 8,
+      "refused_anonymous": 4
+    },
+    "checks": {
+      "fails": 0,
+      "rate": 1,
+      "passes": 242
+    }
+  }
+}

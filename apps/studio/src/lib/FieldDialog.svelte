@@ -238,6 +238,50 @@
 						<Input class="h-8 w-20 tabular" type="number" min={1} max={100} aria-label="Most entries in {field.label || 'this field'}" bind:value={def.max} disabled={!editable} />
 					{/if}
 				</fieldset>
+				{#if depth === 0 && self !== ''}
+					{@const backs = (collections.find((item) => item.slug === def.to)?.definition.fields ?? []).filter((other) => other.type === 'reference' && other.to === self)}
+					<label class="grid gap-1.5">
+						<span class="font-medium">Mirrored on {nameOf(def.to)} by</span>
+						<select
+							class={select}
+							value={def.inverse ?? ''}
+							onchange={(event) => {
+								const chosen = event.currentTarget.value;
+								if (chosen === '') delete def.inverse;
+								else def.inverse = chosen;
+							}}
+							disabled={!editable}
+							data-testid="inverse"
+						>
+							<option value="">No field</option>
+							{#each backs as back (back.id)}<option value={back.id}>{back.label}</option>{/each}
+							{#if def.inverse !== undefined && !backs.some((back) => back.id === def.inverse)}
+								<option value={def.inverse}>{def.inverse} (not on {nameOf(def.to)})</option>
+							{/if}
+						</select>
+						<span class="text-xs text-muted-foreground">The field you choose keeps its side of the link itself: a save here writes it there, in the same change. To offer one, add a link back to this type on {nameOf(def.to)} first.</span>
+					</label>
+				{/if}
+			{/if}
+		</div>
+	{:else if def.type === 'asset'}
+		<div class="grid gap-3 text-sm" data-testid="asset-options">
+			<p class="text-xs text-muted-foreground">An uploaded image, by its id — usable once the upload is verified; a release refuses one that isn't.</p>
+			{#if !isItem}
+				<fieldset class="flex flex-wrap items-center gap-x-4 gap-y-2">
+					<legend class="sr-only">How many</legend>
+					<label class="flex items-center gap-2">
+						<input type="radio" class="size-4 accent-primary" name="many-{place}" checked={!def.many} onchange={() => setMany(def as { many: boolean }, false)} disabled={!editable} />
+						One image
+					</label>
+					<label class="flex items-center gap-2">
+						<input type="radio" class="size-4 accent-primary" name="many-{place}" checked={def.many} onchange={() => setMany(def as { many: boolean }, true)} disabled={!editable} />
+						A list of up to
+					</label>
+					{#if def.many}
+						<Input class="h-8 w-20 tabular" type="number" min={1} max={100} aria-label="Most images in {field.label || 'this field'}" bind:value={def.max} disabled={!editable} />
+					{/if}
+				</fieldset>
 			{/if}
 		</div>
 	{:else if def.type === 'object' && def.component !== undefined}

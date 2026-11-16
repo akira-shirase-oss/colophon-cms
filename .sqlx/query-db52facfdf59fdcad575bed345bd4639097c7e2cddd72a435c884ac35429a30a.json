@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT i.entry_id AS \"entry_id!\", r.title AS \"title!\", r.content AS \"content!\",\n                  cur.definition AS \"definition!\"\n           FROM changeset_items i\n           JOIN revisions r ON r.project_id = i.project_id AND r.environment_id = i.environment_id\n                           AND r.id = i.revision_id\n           JOIN (SELECT DISTINCT ON (collection) collection, version, definition\n                 FROM content_type_versions\n                 WHERE project_id = $1 AND environment_id = $2\n                 ORDER BY collection, version DESC) cur\n             ON cur.collection = r.collection AND cur.version > r.schema_version\n           WHERE i.project_id = $1 AND i.environment_id = $2 AND i.changeset_id = $3\n             AND i.kind = 'publish'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entry_id!",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "changeset_items",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "title!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "content!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "revisions",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "definition!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "content_type_versions",
+            "name": "definition"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "db52facfdf59fdcad575bed345bd4639097c7e2cddd72a435c884ac35429a30a"
+}

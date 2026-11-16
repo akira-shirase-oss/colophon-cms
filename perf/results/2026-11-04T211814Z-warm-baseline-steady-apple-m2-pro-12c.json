@@ -1,0 +1,141 @@
+{
+  "scenario": "steady",
+  "endpoint": "warm-baseline",
+  "date": "2026-11-04T21:18:14Z",
+  "commit": "080053e",
+  "dirty": true,
+  "machine": {
+    "id": "apple-m2-pro-12c",
+    "cpu": "Apple M2 Pro",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "Darwin 27.0.0"
+  },
+  "topology": {
+    "servers": 1,
+    "workers": 0,
+    "balancer": null
+  },
+  "k6": "v2.3.0",
+  "params": {
+    "rate": 400,
+    "duration": "90s",
+    "vus": 256
+  },
+  "requests": 36063,
+  "rps": 398,
+  "failed": 0,
+  "checks_failed": 0,
+  "dropped": 0,
+  "latency_ms": {
+    "avg": 1.848,
+    "p50": 1.41,
+    "p90": 2.901,
+    "p95": 3.757,
+    "p99": 6.885,
+    "p999": 37.605,
+    "max": 81.977
+  },
+  "database_transactions_during_run": 40427,
+  "server_warnings": 0,
+  "thresholds_passed": true,
+  "resources": {
+    "samples": 18,
+    "server_rss_kb": {
+      "first": 27168,
+      "last": 26720,
+      "max": 39968
+    },
+    "server_cpu_percent": {
+      "avg": 9.6,
+      "max": 13.1
+    },
+    "postgres_connections": {
+      "last": 29,
+      "max": 29
+    }
+  },
+  "l02": {
+    "cache": {
+      "hit_share": 0.9993830397630873,
+      "served": {
+        "bypass": 1,
+        "hit": 32378,
+        "miss": 19,
+        "coalesced": 19
+      }
+    },
+    "gates": {
+      "p95_within_gate": true,
+      "p99_within_gate": true,
+      "failures_under_0_1_pct": true,
+      "hits_at_least_95_pct": true,
+      "every_window_within_p99_gate": true,
+      "windows_measured": true
+    },
+    "gate": "overall p95 <150 ms and p99 <350 ms, failure share <0.1%, cache-hit share >95%, and every five-minute window's p99 inside the same gate",
+    "windows_seconds": 300,
+    "rps": 398.49266500232284,
+    "failures": 0,
+    "held": true,
+    "spec": "L02: warm read baseline — warm-origin gates: p95 <=150 ms, p99 <=350 ms, unexpected failures <0.1%; record hits, pools, CPU, RSS",
+    "run_seconds": 90,
+    "requests": 36063,
+    "latency_ms": {
+      "max": 81.977,
+      "p50": 1.41,
+      "p95": 3.7568999999999986,
+      "p99": 6.8851799999999965
+    },
+    "windows_p99": [
+      {
+        "window": "w0",
+        "p95_ms": 3.711,
+        "p99_ms": 6.597,
+        "max_ms": 81.977
+      },
+      {
+        "window": "w1",
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      {
+        "window": "w2",
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      {
+        "p99_ms": 0,
+        "max_ms": 0,
+        "window": "w3",
+        "p95_ms": 0
+      },
+      {
+        "window": "w4",
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      {
+        "p99_ms": 0,
+        "max_ms": 0,
+        "window": "w5",
+        "p95_ms": 0
+      },
+      {
+        "window": "w6",
+        "p95_ms": 0,
+        "p99_ms": 0,
+        "max_ms": 0
+      },
+      {
+        "max_ms": 0,
+        "window": "w7",
+        "p95_ms": 0,
+        "p99_ms": 0
+      }
+    ]
+  }
+}

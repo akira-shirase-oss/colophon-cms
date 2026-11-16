@@ -1,0 +1,12 @@
+2026-11-10T16:48:55Z 1h-validation drills armed (valkey@20m sessions@30m postgres@40m)
+2026-11-10T17:08:55Z drill: pause valkey 60s
+ Container colophon-valkey-1 Paused 
+ Container colophon-valkey-1 Unpaused 
+2026-11-10T17:09:55Z drill: valkey resumed
+2026-11-10T17:19:55Z drill: expire all sessions in colophon
+2026-11-10T17:19:55Z drill: sessions expired
+2026-11-10T17:29:55Z drill: pause postgres 30s
+ Container colophon-postgres-1 Paused 
+ Container colophon-postgres-1 Unpaused 
+2026-11-10T17:30:26Z drill: postgres resumed
+2026-11-10T17:30:26Z drills done

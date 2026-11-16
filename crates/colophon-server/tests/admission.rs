@@ -11,13 +11,9 @@
 
 mod common;
 
-use std::{
-    path::PathBuf,
-    process::{Command, Stdio},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use common::{PORT, Server};
+use common::{PORT, Server, Stopped};
 use reqwest::StatusCode;
 use serde_json::Value;
 
@@ -151,35 +147,6 @@ async fn two_servers_sharing_valkey_share_one_count() {
         "admitted {admitted:?}, refused {refused:?} in {elapsed:?}, at most {allowed} allowed"
     );
     assert!(refused[0] > 0 && refused[1] > 0, "both refuse: {refused:?}");
-}
-
-/// Stops a stack service and starts it again when dropped, whatever the test did.
-struct Stopped(&'static str);
-
-impl Stopped {
-    fn compose(args: &[&str]) {
-        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../deploy/compose.yaml");
-        let status = Command::new("docker")
-            .args(["compose", "-f"])
-            .arg(file)
-            .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("docker compose runs");
-        assert!(status.success(), "docker compose {args:?} failed");
-    }
-
-    fn new(service: &'static str) -> Self {
-        Self::compose(&["stop", service]);
-        Self(service)
-    }
-}
-
-impl Drop for Stopped {
-    fn drop(&mut self) {
-        Self::compose(&["start", self.0]);
-    }
 }
 
 #[tokio::test]

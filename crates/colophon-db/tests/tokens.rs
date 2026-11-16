@@ -42,6 +42,7 @@ async fn read_only(pool: &PgPool, owner: Uuid, project: Uuid, hash: [u8; 32]) ->
         policy: &policy,
         hash,
         expires_at: OffsetDateTime::now_utc() + time::Duration::days(30),
+        limits: None,
     };
     let Created::Done(stored) = tokens::create(&mut tx, &token).await.expect("create") else {
         panic!("a project's first token was refused");
