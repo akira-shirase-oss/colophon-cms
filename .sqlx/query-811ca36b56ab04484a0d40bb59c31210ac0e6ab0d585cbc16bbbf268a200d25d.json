@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT origin FROM audience_origins WHERE project_id = $1 ORDER BY origin",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "origin",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "audience_origins",
+            "name": "origin"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "811ca36b56ab04484a0d40bb59c31210ac0e6ab0d585cbc16bbbf268a200d25d"
+}

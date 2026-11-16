@@ -435,7 +435,7 @@ async fn signin_refuses_wrong_passwords_and_locks_after_enough() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 #[expect(
     clippy::too_many_lines,
-    reason = "the link's whole lifecycle in one test: live, spent, superseded, expired, scoped"
+    reason = "the link's whole lifecycle in one test: listed, live, spent, retired, expired, scoped"
 )]
 async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
     let db = TestDb::new().await;
@@ -451,10 +451,32 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
         panic!("signed up");
     };
     let return_to = "http://site.test/welcome";
+    let origin = "http://site.test";
+
+    // Nothing listed: no link is recorded for any origin (D-148).
+    assert_eq!(
+        audience::request_magic_link(&db.app, project, "a@b.c", &[9; 32], return_to, origin)
+            .await
+            .expect("request"),
+        audience::LinkRequest::OriginNotAllowed
+    );
+    let mut tx = staff(&db.app, owner, project).await;
+    audience::set_origins(&mut tx, &[origin.to_owned()])
+        .await
+        .expect("listed");
+    assert_eq!(audience::origins(&mut tx).await.expect("origins"), [origin]);
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        audience::consume_magic_link(&db.app, project, &[9; 32])
+            .await
+            .expect("consume"),
+        audience::MagicLink::Invalid,
+        "the refused request stored nothing"
+    );
 
     // A link for an existing account signs it in — the answer names the user.
     let first = [1; 32];
-    audience::request_magic_link(&db.app, project, "a@b.c", &first, return_to)
+    audience::request_magic_link(&db.app, project, "a@b.c", &first, return_to, origin)
         .await
         .expect("request");
     match audience::consume_magic_link(&db.app, project, &first)
@@ -478,7 +500,7 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
 
     // An unknown email's link is the signup half: NewUser, still single-use.
     let second = [2; 32];
-    audience::request_magic_link(&db.app, project, "new@b.c", &second, return_to)
+    audience::request_magic_link(&db.app, project, "new@b.c", &second, return_to, origin)
         .await
         .expect("request");
     assert_eq!(
@@ -494,33 +516,36 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
         audience::MagicLink::Invalid
     );
 
-    // Asking again retires the earlier link: only the newest works.
-    let (stale, live) = ([3; 32], [4; 32]);
-    audience::request_magic_link(&db.app, project, "a@b.c", &stale, return_to)
-        .await
-        .expect("request");
-    audience::request_magic_link(&db.app, project, "a@b.c", &live, return_to)
-        .await
-        .expect("request");
-    assert_eq!(
-        audience::consume_magic_link(&db.app, project, &stale)
-            .await
-            .expect("consume"),
-        audience::MagicLink::Invalid,
-        "a superseded link is dead"
-    );
+    // Asking again never retires a link someone holds (D-148): both stay live until one is
+    // spent, and spending either retires the other.
+    let (held, asked) = ([3; 32], [4; 32]);
+    for token in [&held, &asked] {
+        assert_eq!(
+            audience::request_magic_link(&db.app, project, "a@b.c", token, return_to, origin)
+                .await
+                .expect("request"),
+            audience::LinkRequest::Recorded
+        );
+    }
     assert!(matches!(
-        audience::consume_magic_link(&db.app, project, &live)
+        audience::consume_magic_link(&db.app, project, &held)
             .await
             .expect("consume"),
         audience::MagicLink::SignedIn(_)
     ));
+    assert_eq!(
+        audience::consume_magic_link(&db.app, project, &asked)
+            .await
+            .expect("consume"),
+        audience::MagicLink::Invalid,
+        "spending one link retires its siblings"
+    );
 
     // An expired link is dead too: `expires_at > created_at` is a CHECK, so age both as the
     // owner (the application login can't write the table's timestamps — and RLS hides the
     // rows from it outside a project scope anyway).
     let expired = [5; 32];
-    audience::request_magic_link(&db.app, project, "a@b.c", &expired, return_to)
+    audience::request_magic_link(&db.app, project, "a@b.c", &expired, return_to, origin)
         .await
         .expect("request");
     let owner_pool = db.owner().await;
@@ -548,7 +573,7 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
         .expect("created")
         .id;
     let sixth = [6; 32];
-    audience::request_magic_link(&db.app, project, "a@b.c", &sixth, return_to)
+    audience::request_magic_link(&db.app, project, "a@b.c", &sixth, return_to, origin)
         .await
         .expect("request");
     assert_eq!(

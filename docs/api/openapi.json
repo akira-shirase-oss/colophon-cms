@@ -200,6 +200,22 @@
         },
         "type": "object"
       },
+      "AudienceOrigins": {
+        "additionalProperties": false,
+        "properties": {
+          "origins": {
+            "description": "scheme://host[:port] over http(s), no path; the only origins a magic link's `return_to` may name — none listed means no links",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "origins"
+        ],
+        "type": "object"
+      },
       "AudienceRole": {
         "properties": {
           "created_at": {
@@ -1607,7 +1623,7 @@
             "type": "string"
           },
           "return_to": {
-            "description": "the site's absolute http(s) landing page; the token is appended to it",
+            "description": "the site's absolute http(s) landing page, on an origin the project lists; the token is appended to it",
             "type": "string"
           }
         },
@@ -4452,6 +4468,222 @@
         "summary": "One project, with what the caller's role allows in it",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/audience/origins": {
+      "get": {
+        "operationId": "audienceOrigins",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AudienceOrigins"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "The origins the project's magic links may land on",
+        "tags": [
+          "audience"
+        ]
+      },
+      "put": {
+        "operationId": "audienceOriginsSet",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AudienceOrigins"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AudienceOrigins"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`missing_permission and friends` — signed in, but the role does not allow this"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_origin` — not scheme://host[:port] over http(s); `too_many_origins` — more than the project may list"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          }
+        ],
+        "summary": "Replace the origins the project's magic links may land on",
+        "tags": [
+          "audience"
         ]
       }
     },
@@ -18613,6 +18845,16 @@
         "responses": {
           "202": {
             "description": "the same answer whether or not the email has an account; a configured mail provider emails the link, `dev_link` only with COLOPHON_DEV_MAIL=1"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_return_to` — not an absolute http(s) URL; `return_to_not_allowed` — its origin isn't one the project lists (`PUT {P}/audience/origins`)"
           },
           "429": {
             "content": {

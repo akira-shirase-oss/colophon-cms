@@ -3340,7 +3340,14 @@ pub(crate) static TABLE: &[Route] = &[
                     media: "",
                     note: "the same answer whether or not the email has an account; a configured mail provider emails the link, `dev_link` only with COLOPHON_DEV_MAIL=1",
                 },
-                extra: &[],
+                extra: &[
+                    refusal(422, "invalid_return_to", "not an absolute http(s) URL"),
+                    refusal(
+                        422,
+                        "return_to_not_allowed",
+                        "its origin isn't one the project lists (`PUT {P}/audience/origins`)",
+                    ),
+                ],
                 ..MIN
             },
         )],
@@ -3479,6 +3486,45 @@ pub(crate) static TABLE: &[Route] = &[
                             "role_in_use",
                             "site users hold it — change their roles first",
                         ),
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (PR, "/audience/origins"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, audience::list_origins),
+                OpDoc {
+                    id: "audienceOrigins",
+                    summary: "The origins the project's magic links may land on",
+                    tag: "audience",
+                    ok: data("AudienceOrigins"),
+                    extra: &[NOT_FOUND, FORBIDDEN],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Put,
+                |f| on(f, audience::set_origins),
+                OpDoc {
+                    id: "audienceOriginsSet",
+                    summary: "Replace the origins the project's magic links may land on",
+                    tag: "audience",
+                    body: Some(json("AudienceOrigins")),
+                    ok: data("AudienceOrigins"),
+                    extra: &[
+                        NOT_FOUND,
+                        FORBIDDEN,
+                        refusal(
+                            422,
+                            "invalid_origin",
+                            "not scheme://host[:port] over http(s)",
+                        ),
+                        refusal(422, "too_many_origins", "more than the project may list"),
                     ],
                     ..MIN
                 },
@@ -4879,7 +4925,7 @@ fn audience_parts() -> Value {
             "required": ["email", "return_to"],
             "properties": {
                 "email": { "type": "string" },
-                "return_to": { "type": "string", "description": "the site's absolute http(s) landing page; the token is appended to it" },
+                "return_to": { "type": "string", "description": "the site's absolute http(s) landing page, on an origin the project lists; the token is appended to it" },
             },
             "additionalProperties": false,
         },
@@ -4904,6 +4950,18 @@ fn audience_parts() -> Value {
                 "last_sign_in_at": { "type": "string", "format": "date-time", "description": "present once it has signed in" },
                 "disabled": { "type": "boolean", "description": "staff disabled it: its sessions are dead and sign-in says so" },
             },
+        },
+        "AudienceOrigins": {
+            "type": "object",
+            "required": ["origins"],
+            "properties": {
+                "origins": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "scheme://host[:port] over http(s), no path; the only origins a magic link's `return_to` may name — none listed means no links",
+                },
+            },
+            "additionalProperties": false,
         },
         "AudienceRole": {
             "type": "object",

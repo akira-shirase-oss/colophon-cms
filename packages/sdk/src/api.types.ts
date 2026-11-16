@@ -90,6 +90,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/audience/origins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The origins the project's magic links may land on */
+        get: operations["audienceOrigins"];
+        /** Replace the origins the project's magic links may land on */
+        put: operations["audienceOriginsSet"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/audience/roles": {
         parameters: {
             query?: never;
@@ -1854,6 +1872,10 @@ export interface components {
             state?: "quarantined" | "live" | "rejected" | "deleted";
             width?: number | null;
         };
+        AudienceOrigins: {
+            /** @description scheme://host[:port] over http(s), no path; the only origins a magic link's `return_to` may name — none listed means no links */
+            origins: string[];
+        };
         AudienceRole: {
             /** Format: date-time */
             created_at: string;
@@ -2338,7 +2360,7 @@ export interface components {
         };
         MagicLinkRequest: {
             email: string;
-            /** @description the site's absolute http(s) landing page; the token is appended to it */
+            /** @description the site's absolute http(s) landing page, on an origin the project lists; the token is appended to it */
             return_to: string;
         };
         /** @description one JSON-RPC 2.0 message under MCP protocol 2025-11-25: a request, a notification or a response — never a batch */
@@ -3437,6 +3459,159 @@ export interface operations {
             };
             /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceOrigins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AudienceOrigins"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceOriginsSet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AudienceOrigins"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AudienceOrigins"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_origin` — not scheme://host[:port] over http(s); `too_many_origins` — more than the project may list */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12137,6 +12312,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description `invalid_return_to` — not an absolute http(s) URL; `return_to_not_allowed` — its origin isn't one the project lists (`PUT {P}/audience/origins`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
             };
             /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
             429: {

@@ -345,12 +345,18 @@ Built in step 1.7 (D-042), for people:
   change writes its audit event in the same transaction (`audience.role_created`/`_updated`/`_deleted`,
   `audience.user_created`/`_updated`, `audience.session_revoked`), like every other governed change.
 - Passwordless sign-in (D-140, migration 0053): `POST /audience/v1/{project}/magic-link` records a link in
-  `audience_magic_links` — only its token's SHA-256, a 15-minute life, superseded by the next request for the
-  same email — and answers `202 {"sent": true}` whether or not the email has an account; `return_to` is the
-  site's own absolute http(s) URL the link lands on. `POST …/magic-link/{token}` spends it once: an existing,
-  enabled account signs in; an unknown email is created in the project's open `self_assign` role with a
-  password nobody knows (a later password sign-in must set one deliberately); used, expired, superseded and
-  unknown tokens all answer one `403 magic_link_invalid`. Delivery is a provider seam (D-145):
+  `audience_magic_links` — only its token's SHA-256, a 15-minute life — and answers `202 {"sent": true}`
+  whether or not the email has an account. `return_to` is the absolute http(s) page the link lands on, and
+  **its origin must be one the project lists** (D-148, migration 0055): `GET|PUT {P}/audience/origins`
+  (`audience.manage`, the whole list replaced at once, at most 32, each `scheme://host[:port]` normalized the
+  way browsers serialize it, audited as `audience.origins_updated`). Anything else — another host, scheme or
+  port — is `422 return_to_not_allowed` before a token exists, and a project that lists nothing sends no links:
+  the token is a credential, so a link asked for someone else can never be pointed at the asker. A request
+  never retires a link already out — a request proves nothing, so it must not cancel the one a visitor holds —
+  and spending any one link retires every other outstanding link for the address. `POST …/magic-link/{token}`
+  spends it once: an existing, enabled account signs in; an unknown email is created in the project's open
+  `self_assign` role with a password nobody knows (a later password sign-in must set one deliberately); used,
+  expired, retired and unknown tokens all answer one `403 magic_link_invalid`. Delivery is a provider seam (D-145):
   `COLOPHON_MAIL_PROVIDER=resend` with `COLOPHON_MAIL_FROM` and `COLOPHON_RESEND_API_KEY` sends the link
   through `colophon-server::mail::Resend` (one `POST`, bearer key, ten-second deadline, failure logged but
   never changing the 202), and `COLOPHON_RESEND_ENDPOINT` moves the provider's address. With no provider the

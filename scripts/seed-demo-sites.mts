@@ -1111,6 +1111,11 @@ async function main(): Promise<void> {
 		await api('POST', `/api/v1/projects/${project}/audience/roles`, { name, self_assign: selfAssign });
 	}
 	console.log('audience roles: member (open), vip (closed)');
+	// Magic links land only on an origin the project lists (D-148): The Draft, as a browser
+	// reaches it from scripts/serve-demo-sites.sh — by name and by address.
+	const draft = ['http://localhost:58110', 'http://127.0.0.1:58110'];
+	await api('PUT', `/api/v1/projects/${project}/audience/origins`, { origins: draft });
+	console.log(`sign-in link origins: ${draft.join(', ')}`);
 
 	const member = await api<{ id: string }>(
 		'POST',

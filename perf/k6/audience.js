@@ -111,6 +111,10 @@ export function setup() {
   const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), { headers: Object.assign({ 'Idempotency-Key': key() }, ifMatch) });
   if (published.status !== 201) fail(`publish: HTTP ${published.status} ${published.body}`);
 
+  // Magic links land only on an origin the project lists (D-148): the scenario's site.
+  const origins = http.put(`${base}/audience/origins`, JSON.stringify({ origins: ['http://site.test'] }), { headers });
+  if (origins.status !== 200) fail(`origins: HTTP ${origins.status} ${origins.body}`);
+
   // The audience itself: public signups, batched — each returns its first session token.
   const users = [];
   const audience = `${BASE_URL}/audience/v1/${projectId}`;

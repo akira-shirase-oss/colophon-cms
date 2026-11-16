@@ -20,6 +20,8 @@ test('the audience page lists site visitors, manages their accounts, and shows h
 	const email = reader();
 	expect((await api(page, 'POST', `/audience/v1/${project}/signup`, { email, password: 'reader secret one' })).status).toBe(201);
 	expect((await api(page, 'POST', `/audience/v1/${project}/signin`, { email, password: 'reader secret one' })).status).toBe(200);
+	// A link lands only on an origin the project lists (D-148).
+	expect((await api(page, 'PUT', `${base}/audience/origins`, { origins: ['http://site.test'] })).status).toBe(200);
 	expect((await api(page, 'POST', `/audience/v1/${project}/magic-link`, { email, return_to: 'http://site.test/magic' })).status).toBe(202);
 
 	await page.goto(`/studio/projects/${project}`);

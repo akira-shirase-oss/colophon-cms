@@ -788,26 +788,80 @@ pub async fn update_user(
 /// inbox copy is worthless by the time anyone finds it (D-140).
 pub const MAGIC_LIFETIME: Duration = Duration::minutes(15);
 
-/// Records a magic link for `email`, retiring any earlier one for the same address first so
-/// only the newest link works. `token_hash` is the SHA-256 of the token the caller handed out;
-/// the token itself is never stored.
+/// The most origins one project may list for its magic links (D-148): a site and its
+/// preview hosts, not a directory of the web.
+pub const MAX_ORIGINS: usize = 32;
+
+/// The origins the project's magic links may land on (D-148), sorted.
+pub async fn origins(tx: &mut MemberTransaction) -> Result<Vec<String>, DbError> {
+    sqlx::query_scalar!(
+        "SELECT origin FROM audience_origins WHERE project_id = $1 ORDER BY origin",
+        tx.project
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// Replaces the project's origin list with `origins` — each already normalized by the
+/// caller (`scheme://host[:port]`, lowercase), at most [`MAX_ORIGINS`] of them.
+pub async fn set_origins(tx: &mut MemberTransaction, origins: &[String]) -> Result<(), DbError> {
+    sqlx::query!(
+        "DELETE FROM audience_origins WHERE project_id = $1",
+        tx.project
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    sqlx::query!(
+        "INSERT INTO audience_origins (project_id, origin)
+         SELECT $1, origin FROM unnest($2::text[]) AS listed (origin)
+         ON CONFLICT DO NOTHING",
+        tx.project,
+        origins
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
+}
+
+/// What a magic-link request came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkRequest {
+    /// The link is recorded; the caller may send it.
+    Recorded,
+    /// `return_to`'s origin isn't one the project lists (D-148): nothing was recorded, so no
+    /// token exists for anyone to receive.
+    OriginNotAllowed,
+}
+
+/// Records a magic link for `email` whose `return_to` lands on `origin` — only when the
+/// project lists that origin (D-148). Earlier links for the address stay live: a request is
+/// not proof of anything, so it must not be able to cancel the link a visitor already holds;
+/// spending any one link retires the rest ([`consume_magic_link`]). `token_hash` is the
+/// SHA-256 of the token the caller handed out; the token itself is never stored.
 pub async fn request_magic_link(
     pool: &PgPool,
     project: Uuid,
     email: &str,
     token_hash: &[u8; 32],
     return_to: &str,
-) -> Result<(), DbError> {
+    origin: &str,
+) -> Result<LinkRequest, DbError> {
     let mut tx = project_tx(pool, project).await?;
-    sqlx::query!(
-        "UPDATE audience_magic_links SET used_at = now()
-         WHERE project_id = $1 AND email = $2 AND used_at IS NULL",
+    let listed = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM audience_origins WHERE project_id = $1 AND origin = $2)
+             AS \"listed!\"",
         project,
-        email
+        origin
     )
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await
     .map_err(DbError::from_query)?;
+    if !listed {
+        return Ok(LinkRequest::OriginNotAllowed);
+    }
     sqlx::query!(
         "INSERT INTO audience_magic_links (project_id, id, email, token_hash, return_to, expires_at)
          VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
@@ -821,7 +875,8 @@ pub async fn request_magic_link(
     .execute(&mut *tx)
     .await
     .map_err(DbError::from_query)?;
-    tx.commit().await.map_err(DbError::from_query)
+    tx.commit().await.map_err(DbError::from_query)?;
+    Ok(LinkRequest::Recorded)
 }
 
 /// What a magic link's token turned out to be.
@@ -832,7 +887,7 @@ pub enum MagicLink {
     /// A live link naming an email with no account here: the caller may create one in the
     /// project's open self-assign role, then sign in.
     NewUser(String),
-    /// Unknown, used, expired or superseded — one answer for all of them.
+    /// Unknown, used, expired or retired by a sibling's use — one answer for all of them.
     Invalid,
 }
 
@@ -858,10 +913,13 @@ pub async fn consume_magic_link(
     let Some(link) = link else {
         return Ok(MagicLink::Invalid);
     };
+    // Spending one link retires every other one outstanding for the address (D-148): the
+    // locks this takes make a concurrent spend of a sibling re-check `used_at` and refuse.
     sqlx::query!(
-        "UPDATE audience_magic_links SET used_at = now() WHERE project_id = $1 AND id = $2",
+        "UPDATE audience_magic_links SET used_at = now()
+         WHERE project_id = $1 AND email = $2 AND used_at IS NULL",
         project,
-        link.id
+        link.email
     )
     .execute(&mut *tx)
     .await

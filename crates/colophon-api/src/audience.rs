@@ -31,6 +31,8 @@
 //!
 //! - `GET    {P}/audience/roles`, `POST` (`{"name", "self_assign"?}`),
 //!   `PATCH {P}/audience/roles/{name}` (`{"self_assign"}`), `DELETE` it;
+//! - `GET    {P}/audience/origins`, `PUT` (`{"origins": [...]}`): the origins magic links
+//!   may land on (D-148);
 //! - `GET    {P}/audience/users`, `POST` (`{"email", "password", "display_name"?, "role"}`),
 //!   `GET | PATCH {P}/audience/users/{user}` (`{"role"?, "disabled"?}`),
 //!   `GET    {P}/audience/users/{user}/sessions`, `DELETE {P}/audience/sessions/{session}`.
@@ -562,6 +564,80 @@ async fn require_manage(tx: &mut MemberTransaction) -> Result<(), ApiError> {
     )
 }
 
+/// What `PUT {P}/audience/origins` asks for: the whole list, replacing the old one.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OriginList {
+    origins: Vec<String>,
+}
+
+/// The origins a project's magic links may land on, as answers show them.
+#[derive(Serialize)]
+pub(crate) struct OriginsView {
+    origins: Vec<String>,
+}
+
+/// `GET {P}/audience/origins`: where the project's magic links may land (D-148).
+pub(crate) async fn list_origins(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<AudiencePath>,
+) -> Result<Json<Data<OriginsView>>, ApiError> {
+    let mut tx = open_staff(&state, caller, &path.project).await?;
+    require_manage(&mut tx).await?;
+    let origins = audience::origins(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(Json(Data {
+        data: OriginsView { origins },
+    }))
+}
+
+/// `PUT {P}/audience/origins`: replaces the list. Each entry is an origin —
+/// `scheme://host[:port]`, http or https, no path — normalized the way browsers serialize it,
+/// so `https://Site.Example/` is stored as `https://site.example`.
+pub(crate) async fn set_origins(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<AudiencePath>,
+    body: Result<Json<OriginList>, JsonRejection>,
+) -> Result<Json<Data<OriginsView>>, ApiError> {
+    let Json(body) = body?;
+    if body.origins.len() > audience::MAX_ORIGINS {
+        return Err(ApiError::InvalidField {
+            reason: "too_many_origins",
+            pointer: "/origins",
+            message: format!("a project lists at most {} origins", audience::MAX_ORIGINS),
+        });
+    }
+    let mut origins = body
+        .origins
+        .iter()
+        .map(|origin| {
+            clean_origin(origin).ok_or_else(|| ApiError::InvalidField {
+                reason: "invalid_origin",
+                pointer: "/origins",
+                message: "an origin is scheme://host[:port] over http or https, with no path"
+                    .to_owned(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    origins.sort();
+    origins.dedup();
+    let mut tx = open_staff(&state, caller, &path.project).await?;
+    require_manage(&mut tx).await?;
+    audience::set_origins(&mut tx, &origins)
+        .await
+        .map_err(ApiError::from_db)?;
+    let detail = serde_json::json!({ "origins": origins });
+    crate::audit::record(&mut tx, "audience.origins_updated", &path.project, &detail).await?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(Json(Data {
+        data: OriginsView { origins },
+    }))
+}
+
 /// `GET {P}/audience/roles`.
 pub(crate) async fn list_roles(
     State(state): State<AppState>,
@@ -948,8 +1024,9 @@ fn sign_in_html(link: &str) -> String {
     )
 }
 
-/// The `return_to` a magic link may carry: an absolute http(s) URL, nothing else.
-fn check_return_to(value: &str) -> Result<String, ApiError> {
+/// The `return_to` a magic link may carry: an absolute http(s) URL, nothing else — and its
+/// origin, which the project must list before a token is appended to it (D-148).
+fn check_return_to(value: &str) -> Result<(String, String), ApiError> {
     let trimmed = value.trim();
     if trimmed.len() > 2048 {
         return Err(ApiError::InvalidField {
@@ -960,7 +1037,7 @@ fn check_return_to(value: &str) -> Result<String, ApiError> {
     }
     match url::Url::parse(trimmed) {
         Ok(url) if matches!(url.scheme(), "http" | "https") && url.host().is_some() => {
-            Ok(trimmed.to_owned())
+            Ok((trimmed.to_owned(), url.origin().ascii_serialization()))
         }
         _ => Err(ApiError::InvalidField {
             reason: "invalid_return_to",
@@ -970,9 +1047,25 @@ fn check_return_to(value: &str) -> Result<String, ApiError> {
     }
 }
 
+/// An origin staff list for magic links, normalized: `scheme://host[:port]` as browsers
+/// serialize it (lowercase, default port dropped), with nothing after it but an optional `/`.
+fn clean_origin(value: &str) -> Option<String> {
+    let url = url::Url::parse(value.trim()).ok()?;
+    let bare = matches!(url.path(), "" | "/")
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.username().is_empty()
+        && url.password().is_none();
+    let web = matches!(url.scheme(), "http" | "https") && url.host().is_some();
+    let origin = url.origin().ascii_serialization();
+    (bare && web && origin.len() <= 255).then_some(origin)
+}
+
 /// `POST /audience/v1/{project}/magic-link`: records a single-use link and answers `202`
 /// whether or not the email has an account — the same answer either way, so nothing here can
-/// be used to enumerate visitors. The link itself is emailed by a sender this server does not
+/// be used to enumerate visitors. `return_to` must land on an origin the project lists
+/// (`PUT {P}/audience/origins`, D-148); anything else is `422 return_to_not_allowed`, before
+/// a token exists. The link itself is emailed by a sender this server does not
 /// have yet; with `COLOPHON_DEV_MAIL=1` it is also handed back in `dev_link`, which is how the
 /// development stack and the demo sites test the flow without a mail server.
 pub(crate) async fn request_magic_link(
@@ -984,18 +1077,32 @@ pub(crate) async fn request_magic_link(
     let Json(body) = body?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let email = clean_email(&body.email)?;
-    let return_to = check_return_to(&body.return_to)?;
+    let (return_to, origin) = check_return_to(&body.return_to)?;
     let token = tokens::random_token()
         .map_err(|_| ApiError::internal(std::io::Error::other("no secure random source")))?;
-    audience::request_magic_link(
+    match audience::request_magic_link(
         &services.pool,
         project,
         &email,
         &tokens::hash(&token),
         &return_to,
+        &origin,
     )
     .await
-    .map_err(ApiError::from_db)?;
+    .map_err(ApiError::from_db)?
+    {
+        audience::LinkRequest::Recorded => {}
+        // The token is a credential: it is only ever appended to an origin the project
+        // listed, so a link asked for someone else can't be pointed at the asker (D-148).
+        audience::LinkRequest::OriginNotAllowed => {
+            return Err(ApiError::InvalidField {
+                reason: "return_to_not_allowed",
+                pointer: "/return_to",
+                message: "this project doesn't list that site's origin for sign-in links"
+                    .to_owned(),
+            });
+        }
+    }
     audited(
         services,
         project,

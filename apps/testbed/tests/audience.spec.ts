@@ -136,6 +136,16 @@ test('a magic link signs a visitor in without a password, once', async ({ page }
 	await expect(page.getByTestId('message')).toHaveText('created role member');
 	expect(await publishGated(page, projectId)).toBe(201);
 
+	// D-148: a link lands only on an origin the project lists. Nothing listed refuses even
+	// the testbed's own page; listing it lets the request through.
+	await page.getByLabel('Email', { exact: true }).nth(2).fill('carol@example.test');
+	await page.getByRole('button', { name: 'Send the link' }).click();
+	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (return_to_not_allowed)');
+	await page.getByLabel('Origins').fill(new URL(page.url()).origin);
+	await page.getByRole('button', { name: 'Save origins' }).click();
+	await expect(page.getByTestId('message')).toHaveText('listed 1 origin(s)');
+	await expect(page.getByTestId('origins')).toHaveText(new URL(page.url()).origin);
+
 	// An email with no account: the link is the signup — spending it makes a member.
 	await page.getByLabel('Email', { exact: true }).nth(2).fill('carol@example.test');
 	await page.getByRole('button', { name: 'Send the link' }).click();
@@ -161,4 +171,52 @@ test('a magic link signs a visitor in without a password, once', async ({ page }
 		[projectId, token]
 	);
 	expect(spent).toBe(403);
+});
+
+// D-148: a sign-in link is a credential. Someone asking for a link to a visitor's address
+// with their own site as `return_to` is refused — the token never exists — while a listed
+// origin works, and asking again doesn't retire the link the visitor already holds.
+test('a sign-in link lands only on an origin the project lists', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	await page.goto('/audience');
+	await page.getByLabel('Project').selectOption(projectId);
+	await page.getByLabel('Name', { exact: true }).fill('member');
+	await page.getByRole('button', { name: 'Create role' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created role member');
+	const own = new URL(page.url()).origin;
+	await page.getByLabel('Origins').fill(own);
+	await page.getByRole('button', { name: 'Save origins' }).click();
+	await expect(page.getByTestId('origins')).toHaveText(own);
+
+	await page.getByLabel('Email', { exact: true }).nth(2).fill('dana@example.test');
+	await page.getByLabel('Return to').fill('https://attacker.example/steal');
+	await page.getByRole('button', { name: 'Send the link' }).click();
+	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (return_to_not_allowed)');
+	await expect(page.getByTestId('dev-link')).toHaveCount(0);
+
+	// The visitor's own link, then a second request for the same address: the first still
+	// signs in.
+	await page.getByLabel('Return to').fill('');
+	await page.getByRole('button', { name: 'Send the link' }).click();
+	await expect(page.getByTestId('dev-link')).toContainText(`${own}/magic?token=`);
+	const held = (await page.getByTestId('dev-link').textContent())?.split('token=').at(-1) ?? '';
+	const second = await page.evaluate(
+		async ([project, origin]) =>
+			(
+				await fetch(`/server/audience/v1/${project}/magic-link`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email: 'dana@example.test', return_to: `${origin}/magic` })
+				})
+			).status,
+		[projectId, own]
+	);
+	expect(second).toBe(202);
+	const spent = await page.evaluate(
+		async ([project, token]) =>
+			(await fetch(`/server/audience/v1/${project}/magic-link/${token}`, { method: 'POST' })).status,
+		[projectId, held]
+	);
+	expect(spent).toBe(200);
 });
