@@ -419,7 +419,7 @@ Built in step 1.7 (D-042), for people:
 | A5 | Agents are draft-only unless a scoped, revocable, opt-in permission says otherwise; nobody approves their own permission escalation. |
 | A6 | Hidden and missing resources are indistinguishable to unauthorized callers. |
 | A7 | Bootstrap runs once and is then disabled, whether by the command or a setup code (D-061); the development identity never runs on a public bind. |
-| A8 | Tokens and session secrets are stored hashed, compared in constant time, and never logged. |
+| A8 | Tokens and session secrets are stored hashed, compared in constant time, and never logged — a credential carried in a path (a magic link's `{token}`, a device `{code}`) is written into the request span as its template name (D-152). |
 | A9 | Every change to roles, memberships, invitations and API tokens is recorded in the transaction that makes it, and no recorded change is ever altered or removed (step R.4). |
 
 ## Interfaces

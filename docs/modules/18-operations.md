@@ -113,7 +113,8 @@ on clean infrastructure and an independent install, so operations are a module w
   signals below are exposed on the log lines, and the runbook states which.
 - **Correlation fields (built):** request id (UUIDv7 minted, or a sanitised client
   `x-request-id`, echoed on the response header and the error envelope), `method`, `route`
-  (low-cardinality template), `path` without the query string, `latency`, `status`, and the
+  (low-cardinality template), `path` without the query string and with credential segments
+  (`{token}`, `{code}`) written as their template names (D-152), `latency`, `status`, and the
   deployment's `version`/`commit` on every request-attributed line. Work events carry their
   own ids (`job`, `generation`, `attempts`, `project`, `identity`, `changeset`) where the
   event has one — the bare request span does not resolve a project, by design.
@@ -129,8 +130,9 @@ on clean infrastructure and an independent install, so operations are a module w
   the in-app counter and cap are not built — the synchronous writer means pressure shows as
   latency, not silent loss, which is honest but not the spec's shape.
 - **Never logged:** draft text, model prompts, customer addresses or credentials (spec §27) —
-  by rule and review: `path` drops the query string, client ids are sanitised, the envelope
-  names `code` never internals.
+  by rule and review: `path` drops the query string and writes a magic link's token or a device
+  code as `{token}`/`{code}` (D-152, proved at TRACE by `colophon-api/tests/redaction.rs`), client
+  ids are sanitised, the envelope names `code` never internals.
 
 ### Backups (spec §32; capture and archiving built in P6, D-125)
 - WAL archiving is live on the local stack: `archive_mode=on`, `wal_level=replica`, `archive_timeout=60s` (an idle
