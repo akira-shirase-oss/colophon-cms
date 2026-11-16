@@ -2148,6 +2148,11 @@ pub(crate) static TABLE: &[Route] = &[
                         "too_large, wrong_type",
                         "the `query` string over 8 KiB, or `variables` not an object",
                     ),
+                    refusal(
+                        422,
+                        "too_deep, too_complex, fragment_cycle",
+                        "with fragments expanded: deeper than 16, more than 512 fields, or spreads that cycle — refused before the read opens",
+                    ),
                 ],
                 ..MIN
             },

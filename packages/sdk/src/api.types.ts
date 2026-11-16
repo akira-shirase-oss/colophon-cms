@@ -7787,7 +7787,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `too_large, wrong_type` — the `query` string over 8 KiB, or `variables` not an object */
+            /** @description `too_large, wrong_type` — the `query` string over 8 KiB, or `variables` not an object; `too_deep, too_complex, fragment_cycle` — with fragments expanded: deeper than 16, more than 512 fields, or spreads that cycle — refused before the read opens */
             422: {
                 headers: {
                     [name: string]: unknown;
