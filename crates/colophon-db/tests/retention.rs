@@ -585,3 +585,45 @@ async fn a_pass_removes_dead_state_but_never_what_is_still_named() {
 
     db.drop().await;
 }
+
+/// Magic links are swept once dead (D-153): a link past `expires_at` by more than the attempt
+/// age goes, through the worker's definer function — a live one, and one only just expired,
+/// stay — and the worker still can't read the table itself.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn dead_magic_links_are_swept_and_live_ones_kept() {
+    let db = TestDb::new().await;
+    let fix = released(&db).await;
+    let owner = db.owner().await;
+    // Ages as of now: one dead for an hour, one dead a minute, one live.
+    for (n, made, expires) in [
+        (1_u8, "2 hours", "1 hour"),
+        (2, "16 minutes", "1 minute"),
+        (3, "1 minute", "-14 minutes"),
+    ] {
+        sqlx::query(AssertSqlSafe(format!(
+            "INSERT INTO audience_magic_links
+                 (project_id, id, email, token_hash, return_to, created_at, expires_at)
+             VALUES ($1, $2, 'link{n}@example.test', $3, 'http://site.test/magic',
+                     now() - interval '{made}', now() - interval '{expires}')"
+        )))
+        .bind(fix.project)
+        .bind(Uuid::now_v7())
+        .bind(vec![n; 32])
+        .execute(&owner)
+        .await
+        .expect("a link");
+    }
+    let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
+        .await
+        .expect("swept");
+    assert_eq!(swept.magic_links, 1, "only the long-dead link: {swept:?}");
+    let left: Vec<String> =
+        sqlx::query_scalar("SELECT email FROM audience_magic_links ORDER BY email")
+            .fetch_all(&owner)
+            .await
+            .expect("read");
+    assert_eq!(left, ["link2@example.test", "link3@example.test"]);
+    owner.close().await;
+    db.drop().await;
+}

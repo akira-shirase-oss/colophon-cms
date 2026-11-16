@@ -537,6 +537,7 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
     // Asking again never retires a link someone holds (D-148): both stay live until one is
     // spent, and spending either retires the other.
     let (held, asked) = ([3; 32], [4; 32]);
+    let owner_pool = db.owner().await;
     for token in [&held, &asked] {
         assert_eq!(
             audience::request_magic_link(&db.app, project, "a@b.c", token, return_to, origin)
@@ -544,7 +545,17 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
                 .expect("request"),
             audience::LinkRequest::Recorded
         );
+        // Past the address's cooldown (D-153) before the next request.
+        sqlx::query(
+            "UPDATE audience_magic_links SET created_at = created_at - interval '2 minutes'
+             WHERE token_hash = $1",
+        )
+        .bind(&token[..])
+        .execute(&owner_pool)
+        .await
+        .expect("aged");
     }
+    owner_pool.close().await;
     assert!(matches!(
         audience::consume_magic_link(&db.app, project, &held)
             .await

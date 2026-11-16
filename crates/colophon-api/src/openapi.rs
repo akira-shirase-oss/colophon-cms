@@ -3372,6 +3372,11 @@ pub(crate) static TABLE: &[Route] = &[
                         "return_to_not_allowed",
                         "its origin isn't one the project lists (`PUT {P}/audience/origins`)",
                     ),
+                    refusal(
+                        429,
+                        "rate_limited",
+                        "this address's last link is under a minute old and unused, or the project is at its per-minute ceiling; `Retry-After` says when",
+                    ),
                 ],
                 ..MIN
             },

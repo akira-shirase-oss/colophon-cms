@@ -12322,7 +12322,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            /** @description `rate_limited` — this address's last link is under a minute old and unused, or the project is at its per-minute ceiling; `Retry-After` says when; over the per-credential or per-address limit; `Retry-After` */
             429: {
                 headers: {
                     [name: string]: unknown;

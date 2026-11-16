@@ -27,7 +27,8 @@
 //!   `setup_codes` past expiry — used or not; the administrator a used code made is the
 //!   record that outlives it.
 //! - `attempt` (15 minutes): `setup_attempts`, matching the throttle's own window in
-//!   `colophon_setup_attempt`. `sign_in_attempts` and `device_logins` go at `expires_at`:
+//!   `colophon_setup_attempt`; and `audience_magic_links` that far past `expires_at`
+//!   (D-153) — a link is dead when it expires, and its audit events are the record. `sign_in_attempts` and `device_logins` go at `expires_at`:
 //!   dead rows their writers already prune on a busy day, swept here so a quiet one
 //!   doesn't keep them forever either.
 //!
@@ -138,6 +139,8 @@ pub struct Swept {
     pub setup_attempts: u64,
     /// `setup_codes` past `expires_at` plus the flow age.
     pub setup_codes: u64,
+    /// `audience_magic_links` past `expires_at` plus the attempt age (D-153).
+    pub magic_links: u64,
 }
 
 impl Swept {
@@ -161,6 +164,7 @@ impl Swept {
             + self.sign_in_attempts
             + self.setup_attempts
             + self.setup_codes
+            + self.magic_links
     }
 }
 
@@ -457,6 +461,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     let setup_attempts =
         retained(&mut tx, "colophon_sweep_setup_attempts", attempt_cut, batch).await?;
     let setup_codes = retained(&mut tx, "colophon_sweep_setup_codes", flow_cut, batch).await?;
+    // Magic links are dead at `expires_at`; their `audience.magic_link_*` events are the
+    // record. Kept the attempt age past it, longer than any cooldown or ceiling reads.
+    let magic_links = retained(&mut tx, "colophon_sweep_magic_links", attempt_cut, batch).await?;
 
     tx.commit().await.map_err(DbError::from_query)?;
     Ok(Swept {
@@ -478,5 +485,6 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
         sign_in_attempts,
         setup_attempts,
         setup_codes,
+        magic_links,
     })
 }

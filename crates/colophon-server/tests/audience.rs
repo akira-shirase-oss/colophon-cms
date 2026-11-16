@@ -70,6 +70,22 @@ async fn list_origins(owner: &common::Session, project: &str, origins: &[&str]) 
     assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
 }
 
+/// Ages every link for `email` by `seconds`, as the table owner: what waiting out the
+/// per-address cooldown (D-153) looks like without a test that sleeps a minute.
+async fn age_links(email: &str, seconds: i32) {
+    let owner = common::owner_database().await;
+    sqlx::query(
+        "UPDATE audience_magic_links SET created_at = created_at - make_interval(secs => $2)
+         WHERE email = $1",
+    )
+    .bind(email)
+    .bind(f64::from(seconds))
+    .execute(&owner)
+    .await
+    .expect("aged");
+    owner.close().await;
+}
+
 /// `GET /audience/v1/{project}/me` with whatever headers the caller carries.
 async fn me(project: &str, extra: &[(&str, &str)]) -> (StatusCode, Value) {
     let mut request = app().get(format!("{ORIGIN}/audience/v1/{project}/me"));
@@ -749,6 +765,8 @@ async fn magic_links_sign_in_existing_visitors_and_create_new_ones() {
         body["data"]["dev_link"].is_null(),
         "no link without COLOPHON_DEV_MAIL: {body}"
     );
+    // That link is still out, unused: the address's next one waits a minute (D-153).
+    age_links(&email, 61).await;
 
     // The development stack has no mail server: with the loopback-only COLOPHON_DEV_MAIL the
     // request also hands the link back, so the whole flow can run end to end.
@@ -849,6 +867,7 @@ async fn magic_links_sign_in_existing_visitors_and_create_new_ones() {
     // newer link signs the same account back in (an existing email takes the sign-in branch,
     // never a duplicate user), and the older one is dead after it.
     let (stale, _) = request(&email).await;
+    age_links(&email, 61).await;
     let (live, _) = request(&email).await;
     let consumed = audience_post_at(
         &dev,
@@ -1215,7 +1234,11 @@ async fn a_magic_link_lands_only_on_an_origin_the_project_lists() {
     );
 
     // Someone else asking for a link to the same address doesn't retire the victim's: the
-    // victim's link still signs in.
+    // victim's link still signs in. (Asked at once it waits out the address's cooldown,
+    // D-153; a minute later it is recorded beside the victim's.)
+    let (status, body) = ask_link(&project, &victim, "http://localhost:58110/magic").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    age_links(&victim, 61).await;
     let (status, body) = ask_link(&project, &victim, "http://localhost:58110/magic").await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     let other = body["data"]["dev_link"]
@@ -1271,4 +1294,106 @@ async fn a_magic_link_lands_only_on_an_origin_the_project_lists() {
         .filter(|event| event["action"].as_str() == Some("audience.origins_updated"))
         .count();
     assert_eq!(updates, 2, "{}", log.body);
+}
+
+/// Magic-link abuse is bounded (D-153): a second link for an address waits a minute while
+/// its newest is unused — `429` with `Retry-After`, the same whether or not the address has
+/// an account, and nothing recorded or sent — another address is unaffected, a spent link
+/// lifts the wait, and a project that recorded its ceiling of links in the last minute
+/// takes no more until the window moves on.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn magic_link_requests_cool_down_per_address_and_cap_per_project() {
+    let _server = Server::start_with(&[("COLOPHON_DEV_MAIL", "1")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/audience/roles"),
+        Some(&json!({"name": "member", "self_assign": true})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    list_origins(&owner, &project, &["http://site.test"]).await;
+    let ask = |email: String| {
+        let project = project.clone();
+        async move {
+            let response = audience_post(
+                &project,
+                "magic-link",
+                &json!({"email": email, "return_to": "http://site.test/magic"}),
+            )
+            .await;
+            let retry = response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u32>().ok());
+            let status = response.status();
+            let body: Value = response.json().await.unwrap_or(Value::Null);
+            (status, retry, body)
+        }
+    };
+
+    let first = format!("first-{}@example.test", unique_slug());
+    let (status, _, body) = ask(first.clone()).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let link = body["data"]["dev_link"]
+        .as_str()
+        .expect("a link")
+        .to_owned();
+
+    // Asked again at once: refused, saying when — and recording nothing.
+    let (status, retry, body) = ask(first.clone()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["error"]["code"].as_str(),
+        Some("rate_limited"),
+        "{body}"
+    );
+    assert!(
+        retry.is_some_and(|seconds| (1..=60).contains(&seconds)),
+        "Retry-After within the minute: {retry:?}"
+    );
+    assert!(body["data"].is_null(), "no link while waiting: {body}");
+
+    // Another address is its own: no wait.
+    let second = format!("second-{}@example.test", unique_slug());
+    let (status, _, body) = ask(second).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    // Spending the link lifts the wait for its address: the cooldown is for unused links.
+    let spent = audience_post(
+        &project,
+        &format!("magic-link/{}", dev_token(&link)),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(spent.status(), StatusCode::OK);
+    let (status, _, body) = ask(first).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    // The project's ceiling: with a minute's worth of links on record, the next request —
+    // for an address never seen — waits too.
+    let owner_db = common::owner_database().await;
+    let limit = 100;
+    sqlx::query(
+        "INSERT INTO audience_magic_links (project_id, id, email, token_hash, return_to, expires_at)
+         SELECT $1::uuid, gen_random_uuid(), 'filler-' || n || '@example.test',
+                sha256(convert_to($1::text || n::text, 'UTF8')), 'http://site.test/magic',
+                now() + interval '15 minutes'
+         FROM generate_series(1, $2) AS n",
+    )
+    .bind(&project)
+    .bind(limit)
+    .execute(&owner_db)
+    .await
+    .expect("a minute's worth of links");
+    owner_db.close().await;
+    let (status, retry, body) = ask(format!("third-{}@example.test", unique_slug())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert!(retry.is_some(), "the ceiling says when too");
 }

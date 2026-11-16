@@ -1115,6 +1115,12 @@ pub(crate) async fn request_magic_link(
                     .to_owned(),
             });
         }
+        // Too soon for this address, or the project's ceiling (D-153). Keyed by the address
+        // whether or not it has an account, so the 429 enumerates nothing; nothing was
+        // recorded or sent.
+        audience::LinkRequest::Wait(retry_after) => {
+            return Err(ApiError::RateLimited { retry_after });
+        }
     }
     audited(
         services,

@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXTRACT(EPOCH FROM max(created_at) + make_interval(secs => $3) - now())::float8\n         FROM audience_magic_links\n         WHERE project_id = $1 AND email = $2 AND used_at IS NULL AND expires_at > now()\n           AND created_at > now() - make_interval(secs => $3)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "extract",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ee9d56de0c8e52a140cc4c70ed59ce4778e8359b6fb59e3174ce40a0f0b4f3ca"
+}

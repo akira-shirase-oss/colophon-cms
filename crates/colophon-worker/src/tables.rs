@@ -91,6 +91,7 @@ impl Sweeper {
                         sign_in_attempts = swept.sign_in_attempts,
                         setup_attempts = swept.setup_attempts,
                         setup_codes = swept.setup_codes,
+                        magic_links = swept.magic_links,
                         "table retention pass"
                     );
                 }

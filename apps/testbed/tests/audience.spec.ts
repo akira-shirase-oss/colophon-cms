@@ -195,8 +195,8 @@ test('a sign-in link lands only on an origin the project lists', async ({ page }
 	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (return_to_not_allowed)');
 	await expect(page.getByTestId('dev-link')).toHaveCount(0);
 
-	// The visitor's own link, then a second request for the same address: the first still
-	// signs in.
+	// The visitor's own link, then a second request for the same address at once: it waits
+	// out the address's cooldown (D-153), and the first link still signs in.
 	await page.getByLabel('Return to').fill('');
 	await page.getByRole('button', { name: 'Send the link' }).click();
 	await expect(page.getByTestId('dev-link')).toContainText(`${own}/magic?token=`);
@@ -212,7 +212,7 @@ test('a sign-in link lands only on an origin the project lists', async ({ page }
 			).status,
 		[projectId, own]
 	);
-	expect(second).toBe(202);
+	expect(second).toBe(429);
 	const spent = await page.evaluate(
 		async ([project, token]) =>
 			(await fetch(`/server/audience/v1/${project}/magic-link/${token}`, { method: 'POST' })).status,

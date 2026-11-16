@@ -361,7 +361,12 @@ Built in step 1.7 (D-042), for people:
   port — is `422 return_to_not_allowed` before a token exists, and a project that lists nothing sends no links:
   the token is a credential, so a link asked for someone else can never be pointed at the asker. A request
   never retires a link already out — a request proves nothing, so it must not cancel the one a visitor holds —
-  and spending any one link retires every other outstanding link for the address. `POST …/magic-link/{token}`
+  and spending any one link retires every other outstanding link for the address. Requests are bounded
+  (D-153, migration 0056): a second link for an address waits a minute while its newest is unused and live, and
+  a project records at most 100 links a minute; both answer `429 rate_limited` with `Retry-After`, keyed by the
+  address whether or not it has an account (so nothing is enumerated), counted under the address's advisory lock
+  so concurrent requests can't both find room, and recording nothing. Dead links are swept by the table-retention
+  pass 15 minutes past `expires_at`, through `colophon_sweep_magic_links` (the worker deletes, never reads). `POST …/magic-link/{token}`
   spends it once: an existing, enabled account signs in; an unknown email is created in the project's open
   `self_assign` role with a password nobody knows (a later password sign-in must set one deliberately); used,
   expired, retired and unknown tokens all answer one `403 magic_link_invalid`. Delivery is a provider seam (D-145):
