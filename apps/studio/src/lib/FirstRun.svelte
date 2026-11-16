@@ -112,7 +112,8 @@
 						detail: 'Press Publish on it: it goes live as a numbered release.',
 						done: releases.length > 0,
 						href: entryHref,
-						action: latest ? 'Open it' : 'Write'
+						// Until something is written there is nothing to publish, so the button says what comes first
+						action: latest ? 'Publish' : 'Write first'
 					}
 				: {
 						id: 'publish',
@@ -120,7 +121,7 @@
 						detail: 'Press Ask for review on it: a publisher approves it and puts it live.',
 						done: sentForReview || releases.length > 0,
 						href: entryHref,
-						action: latest ? 'Open it' : 'Write'
+						action: latest ? 'Ask for review' : 'Write first'
 					}
 		].filter((item) => (item.id === 'types' ? designs : item.id === 'write' ? writes : item.id === 'publish' ? selfPublish || asks : true));
 		if (managesConnections) {

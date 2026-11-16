@@ -254,7 +254,7 @@
 		border-color: color-mix(in oklch, var(--foreground) 20%, transparent);
 	}
 	.stat-label {
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		color: var(--muted-foreground);
 	}
 	.stat-value {

@@ -104,7 +104,7 @@
 <svelte:window onkeydown={onKey} />
 
 <Command.Dialog bind:open title="Search" description="Go to a page or find an entry by its title" shouldFilter={false}>
-	<Command.Input placeholder="Search entries or jump to…" bind:value={typed} />
+	<Command.Input placeholder="Search or jump to a page" bind:value={typed} />
 	<Command.List>
 		<Command.Empty>{found.isFetching ? 'Searching…' : found.isError ? "Couldn't search just now. Try again in a moment." : 'Nothing matches.'}</Command.Empty>
 		{#if found.data && found.data.missed.length > 0}

@@ -271,7 +271,7 @@
 	</Dialog.Content>
 </Dialog.Root>
 
-<p class="mt-16 text-sm text-muted-foreground">
+<p class={['mt-16 text-sm text-muted-foreground', who.data === null && 'text-center']}>
 	<a class="underline decoration-border underline-offset-4 hover:decoration-foreground" href={resolve('/playground')}>Editor playground</a>: every editing feature, on
 	sample content, without saving.
 </p>

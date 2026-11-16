@@ -47,7 +47,7 @@ test('a role that can’t read one collection gets the Overview, its checklist a
 
 	// Search finds what the role can read.
 	await writer.keyboard.press('ControlOrMeta+k');
-	await writer.getByPlaceholder('Search entries or jump to…').fill('Findable');
+	await writer.getByPlaceholder('Search or jump to a page').fill('Findable');
 	await expect(writer.getByRole('option', { name: /Findable article/ })).toBeVisible();
 	await writer.keyboard.press('Escape');
 

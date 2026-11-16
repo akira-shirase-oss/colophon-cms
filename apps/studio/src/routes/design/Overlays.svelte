@@ -183,7 +183,7 @@
 
 		<Specimen label="Command palette">
 			<Command.Root class="rounded-2xl border border-border shadow-soft" disableInitialScroll>
-				<Command.Input placeholder="Search titles or jump to…" />
+				<Command.Input placeholder="Search or jump to a page" />
 				<Command.List>
 					<Command.Empty>No results.</Command.Empty>
 					<Command.Group heading="Go to">
