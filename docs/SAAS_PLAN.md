@@ -48,6 +48,11 @@ Decisions already made (2026-11-13, by the maintainer):
 
 ## Neon
 
+- Neon requires TLS. Since D-156 the server's Postgres driver is built with rustls (on aws-lc-rs, the same stack
+  `reqwest` uses) and the Mozilla root certificates, so a `?sslmode=require` URL connects; prefer
+  `sslmode=verify-full` so the certificate's host is checked too. Proved locally only: a unit test shows a
+  `require` URL opens with the TLS request (`colophon-db`, `a_require_url_asks_the_server_for_tls_first`); a real
+  Neon connection is still S0's first check.
 - Use Neon's **direct (unpooled) endpoint** for the server: `LISTEN`/`pg_notify` and session advisory locks do not
   survive a transaction-mode pooler. Size the connection pool to Neon's compute limits.
 - Migrations run through `COLOPHON_MIGRATION_DATABASE_URL` with the owner role; the app runs with a lower role.

@@ -319,6 +319,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_require_url_asks_the_server_for_tls_first() {
+        // `sslmode=require` is what Neon's URLs carry (D-156). With a TLS stack built in, the
+        // first bytes sqlx sends are the 8-byte SSLRequest (length 8, code 80877103); without
+        // one it gives up before sending anything. This listener answers `N` — no TLS here — so
+        // the connection fails either way: what arrived first is the proof.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        let seen = tokio::spawn(async move {
+            let Ok((socket, _)) = listener.accept().await else {
+                return Vec::new();
+            };
+            let mut first = [0_u8; 8];
+            let mut filled = 0;
+            while filled < first.len() && socket.readable().await.is_ok() {
+                match socket.try_read(&mut first[filled..]) {
+                    Ok(0) => break,
+                    Ok(read) => filled += read,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(_) => break,
+                }
+            }
+            if socket.writable().await.is_ok() {
+                let _refused = socket.try_write(b"N");
+            }
+            first[..filled].to_vec()
+        });
+        let pool = connect_lazy(
+            &format!("postgres://colophon:x@127.0.0.1:{port}/colophon?sslmode=require"),
+            PoolSettings {
+                acquire_timeout: Duration::from_secs(3),
+                ..PoolSettings::default()
+            },
+        )
+        .expect("a valid URL");
+        let attempt = tokio::time::timeout(Duration::from_secs(5), pool.acquire())
+            .await
+            .map(|connected| connected.map(|_| ()));
+        assert!(
+            matches!(attempt, Ok(Err(_))),
+            "a server without TLS can't take a require URL: {attempt:?}"
+        );
+        let first = tokio::time::timeout(Duration::from_secs(5), seen)
+            .await
+            .expect("the listener finished")
+            .expect("joined");
+        assert_eq!(
+            first,
+            [0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f],
+            "the SSLRequest came first"
+        );
+    }
+
+    #[tokio::test]
     async fn ping_answers_within_its_deadline_when_nothing_listens() {
         // Port 1 on loopback refuses at once, but sqlx doesn't report that: the pool retries
         // with backoff until its acquire timeout (sqlx-core 0.9, pool/inner.rs). The probe's

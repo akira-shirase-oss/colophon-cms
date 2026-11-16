@@ -92,6 +92,10 @@ on clean infrastructure and an independent install, so operations are a module w
   counts alone, so a cluster of N admits up to N times the rate until it is back. `scripts/load.sh` and
   `scripts/cluster.sh` raise the limits so far that they never refuse (one machine sends everything), and still
   pay for every check.
+- Database TLS (D-156): `COLOPHON_DATABASE_URL` and `COLOPHON_MIGRATION_DATABASE_URL` take libpq's `sslmode`
+  (`require`, `verify-ca`, `verify-full`, plus `sslrootcert` for a private CA); the driver speaks TLS through rustls
+  with the Mozilla roots built in. The local stack's Postgres has no TLS and its URLs say nothing, so they stay
+  plaintext on loopback. A managed database (Neon) needs `verify-full`.
 - Password work (D-150): `COLOPHON_PASSWORD_CONCURRENCY` (default one a core, 1–256) bounds the Argon2id
   jobs that run at once — 19 MiB and tens of milliseconds each, and anyone can ask for one. A burst waits up to two
   seconds (at most 32 waiters a slot); past that sign-ins and sign-ups answer `503` with `Retry-After`, while

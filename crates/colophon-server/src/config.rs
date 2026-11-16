@@ -955,6 +955,21 @@ mod tests {
         assert!(error.to_string().contains("COLOPHON_DEV_MAIL"), "{error}");
     }
 
+    #[tokio::test]
+    async fn a_tls_database_url_is_taken_as_given() {
+        // Neon's URLs carry `sslmode=require` (D-156): the configuration keeps the URL whole —
+        // the driver, built with rustls, does the TLS — and never prints it.
+        let url =
+            "postgres://app:s3cret@ep-quiet-1.eu-central-1.aws.neon.tech/colophon?sslmode=require";
+        let config = load(&[("COLOPHON_DATABASE_URL", url)]).expect("valid");
+        assert_eq!(config.database_url.expose(), url);
+        assert!(!format!("{config:?}").contains("s3cret"));
+        assert!(
+            colophon_db::connect_lazy(url, colophon_db::PoolSettings::default()).is_ok(),
+            "the driver accepts the require URL"
+        );
+    }
+
     #[test]
     fn private_destinations_are_an_explicit_opt_in_never_the_listen_address() {
         // Loopback is the default listen address, and still no private destinations: a
