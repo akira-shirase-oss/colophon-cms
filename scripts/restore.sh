@@ -358,8 +358,10 @@ stage_serve() {
     valkey-server --requirepass colophon-dev --save '' --appendonly no >/dev/null
   wait_valkey || { mark_blocked serve "the scratch valkey never answered"; return 1; }
 
-  # shellcheck source=/dev/null # plain KEY=value lines
-  set -a; . deploy/local.env; set +a
+  set -a
+  # shellcheck source=/dev/null # plain KEY=value lines (on its own line: a directive covers only the next command)
+  . deploy/local.env
+  set +a
   COLOPHON_ROLE=api \
   COLOPHON_LISTEN_ADDR="127.0.0.1:$HTTP_PORT" \
   COLOPHON_DATABASE_URL="postgres://colophon_app:colophon-dev@127.0.0.1:$PG_PORT/$DB" \
