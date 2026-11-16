@@ -9,7 +9,9 @@ test('sign in, create a project, and it stays invisible to someone else', async 
 	const editor = await editorContext.newPage();
 	await signIn(editor, 'dev-owner');
 	await expect(editor.getByTestId('signed-in')).toContainText('Dev Owner');
-	await expect(editor.getByTestId('standing')).toContainText('00000000-0000-4000-8000-00000000c001, administrator');
+	// A built-in password account's subject is its normalized email (D-084), and since D-146 the
+	// development accounts are password accounts, not the Keycloak subject the bootstrap used.
+	await expect(editor.getByTestId('standing')).toContainText('dev-owner@colophon.test, administrator');
 
 	const slug = `tb-${Date.now().toString(36)}`;
 	await editor.getByLabel('Slug').fill(slug);

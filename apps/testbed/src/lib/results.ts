@@ -60,8 +60,12 @@ const all = raw
 	.map((line) => JSON.parse(line) as LoadResult | StressResult)
 	.reverse();
 
-/** Throughput and steady runs, newest first. */
-export const results: LoadResult[] = all.filter((result): result is LoadResult => result.scenario !== 'stress');
+/** Throughput and steady runs, newest first. Named, not "everything but stress": the history also
+ *  holds other shapes (the 2026-11-07 failover-kill and failover-drain drills have no latency_ms),
+ *  and one of those in this table made the whole Load tests page fail to render. */
+export const results: LoadResult[] = all.filter(
+	(result): result is LoadResult => result.scenario === 'throughput' || result.scenario === 'steady'
+);
 
 /** Stress runs, newest first. */
 export const stressResults: StressResult[] = all.filter(
