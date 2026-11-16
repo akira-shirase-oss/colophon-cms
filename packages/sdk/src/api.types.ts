@@ -12477,7 +12477,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description `sign_in_failed` — a wrong password and a missing account alike */
+            /** @description `sign_in_failed` — a wrong password, a missing account and an (account, address) paused after eight misses, alike */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -12488,15 +12488,6 @@ export interface operations {
             };
             /** @description `account_disabled` — staff disabled the account */
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description `too_many_attempts` — the account is paused */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13092,17 +13083,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `sign_in_failed` — a wrong password and a missing account alike */
+            /** @description `sign_in_failed` — a wrong password, a missing account and an (account, address) paused after eight misses, alike */
             400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description `too_many_attempts` — the account is paused */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };

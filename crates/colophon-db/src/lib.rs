@@ -37,6 +37,7 @@ pub mod roles;
 pub mod schedules;
 pub mod scope;
 pub mod setup;
+pub mod throttle;
 pub mod tokens;
 pub mod work;
 

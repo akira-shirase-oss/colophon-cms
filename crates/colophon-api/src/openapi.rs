@@ -660,9 +660,8 @@ pub(crate) static TABLE: &[Route] = &[
                     refusal(
                         400,
                         "sign_in_failed",
-                        "a wrong password and a missing account alike",
+                        "a wrong password, a missing account and an (account, address) paused after eight misses, alike",
                     ),
-                    refusal(409, "too_many_attempts", "the account is paused"),
                     refusal(
                         422,
                         "password_too_long",
@@ -3328,9 +3327,8 @@ pub(crate) static TABLE: &[Route] = &[
                     refusal(
                         400,
                         "sign_in_failed",
-                        "a wrong password and a missing account alike",
+                        "a wrong password, a missing account and an (account, address) paused after eight misses, alike",
                     ),
-                    refusal(409, "too_many_attempts", "the account is paused"),
                     refusal(403, "account_disabled", "staff disabled the account"),
                     refusal(
                         422,

@@ -12,8 +12,8 @@
 //!   makes the account and starts its session. `role` names a role open to signup
 //!   (`self_assign`); left out, the project's single open role is taken.
 //! - `POST /audience/v1/{project}/signin`: `{"email", "password"}` starts a session. A wrong
-//!   password, a missing account and an unknown project answer alike
-//!   (`sign_in_failed`); a paused account is `too_many_attempts`, a disabled one
+//!   password, a missing account, an unknown project and an (account, address) paused after
+//!   eight misses answer alike (`sign_in_failed`, D-154); a disabled one is
 //!   `account_disabled`.
 //! - `POST /audience/v1/{project}/signout`: ends the session — a cookie-carried one asks the
 //!   `X-CSRF-Token` header to match its CSRF cookie, as a staff session's writes do; a bearer
@@ -440,6 +440,7 @@ async fn audited(
 pub(crate) async fn sign_in(
     State(state): State<AppState>,
     Path(path): Path<AudiencePath>,
+    crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     body: Result<Json<AudienceSignIn>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let services = session::services(&state)?;
@@ -452,19 +453,15 @@ pub(crate) async fn sign_in(
         &services.passwords,
         project,
         &email,
+        &address,
         &body.password,
     )
     .await
     {
         Ok(SignIn::SignedIn(user)) => user,
-        // A wrong password and a missing account answer alike, after the same Argon2 work.
+        // A wrong password, a missing account and a paused (account, address) answer alike
+        // (D-154).
         Ok(SignIn::Refused) => return Err(ApiError::SignInFailed),
-        Ok(SignIn::Locked(_)) => {
-            return Err(ApiError::conflict(
-                "too_many_attempts",
-                "too many tries; wait a while and try again",
-            ));
-        }
         Ok(SignIn::Disabled) => {
             return Err(ApiError::forbidden(
                 "account_disabled",

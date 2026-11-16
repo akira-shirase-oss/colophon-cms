@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(locked_until > now(), false) AS \"paused!\" FROM sign_in_throttle\n           WHERE realm = $1 AND email = $2 AND address = $3\n           FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "paused!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4d568df6183bce7c17d9e814600b6b122c71c7c07b9efe3b299e3b9c85297c5e"
+}

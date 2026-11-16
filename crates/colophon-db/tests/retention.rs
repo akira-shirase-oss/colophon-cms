@@ -627,3 +627,41 @@ async fn dead_magic_links_are_swept_and_live_ones_kept() {
     owner.close().await;
     db.drop().await;
 }
+
+/// Sign-in keys idle for a day are swept (D-154): their count starts over; a recent one, and
+/// an old one still paused, stay.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn idle_sign_in_keys_are_swept_and_live_ones_kept() {
+    let db = TestDb::new().await;
+    let owner = db.owner().await;
+    for (address, touched, paused_until) in [
+        ("198.51.100.1", "2 days", None),
+        ("198.51.100.2", "1 hour", None),
+        ("198.51.100.3", "2 days", Some("1 hour")),
+    ] {
+        let until = paused_until.map_or_else(
+            || "NULL".to_owned(),
+            |ahead| format!("now() + interval '{ahead}'"),
+        );
+        sqlx::query(AssertSqlSafe(format!(
+            "INSERT INTO sign_in_throttle (realm, email, address, failures, locked_until, updated_at)
+             VALUES ('staff', 'a@b.c', '{address}', 3, {until}, now() - interval '{touched}')"
+        )))
+        .execute(&owner)
+        .await
+        .expect("a key");
+    }
+    let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
+        .await
+        .expect("swept");
+    assert_eq!(swept.sign_in_throttle, 1, "{swept:?}");
+    let left: Vec<String> =
+        sqlx::query_scalar("SELECT address FROM sign_in_throttle ORDER BY address")
+            .fetch_all(&owner)
+            .await
+            .expect("read");
+    assert_eq!(left, ["198.51.100.2", "198.51.100.3"]);
+    owner.close().await;
+    db.drop().await;
+}

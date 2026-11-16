@@ -350,17 +350,24 @@ pub(crate) async fn sign_up(
 }
 
 /// `POST /auth/signin`: trades an email and password for a session. A wrong password, a
-/// missing account and a locked account are refused the same way, and a locked account says
-/// how long it pauses for.
+/// missing account and an (account, address) paused after eight misses are refused the same
+/// way, `400 sign_in_failed` (D-154).
 pub(crate) async fn sign_in(
     State(state): State<AppState>,
+    crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     Json(body): Json<PasswordSignIn>,
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
     let email = clean_email(&body.email)?;
     check_sign_in_password(&body.password)?;
-    match identity::password_sign_in(&services.pool, &services.passwords, &email, &body.password)
-        .await
+    match identity::password_sign_in(
+        &services.pool,
+        &services.passwords,
+        &email,
+        &address,
+        &body.password,
+    )
+    .await
     {
         Ok(identity::PasswordSignIn::SignedIn(id)) => {
             let (session_token, csrf_token) = issue_session(services, id).await?;
@@ -373,11 +380,9 @@ pub(crate) async fn sign_in(
             );
             Ok(response)
         }
+        // A wrong password, a missing account and a paused (account, address) are one
+        // answer after one kind of work (D-154).
         Ok(identity::PasswordSignIn::Refused) => Err(ApiError::SignInFailed),
-        Ok(identity::PasswordSignIn::Locked(_)) => Err(ApiError::Conflict {
-            reason: "too_many_attempts",
-            message: "too many tries; wait a while and try again",
-        }),
         Err(error) => Err(ApiError::from_db(error)),
     }
 }

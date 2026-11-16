@@ -4,9 +4,9 @@
 //! never meet: a member manages the project; a visitor only reads what it delivers.
 //!
 //! Account functions here take the project explicitly and run inside
-//! [`scope::begin`] with no identity: RLS confines them, and `site_users`' lockout state is
-//! counted under a row lock like [`crate::identity::password_sign_in`]'s, before the verify
-//! that runs with nothing held (D-150). Session lookups go
+//! [`scope::begin`] with no identity: RLS confines them; sign-in attempts are counted per
+//! (account, client address) in `sign_in_throttle` like [`crate::identity::password_sign_in`]'s,
+//! before the verify that runs with nothing held (D-150, D-154). Session lookups go
 //! through `colophon_audience_session` (migration 0052), the SECURITY DEFINER function that
 //! finds a session by its token's hash before the project's context exists and stamps its use
 //! — at most once a minute, and only inside the idle window, so an idle session's staleness is
@@ -40,10 +40,9 @@ pub const MAX_SESSIONS: i64 = 16;
 /// flood grow the table without end.
 pub const MAX_SITE_USERS: i64 = 100_000;
 
-/// Consecutive misses before the account pauses — bounded, so guessing costs time and shows.
-pub const LOCK_AFTER: i16 = 8;
-/// How long a locked account stays locked.
-pub const LOCK_FOR: Duration = Duration::minutes(15);
+/// Attempts a (account, client address) key gets before it pauses, and for how long
+/// (D-154): the counts live in `sign_in_throttle`, see [`crate::throttle`].
+pub use crate::throttle::{LOCK_AFTER, LOCK_FOR};
 
 /// A project-scoped transaction with no person in it: what the public audience endpoints
 /// open. Row-level security still confines every statement to the project.
@@ -394,44 +393,48 @@ async fn insert_user(
 /// The answer to a site user's sign-in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignIn {
-    /// Right password; the counter resets and the session may start.
+    /// Right password; the attempt count for this address resets and the session may start.
     SignedIn(SiteUser),
-    /// Wrong password, or no such account — the same answer, after the same work.
+    /// Wrong password, no such account, or this (account, address) paused after too many
+    /// misses (D-154) — one answer for all three.
     Refused,
-    /// Too many misses; the account pauses until this time.
-    Locked(OffsetDateTime),
     /// Staff disabled the account; its sessions are already revoked.
     Disabled,
 }
 
-/// Signs a site user in with an email and a password, as
-/// [`crate::identity::password_sign_in`] does for members (D-150): the slot first, then one
-/// short transaction that checks the disabled and paused states under the row lock and
-/// counts the attempt before any Argon2, then the verify with nothing held, then — on a
-/// match — the reset.
+/// Signs a site user in, as a client at `address`, the way
+/// [`crate::identity::password_sign_in`] signs in members (D-150, D-154): the slot first; one
+/// short transaction that counts the attempt against the (project audience, email, address)
+/// key — refusing unverified while it is paused — and reads the account; the verify with
+/// nothing held; on a match the key forgotten and the sign-in stamped, re-checking
+/// `disabled_at` so a disable during the verify still wins.
 pub async fn sign_in(
     pool: &PgPool,
     gate: &crate::passwords::PasswordGate,
     project: Uuid,
     email: &str,
+    address: &str,
     password: &str,
 ) -> Result<SignIn, DbError> {
+    use crate::throttle::{self, Counted, Realm};
     let slot = gate.slot().await?;
     let mut tx = project_tx(pool, project).await?;
+    if throttle::count(&mut tx, Realm::Audience(project), email, address).await? == Counted::Paused
+    {
+        return Ok(SignIn::Refused);
+    }
     let row = sqlx::query!(
-        "SELECT id, email, display_name, role, created_at, last_sign_in_at, disabled_at,
-                password_hash, locked_until
+        "SELECT id, email, display_name, role, created_at, disabled_at, password_hash
          FROM site_users
-         WHERE project_id = $1 AND email = $2
-         FOR UPDATE",
+         WHERE project_id = $1 AND email = $2",
         project,
         email
     )
     .fetch_optional(&mut *tx)
     .await
     .map_err(DbError::from_query)?;
+    tx.commit().await.map_err(DbError::from_query)?;
     let Some(row) = row else {
-        drop(tx);
         // No such account: the same verify work runs anyway, so the answer can't be told apart.
         let _ = slot.verify(password, None).await;
         return Ok(SignIn::Refused);
@@ -439,40 +442,14 @@ pub async fn sign_in(
     if row.disabled_at.is_some() {
         return Ok(SignIn::Disabled);
     }
-    if row
-        .locked_until
-        .is_some_and(|until| until > OffsetDateTime::now_utc())
-    {
-        return Ok(SignIn::Locked(
-            row.locked_until.unwrap_or_else(OffsetDateTime::now_utc),
-        ));
-    }
-    let locks = sqlx::query_scalar!(
-        "UPDATE site_users
-         SET failed_sign_ins = least(failed_sign_ins + 1, 32767),
-             locked_until = CASE WHEN failed_sign_ins + 1 >= $3 THEN now() + make_interval(secs => $4) END
-         WHERE project_id = $1 AND id = $2
-         RETURNING locked_until",
-        project,
-        row.id,
-        i32::from(LOCK_AFTER),
-        f64::from(u32::try_from(LOCK_FOR.whole_seconds()).unwrap_or(u32::MAX))
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(DbError::from_query)?;
-    tx.commit().await.map_err(DbError::from_query)?;
     // Argon2 with no transaction open and no connection held.
     if !slot.verify(password, Some(&row.password_hash)).await {
-        return Ok(match locks {
-            Some(until) => SignIn::Locked(until),
-            None => SignIn::Refused,
-        });
+        return Ok(SignIn::Refused);
     }
     let mut tx = project_tx(pool, project).await?;
-    // A disable that landed during the verify wins: the row is read again under its lock.
+    throttle::clear(&mut tx, Realm::Audience(project), email, address).await?;
     let enabled = sqlx::query_scalar!(
-        "UPDATE site_users SET failed_sign_ins = 0, locked_until = NULL, last_sign_in_at = now()
+        "UPDATE site_users SET last_sign_in_at = now()
          WHERE project_id = $1 AND id = $2 AND disabled_at IS NULL
          RETURNING id",
         project,

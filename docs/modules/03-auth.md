@@ -73,11 +73,16 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - `POST /auth/signin`: 204 with the same cookies. A wrong password and a missing account get the same 400
   `sign_in_failed` after the same verify work — a parseable dummy hash stands in for a missing account's. The
   email is normalized the same way before the lookup.
-- Bounded guessing: eight consecutive misses pause the account for fifteen minutes (409 `too_many_attempts`).
-  The attempt is counted under the row's `SELECT … FOR UPDATE` *before* the verify, in a transaction that commits
-  at once; Argon2 then runs with no transaction open and no pooled connection held (D-150), so concurrent guesses
-  can't outrun the pause and none of them starves delivery of a connection. A success resets the counter and the
-  pause. `last_sign_in_at` updates only on a success.
+- Bounded guessing, per (account, client address) (D-154, migration 0057): every attempt is counted in
+  `sign_in_throttle` against its key — the realm (`staff` or `audience:<project>`), the normalized email and the
+  client address admission believes (IPv6 by its /64) — *before* the verify, under the key's row lock, in a
+  transaction that commits at once; Argon2 then runs with nothing held (D-150). The eighth attempt pauses that key
+  for fifteen minutes; while paused, an attempt — even with the right password — is refused unverified with the
+  same `400 sign_in_failed` a wrong password gets, and since the key doesn't depend on whether the account exists,
+  a pause tells a guesser nothing. A guesser pauses only their own address: the owner elsewhere signs in, and a
+  pause that runs out starts the count over (at most eight guesses a key a quarter hour, never an indefinite
+  lock). A success forgets the key. Keys idle a day are swept. `last_sign_in_at` updates only on a success; the
+  accounts' old `failed_sign_ins`/`locked_until` columns are no longer written.
 - Bounded password work (D-150): every sign-up, sign-in, staff-made account and magic-link account hashes or
   verifies through one `PasswordGate` — `COLOPHON_PASSWORD_CONCURRENCY` Argon2id jobs at once (one a core by
   default), up to 32 waiters a slot for at most two seconds, and `503` with `Retry-After` past that, decided before
@@ -332,8 +337,9 @@ Built in step 1.7 (D-042), for people:
 - The public routes are unauthenticated and rate-limited per address: `POST /audience/v1/{project}/signup` (201;
   `email`, `password`, optional `display_name` and `role` — only a `self_assign` role may be chosen, and with
   none given the project must have exactly one open role to default to), `POST …/signin` (200; a wrong password,
-  a missing account and an unverifiable one answer alike with 401 `sign_in_failed`, eight misses pause it fifteen
-  minutes with 409 `too_many_attempts`, a disabled one is 403 `account_disabled`), `POST …/signout` (204 whether
+  a missing account and an unverifiable one answer alike with `sign_in_failed`, eight misses pause that (account,
+  client address) for fifteen minutes and answer the same `sign_in_failed` while paused (D-154), a disabled one is
+  403 `account_disabled`), `POST …/signout` (204 whether
   the session was live or not) and `GET …/me` (200 or 401). Signup and sign-in answer the user plus the session:
   the token and its CSRF sibling in the body and as the `colophon_audience` / `colophon_audience_csrf` cookie
   pair (session cookie `HttpOnly` + `SameSite=Lax`, CSRF sibling readable + `SameSite=Strict`).

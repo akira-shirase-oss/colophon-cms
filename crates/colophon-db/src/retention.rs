@@ -28,7 +28,9 @@
 //!   record that outlives it.
 //! - `attempt` (15 minutes): `setup_attempts`, matching the throttle's own window in
 //!   `colophon_setup_attempt`; and `audience_magic_links` that far past `expires_at`
-//!   (D-153) — a link is dead when it expires, and its audit events are the record. `sign_in_attempts` and `device_logins` go at `expires_at`:
+//!   (D-153) — a link is dead when it expires, and its audit events are the record.
+//! - `throttle` (1 day): `sign_in_throttle` keys untouched that long and not paused (D-154)
+//!   — the count of misses from one address at one account starts over. `sign_in_attempts` and `device_logins` go at `expires_at`:
 //!   dead rows their writers already prune on a busy day, swept here so a quiet one
 //!   doesn't keep them forever either.
 //!
@@ -74,6 +76,9 @@ pub struct Retention {
     pub flow: time::Duration,
     /// `setup_attempts`: the throttle's own 15-minute window.
     pub attempt: time::Duration,
+    /// `sign_in_throttle` keys untouched this long, and not paused (D-154): their count starts
+    /// over.
+    pub throttle: time::Duration,
 }
 
 impl Retention {
@@ -86,6 +91,7 @@ impl Retention {
         session: time::Duration::days(90),
         flow: time::Duration::days(90),
         attempt: time::Duration::minutes(15),
+        throttle: time::Duration::days(1),
     };
 }
 
@@ -141,6 +147,8 @@ pub struct Swept {
     pub setup_codes: u64,
     /// `audience_magic_links` past `expires_at` plus the attempt age (D-153).
     pub magic_links: u64,
+    /// `sign_in_throttle` keys idle past the throttle age (D-154).
+    pub sign_in_throttle: u64,
 }
 
 impl Swept {
@@ -165,6 +173,7 @@ impl Swept {
             + self.setup_attempts
             + self.setup_codes
             + self.magic_links
+            + self.sign_in_throttle
     }
 }
 
@@ -464,6 +473,16 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     // Magic links are dead at `expires_at`; their `audience.magic_link_*` events are the
     // record. Kept the attempt age past it, longer than any cooldown or ceiling reads.
     let magic_links = retained(&mut tx, "colophon_sweep_magic_links", attempt_cut, batch).await?;
+    // A sign-in key idle for a day starts its count over; a paused one stays until its
+    // pause is that old too.
+    let throttle_cut = OffsetDateTime::now_utc() - ages.throttle;
+    let sign_in_throttle = retained(
+        &mut tx,
+        "colophon_sweep_sign_in_throttle",
+        throttle_cut,
+        batch,
+    )
+    .await?;
 
     tx.commit().await.map_err(DbError::from_query)?;
     Ok(Swept {
@@ -486,5 +505,6 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
         setup_attempts,
         setup_codes,
         magic_links,
+        sign_in_throttle,
     })
 }

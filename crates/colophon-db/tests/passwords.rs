@@ -10,6 +10,9 @@
 
 mod common;
 
+/// The address the tests' own sign-ins come from.
+const HERE: &str = "203.0.113.1";
+
 use colophon_db::{
     PgPool,
     identity::{self, LOCK_AFTER, PasswordSignIn, SignedUp},
@@ -48,7 +51,7 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
 
     // The right password signs in; the same email can't sign up twice.
     assert_eq!(
-        identity::password_sign_in(&db.app, &common::gate(), "bob@example.com", password)
+        identity::password_sign_in(&db.app, &common::gate(), "bob@example.com", HERE, password)
             .await
             .expect("sign-in"),
         PasswordSignIn::SignedIn(bob)
@@ -64,7 +67,7 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
     // A wrong password and an email with no account answer alike.
     for email in ["bob@example.com", "carol@example.com"] {
         assert_eq!(
-            identity::password_sign_in(&db.app, &common::gate(), email, "wrong password")
+            identity::password_sign_in(&db.app, &common::gate(), email, HERE, "wrong password")
                 .await
                 .expect("sign-in"),
             PasswordSignIn::Refused,
@@ -72,9 +75,9 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
         );
     }
 
-    // The stored row holds the PHC string, never the password; the miss above counted once.
+    // The stored row holds the PHC string, never the password.
     let row = sqlx::query!(
-        "SELECT email, password_hash, failed_sign_ins FROM identities WHERE id = $1",
+        "SELECT email, password_hash FROM identities WHERE id = $1",
         bob
     )
     .fetch_one(&db.app)
@@ -86,39 +89,62 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
             .as_deref()
             .is_some_and(|phc| phc.starts_with("$argon2id$") && !phc.contains(password))
     );
-    assert_eq!(row.failed_sign_ins, 1);
     db.drop().await;
 }
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
-async fn enough_misses_pause_the_account_even_for_the_right_password() {
+async fn enough_misses_pause_the_guessing_address_and_never_the_account() {
     let db = TestDb::new().await;
     let password = "the real password";
     made(&db.app, "dave@example.com", password).await;
+    let guesser = "198.51.100.9";
 
-    for miss in 1..LOCK_AFTER {
+    // Every miss refuses alike, the LOCK_AFTER-th included.
+    for miss in 1..=LOCK_AFTER {
         assert_eq!(
-            identity::password_sign_in(&db.app, &common::gate(), "dave@example.com", "a guess")
-                .await
-                .expect("sign-in"),
+            identity::password_sign_in(
+                &db.app,
+                &common::gate(),
+                "dave@example.com",
+                guesser,
+                "a guess"
+            )
+            .await
+            .expect("sign-in"),
             PasswordSignIn::Refused,
-            "miss {miss} should refuse, not lock"
+            "miss {miss}"
         );
     }
-    let locked =
-        identity::password_sign_in(&db.app, &common::gate(), "dave@example.com", "a guess")
-            .await
-            .expect("sign-in");
-    assert!(
-        matches!(locked, PasswordSignIn::Locked(until) if until > OffsetDateTime::now_utc()),
-        "miss {LOCK_AFTER} should lock: {locked:?}"
-    );
-    // While paused, the right password gets the same answer — no way to try more.
-    let still = identity::password_sign_in(&db.app, &common::gate(), "dave@example.com", password)
+    // Paused for the guesser: the right password from there answers like a wrong one.
+    assert_eq!(
+        identity::password_sign_in(
+            &db.app,
+            &common::gate(),
+            "dave@example.com",
+            guesser,
+            password
+        )
         .await
-        .expect("sign-in");
-    assert!(matches!(still, PasswordSignIn::Locked(_)), "{still:?}");
+        .expect("sign-in"),
+        PasswordSignIn::Refused
+    );
+    // The owner, elsewhere, signs in — and the guesser's pause is untouched by it.
+    assert!(matches!(
+        identity::password_sign_in(&db.app, &common::gate(), "dave@example.com", HERE, password)
+            .await
+            .expect("sign-in"),
+        PasswordSignIn::SignedIn(_)
+    ));
+    let paused = sqlx::query_scalar!(
+        r#"SELECT locked_until > now() AS "paused!" FROM sign_in_throttle
+           WHERE realm = 'staff' AND email = 'dave@example.com' AND address = $1"#,
+        guesser
+    )
+    .fetch_one(&db.app)
+    .await
+    .expect("the guesser's key");
+    assert!(paused, "only the owner's own key was forgotten");
     db.drop().await;
 }
 

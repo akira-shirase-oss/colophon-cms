@@ -347,7 +347,7 @@ impl Admission {
     /// The client's address: the peer, unless it is a trusted proxy, in which case the nearest
     /// address in `X-Forwarded-For` that isn't one. An entry that isn't an address ends the walk:
     /// whatever wrote it isn't believed.
-    fn client(&self, peer: Option<IpAddr>, headers: &HeaderMap) -> Option<IpAddr> {
+    pub(crate) fn client(&self, peer: Option<IpAddr>, headers: &HeaderMap) -> Option<IpAddr> {
         let trusted = |address: IpAddr| {
             self.settings
                 .trusted_proxies
@@ -575,11 +575,78 @@ pub(crate) async fn admit(State(state): State<AppState>, request: Request, next:
 /// Shared between the router and the server.
 pub type SharedAdmission = Arc<Admission>;
 
+/// The client a sign-in attempt is counted against (D-154): who admission believes sent the
+/// request — the peer, or the nearest untrusted `X-Forwarded-For` hop behind a trusted proxy
+/// — with an IPv6 address taken as its /64, the block one subscriber is usually handed, so
+/// hopping within it doesn't start the count over. `-` when the server can't tell (an
+/// in-process router with no connection info).
+pub(crate) struct ClientAddress(pub(crate) String);
+
+impl axum::extract::FromRequestParts<AppState> for ClientAddress {
+    type Rejection = std::convert::Infallible;
+
+    fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        let peer = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|info| info.0.ip());
+        let client = match &state.admission {
+            Some(admission) => admission.client(peer, &parts.headers),
+            None => peer,
+        };
+        std::future::ready(Ok(Self(
+            client.map_or_else(|| "-".to_owned(), keyed_address),
+        )))
+    }
+}
+
+/// An address as a sign-in key: IPv4 (and IPv4-mapped IPv6) whole, other IPv6 by its /64.
+fn keyed_address(address: IpAddr) -> String {
+    match address {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                v4.to_string()
+            } else {
+                let [a, b, c, d, ..] = v6.segments();
+                format!("{a:x}:{b:x}:{c:x}:{d:x}::/64")
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use axum::http::HeaderValue;
 
     use super::*;
+
+    #[test]
+    fn sign_in_keys_take_ipv6_by_its_slash_64() {
+        assert_eq!(
+            keyed_address("198.51.100.7".parse().expect("v4")),
+            "198.51.100.7"
+        );
+        assert_eq!(
+            keyed_address("::ffff:198.51.100.7".parse().expect("mapped")),
+            "198.51.100.7"
+        );
+        assert_eq!(
+            keyed_address("2001:db8:1:2:aaaa::1".parse().expect("v6")),
+            keyed_address("2001:db8:1:2:ffff::9".parse().expect("v6"))
+        );
+        assert_eq!(
+            keyed_address("2001:db8:1:2::1".parse().expect("v6")),
+            "2001:db8:1:2::/64"
+        );
+        assert_ne!(
+            keyed_address("2001:db8:1:2::1".parse().expect("v6")),
+            keyed_address("2001:db8:1:3::1".parse().expect("v6"))
+        );
+    }
 
     fn rate(per_second: u32, burst: u32) -> Rate {
         Rate { per_second, burst }

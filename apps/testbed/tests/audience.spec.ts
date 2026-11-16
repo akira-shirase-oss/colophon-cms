@@ -220,3 +220,47 @@ test('a sign-in link lands only on an origin the project lists', async ({ page }
 	);
 	expect(spent).toBe(200);
 });
+
+// D-154: eight misses pause the guessing address at that account, and the pause answers with
+// the very refusal a wrong password gets — the same one an address with no account gets — so
+// guessing can't tell which visitors exist, and nobody can lock an account for its owner.
+test('a paused sign-in refuses exactly like a wrong password, account or not', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	await page.goto('/audience');
+	await page.getByLabel('Project').selectOption(projectId);
+	await page.getByLabel('Name', { exact: true }).fill('member');
+	await page.getByRole('button', { name: 'Create role' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created role member');
+
+	const email = page.getByLabel('Email', { exact: true }).nth(1);
+	const password = page.getByLabel('Password', { exact: true }).nth(1);
+	await email.fill('erin@example.test');
+	await password.fill('erin-real-password');
+	await page.getByRole('button', { name: 'Sign up' }).click();
+	await expect(page.getByTestId('message')).toHaveText('signed up as member');
+
+	for (const target of ['erin@example.test', 'nobody-here@example.test']) {
+		await email.fill(target);
+		await password.fill('a wrong guess');
+		for (let miss = 1; miss <= 8; miss += 1) {
+			// The same message twice in a row proves nothing about the second answer: wait for
+			// the response itself.
+			const [answer] = await Promise.all([
+				page.waitForResponse((response) => response.url().endsWith('/signin')),
+				page.getByRole('button', { name: 'Sign in' }).click()
+			]);
+			expect(answer.status()).toBe(400);
+			await expect(page.getByTestId('message')).toHaveText('400 sign_in_failed');
+		}
+	}
+	// Paused now — even the right password answers exactly as a wrong one.
+	await email.fill('erin@example.test');
+	await password.fill('erin-real-password');
+	const [paused] = await Promise.all([
+		page.waitForResponse((response) => response.url().endsWith('/signin')),
+		page.getByRole('button', { name: 'Sign in' }).click()
+	]);
+	expect(paused.status()).toBe(400);
+	await expect(page.getByTestId('message')).toHaveText('400 sign_in_failed');
+});

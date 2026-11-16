@@ -43,10 +43,9 @@ pub async fn record_sign_in(
 /// The `issuer` for email-and-password accounts (docs/modules/03-auth.md, D-084).
 pub const PASSWORD_ISSUER: &str = "password";
 
-/// Consecutive misses before the account pauses — bounded, so guessing costs time and shows.
-pub const LOCK_AFTER: i16 = 8;
-/// How long a locked account stays locked.
-pub const LOCK_FOR: Duration = Duration::minutes(15);
+/// Attempts a (account, client address) key gets before it pauses, and for how long
+/// (D-154): the counts live in `sign_in_throttle`, see [`crate::throttle`].
+pub use crate::throttle::{LOCK_AFTER, LOCK_FOR};
 
 /// What signing up did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,81 +116,59 @@ pub async fn ensure_password_account(
 /// The answer to an email-and-password sign-in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PasswordSignIn {
-    /// Right password; the counter resets and the session may start.
+    /// Right password; the attempt count for this address resets and the session may start.
     SignedIn(Uuid),
-    /// Wrong password, or no such account — the same answer, after the same work.
+    /// Wrong password, no such account, or this (account, address) paused after too many
+    /// misses (D-154) — one answer for all three, so none can be told apart.
     Refused,
-    /// Too many misses; the account pauses until this time.
-    Locked(OffsetDateTime),
 }
 
-/// Signs in with an email and a password (D-150). The slot comes first, so a request the
-/// password bound sheds costs nothing else. Then one short transaction finds the account
-/// under its row lock, refuses a paused one, and counts this attempt *before* any Argon2
-/// runs — concurrent guesses can't outrun the pause, yet none of them holds a row lock or a
-/// pooled connection through the verify. A match resets the count; a miss is already in it.
+/// Signs in with an email and a password, as a client at `address` (D-150, D-154). The slot
+/// comes first, so a request the password bound sheds costs nothing else. Then one short
+/// transaction counts the attempt against the (staff, email, address) key — refusing at once,
+/// unverified, while that key is paused — and reads the account; Argon2 runs with no
+/// transaction open and no connection held; a match forgets the key. A guesser pauses only
+/// their own address, and a pause answers exactly as a wrong password does.
 pub async fn password_sign_in(
     pool: &PgPool,
     gate: &crate::passwords::PasswordGate,
     email: &str,
+    address: &str,
     password: &str,
 ) -> Result<PasswordSignIn, DbError> {
+    use crate::throttle::{self, Counted, Realm};
     let slot = gate.slot().await?;
     let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    if throttle::count(&mut transaction, Realm::Staff, email, address).await? == Counted::Paused {
+        return Ok(PasswordSignIn::Refused);
+    }
     let row = sqlx::query!(
-        "SELECT id, password_hash, locked_until FROM identities
-         WHERE issuer = $1 AND subject = $2
-         FOR UPDATE",
+        "SELECT id, password_hash FROM identities WHERE issuer = $1 AND subject = $2",
         PASSWORD_ISSUER,
         email
     )
     .fetch_optional(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
-    let Some(row) = row else {
-        drop(transaction);
-        // No such account: the same verify work runs anyway, so the answer can't be told apart.
-        let _ = slot.verify(password, None).await;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    // Argon2 with nothing held. No such account verifies against the dummy hash anyway, so
+    // the answer can't be told apart.
+    let hash = row.as_ref().and_then(|row| row.password_hash.as_deref());
+    let right = slot.verify(password, hash).await;
+    let Some(row) = row.filter(|_| right) else {
         return Ok(PasswordSignIn::Refused);
     };
-    if row
-        .locked_until
-        .is_some_and(|until| until > OffsetDateTime::now_utc())
-    {
-        return Ok(PasswordSignIn::Locked(
-            row.locked_until.unwrap_or_else(OffsetDateTime::now_utc),
-        ));
-    }
-    let locks = sqlx::query_scalar!(
-        "UPDATE identities
-         SET failed_sign_ins = least(failed_sign_ins + 1, 32767),
-             locked_until = CASE WHEN failed_sign_ins + 1 >= $2 THEN now() + make_interval(secs => $3) END
-         WHERE id = $1
-         RETURNING locked_until",
-        row.id,
-        i32::from(LOCK_AFTER),
-        f64::from(u32::try_from(LOCK_FOR.whole_seconds()).unwrap_or(u32::MAX))
+    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    throttle::clear(&mut transaction, Realm::Staff, email, address).await?;
+    sqlx::query!(
+        "UPDATE identities SET last_sign_in_at = now() WHERE id = $1",
+        row.id
     )
-    .fetch_one(&mut *transaction)
+    .execute(&mut *transaction)
     .await
     .map_err(DbError::from_query)?;
     transaction.commit().await.map_err(DbError::from_query)?;
-    // Argon2 with no transaction open and no connection held.
-    if slot.verify(password, row.password_hash.as_deref()).await {
-        sqlx::query!(
-            "UPDATE identities SET failed_sign_ins = 0, locked_until = NULL, last_sign_in_at = now()
-             WHERE id = $1",
-            row.id
-        )
-        .execute(pool)
-        .await
-        .map_err(DbError::from_query)?;
-        return Ok(PasswordSignIn::SignedIn(row.id));
-    }
-    Ok(match locks {
-        Some(until) => PasswordSignIn::Locked(until),
-        None => PasswordSignIn::Refused,
-    })
+    Ok(PasswordSignIn::SignedIn(row.id))
 }
 
 /// A live session, as stored.

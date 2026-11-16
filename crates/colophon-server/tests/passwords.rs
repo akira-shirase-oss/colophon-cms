@@ -218,10 +218,29 @@ async fn signing_in_wrong_and_missing_refuse_alike() {
     }
 }
 
+/// `POST /auth/signin` as a client at `address`: the test server trusts loopback as a proxy
+/// (`COLOPHON_TRUSTED_PROXIES`), so `X-Forwarded-For` says who the client is.
+async fn sign_in_from(address: &str, body: &Value) -> (StatusCode, Value) {
+    let response = app()
+        .post(format!("{ORIGIN}/auth/signin"))
+        .header("x-forwarded-for", address)
+        .json(body)
+        .send()
+        .await
+        .expect("request");
+    let status = response.status();
+    (status, response.json().await.unwrap_or(Value::Null))
+}
+
+/// Guessing pauses the guesser, not the account (D-154): eight misses from one address pause
+/// that (account, address) key for fifteen minutes — the right password from there is then
+/// refused with the very answer a wrong one gets, the same answer an address with no account
+/// gets after the same guesses — while the owner at another address signs straight in. The
+/// pause is bounded: once it runs out, the count starts over.
 #[tokio::test]
 #[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
-async fn enough_misses_lock_the_account_even_for_the_right_password() {
-    let _server = Server::start().await;
+async fn misses_pause_the_guessing_address_never_the_account() {
+    let _server = Server::start_with(&[("COLOPHON_TRUSTED_PROXIES", "127.0.0.1")]).await;
     let email = an_email();
     let (status, _, _) = post_auth(
         "/auth/signup",
@@ -229,28 +248,63 @@ async fn enough_misses_lock_the_account_even_for_the_right_password() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
+    let nobody = an_email();
+    let failed = (StatusCode::BAD_REQUEST, json!("sign_in_failed"));
 
-    // Seven misses refuse as a failed sign-in; the eighth pauses the account.
-    let guess = json!({"email": email, "password": "a guess"});
-    for miss in 1..8 {
-        let (status, _, body) = post_auth("/auth/signin", &guess).await;
-        assert_eq!(
-            (status, &body["error"]["code"]),
-            (StatusCode::BAD_REQUEST, &json!("sign_in_failed")),
-            "miss {miss}"
-        );
+    // Eight misses at the account and eight at an address with no account, from one place.
+    let guesser = "198.51.100.7";
+    for miss in 1..=8 {
+        for target in [&email, &nobody] {
+            let (status, body) =
+                sign_in_from(guesser, &json!({"email": target, "password": "a guess"})).await;
+            assert_eq!(
+                (status, body["error"]["code"].clone()),
+                failed,
+                "miss {miss}: {body}"
+            );
+        }
     }
-    for body in [
-        guess.clone(),
-        json!({"email": email, "password": "the real password"}),
+    // Paused there: even the right password is refused — exactly as a wrong one, and exactly
+    // as the address with no account, so the pause tells the guesser nothing.
+    for (target, password) in [
+        (&email, "the real password"),
+        (&email, "a guess"),
+        (&nobody, "a guess"),
     ] {
-        let (status, _, body) = post_auth("/auth/signin", &body).await;
-        assert_eq!(
-            (status, &body["error"]["details"]["reason"]),
-            (StatusCode::CONFLICT, &json!("too_many_attempts")),
-            "{body}"
+        let (status, body) =
+            sign_in_from(guesser, &json!({"email": target, "password": password})).await;
+        assert_eq!((status, body["error"]["code"].clone()), failed, "{body}");
+        assert!(
+            body["error"]["details"].is_null(),
+            "no distinct reason: {body}"
         );
     }
+
+    // The owner, somewhere else, is not locked out.
+    let (status, body) = sign_in_from(
+        "203.0.113.20",
+        &json!({"email": email, "password": "the real password"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+
+    // A pause runs out (aged here rather than waited for), and the right password works from
+    // the guesser's address again.
+    let owner = common::owner_database().await;
+    sqlx::query(
+        "UPDATE sign_in_throttle SET locked_until = now() - interval '1 second' WHERE email = $1",
+    )
+    .bind(&email)
+    .execute(&owner)
+    .await
+    .expect("aged");
+    owner.close().await;
+    let (status, body) = sign_in_from(
+        guesser,
+        &json!({"email": email, "password": "the real password"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
 }
 
 /// Password work is bounded and never starves the database (D-150): Argon2id is 19 MiB and

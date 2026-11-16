@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO sign_in_throttle AS t (realm, email, address, failures, locked_until)\n         VALUES ($1, $2, $3, 1, CASE WHEN 1 >= $4 THEN now() + make_interval(secs => $5) END)\n         ON CONFLICT (realm, email, address) DO UPDATE SET\n             failures = CASE WHEN t.locked_until IS NOT NULL THEN 1\n                             ELSE least(t.failures + 1, 1000000) END,\n             locked_until = CASE\n                 WHEN (CASE WHEN t.locked_until IS NOT NULL THEN 1 ELSE t.failures + 1 END) >= $4\n                     THEN now() + make_interval(secs => $5)\n             END,\n             updated_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Int4",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "73bfd0653aac7ec040f80e520b840c4f609c759fc9fe4cd2e076de46b8a17f51"
+}

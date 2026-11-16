@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM sign_in_throttle WHERE realm = $1 AND email = $2 AND address = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d2ec2d42edfedea2d5e9186e9fe7191328b38873b1ad1df34c1008f02f89d5f6"
+}

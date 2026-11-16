@@ -378,6 +378,7 @@ async fn sessions_live_and_die_by_expiry_idle_revocation_and_disable() {
             &common::gate(),
             project,
             "a@b.c",
+            "203.0.113.1",
             "correct horse battery"
         )
         .await
@@ -404,9 +405,16 @@ async fn signin_refuses_wrong_passwords_and_locks_after_enough() {
 
     // A wrong password and no account answer alike, and a few wrongs don't lock.
     assert_eq!(
-        audience::sign_in(&db.app, &common::gate(), project, "a@b.c", "wrong password")
-            .await
-            .expect("sign_in"),
+        audience::sign_in(
+            &db.app,
+            &common::gate(),
+            project,
+            "a@b.c",
+            "203.0.113.1",
+            "wrong password"
+        )
+        .await
+        .expect("sign_in"),
         audience::SignIn::Refused
     );
     assert_eq!(
@@ -415,37 +423,56 @@ async fn signin_refuses_wrong_passwords_and_locks_after_enough() {
             &common::gate(),
             project,
             "nobody@b.c",
+            "203.0.113.1",
             "wrong password"
         )
         .await
         .expect("sign_in"),
         audience::SignIn::Refused
     );
-    // LOCK_AFTER bad tries pause the account — even the right password is refused then.
-    let mut locked = None;
-    for _ in 0..audience::LOCK_AFTER {
-        match audience::sign_in(&db.app, &common::gate(), project, "a@b.c", "wrong password")
+    // LOCK_AFTER bad tries pause that address's key — even the right password is refused
+    // there, exactly as a wrong one (D-154) — while another address signs in.
+    for _ in 1..audience::LOCK_AFTER {
+        assert_eq!(
+            audience::sign_in(
+                &db.app,
+                &common::gate(),
+                project,
+                "a@b.c",
+                "203.0.113.1",
+                "wrong password"
+            )
             .await
-            .expect("sign_in")
-        {
-            audience::SignIn::Locked(until) => locked = Some(until),
-            audience::SignIn::Refused => {}
-            other => panic!("unexpected {other:?}"),
-        }
+            .expect("sign_in"),
+            audience::SignIn::Refused
+        );
     }
-    assert!(locked.is_some(), "locked after {}", audience::LOCK_AFTER);
     assert_eq!(
         audience::sign_in(
             &db.app,
             &common::gate(),
             project,
             "a@b.c",
+            "203.0.113.1",
             "correct horse battery"
         )
         .await
         .expect("sign_in"),
-        audience::SignIn::Locked(locked.expect("locked"))
+        audience::SignIn::Refused
     );
+    assert!(matches!(
+        audience::sign_in(
+            &db.app,
+            &common::gate(),
+            project,
+            "a@b.c",
+            "203.0.113.2",
+            "correct horse battery"
+        )
+        .await
+        .expect("sign_in"),
+        audience::SignIn::SignedIn(_)
+    ));
     db.drop().await;
 }
 

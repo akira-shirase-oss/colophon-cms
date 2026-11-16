@@ -19111,7 +19111,7 @@
                 }
               }
             },
-            "description": "`sign_in_failed` — a wrong password and a missing account alike"
+            "description": "`sign_in_failed` — a wrong password, a missing account and an (account, address) paused after eight misses, alike"
           },
           "403": {
             "content": {
@@ -19122,16 +19122,6 @@
               }
             },
             "description": "`account_disabled` — staff disabled the account"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "`too_many_attempts` — the account is paused"
           },
           "422": {
             "content": {
@@ -19952,17 +19942,7 @@
                 }
               }
             },
-            "description": "`sign_in_failed` — a wrong password and a missing account alike"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "`too_many_attempts` — the account is paused"
+            "description": "`sign_in_failed` — a wrong password, a missing account and an (account, address) paused after eight misses, alike"
           },
           "422": {
             "content": {
