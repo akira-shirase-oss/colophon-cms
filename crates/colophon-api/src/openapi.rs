@@ -4579,11 +4579,6 @@ fn identity() -> Value {
             "type": "object",
             "properties": { "administrator": { "type": "boolean" } },
         },
-        "Installation": {
-            "type": "object",
-            "required": ["has_administrator"],
-            "properties": { "has_administrator": { "type": "boolean" } },
-        },
     })
 }
 
