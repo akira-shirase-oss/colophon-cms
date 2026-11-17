@@ -97,7 +97,7 @@ model, flows, consistency guarantees, capacity model and failure handling.
 | Design system | Colophon's own: OKLCH tokens, Tailwind CSS v4, owned shadcn-svelte components on Bits UI, Inter (self-hosted) |
 | Editor | Tiptap / ProseMirror, stored as validated, versioned JSON, never HTML |
 | Identity | Built-in password accounts (OIDC/SSO optional); sessions enforced by Rust and Postgres |
-| Delivery | Cloudflare CDN adapter: tag purge and evidence probes |
+| Delivery | Generation-keyed cache with ETags and `Cache-Tag` headers; purge-by-tag jobs posted to any CDN destination's purge endpoint; probes that record where a release was seen. No provider adapter yet: the Cloudflare one (credentials, plan limits) is still to build (D-050) |
 | Verification | Unit and property tests, deterministic simulation, real PostgreSQL in a fresh database per test, Vitest, Playwright, k6 |
 
 Exact versions are pinned at milestone P0; the local stack's images are pinned by digest in `deploy/compose.yaml`.
@@ -129,8 +129,10 @@ Sanity offer (D-057). Details: [ROADMAP.md](docs/ROADMAP.md) — it calls develo
 "DX" because D is already the design work.
 
 **Deliberately not in v0.1:** commerce, payments, subscriptions, shipping and tax, hosting integrations and custom
-domains ([parked](docs/modules/parked.md)). **Never:** untrusted native plugins, CRDT live co-editing, GraphQL,
-active-active multi-region writes.
+domains ([parked](docs/modules/parked.md)). **Never:** untrusted native plugins, CRDT live co-editing,
+active-active multi-region writes. GraphQL left this list with D-057 and is built (D-115): a read-only surface over
+drafts on the signed-in API, `POST {P}/collections/{collection}/graphql`; public delivery stays REST, at
+`/content/v1`.
 
 ## Documentation
 
