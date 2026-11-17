@@ -1057,6 +1057,19 @@ fn check_return_to(value: &str) -> Result<(String, String), ApiError> {
     }
 }
 
+/// The link a visitor follows: `return_to` with `token` added to its query — before any
+/// `#fragment`, which a server never sees. `return_to` is an absolute URL [`check_return_to`]
+/// accepted; a base64url token needs no escaping.
+fn link_for(return_to: &str, token: &str) -> String {
+    if let Ok(mut url) = url::Url::parse(return_to) {
+        url.query_pairs_mut().append_pair("token", token);
+        url.into()
+    } else {
+        let separator = if return_to.contains('?') { '&' } else { '?' };
+        format!("{return_to}{separator}token={token}")
+    }
+}
+
 /// An origin staff list for magic links, normalized: `scheme://host[:port]` as browsers
 /// serialize it (lowercase, default port dropped), with nothing after it but an optional `/`.
 fn clean_origin(value: &str) -> Option<String> {
@@ -1130,8 +1143,7 @@ pub(crate) async fn request_magic_link(
         serde_json::json!({ "return_to": return_to }),
     )
     .await;
-    let separator = if return_to.contains('?') { '&' } else { '?' };
-    let link = format!("{return_to}{separator}token={token}");
+    let link = link_for(&return_to, &token);
     let mut data = serde_json::json!({ "sent": true });
     if services.dev_mail {
         data["dev_link"] = serde_json::json!(link);
@@ -1239,4 +1251,26 @@ pub(crate) async fn magic_link_sign_in(
     let mut response = crate::entries::json(StatusCode::OK, body, None, false);
     session_cookies(&mut response, &made.session, &made.csrf);
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::link_for;
+
+    #[test]
+    fn the_token_goes_in_the_query_even_when_return_to_has_a_fragment() {
+        assert_eq!(
+            link_for("https://site.test/in", "abc"),
+            "https://site.test/in?token=abc"
+        );
+        assert_eq!(
+            link_for("https://site.test/in?next=%2Fmembers", "abc"),
+            "https://site.test/in?next=%2Fmembers&token=abc"
+        );
+        // Before the fragment, where a server can read it — not after, where it is the page's.
+        assert_eq!(
+            link_for("https://site.test/in#welcome", "abc"),
+            "https://site.test/in?token=abc#welcome"
+        );
+    }
 }

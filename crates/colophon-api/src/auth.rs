@@ -381,7 +381,9 @@ pub(crate) async fn sign_in(
             Ok(response)
         }
         // A wrong password, a missing account and a paused (account, address) are one
-        // answer after one kind of work (D-154).
+        // answer (D-154). Not one kind of work: a paused attempt runs no Argon2, so its
+        // timing can tell a guesser they are paused — never whether the account exists, since
+        // a missing account verifies against the dummy hash like a real one.
         Ok(identity::PasswordSignIn::Refused) => Err(ApiError::SignInFailed),
         Err(error) => Err(ApiError::from_db(error)),
     }
