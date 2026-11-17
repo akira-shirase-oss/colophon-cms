@@ -218,6 +218,27 @@ impl MediaBase {
     }
 }
 
+/// A query row's `media` (D-172): its own recorded versions plus those of the publications
+/// `depth` populated into it, kept to the uploads its answered `content` still names — so
+/// `fields` narrowing drops the stamps of the fields it left out, and a populated reference's
+/// images carry the versions its release recorded. An asset id is a UUID, so finding it in the
+/// content's JSON is finding where it is named.
+fn media_named(
+    own: &str,
+    populated: &serde_json::Map<String, Value>,
+    content: &str,
+) -> Result<String, ApiError> {
+    let mut stamps: serde_json::Map<String, Value> =
+        serde_json::from_str(own).map_err(ApiError::internal)?;
+    for (asset, stamp) in populated {
+        if !stamps.contains_key(asset) {
+            stamps.insert(asset.clone(), stamp.clone());
+        }
+    }
+    stamps.retain(|asset, _| content.contains(asset.as_str()));
+    serde_json::to_string(&stamps).map_err(ApiError::internal)
+}
+
 impl PublishedView {
     fn new(row: Published, media: &MediaBase) -> Result<Self, ApiError> {
         Ok(Self {
@@ -720,6 +741,7 @@ pub(crate) async fn query(
             let depth = language.depth();
             let keep = language.fields();
             let mut resolved = crate::populate::Resolved::default();
+            let mut populated = serde_json::Map::new();
             let found = if generation == 0 {
                 db_query::PublishedPage {
                     rows: Vec::new(),
@@ -757,7 +779,7 @@ pub(crate) async fn query(
                     }
                 }
                 if !wanted.is_empty() {
-                    resolved = crate::populate::resolve_publications(
+                    (resolved, populated) = crate::populate::resolve_publications(
                         services,
                         &mut tx,
                         project,
@@ -777,6 +799,7 @@ pub(crate) async fn query(
                 .map(|mut row| {
                     row.content =
                         crate::populate::expand_document(&content_type, &row.content, &resolved)?;
+                    row.media = media_named(&row.media, &populated, &row.content)?;
                     PublishedView::new(row, &media)
                 })
                 .collect::<Result<Vec<_>, ApiError>>()?;
@@ -800,6 +823,28 @@ pub(crate) async fn query(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_query_rows_media_is_what_its_answered_content_names() {
+        let a = "0199f0a2-6c1e-7b3a-9d42-00000000000a";
+        let b = "0199f0a2-6c1e-7b3a-9d42-00000000000b";
+        let c = "0199f0a2-6c1e-7b3a-9d42-00000000000c";
+        let own = serde_json::json!({ a: {"sha": "x"}, b: {"sha": "y"} }).to_string();
+        let mut populated = serde_json::Map::new();
+        populated.insert(c.to_owned(), serde_json::json!({"sha": "z"}));
+        populated.insert(a.to_owned(), serde_json::json!({"sha": "other"}));
+        // `fields` kept only the field naming `a`; the populated author's avatar names `c`.
+        let content =
+            format!(r#"{{"cover":"{a}","author":{{"id":"e","content":{{"avatar":"{c}"}}}}}}"#);
+        let named: Value =
+            serde_json::from_str(&super::media_named(&own, &populated, &content).expect("merges"))
+                .expect("json");
+        assert_eq!(
+            named,
+            serde_json::json!({ a: {"sha": "x"}, c: {"sha": "z"} }),
+            "the row's own stamp wins; what the content no longer names goes"
+        );
+    }
+
     #[test]
     fn media_views_name_the_recorded_version_and_follow_the_current_one() {
         let base = super::MediaBase::new("https://media.example", uuid::Uuid::nil(), "production");

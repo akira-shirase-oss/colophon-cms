@@ -95,7 +95,9 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   entries that use it are published again (publishing an unchanged entry whose upload has a newer version reopens
   its publication). A site that wants the newest bytes without publishing uses `current_url`.
   `COLOPHON_MEDIA_URL` (an http(s) origin, default `COLOPHON_PUBLIC_URL`) puts a CDN or asset host in front.
-  Populated references (`depth`) carry their content but not their own uploads' `media` yet.
+  On a query, a row's `media` is what its answered `content` names: `fields` narrowing drops the stamps of the
+  fields it left out, and `depth` adds the versions each populated reference's own release recorded (an avatar on
+  a populated author), so a site renders a populated reference's images at their recorded versions too.
 
 ### Gated content (P7, D-137)
 - Every draft, revision and publication carries a `visibility`: `public` (the default), `authenticated` (any

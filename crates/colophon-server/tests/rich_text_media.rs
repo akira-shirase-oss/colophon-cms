@@ -735,3 +735,153 @@ async fn the_library_pages_searches_filters_and_keeps_metadata_under_if_match() 
         invalid.body
     );
 }
+
+/// `POST /content/v1/{project}/production/{collection}/query` with `document`, anonymously.
+async fn query_published(project: &str, collection: &str, document: &Value) -> Value {
+    let response = app()
+        .post(format!(
+            "{}/content/v1/{project}/production/{collection}/query",
+            common::ORIGIN
+        ))
+        .json(document)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), StatusCode::OK);
+    response.json::<Value>().await.expect("json")
+}
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one journey: two types, two uploads, one release, three reads"
+)]
+async fn a_query_row_carries_its_populated_references_images_and_only_what_it_answers() {
+    let _server = common::Server::start_with(&FAST).await;
+    let owner = sign_in("dev-owner").await;
+    let editor = sign_in("dev-editor").await;
+    let project = project(&owner).await;
+    join(&owner, &editor, &project, "editor").await;
+    for (slug, fields) in [
+        (
+            "authors",
+            json!([
+                {"id": "name", "label": "Name", "type": "text", "required": true},
+                {"id": "avatar", "label": "Avatar", "type": "asset"}
+            ]),
+        ),
+        (
+            "stories",
+            json!([
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "author", "label": "Author", "type": "reference", "to": "authors"},
+                {"id": "body", "label": "Body", "type": "rich_text"}
+            ]),
+        ),
+    ] {
+        let made = call(
+            &owner,
+            Method::POST,
+            &format!("{}/content-types", base(&project)),
+            Some(&json!({"slug": slug, "definition": {
+                "name": slug, "title_field": fields[0]["id"], "fields": fields
+            }})),
+            &[("idempotency-key", &key())],
+        )
+        .await
+        .expect("request");
+        assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    }
+    let avatar = upload(&editor, &project, WIDE_PNG, "avatar.png").await;
+    let figure = upload(&editor, &project, PNG, "figure.png").await;
+    usable(&owner, &project, &avatar).await;
+    usable(&owner, &project, &figure).await;
+    let author = call(
+        &editor,
+        Method::POST,
+        &format!("{}/collections/authors/entries", base(&project)),
+        Some(&json!({"name": "Ada", "avatar": avatar})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(author.status, StatusCode::CREATED, "{}", author.body);
+    let author = author.body["data"]["id"].as_str().expect("id").to_owned();
+    let story = call(
+        &editor,
+        Method::POST,
+        &format!("{}/collections/stories/entries", base(&project)),
+        Some(&json!({"title": "A story", "author": author, "body": body(&[&figure])})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(story.status, StatusCode::CREATED, "{}", story.body);
+    let story = story.body["data"]["id"].as_str().expect("id").to_owned();
+    // One release of both.
+    let created = call(
+        &editor,
+        Method::POST,
+        &format!("{}/changesets", base(&project)),
+        Some(&json!({"title": "Both", "entries": [author, story]})),
+        &[("idempotency-key", &key())],
+    )
+    .await
+    .expect("request");
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let path = format!(
+        "{}/changesets/{}",
+        base(&project),
+        created.body["data"]["id"].as_str().expect("id")
+    );
+    let hash = created.body["data"]["hash"]
+        .as_str()
+        .expect("hash")
+        .to_owned();
+    let if_match = format!("\"{hash}\"");
+    call(
+        &editor,
+        Method::POST,
+        &format!("{path}/submit"),
+        None,
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    call(
+        &owner,
+        Method::POST,
+        &format!("{path}/reviews"),
+        Some(&json!({"decision": "approve"})),
+        &[("if-match", &if_match)],
+    )
+    .await
+    .expect("request");
+    let published = publish(&owner, &path, &hash, 0).await;
+    assert_eq!(published.status, StatusCode::CREATED, "{}", published.body);
+
+    // Populated: the story's own image and its author's avatar, each at its recorded version.
+    let page = query_published(&project, "stories", &json!({"depth": 1})).await;
+    let media = &page["data"][0]["media"];
+    assert!(media[&figure]["url"].is_string(), "{page}");
+    assert!(media[&avatar]["url"].is_string(), "{page}");
+    assert_eq!(media[&avatar]["width"], 400);
+    // Narrowed to the title and author: the body's image is no longer named, so not listed.
+    let page = query_published(
+        &project,
+        "stories",
+        &json!({"depth": 1, "fields": ["title", "author"]}),
+    )
+    .await;
+    let media = &page["data"][0]["media"];
+    assert!(media[&avatar]["url"].is_string(), "{page}");
+    assert!(media.get(&figure).is_none(), "{page}");
+    // Without depth the author stays an id, and its avatar isn't this row's to list.
+    let page = query_published(&project, "stories", &json!({})).await;
+    assert!(page["data"][0]["media"].get(&avatar).is_none(), "{page}");
+    assert!(
+        page["data"][0]["media"][&figure]["url"].is_string(),
+        "{page}"
+    );
+}

@@ -131,7 +131,7 @@ release still references. Proven by L14, malicious-upload fixtures and X10.
 
 1. **P4:** intents, quarantine, verification, ~~the Studio media picker~~ (done, D-095), ~~derivatives~~ (done, D-096), ~~references~~ (done, D-094).
 2. **P6:** ~~staged deletion: the `delete` request, job and tombstone states, the reference/publication race triggers~~ (done, D-098); ~~expiry, the orphan sweep, the Studio delete affordance, the testbed page and the k6 delete arm~~ (done, D-099); ~~byte versioning: content-addressed object keys, `asset_versions`, the replace endpoint and `reverify` job, pinned URLs, prefix-list deletion and the public-orphan sweep~~ (done, D-136). Still open: the CDN purge path the deleted bytes need (the D-098 gap: media responses carry no `Cache-Tag` yet). ~~Stamping a release's pinned version into the published projection~~ (done, D-172).
-3. **Gap 3:** ~~rich-text images as references~~ (D-171), ~~release media and versioned delivery URLs~~ (D-172), ~~library paging, search, metadata~~ (D-173). Still open: media `Cache-Tag` and CDN purge on replace and delete, a `w640` rendition for a denser `srcset`, `media` for populated references, presigned uploads over 20 MiB, AVIF/GIF.
+3. **Gap 3:** ~~rich-text images as references~~ (D-171), ~~release media and versioned delivery URLs~~ (D-172), ~~library paging, search, metadata~~ (D-173). ~~`media` for populated references~~ (D-172). Still open: media `Cache-Tag` and CDN purge on replace and delete, a search that can use its trigram index under row security, an operator audit of drafts still holding placeholder image ids, a `w640` rendition for a denser `srcset`, presigned uploads over 20 MiB, AVIF/GIF.
 
 ## Open decisions
 
