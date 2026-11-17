@@ -10,7 +10,7 @@ through `--version` and `GET /version`.
 
 ### Security
 
-The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-166). Each names the attack it
+The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-169). Each names the attack it
 closes and carries a test that failed without it.
 
 - Magic links land only on an origin the project lists, and spending one retires its
@@ -33,7 +33,11 @@ closes and carries a test that failed without it.
   as well as a loopback listener (D-163).
 - The public sign-in forms read at most 16 KiB of body (D-164); the retention sweep keeps
   pace with the tables strangers grow (D-165); deleting a project removes its audience and
-  asset versions (migration 0061).
+  asset versions (migration 0061), and the application can no longer call it (D-167).
+- The owner guards pin their `search_path`, and the project-existence check answers only
+  its trigger (D-168); only the right password learns an audience account is disabled
+  (D-169); a token on an unmatched path is redacted from logs (D-152); a magic link's token
+  goes before a `return_to` fragment.
 
 ### Changed — read before upgrading
 
@@ -47,7 +51,10 @@ closes and carries a test that failed without it.
   sign_in_failed` a wrong password does (D-154).
 - **New answers:** `429 rate_limited` with `Retry-After` for magic-link requests (D-153,
   D-161); `503` with `Retry-After` when password work is saturated (D-150); `413` for a
-  public sign-in body over 16 KiB (D-164).
+  public sign-in body over 16 KiB (D-164); `account_disabled` only to the right password
+  (D-169).
+- **Deleting a project is an operator's job:** `colophon_delete_project` runs from the
+  owner's login, no longer from the application's (D-167).
 - **Behind a reverse proxy, set `COLOPHON_TRUSTED_PROXIES`:** without it every client is the
   proxy, and every per-address bound — admission, sign-in pauses, magic links — becomes one
   shared bucket.

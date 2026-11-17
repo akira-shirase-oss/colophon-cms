@@ -115,7 +115,7 @@ one you meant to deploy (module 18 "Observability").
 ## 7. Rollback
 
 Decide by the schema, not by the binary — with one floor the schema can't show: **never roll
-back to a binary without the 2026-11-16 security fixes** (D-148 to D-166, the first release
+back to a binary without the 2026-11-16 security fixes** (D-148 to D-169, the first release
 after `0.1.0-alpha.1`). Their migrations are additive, so an older binary would start on the
 newer schema, and it would ignore what they added: magic links would land on any origin
 again, destinations would reach private addresses, and sign-in would lose its bounds. If the

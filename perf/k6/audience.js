@@ -168,8 +168,9 @@ export default function (data) {
     if (res.status === 200) mine.token = res.json('data.session');
   } else if (slot < 99) {
     // A magic-link request answers the same 202 whether or not the email has an account —
-    // or, while this address's last link is under a minute old and unused, or the project is
-    // at its per-minute ceiling, 429 with Retry-After (D-153): both are the designed answers,
+    // or 429 with Retry-After when this client is past its share (five links per ten minutes;
+    // every virtual user here is 127.0.0.1, so most requests get it), the email's escalating
+    // cooldown hasn't passed, or the project is at its ceiling (D-153, D-161): both are the designed answers,
     // so both count as expected. Spending it is possible only where the server mails
     // development links back (COLOPHON_DEV_MAIL, loopback-only).
     const magic = Object.assign(params('magic_request', { 'Content-Type': 'application/json' }), { responseCallback: http.expectedStatuses(202, 429) });
