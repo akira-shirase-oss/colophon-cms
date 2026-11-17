@@ -595,10 +595,11 @@ async fn dead_magic_links_are_swept_and_live_ones_kept() {
     let db = TestDb::new().await;
     let fix = released(&db).await;
     let owner = db.owner().await;
-    // Ages as of now: one dead for an hour, one dead a minute, one live.
+    // Ages as of now: one dead for over a day, one dead for hours — still counted by the
+    // recipient's escalating cooldown (D-161), so kept — and one live.
     for (n, made, expires) in [
-        (1_u8, "2 hours", "1 hour"),
-        (2, "16 minutes", "1 minute"),
+        (1_u8, "26 hours", "25 hours 45 minutes"),
+        (2, "2 hours", "1 hour 45 minutes"),
         (3, "1 minute", "-14 minutes"),
     ] {
         sqlx::query(AssertSqlSafe(format!(
@@ -617,7 +618,7 @@ async fn dead_magic_links_are_swept_and_live_ones_kept() {
     let swept = retention::sweep(&db.app, &Retention::DEFAULT, BATCH)
         .await
         .expect("swept");
-    assert_eq!(swept.magic_links, 1, "only the long-dead link: {swept:?}");
+    assert_eq!(swept.magic_links, 1, "only the link dead for a day: {swept:?}");
     let left: Vec<String> =
         sqlx::query_scalar("SELECT email FROM audience_magic_links ORDER BY email")
             .fetch_all(&owner)

@@ -500,9 +500,18 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
 
     // Nothing listed: no link is recorded for any origin (D-148).
     assert_eq!(
-        audience::request_magic_link(&db.app, project, "a@b.c", &[9; 32], return_to, origin)
-            .await
-            .expect("request"),
+        audience::request_magic_link(
+            &db.app,
+            &audience::MagicLinkLimits::DEFAULT,
+            project,
+            "a@b.c",
+            "203.0.113.1",
+            &[9; 32],
+            return_to,
+            origin
+        )
+        .await
+        .expect("request"),
         audience::LinkRequest::OriginNotAllowed
     );
     let mut tx = staff(&db.app, owner, project).await;
@@ -521,9 +530,18 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
 
     // A link for an existing account signs it in — the answer names the user.
     let first = [1; 32];
-    audience::request_magic_link(&db.app, project, "a@b.c", &first, return_to, origin)
-        .await
-        .expect("request");
+    audience::request_magic_link(
+        &db.app,
+        &audience::MagicLinkLimits::DEFAULT,
+        project,
+        "a@b.c",
+        "203.0.113.1",
+        &first,
+        return_to,
+        origin,
+    )
+    .await
+    .expect("request");
     match audience::consume_magic_link(&db.app, project, &first)
         .await
         .expect("consume")
@@ -545,9 +563,18 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
 
     // An unknown email's link is the signup half: NewUser, still single-use.
     let second = [2; 32];
-    audience::request_magic_link(&db.app, project, "new@b.c", &second, return_to, origin)
-        .await
-        .expect("request");
+    audience::request_magic_link(
+        &db.app,
+        &audience::MagicLinkLimits::DEFAULT,
+        project,
+        "new@b.c",
+        "203.0.113.1",
+        &second,
+        return_to,
+        origin,
+    )
+    .await
+    .expect("request");
     assert_eq!(
         audience::consume_magic_link(&db.app, project, &second)
             .await
@@ -567,9 +594,18 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
     let owner_pool = db.owner().await;
     for token in [&held, &asked] {
         assert_eq!(
-            audience::request_magic_link(&db.app, project, "a@b.c", token, return_to, origin)
-                .await
-                .expect("request"),
+            audience::request_magic_link(
+                &db.app,
+                &audience::MagicLinkLimits::DEFAULT,
+                project,
+                "a@b.c",
+                "203.0.113.1",
+                token,
+                return_to,
+                origin
+            )
+            .await
+            .expect("request"),
             audience::LinkRequest::Recorded
         );
         // Past the address's cooldown (D-153) before the next request.
@@ -601,9 +637,18 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
     // owner (the application login can't write the table's timestamps — and RLS hides the
     // rows from it outside a project scope anyway).
     let expired = [5; 32];
-    audience::request_magic_link(&db.app, project, "a@b.c", &expired, return_to, origin)
-        .await
-        .expect("request");
+    audience::request_magic_link(
+        &db.app,
+        &audience::MagicLinkLimits::DEFAULT,
+        project,
+        "a@b.c",
+        "203.0.113.1",
+        &expired,
+        return_to,
+        origin,
+    )
+    .await
+    .expect("request");
     let owner_pool = db.owner().await;
     sqlx::query(
         "UPDATE audience_magic_links
@@ -629,9 +674,18 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
         .expect("created")
         .id;
     let sixth = [6; 32];
-    audience::request_magic_link(&db.app, project, "a@b.c", &sixth, return_to, origin)
-        .await
-        .expect("request");
+    audience::request_magic_link(
+        &db.app,
+        &audience::MagicLinkLimits::DEFAULT,
+        project,
+        "a@b.c",
+        "203.0.113.1",
+        &sixth,
+        return_to,
+        origin,
+    )
+    .await
+    .expect("request");
     assert_eq!(
         audience::consume_magic_link(&db.app, other, &sixth)
             .await

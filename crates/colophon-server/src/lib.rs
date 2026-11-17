@@ -202,6 +202,7 @@ fn api_services(
         events,
         mcp: colophon_api::mcp::Shared::new(config.mcp),
         passwords: colophon_db::passwords::PasswordGate::new(config.password_concurrency),
+        magic_links: config.magic_links,
     })
 }
 

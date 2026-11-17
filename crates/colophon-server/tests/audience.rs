@@ -1304,7 +1304,11 @@ async fn a_magic_link_lands_only_on_an_origin_the_project_lists() {
 #[tokio::test]
 #[ignore = "needs the stack and scripts/migrate.sh"]
 async fn magic_link_requests_cool_down_per_address_and_cap_per_project() {
-    let _server = Server::start_with(&[("COLOPHON_DEV_MAIL", "1")]).await;
+    let _server = Server::start_with(&[
+        ("COLOPHON_DEV_MAIL", "1"),
+        ("COLOPHON_MAGIC_LINKS_PER_PROJECT", "100"),
+    ])
+    .await;
     let owner = sign_in("dev-owner").await;
     let project = project(&owner).await;
     let made = call(
@@ -1396,4 +1400,104 @@ async fn magic_link_requests_cool_down_per_address_and_cap_per_project() {
     let (status, retry, body) = ask(format!("third-{}@example.test", unique_slug())).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
     assert!(retry.is_some(), "the ceiling says when too");
+}
+
+/// `POST …/magic-link` as the client at `address` (the test server trusts loopback as a proxy):
+/// the status, `Retry-After` and the body.
+async fn ask_link_from(
+    project: &str,
+    address: &str,
+    email: &str,
+) -> (StatusCode, Option<u64>, Value) {
+    let response = app()
+        .post(format!("{ORIGIN}/audience/v1/{project}/magic-link"))
+        .header("x-forwarded-for", address)
+        .json(&json!({"email": email, "return_to": "http://site.test/magic"}))
+        .send()
+        .await
+        .expect("request");
+    let retry = response
+        .headers()
+        .get(header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse().ok());
+    let status = response.status();
+    (status, retry, response.json().await.unwrap_or(Value::Null))
+}
+
+/// One client can't spend a project's magic-link budget, and one recipient can't be mailed
+/// every minute (D-161): an address over its own share is refused while another address is
+/// served at once, and a recipient's wait doubles with each link left unused.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn one_client_cannot_spend_the_link_budget_and_a_recipients_wait_escalates() {
+    let _server = Server::start_with(&[
+        ("COLOPHON_DEV_MAIL", "1"),
+        ("COLOPHON_TRUSTED_PROXIES", "127.0.0.1"),
+        ("COLOPHON_MAGIC_LINKS_PER_ADDRESS", "3"),
+    ])
+    .await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/audience/roles"),
+        Some(&json!({"name": "member", "self_assign": true})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    list_origins(&owner, &project, &["http://site.test"]).await;
+
+    // Three links from one client, each for someone new; the fourth is refused — and a
+    // different client is served at once, so one client never locks the site out.
+    let flooder = "198.51.100.40";
+    for n in 0..3 {
+        let (status, _, body) = ask_link_from(
+            &project,
+            flooder,
+            &format!("v{n}-{}@example.test", unique_slug()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "link {n}: {body}");
+    }
+    let (status, retry, body) = ask_link_from(
+        &project,
+        flooder,
+        &format!("v4-{}@example.test", unique_slug()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert!(retry.is_some(), "a refusal says when");
+    let (status, _, body) = ask_link_from(
+        &project,
+        "203.0.113.41",
+        &format!("ok-{}@example.test", unique_slug()),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "another client is served: {body}"
+    );
+
+    // A recipient who never uses a link waits longer each time: a minute after the first,
+    // two after the second.
+    let victim = format!("victim-{}@example.test", unique_slug());
+    let (status, _, body) = ask_link_from(&project, "203.0.113.42", &victim).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let (status, retry, _) = ask_link_from(&project, "203.0.113.43", &victim).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(retry.is_some_and(|seconds| seconds <= 60), "{retry:?}");
+    age_links(&victim, 61).await;
+    let (status, _, body) = ask_link_from(&project, "203.0.113.44", &victim).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let (status, retry, _) = ask_link_from(&project, "203.0.113.45", &victim).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        retry.is_some_and(|seconds| (61..=120).contains(&seconds)),
+        "the second unused link doubles the wait: {retry:?}"
+    );
 }

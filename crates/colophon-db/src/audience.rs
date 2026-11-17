@@ -816,16 +816,48 @@ pub async fn set_origins(tx: &mut MemberTransaction, origins: &[String]) -> Resu
     Ok(())
 }
 
-/// How long an address waits for another link while its newest one is still unused and
-/// live (D-153): enough to stop a mail bomb, short enough that "send it again" works.
-pub const MAGIC_COOLDOWN: Duration = Duration::MINUTE;
+/// The bounds on magic-link requests (D-153, D-161), configurable per deployment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MagicLinkLimits {
+    /// Links one client address may ask for in one project per [`Self::address_window`]:
+    /// checked first, so one client can never spend the project's shared ceiling.
+    pub per_address: i64,
+    /// The window [`Self::per_address`] counts over.
+    pub address_window: Duration,
+    /// Links one project may record per [`Self::project_window`], every address together.
+    pub per_project: i64,
+    /// The window [`Self::per_project`] counts over.
+    pub project_window: Duration,
+    /// The wait after a recipient's first unused link; each further unused link in the last
+    /// day doubles it, up to [`Self::cooldown_cap`].
+    pub cooldown: Duration,
+    /// The longest a recipient waits between links.
+    pub cooldown_cap: Duration,
+}
 
-/// Links one project may record per [`MAGIC_PROJECT_WINDOW`] (D-153): a ceiling on what
-/// unauthenticated requests can make one project's mail provider send.
-pub const MAGIC_PROJECT_LIMIT: i64 = 100;
+impl MagicLinkLimits {
+    /// Five links an address per ten minutes, three hundred a project per minute, and a
+    /// recipient's wait doubling from a minute to an hour.
+    pub const DEFAULT: Self = Self {
+        per_address: 5,
+        address_window: Duration::minutes(10),
+        per_project: 300,
+        project_window: Duration::MINUTE,
+        cooldown: Duration::MINUTE,
+        cooldown_cap: Duration::HOUR,
+    };
+}
 
-/// The window [`MAGIC_PROJECT_LIMIT`] counts over.
-pub const MAGIC_PROJECT_WINDOW: Duration = Duration::MINUTE;
+impl Default for MagicLinkLimits {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// A duration as the float seconds `make_interval` takes.
+fn seconds_of(duration: Duration) -> f64 {
+    f64::from(u32::try_from(duration.whole_seconds()).unwrap_or(u32::MAX))
+}
 
 /// What a magic-link request came to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -835,16 +867,16 @@ pub enum LinkRequest {
     /// `return_to`'s origin isn't one the project lists (D-148): nothing was recorded, so no
     /// token exists for anyone to receive.
     OriginNotAllowed,
-    /// Too soon (D-153): the address's newest link is under [`MAGIC_COOLDOWN`] old and still
-    /// unused, or the project recorded [`MAGIC_PROJECT_LIMIT`] links in the last
-    /// [`MAGIC_PROJECT_WINDOW`]. Nothing was recorded; ask again after this many seconds.
+    /// Too soon (D-153, D-161): the asking client is over its own share, the recipient's
+    /// newest unused link is younger than its (escalating) cooldown, or the project is at its
+    /// ceiling. Nothing was recorded; ask again after this many seconds.
     Wait(u32),
 }
 
 /// Whole seconds until `remaining` has passed, at least one: what `Retry-After` says.
 fn seconds_until(remaining: f64) -> u32 {
     if remaining.is_finite() && remaining > 1.0 {
-        // Saturating float-to-int: a remaining time is at most a minute here.
+        // Saturating float-to-int: a remaining time is at most a window or the cooldown cap.
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -857,15 +889,115 @@ fn seconds_until(remaining: f64) -> u32 {
     }
 }
 
+/// Whether a link request must wait, and how many seconds (D-153, D-161), counted inside the
+/// request's transaction: the asking client's share, then the recipient's escalating
+/// cooldown, then the project's ceiling.
+async fn too_soon(
+    tx: &mut Transaction<'static, Postgres>,
+    limits: &MagicLinkLimits,
+    project: Uuid,
+    email: &str,
+    address: &str,
+) -> Result<Option<u32>, DbError> {
+    // One request per asking client and per recipient at a time (D-153, D-161): the counts
+    // below and the insert run under both advisory locks — the client's first, always, so two
+    // requests can never wait on each other's — and concurrent requests can't both find room.
+    sqlx::query!(
+        "SELECT 1 AS \"locked!\" FROM pg_advisory_xact_lock(22354, hashtext($1::uuid::text || '/' || $2))",
+        project,
+        address
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
+    sqlx::query!(
+        "SELECT 1 AS \"locked!\" FROM pg_advisory_xact_lock(22353, hashtext($1::uuid::text || '/' || $2))",
+        project,
+        email
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
+    // The asking client's own share first (D-161): one client over it is refused before it
+    // can touch the ceiling everyone shares.
+    let address_window = seconds_of(limits.address_window);
+    let asked = sqlx::query!(
+        r#"SELECT count(*) AS "links!",
+                  EXTRACT(EPOCH FROM min(created_at) + make_interval(secs => $3) - now())::float8
+                      AS "remaining"
+           FROM audience_magic_links
+           WHERE project_id = $1 AND requested_from = $2
+             AND created_at > now() - make_interval(secs => $3)"#,
+        project,
+        address,
+        address_window
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
+    if asked.links >= limits.per_address {
+        return Ok(Some(seconds_until(
+            asked.remaining.unwrap_or(address_window),
+        )));
+    }
+    // The recipient's cooldown escalates (D-161): with k links unused in the last day, the
+    // newest must be `cooldown × 2^(k−1)` old (at most `cooldown_cap`) before another goes —
+    // a visitor who never asked is mailed a handful of times, not every minute. Spending a link
+    // retires its siblings, so a visitor who signs in starts again at zero.
+    let waiting = sqlx::query_scalar!(
+        "SELECT EXTRACT(EPOCH FROM max(created_at)
+                    + make_interval(secs => least($3 * power(2::float8, (count(*) - 1)::float8), $4))
+                    - now())::float8
+         FROM audience_magic_links
+         WHERE project_id = $1 AND email = $2 AND used_at IS NULL
+           AND created_at > now() - interval '1 day'",
+        project,
+        email,
+        seconds_of(limits.cooldown),
+        seconds_of(limits.cooldown_cap)
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
+    if let Some(remaining) = waiting
+        && remaining > 0.0
+    {
+        return Ok(Some(seconds_until(remaining)));
+    }
+    let window = seconds_of(limits.project_window);
+    let recent = sqlx::query!(
+        r#"SELECT count(*) AS "links!",
+                  EXTRACT(EPOCH FROM min(created_at) + make_interval(secs => $2) - now())::float8
+                      AS "remaining"
+           FROM audience_magic_links
+           WHERE project_id = $1 AND created_at > now() - make_interval(secs => $2)"#,
+        project,
+        window
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
+    if recent.links >= limits.per_project {
+        return Ok(Some(seconds_until(recent.remaining.unwrap_or(window))));
+    }
+    Ok(None)
+}
+
 /// Records a magic link for `email` whose `return_to` lands on `origin` — only when the
 /// project lists that origin (D-148). Earlier links for the address stay live: a request is
 /// not proof of anything, so it must not be able to cancel the link a visitor already holds;
 /// spending any one link retires the rest ([`consume_magic_link`]). `token_hash` is the
 /// SHA-256 of the token the caller handed out; the token itself is never stored.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one request's facts: who asked, for whom, where it lands, under which bounds"
+)]
 pub async fn request_magic_link(
     pool: &PgPool,
+    limits: &MagicLinkLimits,
     project: Uuid,
     email: &str,
+    address: &str,
     token_hash: &[u8; 32],
     return_to: &str,
     origin: &str,
@@ -883,59 +1015,20 @@ pub async fn request_magic_link(
     if !listed {
         return Ok(LinkRequest::OriginNotAllowed);
     }
-    // One request per address at a time (D-153): the two counts below and the insert run
-    // under the address's own advisory lock, so concurrent requests can't both find room.
-    sqlx::query!(
-        "SELECT 1 AS \"locked!\" FROM pg_advisory_xact_lock(22353, hashtext($1::uuid::text || '/' || $2))",
-        project,
-        email
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(DbError::from_query)?;
-    let cooldown = f64::from(u32::try_from(MAGIC_COOLDOWN.whole_seconds()).unwrap_or(u32::MAX));
-    let waiting = sqlx::query_scalar!(
-        "SELECT EXTRACT(EPOCH FROM max(created_at) + make_interval(secs => $3) - now())::float8
-         FROM audience_magic_links
-         WHERE project_id = $1 AND email = $2 AND used_at IS NULL AND expires_at > now()
-           AND created_at > now() - make_interval(secs => $3)",
-        project,
-        email,
-        cooldown
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(DbError::from_query)?;
-    if let Some(remaining) = waiting {
-        return Ok(LinkRequest::Wait(seconds_until(remaining)));
-    }
-    let window = f64::from(u32::try_from(MAGIC_PROJECT_WINDOW.whole_seconds()).unwrap_or(u32::MAX));
-    let recent = sqlx::query!(
-        r#"SELECT count(*) AS "links!",
-                  EXTRACT(EPOCH FROM min(created_at) + make_interval(secs => $2) - now())::float8
-                      AS "remaining"
-           FROM audience_magic_links
-           WHERE project_id = $1 AND created_at > now() - make_interval(secs => $2)"#,
-        project,
-        window
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(DbError::from_query)?;
-    if recent.links >= MAGIC_PROJECT_LIMIT {
-        return Ok(LinkRequest::Wait(seconds_until(
-            recent.remaining.unwrap_or(window),
-        )));
+    if let Some(wait) = too_soon(&mut tx, limits, project, email, address).await? {
+        return Ok(LinkRequest::Wait(wait));
     }
     sqlx::query!(
-        "INSERT INTO audience_magic_links (project_id, id, email, token_hash, return_to, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
+        "INSERT INTO audience_magic_links
+             (project_id, id, email, token_hash, return_to, expires_at, requested_from)
+         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6), $7)",
         project,
         Uuid::now_v7(),
         email,
         &token_hash[..],
         return_to,
-        f64::from(u32::try_from(MAGIC_LIFETIME.whole_seconds()).unwrap_or(u32::MAX))
+        seconds_of(MAGIC_LIFETIME),
+        address
     )
     .execute(&mut *tx)
     .await

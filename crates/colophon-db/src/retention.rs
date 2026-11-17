@@ -79,6 +79,9 @@ pub struct Retention {
     /// `sign_in_throttle` keys untouched this long, and not paused (D-154): their count starts
     /// over.
     pub throttle: time::Duration,
+    /// `audience_magic_links` past `expires_at`: as long as a recipient's escalating cooldown
+    /// counts their unused links (D-161).
+    pub magic_link: time::Duration,
 }
 
 impl Retention {
@@ -92,6 +95,7 @@ impl Retention {
         flow: time::Duration::days(90),
         attempt: time::Duration::minutes(15),
         throttle: time::Duration::days(1),
+        magic_link: time::Duration::days(1),
     };
 }
 
@@ -471,8 +475,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
         retained(&mut tx, "colophon_sweep_setup_attempts", attempt_cut, batch).await?;
     let setup_codes = retained(&mut tx, "colophon_sweep_setup_codes", flow_cut, batch).await?;
     // Magic links are dead at `expires_at`; their `audience.magic_link_*` events are the
-    // record. Kept the attempt age past it, longer than any cooldown or ceiling reads.
-    let magic_links = retained(&mut tx, "colophon_sweep_magic_links", attempt_cut, batch).await?;
+    // record. Kept a day past it, as long as the cooldown and the ceilings read them.
+    let magic_cut = OffsetDateTime::now_utc() - ages.magic_link;
+    let magic_links = retained(&mut tx, "colophon_sweep_magic_links", magic_cut, batch).await?;
     // A sign-in key idle for a day starts its count over; a paused one stays until its
     // pause is that old too.
     let throttle_cut = OffsetDateTime::now_utc() - ages.throttle;

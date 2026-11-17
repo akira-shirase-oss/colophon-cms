@@ -211,6 +211,10 @@ pub struct Config {
     /// core by default (1–256). Past it a password job waits briefly, then the request is
     /// shed with `503` and `Retry-After`.
     pub password_concurrency: usize,
+    /// Magic-link request bounds (D-161): `COLOPHON_MAGIC_LINKS_PER_ADDRESS` links one client
+    /// address may ask for in one project per ten minutes (5), and
+    /// `COLOPHON_MAGIC_LINKS_PER_PROJECT` a project may record per minute (300).
+    pub magic_links: colophon_db::audience::MagicLinkLimits,
     /// Whether destinations may name private, loopback and link-local addresses and plain
     /// http: `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` (D-149). Off by default and never
     /// inferred from the listen address — a production server behind a local reverse proxy
@@ -699,6 +703,11 @@ impl Config {
             );
         }
         let allow_private_destinations = env.flag("COLOPHON_ALLOW_PRIVATE_DESTINATIONS");
+        let magic_links = colophon_db::audience::MagicLinkLimits {
+            per_address: env.ranged("COLOPHON_MAGIC_LINKS_PER_ADDRESS", 5, 1..=100_000),
+            per_project: env.ranged("COLOPHON_MAGIC_LINKS_PER_PROJECT", 300, 1..=1_000_000),
+            ..colophon_db::audience::MagicLinkLimits::DEFAULT
+        };
         let password_concurrency = env.ranged(
             "COLOPHON_PASSWORD_CONCURRENCY",
             colophon_db::passwords::PasswordGate::default_slots(),
@@ -742,6 +751,7 @@ impl Config {
                 events,
                 mcp,
                 password_concurrency,
+                magic_links,
                 allow_private_destinations,
                 dev_mail,
                 mail,

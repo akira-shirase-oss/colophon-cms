@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXTRACT(EPOCH FROM max(created_at)\n                    + make_interval(secs => least($3 * power(2::float8, (count(*) - 1)::float8), $4))\n                    - now())::float8\n         FROM audience_magic_links\n         WHERE project_id = $1 AND email = $2 AND used_at IS NULL\n           AND created_at > now() - interval '1 day'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "extract",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "6549b346b3a2d86b832fd81ea791c510a28059fe9d54338fae5e5cebb161e2d7"
+}

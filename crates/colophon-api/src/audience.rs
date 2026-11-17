@@ -1081,6 +1081,7 @@ fn clean_origin(value: &str) -> Option<String> {
 pub(crate) async fn request_magic_link(
     State(state): State<AppState>,
     Path(path): Path<AudiencePath>,
+    crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     body: Result<Json<MagicLinkRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let services = session::services(&state)?;
@@ -1092,8 +1093,10 @@ pub(crate) async fn request_magic_link(
         .map_err(|_| ApiError::internal(std::io::Error::other("no secure random source")))?;
     match audience::request_magic_link(
         &services.pool,
+        &services.magic_links,
         project,
         &email,
+        &address,
         &tokens::hash(&token),
         &return_to,
         &origin,

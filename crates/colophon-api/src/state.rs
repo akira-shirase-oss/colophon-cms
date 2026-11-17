@@ -66,6 +66,9 @@ pub struct Services {
     /// The bound on Argon2 work every sign-up and sign-in shares (D-150):
     /// `COLOPHON_PASSWORD_CONCURRENCY` jobs at once, a short wait, then `503 Busy`.
     pub passwords: colophon_db::passwords::PasswordGate,
+    /// The bounds on magic-link requests (D-153, D-161): `COLOPHON_MAGIC_LINKS_PER_ADDRESS`
+    /// and `COLOPHON_MAGIC_LINKS_PER_PROJECT`.
+    pub magic_links: colophon_db::audience::MagicLinkLimits,
 }
 
 /// The router's state. Cloning is two reference-count increments and a copy.
