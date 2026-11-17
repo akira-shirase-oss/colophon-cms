@@ -10503,7 +10503,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the newest 100 of the caller's own live previews; `next_cursor` is always null */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -10511,8 +10511,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["PreviewLiveView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -14803,7 +14803,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["PreviewEntryView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
