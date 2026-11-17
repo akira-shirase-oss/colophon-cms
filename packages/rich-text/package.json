@@ -1,0 +1,52 @@
+{
+  "name": "@colophon-cms/rich-text",
+  "version": "0.1.0-alpha.1",
+  "license": "MIT",
+  "description": "Render Colophon CMS rich text (colophon/rich-text v1, stored as JSON) to safe HTML, exactly as the Studio and Colophon's own sites do. Zero dependencies.",
+  "keywords": [
+    "colophon",
+    "cms",
+    "headless-cms",
+    "rich-text",
+    "html"
+  ],
+  "homepage": "https://github.com/akira-shirase-oss/colophon-cms/tree/main/packages/rich-text#readme",
+  "bugs": "https://github.com/akira-shirase-oss/colophon-cms/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akira-shirase-oss/colophon-cms.git",
+    "directory": "packages/rich-text"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22.17"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/build.mjs && tsc --noEmit -p tsconfig.json",
+    "test": "node scripts/build.mjs && vitest run",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

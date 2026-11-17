@@ -8,6 +8,18 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Added
+
+- **The TypeScript SDK is ready for npm (D-170):** `@colophon-cms/sdk` gains
+  `client.compatibility()` and a `compat` option (`warn` by default, `throw`, `off`) that say
+  plainly when the server is too old or too new, by the CLI's rule (D-062). A packaging gate
+  checks what npm would ship on every push — file allowlist, size budget, publint, Are the
+  Types Wrong, and a scratch project that installs the tarballs, calls a stub server, compiles
+  the README's examples and bundles the client for a browser (4.5 KB min+gzip).
+- **`@colophon-cms/rich-text` (D-170):** the content renderer as its own zero-dependency
+  package, built from the one renderer the Studio uses, so a site reading the delivery API
+  renders rich text exactly as the Studio previews it.
+
 ### Security
 
 The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-169). Each names the attack it
