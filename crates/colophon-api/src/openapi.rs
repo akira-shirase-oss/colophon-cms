@@ -3974,7 +3974,10 @@ pub(crate) static TABLE: &[Route] = &[
                     summary: "Your own live previews, newest first",
                     tag: "preview",
                     query: &[query("entry", Kind::Uuid, "only those of this entry")],
-                    ok: page("PreviewLiveView"),
+                    ok: capped(
+                        "PreviewLiveView",
+                        "the newest 100 of the caller's own live previews; `next_cursor` is always null",
+                    ),
                     extra: &[NOT_FOUND, API_TOKEN_REFUSED],
                     ..MIN
                 },

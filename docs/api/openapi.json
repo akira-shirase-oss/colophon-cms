@@ -15952,11 +15952,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -15967,7 +15964,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the newest 100 of the caller's own live previews; `next_cursor` is always null"
           },
           "401": {
             "content": {
@@ -22521,7 +22518,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
