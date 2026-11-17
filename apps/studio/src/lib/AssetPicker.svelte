@@ -1,24 +1,20 @@
 <!--
-  Choosing uploads for an `asset` field (media M.2, D-095): "Choose image" opens a panel over the
-  project's uploads — usable images show their picture from the media origin, anything still in
-  quarantine or rejected shows its state, because a draft may name either (only publishing needs
-  usable). Upload inside the panel sends the file into quarantine and waits on the library,
-  which the worker's `assets` hints refresh (D-108), until the worker settles it; a usable
-  result is picked at once. A chosen upload shows as its thumbnail and name
-  with Change and Remove; a list shows chips that can be moved up and down and removed, up to its
-  maximum, never the same upload twice. The server decides: an id that names no upload is refused,
-  and marked on its chip.
+  Choosing uploads for an `asset` field (media M.2, D-095): "Choose image" opens the media library
+  panel (MediaLibraryPanel: search, pages, upload inside it, the upload states) over the project's
+  uploads. A chosen upload shows as its thumbnail and name with Change and Remove; a list shows
+  chips that can be moved up and down and removed, up to its maximum, never the same upload
+  twice. The server decides: an id that names no upload is refused, and marked on its chip.
 -->
 <script lang="ts">
 	import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
 	import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
 	import ImageIcon from '@lucide/svelte/icons/image';
-	import TrashIcon from '@lucide/svelte/icons/trash-2';
 	import XIcon from '@lucide/svelte/icons/x';
-	import { createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
-	import * as AlertDialog from '@colophon/ui/ui/alert-dialog';
+	import { createQueries } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
-	import { ApiError, assetUrl, deleteAsset, getAsset, listAssets, newKey, uploadAsset, type Asset, type FieldDefinition } from './api.ts';
+	import { getAsset, type Asset, type FieldDefinition } from './api.ts';
+	import { stateText, thumbnailUrl } from './media.ts';
+	import MediaLibraryPanel from './MediaLibraryPanel.svelte';
 
 	let {
 		project,
@@ -45,7 +41,6 @@
 		onchange?: () => void;
 	} = $props();
 
-	const queryClient = useQueryClient();
 	const chosen = $derived(Array.isArray(value) ? value : value === '' ? [] : [value]);
 	const full = $derived(field.many ? chosen.length >= field.max : chosen.length >= 1);
 
@@ -55,116 +50,8 @@
 	const named = $derived(chosen.map((id, index) => ({ id, asset: records[index]?.data, failed: records[index]?.isError === true })));
 	const label = (asset: Asset | undefined, failed: boolean) => (failed ? 'An upload you can’t see' : asset === undefined ? 'Loading…' : asset.file_name);
 
-	// The library: every upload in the project, shown while the panel is open.
+	// The library panel, shown while it is open.
 	let open = $state(false);
-	const library = createQuery(() => ({
-		queryKey: ['assets', project],
-		queryFn: () => listAssets(project),
-		enabled: open,
-		staleTime: 5_000
-	}));
-	const visible = $derived(library.data ?? []);
-
-	let fileInput = $state<HTMLInputElement>();
-	let uploading = $state('');
-	let problem = $state('');
-
-	// Deleting from the library: a confirmed 202 is requested, not gone — the row shows
-	// Deleting…, then Deleted, until the list no longer names it. A refusal's message, with
-	// who still names it, shows where upload problems do.
-	let confirming = $state<Asset | null>(null);
-	let deleting = $state(false);
-
-	/** How an upload's record shows beside its name. */
-	function stateText(state: string): string {
-		switch (state) {
-			case 'rejected':
-				return 'Rejected';
-			case 'deleting':
-				return 'Deleting…';
-			case 'deleted':
-				return 'Deleted';
-			default:
-				return 'Checking…';
-		}
-	}
-
-	/** Whether a library row may still be picked: gone or on its way out can't. */
-	const pickable = (asset: Asset) => asset.state !== 'deleting' && asset.state !== 'deleted';
-
-	/** Asks for `confirming`'s asset to go, then refreshes the library to show its state. */
-	async function remove() {
-		const asset = confirming;
-		if (asset === null || deleting) return;
-		problem = '';
-		deleting = true;
-		try {
-			await deleteAsset(project, asset.id, newKey());
-			confirming = null;
-			await library.refetch();
-		} catch (error) {
-			confirming = null;
-			problem =
-				error instanceof ApiError
-					? error.details?.referenced_by !== undefined && error.details.referenced_by.length > 0
-						? `${error.message} (${error.details.referenced_by
-								.slice(0, 3)
-								.map((referrer) => referrer.collection)
-								.join(', ')}${error.details.referenced_by.length > 3 ? ', …' : ''})`
-						: error.message
-					: `Couldn't delete “${asset.file_name}”.`;
-		} finally {
-			deleting = false;
-		}
-	}
-
-	/** Waits for upload `id` to leave quarantine, watching the open library's reads: the
-	 *  worker's commit arrives as an `assets` hint (D-108) which refreshes it — the 10-second
-	 *  timer is only a backstop for the stream being down, and only then does this read again
-	 *  itself. `null` when it hasn't settled within the half minute. */
-	async function settled(id: string): Promise<Asset | null> {
-		const deadline = Date.now() + 30_000;
-		while (Date.now() < deadline) {
-			const found = queryClient.getQueryData<Asset[]>(['assets', project])?.find((asset) => asset.id === id);
-			if (found !== undefined && found.state !== 'quarantined') return found;
-			const heard = await new Promise<boolean>((resolve) => {
-				const timer = setTimeout(() => resolve(false), Math.min(10_000, Math.max(1, deadline - Date.now())));
-				const off = queryClient.getQueryCache().subscribe((event) => {
-					if (event.type === 'updated' && event.query.queryKey[0] === 'assets' && event.query.queryKey[1] === project) {
-						clearTimeout(timer);
-						off();
-						resolve(true);
-					}
-				});
-			});
-			if (!heard) await library.refetch();
-		}
-		return null;
-	}
-
-	/** Sends the picked file into quarantine and waits for the worker's verdict; a usable
-	 *  result is chosen at once. */
-	async function upload(file: File) {
-		problem = '';
-		uploading = file.name;
-		try {
-			const made = await uploadAsset(project, file);
-			await library.refetch();
-			// Quarantine settles on the worker: wait on the library's reads (live-refreshed),
-			// not on polling this one record.
-			const asset = made.state === 'quarantined' ? ((await settled(made.id)) ?? made) : made;
-			if (asset.state === 'usable') {
-				choose(asset.id);
-			} else if (asset.state === 'rejected') {
-				problem = `“${file.name}” was rejected: ${asset.rejected_reason ?? 'not a usable image'}`;
-			}
-		} catch (error) {
-			problem = error instanceof ApiError ? `Couldn't upload “${file.name}”: ${error.message}` : `Couldn't upload “${file.name}”.`;
-		} finally {
-			uploading = '';
-			if (fileInput) fileInput.value = '';
-		}
-	}
 
 	function set(next: string[]) {
 		value = field.many ? next : (next[0] ?? '');
@@ -193,7 +80,7 @@
 					data-invalid={refusedAt === index || undefined}
 				>
 					{#if item.asset?.state === 'usable'}
-						<img src={assetUrl(project, item.id)} alt="" class="size-8 shrink-0 rounded object-cover" />
+						<img src={thumbnailUrl(project, item.asset)} alt="" class="size-8 shrink-0 rounded object-cover" />
 					{:else}
 						<ImageIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 					{/if}
@@ -233,87 +120,11 @@
 					{chosen.length === 0 ? 'Choose an image' : field.many ? 'Add an image' : 'Change the image'}
 				</Button>
 				{#if open}
-					<div class="rounded-lg border border-border bg-card p-3" data-testid="asset-library">
-						<div class="mb-3 flex items-center gap-2">
-							<Button variant="outline" size="sm" disabled={uploading !== ''} onclick={() => fileInput?.click()} data-testid="asset-upload">
-								{uploading === '' ? 'Upload an image' : `Checking ${uploading}…`}
-							</Button>
-							<input
-								bind:this={fileInput}
-								type="file"
-								accept="image/png,image/jpeg,image/webp"
-								class="hidden"
-								onchange={(event) => {
-									const file = event.currentTarget.files?.[0];
-									if (file) upload(file);
-								}}
-								data-testid="asset-file"
-							/>
-							{#if problem}<p class="text-xs text-destructive" data-testid="asset-problem">{problem}</p>{/if}
-						</div>
-						{#if library.isPending}
-							<p class="text-xs text-muted-foreground">Loading the library…</p>
-						{:else if library.isError}
-							<p class="text-xs text-destructive">Couldn't list the uploads just now. Try again.</p>
-						{:else if visible.length === 0}
-							<p class="text-xs text-muted-foreground">No uploads yet — upload an image to choose it.</p>
-						{:else}
-							<ul class="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="Uploads">
-								{#each visible as asset (asset.id)}
-									<li class="group relative">
-										<button
-											type="button"
-											class="w-full overflow-hidden rounded-lg border text-left outline-none enabled:hover:border-primary focus-visible:border-primary disabled:opacity-60 {chosen.includes(asset.id) ? 'border-primary' : 'border-border'}"
-											disabled={chosen.includes(asset.id) || !pickable(asset)}
-											onclick={() => choose(asset.id)}
-											data-testid="asset-option"
-											data-state={asset.state}
-										>
-											{#if asset.state === 'usable'}
-												<img src={assetUrl(project, asset.id)} alt="" class="aspect-video w-full bg-muted object-cover" />
-											{:else}
-												<div class="flex aspect-video w-full items-center justify-center bg-muted text-xs text-muted-foreground">
-													{stateText(asset.state)}
-												</div>
-											{/if}
-											<span class="block truncate px-2 py-1.5 text-xs" data-user-content>{asset.file_name}</span>
-										</button>
-										{#if asset.state === 'usable' || asset.state === 'rejected'}
-											<button
-												type="button"
-												class="absolute end-1 top-1 rounded-md bg-card/90 p-1 text-muted-foreground opacity-0 outline-none transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-												aria-label="Delete {asset.file_name}"
-												onclick={() => (confirming = asset)}
-												data-testid="asset-delete"
-											>
-												<TrashIcon class="size-3.5" />
-											</button>
-										{/if}
-									</li>
-								{/each}
-							</ul>
-						{/if}
+					<div class="rounded-lg border border-border bg-card p-3">
+						<MediaLibraryPanel {project} {chosen} onpick={(asset) => choose(asset.id)} allowDelete label="{field.label}: uploads" />
 					</div>
 				{/if}
 			</div>
 		{/if}
 	{/if}
 </div>
-
-<AlertDialog.Root open={confirming !== null} onOpenChange={(next) => !next && (confirming = null)}>
-	<AlertDialog.Content>
-		<AlertDialog.Header>
-			<AlertDialog.Title>Delete {confirming?.file_name ?? 'this upload'}?</AlertDialog.Title>
-			<AlertDialog.Description>
-				The file and its renditions go for good. If an entry or a release still names it, the
-				server refuses instead — take it out of those first.
-			</AlertDialog.Description>
-		</AlertDialog.Header>
-		<AlertDialog.Footer>
-			<AlertDialog.Cancel disabled={deleting}>Keep it</AlertDialog.Cancel>
-			<AlertDialog.Action variant="destructive" disabled={deleting} onclick={remove}>
-				{deleting ? 'Deleting…' : 'Delete it'}
-			</AlertDialog.Action>
-		</AlertDialog.Footer>
-	</AlertDialog.Content>
-</AlertDialog.Root>

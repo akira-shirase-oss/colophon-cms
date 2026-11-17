@@ -396,17 +396,23 @@ pub struct ContentReference {
     pub entry: String,
 }
 
-/// One asset an asset field names, at its place in the field (M.1).
+/// One asset the content names, at its place in the field (M.1): an asset field's upload, or
+/// an upload a rich-text field's images name (D-177).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentAsset {
-    /// The field's id.
+    /// The field's id, or its path inside objects, lists and blocks (`sections/2/body`).
     pub field: String,
-    /// Its place in a list (0 for a single asset).
+    /// Its place in a list (0 for a single asset); for a rich-text field, the order in which
+    /// the document first names it (each distinct image once).
     pub position: u16,
     /// Whether the field holds a list (so its place is part of where it is).
     pub many: bool,
     /// The asset's id, a lowercase UUID.
     pub asset: String,
+    /// RFC 6901 JSON Pointer, in the content, to the value that names it: the field
+    /// (`/cover`), its list item (`/photos/1`), or a rich-text image's
+    /// `/body/doc/content/3/attrs/assetId` — where a refusal points.
+    pub pointer: String,
 }
 
 impl Content {
@@ -1355,6 +1361,26 @@ fn collect_asset(many: bool, value: &Value, pointer: &Pointer, found: &mut Found
             position: u16::try_from(position).unwrap_or(u16::MAX),
             many,
             asset: id.as_str().unwrap_or_default().to_owned(),
+            pointer: if many {
+                format!("{}/{position}", pointer.as_str())
+            } else {
+                pointer.as_str().to_owned()
+            },
+        });
+    }
+}
+
+/// Notes the uploads a valid rich-text value's images name (D-177): one asset reference per
+/// distinct image, at the place the document first names it, pointing at that `assetId`.
+fn collect_images(document: &rich_text::RichText, pointer: &Pointer, found: &mut Found) {
+    let field = pointer.as_str().trim_start_matches('/');
+    for (position, image) in document.images().iter().enumerate() {
+        found.assets.push(ContentAsset {
+            field: field.to_owned(),
+            position: u16::try_from(position).unwrap_or(u16::MAX),
+            many: false,
+            asset: image.asset_id.clone(),
+            pointer: format!("{}{}", pointer.as_str(), image.pointer),
         });
     }
 }
@@ -2822,6 +2848,7 @@ impl ContentType {
                     message: rejection.to_string(),
                 })?;
                 out.push_str(document.canonical_json());
+                collect_images(&document, pointer, found);
             }
             FieldKind::Number { integer, min, max } => {
                 Self::number(label, value, *integer, (*min, *max), pointer, out)?;
@@ -4038,6 +4065,77 @@ mod tests {
             Err(("out_of_range", "/fields/1/max".to_owned()))
         );
         assert_eq!(base(json!({"many": true})), Ok(()));
+    }
+
+    #[test]
+    fn rich_text_images_are_asset_references_once_each() {
+        let posts = ContentType::parse(&json!({
+            "name": "Posts",
+            "title_field": "title",
+            "fields": [
+                {"id": "title", "label": "Title", "type": "text", "required": true},
+                {"id": "cover", "label": "Cover", "type": "asset"},
+                {"id": "body", "label": "Body", "type": "rich_text"},
+                {"id": "sections", "label": "Sections", "type": "list", "of": {
+                    "type": "object", "fields": [
+                        {"id": "body", "label": "Body", "type": "rich_text"}
+                    ]
+                }}
+            ]
+        }))
+        .expect("a valid definition");
+        let image =
+            |id: &str| json!({"type": "image", "attrs": {"assetId": id, "alt": "A picture"}});
+        let doc = |content: Value| json!({"schema": "colophon/rich-text", "version": 1, "doc": {"type": "doc", "content": content}});
+        let content = posts
+            .validate(&json!({
+                "title": "Hi",
+                "cover": A,
+                "body": doc(json!([{"type": "paragraph"}, image(B), image(A), image(B)])),
+                "sections": [{"body": doc(json!([{"type": "paragraph"}]))}, {"body": doc(json!([image(A)]))}]
+            }))
+            .expect("valid");
+        let named: Vec<(&str, u16, &str, &str)> = content
+            .assets()
+            .iter()
+            .map(|a| {
+                (
+                    a.field.as_str(),
+                    a.position,
+                    a.asset.as_str(),
+                    a.pointer.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("cover", 0, A, "/cover"),
+                ("body", 0, B, "/body/doc/content/1/attrs/assetId"),
+                ("body", 1, A, "/body/doc/content/2/attrs/assetId"),
+                (
+                    "sections/1/body",
+                    0,
+                    A,
+                    "/sections/1/body/doc/content/0/attrs/assetId"
+                ),
+            ]
+        );
+        // The refusal for an over-full document points into the field.
+        let many: Vec<Value> = (0..=crate::rich_text::MAX_IMAGES)
+            .map(|n| image(&format!("00000000-0000-4000-8000-{n:012x}")))
+            .collect();
+        let refused = posts
+            .validate(&json!({"title": "Hi", "body": doc(json!(many))}))
+            .expect_err("too many images");
+        assert_eq!(refused.code, "too_many_images");
+        assert_eq!(
+            refused.pointer,
+            format!(
+                "/body/doc/content/{}/attrs/assetId",
+                crate::rich_text::MAX_IMAGES
+            )
+        );
     }
 
     #[test]

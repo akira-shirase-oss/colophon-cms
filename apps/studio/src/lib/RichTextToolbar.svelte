@@ -1,6 +1,12 @@
 <!--
   Formatting for one rich-text editor: marks, blocks, callouts, links (only the kinds the format
-  allows), placeholder images with required alt text, undo and redo. One tab stop; arrows inside.
+  allows), images from the project's media library with required alt text, undo and redo. One tab
+  stop; arrows inside.
+  "Insert an image" (gap 3 D1): choose or upload in the library panel, then describe it — alt text
+  is required, starts from the upload's own alt text, and is questioned when it reads like a file
+  name — then insert the real asset id. The same dialog answers an image's Edit alt text and
+  Replace (the `colophon-image` event its node view and Enter send). Without a project (the
+  playground) there is no library, so no image button.
 -->
 <script lang="ts">
 	import BoldIcon from '@lucide/svelte/icons/bold';
@@ -16,15 +22,32 @@
 	import SquareCodeIcon from '@lucide/svelte/icons/square-code';
 	import StrikethroughIcon from '@lucide/svelte/icons/strikethrough';
 	import Undo2Icon from '@lucide/svelte/icons/undo-2';
+	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 	import type { Editor } from '@tiptap/core';
-	import { type CalloutTone, isAllowedHref, LIMITS } from '@colophon/editor';
+	import { createQuery } from '@tanstack/svelte-query';
+	import { page } from '$app/state';
+	import { type CalloutTone, IMAGE_ACTION, type ImageAction, isAllowedHref, isValidAlt, LIMITS } from '@colophon/editor';
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Input } from '@colophon/ui/ui/input';
 	import { Label } from '@colophon/ui/ui/label';
 	import * as Toolbar from '@colophon/ui/ui/toolbar';
+	import { ApiError, getAsset, uploadAsset, type Asset } from './api.ts';
+	import { IMAGE_FILE, type ImageFile } from './richTextImage.svelte.ts';
+	import { looksLikeFileName, thumbnailUrl } from './media.ts';
+	import MediaLibraryPanel from './MediaLibraryPanel.svelte';
 
-	let { editor, label = 'Formatting' }: { editor: Editor | null; label?: string } = $props();
+	let {
+		editor,
+		label = 'Formatting',
+		project: given = undefined
+	}: {
+		editor: Editor | null;
+		label?: string;
+		/** The project whose media library images come from; the page's own when left out. */
+		project?: string | null;
+	} = $props();
+	const project = $derived(given ?? page.params['project'] ?? null);
 
 	// Bumped on every transaction, so pressed states recompute.
 	let tick = $state(0);
@@ -50,8 +73,6 @@
 	let linkOpen = $state(false);
 	let linkHref = $state('');
 	let linkError = $state('');
-	let imageOpen = $state(false);
-	let imageAlt = $state('');
 
 	function toggleLink() {
 		linkOpen = !linkOpen;
@@ -76,14 +97,163 @@
 		linkError = '';
 	}
 
-	function insertImage(event: SubmitEvent) {
-		event.preventDefault();
-		// Media uploads arrive in milestone P4; until then an image is a placeholder with a fresh id.
-		if (editor?.chain().focus().insertImage({ assetId: crypto.randomUUID(), alt: imageAlt }).run()) {
-			imageOpen = false;
+	// The image dialog: what it is doing (insert at the cursor, or edit/replace the image at
+	// `pos`), which step it is on, the upload chosen and the alt text being written.
+	type ImageFlow = { mode: 'insert'; at?: number } | { mode: 'edit' | 'replace'; pos: number; assetId: string; alt: string };
+	let flow = $state<ImageFlow | null>(null);
+	let step = $state<'pick' | 'describe'>('pick');
+	let picked = $state.raw<Asset | null>(null);
+	let imageAlt = $state('');
+	let imageProblem = $state('');
+	/** A pasted or dropped file on its way into quarantine. */
+	let sending = $state('');
+	// Describing comes after choosing: the cursor goes to the alt text, not back to the page.
+	let altInput = $state<HTMLInputElement | null>(null);
+	$effect(() => {
+		if (step === 'describe' && flow !== null) altInput?.focus();
+	});
+
+	// Editing alt text names the image's upload by id: its record shows beside the text.
+	const editing = $derived(flow !== null && flow.mode === 'edit' ? flow.assetId : '');
+	const editingRecord = createQuery(() => ({
+		queryKey: ['asset', project ?? '', editing],
+		queryFn: () => getAsset(project ?? '', editing),
+		enabled: project !== null && editing !== '',
+		staleTime: 5_000,
+		retry: false
+	}));
+	const shown = $derived(picked ?? (editing === '' ? undefined : editingRecord.data));
+	const altLooksLikeName = $derived(looksLikeFileName(imageAlt) || (shown !== undefined && imageAlt.trim() === shown.file_name));
+
+	/** What had focus when the dialog opened (the Image button, the editor, an image's own
+	 *  button): a cancel gives focus back to it. */
+	let openedFrom: HTMLElement | null = null;
+
+	function openImage(next: ImageFlow) {
+		if (flow === null) openedFrom = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		flow = next;
+		picked = null;
+		imageProblem = '';
+		if (next.mode === 'edit') {
+			step = 'describe';
+			imageAlt = next.alt;
+		} else {
+			step = 'pick';
 			imageAlt = '';
 		}
 	}
+
+	/** Whether closing should leave the cursor in the editor (an image went in) rather than give
+	 *  focus back to what opened the dialog (a cancel). */
+	let backToEditor = false;
+
+	function closeImage(placed = false) {
+		backToEditor = placed;
+		flow = null;
+		picked = null;
+		imageAlt = '';
+		imageProblem = '';
+	}
+
+	/** The library answered: describe the chosen upload next, starting from its own alt text (a
+	 *  replacement keeps the old words when the new upload has none). */
+	function chose(asset: Asset) {
+		picked = asset;
+		imageAlt = asset.alt?.trim() || (flow !== null && flow.mode === 'replace' ? flow.alt : '');
+		imageProblem = '';
+		step = 'describe';
+	}
+
+	// An image's own buttons and Enter ask through the editor: edit its alt text, or replace it.
+	$effect(() => {
+		const current = editor;
+		if (current === null || project === null) return;
+		let dom: HTMLElement;
+		try {
+			dom = current.view.dom;
+		} catch {
+			return;
+		}
+		const asked = (event: Event) => {
+			const { action, pos } = (event as CustomEvent<ImageAction>).detail;
+			const node = current.state.doc.nodeAt(pos);
+			if (node === null || node.type.name !== 'image') return;
+			openImage({ mode: action, pos, assetId: String(node.attrs['assetId'] ?? ''), alt: String(node.attrs['alt'] ?? '') });
+		};
+		const dropped = (event: Event) => void sendFile((event as CustomEvent<ImageFile>).detail);
+		dom.addEventListener(IMAGE_ACTION, asked);
+		dom.addEventListener(IMAGE_FILE, dropped);
+		return () => {
+			dom.removeEventListener(IMAGE_ACTION, asked);
+			dom.removeEventListener(IMAGE_FILE, dropped);
+		};
+	});
+
+	/** A pasted or dropped image file: sent into quarantine at once, then described — the image
+	 *  goes in where it was dropped, showing Checking… until the worker settles it. */
+	async function sendFile({ file, pos }: ImageFile) {
+		if (project === null || sending !== '') return;
+		openImage({ mode: 'insert', at: pos });
+		step = 'describe';
+		sending = file.name;
+		try {
+			const made = await uploadAsset(project, file);
+			if (flow === null) return;
+			picked = made;
+		} catch (error) {
+			if (flow === null) return;
+			step = 'pick';
+			imageProblem = error instanceof ApiError ? `Couldn't upload “${file.name}”: ${error.message}` : `Couldn't upload “${file.name}”.`;
+		} finally {
+			sending = '';
+		}
+	}
+
+	function applyImage(event: SubmitEvent) {
+		event.preventDefault();
+		const current = editor;
+		if (current === null || flow === null) return;
+		const alt = imageAlt.trim();
+		if (!isValidAlt(alt)) {
+			imageProblem = 'Describe the image in a few words: alt text is required, up to 300 characters.';
+			return;
+		}
+		let done: boolean;
+		if (flow.mode === 'insert') {
+			if (picked === null) return;
+			const at = flow.at;
+			done =
+				at === undefined
+					? current.chain().focus().insertImage({ assetId: picked.id, alt }).run()
+					: current
+							.chain()
+							.focus()
+							.setTextSelection(Math.min(at, current.state.doc.content.size))
+							.insertImage({ assetId: picked.id, alt })
+							.run();
+		} else {
+			const pos = flow.pos;
+			const assetId = flow.mode === 'replace' && picked !== null ? picked.id : flow.assetId;
+			done = current
+				.chain()
+				.focus()
+				.command(({ tr }) => {
+					const node = tr.doc.nodeAt(pos);
+					if (node === null || node.type.name !== 'image') return false;
+					tr.setNodeMarkup(pos, undefined, { ...node.attrs, assetId, alt });
+					return true;
+				})
+				.setNodeSelection(pos)
+				.run();
+		}
+		if (done) closeImage(true);
+		else imageProblem = "The image couldn't be placed here. Move the cursor to an empty line and try again.";
+	}
+
+	const imageTitle = $derived(
+		flow === null ? '' : step === 'pick' ? (flow.mode === 'replace' ? 'Replace the image' : 'Insert an image') : flow.mode === 'edit' ? 'Edit alt text' : 'Describe the image'
+	);
+	const imageAction = $derived(flow === null ? '' : flow.mode === 'insert' ? 'Insert image' : flow.mode === 'replace' ? 'Replace image' : 'Save alt text');
 
 	const tones: CalloutTone[] = ['note', 'tip', 'warning'];
 </script>
@@ -110,7 +280,9 @@
 			>{tone[0]?.toUpperCase()}{tone.slice(1)}</Toolbar.Button
 		>
 	{/each}
-	<Toolbar.Button onclick={() => (imageOpen = true)} aria-label="Image"><ImageIcon /></Toolbar.Button>
+	{#if project !== null}
+		<Toolbar.Button onclick={() => openImage({ mode: 'insert' })} aria-label="Image" title="Insert an image from the media library"><ImageIcon /></Toolbar.Button>
+	{/if}
 	<Toolbar.Button onclick={run((e) => e.chain().focus().setHorizontalRule().run())} aria-label="Rule"><MinusIcon /></Toolbar.Button>
 	<Toolbar.Separator />
 	<Toolbar.Button onclick={run((e) => e.chain().focus().undo().run())} title="Undo (⌘Z)" aria-label="Undo"><Undo2Icon /></Toolbar.Button>
@@ -128,21 +300,84 @@
 	</form>
 {/if}
 
-<Dialog.Root bind:open={imageOpen}>
-	<Dialog.Content class="sm:max-w-md">
-		<Dialog.Header>
-			<Dialog.Title>Insert an image</Dialog.Title>
-			<Dialog.Description>Media uploads arrive in a later milestone; for now the image is a placeholder. Alt text is required.</Dialog.Description>
-		</Dialog.Header>
-		<form class="grid gap-4" onsubmit={insertImage}>
-			<div class="grid gap-1.5">
-				<Label for="{id}-alt">Alt text</Label>
-				<Input id="{id}-alt" bind:value={imageAlt} maxlength={LIMITS.maxAltLength} placeholder="Describe the image for people who can't see it" />
-			</div>
-			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (imageOpen = false)}>Cancel</Button>
-				<Button type="submit" disabled={imageAlt.trim() === ''}>Insert image</Button>
-			</Dialog.Footer>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>
+{#if project !== null}
+	<Dialog.Root open={flow !== null} onOpenChange={(open) => !open && closeImage()}>
+		<Dialog.Content
+			class={step === 'pick' ? 'sm:max-w-2xl' : 'sm:max-w-md'}
+			data-testid="image-dialog"
+			onCloseAutoFocus={(event) => {
+				event.preventDefault();
+				const from = openedFrom;
+				openedFrom = null;
+				// The editor itself takes focus through Tiptap, which keeps its selection.
+				if (backToEditor || from === null || !from.isConnected || from.classList.contains('ProseMirror')) editor?.commands.focus();
+				else from.focus();
+				backToEditor = false;
+			}}
+		>
+			<Dialog.Header>
+				<Dialog.Title>{imageTitle}</Dialog.Title>
+				<Dialog.Description>
+					{#if step === 'pick'}
+						Choose an upload from the media library, or upload a new image.
+					{:else}
+						Say what the picture shows, for people who can't see it. Alt text is required.
+					{/if}
+				</Dialog.Description>
+			</Dialog.Header>
+			{#if step === 'pick'}
+				{#if imageProblem}<p role="alert" class="text-xs text-destructive">{imageProblem}</p>{/if}
+				<MediaLibraryPanel project={project} onpick={chose} label="Media library" autofocus />
+				<Dialog.Footer>
+					<Button type="button" variant="outline" onclick={() => closeImage()}>Cancel</Button>
+				</Dialog.Footer>
+			{:else}
+				<form class="grid gap-4" onsubmit={applyImage}>
+					<div class="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-muted/40 p-2" data-testid="image-chosen">
+						{#if shown?.state === 'usable'}
+							<img src={thumbnailUrl(project, shown)} alt="" class="size-16 shrink-0 rounded-md object-cover" />
+						{:else}
+							<div class="flex size-16 shrink-0 items-center justify-center rounded-md bg-muted"><ImageIcon class="size-5 text-muted-foreground" aria-hidden="true" /></div>
+						{/if}
+						<div class="grid min-w-0 flex-1 gap-0.5 text-sm">
+							<span class="truncate" data-user-content>{shown?.file_name ?? (sending !== '' ? `Uploading ${sending}…` : editingRecord.isError ? 'An upload this project doesn’t have' : 'Loading…')}</span>
+							{#if shown?.state === 'quarantined'}
+								<span class="text-xs text-muted-foreground">Still being checked. You can insert it now; publishing waits until it is ready.</span>
+							{:else if shown?.state === 'rejected'}
+								<span class="text-xs text-destructive">Rejected{shown.rejected_reason ? `: ${shown.rejected_reason}` : ''}. Choose another upload.</span>
+							{/if}
+						</div>
+						{#if flow?.mode !== 'edit'}
+							<Button type="button" variant="ghost" size="sm" onclick={() => (step = 'pick')}>Choose another</Button>
+						{/if}
+					</div>
+					<div class="grid gap-1.5">
+						<Label for="{id}-alt">Alt text</Label>
+						<Input
+							id="{id}-alt"
+							bind:value={imageAlt}
+							maxlength={LIMITS.maxAltLength}
+							placeholder="Describe the image for people who can't see it"
+							aria-invalid={imageProblem !== '' || undefined}
+							aria-describedby="{id}-alt-help{altLooksLikeName ? ` ${id}-alt-warning` : ''}{imageProblem ? ` ${id}-alt-problem` : ''}"
+							bind:ref={altInput}
+						/>
+						<p id="{id}-alt-help" class="text-xs text-muted-foreground">
+							For example “Two editors marking up a printed page proof”. Up to {LIMITS.maxAltLength} characters.
+						</p>
+						{#if altLooksLikeName}
+							<p id="{id}-alt-warning" class="flex items-start gap-1.5 text-xs text-attention-ink" data-testid="alt-file-name">
+								<TriangleAlertIcon class="mt-px size-3.5 shrink-0" aria-hidden="true" />This looks like a file name. Describe what the image shows instead.
+							</p>
+						{/if}
+						{#if imageProblem}<p id="{id}-alt-problem" role="alert" class="text-xs text-destructive">{imageProblem}</p>{/if}
+					</div>
+					<Dialog.Footer>
+						<Button type="button" variant="outline" onclick={() => closeImage()}>Cancel</Button>
+						<Button type="submit" disabled={imageAlt.trim() === '' || (flow?.mode !== 'edit' && shown === undefined) || shown?.state === 'rejected'}>{imageAction}</Button>
+					</Dialog.Footer>
+				</form>
+			{/if}
+		</Dialog.Content>
+	</Dialog.Root>
+{/if}

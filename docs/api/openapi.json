@@ -70,6 +70,42 @@
         },
         "type": "object"
       },
+      "AssetMetadata": {
+        "properties": {
+          "alt": {
+            "description": "absent leaves it; `null` or blank clears it",
+            "maxLength": 300,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "credit": {
+            "maxLength": 200,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tags": {
+            "description": "replaces the whole list",
+            "items": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "AssetUploadView": {
         "properties": {
           "declared_type": {
@@ -133,9 +169,22 @@
       },
       "AssetView": {
         "properties": {
+          "alt": {
+            "description": "the library's default alt text (D-179)",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "created_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "credit": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "declared_type": {
             "type": "string"
@@ -143,7 +192,7 @@
           "derivatives": {
             "description": "the renditions the worker wrote",
             "items": {
-              "type": "object"
+              "type": "string"
             },
             "type": "array"
           },
@@ -166,6 +215,10 @@
             "format": "uuid",
             "type": "string"
           },
+          "metadata_version": {
+            "description": "a PATCH's `If-Match` names it as the `ETag` `\"v<n>\"`",
+            "type": "integer"
+          },
           "rejected_reason": {
             "type": [
               "string",
@@ -185,11 +238,24 @@
           "state": {
             "enum": [
               "quarantined",
-              "live",
+              "usable",
               "rejected",
+              "deleting",
               "deleted"
             ],
             "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "width": {
             "type": [
@@ -3032,6 +3098,13 @@
             "format": "uuid",
             "type": "string"
           },
+          "media": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PublishedMedia"
+            },
+            "description": "the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-178)",
+            "type": "object"
+          },
           "published_in": {
             "description": "the generation this revision went live in",
             "type": "integer"
@@ -3047,6 +3120,43 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "PublishedMedia": {
+        "properties": {
+          "current_url": {
+            "description": "follows replacements, without publishing again",
+            "type": "string"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "renditions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "`wN`: N pixels wide, present only when the original is wider",
+            "type": "object"
+          },
+          "type": {
+            "type": "string"
+          },
+          "url": {
+            "description": "the exact bytes the release published: immutable, cached a year",
+            "type": "string"
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "url",
+          "current_url",
+          "type",
+          "width",
+          "height",
+          "renditions"
+        ],
         "type": "object"
       },
       "PublishedView": {
@@ -6439,6 +6549,52 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "page size: 1–100, default 100",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "the `next_cursor` a previous page answered",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "≤ 100 characters, matched in the file name, title and alt text",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "quarantined, usable, rejected, deleting or deleted",
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "assets carrying this tag",
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6452,10 +6608,18 @@
                         "$ref": "#/components/schemas/AssetView"
                       },
                       "type": "array"
+                    },
+                    "next_cursor": {
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
-                    "data"
+                    "data",
+                    "next_cursor"
                   ],
                   "type": "object"
                 }
@@ -6482,6 +6646,16 @@
               }
             },
             "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid_limit, invalid_query, invalid_state, invalid_tag, invalid_cursor` — a parameter refused"
           },
           "429": {
             "content": {
@@ -6515,7 +6689,7 @@
             "apiToken": []
           }
         ],
-        "summary": "The environment's assets, newest first",
+        "summary": "A page of the environment's assets, newest first, searchable",
         "tags": [
           "assets"
         ]
@@ -6899,7 +7073,14 @@
                 }
               }
             },
-            "description": "`data` is the asset; `versions` its byte history (D-136)"
+            "description": "`data` is the asset; `versions` its byte history (D-136)",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -6954,6 +7135,190 @@
           }
         ],
         "summary": "One asset with every verified version, oldest first",
+        "tags": [
+          "assets"
+        ]
+      },
+      "patch": {
+        "operationId": "updateAsset",
+        "parameters": [
+          {
+            "description": "the project's id",
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the environment's slug, such as `production`",
+            "in": "path",
+            "name": "environment",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "the asset's id",
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the resource's `ETag`, exactly as a response carried it",
+            "in": "header",
+            "name": "if-match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment",
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssetMetadata"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AssetView"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "ok",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`bad_request` — a malformed `If-Match`"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`unauthorized` — not signed in, the credential is invalid, or the token was revoked"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`not_found` — no such resource — or one the caller may not see, which looks the same"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`stale_version` — someone changed its details; the `ETag` names them now; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`wrong_type, unknown_field, invalid_value, invalid_tag, duplicate_tag, too_many_tags` — the change refused"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`precondition_required` — a required `If-Match` or `Idempotency-Key` is missing"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`rate_limited` — over the per-credential or per-address limit; `Retry-After`"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "any other failure, in the one error envelope"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerToken": []
+          },
+          {
+            "apiToken": []
+          }
+        ],
+        "summary": "Change an asset's alt text, title, credit or tags",
         "tags": [
           "assets"
         ]

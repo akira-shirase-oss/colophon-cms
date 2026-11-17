@@ -623,9 +623,7 @@ fn missing(reference: &ContentReference) -> DbError {
 
 fn missing_asset(asset: &ContentAsset) -> DbError {
     DbError::MissingAsset {
-        field: asset.field.clone(),
-        position: asset.position,
-        many: asset.many,
+        pointer: asset.pointer.clone(),
     }
 }
 

@@ -7,7 +7,6 @@
 -->
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { asset } from '$app/paths';
 	import type { Editor } from '@tiptap/core';
 	import { createQueries, createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { resolve } from '$app/paths';
@@ -27,6 +26,7 @@
 	import { goto } from '$app/navigation';
 	import {
 		ApiError,
+		assetUrl as mediaUrl,
 		type Content,
 		type ContentType,
 		createLocalization,
@@ -54,6 +54,7 @@
 	import ThemeLook from './ThemeLook.svelte';
 	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from './queries.ts';
 	import RichTextToolbar from './RichTextToolbar.svelte';
+	import { imageFileHandlers, imageView } from './richTextImage.svelte.ts';
 	import StatusBadge from './shell/StatusBadge.svelte';
 	import TechnicalDetails from './shell/TechnicalDetails.svelte';
 	import { releaseName } from './words.ts';
@@ -103,8 +104,22 @@
 	);
 
 	const queryClient = useQueryClient();
-	// Until media uploads arrive (P4), every image previews as the same placeholder.
-	const assetUrl = (assetId: string) => `${asset('placeholder.svg')}#${assetId}`;
+	// A draft shows each image's current version from the media origin (gap 3 D1); a published
+	// release's own versions are what delivery's `media` names.
+	const assetUrl = (assetId: string) => mediaUrl(project, assetId);
+	/** A refusal inside a rich-text field, in plain words (D-059); its code is in Technical details. */
+	function richRefusal(reason: string | null, message: string): string {
+		switch (reason) {
+			case 'asset_not_found':
+				return "This image isn't in the media library. Choose a replacement or remove it.";
+			case 'too_many_images':
+				return 'This text has more than 200 different images. Remove some, or split it into more entries.';
+			default:
+				return message;
+		}
+	}
+	// Images in the editor: the real picture, its state, and Edit alt text / Replace / Remove.
+	const images = () => ({ image: { view: imageView(project, queryClient) } });
 	// The component is keyed on the entry, so the props it starts with are the ones it keeps.
 	// svelte-ignore state_referenced_locally
 	const definition = type.definition;
@@ -243,11 +258,12 @@
 			try {
 				next[field.id] = openEditor((content[field.id] as RichTextValue | undefined) ?? EMPTY_DOCUMENT, {
 					editorProps: {
-						attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': field.label, class: 'prose-colophon min-h-64' }
+						attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': field.label, class: 'prose-colophon min-h-64' },
+						...imageFileHandlers
 					},
 					editable: !locked.includes(field.id),
 					onUpdate: changed
-				});
+				}, images());
 			} catch (error) {
 				Object.values(next).forEach((editor) => editor.destroy());
 				unopenable = `${field.label}: ${(error as Error).message}`;
@@ -570,9 +586,15 @@
 					<div class="py-5" hidden={!appliesNow(field)} data-testid="rich-field" data-field={field.id}>
 						<p class="mb-2 text-sm font-medium">{field.label}{field.required ? '' : ' (optional)'}</p>
 						<div class="overflow-hidden rounded-xl border border-border bg-card shadow-xs focus-within:border-ring/60">
-							<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" />
+							<RichTextToolbar editor={editors[field.id] ?? null} label="Formatting: {field.label}" {project} />
 							<div class="editor px-6 py-5 sm:px-8" bind:this={hosts[field.id]}></div>
 						</div>
+						{#if saver.status === 'refused' && saver.pointer?.startsWith(`/${field.id}/`)}
+							<div class="mt-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert" data-testid="rich-refusal">
+								<p>{richRefusal(saver.reason, saver.message)}</p>
+								<TechnicalDetails class="mt-1.5"><p class="break-words">{saver.reason ?? 'refused'} at {saver.pointer}</p></TechnicalDetails>
+							</div>
+						{/if}
 					</div>
 				{/if}
 			{/each}

@@ -5,6 +5,8 @@
 
 import { renderToHtml } from '@colophon/content-renderer';
 
+import { mediaOf, type MediaSidecar } from './media.ts';
+
 /** One published article, as the public API answers. */
 export interface Article {
 	id: string;
@@ -15,6 +17,8 @@ export interface Article {
 	content: { title?: unknown; body?: unknown };
 	/** The release it was published in. */
 	published_in: number;
+	/** Every asset the revision names, at the version its release published. */
+	media?: MediaSidecar;
 }
 
 /** What every page is built from: the release, and when the site was built. */
@@ -70,10 +74,16 @@ export function home(release: Release, articles: Article[]): string {
 	return page(release, 'Home', `<h1>Articles</h1>\n${list}`);
 }
 
-/** An article's page; its body goes through the shared renderer, or the build fails (it never guesses). */
-export function article(release: Release, item: Article): string {
+/** An image's bare address on the media origin — what an answer without the sidecar falls back to. */
+export type AssetUrl = (assetId: string) => string;
+
+/** An article's page; its body goes through the shared renderer, or the build fails (it never guesses).
+ *  Images show the version the release published, sized and responsive, from the row's sidecar
+ *  (renderer v2); an image the sidecar doesn't hold gets `assetUrl`'s bare address. */
+export function article(release: Release, item: Article, assetUrl: AssetUrl): string {
 	const body = renderToHtml(item.content.body as Parameters<typeof renderToHtml>[0], {
-		assetUrl: (assetId) => `/assets/${encodeURIComponent(assetId)}`
+		assetUrl,
+		media: mediaOf(item.media)
 	});
 	return page(release, item.title, `<article>\n<h1>${escapeText(item.title)}</h1>\n${body}\n</article>`);
 }

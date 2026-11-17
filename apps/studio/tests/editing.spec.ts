@@ -1,7 +1,7 @@
 // Writing in a real browser: keyboard, clipboard, toolbar.
 
 import { expect, test } from '@playwright/test';
-import { freshEditor, stored, storedDoc } from './helpers.ts';
+import { freshEditor, openFixture, stored, storedDoc } from './helpers.ts';
 
 test('keyboard shortcuts format text', async ({ page }) => {
 	await freshEditor(page);
@@ -105,18 +105,14 @@ test('the callout buttons wrap and unwrap a paragraph', async ({ page }) => {
 	expect(await stored(page)).not.toContain('callout');
 });
 
-test('an image needs alt text and gets a media-library id, never a URL', async ({ page }) => {
+test('without a media library (the playground) there is no image button, and stored images still open as their alt text', async ({ page }) => {
+	// Images come only from a project's media library (gap 3 D1): the playground has none, so it
+	// offers no way to make one up — the old placeholder id would be refused by the server now.
 	await freshEditor(page);
-	await page.getByRole('button', { name: 'Image', exact: true }).click();
-	const insert = page.getByRole('button', { name: 'Insert image' });
-	await expect(insert).toBeDisabled();
-	await page.getByLabel('Alt text').fill('   ');
-	await expect(insert).toBeDisabled();
-	await page.getByLabel('Alt text').fill('The octagonal C mark');
-	await insert.click();
-	const image = JSON.stringify(await storedDoc(page));
-	expect(image).toMatch(/\{"type":"image","attrs":\{"assetId":"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}","alt":"The octagonal C mark"\}\}/);
-	expect(image).not.toContain('http');
+	await expect(page.getByRole('toolbar').getByRole('button', { name: 'Image', exact: true })).toHaveCount(0);
+	await openFixture(page, 'valid/08-image-and-rule');
+	await expect(page.locator('.tiptap figure[data-colophon-image]')).toContainText('Image: ');
+	expect(JSON.stringify(await storedDoc(page))).toMatch(/\{"type":"image","attrs":\{"assetId":"[0-9a-f-]{36}","alt":"[^"]+"\}\}/);
 });
 
 test('an unsafe link is refused with an explanation; a safe one is applied', async ({ page }) => {

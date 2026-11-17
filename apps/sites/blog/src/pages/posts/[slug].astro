@@ -12,7 +12,7 @@ if (post === undefined) return new Response('not found', { status: 404 });
 const tags = Array.isArray(post.content['tags'])
 	? post.content['tags'].filter((tag): tag is string => typeof tag === 'string')
 	: [];
-const body = richText(cms, post.content['body']);
+const body = richText(cms, post.content['body'], post);
 ---
 
 <Base title={`${post.title} · The Draft`} generation={generation}>

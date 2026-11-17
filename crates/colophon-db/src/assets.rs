@@ -44,6 +44,175 @@ pub struct Asset {
     pub derivatives: Vec<String>,
     /// When it was uploaded.
     pub created_at: OffsetDateTime,
+    /// The library's default alt text for it (D-179).
+    pub alt: Option<String>,
+    /// Its title in the library.
+    pub title: Option<String>,
+    /// Who to credit for it.
+    pub credit: Option<String>,
+    /// Up to ten slug-shaped tags.
+    pub tags: Vec<String>,
+    /// Bumped by every metadata change: the `ETag` a PATCH names in `If-Match`.
+    pub metadata_version: i32,
+}
+
+/// The most assets one library page holds.
+pub const MAX_PAGE: i64 = 100;
+
+/// What a library page narrows to (D-179). `q` is matched as a case-insensitive substring of the
+/// file name, title and alt text; `after` is the last row of the previous page.
+#[derive(Debug, Clone, Default)]
+pub struct Filter<'a> {
+    /// The search text, already bounded by the caller.
+    pub q: Option<&'a str>,
+    /// One lifecycle state.
+    pub state: Option<&'a str>,
+    /// One tag.
+    pub tag: Option<&'a str>,
+    /// The previous page's last row: `(created_at, id)`.
+    pub after: Option<(OffsetDateTime, Uuid)>,
+}
+
+/// `text` as an `ILIKE` substring pattern: `%`, `_` and `\` match only themselves.
+fn contains_pattern(text: &str) -> String {
+    let mut pattern = String::with_capacity(text.len() + 2);
+    pattern.push('%');
+    for character in text.chars() {
+        if matches!(character, '%' | '_' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(character);
+    }
+    pattern.push('%');
+    pattern
+}
+
+/// A page of the environment's assets, newest first: at most `limit` (clamped to
+/// 1..=[`MAX_PAGE`] + 1, so a caller can ask for one more to learn whether a next page exists),
+/// keyset-paged on `(created_at, id)` so an upload landing between two pages never shifts what
+/// the next one holds. The `assets_library` index serves the order; a search goes through
+/// `colophon_asset_search` and its trigram index (migration 0067), since row security keeps a
+/// non-leakproof `ILIKE` on `assets` from using an index (module 07).
+pub async fn page(
+    tx: &mut ProjectTransaction,
+    filter: &Filter<'_>,
+    limit: i64,
+) -> Result<Vec<Asset>, DbError> {
+    let limit = limit.clamp(1, MAX_PAGE + 1);
+    let (after_at, after_id) = filter.after.unzip();
+    if let Some(q) = filter.q {
+        // A search reads its page of ids through `colophon_asset_search` (migration 0067),
+        // whose trigram index row security would keep out of an `ILIKE` on `assets` itself,
+        // then the rows themselves through `assets` and its policy.
+        return sqlx::query_as!(
+            Asset,
+            r#"SELECT a.id, a.state, a.file_name, a.declared_type, a.detected_type, a.sha256,
+                      a.size_bytes, a.width, a.height, a.rejected_reason, a.derivatives,
+                      a.created_at, a.alt, a.title, a.credit, a.tags, a.metadata_version
+               FROM colophon_asset_search($2, $3, $4, $5, $6, $7, $8) f
+               JOIN assets a
+                 ON a.project_id = $1 AND a.environment_id = $2 AND a.id = f.asset_id
+               ORDER BY a.created_at DESC, a.id DESC"#,
+            tx.project,
+            tx.environment,
+            contains_pattern(q),
+            filter.state,
+            filter.tag,
+            after_at,
+            after_id,
+            i32::try_from(limit).unwrap_or(i32::MAX)
+        )
+        .fetch_all(&mut *tx.transaction)
+        .await
+        .map_err(DbError::from_query);
+    }
+    sqlx::query_as!(
+        Asset,
+        r#"SELECT id, state, file_name, declared_type, detected_type, sha256, size_bytes, width,
+                  height, rejected_reason, derivatives, created_at, alt, title, credit, tags,
+                  metadata_version
+           FROM assets
+           WHERE project_id = $1 AND environment_id = $2
+             AND ($3::text IS NULL OR state = $3)
+             AND ($4::text IS NULL OR tags @> ARRAY[$4::text])
+             AND ($5::timestamptz IS NULL OR (created_at, id) < ($5, $6::uuid))
+           ORDER BY created_at DESC, id DESC
+           LIMIT $7"#,
+        tx.project,
+        tx.environment,
+        filter.state,
+        filter.tag,
+        after_at,
+        after_id,
+        limit
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// A metadata change (D-179): `None` leaves a field as it is; `Some(None)` clears it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Metadata {
+    /// The default alt text.
+    pub alt: Option<Option<String>>,
+    /// The title.
+    pub title: Option<Option<String>>,
+    /// The credit.
+    pub credit: Option<Option<String>>,
+    /// The tags, replaced as a whole.
+    pub tags: Option<Vec<String>>,
+}
+
+/// What a metadata change found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Updated {
+    /// No such asset in this environment.
+    Unknown,
+    /// Someone changed it since `expected`: nothing was written; the current version.
+    Stale(i32),
+    /// Written; the asset as it is now.
+    Done(Box<Asset>),
+}
+
+/// Changes the asset's library metadata if its `metadata_version` is still `expected`, bumping
+/// it — the compare and the write are one statement, so two editors can never both win.
+pub async fn update_metadata(
+    tx: &mut ProjectTransaction,
+    asset: Uuid,
+    expected: i32,
+    change: &Metadata,
+) -> Result<Updated, DbError> {
+    let updated = sqlx::query_scalar!(
+        "UPDATE assets SET
+             alt = CASE WHEN $5 THEN $6 ELSE alt END,
+             title = CASE WHEN $7 THEN $8 ELSE title END,
+             credit = CASE WHEN $9 THEN $10 ELSE credit END,
+             tags = coalesce($11, tags),
+             metadata_version = metadata_version + 1
+         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND metadata_version = $4
+         RETURNING id",
+        tx.project,
+        tx.environment,
+        asset,
+        expected,
+        change.alt.is_some(),
+        change.alt.clone().flatten(),
+        change.title.is_some(),
+        change.title.clone().flatten(),
+        change.credit.is_some(),
+        change.credit.clone().flatten(),
+        change.tags.as_deref()
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    let found = get(tx, asset).await?;
+    Ok(match (updated, found) {
+        (_, None) => Updated::Unknown,
+        (Some(_), Some(asset)) => Updated::Done(Box::new(asset)),
+        (None, Some(asset)) => Updated::Stale(asset.metadata_version),
+    })
 }
 
 /// One verified version, as [`versions`] lists it (D-136): the immutable record of a landing
@@ -144,22 +313,9 @@ pub async fn insert(
     crate::work::check_payload(tx).await
 }
 
-/// The environment's assets, newest first (at most 100).
+/// The environment's newest assets: the first [`page`] without a filter.
 pub async fn list(tx: &mut ProjectTransaction) -> Result<Vec<Asset>, DbError> {
-    sqlx::query_as!(
-        Asset,
-        "SELECT id, state, file_name, declared_type, detected_type, sha256, size_bytes, width,
-                height, rejected_reason, derivatives, created_at
-         FROM assets
-         WHERE project_id = $1 AND environment_id = $2
-         ORDER BY created_at DESC, id DESC
-         LIMIT 100",
-        tx.project,
-        tx.environment
-    )
-    .fetch_all(&mut *tx.transaction)
-    .await
-    .map_err(DbError::from_query)
+    page(tx, &Filter::default(), MAX_PAGE).await
 }
 
 /// One asset, or `None`.
@@ -167,7 +323,8 @@ pub async fn get(tx: &mut ProjectTransaction, asset: Uuid) -> Result<Option<Asse
     sqlx::query_as!(
         Asset,
         "SELECT id, state, file_name, declared_type, detected_type, sha256, size_bytes, width,
-                height, rejected_reason, derivatives, created_at
+                height, rejected_reason, derivatives, created_at, alt, title, credit, tags,
+                metadata_version
          FROM assets
          WHERE project_id = $1 AND environment_id = $2 AND id = $3",
         tx.project,
@@ -262,7 +419,7 @@ pub enum DeleteAsked {
     /// The delete job is queued; the asset as found, for the audit event and the answer.
     Queued {
         /// The asset as the request found it.
-        asset: Asset,
+        asset: Box<Asset>,
     },
 }
 
@@ -309,7 +466,9 @@ pub async fn request_delete(
     // The delete job's payload metadata counts too (D-135); like the admission above, the
     // check sits after the verdicts so an asset that owes a different answer still gets it.
     crate::work::check_payload(tx).await?;
-    Ok(DeleteAsked::Queued { asset: found })
+    Ok(DeleteAsked::Queued {
+        asset: Box::new(found),
+    })
 }
 
 /// What asking to replace an asset's bytes found; nothing is written unless it is

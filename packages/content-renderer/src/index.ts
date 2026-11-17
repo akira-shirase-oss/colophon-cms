@@ -1,1 +1,1 @@
-export { renderToHtml, RENDERER_VERSION, UnrenderableContent, type RenderOptions } from './render.ts';
+export { renderToHtml, RENDERER_VERSION, UnrenderableContent, type ImageSource, type RenderOptions } from './render.ts';

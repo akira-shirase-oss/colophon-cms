@@ -219,7 +219,9 @@ pub(crate) async fn resolve_drafts(
 /// The same, against the published perspective: each level's publications pinned at
 /// `generation` — the pin the page's own rows answer under — fetched inside the
 /// delivery transaction. Nothing narrows: published content is public. A publication
-/// revoked or unpublished since resolves to nothing, at any generation.
+/// revoked or unpublished since resolves to nothing, at any generation. Beside the
+/// resolutions, the upload versions every resolved publication's release recorded (D-178),
+/// by asset id, so a populated reference's images carry their versions too.
 pub(crate) async fn resolve_publications(
     services: &Services,
     tx: &mut DeliveryTransaction,
@@ -228,9 +230,10 @@ pub(crate) async fn resolve_publications(
     wanted: &BTreeSet<Uuid>,
     generation: i64,
     depth: u8,
-) -> Result<Resolved, ApiError> {
+) -> Result<(Resolved, Map<String, Value>), ApiError> {
     let mut definitions: HashMap<String, Arc<ContentType>> = HashMap::new();
     let mut frames: Vec<Vec<Staged>> = Vec::new();
+    let mut media = Map::new();
     let mut ids: Vec<Uuid> = wanted.iter().copied().collect();
     for level in 0..depth {
         if ids.is_empty() {
@@ -242,6 +245,13 @@ pub(crate) async fn resolve_publications(
         let mut below = BTreeSet::new();
         let mut frame = Vec::with_capacity(targets.len());
         for target in targets {
+            if let Value::Object(stamps) =
+                serde_json::from_str::<Value>(&target.media).map_err(ApiError::internal)?
+            {
+                for (asset, stamp) in stamps {
+                    media.entry(asset).or_insert(stamp);
+                }
+            }
             // Only while the level below still expands is the target's own definition
             // needed — to name its reference fields. It stays `None` at the bound.
             let definition = if level + 1 < depth {
@@ -279,7 +289,7 @@ pub(crate) async fn resolve_publications(
         frames.push(frame);
         ids = below.into_iter().collect();
     }
-    Ok(assemble(frames))
+    Ok((assemble(frames), media))
 }
 
 /// The levels' [`Resolved`] map, assembled from the deepest up: each target's

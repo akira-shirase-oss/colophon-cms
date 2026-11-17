@@ -62,3 +62,29 @@ test('a usable upload can be deleted, and its tombstone stays', async ({ page })
 	await expect(row).toContainText('deleted');
 	await expect(row.getByTestId('asset-delete')).toHaveCount(0);
 });
+
+// The library (D2): keyset paging over a cursor, search by name and by alt text, metadata changed
+// under If-Match — a stale version refused, never a lost update — and a tag as a filter.
+test('the library pages, searches, and keeps metadata edits under If-Match', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	await page.goto('/assets');
+	await page.getByTestId('project').selectOption(projectId);
+
+	await page.getByTestId('library-run').click();
+	const steps = page.getByTestId('library-steps');
+	await expect(steps).toContainText('read back:', { timeout: 60_000 });
+	await expect(steps).toContainText('uploaded: 3');
+	// Newest first, two at a time; the cursor carries the rest.
+	await expect(steps).toContainText('page 1: 200, last-dot.png, wide-strip.png, more');
+	await expect(steps).toContainText('page 2: 200, first-dot.png, end');
+	await expect(steps).toContainText('search "WIDE": wide-strip.png');
+	await expect(steps).toContainText('metadata: 200, version moved on, tags testbed dots');
+	await expect(steps.getByText(/^stale metadata:/)).toContainText('409');
+	await expect(steps.getByText(/^stale metadata:/)).toContainText('stale_version');
+	await expect(steps.getByText(/^bad tag:/)).toContainText('422');
+	await expect(steps.getByText(/^bad tag:/)).toContainText('/tags/0');
+	await expect(steps).toContainText('search "dot of ink": last-dot.png');
+	await expect(steps).toContainText('tag "dots": last-dot.png');
+	await expect(steps).toContainText('read back: Dot / A single dot of ink / The testbed');
+});

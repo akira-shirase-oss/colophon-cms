@@ -45,9 +45,8 @@ for (const mode of ["Light", "Dark"] as const) {
       expect(await axe(page), "editor").toEqual([]);
       await page.getByRole("tab", { name: "Preview" }).click();
       expect(await axe(page), "preview").toEqual([]);
-      await page.getByRole("button", { name: "Image", exact: true }).click();
-      await expect(page.getByRole("dialog")).toBeVisible();
-      expect(await axe(page), "image dialog").toEqual([]);
+      // The image dialog needs a project's media library, which the playground has none of:
+      // tests/server/rich-text-images.spec.ts checks it in both themes.
     });
   }
 }
@@ -105,21 +104,6 @@ test("asking the system for more contrast darkens secondary text without a setti
   const standard = await token(page, "--muted-foreground");
   await page.emulateMedia({ contrast: "more" });
   expect(await token(page, "--muted-foreground")).not.toBe(standard);
-});
-
-test("the image dialog closes on Escape and gives focus back", async ({
-  page,
-}) => {
-  await page.goto("/studio/playground");
-  const opener = page.getByRole("button", { name: "Image", exact: true });
-  await opener.click();
-  await expect(
-    page.getByRole("dialog", { name: "Insert an image" }),
-  ).toBeVisible();
-  await expect(page.getByLabel("Alt text")).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(opener).toBeFocused();
 });
 
 test("the Studio makes no requests to anyone else: the font is self-hosted", async ({
