@@ -1,9 +1,14 @@
-// Load scenario for locales (D-087): each VU owns an English note and its French sibling in
+// Load scenario for locales (D-087): setup() first sets the environment's languages (en, the
+// default, and fr → en) with one PUT {P}/locales, so every locale-carrying write below is
+// checked against a configured list. Each VU owns an English note and its French sibling in
 // one localization group. Each iteration either saves the French draft with its locale
 // riding the write (40%: a revision plus the locale UPDATE in one transaction), reads the
-// source and checks its group lists both members exactly once (30%), or lists the collection
-// filtered to the group's locales (30%). Requests are named by route, so k6 keeps one series
-// per route. scripts/load.sh gives this endpoint RATE 250 and P99_MS 700 (END_GOAL's
+// source and checks its group lists both members exactly once (30%), lists the collection
+// filtered to the group's locales (25%), or saves the languages again (5%): a GET for the
+// list's ETag and a PUT of the same list on top of it — every VU races the one list, so a
+// 409 stale_locales (someone saved first; the answer names the current ETag) is an expected
+// outcome beside a 200 that moves the version on. Requests are named by route, so k6 keeps
+// one series per route. scripts/load.sh gives this endpoint RATE 250 and P99_MS 700 (END_GOAL's
 // editorial write budget: a save writes a revision plus the locale row). The pool covers
 // maxVUs, not VUS: a slow patch spawns extra VUs, and two sharing one entry would race its
 // ETag forever.
@@ -50,6 +55,11 @@ const NOTES = {
   fields: [{ id: 'title', label: 'Title', type: 'text', required: true }],
 };
 
+const LANGUAGES = [
+  { tag: 'en', label: 'English', default: true, fallback: [] },
+  { tag: 'fr', label: 'Français', default: false, fallback: ['en'] },
+];
+
 function key() {
   return `k6-${__VU}-${__ITER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -65,6 +75,12 @@ export function setup() {
   const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug, name: 'k6 locales' }), { headers: write });
   if (project.status !== 201) fail(`project: HTTP ${project.status} ${project.body}`);
   const env = `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production`;
+  const listed = http.get(`${env}/locales`, { headers: write });
+  if (listed.status !== 200) fail(`locales: HTTP ${listed.status} ${listed.body}`);
+  const languages = http.put(`${env}/locales`, JSON.stringify({ locales: LANGUAGES }), {
+    headers: Object.assign({ 'If-Match': listed.headers['Etag'], 'Idempotency-Key': `k6-locales-${slug}` }, write),
+  });
+  if (languages.status !== 200) fail(`locales PUT: HTTP ${languages.status} ${languages.body}`);
   const made = http.post(`${env}/content-types`, JSON.stringify({ slug: 'notes', definition: NOTES }), {
     headers: Object.assign({ 'Idempotency-Key': `k6-type-${slug}` }, write),
   });
@@ -83,7 +99,7 @@ export function setup() {
     if (sibling.status !== 201) fail(`localize: HTTP ${sibling.status} ${sibling.body}`);
     vus.push({ source: source.json('data.id'), sibling: sibling.json('data.id'), etag: sibling.headers['Etag'] });
   }
-  return { session, entries, vus };
+  return { session, env, entries, vus };
 }
 
 let etag = null;
@@ -92,9 +108,24 @@ export default function (data) {
   const mine = data.vus[(__VU - 1) % data.vus.length];
   if (etag === null) etag = mine.etag;
   const read = { headers: { Cookie: data.session.cookie }, redirects: 0 };
-  const roll = __ITER % 10;
+  const roll = __ITER % 20;
 
-  if (roll < 4) {
+  if (roll === 19) {
+    const listed = http.get(`${data.env}/locales`, Object.assign({ tags: { endpoint: 'languages', name: 'locales' } }, read));
+    check(listed, { 'languages read 200 with an ETag': (r) => r.status === 200 && typeof r.headers['Etag'] === 'string' });
+    const headers = {
+      Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json',
+      'If-Match': listed.headers['Etag'], 'Idempotency-Key': key(),
+    };
+    const res = http.put(`${data.env}/locales`, JSON.stringify({ locales: LANGUAGES }), {
+      headers, redirects: 0, tags: { endpoint: 'languages_save', name: 'locales' }, responseCallback: http.expectedStatuses(200, 409),
+    });
+    check(res, {
+      'languages save: a new version, or stale with the current ETag': (r) =>
+        (r.status === 200 && r.json('data.locales').length === LANGUAGES.length && r.headers['Etag'] !== listed.headers['Etag']) ||
+        (r.status === 409 && r.json('error.details.reason') === 'stale_locales' && typeof r.headers['Etag'] === 'string'),
+    });
+  } else if (roll < 8) {
     const headers = {
       Cookie: data.session.cookie, 'X-CSRF-Token': data.session.csrf, Origin: PUBLIC_URL, 'Content-Type': 'application/json',
       'If-Match': etag, 'Idempotency-Key': key(),
@@ -108,7 +139,7 @@ export default function (data) {
       'save gives a new ETag': (r) => typeof r.headers['Etag'] === 'string' && r.headers['Etag'] !== etag,
     });
     if (saved) etag = res.headers['Etag'];
-  } else if (roll < 7) {
+  } else if (roll < 14) {
     const res = http.get(`${data.entries}/${mine.source}`, Object.assign({ tags: { endpoint: 'read', name: 'notes/{entry}' } }, read));
     check(res, {
       'read 200': (r) => r.status === 200,
