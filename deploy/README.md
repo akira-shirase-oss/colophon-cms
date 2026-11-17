@@ -12,6 +12,9 @@ scripts/stack.sh reset   # remove the containers and the data
 
 Needs Docker with Compose, plus `curl`, `jq` and `openssl`. The first `up` downloads about 1 GB of images.
 
+To *run* Colophon rather than develop it, use the quick start instead: `deploy/quickstart/compose.yaml`, with
+generated secrets and nothing published but Colophon's port ([runbooks/install.md](runbooks/install.md)).
+
 ## Services
 
 | Service | Image | On your machine | Credentials |

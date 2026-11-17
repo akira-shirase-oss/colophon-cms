@@ -57,6 +57,13 @@ on clean infrastructure and an independent install, so operations are a module w
 - `colophon doctor --json` reports readiness per dependency. A cache outage shows as degraded while authoritative writes
   stay available (spec §04).
 
+### One-machine install (D-171, D-172)
+- `deploy/quickstart/compose.yaml`: Colophon's image with PostgreSQL, Valkey and Garage in one shared network
+  namespace — only `127.0.0.1:8080` is published, the dependencies listen on its loopback, secrets are generated on
+  first start into per-service volumes and read through `COLOPHON_*_FILE`. `deploy/runbooks/install.md` covers
+  install, first run, serving it behind a proxy, upgrade, backup and troubleshooting; `scripts/quickstart.sh` runs it
+  as documented (CI's `quickstart` job).
+
 ### Production topology (spec §03, §26, §32)
 - An external TLS proxy or CDN in front.
 - Non-root containers with read-only file systems where possible, and resource limits.

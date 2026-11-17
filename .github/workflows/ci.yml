@@ -287,6 +287,62 @@ jobs:
         if: always()
         run: scripts/stack.sh reset
 
+  # The quick start on a clean runner, exactly as documented (D-171, D-172): the image built
+  # from source, deploy/quickstart/compose.yaml in an empty directory, `docker compose up -d
+  # --wait`, the Studio and the API answering, the setup code from the logs, a newcomer's
+  # journey in Chromium, and the data kept across `down` and `up`. Node is only for the
+  # browser check; the install itself needs Docker alone.
+  quickstart:
+    name: quick start (image from source, compose up, Studio journey)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The Dockerfile passes hadolint
+        run: >-
+          docker run --rm -i
+          hadolint/hadolint:v2.14.0@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e
+          < deploy/image/Dockerfile
+      - name: The quick start's compose file is valid
+        run: COLOPHON_IMAGE=colophon:local docker compose -f deploy/quickstart/compose.yaml config --quiet
+      - name: Build the image from source (deploy/image/Dockerfile)
+        run: |
+          set -euo pipefail
+          t0=$SECONDS
+          docker build -f deploy/image/Dockerfile \
+            --build-arg COLOPHON_COMMIT="$GITHUB_SHA" \
+            --build-arg SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" \
+            -t colophon:local .
+          echo "Image built from source in $((SECONDS - t0)) s" >>"$GITHUB_STEP_SUMMARY"
+          docker run --rm --entrypoint /usr/local/bin/colophon-server colophon:local --version
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx -w @colophon/studio playwright install --with-deps chromium
+      - name: The quick start, as documented (scripts/quickstart.sh)
+        run: scripts/quickstart.sh --image colophon:local --browser --record
+      - name: Timings and sizes
+        if: always()
+        run: |
+          for file in perf/results/*-quickstart-*.json; do
+            [[ -f "$file" ]] || continue
+            jq -r '"| First `up --wait` | \(.seconds.first_up_wait) s |\n| Restart `up --wait` | \(.seconds.second_up_wait) s |\n| Colophon cold start | \(.seconds.colophon_cold_start) s |\n| Image, compressed | \(.image.compressed_bytes / 1000000 | floor) MB |\n| Colophon idle memory | \(.colophon_idle_memory) |"' "$file" \
+              | { echo '| Quick start | |'; echo '|---|---|'; cat; } >>"$GITHUB_STEP_SUMMARY"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: quickstart
+          path: |
+            perf/results/*-quickstart-*.json
+            apps/studio/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   supply-chain:
     name: supply chain (cargo-deny)
     runs-on: ubuntu-latest
