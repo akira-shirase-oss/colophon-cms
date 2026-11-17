@@ -45,7 +45,7 @@ use std::{str::FromStr, time::Duration};
 
 use sqlx::{
     Executor as _,
-    postgres::{PgConnectOptions, PgPoolOptions},
+    postgres::{PgConnectOptions, PgPoolOptions, PgSslMode},
 };
 
 pub use sqlx::postgres::{PgConnection, PgListener, PgPool};
@@ -254,13 +254,71 @@ pub(crate) fn deleted_asset(error: &sqlx::Error) -> Option<uuid::Uuid> {
         .and_then(|detail| uuid::Uuid::try_parse(detail).ok())
 }
 
+/// Parses `url` and holds it to the TLS rule (D-156): a database on another machine is reached
+/// only with `sslmode=verify-full`, or `verify-ca` with a root named (`sslrootcert`), because
+/// `require` and `prefer` encrypt but accept any certificate — anyone on the path could answer
+/// as the database. This machine's own database (a loopback host or a Unix socket) needs no
+/// certificate. The refusal says how to fix the URL and never contains it.
+pub fn check_url(url: &str) -> Result<PgConnectOptions, DbError> {
+    let options = PgConnectOptions::from_str(url).map_err(|error| DbError::InvalidUrl {
+        reason: redact_url_error(&error),
+    })?;
+    let host = options
+        .get_host()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    let local = options.get_socket().is_some()
+        || host.starts_with('/')
+        || host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback());
+    let verified = match options.get_ssl_mode() {
+        PgSslMode::VerifyFull => true,
+        PgSslMode::VerifyCa => names_a_root(url),
+        _ => false,
+    };
+    if local || verified {
+        return Ok(options);
+    }
+    Err(DbError::InvalidUrl {
+        reason: format!(
+            "the database at {host} is not checked to be who it says: sslmode={} encrypts but \
+             accepts any certificate. Use sslmode=verify-full (or verify-ca with \
+             sslrootcert=<CA file>); only a loopback host or a Unix socket may go without",
+            ssl_mode_name(options.get_ssl_mode())
+        ),
+    })
+}
+
+/// Whether the URL (or `PGSSLROOTCERT`) names the root certificate `verify-ca` checks against.
+fn names_a_root(url: &str) -> bool {
+    let query = url.split_once('?').map_or("", |(_, query)| query);
+    query.split('&').any(|pair| {
+        matches!(
+            pair.split_once('=').map(|(key, _)| key),
+            Some("sslrootcert" | "ssl-root-cert" | "ssl-ca")
+        )
+    }) || std::env::var_os("PGSSLROOTCERT").is_some()
+}
+
+/// libpq's name for a mode, as a URL spells it.
+fn ssl_mode_name(mode: PgSslMode) -> &'static str {
+    match mode {
+        PgSslMode::Disable => "disable",
+        PgSslMode::Allow => "allow",
+        PgSslMode::Prefer => "prefer",
+        PgSslMode::Require => "require",
+        PgSslMode::VerifyCa => "verify-ca",
+        PgSslMode::VerifyFull => "verify-full",
+    }
+}
+
 /// Builds the pool without connecting. Connections open on first use, so the server starts
-/// (and reports "not ready") while the database is down, instead of failing to start.
+/// (and reports "not ready") while the database is down, instead of failing to start. The URL
+/// is held to [`check_url`]'s TLS rule first.
 pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError> {
-    let options = PgConnectOptions::from_str(url)
-        .map_err(|error| DbError::InvalidUrl {
-            reason: redact_url_error(&error),
-        })?
+    let options = check_url(url)?
         .application_name("colophon-server")
         .options([(
             "statement_timeout",
@@ -316,6 +374,48 @@ mod tests {
             !text.contains("hunter2"),
             "the password must never appear: {text}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_database_elsewhere_must_prove_who_it_is() {
+        // `sslmode=require` (and `prefer`, the default) encrypts but takes any certificate: anyone
+        // on the path can pose as the database (D-156). Off this machine only `verify-full`, or
+        // `verify-ca` with a root named, may connect; the refusal says how to fix the URL and
+        // never echoes it.
+        let remote = "postgres://app:s3cret@db.example.com/colophon";
+        for query in [
+            "",
+            "?sslmode=disable",
+            "?sslmode=prefer",
+            "?sslmode=require",
+            "?sslmode=require&channel_binding=require",
+            "?sslmode=verify-ca",
+        ] {
+            let error = connect_lazy(&format!("{remote}{query}"), PoolSettings::default())
+                .expect_err("an unverified remote database");
+            let text = error.to_string();
+            assert!(text.contains("sslmode=verify-full"), "{query}: {text}");
+            assert!(!text.contains("s3cret"), "{query}: {text}");
+        }
+        for query in [
+            "?sslmode=verify-full",
+            "?sslmode=verify-ca&sslrootcert=/etc/colophon/db-ca.pem",
+        ] {
+            assert!(
+                connect_lazy(&format!("{remote}{query}"), PoolSettings::default()).is_ok(),
+                "{query}"
+            );
+        }
+        // This machine's own database needs no certificate: loopback, by name or address, or
+        // a Unix socket.
+        for url in [
+            "postgres://app:x@localhost/colophon",
+            "postgres://app:x@127.0.0.1:55432/colophon?sslmode=require",
+            "postgres://app:x@[::1]/colophon?sslmode=disable",
+            "postgres://app:x@/colophon?host=/var/run/postgresql",
+        ] {
+            assert!(connect_lazy(url, PoolSettings::default()).is_ok(), "{url}");
+        }
     }
 
     #[tokio::test]
