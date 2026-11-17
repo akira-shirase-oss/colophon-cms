@@ -97,7 +97,9 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   (`tests/server/deliveries.spec.ts`, "settles before the live stream opens"). Every invalidation cancels a read
   already in flight first: while a query has no data yet, TanStack joins the read in flight rather than send a new
   one, and that read may predate the commit the hint announces, so its stale answer stood ("settles while the page is
-  still loading its lists"). The stream closes on teardown,
+  still loading its lists"). An entry's editor stays on screen when a refresh of it fails — a read turned away
+  for the rate limit, a blip; only a first load that fails shows the problem instead ("an open entry stays open
+  when a refresh of it is turned away"). The stream closes on teardown,
   EventSource reopens it on its own, and a hidden tab that becomes visible resyncs (and reconnects if its stream
   died). The polling the hints replace — releases and their deliveries, a release's receipt, a running migration's
   plan and items, the schedule panel's due times, an upload waiting out quarantine — is gone; only a bounded fallback

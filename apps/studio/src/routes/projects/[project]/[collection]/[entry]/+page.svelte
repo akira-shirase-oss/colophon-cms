@@ -34,12 +34,17 @@
 
 <svelte:head><title>{draft.data?.draft.revision.title ?? 'Editing'} · Colophon Studio</title></svelte:head>
 
-{#if draft.isPending || type.isPending}
+<!-- A refresh that fails keeps what is on screen: only a first load that fails has nothing better
+     to show than the problem. (Replacing an open editor because a background read was turned away
+     — the rate limit, a blip — took the person's page away under them.) -->
+{#if draft.data === undefined && draft.isError}
+	<Problem error={draft.error as Error} />
+{:else if type.data === undefined && type.isError}
+	<Problem error={type.error as Error} />
+{:else if draft.data === undefined || type.data === undefined}
 	<Skeleton class="mb-3 h-10 w-2/3" />
 	<Skeleton class="mb-8 h-4 w-48" />
 	<Skeleton class="h-64 w-full rounded-xl" />
-{:else if draft.isError || type.isError}
-	<Problem error={(draft.error ?? type.error) as Error} />
 {:else}
 	<!-- When it was saved is said once, beside the fields, where it stays current (D-081). -->
 	<PageHeader title={draft.data.draft.revision.title || 'Untitled'}>

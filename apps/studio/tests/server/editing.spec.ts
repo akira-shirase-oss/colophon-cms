@@ -359,3 +359,50 @@ test('a terminal is approved on the device page and gets a working token', async
 	await page.reload();
 	await expect(page.getByTestId('device-outcome')).toContainText('expired or was already used');
 });
+
+// A refresh of an open entry that fails — the read turned away for the rate limit twice, say —
+// leaves the editor where it is. Only a first load that fails has nothing better to show than
+// the problem; once the entry is on screen, a background read failing must not take it away
+// (a release CI run lost the editor, and the page its heading, this way).
+test('an open entry stays open when a refresh of it is turned away', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	const path = await newArticle(page, project, 'Kept open');
+	const entry = path.split('/').pop() ?? '';
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Kept open');
+
+	// From now on every read of this entry is refused for the rate limit.
+	let refused = 0;
+	await page.route(
+		(url) => url.pathname.endsWith(`/entries/${entry}`),
+		async (route) => {
+			if (route.request().method() !== 'GET') return route.continue();
+			refused += 1;
+			return route.fulfill({
+				status: 429,
+				headers: { 'Content-Type': 'application/json', 'Retry-After': '1' },
+				body: JSON.stringify({ error: { code: 'rate_limited', message: 'Too many requests', details: { reason: 'rate_limited' } } })
+			});
+		}
+	);
+	// Another entry in the collection: its hint refreshes this one's reads.
+	const created = await page.evaluate(async (project) => {
+		const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+		const body = { title: 'Another', body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } };
+		const reply = await fetch(`/api/v1/projects/${project}/environments/production/collections/articles/entries`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, 'Idempotency-Key': crypto.randomUUID().replaceAll('-', '') },
+			body: JSON.stringify(body)
+		});
+		return reply.status;
+	}, project);
+	expect(created).toBe(201);
+	// Both reads of it (the draft and its published state) are refused, and so is each one's
+	// single retry after the wait.
+	await expect.poll(() => refused, { timeout: 10_000 }).toBeGreaterThanOrEqual(4);
+	await page.waitForTimeout(500);
+
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Kept open');
+	await expect(status(page)).toHaveAttribute('data-status', 'saved');
+	expect(await violations(page)).toEqual([]);
+});
