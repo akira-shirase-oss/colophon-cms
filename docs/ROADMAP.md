@@ -370,12 +370,12 @@ evidence".
   nothing) and `ci.yml`'s `distribution` job. Its first dry run is the first real test of the cross-builds (musl
   with aws-lc, Windows, macOS x64 from arm64).
 - Waits on the maintainer: create the npm organization `colophon-cms`; create the `npm` environment with required
-  reviewers and `NPM_TOKEN` (an npm token that can publish to `@colophon-cms`) in its secrets; confirm the licence
-  (O-014) and add `LICENSE`; add `CHANGELOG.md` with a `## 0.1.0-alpha.1` section; run the workflow by hand once as a
+  reviewers and `NPM_TOKEN` (an npm token that can publish to `@colophon-cms`) in its secrets (the licence is
+  confirmed — MIT, D-158 — and `LICENSE` is in place); add `CHANGELOG.md` with a `## 0.1.0-alpha.1` section; run the workflow by hand once as a
   dry run; then push the tag `v0.1.0-alpha.1`, check the draft release and publish it, and approve the npm job. For
   Homebrew, create the tap `akira-shirase-oss/homebrew-colophon` and commit each release's `colophon.rb` as
   `Formula/colophon.rb`.
-- Not built yet: crates.io publishing (`cargo install colophon-cli`, after O-014 and publishing the crates it
+- Not built yet: crates.io publishing (`cargo install colophon-cli`, after publishing the crates it
   depends on); the SDK (it doesn't exist yet); packaging the MCP server (`crates/colophon-mcp`, built in P5, D-068) for npm,
   Cargo and Homebrew, and its checks; container images for the server
   and worker; the server archive without the Studio's files; CI installs of the published packages, the formula and

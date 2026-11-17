@@ -32,7 +32,7 @@ verified are listed there).
    Q&A, and Show and tell. Ideas are triaged into `ROADMAP.md`; decided proposals become entries in `DECISIONS.md`.
    No Discord, Canny or community calls until there are people to talk to.
 4. Each step still ends with a build-log entry at https://404human.dev/colophon/, which the website's blog mirrors.
-5. The licence is settled (O-014) before anyone is invited to try Colophon.
+5. The licence is settled before anyone is invited to try Colophon — done: MIT (D-158, `LICENSE`).
 
 ## At v0.1
 

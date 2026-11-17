@@ -56,8 +56,8 @@ install are still ahead — see `docs/ROADMAP.md`).
   gaps (Prometheus-style metrics, OTLP export, the dropped-record counter) are
   documented in `deploy/runbooks/observability.md`.
 - The release workflow is written and reviewed but has not yet run on GitHub;
-  publishing waits on the maintainer (licence confirmation, npm organisation,
-  credentials — module 19).
+  publishing waits on the maintainer (npm organisation, credentials — module 19);
+  the licence is MIT (`LICENSE`, D-158).
 
 ## How to upgrade
 

@@ -35,8 +35,8 @@ detail: `docs/ROADMAP.md` and the build log):
   `scripts/failover.sh`), Valkey-shared rate limits, `scripts/load.sh … stress`,
   `colophon-bench` micro-benchmarks.
 - **V built:** `0.1.0-alpha.1` across every binary, the `@colophon-cms/cli` npm launcher,
-  the install script and the Homebrew template; publishing waits on the maintainer
-  (npm org, `NPM_TOKEN`, licence, tag — module 19).
+  the install script and the Homebrew template; the licence is MIT (D-158, `LICENSE`), and
+  publishing waits on the maintainer (npm org, `NPM_TOKEN`, tag — module 19).
 - **P5 done:** the MCP adapter (stdio and Streamable HTTP) with no self-approval enforced,
   budget reservations in Postgres, bounded bulk manifests, the eval suite gated at
   `UNAUTHORIZED: 0`, the L08 noisy-agent run committed.

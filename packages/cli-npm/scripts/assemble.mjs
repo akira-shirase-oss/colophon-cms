@@ -98,7 +98,8 @@ export async function assemble({ version, archives, out }) {
     await stat(path.join(repository, 'LICENSE'));
     licence = path.join(repository, 'LICENSE');
   } catch {
-    // No licence confirmed yet (O-014): the release workflow refuses to publish without one.
+    // No LICENSE in this checkout: the release workflow refuses to publish without one (the
+    // licence is MIT, D-158, and the repository's root carries it).
   }
 
   await rm(out, { recursive: true, force: true });

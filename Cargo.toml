@@ -9,7 +9,9 @@ version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.99"
 repository = "https://github.com/akira-shirase-oss/colophon-cms"
-# Nothing is published until the licence is confirmed (DECISIONS.md, O-014).
+# MIT, the maintainer's decision (D-158); the text is the root LICENSE.
+license = "MIT"
+# Crates stay off crates.io: the binaries ship through releases and npm (module 19).
 publish = false
 
 [workspace.dependencies]

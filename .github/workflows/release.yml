@@ -60,7 +60,7 @@ jobs:
           # OSS1 and OSS2 (module 19): no public release without a confirmed licence and a
           # changelog entry. A dry run reports what is missing and goes on.
           problems=()
-          [[ -f LICENSE ]] || problems+=("there is no LICENSE file: the licence is not confirmed yet (O-014)")
+          [[ -f LICENSE ]] || problems+=("there is no LICENSE file: the licence (MIT, D-158) must ship with every release")
           heading="^## \[?${version//./\\.}\]?([[:space:]]|$)"
           grep -Eq "$heading" CHANGELOG.md 2>/dev/null || problems+=("CHANGELOG.md has no '## $version' section")
           for problem in "${problems[@]}"; do
