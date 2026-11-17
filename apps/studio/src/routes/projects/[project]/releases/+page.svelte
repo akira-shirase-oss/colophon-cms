@@ -2,14 +2,15 @@
   A project's releases (D-045, D-046): each one numbered, what it published, who published it, its
   label, and how each website connection (destination) heard about it. Connections are set up in
   Settings; addresses for developers are in the Technical details. Above them, what is scheduled
-  to publish and how past schedules went (D-060).
+  to publish and how past schedules went (D-060). The newest 100 first; older ones a page at a
+  time, as the list pages (`?cursor=`).
 -->
 <script lang="ts">
 	import ArrowUpRightIcon from '@lucide/svelte/icons/arrow-up-right';
 	import PackageCheckIcon from '@lucide/svelte/icons/package-check';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { Badge } from '@colophon/ui/ui/badge';
@@ -39,11 +40,18 @@
 	const types = createQuery(() => typesQuery(project));
 	const firstType = $derived(types.data?.find((type) => type.slug !== 'articles') ?? types.data?.[0]);
 	// A CDN purge and a probe settle on their own: the worker's commits arrive as `releases`
-	// hints (D-108), which cover this and the jobs below — nothing to poll for.
-	const releases = createQuery(() => ({
-		queryKey: ['releases', project],
-		queryFn: () => listReleases(project)
+	// hints (D-108), which cover this and the jobs below — nothing to poll for. Pages, newest
+	// first: a hint reads every page shown again from the first, each from the fresh page before
+	// it, so a release published meanwhile never leaves a gap between them.
+	type ReleasePage = Awaited<ReturnType<typeof listReleases>>;
+	const releases = createInfiniteQuery(() => ({
+		queryKey: ['releases', project, 'pages'],
+		queryFn: ({ pageParam }: { pageParam: string | null }) => listReleases(project, pageParam),
+		initialPageParam: null as string | null,
+		getNextPageParam: (last: ReleasePage) => last.nextCursor
 	}));
+	const generation = $derived(releases.data?.pages[0]?.generation ?? 0);
+	const shown = $derived((releases.data?.pages ?? []).flatMap((one) => one.releases));
 	// Deliveries settle on their own; the `releases` kind carries job commits too.
 	const jobs = createQuery(() => ({
 		queryKey: ['jobs', project],
@@ -93,20 +101,25 @@
 
 {#if releases.isPending}
 	<Skeleton class="h-48 w-full rounded-xl" />
-{:else if releases.isError}
+{:else if releases.isError && releases.data === undefined}
 	<Problem error={releases.error} />
 {:else}
 	<p class="mb-6 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border bg-card px-4 py-3 text-sm" data-testid="current-generation">
-		{#if releases.data.generation === 0}
+		{#if generation === 0}
 			Nothing is published yet.
 		{:else}
-			<span>Live: release {releases.data.generation}.</span>
+			<span>Live: release {generation}.</span>
 			<span class="text-muted-foreground">Your website reads it from Colophon's public address, with no sign-in.</span>
 		{/if}
 	</p>
 
 	{#if schedules.isError}
 		<div class="mb-6"><Problem error={schedules.error} what="what is scheduled" retry={() => schedules.refetch()} /></div>
+	{/if}
+	<!-- A failed refresh, or a failed older page, keeps the releases already shown: the first says so
+	     here, the second beside its button. -->
+	{#if releases.isRefetchError}
+		<div class="mb-6"><Problem error={releases.error} what="the latest releases" retry={() => releases.refetch()} /></div>
 	{/if}
 	{#if jobs.isError}
 		<div class="mb-6"><Problem error={jobs.error} what="how each release reached your website" retry={() => jobs.refetch()} /></div>
@@ -138,7 +151,7 @@
 		</section>
 	{/if}
 
-	{#if releases.data.releases.length === 0}
+	{#if shown.length === 0}
 		<EmptyState icon={PackageCheckIcon} title="Nothing is live yet" testid="releases-empty">
 			Each time something is published it becomes a numbered release, with a receipt of what reached your website. Publish an entry to make release 1.
 			{#snippet action()}
@@ -147,7 +160,7 @@
 		</EmptyState>
 	{:else}
 		<ol class="stagger space-y-3" reversed data-testid="releases">
-			{#each releases.data.releases as release, index (release.generation)}
+			{#each shown as release, index (release.generation)}
 				<li class="rounded-xl border border-border bg-card p-4" style="--i: {index}" data-generation={release.generation}>
 					<div class="flex flex-wrap items-start gap-x-4 gap-y-2">
 						<span class="text-2xl leading-none font-semibold tracking-tight tabular">
@@ -185,6 +198,18 @@
 				</li>
 			{/each}
 		</ol>
+		{#if releases.hasNextPage || releases.isFetchingNextPage || releases.isFetchNextPageError}
+			<div class="mt-4 flex flex-wrap items-center gap-3">
+				<Button variant="outline" size="sm" onclick={() => releases.fetchNextPage()} disabled={releases.isFetchingNextPage} data-testid="releases-older">
+					{releases.isFetchingNextPage ? 'Loading older releases…' : 'Show older releases'}
+				</Button>
+				{#if releases.isFetchNextPageError}
+					<p role="alert" class="text-sm text-destructive" data-testid="releases-older-failed">Couldn't load older releases. Try again.</p>
+				{/if}
+			</div>
+		{:else if shown.length > 100}
+			<p class="mt-4 text-sm text-muted-foreground" data-testid="releases-all">That's every release, back to release {shown.at(-1)?.generation}.</p>
+		{/if}
 	{/if}
 	<TechnicalDetails class="mt-8">
 		<p>Releases are generations: each publish takes the next one, and a reader's request can pin one with <span class="font-mono">?generation=n</span>.</p>
