@@ -9,7 +9,7 @@ use object_store::ObjectStore as _;
 use colophon_db::{
     PgPool, PoolSettings,
     administrators::{self, Bootstrapped},
-    identity, ledger, restore,
+    identity, ledger, login_roles, restore,
 };
 use serde_json::json;
 
@@ -38,8 +38,70 @@ fn fail(out: &Out, exit: Exit, message: &str) -> Exit {
     exit
 }
 
+/// The migrator's connection URL, from a flag, the environment, or a file holding it (a
+/// mounted secret, D-172): `--database-url` / `COLOPHON_MIGRATION_DATABASE_URL`, or
+/// `--database-url-file` / `COLOPHON_MIGRATION_DATABASE_URL_FILE`.
+#[derive(Debug, clap::Args)]
+pub(crate) struct MigratorUrl {
+    /// The migrator's connection URL. Never the application's.
+    #[arg(
+        long,
+        env = "COLOPHON_MIGRATION_DATABASE_URL",
+        hide_env_values = true,
+        required_unless_present = "database_url_file",
+        conflicts_with = "database_url_file"
+    )]
+    database_url: Option<String>,
+    /// A file holding the migrator's connection URL (a mounted secret), instead of the URL.
+    #[arg(long, env = "COLOPHON_MIGRATION_DATABASE_URL_FILE")]
+    database_url_file: Option<std::path::PathBuf>,
+}
+
+impl MigratorUrl {
+    /// The URL; the error names the file and why, never its contents.
+    fn resolve(&self) -> Result<String, String> {
+        match (&self.database_url, &self.database_url_file) {
+            (Some(url), _) => Ok(url.clone()),
+            (None, Some(path)) => read_secret_file(path)
+                .map_err(|why| format!("--database-url-file {}: {why}", path.display())),
+            // clap requires one of the two.
+            (None, None) => {
+                Err("no database URL: pass --database-url or --database-url-file".to_owned())
+            }
+        }
+    }
+}
+
+/// The most bytes a secret file may hold.
+const SECRET_FILE_MAX_BYTES: u64 = 16 * 1024;
+
+/// Reads a mounted secret: UTF-8, bounded, surrounding whitespace trimmed. Errors never quote
+/// the contents. Small and read once before connecting, so a blocking read is fine.
+pub(crate) fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
+    let file = std::fs::File::open(path).map_err(|error| format!("cannot open it: {error}"))?;
+    let mut bytes = Vec::new();
+    file.take(SECRET_FILE_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read it: {error}"))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > SECRET_FILE_MAX_BYTES {
+        return Err(format!(
+            "it is over {SECRET_FILE_MAX_BYTES} bytes, too big for a secret"
+        ));
+    }
+    let text = String::from_utf8(bytes).map_err(|_| "it is not UTF-8 text".to_owned())?;
+    let value = text.trim();
+    if value.is_empty() {
+        return Err("it is empty".to_owned());
+    }
+    Ok(value.to_owned())
+}
+
 /// One connection as the migrator, checked; the exit code if there is none.
-async fn connect(database_url: &str, out: &Out) -> Result<PgPool, Exit> {
+async fn connect(database: &MigratorUrl, out: &Out) -> Result<PgPool, Exit> {
+    let database_url = database
+        .resolve()
+        .map_err(|message| fail(out, Exit::Usage, &message))?;
+    let database_url = database_url.as_str();
     let settings = PoolSettings {
         max_connections: 1,
         acquire_timeout: Duration::from_secs(10),
@@ -59,8 +121,8 @@ async fn connect(database_url: &str, out: &Out) -> Result<PgPool, Exit> {
 }
 
 /// `colophon admin migrate`: applies pending schema migrations as the migrator role.
-pub(crate) async fn migrate(database_url: &str, out: Out) -> Exit {
-    let pool = match connect(database_url, &out).await {
+pub(crate) async fn migrate(database: &MigratorUrl, out: Out) -> Exit {
+    let pool = match connect(database, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
@@ -83,8 +145,8 @@ pub(crate) async fn migrate(database_url: &str, out: Out) -> Exit {
 /// `admin migrate` applies them deliberately), and exits 4 on any the database holds that
 /// this binary doesn't know (`unknown`): the schema is newer than the code, and serving it,
 /// or rolling a binary back onto it, would be guessing.
-pub(crate) async fn migrate_status(database_url: &str, out: Out) -> Exit {
-    let pool = match connect(database_url, &out).await {
+pub(crate) async fn migrate_status(database: &MigratorUrl, out: Out) -> Exit {
+    let pool = match connect(database, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
@@ -146,6 +208,69 @@ pub(crate) async fn migrate_status(database_url: &str, out: Out) -> Exit {
     }
 }
 
+/// `colophon admin init-roles`: creates the server's database roles with passwords from files
+/// (D-172), as the migrator. Refuses the development stack's public password and anything too
+/// short before connecting; never prints a password.
+pub(crate) async fn init_roles(
+    database: &MigratorUrl,
+    app_password_file: &std::path::Path,
+    backup_password_file: Option<&std::path::Path>,
+    out: Out,
+) -> Exit {
+    let read = |flag: &str, path: &std::path::Path| {
+        read_secret_file(path).map_err(|why| format!("{flag} {}: {why}", path.display()))
+    };
+    let app_password = match read("--app-password-file", app_password_file) {
+        Ok(password) => password,
+        Err(message) => return fail(&out, Exit::Usage, &message),
+    };
+    let backup_password = match backup_password_file
+        .map(|path| read("--backup-password-file", path))
+        .transpose()
+    {
+        Ok(password) => password,
+        Err(message) => return fail(&out, Exit::Usage, &message),
+    };
+    for (role, password) in [
+        ("colophon_app", Some(&app_password)),
+        ("colophon_backup", backup_password.as_ref()),
+    ] {
+        if let Some(password) = password
+            && let Err(reason) = login_roles::check_password(password)
+        {
+            return fail(
+                &out,
+                Exit::Usage,
+                &format!("the {role} password was refused: {reason}"),
+            );
+        }
+    }
+    let pool = match connect(database, &out).await {
+        Ok(pool) => pool,
+        Err(exit) => return exit,
+    };
+    match login_roles::init(&pool, &app_password, backup_password.as_deref()).await {
+        Ok(outcomes) => {
+            if out.format.machine() {
+                let roles: serde_json::Map<String, serde_json::Value> = outcomes
+                    .iter()
+                    .map(|outcome| (outcome.name.to_owned(), json!(outcome.action.as_str())))
+                    .collect();
+                out.print_data(&json!({ "roles": roles }));
+            } else {
+                for outcome in &outcomes {
+                    println!("{:<20} {}", outcome.name, outcome.action.as_str());
+                }
+            }
+            Exit::Success
+        }
+        Err(login_roles::InitError::Password { .. }) => {
+            fail(&out, Exit::Usage, "a password was refused")
+        }
+        Err(error) => fail(&out, Exit::Internal, &chain(&error)),
+    }
+}
+
 /// Why an issuer or subject was refused, before touching the database.
 fn check(issuer: &str, subject: &str) -> Result<(), &'static str> {
     let local = [
@@ -174,11 +299,16 @@ fn check(issuer: &str, subject: &str) -> Result<(), &'static str> {
 
 /// `colophon admin bootstrap`: makes `(issuer, subject)` the installation's first administrator,
 /// once (D-043). Exits 4 if it was already bootstrapped for someone else.
-pub(crate) async fn bootstrap(database_url: &str, issuer: &str, subject: &str, out: Out) -> Exit {
+pub(crate) async fn bootstrap(
+    database: &MigratorUrl,
+    issuer: &str,
+    subject: &str,
+    out: Out,
+) -> Exit {
     if let Err(message) = check(issuer, subject) {
         return fail(&out, Exit::Usage, message);
     }
-    let pool = match connect(database_url, &out).await {
+    let pool = match connect(database, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
@@ -214,7 +344,7 @@ pub(crate) async fn bootstrap(database_url: &str, issuer: &str, subject: &str, o
 /// bootstrap can't do after its one run: more administrators, an operator's own account, the
 /// development owner. The hash goes to the database; the password itself is never printed.
 pub(crate) async fn account(
-    database_url: &str,
+    database: &MigratorUrl,
     email: &str,
     password: &str,
     display_name: Option<&str>,
@@ -231,7 +361,7 @@ pub(crate) async fn account(
             "the password is eight characters or more, under 512 bytes",
         );
     }
-    let pool = match connect(database_url, &out).await {
+    let pool = match connect(database, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
@@ -319,13 +449,13 @@ fn object_store() -> Result<object_store::aws::AmazonS3, String> {
 /// `colophon admin ledger export`: writes the deletion ledger, id-ordered to a high-water
 /// mark, as one JSONL snapshot — the off-host copy restore step 4 replays (O2, D-124).
 pub(crate) async fn ledger_export(
-    database_url: &str,
+    database: &MigratorUrl,
     file: Option<&str>,
     s3_key: Option<&str>,
     after: i64,
     out: Out,
 ) -> Exit {
-    let pool = match connect(database_url, &out).await {
+    let pool = match connect(database, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
@@ -413,8 +543,8 @@ fn report_export(out: &Out, destination: &str, high_water: i64, rows: u64) -> Ex
 /// `colophon admin ledger replay`: reapplies an export's interval on the restored database
 /// (O2's restore step 4). Exits `conflict` while any row can't replay — O2 keeps the
 /// installation closed until the gap is resolved.
-pub(crate) async fn ledger_replay(database_url: &str, input: &str, out: Out) -> Exit {
-    let pool = match connect(database_url, &out).await {
+pub(crate) async fn ledger_replay(database: &MigratorUrl, input: &str, out: Out) -> Exit {
+    let pool = match connect(database, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
@@ -495,8 +625,8 @@ pub(crate) async fn ledger_replay(database_url: &str, input: &str, out: Out) -> 
 /// newer than the code, and serving it would be guessing (F10's territory). A schema the
 /// binary is *ahead* of reports `behind` with the pending list, and succeeds — the upgrade
 /// runbook's `admin migrate` applies them deliberately, never inside verify.
-pub(crate) async fn restore_verify(database_url: &str, manifest: &str, out: Out) -> Exit {
-    let pool = match connect(database_url, &out).await {
+pub(crate) async fn restore_verify(database: &MigratorUrl, manifest: &str, out: Out) -> Exit {
+    let pool = match connect(database, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
@@ -603,8 +733,8 @@ fn restore_manifest(manifest: &str, out: &Out) -> Result<Vec<i64>, Exit> {
 
 /// `colophon admin restore epoch`: registers the recovery epoch (spec step 3, O2) — every
 /// environment's epoch advances past whatever the backup held.
-pub(crate) async fn restore_epoch(database_url: &str, out: Out) -> Exit {
-    let pool = match connect(database_url, &out).await {
+pub(crate) async fn restore_epoch(database: &MigratorUrl, out: Out) -> Exit {
+    let pool = match connect(database, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
@@ -640,8 +770,8 @@ pub(crate) async fn restore_epoch(database_url: &str, out: Out) -> Exit {
 /// `colophon admin restore hold`: freezes every unfinished delivery job as `held` (spec step
 /// 5, O3) and reports what it took, with the state each was taken from — `running` marks the
 /// in-flight attempts whose external effect is unknown (F13: never resent blind).
-pub(crate) async fn restore_hold(database_url: &str, out: Out) -> Exit {
-    let pool = match connect(database_url, &out).await {
+pub(crate) async fn restore_hold(database: &MigratorUrl, out: Out) -> Exit {
+    let pool = match connect(database, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
@@ -669,8 +799,8 @@ pub(crate) async fn restore_hold(database_url: &str, out: Out) -> Exit {
 /// `colophon admin restore jobs`: the reconciliation inventory (spec step 5): job counts by
 /// status, the held list, and the other surfaces that could act once a server points at the
 /// restored database.
-pub(crate) async fn restore_jobs(database_url: &str, out: Out) -> Exit {
-    let pool = match connect(database_url, &out).await {
+pub(crate) async fn restore_jobs(database: &MigratorUrl, out: Out) -> Exit {
+    let pool = match connect(database, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };
@@ -719,8 +849,8 @@ pub(crate) async fn restore_jobs(database_url: &str, out: Out) -> Exit {
 
 /// `colophon admin restore resume`: returns every held job to `pending` — the explicit
 /// enable of spec step 6, run only after reconciliation.
-pub(crate) async fn restore_resume(database_url: &str, lifetime_secs: i32, out: Out) -> Exit {
-    let pool = match connect(database_url, &out).await {
+pub(crate) async fn restore_resume(database: &MigratorUrl, lifetime_secs: i32, out: Out) -> Exit {
+    let pool = match connect(database, &out).await {
         Ok(pool) => pool,
         Err(exit) => return exit,
     };

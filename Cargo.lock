@@ -619,6 +619,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "argon2",
  "aws-lc-rs",
+ "base64 0.22.1",
  "colophon-domain",
  "colophon-sim",
  "serde_json",

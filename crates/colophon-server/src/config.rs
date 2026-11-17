@@ -112,7 +112,8 @@ pub struct Config {
     pub role: Role,
     /// Address to listen on. `COLOPHON_LISTEN_ADDR`, default `127.0.0.1:58000`.
     pub listen_addr: SocketAddr,
-    /// PostgreSQL URL (holds a password). `COLOPHON_DATABASE_URL`, required.
+    /// PostgreSQL URL (holds a password). `COLOPHON_DATABASE_URL`, or the file
+    /// `COLOPHON_DATABASE_URL_FILE` names; required. Every secret below takes `_FILE` too (D-172).
     pub database_url: Secret,
     /// Redis-protocol cache URL. `COLOPHON_CACHE_URL`, optional: without it, readiness reports
     /// the cache as `not_configured`.
@@ -223,6 +224,10 @@ pub struct Config {
     /// Whether a magic-link request hands the link back in `dev_link` instead of emailing it:
     /// `COLOPHON_DEV_MAIL=1` (D-140). A development affordance, off by default.
     pub dev_mail: bool,
+    /// How this server was installed, when the installer says so: `COLOPHON_INSTALL_KIND`,
+    /// only `container` today (the image sets it, D-171). The Studio's first-run screen uses it
+    /// to show where the setup code is — `docker compose logs`, not a terminal.
+    pub install_kind: Option<&'static str>,
     /// Transactional mail for sign-in links (D-145): `COLOPHON_MAIL_PROVIDER=resend` with
     /// `COLOPHON_MAIL_FROM` and `COLOPHON_RESEND_API_KEY`; `COLOPHON_RESEND_ENDPOINT` overrides
     /// the API address (a deployment's own relay, or a test receiver). `None` without a
@@ -620,14 +625,62 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         }
     }
 
-    /// A secret: the value is never echoed, not even in problems.
+    /// A secret: the value is never echoed, not even in problems. It comes from `KEY`, or from
+    /// the file `KEY_FILE` names — a mounted secret, so the value is never in the environment
+    /// (D-172). Setting both is a problem, not a precedence rule: one of them is a mistake.
     fn secret(&mut self, key: &str, required: bool) -> Option<Secret> {
+        let file_key = format!("{key}_FILE");
+        let in_env = (self.lookup)(key).is_some();
+        let path = self.raw(&file_key);
+        if in_env && path.is_some() {
+            self.problems
+                .push(format!("{key} and {file_key} are both set: use one"));
+            return None;
+        }
+        if let Some(path) = path {
+            return match read_secret_file(std::path::Path::new(&path)) {
+                Ok(value) => Some(Secret::new(value)),
+                Err(problem) => {
+                    self.problems.push(format!("{file_key}: {path}: {problem}"));
+                    None
+                }
+            };
+        }
         let value = self.raw(key);
-        if value.is_none() && required && (self.lookup)(key).is_none() {
-            self.problems.push(format!("{key} is required"));
+        if value.is_none() && required && !in_env && (self.lookup)(&file_key).is_none() {
+            self.problems.push(format!(
+                "{key} is required (or {file_key}, a file holding it)"
+            ));
         }
         value.map(Secret::new)
     }
+}
+
+/// The most bytes a secret file may hold: a URL with a password is far shorter, and a bound
+/// keeps a wrong path (a log, a device) from being read whole.
+const SECRET_FILE_MAX_BYTES: u64 = 16 * 1024;
+
+/// Reads a mounted secret: UTF-8, at most [`SECRET_FILE_MAX_BYTES`], surrounding whitespace
+/// trimmed (the newline `echo` and editors add). The problem never quotes the contents. Read
+/// once at startup, before the server does anything else, so a blocking read is fine here.
+fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).map_err(|error| format!("cannot open it: {error}"))?;
+    let mut bytes = Vec::new();
+    file.take(SECRET_FILE_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read it: {error}"))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > SECRET_FILE_MAX_BYTES {
+        return Err(format!(
+            "it is over {SECRET_FILE_MAX_BYTES} bytes, too big for a secret"
+        ));
+    }
+    let text = String::from_utf8(bytes).map_err(|_| "it is not UTF-8 text".to_owned())?;
+    let value = text.trim();
+    if value.is_empty() {
+        return Err("it is empty".to_owned());
+    }
+    Ok(value.to_owned())
 }
 
 impl Config {
@@ -737,6 +790,16 @@ impl Config {
             1..=256,
         );
         let mail = env.mail();
+        let install_kind = match env.raw("COLOPHON_INSTALL_KIND").as_deref() {
+            None => None,
+            Some("container") => Some("container"),
+            Some(other) => {
+                env.problems.push(format!(
+                    "COLOPHON_INSTALL_KIND: {other:?} is not one this build knows ('container')"
+                ));
+                None
+            }
+        };
         if let Some(database_url) = database_url
             && env.problems.is_empty()
         {
@@ -777,6 +840,7 @@ impl Config {
                 magic_links,
                 allow_private_destinations,
                 dev_mail,
+                install_kind,
                 mail,
             })
         } else {
@@ -866,7 +930,12 @@ mod tests {
     #[test]
     fn the_database_url_is_required() {
         let error = load(&[]).expect_err("missing database");
-        assert_eq!(error.problems, ["COLOPHON_DATABASE_URL is required"]);
+        assert_eq!(
+            error.problems,
+            [
+                "COLOPHON_DATABASE_URL is required (or COLOPHON_DATABASE_URL_FILE, a file holding it)"
+            ]
+        );
     }
 
     #[test]
@@ -1185,5 +1254,129 @@ mod tests {
                 "{extra:?}: {error}"
             );
         }
+    }
+
+    /// A scratch directory of this test's own, removed when it drops.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "colophon-config-{name}-{}-{}",
+                std::process::id(),
+                uuid::Uuid::now_v7().simple()
+            ));
+            std::fs::create_dir_all(&dir).expect("a scratch directory");
+            Self(dir)
+        }
+
+        fn file(&self, name: &str, contents: &[u8]) -> String {
+            let path = self.0.join(name);
+            std::fs::write(&path, contents).expect("a scratch file");
+            path.to_string_lossy().into_owned()
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn secrets_come_from_files_trimmed_and_never_quoted() {
+        let scratch = Scratch::new("files");
+        let database = scratch.file("database_url", format!("{DB}\n").as_bytes());
+        let cache = scratch.file("cache_url", b"  redis://:hunter3@127.0.0.1:6379\r\n");
+        let s3 = scratch.file("s3", b"s3cret-from-file\n");
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL_FILE", &database),
+            ("COLOPHON_CACHE_URL_FILE", &cache),
+            ("COLOPHON_S3_ENDPOINT", "http://127.0.0.1:3900"),
+            ("COLOPHON_S3_BUCKET", "colophon"),
+            ("COLOPHON_S3_ACCESS_KEY", "GK-test"),
+            ("COLOPHON_S3_SECRET_KEY_FILE", &s3),
+        ])
+        .expect("every secret from a file");
+        assert_eq!(config.database_url.expose(), DB, "the newline is trimmed");
+        assert_eq!(
+            config.cache_url.as_ref().map(Secret::expose),
+            Some("redis://:hunter3@127.0.0.1:6379")
+        );
+        assert_eq!(
+            config.s3.as_ref().map(|s3| s3.secret_key.expose()),
+            Some("s3cret-from-file")
+        );
+        let debug = format!("{config:?}");
+        for secret in ["hunter2", "hunter3", "s3cret-from-file"] {
+            assert!(!debug.contains(secret), "{secret} leaked into {debug}");
+        }
+    }
+
+    #[test]
+    fn a_secret_and_its_file_together_is_a_problem_not_a_precedence_rule() {
+        let scratch = Scratch::new("both");
+        let database = scratch.file("database_url", DB.as_bytes());
+        let error = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_DATABASE_URL_FILE", &database),
+        ])
+        .expect_err("both set");
+        assert_eq!(
+            error.problems,
+            ["COLOPHON_DATABASE_URL and COLOPHON_DATABASE_URL_FILE are both set: use one"]
+        );
+        assert!(!error.to_string().contains("hunter2"));
+    }
+
+    #[test]
+    fn a_secret_file_that_is_missing_empty_huge_or_binary_is_refused_without_its_contents() {
+        let scratch = Scratch::new("bad");
+        let missing = scratch.0.join("absent").to_string_lossy().into_owned();
+        let empty = scratch.file("empty", b" \n\n");
+        let huge = scratch.file("huge", &vec![b'h'; 16 * 1024 + 1]);
+        let binary = scratch.file("binary", &[0xff, 0xfe, b'h', b'u', b'n', b't', b'e', b'r']);
+        for (path, says) in [
+            (&missing, "cannot open it"),
+            (&empty, "it is empty"),
+            (&huge, "too big for a secret"),
+            (&binary, "not UTF-8"),
+        ] {
+            let error = load(&[("COLOPHON_DATABASE_URL_FILE", path)]).expect_err(says);
+            let text = error.to_string();
+            assert!(text.contains("COLOPHON_DATABASE_URL_FILE"), "{text}");
+            assert!(text.contains(says), "{says} missing from: {text}");
+            assert!(!text.contains("hhhh") && !text.contains("unter"), "{text}");
+        }
+        // Exactly at the bound is still a secret.
+        let at_bound = scratch.file("at-bound", &vec![b'h'; 16 * 1024]);
+        let error = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_OIDC_ISSUER", "https://id.example.com"),
+            ("COLOPHON_OIDC_CLIENT_ID", "colophon"),
+            ("COLOPHON_OIDC_CLIENT_SECRET_FILE", &at_bound),
+        ]);
+        assert!(error.is_ok(), "{error:?}");
+    }
+
+    #[test]
+    fn the_install_kind_is_container_or_nothing() {
+        let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
+        assert_eq!(config.install_kind, None);
+        let config = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_INSTALL_KIND", "container"),
+        ])
+        .expect("the image's value");
+        assert_eq!(config.install_kind, Some("container"));
+        let error = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_INSTALL_KIND", "snap"),
+        ])
+        .expect_err("unknown");
+        assert!(
+            error.to_string().contains("COLOPHON_INSTALL_KIND"),
+            "{error}"
+        );
     }
 }
