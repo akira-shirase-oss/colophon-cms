@@ -385,6 +385,8 @@ impl Admission {
             Class::Delivery => ("d", self.settings.delivery_per_address),
         };
         if let (Some(rate), Some(client)) = (per_address, self.client(peer, headers)) {
+            // IPv6 by its /64, as the sign-in keys are (D-162): one subscriber's block.
+            let client = keyed_address(client);
             keys.push((format!("colophon:rl:{prefix}:a:{client}"), rate.cell()));
         }
         if class == Class::Management
@@ -778,6 +780,33 @@ mod tests {
             "a hop that isn't an address ends the walk"
         );
         assert_eq!(admission.client(None, &headers), None);
+    }
+
+    #[test]
+    fn an_ipv6_client_is_limited_by_its_slash_64_like_a_sign_in_key() {
+        // One subscriber is handed a /64; rotating inside it must not reset the address limit
+        // (D-162), the same keying the sign-in throttle uses.
+        let admission = Admission::new(
+            AdmissionSettings {
+                per_address: Rate::parse("10").expect("a rate"),
+                ..AdmissionSettings::default()
+            },
+            None,
+        )
+        .expect("no URL");
+        let headers = HeaderMap::new();
+        let key = |address: &str| {
+            admission.keys(
+                Class::Management,
+                Some(address.parse().expect("an address")),
+                &headers,
+            )[0]
+            .0
+            .clone()
+        };
+        assert_eq!(key("2001:db8:1:2::1"), key("2001:db8:1:2:ffff::9"));
+        assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+        assert_eq!(key("198.51.100.7"), "colophon:rl:m:a:198.51.100.7");
     }
 
     #[test]

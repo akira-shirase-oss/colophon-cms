@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO sign_in_throttle (realm, email, address, failures, locked_until, trusted)\n         VALUES ($1, $2, $3, 0, NULL, true)\n         ON CONFLICT (realm, email, address) DO UPDATE\n             SET failures = 0, locked_until = NULL, trusted = true, updated_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cb414fff41bbdd96c0dcf3656a825fc10825ffdd32036549a5bffc06d4b52447"
+}

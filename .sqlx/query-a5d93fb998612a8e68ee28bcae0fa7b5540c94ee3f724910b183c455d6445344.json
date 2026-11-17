@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT coalesce(sum(failures), 0)::bigint AS \"misses!\" FROM sign_in_throttle\n               WHERE realm = $1 AND email = $2 AND NOT trusted\n                 AND updated_at > now() - make_interval(secs => $3)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "misses!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a5d93fb998612a8e68ee28bcae0fa7b5540c94ee3f724910b183c455d6445344"
+}

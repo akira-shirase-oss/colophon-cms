@@ -423,3 +423,49 @@ async fn a_sign_in_flood_is_shed_with_busy_and_leaves_delivery_its_connections()
 fn uuid_like() -> String {
     uuid::Uuid::now_v7().to_string()
 }
+
+/// Guessing from many addresses is bounded per account too (D-162): fifty misses within an
+/// hour from addresses that never signed in to the account pause every such address for it —
+/// one answer, a wrong password's — while an address the owner already signed in from keeps
+/// working, so the ceiling can't be turned into a lockout of the owner.
+#[tokio::test]
+#[ignore = "needs the local stack and migrations: scripts/stack.sh up && scripts/migrate.sh"]
+async fn misses_from_many_addresses_hit_a_per_account_ceiling_the_owner_bypasses() {
+    let _server = Server::start_with(&[("COLOPHON_TRUSTED_PROXIES", "127.0.0.1")]).await;
+    let email = an_email();
+    let (status, _, _) = post_auth(
+        "/auth/signup",
+        &json!({"email": email, "password": "the real password"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let owner_address = "2001:db8:aa::1";
+    let right = json!({"email": email, "password": "the real password"});
+    let (status, body) = sign_in_from(owner_address, &right).await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "the owner's address, now known: {body}"
+    );
+
+    // One guess each from fifty fresh /64s: no single address is near its own pause.
+    for n in 0..50 {
+        let (status, body) = sign_in_from(
+            &format!("2001:db8:{n:x}:{n:x}::1"),
+            &json!({"email": email, "password": "a guess"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "guess {n}: {body}");
+    }
+    // A fresh address is paused for this account now — even with the right password, and
+    // with exactly a wrong password's answer.
+    let (status, body) = sign_in_from("2001:db8:ff:ff::1", &right).await;
+    assert_eq!(
+        (status, body["error"]["code"].clone()),
+        (StatusCode::BAD_REQUEST, json!("sign_in_failed")),
+        "{body}"
+    );
+    // The owner's known address is not.
+    let (status, body) = sign_in_from(owner_address, &right).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+}

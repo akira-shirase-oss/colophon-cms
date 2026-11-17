@@ -66,7 +66,7 @@ create → conflict → review → publish scenario produce equivalent durable r
   7. timeout (504 `deadline_exceeded`);
   8. body limit (1 MiB; uploads stream separately).
 - Inside that stack, around every route: rate limits (milestone S, D-076; `admission.rs`). The management API
-  (`/api/`, `/auth/`) counts per client address and per credential (a session cookie or bearer token, hashed; a
+  (`/api/`, `/auth/`) counts per client address (IPv6 by its /64, D-162) and per credential (a session cookie or bearer token, hashed; a
   made-up one counts too), public delivery (`/content/`) per client address at its own rate; health, `/version` and
   the Studio's files never count. Over a limit: 429 `rate_limited` (`details.reason` `rate_limited`) with
   `Retry-After` in seconds, before any handler runs. GCRA in one Valkey script on Valkey's clock, so every server
