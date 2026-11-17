@@ -1711,7 +1711,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The asset's verified origin bytes, publicly and immutable */
+        /** The asset's current version's verified bytes, publicly */
         get: operations["serveAsset"];
         put?: never;
         post?: never;
@@ -13566,7 +13566,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description the stored `Content-Type`; caches forever — bytes under an id never change */
+            /** @description the stored `Content-Type`; `max-age=60, must-revalidate` with the version's `ETag` (a replace or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable` */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -13620,7 +13620,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description the stored `Content-Type`; caches forever */
+            /** @description the stored `Content-Type`; a sha (a pinned version) is `immutable`, a rendition name of the current version revalidates after 60 s (D-157) */
             200: {
                 headers: {
                     [name: string]: unknown;

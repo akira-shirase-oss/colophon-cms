@@ -3805,7 +3805,7 @@ pub(crate) static TABLE: &[Route] = &[
             |f| on(f, assets::serve),
             OpDoc {
                 id: "serveAsset",
-                summary: "The asset's verified origin bytes, publicly and immutable",
+                summary: "The asset's current version's verified bytes, publicly",
                 tag: "media",
                 security: Security::Public,
                 ok: Res {
@@ -3813,7 +3813,7 @@ pub(crate) static TABLE: &[Route] = &[
                     shape: Shape::Empty,
                     headers: &[],
                     media: "*/*",
-                    note: "the stored `Content-Type`; caches forever — bytes under an id never change",
+                    note: "the stored `Content-Type`; `max-age=60, must-revalidate` with the version's `ETag` (a replace or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable`",
                 },
                 extra: &[
                     NOT_FOUND,
@@ -3838,7 +3838,7 @@ pub(crate) static TABLE: &[Route] = &[
                     shape: Shape::Empty,
                     headers: &[],
                     media: "*/*",
-                    note: "the stored `Content-Type`; caches forever",
+                    note: "the stored `Content-Type`; a sha (a pinned version) is `immutable`, a rendition name of the current version revalidates after 60 s (D-157)",
                 },
                 extra: &[
                     NOT_FOUND,
@@ -4016,7 +4016,10 @@ const TAGS: &[(&str, &str)] = &[
         "delivery",
         "the published projection, publicly, at a generation",
     ),
-    ("media", "verified asset bytes, publicly and immutable"),
+    (
+        "media",
+        "verified asset bytes, publicly: sha addresses immutable, current-version addresses revalidating",
+    ),
 ];
 
 /// The operation object for one `Op` on `route`'s path.

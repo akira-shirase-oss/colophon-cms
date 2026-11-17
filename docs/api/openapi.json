@@ -20716,7 +20716,7 @@
         ],
         "responses": {
           "200": {
-            "description": "the stored `Content-Type`; caches forever — bytes under an id never change"
+            "description": "the stored `Content-Type`; `max-age=60, must-revalidate` with the version's `ETag` (a replace or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable`"
           },
           "404": {
             "content": {
@@ -20750,7 +20750,7 @@
           }
         },
         "security": [],
-        "summary": "The asset's verified origin bytes, publicly and immutable",
+        "summary": "The asset's current version's verified bytes, publicly",
         "tags": [
           "media"
         ]
@@ -20801,7 +20801,7 @@
         ],
         "responses": {
           "200": {
-            "description": "the stored `Content-Type`; caches forever"
+            "description": "the stored `Content-Type`; a sha (a pinned version) is `immutable`, a rendition name of the current version revalidates after 60 s (D-157)"
           },
           "404": {
             "content": {
@@ -21125,7 +21125,7 @@
       "name": "delivery"
     },
     {
-      "description": "verified asset bytes, publicly and immutable",
+      "description": "verified asset bytes, publicly: sha addresses immutable, current-version addresses revalidating",
       "name": "media"
     }
   ]

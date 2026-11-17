@@ -258,7 +258,8 @@ export function media(data) {
       const object = http.get(url, { redirects: 0, tags: { arm: 'media', endpoint: 'media', name: 'media/v1/{asset}' } });
       if (check(object, {
         'media 200': (r) => r.status === 200,
-        'media immutable': (r) => r.headers['Cache-Control'] === 'public, max-age=31536000, immutable',
+        // The bare address follows the current version, so it revalidates (D-157).
+        'media revalidates': (r) => r.headers['Cache-Control'] === 'public, max-age=60, must-revalidate',
       })) mediaReads.add(1);
       else errors.add(1);
     }
