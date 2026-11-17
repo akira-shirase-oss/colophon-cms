@@ -440,6 +440,24 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
         .connect_lazy_with(options))
 }
 
+/// Opens the change-hint listener's connection (D-108): its own, not one of the pool's, since
+/// `LISTEN` holds it for the process's life — built as sqlx's `PgListener::connect` builds it,
+/// but from [`check_url`]'s options, so the listener takes exactly the URLs the pool takes and
+/// is held to the same TLS rule.
+pub async fn listener(url: &str) -> Result<PgListener, DbError> {
+    let options = check_url(url)?.application_name("colophon-server");
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .max_lifetime(None)
+        .idle_timeout(None)
+        .connect_with(options)
+        .await
+        .map_err(DbError::Query)?;
+    PgListener::connect_with(&pool)
+        .await
+        .map_err(DbError::Query)
+}
+
 /// sqlx's URL errors describe the problem, but keep only the first line and drop anything
 /// that looks like it could echo the URL back.
 fn redact_url_error(error: &sqlx::Error) -> String {
@@ -573,6 +591,27 @@ mod tests {
         assert!(text.contains("channel_binding=require"), "{text}");
         assert!(text.contains("sslmode=require"), "{text}");
         assert!(text.contains("sslmode=verify-full"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn the_listener_takes_the_urls_the_pool_takes() {
+        // The change-hint listener used sqlx's own URL parser, which refuses libpq's empty host
+        // after credentials: the server started on such a URL and its live lists never did.
+        let url = "postgres://app:x@/colophon?host=/nonexistent/colophon-socket";
+        assert!(
+            PgListener::connect(url).await.is_err(),
+            "sqlx alone refuses it"
+        );
+        let error = listener(url).await.expect_err("there is no socket there");
+        assert!(
+            matches!(error, DbError::Query(_)),
+            "got as far as connecting: {error:?}"
+        );
+        let refused = listener("postgres://app:x@db.example.com/colophon?sslmode=require").await;
+        assert!(
+            matches!(refused, Err(DbError::Unverified { .. })),
+            "held to the TLS rule: {refused:?}"
+        );
     }
 
     #[test]
