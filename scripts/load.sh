@@ -108,7 +108,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|rich-text-media|bulk|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -181,6 +181,10 @@ case "$endpoint" in
   # An upload's write is a body-bound check, an S3 PUT and two inserts — transfer's arm: an
   # external call on every write, so half the entries rate and the editorial write budget.
   assets) RATE="${RATE:-250}" P99_MS="${P99_MS:-700}" ;;
+  # Gap 3 (D-170, D-171): half cached image-heavy delivery reads, a fifth saves naming 20
+  # images each (the reference writes), a tenth refused saves — the entries arm's rate and,
+  # for the save arm, the editorial write budget.
+  rich-text-media) RATE="${RATE:-500}" P99_MS="${P99_MS:-700}" ;;
   # Job and item reads dominate; one iteration in seven submits a one-item sealed job (the
   # manifest insert plus its two reservations): migrations' rate and p99.
   bulk) RATE="${RATE:-250}" P99_MS="${P99_MS:-250}" ;;
