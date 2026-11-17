@@ -2,12 +2,37 @@
 // Studio says the installation is new and where a container's setup code is (the compose logs,
 // not a terminal); the first account becomes the administrator with the code read from those
 // logs; and they create a project. scripts/quickstart.sh reads the code from
-// `docker compose logs colophon` exactly as the Studio tells the person to.
+// `docker compose logs colophon` exactly as the Studio tells the person to. Both first-run screens
+// pass axe and the plain-words check in light and dark, at 1440 and 360 pixels wide; with
+// QUICKSTART_SHOTS set they are photographed there too.
 
-import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { expect, type Page, test } from '@playwright/test';
+import { internalTerms, violations } from '../server/helpers.ts';
 
 const code = process.env['QUICKSTART_SETUP_CODE'] ?? '';
+const SHOTS = process.env['QUICKSTART_SHOTS'];
+
+/** One screen: axe and plain words in light and dark, wide and narrow; photographed on request. */
+async function screen(page: Page, name: string) {
+	await page.waitForLoadState('networkidle');
+	for (const width of [1440, 360]) {
+		await page.setViewportSize({ width, height: width === 360 ? 780 : 900 });
+		for (const scheme of ['light', 'dark'] as const) {
+			await page.emulateMedia({ colorScheme: scheme });
+			await expect(page.locator('html')).toHaveClass(scheme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);
+			expect(await violations(page), `${name}, ${scheme}, ${width}px`).toEqual([]);
+			if (SHOTS !== undefined) {
+				mkdirSync(SHOTS, { recursive: true });
+				await page.screenshot({ path: join(SHOTS, `quickstart-${name}-${width}-${scheme}.png`), fullPage: true });
+			}
+		}
+	}
+	await page.emulateMedia({ colorScheme: 'light' });
+	await page.setViewportSize({ width: 1440, height: 900 });
+	expect(await internalTerms(page), `${name}: internal terms`).toEqual([]);
+}
 
 test('a newcomer finds the setup code in the compose logs, becomes the administrator, and makes a project', async ({ page }) => {
 	expect(code, 'scripts/quickstart.sh passes the setup code from the logs').toMatch(/^[0-9A-Z]{5}(-[0-9A-Z]{5}){3}$/);
@@ -17,8 +42,7 @@ test('a newcomer finds the setup code in the compose logs, becomes the administr
 		await expect(page.getByTestId('new-installation')).toContainText('This Colophon is new');
 		await expect(page.getByTestId('new-installation')).toContainText('to its log when it started');
 		await expect(page.getByTestId('setup-code-from-logs')).toContainText('docker compose logs colophon | grep "Setup code"');
-		const serious = (await new AxeBuilder({ page }).analyze()).violations.filter((v) => v.impact === 'serious' || v.impact === 'critical');
-		expect(serious.map((v) => v.id)).toEqual([]);
+		await screen(page, 'welcome');
 	});
 
 	await test.step('they create the first account', async () => {
@@ -29,6 +53,7 @@ test('a newcomer finds the setup code in the compose logs, becomes the administr
 		await expect(page.getByTestId('setup')).toBeVisible();
 		await expect(page.getByTestId('setup')).toContainText('in its log');
 		await expect(page.getByTestId('setup-code-from-logs')).toBeVisible();
+		await screen(page, 'setup');
 	});
 
 	await test.step('the code from the logs makes them the administrator', async () => {

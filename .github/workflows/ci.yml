@@ -328,7 +328,7 @@ jobs:
           scripts/install-k6.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
       - name: The quick start, as documented (scripts/quickstart.sh)
-        run: scripts/quickstart.sh --image colophon:local --browser --load --record
+        run: QUICKSTART_SHOTS="$PWD/apps/studio/test-results/screens" scripts/quickstart.sh --image colophon:local --browser --load --record
       - name: Timings and sizes
         if: always()
         run: |
