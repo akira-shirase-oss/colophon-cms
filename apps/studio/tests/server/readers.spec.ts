@@ -4,7 +4,7 @@
 // says plainly when the entry has been taken down meanwhile.
 
 import { expect, test } from '@playwright/test';
-import { env, internalTerms, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
+import { api, env, internalTerms, key, newEntry, newProject, publishThroughApi, signIn, violations } from './helpers.ts';
 
 test('a published entry shows what readers get, as the website receives it, and says when that is behind or gone', async ({ page, context, request }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -62,6 +62,60 @@ test('a published entry shows what readers get, as the website receives it, and 
 	await page.getByTestId('see-what-readers-get').click();
 	await expect(view.getByTestId('reader-outcome')).toContainText('Readers get nothing for it now: it was taken down.');
 	await expect(view.getByTestId('reader-copy')).toHaveCount(0);
+	expect(await internalTerms(page)).toEqual([]);
+	expect(await violations(page)).toEqual([]);
+});
+
+test('in one language, it says which translation readers get and when that is a fallback', async ({ page }) => {
+	await signIn(page);
+	const project = await newProject(page);
+	// English is the default; French readers get English where there is no French; German
+	// readers get German or nothing (D-172).
+	const set = await api(
+		page,
+		'PUT',
+		`${env(project)}/locales`,
+		{
+			locales: [
+				{ tag: 'en', label: 'English', default: true },
+				{ tag: 'fr', label: 'Français', fallback: ['en'] },
+				{ tag: 'de', label: 'Deutsch' }
+			]
+		},
+		{ 'If-Match': '"locales-0"', 'Idempotency-Key': key() }
+	);
+	expect(set.status, JSON.stringify(set.body)).toBe(200);
+	const made = await api(
+		page,
+		'POST',
+		`${env(project)}/collections/articles/entries?locale=en`,
+		{ title: 'Hello', body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } },
+		{ 'Idempotency-Key': key() }
+	);
+	expect(made.status, JSON.stringify(made.body)).toBe(201);
+	const entry = made.body?.['data'].id as string;
+	await publishThroughApi(page, project, 'Out it goes', [entry]);
+	await page.goto(`/studio/projects/${project}/articles/${entry}`);
+	await expect(page.getByTestId('save-status')).toHaveAttribute('data-status', 'saved');
+	await page.getByTestId('entry-details').getByTestId('technical-details').locator('summary').click();
+	await page.getByTestId('see-what-readers-get').click();
+	const view = page.getByTestId('reader-view');
+	await expect(view.getByTestId('reader-title')).toHaveText('Hello');
+	await expect(view.getByTestId('reader-resolved')).toHaveCount(0);
+
+	// French readers get the English, and it says that is a fallback.
+	await view.getByTestId('reader-language-select').selectOption('fr');
+	await expect(view.getByTestId('reader-resolved')).toContainText('English');
+	await expect(view.getByTestId('reader-resolved')).toContainText('falls back from Français');
+	expect(await violations(page)).toEqual([]);
+	// German readers get nothing, and it says which languages it is published in.
+	await view.getByTestId('reader-language-select').selectOption('de');
+	await expect(view.getByTestId('reader-outcome')).toContainText('Readers in Deutsch get nothing for this');
+	await expect(view.getByTestId('reader-outcome')).toContainText('It is published in English.');
+	await expect(view.getByTestId('reader-copy')).toHaveCount(0);
+	// English readers get it as it is.
+	await view.getByTestId('reader-language-select').selectOption('en');
+	await expect(view.getByTestId('reader-resolved')).toHaveText('English');
 	expect(await internalTerms(page)).toEqual([]);
 	expect(await violations(page)).toEqual([]);
 });

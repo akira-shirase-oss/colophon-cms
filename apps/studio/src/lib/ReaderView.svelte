@@ -3,6 +3,8 @@
   website makes it (no sign-in), at the latest release. It says in words which release that is and
   whether newer changes are left out, then shows the answer exactly as a website receives it, to
   copy for whoever builds the site. Taken down, not out yet, or no answer: each said plainly.
+  With the project's languages listed (D-172), a picker reads it the way a site in one language
+  does: which translation that reader gets, and when it is a fallback, from which language.
 -->
 <script lang="ts">
 	import CopyIcon from '@lucide/svelte/icons/copy';
@@ -12,6 +14,7 @@
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import { ApiError, readDelivered } from './api.ts';
+	import { localesQuery } from './queries.ts';
 	import Problem from './shell/Problem.svelte';
 	import { capital, releaseName, URL_NAME } from './words.ts';
 
@@ -33,16 +36,27 @@
 		titleLabel?: string;
 	} = $props();
 
+	// The project's languages: with any listed, the read can be made in one of them.
+	const languages = createQuery(() => ({ ...localesQuery(project), enabled: open }));
+	const listed = $derived(languages.data?.locales ?? []);
+	/** The language asked for; empty is every language, as a site that names none reads it. */
+	let language = $state('');
+	const labelOf = (tag: string | null | undefined) =>
+		tag === null || tag === undefined ? 'no language' : (listed.find((row) => row.tag === tag)?.label ?? tag);
+
 	// Asked each time it opens: a release may have gone out since.
 	const read = createQuery(() => ({
-		queryKey: ['delivered', project, collection, entry],
-		queryFn: () => readDelivered(project, collection, entry),
+		queryKey: ['delivered', project, collection, entry, language],
+		queryFn: () => readDelivered(project, collection, entry, language === '' ? undefined : language),
 		enabled: open,
 		staleTime: 0
 	}));
 	const pretty = $derived(read.data ? JSON.stringify(JSON.parse(read.data.raw), null, 2) : '');
 	const gone = $derived(read.error instanceof ApiError && read.error.status === 410);
-	const notYet = $derived(read.error instanceof ApiError && read.error.status === 404);
+	const notInLanguage = $derived(read.error instanceof ApiError && read.error.reason === 'not_in_locale');
+	const available = $derived(read.error instanceof ApiError ? (read.error.details?.available ?? []) : []);
+	const notYet = $derived(read.error instanceof ApiError && read.error.status === 404 && !notInLanguage);
+	const localization = $derived(read.data?.data.localization);
 
 	async function copy() {
 		try {
@@ -62,11 +76,32 @@
 				What your website receives for this entry right now, read the way it reads it, without signing in.
 			</Dialog.Description>
 		</Dialog.Header>
+		{#if listed.length > 0}
+			<div class="flex flex-wrap items-center gap-2 text-sm" data-testid="reader-language">
+				<label class="font-medium text-foreground" for="reader-language-select">Read in</label>
+				<select
+					id="reader-language-select"
+					class="h-8 rounded-md border border-input bg-card px-2 text-xs text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+					bind:value={language}
+					data-testid="reader-language-select"
+				>
+					<option value="">Every language</option>
+					{#each listed as row (row.tag)}
+						<option value={row.tag}>{row.label} — {row.tag}</option>
+					{/each}
+				</select>
+			</div>
+		{/if}
 		{#if read.isPending}
 			<Skeleton class="h-40 w-full rounded-xl" />
 		{:else if gone}
 			<p class="rounded-lg bg-attention-soft px-4 py-2.5 text-sm text-attention-ink" role="status" data-testid="reader-outcome">
 				Readers get nothing for it now: it was taken down. Publish it again to bring it back.
+			</p>
+		{:else if notInLanguage}
+			<p class="rounded-lg bg-pending-soft px-4 py-2.5 text-sm text-pending-ink" role="status" data-testid="reader-outcome">
+				Readers in {labelOf(language)} get nothing for this: it isn't published in {labelOf(language)} or the languages it falls back to.
+				{#if available.length > 0}It is published in {available.map((tag) => labelOf(tag)).join(', ')}.{/if}
 			</p>
 		{:else if notYet}
 			<p class="rounded-lg bg-pending-soft px-4 py-2.5 text-sm text-pending-ink" role="status" data-testid="reader-outcome">
@@ -84,6 +119,14 @@
 					<div class="flex items-baseline justify-between gap-4">
 						<dt class="text-muted-foreground">{capital(URL_NAME)}</dt>
 						<dd class="min-w-0 truncate font-mono text-xs" data-user-content>{read.data.data.slug}</dd>
+					</div>
+				{/if}
+				{#if localization}
+					<div class="flex items-baseline justify-between gap-4">
+						<dt class="text-muted-foreground">Language</dt>
+						<dd class="min-w-0 truncate" data-testid="reader-resolved">
+							{labelOf(localization.resolved)}{#if localization.fallback}<span class="text-muted-foreground"> — falls back from {labelOf(localization.requested)}</span>{/if}
+						</dd>
 					</div>
 				{/if}
 				<div class="flex items-baseline justify-between gap-4">

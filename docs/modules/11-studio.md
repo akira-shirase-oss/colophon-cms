@@ -95,7 +95,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   list under the ETag it was read at with an idempotency key; a list changed meanwhile (`stale_locales`) loads in
   its place with "Someone changed languages; review and save again"; `locale_in_use` (a non-empty list must name
   every tag live entries carry: one just removed, one written before any list, one spelled otherwise) names the
-  tag from the refusal's message and the entries in the way, each linked once its collection is found by listing
+  tag from the refusal's `details.locale` and the entries in the way, each linked once its collection is found by listing
   each collection in that tag, with *Keep* for a language just removed, *Add* for a tag the list never had, and
   for another spelling a note that choosing the listed language saves it the list's way; other refusals are said
   at the language their pointer names. With languages listed, the
@@ -105,7 +105,10 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   lacks; without a list both stay free text (tags match the list case-insensitively, as the server matches them).
   The collection list names each entry's language and, with languages listed, filters by one (`?locale=`, also
   from the address); at 360 px the title keeps its room (*Updated* hides below `sm`, the state tabs scroll instead
-  of the page). Test: `tests/server/languages.spec.ts`.
+  of the page). *What readers get* gains *Read in* — every language, or one of the listed ones — and says which
+  translation a reader in that language gets ("English — falls back from Français"), or that they get nothing and
+  which languages it is published in (`not_in_locale`). Tests: `tests/server/languages.spec.ts`,
+  `tests/server/readers.spec.ts`.
   Since step E3 (D-108, branch `e3-surfaces`): the project shell holds one `GET {P}/events` stream per open project
   (`lib/live.ts`, `watchProject`, mounted in the project layout) and turns each `change` hint — a kind and a scope,
   never content — into the query invalidations a fresh visit would run: entries, drafts, history, changesets, stages,
