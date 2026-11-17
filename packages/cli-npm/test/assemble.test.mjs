@@ -81,7 +81,7 @@ test('npm pack --dry-run lists the launcher, its lookup, the readme and the lice
 test('every published package carries the repository licence word for word (MIT, D-158)', () => {
   const root = readFileSync(path.join(repository, 'LICENSE'), 'utf8');
   assert.match(root, /^MIT License\n\nCopyright \(c\) 2026 akira-shirase-oss\n/);
-  for (const copy of ['packages/cli-npm/LICENSE', 'packages/sdk/LICENSE']) {
+  for (const copy of ['packages/cli-npm/LICENSE', 'packages/sdk/LICENSE', 'packages/rich-text/LICENSE']) {
     assert.equal(readFileSync(path.join(repository, copy), 'utf8'), root, `${copy} is the root LICENSE`);
   }
 });

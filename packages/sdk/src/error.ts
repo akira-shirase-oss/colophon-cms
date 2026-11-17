@@ -20,7 +20,10 @@ export type ClientCode =
 	/** The reply was not the JSON the contract promises (a proxy page, a truncated body). */
 	| 'invalid_response'
 	/** The body ran past `ClientOptions.maxBodyBytes`; nothing was parsed. */
-	| 'response_too_large';
+	| 'response_too_large'
+	/** `compat: 'throw'` and the server doesn't fit this SDK (`client.compatibility()` says why);
+	 *  nothing was sent. Not retryable: it answers the same until one side is upgraded. */
+	| 'incompatible_server';
 
 /**
  * Every failure a call can meet, as one typed error: the HTTP `status` (0 when no answer ever
@@ -78,6 +81,7 @@ export class ApiError extends Error {
 	 * they answer the same way every time.
 	 */
 	get retryable(): boolean {
+		if (this.code === 'incompatible_server') return false;
 		return (
 			this.status === 0 ||
 			this.status === 429 ||
