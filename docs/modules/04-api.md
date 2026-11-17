@@ -259,7 +259,13 @@ The spec's `/forms`, `/leads`, `/commerce/*` and `/store/v1` families are parked
   `%` and `_` literal; a cursor is bound to its caller; `tests/projects.rs`). Without any of those parameters it still
   answers the old way, every project up to 1,000 on one page, because the testbed's project pickers, `colophon
   content` and `perf/k6/projects.js` rely on it; once they and the Studio's home ask for pages, that answer and
-  `/me`'s project list go.
+  `/me`'s project list go. Measured 2026-11-17 on a seeded database (about 20,000 memberships of background, as
+  `colophon_app`, laptop under other load — a development observation): the person's memberships are found by
+  `memberships_by_identity` either way, but every answer joins and sorts all of them through row-level security, so a
+  page costs what the person's whole list does — 3.7 ms for the 1,000-row answer and 3 ms for a page of 20 at 500
+  memberships; 33 ms and 26 ms at 5,000. Pages bound what is sent, not what is read: a cursor that walks
+  `(name, id)` from an index would be the fix. CI's `session` smoke saw this as 40–77 ms reads for dev-owner's 395
+  memberships on a slow runner (run 44062423664), which is why the per-person smokes now make their own person.
 
 - Whether the Studio (session cookie) and the CLI (bearer credential) share every route, or whether some routes are
   cookie-only.

@@ -1077,17 +1077,35 @@ pub async fn localizations(
     collection: &str,
     entry_id: Uuid,
 ) -> Result<Vec<Localization>, DbError> {
-    let rows = sqlx::query!(
-        "SELECT s.id, s.locale FROM entries s
-         JOIN entries e ON e.project_id = s.project_id AND e.environment_id = s.environment_id
-                       AND e.localization_id = s.localization_id
-         WHERE e.project_id = $1 AND e.environment_id = $2 AND e.collection = $3
-           AND e.id = $4 AND e.deleted_at IS NULL AND s.deleted_at IS NULL
-         ORDER BY s.locale",
+    // Two lookups, not one self-join: the entry by its key, then its group by `localization_id`.
+    // Joined, a planner whose statistics predate a project's entries (a fresh project filling up
+    // between analyses) took both sides by the project's index and compared every entry with
+    // every other — 0.5 s a read at 512 entries in CI. An unlocalized entry, the usual case, now
+    // costs the one key lookup.
+    let group = sqlx::query_scalar!(
+        "SELECT localization_id FROM entries
+         WHERE project_id = $1 AND environment_id = $2 AND collection = $3 AND id = $4
+           AND deleted_at IS NULL",
         tx.project,
         tx.environment,
         collection,
         entry_id
+    )
+    .fetch_optional(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)?
+    .flatten();
+    let Some(group) = group else {
+        return Ok(Vec::new());
+    };
+    let rows = sqlx::query!(
+        "SELECT id, locale FROM entries
+         WHERE localization_id = $3 AND project_id = $1 AND environment_id = $2
+           AND deleted_at IS NULL
+         ORDER BY locale",
+        tx.project,
+        tx.environment,
+        group
     )
     .fetch_all(&mut *tx.transaction)
     .await

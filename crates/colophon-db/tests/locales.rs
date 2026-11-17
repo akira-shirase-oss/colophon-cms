@@ -306,3 +306,69 @@ async fn tombstoned_sibling_frees_its_locale() {
     );
     tx.commit().await.expect("commit");
 }
+
+/// Reading an entry's translations stays one cheap lookup however many entries share its
+/// project. The smoke runs that fill a fresh project with hundreds of entries read them before
+/// statistics catch up, and the plan then joined every entry of the project to every other (a
+/// 512-entry project: 0.5 s a read in CI, its entries smoke collapsing). Here: statistics taken
+/// while the project was empty, 1,500 entries after them, and twenty reads each of an
+/// unlocalized entry and a translated one must stay inside a budget no quadratic plan meets.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn translations_are_read_in_constant_time_in_a_full_project() {
+    let db = TestDb::new().await;
+    let (alice, project) = alice_with_a_project(&db).await;
+    // Statistics taken while the project held nothing, the way a running server's are when a
+    // fresh project fills up between two autovacuum analyses: another project's entries, then
+    // ANALYZE, then this project's 1,500.
+    let other = projects::create(&db.app, alice, "beta", "Beta")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = enter(&db.app, alice, other).await;
+    for n in 0..200 {
+        create(&mut tx, &format!("Other {n}"), None).await;
+    }
+    tx.commit().await.expect("commit");
+    let owner = db.owner().await;
+    sqlx::query("ANALYZE entries")
+        .execute(&owner)
+        .await
+        .expect("analyze");
+    owner.close().await;
+    let mut tx = enter(&db.app, alice, project).await;
+    let mut plain = Vec::new();
+    for n in 0..1500 {
+        plain.push(create(&mut tx, &format!("Entry {n}"), None).await.0);
+    }
+    let (english, _) = create(&mut tx, "Hello", Some("en")).await;
+    tx.commit().await.expect("commit");
+    let mut tx = enter(&db.app, alice, project).await;
+    let german = Content::new("Hallo");
+    let made = entries::create_localization(
+        &mut tx,
+        Uuid::now_v7(),
+        english,
+        ARTICLES,
+        "de",
+        german.revision(),
+    )
+    .await
+    .expect("localize");
+    assert!(matches!(made, Localized::Made(_)));
+    tx.commit().await.expect("commit");
+
+    let mut tx = enter(&db.app, alice, project).await;
+    let started = std::time::Instant::now();
+    for n in 0..20 {
+        assert_eq!(group(&mut tx, plain[n * 71]).await, Vec::new());
+        assert_eq!(group(&mut tx, english).await.len(), 2);
+    }
+    let took = started.elapsed();
+    tx.commit().await.expect("commit");
+    assert!(
+        took < std::time::Duration::from_millis(250),
+        "40 reads of translations took {took:?}"
+    );
+    db.drop().await;
+}

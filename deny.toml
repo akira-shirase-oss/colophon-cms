@@ -6,7 +6,13 @@ all-features = true
 
 [advisories]
 # Vulnerabilities and unmaintained crates fail by default. Ignore only with a reason and an expiry.
-ignore = []
+ignore = [
+    # chrono, and humantime which wraps it, were declared unmaintained on 2026-11-17. Neither is a
+    # vulnerability and no release is safe to move to; both reach us only through object_store 0.14
+    # (the S3 client). Expires 2026-12-17: by then an object_store without them, or triage again.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no fix; only via object_store 0.14; expires 2026-12-17" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime unmaintained, no fix; only via object_store 0.14; expires 2026-12-17" },
+]
 
 [licenses]
 # BSL-1.0 (Boost): permissive and OSI-approved; needed by xxhash-rust, through redis (2026-10-25).

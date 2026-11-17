@@ -41,31 +41,55 @@ export const options = {
   setupTimeout: '60s',
 };
 
-export function setup() {
-  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
-  if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
-  const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
-  const browser = {
-    Cookie: `colophon_session=${jar.colophon_session[0]}`, 'X-CSRF-Token': jar.colophon_csrf[0], Origin: PUBLIC_URL,
+/** The headers a browser tab of the session in `jar` would send. */
+function browserOf(jar) {
+  const cookies = jar.cookiesForURL(PUBLIC_URL);
+  return {
+    Cookie: `colophon_session=${cookies.colophon_session[0]}`, 'X-CSRF-Token': cookies.colophon_csrf[0], Origin: PUBLIC_URL,
     'Content-Type': 'application/json',
   };
+}
 
-  const slug = `k6-${Date.now().toString(36)}`;
-  const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug, name: 'k6 CLI' }), { headers: browser });
-  if (project.status !== 201) fail(`project: HTTP ${project.status}`);
+/** A person made for this run, so what is measured never depends on what earlier runs or test
+ *  suites left on the shared development accounts (dev-owner's project list grows with every
+ *  project a test makes): a fresh password account, the member of exactly one fresh project,
+ *  which the administrator `owner` creates and invites them to. Their browser headers and the
+ *  project's id. */
+function freshMember(owner, label, role) {
+  const run = Date.now().toString(36);
+  const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6-${label}-${run}`, name: `k6 ${label}` }), { headers: owner });
+  if (project.status !== 201) fail(`project: HTTP ${project.status} ${project.body}`);
+  const id = project.json('data.id');
+  const invited = http.post(`${BASE_URL}/api/v1/projects/${id}/invitations`, JSON.stringify({ role, label: `k6 ${label}` }), { headers: owner });
+  if (invited.status !== 201) fail(`invitation: HTTP ${invited.status} ${invited.body}`);
+  const jar = new http.CookieJar();
+  const made = http.post(`${PUBLIC_URL}/auth/signup`, JSON.stringify({ email: `k6-${label}-${run}@load.test`, password: 'a password for this run', display_name: `k6 ${label}` }), { jar, headers: { 'Content-Type': 'application/json' } });
+  if (made.status !== 201) fail(`signup: HTTP ${made.status} ${made.body}`);
+  const person = browserOf(jar);
+  const joined = http.post(`${BASE_URL}/api/v1/invitations/accept`, JSON.stringify({ token: invited.json('data.link').split('#')[1] }), { headers: person });
+  if (joined.status !== 200) fail(`accept: HTTP ${joined.status} ${joined.body}`);
+  return { person, project: id };
+}
+
+export function setup() {
+  const jar = new http.CookieJar();
+  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { jar, headers: { 'Content-Type': 'application/json' } });
+  if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
+  // A person of this run's own, in one project of its own (see freshMember).
+  const { person, project } = freshMember(browserOf(jar), 'cli', 'editor');
 
   // The device sign-in, as `colophon login` and its person would do it.
   const json = { 'Content-Type': 'application/json' };
   const started = http.post(`${BASE_URL}/auth/device`, JSON.stringify({ client_name: 'k6 terminal' }), { headers: json });
   if (started.status !== 201) fail(`device sign-in: HTTP ${started.status}`);
-  const approved = http.post(`${BASE_URL}/auth/device/approve`, JSON.stringify({ user_code: started.json('data.user_code') }), { headers: browser });
+  const approved = http.post(`${BASE_URL}/auth/device/approve`, JSON.stringify({ user_code: started.json('data.user_code') }), { headers: person });
   if (approved.status !== 204) fail(`approval: HTTP ${approved.status}`);
   const polled = http.post(`${BASE_URL}/auth/device/token`, JSON.stringify({ device_secret: started.json('data.device_secret') }), { headers: json });
   const token = polled.json('data.access_token');
   if (!token) fail(`token: HTTP ${polled.status} ${polled.body}`);
   return {
     token,
-    entries: `${BASE_URL}/api/v1/projects/${project.json('data.id')}/environments/production/collections/articles/entries?limit=20`,
+    entries: `${BASE_URL}/api/v1/projects/${project}/environments/production/collections/articles/entries?limit=20`,
   };
 }
 
@@ -76,6 +100,7 @@ export default function (data) {
     check(res, {
       'projects 200': (r) => r.status === 200,
       'projects listed': (r) => r.body.indexOf('{"data":[') === 0,
+      'just the one project': (r) => r.json('data').length === 1,
     });
   } else {
     const res = http.get(data.entries, Object.assign({ tags: { endpoint: 'entries' } }, params));
