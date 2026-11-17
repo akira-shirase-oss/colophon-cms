@@ -8,6 +8,27 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Changed — read before upgrading
+
+- **Images inside rich text must name real uploads** (D-170). A rich-text `image` whose
+  `assetId` isn't an upload of the environment is refused `422 asset_not_found` at that
+  image's pointer. Drafts made with the old Studio dialog hold random placeholder ids, so they
+  are refused at their next save until each image is replaced or removed. Revisions saved before migration 0065 record no rich-text references until saved again.
+- **A replaced image reaches published pages at the next publish** (D-171). Delivery rows now
+  carry `media`: the versioned, immutable URL of each upload the release recorded, with its
+  size and renditions. A site using `url` keeps showing the released bytes after a replace
+  until the entries using it are published again; `current_url` follows the newest bytes.
+  `RENDER_VERSION` is 2, so cached delivery answers are refetched once.
+
+### Added
+
+- Images inside rich text are tracked like every upload: publish-checked, kept from deletion,
+  listed under "Used in"; at most 200 distinct images per document (D-170).
+- `COLOPHON_MEDIA_URL`: the origin delivery's media URLs name (default the public origin).
+- The media library pages past 100 uploads (`cursor`, `next_cursor`), searches (`q`), filters
+  by `state` and `tag`, and keeps alt text, title, credit and tags via
+  `PATCH …/assets/{asset}` under `If-Match` (D-172).
+
 ### Security
 
 The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-169). Each names the attack it

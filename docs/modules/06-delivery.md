@@ -85,6 +85,18 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   document and its `query_hash`, and publications carry no locale, so every answer is in the stored one until
   locale lands on the projection.
 
+- Gap 3 (D-171) adds `media` to every row (list, get and query), left out when the published revision names no
+  uploads: by asset id, the version of each upload — asset fields and rich-text images alike — that the row's
+  release recorded in `publications.media`. Each carries `url` (the versioned address
+  `{COLOPHON_MEDIA_URL}/media/v1/{project}/{env}/{asset}/{sha}`, immutable and cached a year, D-157),
+  `renditions` (`w320`, `w1280` under that version, only those the worker wrote), `width`, `height`, `type`, and
+  `current_url` (the bare address, which follows replacements). A site that uses `url` shows exactly the bytes
+  that were released, so a pinned read at generation N shows N's images; a replaced image reaches it when the
+  entries that use it are published again (publishing an unchanged entry whose upload has a newer version reopens
+  its publication). A site that wants the newest bytes without publishing uses `current_url`.
+  `COLOPHON_MEDIA_URL` (an http(s) origin, default `COLOPHON_PUBLIC_URL`) puts a CDN or asset host in front.
+  Populated references (`depth`) carry their content but not their own uploads' `media` yet.
+
 ### Gated content (P7, D-137)
 - Every draft, revision and publication carries a `visibility`: `public` (the default), `authenticated` (any
   signed-in site user) or `role:<name>` (a site user whose [audience](03-auth.md) role is `<name>`). Editorial
@@ -119,6 +131,9 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   resolves its generation from Postgres in one statement, before and apart from the cache: `delivery_environment`
   (migration 0011) runs as `colophon_delivery` in the project's context and returns only the environment's id, epoch
   and generation. As a delivery transaction (five round trips) the lookup cost as much as the cache saved.
+- Gap 3 (D-171): `RENDER_VERSION` is 2 (rows carry `media`), and the key's prefix names the media origin's
+  digest (`m{16 hex}`), since answers carry absolute media URLs: an answer cached while media pointed at one
+  origin is never served after `COLOPHON_MEDIA_URL` moves.
 - DX.4 (D-105): a query page keys on `Scope::query_key` — the normalized query's own `query_hash` and the page
   boundary's SHA-256, both fixed-width hex, the collection last as always — so two different queries can never
   share an answer (§15) and a key stays short however long a cursor is. The boundary names the canonical
