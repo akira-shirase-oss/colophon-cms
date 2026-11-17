@@ -92,6 +92,29 @@ pub async fn set_target(
     .map_err(DbError::from_write)
 }
 
+/// The preview address of `project`'s environment `environment`, read in the project's context
+/// alone: what a browser's cross-origin preview request is checked against (D-172's CORS), when
+/// no person is signed in to ask. `None` when the environment has none (or doesn't exist).
+pub async fn target_of(
+    pool: &PgPool,
+    project: Uuid,
+    environment: &str,
+) -> Result<Option<String>, DbError> {
+    let mut transaction = in_project(pool, project).await?;
+    let template = sqlx::query_scalar!(
+        "SELECT t.url_template FROM preview_targets t
+         JOIN environments e ON e.project_id = t.project_id AND e.id = t.environment_id
+         WHERE t.project_id = $1 AND e.slug = $2",
+        project,
+        environment
+    )
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(DbError::from_query)?;
+    transaction.commit().await.map_err(DbError::from_query)?;
+    Ok(template)
+}
+
 /// What a grant lets its holder read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Scope {
