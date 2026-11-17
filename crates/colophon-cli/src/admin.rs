@@ -39,7 +39,7 @@ fn fail(out: &Out, exit: Exit, message: &str) -> Exit {
 }
 
 /// The migrator's connection URL, from a flag, the environment, or a file holding it (a
-/// mounted secret, D-172): `--database-url` / `COLOPHON_MIGRATION_DATABASE_URL`, or
+/// mounted secret, D-171): `--database-url` / `COLOPHON_MIGRATION_DATABASE_URL`, or
 /// `--database-url-file` / `COLOPHON_MIGRATION_DATABASE_URL_FILE`.
 #[derive(Debug, clap::Args)]
 pub(crate) struct MigratorUrl {
@@ -209,7 +209,7 @@ pub(crate) async fn migrate_status(database: &MigratorUrl, out: Out) -> Exit {
 }
 
 /// `colophon admin init-roles`: creates the server's database roles with passwords from files
-/// (D-172), as the migrator. Refuses the development stack's public password and anything too
+/// (D-171), as the migrator. Refuses the development stack's public password and anything too
 /// short before connecting; never prints a password.
 pub(crate) async fn init_roles(
     database: &MigratorUrl,

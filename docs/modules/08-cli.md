@@ -136,7 +136,7 @@ colophon export --env production --out export-directory
   [--json]` (D-043): the first administrator, once. Both read `COLOPHON_MIGRATION_DATABASE_URL`; the issuer defaults
   to `COLOPHON_OIDC_ISSUER`. `colophon whoami` prints your subject, so an operator can sign in once and then bootstrap
   themselves.
-- `colophon admin init-roles --app-password-file F [--backup-password-file G] [--json]` (D-170): creates the roles
+- `colophon admin init-roles --app-password-file F [--backup-password-file G] [--json]` (D-171): creates the roles
   `deploy/postgres/roles.sql` makes for the local stack, outside development — passwords from files, sent as SCRAM
   verifiers, never the development password; existing roles are left as they are, so it is safe to rerun. Run it
   before `admin migrate`. Every admin command reads the migrator's URL from `--database-url` /

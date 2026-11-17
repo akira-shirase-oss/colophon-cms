@@ -640,7 +640,7 @@ enum AdminCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Create the database roles the server needs, with passwords from files (D-172): what
+    /// Create the database roles the server needs, with passwords from files (D-171): what
     /// the development stack's roles.sql does with its public password. Idempotent: existing
     /// roles, passwords included, are left as they are. Run before `admin migrate`.
     InitRoles {

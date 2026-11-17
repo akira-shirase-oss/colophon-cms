@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The quick start, run exactly as documented (D-171, D-172): deploy/quickstart/compose.yaml in
+# The quick start, run exactly as documented (D-172, D-173): deploy/quickstart/compose.yaml in
 # an empty directory, `docker compose up -d --wait`, the Studio and the API answering, the
 # setup code read from the logs with the command the Studio shows, and then the checks a
 # newcomer can't see: no dependency reachable from the host, password authentication on

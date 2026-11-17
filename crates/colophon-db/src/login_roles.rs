@@ -1,4 +1,4 @@
-//! The installation's database roles outside development (D-172): what
+//! The installation's database roles outside development (D-171): what
 //! `deploy/postgres/roles.sql` creates for the local stack with its public password, created
 //! here by `colophon admin init-roles` with passwords an installer generated.
 //!

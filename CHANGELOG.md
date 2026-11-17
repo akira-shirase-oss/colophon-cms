@@ -11,14 +11,14 @@ through `--version` and `GET /version`.
 ### Added
 
 - **Secrets from files:** every secret setting also takes `<KEY>_FILE`, a path to a mounted
-  secret; the admin commands take `COLOPHON_MIGRATION_DATABASE_URL_FILE` (D-170).
+  secret; the admin commands take `COLOPHON_MIGRATION_DATABASE_URL_FILE` (D-171).
 - **`colophon admin init-roles`:** creates the server's database roles with passwords from
-  files, sent as SCRAM verifiers; refuses the development password; safe to rerun (D-170).
+  files, sent as SCRAM verifiers; refuses the development password; safe to rerun (D-171).
 - **A container image and a one-command quick start:** `deploy/image/Dockerfile` (server, CLI
   and Studio on distroless static, non-root, 25 MB compressed) and
   `deploy/quickstart/compose.yaml` — `docker compose up -d --wait` brings up Colophon with
   PostgreSQL, Valkey and Garage, secrets generated on first start, only `127.0.0.1:8080`
-  published (D-171, D-172). The Studio's first-run screens say where a container's setup code
+  published (D-172, D-173). The Studio's first-run screens say where a container's setup code
   is. Operator guide: `deploy/runbooks/install.md`.
 
 ### Security

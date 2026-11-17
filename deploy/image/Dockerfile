@@ -1,4 +1,4 @@
-# Colophon's container image (D-171): colophon-server, the colophon CLI and the Studio, on
+# Colophon's container image (D-172): colophon-server, the colophon CLI and the Studio, on
 # distroless static, non-root. Build from the repository root:
 #
 #   docker build -f deploy/image/Dockerfile -t colophon:local .

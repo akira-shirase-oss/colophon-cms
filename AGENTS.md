@@ -50,7 +50,7 @@ detail: `docs/ROADMAP.md` and the build log):
   (D-141, D-146). Five Astro demo sites (D-133) rebuild themselves on publish with live
   delivery updates (D-138, D-139).
 
-Running it as a user would (D-171, D-172): `docker build -f deploy/image/Dockerfile -t colophon:local .`, then
+Running it as a user would (D-172, D-173): `docker build -f deploy/image/Dockerfile -t colophon:local .`, then
 `docker compose up -d --wait` in `deploy/quickstart/` with `COLOPHON_IMAGE=colophon:local`; `scripts/quickstart.sh`
 does that in a scratch directory and checks it (`--port` moves it off 8080). Operator guide:
 `deploy/runbooks/install.md`.

@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// The Studio as a newcomer meets it from the quick start (D-171, D-172): the containers from
+// The Studio as a newcomer meets it from the quick start (D-172, D-173): the containers from
 // deploy/quickstart/compose.yaml are already running, so there is no web server to start here.
 // Run by scripts/quickstart.sh, which passes the address and the setup code it read from the logs.
 const BASE = process.env['QUICKSTART_URL'] ?? 'http://localhost:8080';
