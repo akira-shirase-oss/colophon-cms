@@ -286,3 +286,47 @@ test('a delivery that settles before the live stream opens still shows how it se
 		hook.close();
 	}
 });
+
+// A hint can land while the page's first read of a list is still on its way back — a read the
+// server made before the commit the hint announces. Joining that read would keep its stale
+// answer; the hint must start a read of its own.
+test('a delivery that settles while the page is still loading its lists shows how it settled', async ({ page }) => {
+	const hook = await refuser(1_500);
+	try {
+		await signIn(page);
+		const project = await newProject(page);
+		await page.goto(`/studio/projects/${project}/settings/connections`);
+		await page.getByRole('button', { name: 'Add a connection' }).click();
+		await page.getByLabel('Connection name').fill('Site rebuild');
+		await page.getByLabel('Webhook URL (https)').fill(hook.url);
+		await page.getByRole('button', { name: 'Add website connection' }).click();
+		await expect(page.getByTestId('destinations')).toContainText('Site rebuild');
+
+		await publishThroughApi(page, project, 'Settled meanwhile', [await newEntry(page, project, 'Settled meanwhile')]);
+		// The website answers after 1.5 s. Meanwhile the release list and its jobs are read at
+		// once, but their answers are held back until the delivery has given up and its hint has
+		// reached the open stream.
+		let deliver = () => {};
+		const held = new Promise<void>((done) => (deliver = done));
+		await page.route(
+			(url) => /\/environments\/production\/(releases|jobs)$/.test(url.pathname),
+			async (route) => {
+				const response = await route.fetch();
+				await held;
+				await route.fulfill({ response });
+			}
+		);
+		await page.goto(`/studio/projects/${project}/releases`);
+		await expect
+			.poll(async () => ((await (await page.request.get(`${env(project)}/jobs`)).json()) as { data: { status: string }[] }).data[0]?.status, {
+				timeout: 15_000
+			})
+			.toBe('failed');
+		await page.waitForTimeout(1_000); // the hint's way to the page
+		deliver();
+		const label = page.locator('[data-generation="1"]').getByTestId('label');
+		await expect(label).toHaveAttribute('data-label', 'needs_attention', { timeout: 10_000 });
+	} finally {
+		hook.close();
+	}
+});
