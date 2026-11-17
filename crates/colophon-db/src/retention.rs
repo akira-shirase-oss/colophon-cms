@@ -162,6 +162,8 @@ pub struct Swept {
     pub magic_links: u64,
     /// `sign_in_throttle` keys idle past the throttle age (D-154).
     pub sign_in_throttle: u64,
+    /// `preview_grants` ended (expired or revoked) more than a week ago (D-171).
+    pub preview_grants: u64,
 }
 
 impl Swept {
@@ -187,6 +189,7 @@ impl Swept {
             + self.setup_codes
             + self.magic_links
             + self.sign_in_throttle
+            + self.preview_grants
     }
 }
 
@@ -498,6 +501,11 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
         hot,
     )
     .await?;
+    // Preview grants (D-171): an ended grant reads nothing; its `preview.*` audit events are
+    // the record. Kept a week past its end, so "who previewed this" still answers for a while.
+    let preview_cut = OffsetDateTime::now_utc() - PREVIEW_GRANT_AGE;
+    let preview_grants =
+        retained(&mut tx, "colophon_sweep_preview_grants", preview_cut, batch).await?;
 
     tx.commit().await.map_err(DbError::from_query)?;
     Ok(Swept {
@@ -521,5 +529,9 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
         setup_codes,
         magic_links,
         sign_in_throttle,
+        preview_grants,
     })
 }
+
+/// How long an ended preview grant is kept (D-171): a week.
+const PREVIEW_GRANT_AGE: time::Duration = time::Duration::days(7);

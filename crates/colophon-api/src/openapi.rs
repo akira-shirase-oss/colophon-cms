@@ -26,7 +26,8 @@ use serde_json::{Map, Value, json};
 use crate::{
     AppState, BuildInfo, assets, audience, audit, auth, bulk, changesets, collaboration,
     components, content_types, delivery, destinations, device, entries, graphql, health, mcp,
-    members, migrations, projects, receipts, rich_text, roles, schedules, setup, tokens, version,
+    members, migrations, preview, projects, receipts, rich_text, roles, schedules, setup, tokens,
+    version,
 };
 
 /// A verb Colophon's routes use. Naming them in a small enum keeps the table total: the
@@ -203,6 +204,8 @@ enum Security {
     /// A site user's session — the `colophon_audience` cookie or `Authorization: Bearer`
     /// (D-137). A visitor credential, never a staff one.
     Audience,
+    /// A preview token (`cpv_…`, D-171) — what a customer's site exchanged a one-time code for.
+    PreviewToken,
 }
 
 /// What the document says about one operation.
@@ -343,6 +346,41 @@ const NOT_FOUND: Refusal = refusal(
     "not_found",
     "no such resource — or one the caller may not see, which looks the same",
 );
+/// A project API token on a person-only route.
+const API_TOKEN_REFUSED: Refusal = refusal(
+    403,
+    "api_token_not_allowed",
+    "people open previews; an API token can't",
+);
+/// What every `/preview/v1` read may refuse (D-172).
+const PREVIEW_REFUSALS: &[Refusal] = &[
+    refusal(
+        401,
+        "preview_invalid, preview_expired, preview_revoked",
+        "no token, an ended one, or its issuer can no longer read here",
+    ),
+    NOT_FOUND,
+    refusal(
+        409,
+        "preview_stale",
+        "the publish request changed after the preview opened",
+    ),
+    refusal(
+        410,
+        "preview_published",
+        "the publish request is live; `Colophon-Generation` names its release",
+    ),
+    refusal(
+        422,
+        "preview_reads_latest, preview_depth",
+        "`?generation=` or `depth` asked for",
+    ),
+    refusal(
+        503,
+        "unavailable",
+        "preview read capacity is full; `Retry-After` says when",
+    ),
+];
 const FORBIDDEN: Refusal = refusal(
     403,
     "missing_permission and friends",
@@ -3888,6 +3926,263 @@ pub(crate) static TABLE: &[Route] = &[
         )],
     ),
     route(
+        (P, "/preview-target"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, preview::get_target),
+                OpDoc {
+                    id: "getPreviewTarget",
+                    summary: "Where this environment's previews open on the site",
+                    tag: "preview",
+                    ok: ok(
+                        200,
+                        Shape::Data("PreviewTargetView"),
+                        "unset fields are null",
+                    ),
+                    extra: &[NOT_FOUND, API_TOKEN_REFUSED],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Put,
+                |f| on(f, preview::set_target),
+                OpDoc {
+                    id: "setPreviewTarget",
+                    summary: "Set or clear the site address previews open",
+                    tag: "preview",
+                    body: Some(json("SetPreviewTarget")),
+                    ok: ok(200, Shape::Data("PreviewTargetView"), "as stored"),
+                    extra: &[
+                        NOT_FOUND,
+                        FORBIDDEN,
+                        refusal(422, "invalid_preview_url", "the address refused"),
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (P, "/previews"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, preview::mine),
+                OpDoc {
+                    id: "listMyPreviews",
+                    summary: "Your own live previews, newest first",
+                    tag: "preview",
+                    query: &[query("entry", Kind::Uuid, "only those of this entry")],
+                    ok: capped(
+                        "PreviewLiveView",
+                        "the newest 100 of the caller's own live previews; `next_cursor` is always null",
+                    ),
+                    extra: &[NOT_FOUND, API_TOKEN_REFUSED],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Post,
+                |f| on(f, preview::issue),
+                OpDoc {
+                    id: "issuePreview",
+                    summary: "Open a preview of an entry or a publish request: a one-time code and the site address it fills",
+                    tag: "preview",
+                    body: Some(json("NewPreview")),
+                    ok: created("PreviewIssuedView"),
+                    extra: &[
+                        NOT_FOUND,
+                        API_TOKEN_REFUSED,
+                        refusal(
+                            409,
+                            "already_published",
+                            "the publish request is already live",
+                        ),
+                        refusal(
+                            422,
+                            "preview_not_configured, invalid_scope, invalid_ttl",
+                            "no preview address is set, or the request refused",
+                        ),
+                        refusal(429, "preview_limit", "the project has 1,000 previews open"),
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (P, "/previews/{preview}"),
+        &[op(
+            Verb::Delete,
+            |f| on(f, preview::revoke),
+            OpDoc {
+                id: "revokePreview",
+                summary: "End one of your previews now: its token answers 401 preview_revoked",
+                tag: "preview",
+                ok: ok(204, Shape::Empty, "ended"),
+                extra: &[NOT_FOUND, API_TOKEN_REFUSED],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        (P, "/previews/{preview}/renew"),
+        &[op(
+            Verb::Post,
+            |f| on(f, preview::renew),
+            OpDoc {
+                id: "renewPreview",
+                summary: "Keep one of your live previews open: its time to live again, never past 8 hours from opening",
+                tag: "preview",
+                ok: ok(200, Shape::Data("PreviewRenewedView"), "the new end"),
+                extra: &[NOT_FOUND, API_TOKEN_REFUSED],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        (P, "/previews/{preview}/code"),
+        &[op(
+            Verb::Post,
+            |f| on(f, preview::new_code),
+            OpDoc {
+                id: "newPreviewCode",
+                summary: "A fresh one-time code for one of your live previews (exchanging it replaces the token)",
+                tag: "preview",
+                ok: created("PreviewCodeView"),
+                extra: &[
+                    NOT_FOUND,
+                    API_TOKEN_REFUSED,
+                    refusal(422, "preview_not_configured", "no preview address is set"),
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/preview/v1/{project}/{environment}/exchange"),
+        &[op(
+            Verb::Post,
+            |f| on(f, preview::exchange),
+            OpDoc {
+                id: "previewExchange",
+                summary: "Exchange a preview address's one-time code for a bearer token",
+                tag: "preview",
+                security: Security::Public,
+                body: Some(json("PreviewExchange")),
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Data("PreviewTokenView"),
+                    headers: &[],
+                    media: "",
+                    note: "`private, no-store`; a code works once",
+                },
+                extra: &[refusal(
+                    404,
+                    "preview_not_found",
+                    "unknown, used and expired codes all answer alike",
+                )],
+                body_limit: Some(preview::EXCHANGE_BYTES),
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/preview/v1/{project}/{environment}/session"),
+        &[op(
+            Verb::Get,
+            |f| on(f, preview::session),
+            OpDoc {
+                id: "previewSession",
+                summary: "The preview token's scope and end, for the site's preview banner",
+                tag: "preview",
+                security: Security::PreviewToken,
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Data("PreviewSessionView"),
+                    headers: &["Colophon-Preview", "Colophon-Generation"],
+                    media: "",
+                    note: "`private, no-store`, `noindex`",
+                },
+                extra: PREVIEW_REFUSALS,
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/preview/v1/{project}/{environment}/{collection}"),
+        &[op(
+            Verb::Get,
+            |f| on(f, preview::list),
+            OpDoc {
+                id: "previewList",
+                summary: "A collection as the preview sees it: the scope's drafts over the latest release",
+                tag: "preview",
+                security: Security::PreviewToken,
+                query: &[LIMIT, CURSOR],
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Page("PreviewEntryView"),
+                    headers: &["Colophon-Preview", "Colophon-Generation"],
+                    media: "",
+                    note: "`/content/v1`'s shape; `private, no-store`, `noindex`, never `ETag`",
+                },
+                extra: PREVIEW_REFUSALS,
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/preview/v1/{project}/{environment}/{collection}/query"),
+        &[op(
+            Verb::Post,
+            |f| on(f, preview::query),
+            OpDoc {
+                id: "previewQuery",
+                summary: "Run the bounded query language over the preview's overlay",
+                tag: "preview",
+                security: Security::PreviewToken,
+                query: &[CURSOR],
+                body: Some(json("QueryDocument")),
+                ok: Res {
+                    status: 200,
+                    shape: Shape::It("PreviewQueryPage"),
+                    headers: &["Colophon-Preview", "Colophon-Generation"],
+                    media: "",
+                    note: "`/content/v1`'s query page; `depth` isn't served in preview yet (422 `preview_depth`)",
+                },
+                extra: PREVIEW_REFUSALS,
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        (
+            "",
+            "/preview/v1/{project}/{environment}/{collection}/{entry}",
+        ),
+        &[op(
+            Verb::Get,
+            |f| on(f, preview::get),
+            OpDoc {
+                id: "previewGet",
+                summary: "One entry as the preview sees it",
+                tag: "preview",
+                security: Security::PreviewToken,
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Data("PreviewEntryView"),
+                    headers: &["Colophon-Preview", "Colophon-Generation"],
+                    media: "",
+                    note: "`/content/v1`'s shape; `private, no-store`, `noindex`, never `ETag`",
+                },
+                extra: PREVIEW_REFUSALS,
+                ..MIN
+            },
+        )],
+    ),
+    route(
         ("", "/media/v1/{project}/{environment}/{asset}"),
         &[op(
             Verb::Get,
@@ -4027,6 +4322,12 @@ pub(crate) fn document(build: &BuildInfo) -> Value {
                     "bearerFormat": "colophon_api_",
                     "description": "a project API token (`colophon_api_…`). It acts as its own identity with its own permissions, only on its own project's `/environments` routes and `/api/v1/rich-text/validate`: another project is 404, other routes are 403 `api_token_not_allowed`, and so is scheduling, which runs later as a person."
                 },
+                "previewToken": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "bearerFormat": "cpv_",
+                    "description": "a preview token (D-171): a customer's site exchanges a one-time code from a preview address for it. It reads one entry's drafts (or one publish request's pinned revisions) over the latest release, as the person who opened the preview may read them, until it expires or is revoked."
+                },
                 "audienceCookie": {
                     "type": "apiKey",
                     "in": "cookie",
@@ -4108,6 +4409,10 @@ const TAGS: &[(&str, &str)] = &[
     (
         "media",
         "verified asset bytes, publicly: sha addresses immutable, current-version addresses revalidating",
+    ),
+    (
+        "preview",
+        "drafts on the editor's own site: scoped, short-lived grants and the `/preview/v1` reads (never cached)",
     ),
 ];
 
@@ -4276,6 +4581,9 @@ fn operation(route: &Route, op: &Op) -> Value {
         }
         Security::Audience => {
             operation["security"] = json!([{ "audienceCookie": [] }, { "bearerToken": [] }]);
+        }
+        Security::PreviewToken => {
+            operation["security"] = json!([{ "previewToken": [] }]);
         }
     }
     operation
@@ -4553,6 +4861,7 @@ fn schema_table() -> Value {
         collaboration_parts(),
         publishing_parts(),
         delivery_parts(),
+        preview_parts(),
         mcp_parts(),
     ] {
         if let Value::Object(map) = part {
@@ -6085,6 +6394,139 @@ fn delivery_parts() -> Value {
             "required": ["data", "next_cursor", "applied"],
             "properties": {
                 "data": { "type": "array", "items": { "$ref": "#/components/schemas/PublishedEntryView" } },
+                "next_cursor": { "type": ["string", "null"] },
+                "applied": { "$ref": "#/components/schemas/AppliedQuery" },
+            },
+        },
+    })
+}
+
+/// Draft preview (D-171, D-172).
+#[expect(
+    clippy::too_many_lines,
+    reason = "a JSON Schema literal reads top to bottom; splitting scatters one component map"
+)]
+fn preview_parts() -> Value {
+    let scope = json!({
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+            "kind": { "type": "string", "enum": ["entry", "changeset"] },
+            "entry": { "type": "string", "format": "uuid" },
+            "changeset": { "type": "string", "format": "uuid" },
+        },
+    });
+    json!({
+        "PreviewScope": scope,
+        "PreviewTargetView": {
+            "type": "object",
+            "properties": {
+                "url_template": { "type": ["string", "null"], "description": "the site address a preview opens, with `{code}` and optional `{collection}`, `{id}`, `{slug}`, `{locale}`" },
+                "origin": { "type": ["string", "null"], "description": "the address's origin: where the Studio posts `colophon:draft-saved`" },
+                "updated_at": { "type": ["string", "null"], "format": "date-time" },
+            },
+        },
+        "SetPreviewTarget": {
+            "type": "object",
+            "required": ["url_template"],
+            "additionalProperties": false,
+            "properties": {
+                "url_template": { "type": ["string", "null"], "description": "https (http only to localhost on a development server), at most 2,048 characters, holding `{code}`; `null` clears it" },
+            },
+        },
+        "NewPreview": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "exactly one of `entry` and `changeset`",
+            "properties": {
+                "entry": { "type": "string", "format": "uuid" },
+                "changeset": { "type": "string", "format": "uuid" },
+                "ttl_seconds": { "type": "integer", "minimum": 60, "maximum": 3600, "default": 900 },
+            },
+        },
+        "PreviewIssuedView": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "code": { "type": "string", "description": "the one-time code (`cpc_…`): exchangeable once, for 60 seconds" },
+                "code_expires_at": { "type": "string", "format": "date-time" },
+                "expires_at": { "type": "string", "format": "date-time" },
+                "url": { "type": "string", "description": "the preview address with the code in it" },
+                "origin": { "type": "string" },
+                "scope": { "$ref": "#/components/schemas/PreviewScope" },
+            },
+        },
+        "PreviewLiveView": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "scope": { "$ref": "#/components/schemas/PreviewScope" },
+                "created_at": { "type": "string", "format": "date-time" },
+                "expires_at": { "type": "string", "format": "date-time" },
+                "exchanged": { "type": "boolean", "description": "whether a site has exchanged its code" },
+            },
+        },
+        "PreviewRenewedView": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "expires_at": { "type": "string", "format": "date-time" },
+            },
+        },
+        "PreviewCodeView": {
+            "type": "object",
+            "properties": {
+                "code": { "type": "string" },
+                "code_expires_at": { "type": "string", "format": "date-time" },
+                "url": { "type": "string" },
+            },
+        },
+        "PreviewExchange": {
+            "type": "object",
+            "required": ["code"],
+            "additionalProperties": false,
+            "properties": { "code": { "type": "string", "description": "the `cpc_…` code from the preview address" } },
+        },
+        "PreviewTokenView": {
+            "type": "object",
+            "properties": {
+                "token": { "type": "string", "description": "the bearer token (`cpv_…`); keep it in an HttpOnly cookie, never a URL" },
+                "expires_at": { "type": "string", "format": "date-time" },
+                "scope": { "$ref": "#/components/schemas/PreviewScope" },
+            },
+        },
+        "PreviewSessionView": {
+            "type": "object",
+            "properties": {
+                "scope": { "$ref": "#/components/schemas/PreviewScope" },
+                "expires_at": { "type": "string", "format": "date-time" },
+            },
+        },
+        "PreviewEntryView": {
+            "description": "a `PublishedEntryView`, byte for byte, plus `preview`",
+            "allOf": [
+                { "$ref": "#/components/schemas/PublishedEntryView" },
+                {
+                    "type": "object",
+                    "required": ["preview"],
+                    "properties": {
+                        "preview": {
+                            "type": "object",
+                            "required": ["source"],
+                            "properties": {
+                                "source": { "type": "string", "enum": ["published", "draft", "changeset"] },
+                                "hidden_fields": { "type": "array", "items": { "type": "string" }, "description": "fields the issuer's role can't read, left out" },
+                            },
+                        },
+                    },
+                },
+            ],
+        },
+        "PreviewQueryPage": {
+            "type": "object",
+            "required": ["data", "next_cursor", "applied"],
+            "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/PreviewEntryView" } },
                 "next_cursor": { "type": ["string", "null"] },
                 "applied": { "$ref": "#/components/schemas/AppliedQuery" },
             },
