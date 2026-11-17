@@ -342,8 +342,8 @@ pub(crate) async fn sign_up(
     Path(path): Path<AudiencePath>,
     body: Result<Json<AudienceSignUp>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let services = session::services(&state)?;
     let Json(body) = body?;
+    let services = session::services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let email = clean_email(&body.email)?;
     check_password(&body.password)?;
@@ -443,8 +443,8 @@ pub(crate) async fn sign_in(
     crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     body: Result<Json<AudienceSignIn>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let services = session::services(&state)?;
     let Json(body) = body?;
+    let services = session::services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let email = clean_email(&body.email)?;
     check_sign_in_password(&body.password)?;
@@ -1084,8 +1084,8 @@ pub(crate) async fn request_magic_link(
     crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     body: Result<Json<MagicLinkRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let services = session::services(&state)?;
     let Json(body) = body?;
+    let services = session::services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let email = clean_email(&body.email)?;
     let (return_to, origin) = check_return_to(&body.return_to)?;

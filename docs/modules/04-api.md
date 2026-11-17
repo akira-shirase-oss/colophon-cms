@@ -64,7 +64,10 @@ create → conflict → review → publish scenario produce equivalent durable r
      and otherwise the response says `Connection: close` (RFC 9112 §9.6; found by the testbed);
   6. `CatchPanicLayer::custom`;
   7. timeout (504 `deadline_exceeded`);
-  8. body limit (1 MiB; uploads stream separately).
+  8. body limit (`COLOPHON_MAX_BODY_BYTES`, 21 MiB by default, sized for uploads). The routes anyone may call
+     with a body before signing in — `/auth/signup`, `/auth/signin`, `/auth/device`, `/auth/device/token` and an
+     audience's `signup`, `signin` and `magic-link` — read at most 16 KiB (`body_limit` in the route table,
+     D-164): a 413 past it, and the rest of the body is drained, never kept.
 - Inside that stack, around every route: rate limits (milestone S, D-076; `admission.rs`). The management API
   (`/api/`, `/auth/`) counts per client address (IPv6 by its /64, D-162) and per credential (a session cookie or bearer token, hashed; a
   made-up one counts too), public delivery (`/content/`) per client address at its own rate; health, `/version` and

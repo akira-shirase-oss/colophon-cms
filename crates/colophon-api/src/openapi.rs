@@ -93,7 +93,13 @@ impl Route {
     /// The `MethodRouter` holding every operation on this path.
     pub(crate) fn router(&self) -> MethodRouter<AppState> {
         self.ops.iter().fold(MethodRouter::new(), |router, op| {
-            router.merge((op.build)(op.verb.filter()))
+            let served = (op.build)(op.verb.filter());
+            router.merge(match op.doc.body_limit {
+                // The extractors read at most this; the hygiene layer drains, never keeps,
+                // whatever is left (body.rs).
+                Some(bytes) => served.layer(axum::extract::DefaultBodyLimit::max(bytes)),
+                None => served,
+            })
         })
     }
 
@@ -212,7 +218,16 @@ struct OpDoc {
     /// import dry run's plan (D-114).
     also: Option<Res>,
     extra: &'static [Refusal],
+    /// The most body bytes the operation reads, when it is smaller than the server-wide limit
+    /// (which is sized for uploads): the routes anyone may call with a body before signing in
+    /// read [`PUBLIC_FORM_BYTES`], so a stranger's body is never buffered past what its fields
+    /// could need.
+    body_limit: Option<usize>,
 }
+
+/// What the public sign-in forms may send (D-164): an email (254 bytes), a password (512), a
+/// display name or a `return_to` (2 KiB), JSON around them — with room to spare.
+pub(crate) const PUBLIC_FORM_BYTES: usize = 16 * 1024;
 
 const fn op(verb: Verb, build: fn(MethodFilter) -> MethodRouter<AppState>, doc: OpDoc) -> Op {
     Op { verb, build, doc }
@@ -430,6 +445,7 @@ const MIN: OpDoc = OpDoc {
     },
     also: None,
     extra: &[],
+    body_limit: None,
 };
 
 // ---------------------------------------------------------------------------
@@ -634,6 +650,7 @@ pub(crate) static TABLE: &[Route] = &[
                     refusal(409, "email_taken", "an account with this email exists"),
                     refusal(422, "invalid_email, weak_password", "the fields refused"),
                 ],
+                body_limit: Some(PUBLIC_FORM_BYTES),
                 ..MIN
             },
         )],
@@ -673,6 +690,7 @@ pub(crate) static TABLE: &[Route] = &[
                         "password work at its bound; `Retry-After` says when",
                     ),
                 ],
+                body_limit: Some(PUBLIC_FORM_BYTES),
                 ..MIN
             },
         )],
@@ -689,6 +707,7 @@ pub(crate) static TABLE: &[Route] = &[
                 security: Security::Public,
                 body: Some(json("DeviceStart")),
                 ok: created("DeviceStarted"),
+                body_limit: Some(PUBLIC_FORM_BYTES),
                 ..MIN
             },
         )],
@@ -729,6 +748,7 @@ pub(crate) static TABLE: &[Route] = &[
                     Shape::Data("DevicePolled"),
                     "`pending` until a browser approves, `approved` with the token",
                 ),
+                body_limit: Some(PUBLIC_FORM_BYTES),
                 ..MIN
             },
         )],
@@ -2083,6 +2103,7 @@ pub(crate) static TABLE: &[Route] = &[
                         REUSED_KEY,
                     ],
                     also: None,
+                    body_limit: None,
                 },
             ),
         ],
@@ -2239,6 +2260,7 @@ pub(crate) static TABLE: &[Route] = &[
                     BAD_MATCH,
                     REUSED_KEY,
                 ],
+                body_limit: None,
             },
         )],
     ),
@@ -2300,6 +2322,7 @@ pub(crate) static TABLE: &[Route] = &[
                         REUSED_KEY,
                     ],
                     also: None,
+                    body_limit: None,
                 },
             ),
             op(
@@ -3301,6 +3324,7 @@ pub(crate) static TABLE: &[Route] = &[
                         "the fields refused — a role not open to signup among them",
                     ),
                 ],
+                body_limit: Some(PUBLIC_FORM_BYTES),
                 ..MIN
             },
         )],
@@ -3341,6 +3365,7 @@ pub(crate) static TABLE: &[Route] = &[
                         "password work at its bound; `Retry-After` says when",
                     ),
                 ],
+                body_limit: Some(PUBLIC_FORM_BYTES),
                 ..MIN
             },
         )],
@@ -3376,6 +3401,7 @@ pub(crate) static TABLE: &[Route] = &[
                         "this address's last link is under a minute old and unused, or the project is at its per-minute ceiling; `Retry-After` says when",
                     ),
                 ],
+                body_limit: Some(PUBLIC_FORM_BYTES),
                 ..MIN
             },
         )],

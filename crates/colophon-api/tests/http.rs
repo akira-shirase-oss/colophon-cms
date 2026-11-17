@@ -323,3 +323,57 @@ async fn hostile_request_ids_are_replaced() {
         assert_eq!(id.get_version_num(), 7);
     }
 }
+
+/// The routes anyone may call with a body before signing in — sign-up, sign-in, the device
+/// flow's public half, an audience's sign-up, sign-in and magic-link requests — read at most
+/// 16 KiB, whatever the server-wide limit (sized for uploads) allows: their fields fit in well
+/// under one, and a stranger's body is buffered to be parsed. A body past it is a 413 before
+/// any handler runs; one that fits reaches the handler (here, without services, a 503).
+#[tokio::test]
+async fn unauthenticated_bodies_are_held_to_a_small_limit() {
+    let roomy = HttpLimits {
+        request_timeout: Duration::from_secs(5),
+        max_body_bytes: 21 * 1024 * 1024,
+    };
+    let project = "01a1e7a9-2124-7402-831c-7bf75e44a705";
+    let padding = "x".repeat(64 * 1024);
+    for path in [
+        "/auth/signup".to_owned(),
+        "/auth/signin".to_owned(),
+        "/auth/device".to_owned(),
+        "/auth/device/token".to_owned(),
+        format!("/audience/v1/{project}/signup"),
+        format!("/audience/v1/{project}/signin"),
+        format!("/audience/v1/{project}/magic-link"),
+    ] {
+        let app = || {
+            let state = AppState::without_services(ready());
+            let build = state.build;
+            middleware::apply(colophon_api::routes(state), roomy, build)
+        };
+        let big = json!({"email": "a@example.test", "password": "x", "padding": padding});
+        let request = Request::post(path.as_str())
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(big.to_string()))
+            .expect("valid request");
+        let reply = send(app(), request).await;
+        assert_eq!(
+            reply.status,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "{path}: {}",
+            reply.body
+        );
+
+        let small = Request::post(path.as_str())
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"email":"a@example.test","password":"x"}"#))
+            .expect("valid request");
+        let reply = send(app(), small).await;
+        assert_ne!(
+            reply.status,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "{path}: {}",
+            reply.body
+        );
+    }
+}
