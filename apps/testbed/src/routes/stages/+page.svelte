@@ -164,8 +164,15 @@
 			headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken(), 'If-Match': `"${hash}"`, 'Idempotency-Key': crypto.randomUUID() },
 			body: JSON.stringify({ base_generation: Number(base) })
 		});
-		message = reply.status === 201 ? `published (generation ${(reply.body as { data: { generation: number } }).data.generation})` : describe(reply);
-		if (reply.status === 201) await reload();
+		if (reply.status !== 201) {
+			message = describe(reply);
+			return;
+		}
+		const published = `published (generation ${(reply.body as { data: { generation: number } }).data.generation})`;
+		// Refresh the changeset's state, then say what happened: the refresh's own "loaded" must
+		// not replace the answer to the click (a race the testbed's CI lost on a fast runner).
+		await reload();
+		message = published;
 	}
 
 	onMount(loadProjects);
