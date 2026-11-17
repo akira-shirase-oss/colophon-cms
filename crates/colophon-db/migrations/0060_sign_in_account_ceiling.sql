@@ -13,7 +13,14 @@ ALTER TABLE sign_in_throttle ADD COLUMN trusted boolean NOT NULL DEFAULT false;
 CREATE INDEX sign_in_throttle_by_account ON sign_in_throttle (realm, email, updated_at)
     WHERE NOT trusted;
 
-CREATE OR REPLACE FUNCTION colophon_sweep_sign_in_throttle(cutoff timestamptz, batch bigint)
+-- The sweep keeps trusted keys 90 days. Its function belongs to colophon_retention (0057), and
+-- only an owner may replace a function — a migrator that isn't a superuser is not one — so it
+-- is dropped as its owner and created again exactly as 0057 created it.
+SET LOCAL ROLE colophon_retention;
+DROP FUNCTION colophon_sweep_sign_in_throttle(timestamptz, bigint);
+RESET ROLE;
+
+CREATE FUNCTION colophon_sweep_sign_in_throttle(cutoff timestamptz, batch bigint)
     RETURNS bigint LANGUAGE plpgsql VOLATILE SECURITY DEFINER
     SET search_path = pg_catalog, pg_temp
 AS $$
@@ -30,3 +37,7 @@ BEGIN
     GET DIAGNOSTICS removed = ROW_COUNT;
     RETURN removed;
 END $$;
+
+ALTER FUNCTION colophon_sweep_sign_in_throttle(timestamptz, bigint) OWNER TO colophon_retention;
+REVOKE ALL ON FUNCTION colophon_sweep_sign_in_throttle(timestamptz, bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION colophon_sweep_sign_in_throttle(timestamptz, bigint) TO colophon_worker;
