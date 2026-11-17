@@ -127,6 +127,19 @@ colophon export --env production --out export-directory
     line that isn't JSON, one line bigger than a document can be, or a final line that never ends is an
     internal failure, so a truncated export reads as one. There is no `--cursor`: the endpoint answers
     the whole bounded export and doesn't page, so the CLI doesn't invent one.
+- Built in gap/locales: `locales list` prints the environment's languages in display order — label,
+  tag, and `default` or where each falls back — and `--json` answers `{"version", "etag",
+  "locales"}`. `locales set --file locales.json [--idempotency-key KEY]` reads a file holding
+  exactly `{"locales": [...]}` (each language an object; the tags, labels, the one default and
+  the chains are the API's to judge), refused at exit 2 before any request otherwise. It reads the
+  current list, says `unchanged` without writing when the file already matches, and otherwise
+  `PUT`s on top of the `ETag` it read with one `Idempotency-Key` (retried with that key on a lost
+  answer). A refusal is told in plain words — the language in the file a pointer names, and what
+  to do: someone changed the list in between (`stale_locales`, exit 4, nothing saved), a removed
+  language entries are written in (`locale_in_use`, exit 4, naming up to five of them), the
+  `schema.change` permission (exit 3), or the rule a tag, label, default or fallback broke (exit
+  2) — while `--json` keeps the API's error object whole. `tests/locales.rs` runs the binary
+  against a canned server for each path.
 - `module enable` from spec §11 is dropped, because v0.1 has no optional modules.
 - `colophon dev` may orchestrate local dependencies but must never discover or use production credentials silently.
 

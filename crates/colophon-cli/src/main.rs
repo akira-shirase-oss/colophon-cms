@@ -9,7 +9,8 @@
 //! `login`, `whoami`, `content create` and `content list` in P1, `release …` in P2,
 //! and — with the API's collaboration and migration routes (M.5, E1) — `content query`,
 //! `release …`, `migration …`, `comment …` and `task …`. `mcp` is P5: the same MCP
-//! stdio server the `colophon-mcp` binary serves, linked into this binary.
+//! stdio server the `colophon-mcp` binary serves, linked into this binary. `locales …`
+//! reads and replaces an environment's languages.
 
 mod admin;
 mod client;
@@ -18,6 +19,7 @@ mod compat;
 mod content;
 mod credentials;
 mod doctor;
+mod locales;
 mod login;
 mod mcp;
 mod migration;
@@ -144,6 +146,9 @@ enum Command {
     /// List, create and update the environment's tasks.
     #[command(subcommand)]
     Task(TaskCommand),
+    /// List the environment's languages, or replace them from a file.
+    #[command(subcommand)]
+    Locales(LocalesCommand),
     /// Operator mode: direct infrastructure access, separate from normal commands.
     #[command(subcommand)]
     Admin(AdminCommand),
@@ -313,6 +318,38 @@ enum ReleaseCommand {
         /// The release's generation, as `release list` prints it.
         #[arg(value_parser = clap::value_parser!(u64).range(1..))]
         generation: u64,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// An environment's languages: each one's label, tag, default flag and fallback chain.
+#[derive(Debug, Subcommand)]
+enum LocalesCommand {
+    /// List the languages in display order: label, tag, the default, and where each falls back.
+    List {
+        #[command(flatten)]
+        scope: InProject,
+        /// Print one versioned JSON result instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Replace the languages with a file's `{"locales": [...]}` — the whole list, in order.
+    ///
+    /// Each language is `{"tag", "label", "default", "fallback"}`. The save goes on top of the
+    /// list as this command reads it, so a change someone made in between is refused (exit 4),
+    /// never overwritten; removing a language entries are written in is refused too, naming
+    /// them. Needs the schema.change permission.
+    Set {
+        #[command(flatten)]
+        scope: InProject,
+        /// The file holding `{"locales": [...]}`.
+        #[arg(long)]
+        file: PathBuf,
+        /// Reuse the key of an earlier attempt that got no answer: it can't save twice.
+        #[arg(long)]
+        idempotency_key: Option<String>,
         /// Print one versioned JSON result instead of text.
         #[arg(long)]
         json: bool,
@@ -842,6 +879,7 @@ fn main() -> ExitCode {
         Command::Migration(command) => run_migration(&runtime, command),
         Command::Comment(command) => run_comment(&runtime, command),
         Command::Task(command) => run_task(&runtime, command),
+        Command::Locales(command) => run_locales(&runtime, command),
         Command::Mcp => runtime.block_on(mcp::run()),
     }
 }
@@ -1024,6 +1062,31 @@ fn run_release(runtime: &Runtime, command: ReleaseCommand) -> ExitCode {
             let out = out::Out::new("release show", out::Format::of(json, false));
             finish(
                 runtime.block_on(release::show(&scope.scope(), generation, out)),
+                &out,
+            )
+            .into()
+        }
+    }
+}
+
+fn run_locales(runtime: &Runtime, command: LocalesCommand) -> ExitCode {
+    match command {
+        LocalesCommand::List { scope, json } => {
+            let out = out::Out::new("locales list", out::Format::of(json, false));
+            finish(runtime.block_on(locales::list(&scope.scope(), out)), &out).into()
+        }
+        LocalesCommand::Set {
+            scope,
+            file,
+            idempotency_key,
+            json,
+        } => {
+            let out = out::Out::new("locales set", out::Format::of(json, false));
+            finish(
+                runtime.block_on(async {
+                    let document = content::content(None, Some(&file)).await?;
+                    locales::set(&scope.scope(), &document, idempotency_key.as_deref(), out).await
+                }),
                 &out,
             )
             .into()
