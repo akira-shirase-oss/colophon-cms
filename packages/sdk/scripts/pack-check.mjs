@@ -12,7 +12,8 @@
 //      the SDK against a stub server (livez, the compatibility check, a delivery read) and
 //      renders every rich-text fixture to its reviewed HTML; a TypeScript type-check of a
 //      consumer file and of every `ts` code block in both READMEs, under `nodenext` and
-//      `bundler` resolution with each TypeScript the workspace uses; and a browser bundle of
+//      `bundler` resolution with each TypeScript the workspace uses; the packed declarations'
+//      public API against each package's committed api-report.txt; and a browser bundle of
 //      `Client` and `Delivery`, minified and gzipped, held to a budget.
 //
 //   node packages/sdk/scripts/pack-check.mjs              # tarballs in a temporary directory
@@ -283,7 +284,19 @@ for (const { label, tsc } of compilers) {
 	}
 }
 
-// 3c. A browser bundle of the client, as a site would ship it.
+// 3c. The public API, from the packed declarations, against the committed report (api-report.mjs).
+step('public API: the packed declarations against api-report.txt');
+const { report } = await import('./api-report.mjs');
+for (const { name, dir } of PACKAGES) {
+	const committed = path.join(repository, dir, 'api-report.txt');
+	const packedReport = report(path.join(consumer, 'node_modules', name, 'dist/index.d.ts'));
+	check(
+		readFileSync(committed, 'utf8') === packedReport,
+		`${name}'s public API changed: review it, then run node packages/sdk/scripts/api-report.mjs ${dir}/dist/index.d.ts ${dir}/api-report.txt --update`
+	);
+}
+
+// 3d. A browser bundle of the client, as a site would ship it.
 step('browser bundle: Client and Delivery, minified and gzipped');
 writeFileSync(path.join(consumer, 'browser.mjs'), "export { Client, Delivery } from '@colophon-cms/sdk';\n");
 try {

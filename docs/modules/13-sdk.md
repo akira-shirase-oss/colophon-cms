@@ -63,7 +63,10 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
   compatibility check, a delivery read rendered), every rich-text fixture against its reviewed
   HTML, a type-check of a consumer file and of every `ts` block in both READMEs under `nodenext`
   and `bundler` resolution with TypeScript 5.9 and 6.0, and a browser bundle of `Client` and
-  `Delivery` held to 12 KB min+gzip (4.5 KB at 0.1.0-alpha.1).
+  `Delivery` held to 12 KB min+gzip (4.5 KB at 0.1.0-alpha.1). Last, each package's public API —
+  every export of the packed `dist/index.d.ts`, declarations as written, generated wire types by
+  name only — must equal its committed `api-report.txt` (`scripts/api-report.mjs … --update`
+  rewrites it), so a removed, renamed or re-typed export shows up in review.
 - **Rich text outside the monorepo (D-170):** `@colophon-cms/rich-text` (`packages/rich-text`) is
   the content renderer as a zero-dependency package: its build assembles
   `packages/content-renderer/src/render.ts` and `packages/editor/src/schema.ts` (plus the stored

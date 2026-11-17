@@ -1,0 +1,157 @@
+class Client
+  constructor(options: ClientOptions);
+  compatibility(options?: ReadOptions): Promise<Compatibility>;
+  livez(options?: ReadOptions): Promise<Reply<ReplyJson<'liveness'>>>;
+  readyz(options?: ReadOptions): Promise<Reply<ReplyJson<'readiness'>>>;
+  version(options?: ReadOptions): Promise<Reply<ReplyJson<'serverVersion'>>>;
+  me(options?: ReadOptions): Promise<Reply<ReplyJson<'me'>>>;
+  validateRichText(doc: components['schemas']['RichTextDocument'], options?: ReadOptions): Promise<Reply<ReplyJson<'validateRichText'>>>;
+  listProjects(opts?: QueryOf<'listProjects'> & ReadOptions): Promise<Reply<ReplyJson<'listProjects'>>>;
+  getProject(project: string, options?: ReadOptions): Promise<Reply<ReplyJson<'getProject'>>>;
+  environment(project: string, environment?: string): Environment;
+  delivery(project: string, environment?: string): Delivery;
+class Environment
+  constructor(send: Send, project: string, environment: string);
+  ownPermissions(options?: ReadOptions): Promise<Reply<ReplyJson<'ownPermissions'>>>;
+  listEntries(collection: string, opts?: QueryOf<'listEntries'> & ReadOptions): Promise<Reply<ReplyJson<'listEntries'>>>;
+  getEntry(collection: string, entry: string, options?: ReadOptions): Promise<Reply<ReplyJson<'getEntry'>>>;
+  createEntry(collection: string, document: RequestJson<'createEntry'>, opts: WriteOptions & { locale?: string; }): Promise<Reply<ReplyJson<'createEntry'>>>;
+  saveEntry(collection: string, entry: string, document: RequestJson<'saveEntry'>, opts: GuardedOptions & { locale?: string; }): Promise<Reply<ReplyJson<'saveEntry'>>>;
+  deleteEntry(collection: string, entry: string, opts: GuardedOptions): Promise<Reply<ReplyJson<'deleteEntry'>>>;
+  entryHistory(collection: string, entry: string, options?: ReadOptions): Promise<Reply<ReplyJson<'entryHistory'>>>;
+  getRevision(collection: string, entry: string, revision: string, options?: ReadOptions): Promise<Reply<ReplyJson<'getRevision'>>>;
+  queryEntries(collection: string, document: RequestJson<'queryEntries'>, opts?: { cursor?: string; } & ReadOptions): Promise<Reply<ReplyJson<'queryEntries'>>>;
+  listContentTypes(options?: ReadOptions): Promise<Reply<ReplyJson<'listContentTypes'>>>;
+  getContentType(slug: string, options?: ReadOptions): Promise<Reply<ReplyJson<'getContentType'>>>;
+  createContentType(body: RequestJson<'createContentType'>, opts: WriteOptions): Promise<Reply<ReplyJson<'createContentType'>>>;
+  updateContentType(slug: string, definition: components['schemas']['TypeDefinition'], opts: GuardedOptions): Promise<Reply<ReplyJson<'updateContentType'>>>;
+  deleteContentType(slug: string, opts: GuardedOptions): Promise<Reply<ReplyJson<'deleteContentType'>>>;
+  listChangesets(options?: ReadOptions): Promise<Reply<ReplyJson<'listChangesets'>>>;
+  getChangeset(changeset: string, options?: ReadOptions): Promise<Reply<ReplyJson<'getChangeset'>>>;
+  createChangeset(body: RequestJson<'createChangeset'>, opts: WriteOptions): Promise<Reply<ReplyJson<'createChangeset'>>>;
+  submitChangeset(changeset: string, opts: MatchOptions): Promise<Reply<ReplyJson<'submitChangeset'>>>;
+  reviewChangeset(changeset: string, review: RequestJson<'reviewChangeset'>, opts: MatchOptions): Promise<Reply<ReplyJson<'reviewChangeset'>>>;
+  publishChangeset(changeset: string, release: RequestJson<'publishChangeset'>, opts: GuardedOptions): Promise<Reply<ReplyJson<'publishChangeset'>>>;
+  listReleases(options?: ReadOptions): Promise<Reply<ReplyJson<'listReleases'>>>;
+  getReceipt(generation: number, options?: ReadOptions): Promise<Reply<ReplyJson<'getReceipt'>>>;
+  listComments(collection: string, entry: string, opts?: QueryOf<'listComments'> & ReadOptions): Promise<Reply<ReplyJson<'listComments'>>>;
+  getComment(collection: string, entry: string, comment: string, options?: ReadOptions): Promise<Reply<ReplyJson<'getComment'>>>;
+  createComment(collection: string, entry: string, body: RequestJson<'createComment'>, opts: WriteOptions): Promise<Reply<ReplyJson<'createComment'>>>;
+  resolveComment(collection: string, entry: string, comment: string, opts: GuardedOptions): Promise<Reply<ReplyJson<'resolveComment'>>>;
+  reopenComment(collection: string, entry: string, comment: string, opts: GuardedOptions): Promise<Reply<ReplyJson<'reopenComment'>>>;
+  listTasks(opts?: QueryOf<'listTasks'> & ReadOptions): Promise<Reply<ReplyJson<'listTasks'>>>;
+  getTask(task: string, options?: ReadOptions): Promise<Reply<ReplyJson<'getTask'>>>;
+  createTask(body: RequestJson<'createTask'>, opts: WriteOptions): Promise<Reply<ReplyJson<'createTask'>>>;
+  updateTask(task: string, patch: RequestJson<'updateTask'>, opts: GuardedOptions): Promise<Reply<ReplyJson<'updateTask'>>>;
+  listMigrations(opts?: QueryOf<'listMigrations'> & ReadOptions): Promise<Reply<ReplyJson<'listMigrations'>>>;
+  getMigration(migration: string, options?: ReadOptions): Promise<Reply<ReplyJson<'getMigration'>>>;
+  listMigrationItems(migration: string, opts?: QueryOf<'listMigrationItems'> & ReadOptions): Promise<Reply<ReplyJson<'listMigrationItems'>>>;
+  listAssets(options?: ReadOptions): Promise<Reply<ReplyJson<'listAssets'>>>;
+  getAsset(asset: string, options?: ReadOptions): Promise<Reply<ReplyJson<'getAsset'>>>;
+class Delivery
+  constructor(send: Send, project: string, environment: string, generation?: number);
+  atGeneration(generation: number): Delivery;
+  list(collection: string, opts?: { limit?: number; cursor?: string; generation?: number; } & ReadOptions): Promise<Reply<ReplyJson<'deliveryList'>>>;
+  get(collection: string, entry: string, opts?: { generation?: number; } & ReadOptions): Promise<Reply<ReplyJson<'deliveryGet'>>>;
+  query(collection: string, document: RequestJson<'deliveryQuery'>, opts?: { cursor?: string; generation?: number; } & ReadOptions): Promise<Reply<ReplyJson<'deliveryQuery'>>>;
+function newIdempotencyKey(): string;
+interface ClientOptions
+  baseUrl: string;
+  token?: string;
+  session?: SessionCredential;
+  fetch?: typeof fetch;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+  maxBodyBytes?: number;
+  compat?: 'off' | 'warn' | 'throw';
+interface SessionCredential
+  csrf: string;
+  cookie?: string;
+interface CallOptions
+  signal?: AbortSignal;
+type ReadOptions = CallOptions;
+interface WriteOptions extends CallOptions
+  idempotencyKey: string;
+interface MatchOptions extends CallOptions
+  ifMatch: string;
+interface GuardedOptions extends WriteOptions, MatchOptions
+type Reply<B> = B & { response: ReplyMeta; };
+interface ReplyMeta
+  readonly status: number;
+  readonly etag: string | null;
+  readonly replayed: boolean;
+  readonly requestId: string | null;
+type RequestJson<O extends keyof operations> = operations[O] extends { requestBody: { content: { 'application/json': infer B; }; }; } ? B : never;
+type ReplyJson<O extends keyof operations> = operations[O]['responses'] extends { 200: { content: { 'application/json': infer B; }; }; } ? B : operations[O]['responses'] extends { 201: { content: { 'application/json': infer B; }; }; } ? B : never;
+type QueryOf<O extends keyof operations> = operations[O]['parameters'] extends { query?: infer Q; } ? NonNullable<Q> : Record<string, never>;
+class ApiError extends Error
+  readonly status: number;
+  readonly code: ErrorCode | ClientCode;
+  readonly name = "ApiError";
+  readonly requestId: string | null;
+  readonly details: ErrorDetails | null;
+  readonly etag: string | null;
+  readonly retryAfterMs: number | null;
+  constructor(status: number, code: ErrorCode | ClientCode, message: string, init?: { requestId?: string | null; details?: ErrorDetails | null; etag?: string | null; retryAfterMs?: number | null; cause?: unknown; });
+  get reason(): string | null;
+  get pointer(): string | null;
+  get retryable(): boolean;
+function errorOf(body: unknown): ErrorEnvelope['error'] | null;
+const SDK_VERSION = "0.1.0-alpha.1"
+const API = "v1"
+const OLDEST_SERVER = "0.1.0-alpha.1"
+interface Compatibility
+  readonly compatible: boolean;
+  readonly sdk: string;
+  readonly server: string | null;
+  readonly api: readonly string[];
+  readonly misfit?: Misfit;
+  readonly reason?: string;
+type Misfit = 'api_dropped' | 'api_not_yet' | 'later_line' | 'earlier_line' | 'before_oldest' | 'no_version_report';
+type ErrorEnvelope = components['schemas']['Error'];
+type ErrorCode = ErrorEnvelope['error']['code'];
+type ErrorDetails = NonNullable<ErrorEnvelope['error']['details']>;
+type ClientCode = 'no_answer' | 'invalid_response' | 'response_too_large' | 'incompatible_server';
+paths: generated from the OpenAPI document
+operations: generated from the OpenAPI document
+components: generated from the OpenAPI document
+type Liveness = components['schemas']['Liveness'];
+type ReadinessReport = components['schemas']['ReadinessReport'];
+type VersionReport = components['schemas']['VersionReport'];
+type Me = components['schemas']['Me'];
+type ProjectView = components['schemas']['ProjectView'];
+type PermissionView = components['schemas']['PermissionView'];
+type EntryDocument = components['schemas']['EntryDocument'];
+type DraftView = components['schemas']['DraftView'];
+type EntrySummaryView = components['schemas']['EntrySummaryView'];
+type RevisionView = components['schemas']['RevisionView'];
+type RevisionContentView = components['schemas']['RevisionContentView'];
+type DeletedView = components['schemas']['DeletedView'];
+type QueryDocument = components['schemas']['QueryDocument'];
+type QueryPage = components['schemas']['QueryPage'];
+type QueriedView = components['schemas']['QueriedView'];
+type AppliedQuery = components['schemas']['AppliedQuery'];
+type TypeDefinition = components['schemas']['TypeDefinition'];
+type TypeVersionView = components['schemas']['TypeVersionView'];
+type NewType = components['schemas']['NewType'];
+type ChangesetView = components['schemas']['ChangesetView'];
+type ChangesetSummaryView = components['schemas']['ChangesetSummaryView'];
+type NewChangeset = components['schemas']['NewChangeset'];
+type NewReview = components['schemas']['NewReview'];
+type NewRelease = components['schemas']['NewRelease'];
+type PublishedView = components['schemas']['PublishedView'];
+type ReleaseView = components['schemas']['ReleaseView'];
+type ReceiptView = components['schemas']['ReceiptView'];
+type CommentView = components['schemas']['CommentView'];
+type NewComment = components['schemas']['NewComment'];
+type TaskView = components['schemas']['TaskView'];
+type NewTask = components['schemas']['NewTask'];
+type TaskUpdate = components['schemas']['TaskUpdate'];
+type MigrationSummaryView = components['schemas']['MigrationSummaryView'];
+type PlanView = components['schemas']['PlanView'];
+type MigrationItemView = components['schemas']['MigrationItemView'];
+type AssetView = components['schemas']['AssetView'];
+type RichTextDocument = components['schemas']['RichTextDocument'];
+type RichTextVerdict = components['schemas']['RichTextVerdict'];
+type PublishedEntryView = components['schemas']['PublishedEntryView'];
+type DeliveryQueryPage = components['schemas']['DeliveryQueryPage'];

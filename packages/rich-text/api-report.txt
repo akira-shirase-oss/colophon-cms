@@ -1,0 +1,21 @@
+function renderToHtml(value: RichTextValue, options: RenderOptions): string;
+const RENDERER_VERSION = 1
+class UnrenderableContent extends Error
+  name: string;
+interface RenderOptions
+  assetUrl: (assetId: string) => string;
+const RICH_TEXT_SCHEMA = "colophon/rich-text"
+const RICH_TEXT_VERSION = 1
+interface RichTextValue
+  schema: typeof RICH_TEXT_SCHEMA;
+  version: typeof RICH_TEXT_VERSION;
+  doc: StoredNode;
+interface StoredNode
+  type: string;
+  attrs?: Record<string, string | number>;
+  text?: string;
+  marks?: StoredMark[];
+  content?: StoredNode[];
+interface StoredMark
+  type: string;
+  attrs?: Record<string, string>;
