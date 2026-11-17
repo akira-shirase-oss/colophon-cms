@@ -207,6 +207,9 @@ impl Class {
         } else if path.starts_with("/api/")
             || path.starts_with("/auth/")
             || path.starts_with("/audience/")
+            // Preview reads and exchanges (D-171): per address and per bearer, like the
+            // management API — a preview token is a credential, not anonymous delivery.
+            || path.starts_with("/preview/")
         {
             Some(Self::Management)
         } else {
@@ -852,6 +855,10 @@ mod tests {
         assert_eq!(Class::of("/readyz"), None);
         assert_eq!(Class::of("/studio/_app/x.js"), None);
         assert_eq!(Class::of("/auth/login"), Some(Class::Management));
+        assert_eq!(
+            Class::of("/preview/v1/p/production/exchange"),
+            Some(Class::Management)
+        );
     }
 
     #[test]

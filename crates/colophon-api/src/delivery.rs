@@ -106,6 +106,8 @@ pub(crate) struct QueryParams {
     cursor: Option<String>,
 }
 
+/// One published entry as `/content/v1` answers it — and, with a `preview` member beside it,
+/// as `/preview/v1` does (D-171): one serialization for both.
 #[derive(Serialize)]
 pub(crate) struct PublishedView {
     id: Uuid,
@@ -125,7 +127,7 @@ pub(crate) struct PublishedView {
 }
 
 impl PublishedView {
-    fn new(row: Published) -> Result<Self, ApiError> {
+    pub(crate) fn new(row: Published) -> Result<Self, ApiError> {
         Ok(Self {
             id: row.entry_id,
             revision_id: row.revision_id,

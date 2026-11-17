@@ -498,6 +498,21 @@ pub enum ApiError {
     /// Sign-in failed. Details are logged, never shown: they can help an attacker.
     #[error("sign-in failed or expired; start again")]
     SignInFailed,
+    /// A preview read or exchange refused (D-170): 401 for a token that ended, 404 for a code
+    /// that can't be spent, 409 when the publish request moved, 410 once it is published, 422
+    /// for a pinned read. `reason` is the stable code (`preview_expired`, …); the message is
+    /// safe to show.
+    #[error("{message}")]
+    Preview {
+        /// The status: 401, 404, 409, 410 or 422.
+        status: StatusCode,
+        /// A stable code clients can act on.
+        reason: &'static str,
+        /// What is wrong, for people.
+        message: &'static str,
+        /// For 410: the release that published the request, sent as `Colophon-Generation`.
+        generation: Option<i64>,
+    },
     /// An unexpected failure; the boxed error is the private cause.
     #[error("internal error")]
     Internal(#[source] Box<dyn StdError + Send + Sync>),
@@ -699,6 +714,7 @@ impl ApiError {
             | Self::WorkFull { .. }
             | Self::PayloadFull { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Preview { status, .. } => *status,
         }
     }
 
@@ -740,6 +756,14 @@ impl ApiError {
             | Self::PayloadFull { .. } => ErrorCode::Unavailable,
             Self::SignInFailed => ErrorCode::SignInFailed,
             Self::Internal(_) => ErrorCode::Internal,
+            Self::Preview { status, .. } => match *status {
+                StatusCode::UNAUTHORIZED => ErrorCode::Unauthorized,
+                StatusCode::NOT_FOUND => ErrorCode::NotFound,
+                StatusCode::CONFLICT => ErrorCode::Conflict,
+                StatusCode::GONE => ErrorCode::Gone,
+                StatusCode::TOO_MANY_REQUESTS => ErrorCode::RateLimited,
+                _ => ErrorCode::ValidationFailed,
+            },
         }
     }
 
@@ -769,7 +793,9 @@ impl ApiError {
                 permission: *permission,
                 ..ErrorDetails::new(reason, "")
             }),
-            Self::Conflict { reason, .. } => Some(ErrorDetails::new(reason, "")),
+            Self::Conflict { reason, .. } | Self::Preview { reason, .. } => {
+                Some(ErrorDetails::new(reason, ""))
+            }
             Self::WorkFull { .. } => Some(ErrorDetails::new("work_full", "")),
             Self::PayloadFull { .. } => Some(ErrorDetails::new("payload_full", "")),
             Self::TooManyRequests { .. } => Some(ErrorDetails::new("rate_limited", "")),
@@ -902,6 +928,21 @@ impl IntoResponse for ApiError {
                 response
                     .headers_mut()
                     .insert(crate::delivery::GENERATION, HeaderValue::from(current));
+            }
+            Self::Preview {
+                status, generation, ..
+            } => {
+                if status == StatusCode::UNAUTHORIZED {
+                    response.headers_mut().insert(
+                        header::WWW_AUTHENTICATE,
+                        HeaderValue::from_static("Bearer error=\"invalid_token\""),
+                    );
+                }
+                if let Some(generation) = generation {
+                    response
+                        .headers_mut()
+                        .insert(crate::delivery::GENERATION, HeaderValue::from(generation));
+                }
             }
             Self::RateLimited { retry_after } | Self::TooManyRequests { retry_after } => {
                 response
