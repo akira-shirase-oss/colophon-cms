@@ -31,7 +31,7 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - Roles and memberships.
 - Machine credentials for scripts and agents.
 - The policy function.
-- Preview grants (D-170): scoped, short-lived, hashed, re-checked against the issuer on every read.
+- Preview grants (D-171): scoped, short-lived, hashed, re-checked against the issuer on every read.
 - The row-level-security context for each transaction.
 
 ## Not its job
@@ -427,7 +427,7 @@ Built in step 1.7 (D-042), for people:
 - Revocation is checked before every later authorized operation, including the worker's next external attempt.
 - The decision sets the transaction-local row-level-security context that [db](02-db.md) relies on.
 
-### Preview grants (D-170; built 2026-11-17, gap 1)
+### Preview grants (D-171; built 2026-11-17, gap 1)
 A preview is a **delegated, scoped, short-lived read**: a person lets their own site's server read drafts they can
 read, for a few minutes, and nothing else. Built as `colophon_db::previews`, `colophon_api::preview` and
 `colophon_domain::preview` (migration 0065).
@@ -459,7 +459,7 @@ read, for a few minutes, and nothing else. Built as `colophon_db::previews`, `co
   `{collection}`, `{id}`, `{slug}` and `{locale}` and none in the host, so its origin is fixed (the Studio posts
   messages to exactly it). Changing it needs `destinations.manage`.
 
-### Preview threat model (D-170, D-171)
+### Preview threat model (D-171, D-172)
 
 | Threat | Mitigation | Test |
 |---|---|---|

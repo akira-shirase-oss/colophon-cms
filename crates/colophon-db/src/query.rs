@@ -178,7 +178,7 @@ pub async fn published_page(
     })
 }
 
-/// A preview's scope laid over a release (D-171): the query language's third source.
+/// A preview's scope laid over a release (D-172): the query language's third source.
 /// `entries[i]` shows `revisions[i]` instead of its publication — or, when that is `None`,
 /// nothing at all (an unpublish item takes the entry out). Every other entry reads as
 /// published at `generation`, exactly as delivery pins it.
@@ -194,7 +194,7 @@ pub struct Overlay<'a> {
     pub source: &'a str,
 }
 
-/// The overlay's statement head (D-171): `$1` environment, `$2` collection, `$3`
+/// The overlay's statement head (D-172): `$1` environment, `$2` collection, `$3`
 /// generation, `$4` the scope's entries, `$5` their revisions, `$6` the scope rows' source.
 /// The published half is delivery's own pin; the scope half reads each named revision of a
 /// live entry of the collection. It runs as `colophon_api` in the issuer's project
@@ -235,7 +235,7 @@ pub const OVERLAY_ROWS: &str = " SELECT p.entry_id, p.revision_id, p.collection,
         AND c.environment_id = $1 AND c.id = p.entry_id) AS created_by
  FROM overlay p";
 
-/// One page a query answered with over a preview's overlay (D-171).
+/// One page a query answered with over a preview's overlay (D-172).
 #[derive(Debug)]
 pub struct OverlayPage {
     /// The page's rows in the query's order.
@@ -441,7 +441,7 @@ enum Arg {
     Generation(i64),
     /// The row cap.
     Rows(i64),
-    /// A preview overlay's scope entries (D-171).
+    /// A preview overlay's scope entries (D-172).
     Ids(Vec<Uuid>),
     /// What each scope entry shows; `NULL` takes it out.
     OptIds(Vec<Option<Uuid>>),

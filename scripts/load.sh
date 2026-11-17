@@ -18,7 +18,7 @@
 # exported as JSONL, nine requests in ten; the tenth imports a three-line file, entries and
 # a Strapi entity, in one transaction; D-086), preview (draft preview reads through bearer
 # tokens: entry and publish-request scopes, a query, invalid and revoked tokens, and an
-# exchange arm; D-171), graphql (entries reads through the
+# exchange arm; D-172), graphql (entries reads through the
 # per-collection schema — filters, a sort, a page and one expanded reference per node —
 # and one entry read in ten; D-115), locales (a French sibling's save carrying its
 # locale, the source's group read, and a locale-filtered list; D-087), deletion (articles created and deleted
@@ -187,7 +187,7 @@ case "$endpoint" in
   # manifest insert plus its two reservations): migrations' rate and p99.
   bulk) RATE="${RATE:-250}" P99_MS="${P99_MS:-250}" ;;
   studio) RATE="${RATE:-5000}" P99_MS="${P99_MS:-25}" ;;
-  # Preview reads (D-171): each re-checks the grant and opens as the issuer in one snapshot,
+  # Preview reads (D-172): each re-checks the grant and opens as the issuer in one snapshot,
   # never cached — the spec's budget is 200/s at a 150 ms p99. The server holds 32 preview
   # reads in flight, so its throughput VUs stay under that bound (stress is where it sheds).
   preview) RATE="${RATE:-200}" P99_MS="${P99_MS:-150}"; [[ "$scenario" == throughput ]] && VUS="${VUS_PREVIEW:-24}" ;;

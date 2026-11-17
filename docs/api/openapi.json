@@ -4195,7 +4195,7 @@
       },
       "previewToken": {
         "bearerFormat": "cpv_",
-        "description": "a preview token (D-170): a customer's site exchanges a one-time code from a preview address for it. It reads one entry's drafts (or one publish request's pinned revisions) over the latest release, as the person who opened the preview may read them, until it expires or is revoked.",
+        "description": "a preview token (D-171): a customer's site exchanges a one-time code from a preview address for it. It reads one entry's drafts (or one publish request's pinned revisions) over the latest release, as the person who opened the preview may read them, until it expires or is revoked.",
         "scheme": "bearer",
         "type": "http"
       },

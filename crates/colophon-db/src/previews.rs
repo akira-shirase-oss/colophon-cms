@@ -1,4 +1,4 @@
-//! Preview grants and the preview overlay (D-170, D-171; docs/modules/03-auth.md "Preview
+//! Preview grants and the preview overlay (D-171, D-172; docs/modules/03-auth.md "Preview
 //! grants", 06-delivery.md "Preview reads").
 //!
 //! A grant is a delegated, scoped, short-lived read: a person issues it for one entry (with its

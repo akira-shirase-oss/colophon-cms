@@ -1,4 +1,4 @@
-// Load scenario for draft preview reads (gap 1; D-170, D-171). setup() signs in the
+// Load scenario for draft preview reads (gap 1; D-171, D-172). setup() signs in the
 // administrator, makes a project with a preview address and 20 published articles, saves new
 // drafts of five, and puts ten in a publish request; it opens an entry preview, a publish-request
 // preview and one it revokes, exchanging each code for a bearer token. Every measured request
@@ -12,7 +12,7 @@
 //     fresh preview, exchanges its code, reads with it and revokes it (the exchange arm).
 // Every answer must be `private, no-store` and `noindex`. A preview read runs as the issuer in
 // one snapshot and never touches the delivery cache, so nothing here is a cache hit.
-// The server bounds preview reads at 32 in flight (D-171); VUS defaults below that in
+// The server bounds preview reads at 32 in flight (D-172); VUS defaults below that in
 // scripts/load.sh so a throughput run measures the reads, not the bound — `stress` is where the
 // bound's 503s are the expected failure mode.
 

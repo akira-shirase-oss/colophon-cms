@@ -207,7 +207,7 @@ impl Class {
         } else if path.starts_with("/api/")
             || path.starts_with("/auth/")
             || path.starts_with("/audience/")
-            // Preview reads and exchanges (D-171): per address and per bearer, like the
+            // Preview reads and exchanges (D-172): per address and per bearer, like the
             // management API — a preview token is a credential, not anonymous delivery.
             || path.starts_with("/preview/")
         {

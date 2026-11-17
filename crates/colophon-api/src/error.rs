@@ -498,7 +498,7 @@ pub enum ApiError {
     /// Sign-in failed. Details are logged, never shown: they can help an attacker.
     #[error("sign-in failed or expired; start again")]
     SignInFailed,
-    /// A preview read or exchange refused (D-170): 401 for a token that ended, 404 for a code
+    /// A preview read or exchange refused (D-171): 401 for a token that ended, 404 for a code
     /// that can't be spent, 409 when the publish request moved, 410 once it is published, 422
     /// for a pinned read. `reason` is the stable code (`preview_expired`, …); the message is
     /// safe to show.

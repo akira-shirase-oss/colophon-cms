@@ -246,7 +246,7 @@ jobs:
           RATE=500 P99_MS=200 scripts/load.sh projects steady
           RATE=400 P99_MS=200 scripts/load.sh changesets steady
           RATE=1500 P99_MS=200 scripts/load.sh delivery steady
-          # Draft preview reads (D-171): never cached, each re-checked as its issuer — the
+          # Draft preview reads (D-172): never cached, each re-checked as its issuer — the
           # spec's 200/s budget, at the drafts smoke's p99 until a runner baseline exists.
           RATE=200 P99_MS=500 scripts/load.sh preview steady
           # RATE counts publishes here, five requests each.

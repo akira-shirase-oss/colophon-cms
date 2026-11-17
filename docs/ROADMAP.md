@@ -261,7 +261,7 @@ expired-approval scheduling).
   would run, so a member's save lands in an owner's list without a reload or a poll — and a save on an entry being
   edited stays a conflict, never a silent overwrite.
 - Visual preview: the site renders a draft through a short-lived capability (spec §06), with click-to-edit. The
-  backend is built (D-170, D-171, migration 0065): scoped, hashed, 15-minute grants issued by people (an entry with
+  backend is built (D-171, D-172, migration 0065): scoped, hashed, 15-minute grants issued by people (an entry with
   its translations, or a publish request bound to its hash), a 60-second one-time code exchanged for a bearer token,
   and `/preview/v1` answering `/content/v1`'s shapes with the scope's drafts laid over the latest release — never
   cached, re-checked against the issuer's membership and field policy on every read, revocable. Proved by a caching

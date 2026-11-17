@@ -107,7 +107,7 @@ pub(crate) struct QueryParams {
 }
 
 /// One published entry as `/content/v1` answers it — and, with a `preview` member beside it,
-/// as `/preview/v1` does (D-171): one serialization for both.
+/// as `/preview/v1` does (D-172): one serialization for both.
 #[derive(Serialize)]
 pub(crate) struct PublishedView {
     id: Uuid,

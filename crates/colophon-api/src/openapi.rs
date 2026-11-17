@@ -200,7 +200,7 @@ enum Security {
     /// A site user's session — the `colophon_audience` cookie or `Authorization: Bearer`
     /// (D-137). A visitor credential, never a staff one.
     Audience,
-    /// A preview token (`cpv_…`, D-170) — what a customer's site exchanged a one-time code for.
+    /// A preview token (`cpv_…`, D-171) — what a customer's site exchanged a one-time code for.
     PreviewToken,
 }
 
@@ -346,7 +346,7 @@ const API_TOKEN_REFUSED: Refusal = refusal(
     "api_token_not_allowed",
     "people open previews; an API token can't",
 );
-/// What every `/preview/v1` read may refuse (D-171).
+/// What every `/preview/v1` read may refuse (D-172).
 const PREVIEW_REFUSALS: &[Refusal] = &[
     refusal(
         401,
@@ -4265,7 +4265,7 @@ pub(crate) fn document(build: &BuildInfo) -> Value {
                     "type": "http",
                     "scheme": "bearer",
                     "bearerFormat": "cpv_",
-                    "description": "a preview token (D-170): a customer's site exchanges a one-time code from a preview address for it. It reads one entry's drafts (or one publish request's pinned revisions) over the latest release, as the person who opened the preview may read them, until it expires or is revoked."
+                    "description": "a preview token (D-171): a customer's site exchanges a one-time code from a preview address for it. It reads one entry's drafts (or one publish request's pinned revisions) over the latest release, as the person who opened the preview may read them, until it expires or is revoked."
                 },
                 "audienceCookie": {
                     "type": "apiKey",
@@ -6288,7 +6288,7 @@ fn delivery_parts() -> Value {
     })
 }
 
-/// Draft preview (D-170, D-171).
+/// Draft preview (D-171, D-172).
 #[expect(
     clippy::too_many_lines,
     reason = "a JSON Schema literal reads top to bottom; splitting scatters one component map"

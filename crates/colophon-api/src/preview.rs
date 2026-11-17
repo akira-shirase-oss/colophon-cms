@@ -1,4 +1,4 @@
-//! Draft preview on the editor's own site (D-170, D-171; docs/modules/03-auth.md "Preview
+//! Draft preview on the editor's own site (D-171, D-172; docs/modules/03-auth.md "Preview
 //! grants", 06-delivery.md "Preview reads").
 //!
 //! **Management, signed in as a person** (`{P}`; project API tokens are refused — agents

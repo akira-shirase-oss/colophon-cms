@@ -1,4 +1,4 @@
--- Gap 1, D-170: editor draft preview on the editor's own site. docs/modules/03-auth.md
+-- Gap 1, D-171: editor draft preview on the editor's own site. docs/modules/03-auth.md
 -- ("Preview grants"), 06-delivery.md ("Preview reads").
 --
 -- A preview is a delegated, scoped, short-lived read. A person who may read the entry issues a

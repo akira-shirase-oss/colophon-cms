@@ -1,4 +1,4 @@
-//! Draft preview on the editor's own site (D-170, D-171): the rules that need no I/O — the
+//! Draft preview on the editor's own site (D-171, D-172): the rules that need no I/O — the
 //! site address a preview opens, how long a grant lives, and what a preview shows.
 //!
 //! **The address.** A project sets one template per environment, such as
@@ -210,7 +210,7 @@ pub enum Source {
     Scope,
 }
 
-/// The overlay rule (D-171) over plain values: `published` maps each entry delivered at the
+/// The overlay rule (D-172) over plain values: `published` maps each entry delivered at the
 /// latest generation to its revision; `scope` maps each entry the scope names to the revision
 /// it shows, or `None` to take it out. The answer is every entry either side shows, keyed by
 /// entry, with its revision and its source — what `/preview/v1` must list, before the issuer's

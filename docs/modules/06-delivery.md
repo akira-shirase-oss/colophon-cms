@@ -33,7 +33,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
 - CDN headers and tag purge.
 - Unpublish and revocation.
 - Evidence probes.
-- Preview reads, `/preview/v1` (D-171).
+- Preview reads, `/preview/v1` (D-172).
 - Sitemaps, feeds and redirects.
 - Locale fallback.
 
@@ -187,8 +187,8 @@ These are policies to test, not a global 30-second consistency guarantee.
   read in one snapshot (`scope::Isolation::Snapshot`, REPEATABLE READ) so the deliveries and the locations that saw
   them always describe the same moment.
 
-### Preview reads (D-171; built 2026-11-17, gap 1)
-`/preview/v1` answers exactly what `/content/v1` answers, with a grant's scope ([auth](03-auth.md), D-170) laid over
+### Preview reads (D-172; built 2026-11-17, gap 1)
+`/preview/v1` answers exactly what `/content/v1` answers, with a grant's scope ([auth](03-auth.md), D-171) laid over
 the latest release. It deviates from spec §06's separate preview origin: Colophon serves JSON, not pages — the page
 sandbox is the customer's own site — so preview is a path family on the content origin, which an operator may still
 route to its own host.
@@ -242,7 +242,7 @@ route to its own host.
 
 ## Interfaces
 
-- HTTP: `/content/v1/{project}/{env}/…` and `/preview/v1/{project}/{env}/…` (D-171).
+- HTTP: `/content/v1/{project}/{env}/…` and `/preview/v1/{project}/{env}/…` (D-172).
 - Purge and probe adapters used by [worker](05-worker.md) jobs.
 - Cache-key and tag builders shared with the site build adapter.
 

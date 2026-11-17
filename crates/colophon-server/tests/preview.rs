@@ -1,4 +1,4 @@
-//! Draft preview on the editor's own site (D-170, D-171), against the real binary and stack.
+//! Draft preview on the editor's own site (D-171, D-172), against the real binary and stack.
 //!
 //! Leaking a draft is the worst failure here, so the first test puts a caching proxy — a
 //! "cache everything" CDN that keys on the URL alone and ignores `Authorization` and `Vary`,
