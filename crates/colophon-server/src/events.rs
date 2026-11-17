@@ -12,10 +12,7 @@
 use std::{sync::Arc, time::Duration};
 
 use colophon_api::events::EventBus;
-use colophon_db::{
-    PgListener,
-    events::{CHANNEL, Hint},
-};
+use colophon_db::events::{CHANNEL, Hint};
 use tokio_util::sync::CancellationToken;
 
 /// How long to wait before reconnecting after a failure. Bounded, so a database that never
@@ -30,12 +27,16 @@ pub async fn run(bus: Arc<EventBus>, database_url: String, cancel: CancellationT
     'reconnect: loop {
         let connected = tokio::select! {
             () = cancel.cancelled() => return,
-            connected = PgListener::connect(&database_url) => connected,
+            connected = colophon_db::listener(&database_url) => connected,
         };
         let mut listener = match connected {
             Ok(listener) => listener,
             Err(error) => {
-                tracing::warn!(%error, "the change-hint listener could not connect; retrying");
+                tracing::warn!(
+                    %error,
+                    cause = std::error::Error::source(&error).map(ToString::to_string),
+                    "the change-hint listener could not connect; retrying"
+                );
                 tokio::select! {
                     () = cancel.cancelled() => return,
                     () = tokio::time::sleep(RECONNECT_DELAY) => continue 'reconnect,
