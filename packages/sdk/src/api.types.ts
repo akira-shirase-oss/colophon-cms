@@ -2473,6 +2473,11 @@ export interface components {
         };
         Installation: {
             has_administrator: boolean;
+            /**
+             * @description How the server was installed, when its installer said (`GET /api/v1/installation` only): `container` means the setup code is in `docker compose logs colophon`.
+             * @enum {string}
+             */
+            install_kind?: "container";
         };
         InvitationToken: {
             token: string;

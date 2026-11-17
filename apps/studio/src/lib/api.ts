@@ -518,8 +518,15 @@ export async function signOut(): Promise<string | null> {
 
 /** Whether anyone is this installation's administrator yet (`GET /api/v1/installation`, D-147):
  *  answered without signing in, so the signed-out front door can say a new Colophon is new. */
-export async function installation(): Promise<{ has_administrator: boolean }> {
-	return ((await (await send('GET', '/api/v1/installation')).json()) as { data: { has_administrator: boolean } }).data;
+/** What anyone may know about the installation before signing in. `install_kind` is `container`
+ *  when the server runs from Colophon's image (D-174): its setup code is in `docker compose logs`. */
+export interface Installation {
+	has_administrator: boolean;
+	install_kind?: 'container';
+}
+
+export async function installation(): Promise<Installation> {
+	return ((await (await send('GET', '/api/v1/installation')).json()) as { data: Installation }).data;
 }
 
 /** Which Colophon the server is (`GET /version`, D-062): its release version, the full git commit

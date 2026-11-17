@@ -5007,7 +5007,14 @@ fn identity() -> Value {
         "Installation": {
             "type": "object",
             "required": ["has_administrator"],
-            "properties": { "has_administrator": { "type": "boolean" } },
+            "properties": {
+                "has_administrator": { "type": "boolean" },
+                "install_kind": {
+                    "type": "string",
+                    "enum": ["container"],
+                    "description": "How the server was installed, when its installer said (`GET /api/v1/installation` only): `container` means the setup code is in `docker compose logs colophon`.",
+                },
+            },
         },
         "AuthProviders": {
             "type": "object",

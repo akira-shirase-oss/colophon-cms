@@ -35,6 +35,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
 
+# The static Linux build's allocator (D-176); every other target keeps its system allocator.
+[target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]
+mimalloc.workspace = true
+
 [build-dependencies]
 # build.rs stamps the commit and build date (D-062).
 colophon-version = { workspace = true, features = ["stamp"] }
