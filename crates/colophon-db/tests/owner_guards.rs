@@ -112,3 +112,49 @@ async fn forged_bypass_settings_open_nothing_for_the_application() {
     owner.close().await;
     db.drop().await;
 }
+
+/// The guards' own functions can't be turned (D-168): each trigger function pins its
+/// `search_path`, so no schema a session puts first can stand in for what it calls, and
+/// `colophon_project_exists` — which sees every project's row past row-level security —
+/// answers only inside a trigger, so the application can't use it to test project ids.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_guard_functions_pin_their_path_and_answer_only_their_trigger() {
+    let db = TestDb::new().await;
+    let owner = db.owner().await;
+    let unpinned: Vec<String> = sqlx::query_scalar(
+        "SELECT p.proname::text FROM pg_proc p
+         WHERE p.proname IN ('colophon_audit_append_only', 'colophon_owner_role_is_fixed',
+                             'memberships_keep_an_owner', 'colophon_project_exists')
+           AND NOT EXISTS (SELECT 1 FROM unnest(coalesce(p.proconfig, '{}')) AS c
+                           WHERE c LIKE 'search_path=pg_catalog%')
+         ORDER BY 1",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("the catalogue");
+    assert!(unpinned.is_empty(), "no pinned search_path: {unpinned:?}");
+
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "probed", "Probed")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = staff(&db, alice, project).await;
+    let probe = sqlx::query_scalar::<_, bool>("SELECT colophon_project_exists($1)")
+        .bind(Uuid::now_v7())
+        .fetch_one(&mut *tx.transaction)
+        .await
+        .expect_err("the application asked colophon_project_exists directly");
+    assert_eq!(
+        probe
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref(),
+        Some("42501"),
+        "{probe}"
+    );
+    drop(tx);
+    owner.close().await;
+    db.drop().await;
+}
