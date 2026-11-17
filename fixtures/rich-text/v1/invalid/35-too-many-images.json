@@ -1,5 +1,5 @@
 {
-  "description": "201 distinct images: one document names at most 200 uploads (D-173).",
+  "description": "201 distinct images: one document names at most 200 uploads (D-171).",
   "reject": {
     "code": "too_many_images",
     "path": "/doc/content/200/attrs/assetId"
@@ -720,14 +720,14 @@
         {
           "type": "image",
           "attrs": {
-            "assetId": "0199f0a2-6c1e-7b3a-9d42-000000000066",
+            "assetId": "0199f0a2-6c1e-7b3a-9d42-000000000065",
             "alt": "Photo 102"
           }
         },
         {
           "type": "image",
           "attrs": {
-            "assetId": "0199f0a2-6c1e-7b3a-9d42-000000000067",
+            "assetId": "0199f0a2-6c1e-7b3a-9d42-000000000066",
             "alt": "Photo 103"
           }
         },
