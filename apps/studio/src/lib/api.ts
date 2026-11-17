@@ -1260,11 +1260,18 @@ export async function getReceipt(project: string, generation: number): Promise<R
 	return ((await (await send('GET', `${base(project)}/releases/${generation}`)).json()) as { data: Receipt }).data;
 }
 
-/** The environment's releases, newest first, and its current generation. */
-export async function listReleases(project: string): Promise<{ releases: Release[]; generation: number }> {
-	const response = await send('GET', `${base(project)}/releases`);
+/** One page of the environment's releases, newest first (100 a page), its current generation, and
+ *  the cursor of the page after it — `null` on the last. Pass a page's `nextCursor` back as
+ *  `cursor` for the releases older than it. */
+export async function listReleases(
+	project: string,
+	cursor: string | null = null
+): Promise<{ releases: Release[]; generation: number; nextCursor: string | null }> {
+	const query = cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+	const response = await send('GET', `${base(project)}/releases${query}`);
 	const generation = Number(response.headers.get('colophon-generation') ?? '0');
-	return { releases: ((await response.json()) as { data: Release[] }).data, generation };
+	const page = (await response.json()) as { data: Release[]; next_cursor?: string | null };
+	return { releases: page.data, generation, nextCursor: page.next_cursor ?? null };
 }
 
 /** Publishes the approved changeset with `hash` as the release after `baseGeneration`; refused

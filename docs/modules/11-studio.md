@@ -63,7 +63,10 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   has seen and, if another release came first, says so and lets you look again; `…/releases` lists releases and
   links the public `/content/v1` address. Since step 2.3 (D-046), each release shows how its announcement to each
   destination went (refreshing while any is still under way), and owners and developers add destinations and turn
-  them on or off there.
+  them on or off there. Since 2026-11-17 the list pages as the API does: the newest 100, then **Show older releases**
+  loads the next 100 (a failed load says so and the button tries again; the last page says it reached release 1). A
+  live hint reads every page shown again from the first, each from the fresh page before it, so a release published
+  meanwhile never leaves a gap (`tests/server/releases.spec.ts`, 101 releases).
   Since step 3.5 (D-053): every project page sits in one shell: a sidebar with a project switcher, each collection
   with its entry count, changesets awaiting review, releases, members and settings, and at its foot the live release
   and its label; breadcrumbs; and a command palette (⌘K) that finds entries by title across collections. The
