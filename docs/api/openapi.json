@@ -2824,7 +2824,7 @@
             "type": "string"
           },
           "locale": {
-            "description": "its language: its own tag, or the default language's for an untagged entry (D-171)",
+            "description": "its language: its own tag, or the default language's for an untagged entry (D-172)",
             "type": [
               "string",
               "null"
@@ -14017,7 +14017,7 @@
                 }
               }
             },
-            "description": "`stale_locales` — the list moved; the `ETag` names it now; `locale_in_use` — live entries are written in a language the list drops; `details.entries` and `details.total` name them; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request"
+            "description": "`stale_locales` — the list moved; the `ETag` names it now; `locale_in_use` — live entries are written in a language the list leaves out; `details.locale` names it, `details.entries` and `details.total` the entries; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request"
           },
           "422": {
             "content": {
@@ -20617,7 +20617,7 @@
             }
           },
           {
-            "description": "answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "description": "answer in one language (D-172): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
             "in": "query",
             "name": "locale",
             "required": false,
@@ -20806,7 +20806,7 @@
             }
           },
           {
-            "description": "answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "description": "answer in one language (D-172): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
             "in": "query",
             "name": "locale",
             "required": false,
@@ -20977,7 +20977,7 @@
             }
           },
           {
-            "description": "answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+            "description": "answer in one language (D-172): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
             "in": "query",
             "name": "locale",
             "required": false,

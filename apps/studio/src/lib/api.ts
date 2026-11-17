@@ -378,6 +378,9 @@ export interface Details {
 	/** For a refused deletion (409 `still_referenced`, D-080): who still names it, in
 	 *  collections the caller reads. */
 	referenced_by?: AssetReference[];
+	/** For a refused language list (409 `locale_in_use`, D-171): the tag the entries are
+	 *  written in. */
+	locale?: string;
 }
 
 /** The session's CSRF token, which every cookie-authenticated write echoes. */

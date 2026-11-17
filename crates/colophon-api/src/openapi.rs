@@ -270,7 +270,7 @@ const LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 20")
 const LOCALE: Param = query(
     "locale",
     Kind::Str,
-    "answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
+    "answer in one language (D-172): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages",
 );
 const FALLBACK: Param = query(
     "fallback",
@@ -3015,7 +3015,7 @@ pub(crate) static TABLE: &[Route] = &[
                         refusal(
                             409,
                             "locale_in_use",
-                            "live entries are written in a language the list drops; `details.entries` and `details.total` name them",
+                            "live entries are written in a language the list leaves out; `details.locale` names it, `details.entries` and `details.total` the entries",
                         ),
                         refusal(
                             422,
@@ -6065,7 +6065,7 @@ fn delivery_parts() -> Value {
     })
 }
 
-/// Languages (D-170, D-171): the list's own shapes, and the delivered row that names its
+/// Languages (D-171, D-172): the list's own shapes, and the delivered row that names its
 /// language.
 fn locale_parts() -> Value {
     json!({
@@ -6106,7 +6106,7 @@ fn locale_parts() -> Value {
                 "content_hash": { "type": "string" },
                 "published_in": { "type": "integer", "description": "the generation this revision went live in" },
                 "visibility": { "type": "string", "description": "`public`, `authenticated` or `role:<name>` (D-137)" },
-                "locale": { "type": ["string", "null"], "description": "its language: its own tag, or the default language's for an untagged entry (D-171)" },
+                "locale": { "type": ["string", "null"], "description": "its language: its own tag, or the default language's for an untagged entry (D-172)" },
                 "localization": {
                     "type": "object",
                     "description": "on a `locale` read: what was asked for, what was served, and whether it is a fallback",

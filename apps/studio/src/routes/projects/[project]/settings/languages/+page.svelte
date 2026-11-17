@@ -266,9 +266,8 @@
 		const listed = failure.details?.entries ?? [];
 		const total = failure.details?.total ?? listed.length;
 		const unlinked = listed.map((item) => ({ entry: item.entry, title: item.title, href: null }));
-		// The refusal's message names the tag ("12 entries are written in pt-BR. …"); the details
-		// don't carry it on their own.
-		const named = /written in ([A-Za-z0-9-]+)/.exec(failure.message)?.[1];
+		// The refusal names the tag in its details (D-171).
+		const named = failure.details?.locale;
 		const asked = named === undefined ? removed : [named];
 		inUse = { total, tags: asked, entries: unlinked, places: [], finding: true };
 		try {

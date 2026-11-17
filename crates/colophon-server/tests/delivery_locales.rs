@@ -1,4 +1,4 @@
-//! Languages end to end (D-170, D-171): the real binary, a real sign-in. `GET|PUT {P}/locales`
+//! Languages end to end (D-171, D-172): the real binary, a real sign-in. `GET|PUT {P}/locales`
 //! replaces an environment's language list under its version and guards what it drops; entry
 //! writes keep to the list; `/content/v1` answers in one language with `?locale=` and
 //! `?fallback=` — one row per translation group, labelled, paged by group, keyed apart in the
@@ -237,7 +237,6 @@ async fn languages_are_listed_replaced_and_guarded() {
     assert_eq!(empty.body["data"], json!({"version": 0, "locales": []}));
     assert_eq!(empty.etag().as_deref(), Some("\"locales-0\""));
     let free = page(&owner, &project, "Free", "free", Some("de")).await;
-    assert!(!free.is_empty());
     // Without a list a reader may ask for any tag, but not name fallbacks: they would give
     // every made-up tag an answer worth caching.
     let unlisted_read = read(&format!("{}?locale=zz&fallback=de", delivery(&project))).await;
@@ -277,6 +276,7 @@ async fn languages_are_listed_replaced_and_guarded() {
     assert_eq!(in_use.status, StatusCode::CONFLICT, "{}", in_use.body);
     assert_eq!(reason(&in_use), "locale_in_use");
     assert_eq!(in_use.body["error"]["details"]["total"], 1);
+    assert_eq!(in_use.body["error"]["details"]["locale"], "de");
     assert_eq!(in_use.body["error"]["details"]["entries"][0]["entry"], free);
 
     // With `de` listed too, it goes through: version 1, and a replay answers the same.
@@ -307,9 +307,9 @@ async fn languages_are_listed_replaced_and_guarded() {
         replaced.body["data"]["locales"][2]["fallback"],
         json!(["pt", "en"])
     );
-    let replayed = replace(replace_key).await;
-    assert!(replayed.replayed());
-    assert_eq!(replayed.body, replaced.body);
+    let replay = replace(replace_key).await;
+    assert!(replay.replayed());
+    assert_eq!(replay.body, replaced.body);
 
     // A replace that saw version 0 is stale now, and says what the list's ETag is.
     let stale = replace(key()).await;

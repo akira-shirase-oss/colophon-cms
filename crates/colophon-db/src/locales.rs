@@ -1,4 +1,4 @@
-//! An environment's languages (migration 0065; D-170): the list with its default and
+//! An environment's languages (migration 0065; D-171): the list with its default and
 //! fallbacks, replaced whole under the policy version, and the check entry writes make against
 //! it. Every function runs inside a [`ProjectTransaction`], so row-level security confines it
 //! to the project; the caller has checked the role.
@@ -191,7 +191,7 @@ pub async fn replace(
     Ok(Replaced::Replaced { version })
 }
 
-/// What an entry write's `?locale=` meets (D-170): `None` when the environment lists no
+/// What an entry write's `?locale=` meets (D-171): `None` when the environment lists no
 /// languages (any well-formed tag goes, as before); otherwise the listed spelling of `tag`,
 /// or `Some(None)` when the list doesn't have it.
 pub async fn configured(

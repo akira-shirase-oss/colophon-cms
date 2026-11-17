@@ -1,4 +1,4 @@
-//! An environment's languages (D-170): `GET {P}/locales` and `PUT {P}/locales`. The list is
+//! An environment's languages (D-171): `GET {P}/locales` and `PUT {P}/locales`. The list is
 //! replaced whole, in the body's order, under `If-Match` with its policy version's `ETag` and
 //! an `Idempotency-Key`, by a role with `schema.change` — the same discipline as the review
 //! stages (D-104) — and every change is audited. Delivery names the policy version in its cache
@@ -144,7 +144,7 @@ pub(crate) async fn list(
     Ok(respond(StatusCode::OK, text, policy.version, false))
 }
 
-/// `PUT {P}/locales`: replaces the whole list in the body's order (D-170). Needs `If-Match`
+/// `PUT {P}/locales`: replaces the whole list in the body's order (D-171). Needs `If-Match`
 /// with the list's `ETag`, an `Idempotency-Key` and `schema.change`. The list must have one
 /// default (when it has any language) and fallbacks drawn from it, and a non-empty list must
 /// cover every tag live entries carry (`locale_in_use`, naming them). Audited
@@ -221,24 +221,27 @@ pub(crate) async fn replace(
             } else {
                 "entries are"
             };
-            return Err(ApiError::Taken(Box::new(InTheWay {
-                reason: "locale_in_use",
-                pointer: "/locales".to_owned(),
-                message: format!(
-                    "{total} {noun} written in {tag}. Move or delete them first, then remove the language"
-                ),
-                entries: entries
-                    .into_iter()
-                    .map(|entry| EntryInTheWay {
-                        entry: entry.entry_id,
-                        title: entry.title,
-                        state: "draft",
-                        problem: None,
-                    })
-                    .collect(),
-                total: u64::try_from(total).ok(),
-                content_type: None,
-            })));
+            return Err(ApiError::LocaleInUse(Box::new((
+                tag.clone(),
+                InTheWay {
+                    reason: "locale_in_use",
+                    pointer: "/locales".to_owned(),
+                    message: format!(
+                        "{total} {noun} written in {tag}. Move or delete them first, then remove the language"
+                    ),
+                    entries: entries
+                        .into_iter()
+                        .map(|entry| EntryInTheWay {
+                            entry: entry.entry_id,
+                            title: entry.title,
+                            state: "draft",
+                            problem: None,
+                        })
+                        .collect(),
+                    total: u64::try_from(total).ok(),
+                    content_type: None,
+                },
+            ))));
         }
     };
     let after: Vec<LanguageView> = languages.iter().map(LanguageView::from).collect();

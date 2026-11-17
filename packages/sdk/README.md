@@ -17,6 +17,53 @@ await env.saveEntry('articles', entryId, { ...draft.content, title: 'New title' 
 });
 ```
 
+## Read published content and render it (five minutes)
+
+```sh
+npm i @colophon-cms/sdk @colophon-cms/rich-text
+```
+
+```ts
+import { Client } from '@colophon-cms/sdk';
+import { renderToHtml, type RichTextValue } from '@colophon-cms/rich-text';
+
+const origin = 'https://cms.example.com';
+// Anonymous: published content only, which is all a site needs.
+const site = new Client({ baseUrl: origin }).delivery('my-site'); // production by default
+
+const page = await site.list('articles', { limit: 10 });
+for (const entry of page.data) {
+  const body = entry.content?.['body'] as RichTextValue | undefined;
+  const html = body === undefined ? '' : renderToHtml(body, {
+    assetUrl: (assetId) => `${origin}/media/v1/my-site/production/${assetId}`
+  });
+  console.log(entry.title, html.length);
+}
+
+// The next page, if there is one; `.atGeneration(g)` pins every read to one release.
+if (page.next_cursor) await site.list('articles', { limit: 10, cursor: page.next_cursor });
+```
+
+**Never ship a staff or personal token to a browser.** Delivery reads need no credential; when a
+server-side script needs more, give it a project API token (`colophon_api_…`) with the least
+role that works, and keep it in that server's environment.
+
+## Is this SDK right for that server?
+
+```ts
+import { Client } from '@colophon-cms/sdk';
+
+const client = new Client({ baseUrl: 'https://cms.example.com', compat: 'throw' });
+const fit = await client.compatibility();
+if (!fit.compatible) console.error(fit.reason); // which side to upgrade, and to what
+```
+
+The SDK checks once, before its first API call: by default (`compat: 'warn'`) it says why
+through `console.warn` and never delays or fails a call; `'throw'` fails every call with an
+`incompatible_server` `ApiError` while the server doesn't fit; `'off'` never asks. The rule is
+the CLI's (D-062): the server must serve API `v1`, share the SDK's minor version before 1.0,
+and be at least the oldest server the SDK supports.
+
 ## What it covers
 
 The client wraps the core surface — about a third of the API's 104 operations, chosen for what a
@@ -117,15 +164,28 @@ npm run check -w @colophon-cms/sdk    # tsc --noEmit + fails when the types are 
 The `--check` half runs in `scripts/frontend.sh`, so CI refuses a stale file exactly as the Rust
 test refuses a stale `openapi.json`.
 
+## Packaging
+
+ESM only, no runtime dependencies, Node 22.17+ or any browser. `npm run pack-check -w
+@colophon-cms/sdk` packs this package and `@colophon-cms/rich-text` and checks what npm would
+ship: the file allowlist and size budget, publint, Are the Types Wrong, and a scratch project
+that installs the tarballs, calls a stub server, renders every rich-text fixture, compiles this
+README's examples under `nodenext` and `bundler` resolution, and bundles the client for a
+browser (12 KB min+gzip budget).
+
 ## Layout
 
 - `src/api.types.ts` — generated (do not edit; `openapi-typescript@7.13.0`,
   `--empty-objects-unknown`)
 - `src/client.ts` — `Client`, `Environment`, `Delivery`, `newIdempotencyKey`, the locale types
+- `src/compat.ts` — the server-version rule (`SDK_VERSION`, `compatibility()`'s verdicts)
 - `src/error.ts` — `ApiError`, the envelope types, `availableLocales`
 - `src/index.ts` — exports and the common schema aliases
-- `test/` — mocked-fetch contract tests, type-level tests, and a real-server suite gated on
-  `COLOPHON_TEST_ORIGIN`
+- `test/` — mocked-fetch contract tests, type-level tests, the compatibility table, and a
+  real-server suite gated on `COLOPHON_TEST_ORIGIN`
+- `scripts/pack-check.mjs` — the packaging gate above
 
-Build emits `dist/` (`npm run build`, NodeNext ESM + `.d.ts`). Publishing is a maintainer action
-(D-062); the package is versioned with the server.
+Build emits `dist/` (`npm run build`, NodeNext ESM + `.d.ts`). The release workflow packs,
+checks and publishes it with provenance (under the `next` tag while the version is a
+pre-release) once a maintainer approves; nothing is published from a laptop. The package is
+versioned with the server.

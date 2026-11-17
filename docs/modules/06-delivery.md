@@ -56,7 +56,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   `…/{collection}/{entry}`, with no sign-in, from `publications` as `colophon_delivery` (`colophon_db::delivery`,
   which switches role for each transaction). Answers carry `Colophon-Generation`; a list's cursor keeps the
   generation of its first page; a generation that hasn't committed is 422 `invalid_generation`. Projects are
-  addressed by id; languages are chosen with `?locale=` (E, D-171, below).
+  addressed by id; languages are chosen with `?locale=` (E, D-172, below).
 - Step 3.1 (D-048) adds a strong `ETag` (304 for a matching `If-None-Match`), the cache policies below,
   `Cache-Tag`, and `Colophon-Cache: hit | miss | coalesced | bypass`.
 - Step 3.2 (D-049): revoked publications are never delivered; an unpublished entry is 410 `gone`.
@@ -83,7 +83,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   publication revoked or taken down since resolves to nothing, staying the stored id at any generation.
   `applied` echoes the canonical
   document and its `query_hash`. With `?locale=` the rows are resolved to one per translation group first, and
-  the document's filters, order and keyset run over what readers of that language get (D-171, below).
+  the document's filters, order and keyset run over what readers of that language get (D-172, below).
 
 ### Gated content (P7, D-137)
 - Every draft, revision and publication carries a `visibility`: `public` (the default), `authenticated` (any
@@ -104,7 +104,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   simply anonymous — delivery never 401s a public collection, it answers the public rows, and the member
   answer's `Vary: Authorization, Cookie` keeps any shared cache between the two honest.
 
-### Locales (E, D-170, D-171)
+### Locales (E, D-171, D-172)
 - **What a publication says.** A revision pins the tag its entry had when it was written (`revisions.locale`,
   set by a trigger on every insert, so saves, creates, translations, bulk items and the content-migration run all
   pin alike; a save that changes the tag moves the entry first). A release copies it into the projection
@@ -113,7 +113,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   translated stays in its group). Delivery reads the locale from there, never from the moving draft. Migration
   0065 backfilled revisions from their entry's tag at the time, which is exact for every revision written since
   and an approximation for older ones whose entry changed its tag later.
-- **The policy.** Each environment may list its languages (`environment_locales`, `GET|PUT {P}/locales`, D-170):
+- **The policy.** Each environment may list its languages (`environment_locales`, `GET|PUT {P}/locales`, D-171):
   at most 50 tags, one default (the language of entries with no tag), each with up to four ordered fallbacks
   drawn from the list, and a non-empty list must cover every tag live entries carry (`locale_in_use`). Every
   replace bumps `environments.locale_policy_version`. Once a list exists, entry
@@ -279,7 +279,7 @@ These are policies to test, not a global 30-second consistency guarantee.
 - Sitemaps, feeds and language alternates are generated from a single published generation.
 - Canonical URLs are normalized against the verified site configuration.
 - A slug change proposes a reviewed redirect, with cycles and collisions rejected.
-- Locale fallback follows an explicit environment policy (D-170): none until a list names fallbacks; it resolves
+- Locale fallback follows an explicit environment policy (D-171): none until a list names fallbacks; it resolves
   only to published revisions and labels the resolved locale (built in E, above). Sitemaps and feeds aren't built.
 
 ## Invariants

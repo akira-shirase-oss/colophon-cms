@@ -2754,7 +2754,7 @@ export interface components {
             content_hash?: string;
             /** Format: uuid */
             id?: string;
-            /** @description its language: its own tag, or the default language's for an untagged entry (D-171) */
+            /** @description its language: its own tag, or the default language's for an untagged entry (D-172) */
             locale?: string | null;
             /** @description on a `locale` read: what was asked for, what was served, and whether it is a fallback */
             localization?: {
@@ -9262,7 +9262,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `stale_locales` — the list moved; the `ETag` names it now; `locale_in_use` — live entries are written in a language the list drops; `details.entries` and `details.total` name them; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
+            /** @description `stale_locales` — the list moved; the `ETag` names it now; `locale_in_use` — live entries are written in a language the list leaves out; `details.locale` names it, `details.entries` and `details.total` the entries; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -13498,7 +13498,7 @@ export interface operations {
                 limit?: number;
                 /** @description the `next_cursor` a previous page answered */
                 cursor?: string;
-                /** @description answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                /** @description answer in one language (D-172): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
                 locale?: string;
                 /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
                 fallback?: string;
@@ -13590,7 +13590,7 @@ export interface operations {
                 generation?: number;
                 /** @description the `next_cursor` a previous page answered */
                 cursor?: string;
-                /** @description answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                /** @description answer in one language (D-172): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
                 locale?: string;
                 /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
                 fallback?: string;
@@ -13671,7 +13671,7 @@ export interface operations {
             query?: {
                 /** @description pin the read to one release generation */
                 generation?: number;
-                /** @description answer in one language (D-171): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
+                /** @description answer in one language (D-172): one row per translation group, the best published member through the fallback chain; a listed tag when the environment lists languages */
                 locale?: string;
                 /** @description with `locale`: `policy` (the environment's chain, the default), `none`, or up to four tags separated by commas */
                 fallback?: string;

@@ -152,9 +152,12 @@ pub struct ErrorDetails {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub changesets: Vec<PendingChangeset>,
     /// For a delivery read in a language nothing in the chain is published in
-    /// (`not_in_locale`, D-171): the tags the entry's translations are published in.
+    /// (`not_in_locale`, D-172): the tags the entry's translations are published in.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub available: Vec<String>,
+    /// For a refused language list (`locale_in_use`, D-171): the tag the entries are written in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
 }
 
 impl ErrorDetails {
@@ -170,6 +173,7 @@ impl ErrorDetails {
             referenced_by: Vec::new(),
             changesets: Vec::new(),
             available: Vec::new(),
+            locale: None,
         }
     }
 }
@@ -357,7 +361,7 @@ pub enum ApiError {
         /// The current list's `ETag`, as `sha256:<hex>`.
         current: String,
     },
-    /// A language-list change named a policy version that is no longer current (D-170). The
+    /// A language-list change named a policy version that is no longer current (D-171). The
     /// response's `ETag` names the list now.
     #[error(
         "someone changed this environment's languages since you loaded them; review them and save again"
@@ -366,8 +370,12 @@ pub enum ApiError {
         /// The list's current policy version.
         current: i64,
     },
+    /// A language list leaves out a tag that live entries carry (D-171): 409 `locale_in_use`,
+    /// naming the tag and the first entries. Boxed, so every `Result` in the API stays small.
+    #[error("{}", .0.1.message)]
+    LocaleInUse(Box<(String, InTheWay)>),
     /// A delivery read asked for an entry in a language that neither it nor any translation in
-    /// the fallback chain is published in (D-171). 404 — it may exist in others.
+    /// the fallback chain is published in (D-172). 404 — it may exist in others.
     #[error("this entry isn't published in that language or its fallbacks")]
     NotInLocale {
         /// The tags its group is published in, for the reader to choose from.
@@ -714,6 +722,7 @@ impl ApiError {
             | Self::IdempotencyKeyReused
             | Self::AlreadySetUp
             | Self::Taken(_)
+            | Self::LocaleInUse(_)
             | Self::StillNeeded(_) => StatusCode::CONFLICT,
             Self::RateLimited { .. } | Self::TooManyRequests { .. } => {
                 StatusCode::TOO_MANY_REQUESTS
@@ -757,6 +766,7 @@ impl ApiError {
             | Self::IdempotencyKeyReused
             | Self::AlreadySetUp
             | Self::Taken(_)
+            | Self::LocaleInUse(_)
             | Self::StillNeeded(_) => ErrorCode::Conflict,
             Self::RateLimited { .. } | Self::TooManyRequests { .. } => ErrorCode::RateLimited,
             Self::Unavailable(_)
@@ -818,6 +828,15 @@ impl ApiError {
                 content_type: way.content_type.clone(),
                 ..ErrorDetails::new(way.reason, way.pointer.clone())
             }),
+            Self::LocaleInUse(refused) => {
+                let (locale, way) = refused.as_ref();
+                Some(ErrorDetails {
+                    entries: way.entries.clone(),
+                    total: way.total,
+                    locale: Some(locale.clone()),
+                    ..ErrorDetails::new(way.reason, way.pointer.clone())
+                })
+            }
             Self::StillNeeded(needed) => Some(ErrorDetails {
                 referenced_by: needed.referenced_by.clone(),
                 changesets: needed.changesets.clone(),

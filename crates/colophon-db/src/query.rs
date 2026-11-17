@@ -154,7 +154,7 @@ pub async fn published_page(
     .await
 }
 
-/// [`published_page`] for a `?locale=` read (D-171): with a `resolution`, the rows the query
+/// [`published_page`] for a `?locale=` read (D-172): with a `resolution`, the rows the query
 /// filters, sorts and pages are first resolved to one per translation group — each group's
 /// best published member through the chain, inside the audience's own row-level security —
 /// so a filter sees the language a reader gets, never a sibling it doesn't.
@@ -338,7 +338,7 @@ enum Arg {
     Generation(i64),
     /// The row cap.
     Rows(i64),
-    /// Tags: a locale read's chain (D-171).
+    /// Tags: a locale read's chain (D-172).
     Tags(Vec<String>),
 }
 
@@ -445,7 +445,7 @@ fn published_statement(
         literals_fit(definition, &order, position)?;
     }
     if let Some(resolution) = resolution {
-        // One row per translation group first (D-171): the group's earliest tag in the chain,
+        // One row per translation group first (D-172): the group's earliest tag in the chain,
         // an untagged member counting as the default. The filters, the order and the keyset
         // below run over what readers of that language get.
         args.extend([
