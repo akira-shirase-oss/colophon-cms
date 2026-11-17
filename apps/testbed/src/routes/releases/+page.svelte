@@ -45,6 +45,9 @@
 	let restoreOf = $state('');
 	let restoreTitle = $state('');
 	let restored = $state('');
+	let pageSize = $state('');
+	let pageCursor = $state<string | null>(null);
+	let paged = $state('');
 
 	const api = $derived(`/api/v1/projects/${projectId}/environments/production`);
 
@@ -126,6 +129,29 @@
 		receipt = `${shown.label} at ${shown.locations}; ${parts || 'no destinations'}; ${seen.length} looks${seen.length > 0 ? `, last: ${seen[seen.length - 1]}` : ''}`;
 	}
 
+	// The list a page at a time (`?limit=`, `?cursor=`): which generations each page held and
+	// whether another follows.
+	async function readPage(next: boolean) {
+		const query = new URLSearchParams();
+		if (pageSize.trim() !== '') query.set('limit', pageSize.trim());
+		if (next && pageCursor !== null) query.set('cursor', pageCursor);
+		const reply = await call('GET', `${api}/releases${query.size > 0 ? `?${query}` : ''}`);
+		if (reply.status !== 200) {
+			pageCursor = null;
+			paged = describe(reply);
+			return;
+		}
+		const shown = reply.body as { data: Release[]; next_cursor: string | null };
+		pageCursor = shown.next_cursor;
+		const generations = shown.data.map((release) => release.generation).join(', ');
+		paged = `generations ${generations || 'none'}; ${pageCursor === null ? 'last page' : 'more'}`;
+	}
+
+	async function firstPage(event: SubmitEvent) {
+		event.preventDefault();
+		await readPage(false);
+	}
+
 	onMount(loadProjects);
 </script>
 
@@ -135,7 +161,7 @@
 	refused, and read <code>/content/v1</code> with no cookie, at the latest release or pinned to an earlier one. Rolling back to a
 	release builds an ordinary changeset restoring what that release published — it is reviewed and published like any other, and
 	the generation still moves forward (D-097). Each release has a label and a receipt (D-051): what its destinations did and what
-	its probes saw.
+	its probes saw. The list pages newest first with <code>?limit=</code> and <code>?cursor=</code>.
 </p>
 
 {#if signedIn === false}
@@ -189,6 +215,15 @@
 		<button type="submit">Roll back to this release</button>
 	</form>
 	{#if restored}<p data-testid="restored">{restored}</p>{/if}
+
+	<form onsubmit={firstPage}>
+		<label class="field">Releases per page (empty for the default, 100) <input bind:value={pageSize} name="page-size" /></label>
+		<button type="submit">Read the first page</button>
+	</form>
+	{#if paged}
+		<p data-testid="release-page">{paged}</p>
+		{#if pageCursor !== null}<button type="button" onclick={() => readPage(true)}>Next page</button>{/if}
+	{/if}
 
 	<form onsubmit={readReceipt}>
 		<label class="field">Receipt of generation <input bind:value={receiptOf} name="receipt-of" /></label>

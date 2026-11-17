@@ -148,7 +148,7 @@ pub struct Config {
     /// `http://localhost:58000`): the sign-in redirect URI and the first trusted origin.
     pub public_origin: String,
     /// The origin delivery's media URLs name (`COLOPHON_MEDIA_URL`, default the public origin;
-    /// D-172): a CDN or a separate asset host in front of `/media/v1`.
+    /// D-174): a CDN or a separate asset host in front of `/media/v1`.
     pub media_origin: String,
     /// Sign-in; `None` when the three `COLOPHON_OIDC_*` settings are absent.
     pub oidc: Option<OidcSettings>,

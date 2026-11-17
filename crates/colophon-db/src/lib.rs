@@ -27,6 +27,7 @@ pub mod ledger;
 pub mod members;
 pub mod migrations;
 pub mod passwords;
+pub mod previews;
 pub mod projects;
 pub mod publish;
 pub mod query;
@@ -133,7 +134,7 @@ pub enum DbError {
         many: bool,
     },
     /// An asset field or a rich-text image names an upload the environment doesn't have
-    /// (migration 0036, media M1, D-171): the id was never an asset of this project or its
+    /// (migration 0036, media M1, D-173): the id was never an asset of this project or its
     /// upload failed before the row existed. Nothing was written.
     #[error("the content names no asset of the environment")]
     MissingAsset {

@@ -4,8 +4,9 @@
 // user, as many people reviewing different changesets would. Every measured request is theirs:
 // 50 in 100 read a changeset (items, reviews and the status decided from them), 15 list the
 // project's changesets, 15 review a changeset's current hash (under a lock on its row), 10
-// create a new changeset pinning two of the articles (an idempotent create), 5 list the
-// environment's releases, 3 read release 2's receipt, and 2 build the rollback changeset that
+// create a new changeset pinning two of the articles (an idempotent create), 3 list the
+// environment's releases, 2 walk them a page at a time (`?limit=1`, then the page its
+// `next_cursor` names: two requests), 3 read release 2's receipt, and 2 build the rollback changeset that
 // would restore release 1 — an open changeset of two unpublish pins (P4, D-097). Reviews of one
 // changeset queue on its row by design; this scenario measures the path, not that queue
 // (docs/modules/03-auth.md measures the same kind of queue for members).
@@ -37,7 +38,7 @@ if (!(SCENARIO in scenarios)) throw new Error(`SCENARIO must be one of ${Object.
 
 const thresholds = { http_req_failed: ['rate==0'], checks: ['rate==1'], http_req_duration: [`p(99)<${P99_MS}`] };
 // Reported per kind of request, so a tail can be traced to its cause; only the overall p99 fails a run.
-for (const endpoint of ['get', 'list', 'review', 'create', 'releases', 'receipt', 'rollback']) {
+for (const endpoint of ['get', 'list', 'review', 'create', 'releases', 'releases-page', 'receipt', 'rollback']) {
   thresholds[`http_req_duration{endpoint:${endpoint}}`] = ['p(99)<60000'];
 }
 if (SCENARIO === 'steady') {
@@ -117,9 +118,17 @@ export default function (data) {
     const res = http.post(`${data.base}/changesets`, JSON.stringify({ title: `k6 ${__VU}-${__ITER}`, entries: pair }),
       params('create', { 'Idempotency-Key': `k6-${data.run}-${__VU}-${__ITER}` }));
     check(res, { 'create 201': (r) => r.status === 201 });
-  } else if (slot < 95) {
+  } else if (slot < 93) {
     const res = http.get(`${data.base}/releases`, params('releases'));
     check(res, { 'releases 200: two, at generation 2': (r) => r.status === 200 && r.headers['Colophon-Generation'] === '2' && r.json('data').length === 2 });
+  } else if (slot < 95) {
+    const first = http.get(`${data.base}/releases?limit=1`, params('releases-page'));
+    const cursor = first.status === 200 ? first.json('next_cursor') : null;
+    check(first, { 'releases page 1: release 2 and a cursor': (r) => r.status === 200 && r.json('data.0.generation') === 2 && typeof cursor === 'string' });
+    if (typeof cursor === 'string') {
+      const second = http.get(`${data.base}/releases?limit=1&cursor=${cursor}`, params('releases-page'));
+      check(second, { 'releases page 2: release 1, the last': (r) => r.status === 200 && r.json('data.0.generation') === 1 && r.json('next_cursor') === null });
+    }
   } else if (slot < 98) {
     const res = http.get(`${data.base}/releases/2`, params('receipt'));
     check(res, { 'receipt 200': (r) => r.status === 200 && r.json('data.generation') === 2 });

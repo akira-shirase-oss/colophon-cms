@@ -1,4 +1,4 @@
-//! Images inside rich text and the media library (D-171 to D-173), end to end against the real
+//! Images inside rich text and the media library (D-173 to D-175), end to end against the real
 //! binary and the stack: a rich-text image names a real upload or the save is refused where it
 //! names it; a release can't publish an image that isn't usable, and records the version it
 //! did publish; delivery hands sites that version's immutable URL with its size and
@@ -895,7 +895,7 @@ async fn a_search_never_finds_another_projects_uploads() {
     let theirs = common::project(&owner).await;
     let own = upload(&owner, &mine, PNG, "lighthouse-mine.png").await;
     upload(&owner, &theirs, PNG, "lighthouse-theirs.png").await;
-    // The search reads through colophon_asset_search (migration 0066), which has no row
+    // The search reads through colophon_asset_search (migration 0067), which has no row
     // security of its own: it must scope to the transaction's project exactly as the policy does.
     let found = call(
         &owner,

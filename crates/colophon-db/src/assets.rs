@@ -44,7 +44,7 @@ pub struct Asset {
     pub derivatives: Vec<String>,
     /// When it was uploaded.
     pub created_at: OffsetDateTime,
-    /// The library's default alt text for it (D-173).
+    /// The library's default alt text for it (D-175).
     pub alt: Option<String>,
     /// Its title in the library.
     pub title: Option<String>,
@@ -59,7 +59,7 @@ pub struct Asset {
 /// The most assets one library page holds.
 pub const MAX_PAGE: i64 = 100;
 
-/// What a library page narrows to (D-173). `q` is matched as a case-insensitive substring of the
+/// What a library page narrows to (D-175). `q` is matched as a case-insensitive substring of the
 /// file name, title and alt text; `after` is the last row of the previous page.
 #[derive(Debug, Clone, Default)]
 pub struct Filter<'a> {
@@ -91,7 +91,7 @@ fn contains_pattern(text: &str) -> String {
 /// 1..=[`MAX_PAGE`] + 1, so a caller can ask for one more to learn whether a next page exists),
 /// keyset-paged on `(created_at, id)` so an upload landing between two pages never shifts what
 /// the next one holds. The `assets_library` index serves the order; a search goes through
-/// `colophon_asset_search` and its trigram index (migration 0066), since row security keeps a
+/// `colophon_asset_search` and its trigram index (migration 0067), since row security keeps a
 /// non-leakproof `ILIKE` on `assets` from using an index (module 07).
 pub async fn page(
     tx: &mut ProjectTransaction,
@@ -101,7 +101,7 @@ pub async fn page(
     let limit = limit.clamp(1, MAX_PAGE + 1);
     let (after_at, after_id) = filter.after.unzip();
     if let Some(q) = filter.q {
-        // A search reads its page of ids through `colophon_asset_search` (migration 0066),
+        // A search reads its page of ids through `colophon_asset_search` (migration 0067),
         // whose trigram index row security would keep out of an `ILIKE` on `assets` itself,
         // then the rows themselves through `assets` and its policy.
         return sqlx::query_as!(
@@ -151,7 +151,7 @@ pub async fn page(
     .map_err(DbError::from_query)
 }
 
-/// A metadata change (D-173): `None` leaves a field as it is; `Some(None)` clears it.
+/// A metadata change (D-175): `None` leaves a field as it is; `Some(None)` clears it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Metadata {
     /// The default alt text.

@@ -70,7 +70,7 @@ pub struct Services {
     /// and `COLOPHON_MAGIC_LINKS_PER_PROJECT`.
     pub magic_links: colophon_db::audience::MagicLinkLimits,
     /// The origin delivery's media URLs start with (`COLOPHON_MEDIA_URL`, default the public
-    /// origin; D-172): `{media_origin}/media/v1/…`.
+    /// origin; D-174): `{media_origin}/media/v1/…`.
     pub media_origin: String,
 }
 

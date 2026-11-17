@@ -218,8 +218,8 @@ M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 - `media`: upload intents, quarantine, signature and decoder checks, derivatives, reference tracking, cleanup —
   built through staged deletion with tombstones and the retention sweep (D-098, D-099); the CDN purge path for
   deleted bytes is the remaining gap. Gap 3 (2026-11-17): images inside rich text are tracked asset references
-  (D-171), releases record the upload versions they publish and delivery hands sites versioned URLs with sizes and
-  renditions (D-172), and the library pages, searches and keeps alt text, titles, credits and tags (D-173). Still
+  (D-173), releases record the upload versions they publish and delivery hands sites versioned URLs with sizes and
+  renditions (D-174), and the library pages, searches and keeps alt text, titles, credits and tags (D-175). Still
   open there: media `Cache-Tag` and CDN purge, the full 1M load runs.
 - Preview capabilities on a separate origin; sitemaps and feeds from one generation; scheduled publishing with time
   zones and daylight-saving handling.
@@ -263,7 +263,14 @@ expired-approval scheduling).
   `e3-surfaces`): the project shell holds one stream and turns each hint's kind into the invalidations a fresh visit
   would run, so a member's save lands in an owner's list without a reload or a poll — and a save on an entry being
   edited stays a conflict, never a silent overwrite.
-- Visual preview: the site renders a draft through a short-lived capability (spec §06), with click-to-edit.
+- Visual preview: the site renders a draft through a short-lived capability (spec §06), with click-to-edit. The
+  backend is built (D-171, D-172, migration 0065): scoped, hashed, 15-minute grants issued by people (an entry with
+  its translations, or a publish request bound to its hash), a 60-second one-time code exchanged for a bearer token,
+  and `/preview/v1` answering `/content/v1`'s shapes with the scope's drafts laid over the latest release — never
+  cached, re-checked against the issuer's membership and field policy on every read, revocable. Proved by a caching
+  proxy that never keeps a preview answer and a scope property test against a pure model. Still to come: the Studio's
+  side-by-side pane and settings, the SDK's site helpers with a testbed site, the k6 runs, CORS for browser-side
+  fetching, `depth` over the overlay, and click-to-edit.
 
 **Proof gate:** two editors editing at once never lose an acknowledged edit; a schedule missed during downtime is
 reported as delayed, never on time; locale variants publish independently; comments and tasks follow permissions.

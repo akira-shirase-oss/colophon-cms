@@ -10,12 +10,12 @@ through `--version` and `GET /version`.
 
 ### Changed — read before upgrading
 
-- **Images inside rich text must name real uploads** (D-171). A rich-text `image` whose
+- **Images inside rich text must name real uploads** (D-173). A rich-text `image` whose
   `assetId` isn't an upload of the environment is refused `422 asset_not_found` at that
   image's pointer. Drafts made with the old Studio dialog hold random placeholder ids, so they
   are refused at their next save until each image is replaced or removed; the Studio marks the
-  image in place and offers Replace and Remove. Revisions saved before migration 0065 record no rich-text references until saved again.
-- **A replaced image reaches published pages at the next publish** (D-172). Delivery rows now
+  image in place and offers Replace and Remove. Revisions saved before migration 0066 record no rich-text references until saved again.
+- **A replaced image reaches published pages at the next publish** (D-174). Delivery rows now
   carry `media`: the versioned, immutable URL of each upload the release recorded, with its
   size and renditions. A site using `url` keeps showing the released bytes after a replace
   until the entries using it are published again; `current_url` follows the newest bytes.
@@ -32,8 +32,14 @@ through `--version` and `GET /version`.
 - **`@colophon-cms/rich-text` (D-170):** the content renderer as its own zero-dependency
   package, built from the one renderer the Studio uses, so a site reading the delivery API
   renders rich text exactly as the Studio previews it.
+- Draft preview on your own site, the backend (D-171, D-172): a person opens a preview of an
+  entry (with its translations) or a publish request; the site exchanges the address's
+  one-time code for a 15-minute bearer token and reads `/preview/v1`, which answers
+  `/content/v1`'s shapes with the drafts laid over the latest release. Never cached, never
+  indexed, re-checked against the issuer on every read, revocable. Set the address with
+  `PUT {P}/preview-target`; the Studio pane and the SDK's site helpers follow.
 - Images inside rich text are tracked like every upload: publish-checked, kept from deletion,
-  listed under "Used in"; at most 200 distinct images per document (D-171).
+  listed under "Used in"; at most 200 distinct images per document (D-173).
 - The Studio inserts images into rich text from the media library (pick, search or upload,
   then alt text, required), shows each image as itself with its state, and edits its alt text,
   replaces or removes it from the keyboard; a pasted or dropped image is uploaded and inserted.
@@ -47,7 +53,7 @@ through `--version` and `GET /version`.
 - `COLOPHON_MEDIA_URL`: the origin delivery's media URLs name (default the public origin).
 - The media library pages past 100 uploads (`cursor`, `next_cursor`), searches (`q`), filters
   by `state` and `tag`, and keeps alt text, title, credit and tags via
-  `PATCH …/assets/{asset}` under `If-Match` (D-173).
+  `PATCH …/assets/{asset}` under `If-Match` (D-175).
 
 ### Security
 
@@ -80,6 +86,17 @@ closes and carries a test that failed without it.
   its trigger (D-168); only the right password learns an audience account is disabled
   (D-169); a token on an unmatched path is redacted from logs (D-152); a magic link's token
   goes before a `return_to` fragment.
+
+### Fixed
+
+- The releases list pages: `GET {P}/releases` takes `?limit=` (1–100, default 100, what it
+  answered before) and `?cursor=`, and its `next_cursor` is real. It used to stop at the
+  newest 100 while the OpenAPI document advertised a cursor. The MCP `list_releases` tool
+  takes the cursor too.
+- The OpenAPI document says only what the routes do: lists that answer in one page say how
+  much it holds and that `next_cursor` is always `null`; the receipt schema lists every
+  release field itself instead of through `allOf`, and the release, delivery and observation
+  fields are marked required. `@colophon-cms/sdk`'s generated types follow.
 
 ### Changed — read before upgrading
 

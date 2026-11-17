@@ -1,0 +1,81 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE preview_grants\n         SET code_hash = $5,\n             code_expires_at = least(now() + make_interval(secs => $6), expires_at)\n         WHERE project_id = $1 AND environment_id = $2 AND id = $3 AND issuer_id = $4\n           AND revoked_at IS NULL AND expires_at > now()\n         RETURNING code_expires_at AS \"code_expires_at!\", scope_kind, entry_id, changeset_id,\n                   changeset_hash",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code_expires_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "code_expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "scope_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "scope_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "entry_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "changeset_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "changeset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "changeset_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "changeset_hash"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Bytea",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "fdc494c276499175436397ea548e351ec6467e2666b8601f74265c4db9600129"
+}

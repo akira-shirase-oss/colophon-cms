@@ -20,12 +20,12 @@
 use sha2::{Digest, Sha256};
 
 /// Changes whenever the shape of a delivery answer does, so an entry cached for the old shape is
-/// never served as the new one. 2: rows carry the `media` their release recorded (D-172).
+/// never served as the new one. 2: rows carry the `media` their release recorded (D-174).
 pub const RENDER_VERSION: u32 = 2;
 
 /// The first 8 bytes of SHA-256 of `origin`, as a number: what [`Scope::media`] names, so an
 /// answer cached while media URLs pointed at one origin is never served after they move
-/// (`COLOPHON_MEDIA_URL`, D-172).
+/// (`COLOPHON_MEDIA_URL`, D-174).
 pub fn media_digest(origin: &str) -> u64 {
     let digest = Sha256::digest(origin.as_bytes());
     let mut first = [0_u8; 8];
@@ -83,7 +83,7 @@ pub struct Scope {
     /// The generation of the environment's latest release that unpublished something (0 if none
     /// has).
     pub unpublished: i64,
-    /// The media origin's [`media_digest`]: delivery answers carry absolute media URLs (D-172).
+    /// The media origin's [`media_digest`]: delivery answers carry absolute media URLs (D-174).
     pub media: u64,
 }
 

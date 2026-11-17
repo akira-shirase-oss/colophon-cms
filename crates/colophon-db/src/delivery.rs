@@ -55,7 +55,7 @@ pub struct Published {
     /// Who may read it: `public`, `authenticated` or `role:<name>` — what the transaction's
     /// audience already proved it may see (D-137).
     pub visibility: String,
-    /// The upload versions its release recorded (D-172), as JSON: `{asset id: {sha, type,
+    /// The upload versions its release recorded (D-174), as JSON: `{asset id: {sha, type,
     /// width, height, renditions}}` — `{}` when it names none.
     pub media: String,
 }

@@ -26,7 +26,8 @@ use serde_json::{Map, Value, json};
 use crate::{
     AppState, BuildInfo, assets, audience, audit, auth, bulk, changesets, collaboration,
     components, content_types, delivery, destinations, device, entries, graphql, health, mcp,
-    members, migrations, projects, receipts, rich_text, roles, schedules, setup, tokens, version,
+    members, migrations, preview, projects, receipts, rich_text, roles, schedules, setup, tokens,
+    version,
 };
 
 /// A verb Colophon's routes use. Naming them in a small enum keeps the table total: the
@@ -162,8 +163,12 @@ enum Shape {
     Empty,
     /// `{"data": <schema>}`.
     Data(&'static str),
-    /// `{"data": [<schema>], "next_cursor": <opaque|string|null>}`.
+    /// `{"data": [<schema>], "next_cursor": <opaque|string|null>}`: the operation declares the
+    /// [`Kind::Cursor`] query parameter `next_cursor` goes back in.
     Page(&'static str),
+    /// `{"data": [<schema>], "next_cursor": null}` — the page envelope, but one answer and no
+    /// further pages; the response's note says how many it holds at most.
+    Capped(&'static str),
     /// `{"data": [<schema>]}` — a whole list without a cursor.
     List(&'static str),
     /// The schema itself, unwrapped.
@@ -199,6 +204,8 @@ enum Security {
     /// A site user's session — the `colophon_audience` cookie or `Authorization: Bearer`
     /// (D-137). A visitor credential, never a staff one.
     Audience,
+    /// A preview token (`cpv_…`, D-171) — what a customer's site exchanged a one-time code for.
+    PreviewToken,
 }
 
 /// What the document says about one operation.
@@ -266,6 +273,10 @@ const CURSOR: Param = query(
     "the `next_cursor` a previous page answered",
 );
 const LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 20");
+/// The releases list's page size: by default the whole of what it answered before it paged.
+const RELEASES_LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 100");
+/// The media library's page size: by default the 100 it listed before it paged (D-175).
+const LIBRARY_LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 100");
 const GENERATION: Param = query(
     "generation",
     Kind::Int,
@@ -337,6 +348,41 @@ const NOT_FOUND: Refusal = refusal(
     "not_found",
     "no such resource — or one the caller may not see, which looks the same",
 );
+/// A project API token on a person-only route.
+const API_TOKEN_REFUSED: Refusal = refusal(
+    403,
+    "api_token_not_allowed",
+    "people open previews; an API token can't",
+);
+/// What every `/preview/v1` read may refuse (D-172).
+const PREVIEW_REFUSALS: &[Refusal] = &[
+    refusal(
+        401,
+        "preview_invalid, preview_expired, preview_revoked",
+        "no token, an ended one, or its issuer can no longer read here",
+    ),
+    NOT_FOUND,
+    refusal(
+        409,
+        "preview_stale",
+        "the publish request changed after the preview opened",
+    ),
+    refusal(
+        410,
+        "preview_published",
+        "the publish request is live; `Colophon-Generation` names its release",
+    ),
+    refusal(
+        422,
+        "preview_reads_latest, preview_depth",
+        "`?generation=` or `depth` asked for",
+    ),
+    refusal(
+        503,
+        "unavailable",
+        "preview read capacity is full; `Retry-After` says when",
+    ),
+];
 const FORBIDDEN: Refusal = refusal(
     403,
     "missing_permission and friends",
@@ -348,6 +394,11 @@ const P428: Refusal = refusal(
     "a required `If-Match` or `Idempotency-Key` is missing",
 );
 const BAD_MATCH: Refusal = refusal(400, "bad_request", "a malformed `If-Match`");
+const BAD_PAGE: Refusal = refusal(
+    400,
+    "bad_request",
+    "`limit` out of range, or a cursor that isn't this list's",
+);
 const REUSED_KEY: Refusal = refusal(
     409,
     "idempotency_key_reused",
@@ -389,6 +440,18 @@ const fn page(schema: &'static str) -> Res {
         headers: &[],
         media: "",
         note: "",
+    }
+}
+
+/// A list in the page envelope that never pages; `note` says what it holds (D-110: the
+/// document says only what the route does).
+const fn capped(schema: &'static str, note: &'static str) -> Res {
+    Res {
+        status: 200,
+        shape: Shape::Capped(schema),
+        headers: &[],
+        media: "",
+        note,
     }
 }
 
@@ -888,7 +951,10 @@ pub(crate) static TABLE: &[Route] = &[
                 id: "listMembers",
                 summary: "The project's members",
                 tag: "members",
-                ok: page("MemberView"),
+                ok: capped(
+                    "MemberView",
+                    "up to 1,000 members, owners first; no further pages (`next_cursor` is always `null`)",
+                ),
                 extra: &[NOT_FOUND],
                 ..MIN
             },
@@ -943,7 +1009,10 @@ pub(crate) static TABLE: &[Route] = &[
                     id: "listInvitations",
                     summary: "The project's pending invitations",
                     tag: "members",
-                    ok: page("InvitationView"),
+                    ok: capped(
+                        "InvitationView",
+                        "the newest 1,000 invitations; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -1036,7 +1105,10 @@ pub(crate) static TABLE: &[Route] = &[
                     id: "listRoles",
                     summary: "The project's roles, built-in and custom",
                     tag: "roles",
-                    ok: page("RoleView"),
+                    ok: capped(
+                        "RoleView",
+                        "up to 100 roles, the built-in ones first; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -1134,7 +1206,10 @@ pub(crate) static TABLE: &[Route] = &[
                     id: "listTokens",
                     summary: "The project's API tokens",
                     tag: "tokens",
-                    ok: page("TokenView"),
+                    ok: capped(
+                        "TokenView",
+                        "the newest 200 tokens; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -1448,7 +1523,10 @@ pub(crate) static TABLE: &[Route] = &[
                     summary: "The environment's content types, each at its current version",
                     tag: "schema",
                     security: Security::Any,
-                    ok: page("TypeVersionView"),
+                    ok: capped(
+                        "TypeVersionView",
+                        "every content type; one answer (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -1568,7 +1646,10 @@ pub(crate) static TABLE: &[Route] = &[
                     summary: "The environment's shared components",
                     tag: "schema",
                     security: Security::Any,
-                    ok: page("ComponentView"),
+                    ok: capped(
+                        "ComponentView",
+                        "every shared component; one answer (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -1667,7 +1748,10 @@ pub(crate) static TABLE: &[Route] = &[
                             "`proposed`, `approved`, `running`, `done`, `blocked`, `superseded`, `cancelled`",
                         ),
                     ],
-                    ok: page("MigrationSummaryView"),
+                    ok: capped(
+                        "MigrationSummaryView",
+                        "the newest 100 plans; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -2659,7 +2743,10 @@ pub(crate) static TABLE: &[Route] = &[
                     summary: "The environment's changesets",
                     tag: "publishing",
                     security: Security::Any,
-                    ok: page("ChangesetSummaryView"),
+                    ok: capped(
+                        "ChangesetSummaryView",
+                        "the latest 100 changesets; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -2892,7 +2979,10 @@ pub(crate) static TABLE: &[Route] = &[
                     Kind::Uuid,
                     "keep one changeset's schedules",
                 )],
-                ok: page("ScheduleView"),
+                ok: capped(
+                    "ScheduleView",
+                    "up to 100 pending schedules in time order, then the 20 most recently finished; no further pages (`next_cursor` is always `null`)",
+                ),
                 extra: &[NOT_FOUND],
                 ..MIN
             },
@@ -2976,14 +3066,16 @@ pub(crate) static TABLE: &[Route] = &[
                 summary: "The environment's releases, newest first",
                 tag: "publishing",
                 security: Security::Any,
+                query: &[RELEASES_LIMIT, CURSOR],
                 ok: Res {
                     status: 200,
                     shape: Shape::Page("ReleaseView"),
                     headers: &["Colophon-Generation"],
                     media: "",
-                    note: "the current generation is in `Colophon-Generation`",
+                    note: "a page of releases, newest first; the current generation is in \
+                           `Colophon-Generation`",
                 },
-                extra: &[NOT_FOUND],
+                extra: &[BAD_PAGE, NOT_FOUND],
                 ..MIN
             },
         )],
@@ -3043,7 +3135,10 @@ pub(crate) static TABLE: &[Route] = &[
                     summary: "The environment's delivery destinations",
                     tag: "publishing",
                     security: Security::Any,
-                    ok: page("DestinationView"),
+                    ok: capped(
+                        "DestinationView",
+                        "the first 100 destinations; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -3100,7 +3195,10 @@ pub(crate) static TABLE: &[Route] = &[
                 tag: "publishing",
                 security: Security::Any,
                 query: &[query("generation", Kind::Int, "keep one release's jobs")],
-                ok: page("JobView"),
+                ok: capped(
+                    "JobView",
+                    "the newest 100 jobs; no further pages (`next_cursor` is always `null`)",
+                ),
                 extra: &[NOT_FOUND],
                 ..MIN
             },
@@ -3119,8 +3217,8 @@ pub(crate) static TABLE: &[Route] = &[
                     tag: "assets",
                     security: Security::Any,
                     query: &[
-                        query("limit", Kind::Int, "1–100 assets per page (default 100)"),
-                        query("cursor", Kind::Str, "the previous page's `next_cursor`"),
+                        LIBRARY_LIMIT,
+                        CURSOR,
                         query(
                             "q",
                             Kind::Str,
@@ -3882,6 +3980,263 @@ pub(crate) static TABLE: &[Route] = &[
         )],
     ),
     route(
+        (P, "/preview-target"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, preview::get_target),
+                OpDoc {
+                    id: "getPreviewTarget",
+                    summary: "Where this environment's previews open on the site",
+                    tag: "preview",
+                    ok: ok(
+                        200,
+                        Shape::Data("PreviewTargetView"),
+                        "unset fields are null",
+                    ),
+                    extra: &[NOT_FOUND, API_TOKEN_REFUSED],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Put,
+                |f| on(f, preview::set_target),
+                OpDoc {
+                    id: "setPreviewTarget",
+                    summary: "Set or clear the site address previews open",
+                    tag: "preview",
+                    body: Some(json("SetPreviewTarget")),
+                    ok: ok(200, Shape::Data("PreviewTargetView"), "as stored"),
+                    extra: &[
+                        NOT_FOUND,
+                        FORBIDDEN,
+                        refusal(422, "invalid_preview_url", "the address refused"),
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (P, "/previews"),
+        &[
+            op(
+                Verb::Get,
+                |f| on(f, preview::mine),
+                OpDoc {
+                    id: "listMyPreviews",
+                    summary: "Your own live previews, newest first",
+                    tag: "preview",
+                    query: &[query("entry", Kind::Uuid, "only those of this entry")],
+                    ok: capped(
+                        "PreviewLiveView",
+                        "the newest 100 of the caller's own live previews; `next_cursor` is always null",
+                    ),
+                    extra: &[NOT_FOUND, API_TOKEN_REFUSED],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Post,
+                |f| on(f, preview::issue),
+                OpDoc {
+                    id: "issuePreview",
+                    summary: "Open a preview of an entry or a publish request: a one-time code and the site address it fills",
+                    tag: "preview",
+                    body: Some(json("NewPreview")),
+                    ok: created("PreviewIssuedView"),
+                    extra: &[
+                        NOT_FOUND,
+                        API_TOKEN_REFUSED,
+                        refusal(
+                            409,
+                            "already_published",
+                            "the publish request is already live",
+                        ),
+                        refusal(
+                            422,
+                            "preview_not_configured, invalid_scope, invalid_ttl",
+                            "no preview address is set, or the request refused",
+                        ),
+                        refusal(429, "preview_limit", "the project has 1,000 previews open"),
+                    ],
+                    ..MIN
+                },
+            ),
+        ],
+    ),
+    route(
+        (P, "/previews/{preview}"),
+        &[op(
+            Verb::Delete,
+            |f| on(f, preview::revoke),
+            OpDoc {
+                id: "revokePreview",
+                summary: "End one of your previews now: its token answers 401 preview_revoked",
+                tag: "preview",
+                ok: ok(204, Shape::Empty, "ended"),
+                extra: &[NOT_FOUND, API_TOKEN_REFUSED],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        (P, "/previews/{preview}/renew"),
+        &[op(
+            Verb::Post,
+            |f| on(f, preview::renew),
+            OpDoc {
+                id: "renewPreview",
+                summary: "Keep one of your live previews open: its time to live again, never past 8 hours from opening",
+                tag: "preview",
+                ok: ok(200, Shape::Data("PreviewRenewedView"), "the new end"),
+                extra: &[NOT_FOUND, API_TOKEN_REFUSED],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        (P, "/previews/{preview}/code"),
+        &[op(
+            Verb::Post,
+            |f| on(f, preview::new_code),
+            OpDoc {
+                id: "newPreviewCode",
+                summary: "A fresh one-time code for one of your live previews (exchanging it replaces the token)",
+                tag: "preview",
+                ok: created("PreviewCodeView"),
+                extra: &[
+                    NOT_FOUND,
+                    API_TOKEN_REFUSED,
+                    refusal(422, "preview_not_configured", "no preview address is set"),
+                ],
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/preview/v1/{project}/{environment}/exchange"),
+        &[op(
+            Verb::Post,
+            |f| on(f, preview::exchange),
+            OpDoc {
+                id: "previewExchange",
+                summary: "Exchange a preview address's one-time code for a bearer token",
+                tag: "preview",
+                security: Security::Public,
+                body: Some(json("PreviewExchange")),
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Data("PreviewTokenView"),
+                    headers: &[],
+                    media: "",
+                    note: "`private, no-store`; a code works once",
+                },
+                extra: &[refusal(
+                    404,
+                    "preview_not_found",
+                    "unknown, used and expired codes all answer alike",
+                )],
+                body_limit: Some(preview::EXCHANGE_BYTES),
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/preview/v1/{project}/{environment}/session"),
+        &[op(
+            Verb::Get,
+            |f| on(f, preview::session),
+            OpDoc {
+                id: "previewSession",
+                summary: "The preview token's scope and end, for the site's preview banner",
+                tag: "preview",
+                security: Security::PreviewToken,
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Data("PreviewSessionView"),
+                    headers: &["Colophon-Preview", "Colophon-Generation"],
+                    media: "",
+                    note: "`private, no-store`, `noindex`",
+                },
+                extra: PREVIEW_REFUSALS,
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/preview/v1/{project}/{environment}/{collection}"),
+        &[op(
+            Verb::Get,
+            |f| on(f, preview::list),
+            OpDoc {
+                id: "previewList",
+                summary: "A collection as the preview sees it: the scope's drafts over the latest release",
+                tag: "preview",
+                security: Security::PreviewToken,
+                query: &[LIMIT, CURSOR],
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Page("PreviewEntryView"),
+                    headers: &["Colophon-Preview", "Colophon-Generation"],
+                    media: "",
+                    note: "`/content/v1`'s shape; `private, no-store`, `noindex`, never `ETag`",
+                },
+                extra: PREVIEW_REFUSALS,
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        ("", "/preview/v1/{project}/{environment}/{collection}/query"),
+        &[op(
+            Verb::Post,
+            |f| on(f, preview::query),
+            OpDoc {
+                id: "previewQuery",
+                summary: "Run the bounded query language over the preview's overlay",
+                tag: "preview",
+                security: Security::PreviewToken,
+                query: &[CURSOR],
+                body: Some(json("QueryDocument")),
+                ok: Res {
+                    status: 200,
+                    shape: Shape::It("PreviewQueryPage"),
+                    headers: &["Colophon-Preview", "Colophon-Generation"],
+                    media: "",
+                    note: "`/content/v1`'s query page; `depth` isn't served in preview yet (422 `preview_depth`)",
+                },
+                extra: PREVIEW_REFUSALS,
+                ..MIN
+            },
+        )],
+    ),
+    route(
+        (
+            "",
+            "/preview/v1/{project}/{environment}/{collection}/{entry}",
+        ),
+        &[op(
+            Verb::Get,
+            |f| on(f, preview::get),
+            OpDoc {
+                id: "previewGet",
+                summary: "One entry as the preview sees it",
+                tag: "preview",
+                security: Security::PreviewToken,
+                ok: Res {
+                    status: 200,
+                    shape: Shape::Data("PreviewEntryView"),
+                    headers: &["Colophon-Preview", "Colophon-Generation"],
+                    media: "",
+                    note: "`/content/v1`'s shape; `private, no-store`, `noindex`, never `ETag`",
+                },
+                extra: PREVIEW_REFUSALS,
+                ..MIN
+            },
+        )],
+    ),
+    route(
         ("", "/media/v1/{project}/{environment}/{asset}"),
         &[op(
             Verb::Get,
@@ -4021,6 +4376,12 @@ pub(crate) fn document(build: &BuildInfo) -> Value {
                     "bearerFormat": "colophon_api_",
                     "description": "a project API token (`colophon_api_…`). It acts as its own identity with its own permissions, only on its own project's `/environments` routes and `/api/v1/rich-text/validate`: another project is 404, other routes are 403 `api_token_not_allowed`, and so is scheduling, which runs later as a person."
                 },
+                "previewToken": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "bearerFormat": "cpv_",
+                    "description": "a preview token (D-171): a customer's site exchanges a one-time code from a preview address for it. It reads one entry's drafts (or one publish request's pinned revisions) over the latest release, as the person who opened the preview may read them, until it expires or is revoked."
+                },
                 "audienceCookie": {
                     "type": "apiKey",
                     "in": "cookie",
@@ -4102,6 +4463,10 @@ const TAGS: &[(&str, &str)] = &[
     (
         "media",
         "verified asset bytes, publicly: sha addresses immutable, current-version addresses revalidating",
+    ),
+    (
+        "preview",
+        "drafts on the editor's own site: scoped, short-lived grants and the `/preview/v1` reads (never cached)",
     ),
 ];
 
@@ -4271,6 +4636,9 @@ fn operation(route: &Route, op: &Op) -> Value {
         Security::Audience => {
             operation["security"] = json!([{ "audienceCookie": [] }, { "bearerToken": [] }]);
         }
+        Security::PreviewToken => {
+            operation["security"] = json!([{ "previewToken": [] }]);
+        }
     }
     operation
 }
@@ -4398,7 +4766,21 @@ fn content(res: &Res) -> Option<Value> {
                 },
                 "next_cursor": {
                     "type": ["string", "null"],
-                    "description": "pass back as `?cursor=`; `null` on the last page",
+                    "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
+                },
+            },
+        }),
+        Shape::Capped(schema) => json!({
+            "type": "object",
+            "required": ["data", "next_cursor"],
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": { "$ref": format!("#/components/schemas/{schema}") },
+                },
+                "next_cursor": {
+                    "type": "null",
+                    "description": "always `null`: this list answers in one page",
                 },
             },
         }),
@@ -4497,6 +4879,31 @@ fn hex(bytes: &[u8; 32]) -> String {
 /// The `components.schemas` object, assembled from family parts: one `json!` per family keeps
 /// the macro below the recursion limit and keeps each schema near its kin.
 fn schemas() -> Value {
+    let mut schemas = schema_table();
+    // A receipt is a release with two more lists, flattened (`#[serde(flatten)]`): it lists
+    // every release field itself rather than through `allOf`, which readers and generators
+    // too often show as the two lists alone.
+    let release = schemas["ReleaseView"].clone();
+    let receipt = &mut schemas["ReceiptView"];
+    if let (Some(fields), Some(own)) = (
+        release["properties"].as_object(),
+        receipt["properties"].as_object_mut(),
+    ) {
+        for (name, field) in fields {
+            own.entry(name.clone()).or_insert_with(|| field.clone());
+        }
+    }
+    if let (Some(fields), Some(own)) = (
+        release["required"].as_array(),
+        receipt["required"].as_array_mut(),
+    ) {
+        own.extend(fields.iter().cloned());
+    }
+    schemas
+}
+
+/// The component schemas, as written; [`schemas`] completes the ones built from others.
+fn schema_table() -> Value {
     let mut schemas = Map::new();
     for part in [
         shared(),
@@ -4509,6 +4916,7 @@ fn schemas() -> Value {
         publishing_parts(),
         delivery_parts(),
         media_parts(),
+        preview_parts(),
         mcp_parts(),
     ] {
         if let Value::Object(map) = part {
@@ -5833,26 +6241,31 @@ fn publishing_parts() -> Value {
         },
         "ReleaseView": {
             "type": "object",
+            "required": [
+                "generation", "epoch", "changeset_id", "title", "changeset_hash", "published_by",
+                "published_by_name", "published_at", "entries", "unpublished", "purge", "label",
+                "locations",
+            ],
             "properties": {
-                "generation": { "type": "integer" },
-                "epoch": { "type": "integer" },
+                "generation": { "type": "integer", "description": "its number in the environment: 1 for the first, up by exactly one each release" },
+                "epoch": { "type": "integer", "description": "the environment's epoch when it committed" },
                 "changeset_id": { "type": "string", "format": "uuid" },
-                "title": { "type": "string" },
-                "changeset_hash": { "type": "string" },
+                "title": { "type": "string", "description": "the changeset's title" },
+                "changeset_hash": { "type": "string", "description": "the approved hash it published" },
                 "published_by": { "type": "string", "format": "uuid" },
                 "published_by_name": { "type": ["string", "null"] },
                 "published_at": { "type": "string", "format": "date-time" },
-                "entries": { "type": "integer" },
-                "unpublished": { "type": "integer" },
-                "purge": { "type": "string", "description": "the purge job's state for this release" },
-                "label": { "type": "string" },
-                "locations": { "type": "integer" },
+                "entries": { "type": "integer", "description": "entries whose published revision changed" },
+                "unpublished": { "type": "integer", "description": "entries it took down" },
+                "purge": { "type": "string", "enum": ["none", "pending", "accepted", "failed"], "description": "whether the environment's CDNs accepted a purge covering it (D-050)" },
+                "label": { "type": "string", "enum": ["published", "pending", "verified", "needs_attention"], "description": "the release's one label (D-051); `verified` is at `locations` locations" },
+                "locations": { "type": "integer", "description": "distinct locations a probe saw this release, or a later one, from" },
             },
         },
         "ReceiptView": {
             "type": "object",
-            "description": "a release plus its deliveries and observations — the publish receipt",
-            "allOf": [{ "$ref": "#/components/schemas/ReleaseView" }],
+            "description": "a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt",
+            "required": ["deliveries", "observations"],
             "properties": {
                 "deliveries": { "type": "array", "items": { "$ref": "#/components/schemas/DeliveryView" } },
                 "observations": { "type": "array", "items": { "$ref": "#/components/schemas/SeenView" } },
@@ -5860,14 +6273,18 @@ fn publishing_parts() -> Value {
         },
         "DeliveryView": {
             "type": "object",
+            "required": [
+                "destination_id", "name", "kind", "location", "state", "covered_by", "status",
+                "attempts", "last_error", "finished_at",
+            ],
             "properties": {
                 "destination_id": { "type": "string", "format": "uuid" },
                 "name": { "type": "string" },
-                "kind": { "type": "string" },
-                "location": { "type": ["string", "null"] },
-                "state": { "type": "string" },
+                "kind": { "type": "string", "enum": ["webhook", "cdn", "probe"] },
+                "location": { "type": ["string", "null"], "description": "a probe's pinned location" },
+                "state": { "type": "string", "enum": ["done", "covered", "pending", "failed"], "description": "`covered`: a later release's job succeeded, which covers this one (`covered_by`)" },
                 "covered_by": { "type": ["integer", "null"] },
-                "status": { "type": ["string", "null"] },
+                "status": { "type": ["string", "null"], "description": "its job for this very release, if it had one" },
                 "attempts": { "type": ["integer", "null"] },
                 "last_error": { "type": ["string", "null"] },
                 "finished_at": { "type": ["string", "null"], "format": "date-time" },
@@ -5875,10 +6292,14 @@ fn publishing_parts() -> Value {
         },
         "SeenView": {
             "type": "object",
+            "required": [
+                "destination_id", "location", "observed_generation", "http_status", "body_hash",
+                "error", "observed_at",
+            ],
             "properties": {
                 "destination_id": { "type": "string", "format": "uuid" },
                 "location": { "type": "string" },
-                "observed_generation": { "type": ["integer", "null"] },
+                "observed_generation": { "type": ["integer", "null"], "description": "the release the answer said it was built from, if it said" },
                 "http_status": { "type": ["integer", "null"] },
                 "body_hash": { "type": ["string", "null"] },
                 "error": { "type": ["string", "null"] },
@@ -5954,7 +6375,7 @@ fn publishing_parts() -> Value {
     })
 }
 
-/// The library's metadata and the media a release recorded (D-172, D-173).
+/// The library's metadata and the media a release recorded (D-174, D-175).
 fn media_parts() -> Value {
     json!({
         "AssetMetadata": {
@@ -5999,7 +6420,7 @@ fn delivery_parts() -> Value {
                 "rejected_reason": { "type": ["string", "null"] },
                 "derivatives": { "type": "array", "items": { "type": "string" }, "description": "the renditions the worker wrote" },
                 "created_at": { "type": "string", "format": "date-time" },
-                "alt": { "type": ["string", "null"], "description": "the library's default alt text (D-173)" },
+                "alt": { "type": ["string", "null"], "description": "the library's default alt text (D-175)" },
                 "title": { "type": ["string", "null"] },
                 "credit": { "type": ["string", "null"] },
                 "tags": { "type": "array", "items": { "type": "string" } },
@@ -6055,7 +6476,7 @@ fn delivery_parts() -> Value {
                 "published_in": { "type": "integer", "description": "the generation this revision went live in" },
                 "media": {
                     "type": "object",
-                    "description": "the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-172)",
+                    "description": "the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-174)",
                     "additionalProperties": { "$ref": "#/components/schemas/PublishedMedia" },
                 },
             },
@@ -6065,6 +6486,139 @@ fn delivery_parts() -> Value {
             "required": ["data", "next_cursor", "applied"],
             "properties": {
                 "data": { "type": "array", "items": { "$ref": "#/components/schemas/PublishedEntryView" } },
+                "next_cursor": { "type": ["string", "null"] },
+                "applied": { "$ref": "#/components/schemas/AppliedQuery" },
+            },
+        },
+    })
+}
+
+/// Draft preview (D-171, D-172).
+#[expect(
+    clippy::too_many_lines,
+    reason = "a JSON Schema literal reads top to bottom; splitting scatters one component map"
+)]
+fn preview_parts() -> Value {
+    let scope = json!({
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+            "kind": { "type": "string", "enum": ["entry", "changeset"] },
+            "entry": { "type": "string", "format": "uuid" },
+            "changeset": { "type": "string", "format": "uuid" },
+        },
+    });
+    json!({
+        "PreviewScope": scope,
+        "PreviewTargetView": {
+            "type": "object",
+            "properties": {
+                "url_template": { "type": ["string", "null"], "description": "the site address a preview opens, with `{code}` and optional `{collection}`, `{id}`, `{slug}`, `{locale}`" },
+                "origin": { "type": ["string", "null"], "description": "the address's origin: where the Studio posts `colophon:draft-saved`" },
+                "updated_at": { "type": ["string", "null"], "format": "date-time" },
+            },
+        },
+        "SetPreviewTarget": {
+            "type": "object",
+            "required": ["url_template"],
+            "additionalProperties": false,
+            "properties": {
+                "url_template": { "type": ["string", "null"], "description": "https (http only to localhost on a development server), at most 2,048 characters, holding `{code}`; `null` clears it" },
+            },
+        },
+        "NewPreview": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "exactly one of `entry` and `changeset`",
+            "properties": {
+                "entry": { "type": "string", "format": "uuid" },
+                "changeset": { "type": "string", "format": "uuid" },
+                "ttl_seconds": { "type": "integer", "minimum": 60, "maximum": 3600, "default": 900 },
+            },
+        },
+        "PreviewIssuedView": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "code": { "type": "string", "description": "the one-time code (`cpc_…`): exchangeable once, for 60 seconds" },
+                "code_expires_at": { "type": "string", "format": "date-time" },
+                "expires_at": { "type": "string", "format": "date-time" },
+                "url": { "type": "string", "description": "the preview address with the code in it" },
+                "origin": { "type": "string" },
+                "scope": { "$ref": "#/components/schemas/PreviewScope" },
+            },
+        },
+        "PreviewLiveView": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "scope": { "$ref": "#/components/schemas/PreviewScope" },
+                "created_at": { "type": "string", "format": "date-time" },
+                "expires_at": { "type": "string", "format": "date-time" },
+                "exchanged": { "type": "boolean", "description": "whether a site has exchanged its code" },
+            },
+        },
+        "PreviewRenewedView": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "expires_at": { "type": "string", "format": "date-time" },
+            },
+        },
+        "PreviewCodeView": {
+            "type": "object",
+            "properties": {
+                "code": { "type": "string" },
+                "code_expires_at": { "type": "string", "format": "date-time" },
+                "url": { "type": "string" },
+            },
+        },
+        "PreviewExchange": {
+            "type": "object",
+            "required": ["code"],
+            "additionalProperties": false,
+            "properties": { "code": { "type": "string", "description": "the `cpc_…` code from the preview address" } },
+        },
+        "PreviewTokenView": {
+            "type": "object",
+            "properties": {
+                "token": { "type": "string", "description": "the bearer token (`cpv_…`); keep it in an HttpOnly cookie, never a URL" },
+                "expires_at": { "type": "string", "format": "date-time" },
+                "scope": { "$ref": "#/components/schemas/PreviewScope" },
+            },
+        },
+        "PreviewSessionView": {
+            "type": "object",
+            "properties": {
+                "scope": { "$ref": "#/components/schemas/PreviewScope" },
+                "expires_at": { "type": "string", "format": "date-time" },
+            },
+        },
+        "PreviewEntryView": {
+            "description": "a `PublishedEntryView`, byte for byte, plus `preview`",
+            "allOf": [
+                { "$ref": "#/components/schemas/PublishedEntryView" },
+                {
+                    "type": "object",
+                    "required": ["preview"],
+                    "properties": {
+                        "preview": {
+                            "type": "object",
+                            "required": ["source"],
+                            "properties": {
+                                "source": { "type": "string", "enum": ["published", "draft", "changeset"] },
+                                "hidden_fields": { "type": "array", "items": { "type": "string" }, "description": "fields the issuer's role can't read, left out" },
+                            },
+                        },
+                    },
+                },
+            ],
+        },
+        "PreviewQueryPage": {
+            "type": "object",
+            "required": ["data", "next_cursor", "applied"],
+            "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/PreviewEntryView" } },
                 "next_cursor": { "type": ["string", "null"] },
                 "applied": { "$ref": "#/components/schemas/AppliedQuery" },
             },
@@ -6192,6 +6746,74 @@ mod tests {
                 route.path()
             );
         }
+    }
+
+    /// The document and the routes agree on paging. The releases list answered a page whose
+    /// `next_cursor` the document said to pass back as `?cursor=`, while the route took no
+    /// cursor and returned the newest 100. An operation answering a `Page` now declares the one
+    /// cursor parameter its `next_cursor` goes back in; one that answers in a single page is
+    /// `Capped`, says what that page holds, and declares no cursor.
+    #[test]
+    fn a_page_declares_where_its_cursor_goes_back() {
+        let schemas = schemas();
+        // A schema of its own that carries `next_cursor` (the query language's pages) is a page.
+        let pages = |schema: &str| schemas[schema]["properties"].get("next_cursor").is_some();
+        let mut wrong = Vec::new();
+        for route in TABLE {
+            for op in route.ops {
+                let cursors = op
+                    .doc
+                    .query
+                    .iter()
+                    .filter(|param| matches!(param.kind, Kind::Cursor))
+                    .count();
+                let id = op.doc.id;
+                match op.doc.ok.shape {
+                    Shape::Page(_) if cursors != 1 => {
+                        wrong.push(format!(
+                            "{id} answers a page but declares {cursors} cursors"
+                        ));
+                    }
+                    Shape::Capped(_) if cursors != 0 || op.doc.ok.note.is_empty() => {
+                        wrong.push(format!("{id} answers one page: no cursor, and a note"));
+                    }
+                    Shape::Data(schema) | Shape::It(schema) if pages(schema) => {
+                        if cursors != 1 {
+                            wrong.push(format!(
+                                "{id} answers a page but declares {cursors} cursors"
+                            ));
+                        }
+                    }
+                    Shape::Empty | Shape::Data(_) | Shape::List(_) | Shape::It(_)
+                        if cursors != 0 =>
+                    {
+                        wrong.push(format!("{id} takes a cursor but answers no page"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A receipt lists every release field itself, as the flattened view writes them.
+    #[test]
+    fn a_receipt_lists_the_release_it_is() {
+        let schemas = schemas();
+        let release = schemas["ReleaseView"]["properties"]
+            .as_object()
+            .expect("release fields");
+        let receipt = &schemas["ReceiptView"];
+        for (name, _) in release {
+            assert!(receipt["properties"].get(name).is_some(), "{name}");
+            assert!(
+                receipt["required"]
+                    .as_array()
+                    .is_some_and(|required| required.iter().any(|field| field == name)),
+                "{name} is required"
+            );
+        }
+        assert!(receipt.get("allOf").is_none());
     }
 
     /// The document is a well-formed `OpenAPI` 3.1 value and covers every table route.

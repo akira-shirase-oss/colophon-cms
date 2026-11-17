@@ -48,7 +48,7 @@ Rules that apply everywhere:
 `alt` is required because every image needs a text alternative. A document names at most **200 distinct** uploads
 (`too_many_images` at the 201st distinct image's `assetId`; repeats of one upload don't count again). The format
 checks only the id's shape; the server also checks, at save, that it names an upload of the environment
-(`asset_not_found` at the same pointer) and keeps it as an asset reference (D-171).
+(`asset_not_found` at the same pointer) and keeps it as an asset reference (D-173).
 
 ## Marks
 
@@ -106,7 +106,7 @@ Every rejection has a code and a [JSON Pointer](https://www.rfc-editor.org/rfc/r
 | `too_deep` | nesting beyond depth 16 | the first node past the limit |
 | `too_large` | over 256 KiB of canonical JSON | the document root (empty pointer) |
 | `too_many_nodes` | over 10,000 nodes | the document root (empty pointer) |
-| `too_many_images` | over 200 distinct images (D-171) | the 201st distinct image's `assetId` |
+| `too_many_images` | over 200 distinct images (D-173) | the 201st distinct image's `assetId` |
 
 When a document has several problems, the validator reports the first one, in this order: the envelope (`schema`,
 `version`, unknown fields, `doc`), then the tree depth-first. Within a node: the node count, its depth, its `type`,

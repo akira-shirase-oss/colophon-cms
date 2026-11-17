@@ -1,4 +1,4 @@
--- The library's search, served by its trigram index (D-173 follow-up; docs/modules/07-media.md).
+-- The library's search, served by its trigram index (D-175 follow-up; docs/modules/07-media.md).
 --
 -- Under colophon_api's row security `ILIKE` isn't leakproof, so the planner may not use an
 -- index condition built from it before the policy's own check: a search over `assets` scanned
