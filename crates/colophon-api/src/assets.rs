@@ -9,14 +9,16 @@
 //! for clients polling `quarantined` → `usable`/`rejected`.
 
 use axum::{
+    Json,
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode, header},
     response::Response,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use object_store::ObjectStoreExt;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use colophon_db::{assets, idempotency, scope::ProjectTransaction};
@@ -332,25 +334,343 @@ async fn queue_replace(
     }
 }
 
-/// `GET {P}/assets`: the environment's assets, newest first.
+/// A library list's parameters (D-172).
+#[derive(Deserialize)]
+pub(crate) struct ListQuery {
+    limit: Option<i64>,
+    cursor: Option<String>,
+    q: Option<String>,
+    state: Option<String>,
+    tag: Option<String>,
+}
+
+/// The longest search text, in characters.
+const MAX_QUERY_CHARS: usize = 100;
+/// The states a library list can narrow to.
+const STATES: [&str; 5] = ["quarantined", "usable", "rejected", "deleting", "deleted"];
+
+/// `GET {P}/assets?limit=&cursor=&q=&state=&tag=`: a page of the environment's assets, newest
+/// first, with the cursor for the next (D-172). Keyset paging on `(created_at, id)`: an upload
+/// landing between two reads never shifts what the next page holds.
 pub(crate) async fn list(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<ListPath>,
+    Query(query): Query<ListQuery>,
 ) -> Result<Response, ApiError> {
+    let limit = query.limit.unwrap_or(assets::MAX_PAGE);
+    if !(1..=assets::MAX_PAGE).contains(&limit) {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_limit",
+            pointer: "/limit",
+            message: format!("limit is 1 to {}", assets::MAX_PAGE),
+        });
+    }
+    let q = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
+    if q.is_some_and(|q| q.chars().count() > MAX_QUERY_CHARS || q.chars().any(char::is_control)) {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_query",
+            pointer: "/q",
+            message: format!("a search is at most {MAX_QUERY_CHARS} characters of plain text"),
+        });
+    }
+    let wanted_state = query.state.as_deref().filter(|state| !state.is_empty());
+    if wanted_state.is_some_and(|state| !STATES.contains(&state)) {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_state",
+            pointer: "/state",
+            message: format!("state is one of {}", STATES.join(", ")),
+        });
+    }
+    let tag = query.tag.as_deref().filter(|tag| !tag.is_empty());
+    if tag.is_some_and(|tag| !is_tag(tag)) {
+        return Err(ApiError::InvalidField {
+            reason: "invalid_tag",
+            pointer: "/tag",
+            message: TAG_RULE.to_owned(),
+        });
+    }
+    let after = query.cursor.as_deref().map(read_cursor).transpose()?;
+    let filter = assets::Filter {
+        q,
+        state: wanted_state,
+        tag,
+        after,
+    };
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
     may_read(&tx)?;
-    let items = assets::list(&mut tx).await.map_err(ApiError::from_db)?;
+    let mut items = assets::page(&mut tx, &filter, limit + 1)
+        .await
+        .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
+    let more = items.len() > usize::try_from(limit).unwrap_or(usize::MAX);
+    items.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    let next_cursor = more
+        .then(|| {
+            items
+                .last()
+                .map(|last| write_cursor(last.created_at, last.id))
+        })
+        .flatten();
     Ok(json(
         StatusCode::OK,
         serde_json::to_string(&json!({
             "data": items.iter().map(view).collect::<Vec<_>>(),
+            "next_cursor": next_cursor,
         }))
         .map_err(ApiError::internal)?,
         None,
         false,
     ))
+}
+
+/// A library page's cursor: the last row's `(created_at, id)`, opaque to clients. It is a
+/// position, not a permission — the list it continues is read under the caller's own scope.
+fn write_cursor(created_at: time::OffsetDateTime, id: Uuid) -> String {
+    URL_SAFE_NO_PAD.encode(format!("a1:{}:{id}", created_at.unix_timestamp_nanos()))
+}
+
+fn read_cursor(text: &str) -> Result<(time::OffsetDateTime, Uuid), ApiError> {
+    let bad = || ApiError::InvalidField {
+        reason: "invalid_cursor",
+        pointer: "/cursor",
+        message: "that cursor isn't one this list gave out; start from the first page".to_owned(),
+    };
+    if text.len() > 200 {
+        return Err(bad());
+    }
+    let decoded = URL_SAFE_NO_PAD.decode(text).map_err(|_| bad())?;
+    let decoded = std::str::from_utf8(&decoded).map_err(|_| bad())?;
+    let mut parts = decoded.splitn(3, ':');
+    let (Some("a1"), Some(nanos), Some(id)) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(bad());
+    };
+    let nanos: i128 = nanos.parse().map_err(|_| bad())?;
+    let at = time::OffsetDateTime::from_unix_timestamp_nanos(nanos).map_err(|_| bad())?;
+    Ok((at, Uuid::try_parse(id).map_err(|_| bad())?))
+}
+
+/// The tag rule (D-172), worded for a refusal.
+const TAG_RULE: &str =
+    "a tag is 1 to 40 lowercase letters, digits and hyphens, starting with a letter or digit";
+/// The most tags one asset carries.
+const MAX_TAGS: usize = 10;
+
+/// `^[a-z0-9][a-z0-9-]{0,39}$`
+fn is_tag(tag: &str) -> bool {
+    let bytes = tag.as_bytes();
+    bytes.len() <= 40
+        && bytes
+            .first()
+            .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+}
+
+/// Metadata changes are claimed under this operation (D-172).
+const UPDATE: &str = "asset.update";
+
+/// `PATCH {P}/assets/{asset}`: the library's own words for an upload — alt text, title, credit,
+/// tags (D-172). `If-Match` names the `metadata_version` the editor saw (`"v3"`, or `"3"`), so
+/// two people editing one upload can't silently overwrite each other: the second gets
+/// `409 stale_version` with the current `ETag`. A field left out stays; `null` clears it.
+pub(crate) async fn update(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<OnePath>,
+    headers: HeaderMap,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let asset = Uuid::try_parse(&path.asset).map_err(|_| ApiError::NotFound)?;
+    let expected = metadata_if_match(&headers)?;
+    let key = idempotency_key(&headers)?;
+    let Json(value) = body?;
+    let change = read_metadata(&value)?;
+    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    crate::members::require(
+        &tx.policy,
+        colophon_domain::policy::Action::ContentUpdate,
+        None,
+        "your role can't change this project's assets",
+    )?;
+    let hash = request_hash(&[
+        UPDATE,
+        &asset.to_string(),
+        &expected.to_string(),
+        &value.to_string(),
+    ]);
+    match idempotency::claim(&mut tx, UPDATE, key, &hash)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        idempotency::Claim::Fresh => {}
+        idempotency::Claim::Mismatch => return Err(ApiError::IdempotencyKeyReused),
+        idempotency::Claim::Replay { status, response } => {
+            let version = serde_json::from_str::<Value>(&response)
+                .ok()
+                .and_then(|body| i32::try_from(body["data"]["metadata_version"].as_i64()?).ok())
+                .unwrap_or(1);
+            return Ok(crate::content_types::respond(
+                StatusCode::from_u16(status).map_err(ApiError::internal)?,
+                response,
+                version,
+                true,
+            ));
+        }
+    }
+    let found = match assets::update_metadata(&mut tx, asset, expected, &change)
+        .await
+        .map_err(ApiError::from_db)?
+    {
+        assets::Updated::Unknown => return Err(ApiError::NotFound),
+        assets::Updated::Stale(current) => return Err(ApiError::StaleVersion { current }),
+        assets::Updated::Done(found) => found,
+    };
+    // The audit names which fields changed, never their text.
+    let fields: Vec<&str> = [
+        change.alt.is_some().then_some("alt"),
+        change.title.is_some().then_some("title"),
+        change.credit.is_some().then_some("credit"),
+        change.tags.is_some().then_some("tags"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    colophon_db::audit::record_in(
+        &mut tx.transaction,
+        tx.project,
+        tx.identity,
+        "asset.updated",
+        &asset.to_string(),
+        &json!({"fields": fields, "metadata_version": found.metadata_version}).to_string(),
+    )
+    .await
+    .map_err(ApiError::from_db)?;
+    let body = serde_json::to_string(&json!({"data": view(&found)})).map_err(ApiError::internal)?;
+    idempotency::complete(&mut tx, UPDATE, key, StatusCode::OK.as_u16(), &body)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(crate::content_types::respond(
+        StatusCode::OK,
+        body,
+        found.metadata_version,
+        false,
+    ))
+}
+
+/// The `metadata_version` an `If-Match` names: `"v3"` (the `ETag` this API answers with) or
+/// `"3"`.
+fn metadata_if_match(headers: &HeaderMap) -> Result<i32, ApiError> {
+    let value = headers
+        .get(header::IF_MATCH)
+        .ok_or(ApiError::PreconditionRequired(
+            "changing an asset's details needs an If-Match header with the ETag you read",
+        ))?;
+    value
+        .to_str()
+        .ok()
+        .and_then(|text| {
+            let inner = text.trim().strip_prefix('"')?.strip_suffix('"')?;
+            inner.strip_prefix('v').unwrap_or(inner).parse().ok()
+        })
+        .filter(|version: &i32| *version >= 1)
+        .ok_or(ApiError::InvalidHeader(
+            "If-Match must be one asset ETag, such as \"v3\"",
+        ))
+}
+
+/// A PATCH body checked into a [`assets::Metadata`]: an object of `alt` (≤ 300 characters),
+/// `title` and `credit` (≤ 200 each) — a string or `null` — and `tags`, at most ten distinct
+/// tags. Text is trimmed; blank text clears the field like `null`.
+fn read_metadata(value: &Value) -> Result<assets::Metadata, ApiError> {
+    let refuse = |code: &'static str, pointer: String, message: String| {
+        ApiError::Invalid(colophon_domain::schema::Refusal {
+            code,
+            pointer,
+            message,
+        })
+    };
+    let Value::Object(object) = value else {
+        return Err(refuse(
+            "wrong_type",
+            String::new(),
+            "the body is an object of alt, title, credit and tags".to_owned(),
+        ));
+    };
+    if let Some(unknown) = object
+        .keys()
+        .find(|key| !matches!(key.as_str(), "alt" | "title" | "credit" | "tags"))
+    {
+        return Err(refuse(
+            "unknown_field",
+            format!("/{unknown}"),
+            "an asset's details are alt, title, credit and tags".to_owned(),
+        ));
+    }
+    let text = |name: &str, max: usize| -> Result<Option<Option<String>>, ApiError> {
+        match object.get(name) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(Value::String(text)) => {
+                let trimmed = text.trim();
+                if trimmed.chars().count() > max || trimmed.chars().any(char::is_control) {
+                    return Err(refuse(
+                        "invalid_value",
+                        format!("/{name}"),
+                        format!("{name} is at most {max} characters, on one line"),
+                    ));
+                }
+                Ok(Some((!trimmed.is_empty()).then(|| trimmed.to_owned())))
+            }
+            Some(_) => Err(refuse(
+                "wrong_type",
+                format!("/{name}"),
+                format!("{name} is text or null"),
+            )),
+        }
+    };
+    let tags = match object.get("tags") {
+        None => None,
+        Some(Value::Array(items)) => {
+            if items.len() > MAX_TAGS {
+                return Err(refuse(
+                    "too_many_tags",
+                    "/tags".to_owned(),
+                    format!("an asset has at most {MAX_TAGS} tags"),
+                ));
+            }
+            let mut tags: Vec<String> = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                let tag = item.as_str().filter(|tag| is_tag(tag)).ok_or_else(|| {
+                    refuse("invalid_tag", format!("/tags/{index}"), TAG_RULE.to_owned())
+                })?;
+                if tags.iter().any(|seen| seen == tag) {
+                    return Err(refuse(
+                        "duplicate_tag",
+                        format!("/tags/{index}"),
+                        "each tag appears once".to_owned(),
+                    ));
+                }
+                tags.push(tag.to_owned());
+            }
+            Some(tags)
+        }
+        Some(_) => {
+            return Err(refuse(
+                "wrong_type",
+                "/tags".to_owned(),
+                "tags is a list of tags".to_owned(),
+            ));
+        }
+    };
+    Ok(assets::Metadata {
+        alt: text("alt", colophon_domain::rich_text::MAX_ALT_CHARS)?,
+        title: text("title", 200)?,
+        credit: text("credit", 200)?,
+        tags,
+    })
 }
 
 /// `GET /media/v1/{project}/{environment}/{asset}`: the asset origin — the current version's
@@ -575,14 +895,15 @@ pub(crate) async fn get(
         .await
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
-    Ok(json(
+    // The ETag names the metadata version a PATCH's If-Match quotes back (D-172).
+    Ok(crate::content_types::respond(
         StatusCode::OK,
         serde_json::to_string(&json!({
             "data": view(&asset),
             "versions": versions.iter().map(version_view).collect::<Vec<_>>(),
         }))
         .map_err(ApiError::internal)?,
-        None,
+        asset.metadata_version,
         false,
     ))
 }
@@ -787,6 +1108,11 @@ fn view(asset: &assets::Asset) -> serde_json::Value {
             .created_at
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_default(),
+        "alt": asset.alt,
+        "title": asset.title,
+        "credit": asset.credit,
+        "tags": asset.tags,
+        "metadata_version": asset.metadata_version,
     })
 }
 
@@ -806,4 +1132,110 @@ fn version_view(version: &assets::Version) -> serde_json::Value {
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_default(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue, header};
+    use serde_json::json;
+
+    use super::{is_tag, metadata_if_match, read_cursor, read_metadata, write_cursor};
+    use crate::ApiError;
+
+    fn refused(value: &serde_json::Value) -> (&'static str, String) {
+        match read_metadata(value) {
+            Err(ApiError::Invalid(refusal)) => (refusal.code, refusal.pointer),
+            other => panic!("not a refusal: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn metadata_leaves_absent_fields_and_clears_null_or_blank_ones() {
+        let change = read_metadata(&json!({"alt": "  A press  ", "title": null, "credit": " "}))
+            .expect("valid");
+        assert_eq!(change.alt, Some(Some("A press".to_owned())));
+        assert_eq!(change.title, Some(None));
+        assert_eq!(change.credit, Some(None), "blank clears");
+        assert_eq!(change.tags, None, "absent stays");
+        let tags = read_metadata(&json!({"tags": ["press", "1920s"]})).expect("valid");
+        assert_eq!(
+            tags.tags,
+            Some(vec!["press".to_owned(), "1920s".to_owned()])
+        );
+    }
+
+    #[test]
+    fn metadata_refusals_point_at_the_value() {
+        assert_eq!(refused(&json!([])), ("wrong_type", String::new()));
+        assert_eq!(
+            refused(&json!({"url": "x"})),
+            ("unknown_field", "/url".into())
+        );
+        assert_eq!(
+            refused(&json!({"alt": "x".repeat(301)})),
+            ("invalid_value", "/alt".into())
+        );
+        assert_eq!(
+            refused(&json!({"title": "a\nb"})),
+            ("invalid_value", "/title".into())
+        );
+        assert_eq!(
+            refused(&json!({"credit": 3})),
+            ("wrong_type", "/credit".into())
+        );
+        assert_eq!(
+            refused(&json!({"tags": ["ok", "Not OK"]})),
+            ("invalid_tag", "/tags/1".into())
+        );
+        assert_eq!(
+            refused(&json!({"tags": ["a", "b", "a"]})),
+            ("duplicate_tag", "/tags/2".into())
+        );
+        let eleven: Vec<String> = (0..11).map(|n| format!("t{n}")).collect();
+        assert_eq!(
+            refused(&json!({"tags": eleven})),
+            ("too_many_tags", "/tags".into())
+        );
+        assert_eq!(
+            refused(&json!({"tags": "a"})),
+            ("wrong_type", "/tags".into())
+        );
+    }
+
+    #[test]
+    fn tags_are_slug_shaped() {
+        assert!(is_tag("a") && is_tag("press-2") && is_tag(&"a".repeat(40)));
+        for bad in ["", "-a", "A", "a b", "a_b", "é", &"a".repeat(41)] {
+            assert!(!is_tag(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn if_match_takes_a_version_etag_with_or_without_its_v() {
+        let with = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::IF_MATCH,
+                HeaderValue::from_str(value).expect("header"),
+            );
+            metadata_if_match(&headers).ok()
+        };
+        assert_eq!(with("\"v3\""), Some(3));
+        assert_eq!(with("\"3\""), Some(3));
+        assert_eq!(with("3"), None, "unquoted");
+        assert_eq!(with("\"v0\""), None);
+        assert_eq!(with("\"vx\""), None);
+        assert!(metadata_if_match(&HeaderMap::new()).is_err());
+    }
+
+    #[test]
+    fn cursors_round_trip_and_refuse_anything_else() {
+        let at = time::OffsetDateTime::from_unix_timestamp_nanos(1_763_400_000_123_456_789)
+            .expect("a time");
+        let id = uuid::Uuid::now_v7();
+        assert_eq!(read_cursor(&write_cursor(at, id)).ok(), Some((at, id)));
+        for bad in ["", "x", "YTE6MTox", &"a".repeat(201)] {
+            assert!(read_cursor(bad).is_err(), "{bad:?}");
+        }
+    }
 }

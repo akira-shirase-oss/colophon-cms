@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, state, file_name, declared_type, detected_type, sha256, size_bytes, width,\n                height, rejected_reason, derivatives, created_at\n         FROM assets\n         WHERE project_id = $1 AND environment_id = $2\n         ORDER BY created_at DESC, id DESC\n         LIMIT 100",
+  "query": "SELECT id, state, file_name, declared_type, detected_type, sha256, size_bytes, width,\n                  height, rejected_reason, derivatives, created_at, alt, title, credit, tags,\n                  metadata_version\n           FROM assets\n           WHERE project_id = $1 AND environment_id = $2\n             AND ($3::text IS NULL OR search ILIKE $3 ESCAPE '\\')\n             AND ($4::text IS NULL OR state = $4)\n             AND ($5::text IS NULL OR tags @> ARRAY[$5::text])\n             AND ($6::timestamptz IS NULL OR (created_at, id) < ($6, $7::uuid))\n           ORDER BY created_at DESC, id DESC\n           LIMIT $8",
   "describe": {
     "columns": [
       {
@@ -134,12 +134,73 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "ordinal": 12,
+        "name": "alt",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "alt"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "credit",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "credit"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "tags",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "tags"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "metadata_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "metadata_version"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
-        "Uuid"
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Uuid",
+        "Int8"
       ]
     },
     "nullable": [
@@ -154,8 +215,13 @@
       true,
       true,
       false,
+      false,
+      true,
+      true,
+      true,
+      false,
       false
     ]
   },
-  "hash": "433e8704e5af1dc1e29450185e0ace78d8d098c4b0fe6ef268c3e3da3bcbabc8"
+  "hash": "800ff7af7d095afbb14305af459fb98042d8319187f9e58fac7f492c0a404ee0"
 }

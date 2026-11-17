@@ -653,6 +653,8 @@ export interface Asset {
 	file_name: string;
 	declared_type: string;
 	detected_type: string | null;
+	/** The current version's digest (D-136): `/media/v1/…/{asset}/{sha256}` pins those bytes. */
+	sha256: string | null;
 	size_bytes: number;
 	width: number | null;
 	height: number | null;
@@ -736,9 +738,10 @@ export interface AssetVersion {
 	created_at: string;
 }
 
-/** One upload's record with its version history. */
+/** One upload's record with its version history (the answer carries `versions` beside `data`). */
 export async function getAssetWithVersions(project: string, asset: string): Promise<Asset & { versions: AssetVersion[] }> {
-	return ((await (await send('GET', `${assetsPath(project)}/${asset}`)).json()) as { data: Asset & { versions: AssetVersion[] } }).data;
+	const body = (await (await send('GET', `${assetsPath(project)}/${asset}`)).json()) as { data: Asset; versions?: AssetVersion[] };
+	return { ...body.data, versions: body.versions ?? [] };
 }
 
 /** One upload's record — polled until it leaves `quarantined`. */

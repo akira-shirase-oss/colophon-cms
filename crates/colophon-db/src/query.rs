@@ -240,7 +240,7 @@ pub async fn resolved_publications(
     for chunk in ids.chunks(RESOLVE_BATCH) {
         let rows = sqlx::query(sqlx::AssertSqlSafe(
             "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
-                    p.content_hash, p.valid_from, p.visibility
+                    p.content_hash, p.valid_from, p.visibility, p.media::text AS media
              FROM publications p
              WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND p.environment_id = $1 AND p.entry_id = ANY($2)
@@ -410,7 +410,7 @@ fn published_statement(
     }
     text.push_str(
         "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
-         p.content_hash, p.valid_from, p.visibility
+         p.content_hash, p.valid_from, p.visibility, p.media::text AS media
          FROM publications p
          CROSS JOIN LATERAL (SELECT p.content::jsonb AS body) d
          WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
@@ -796,6 +796,7 @@ fn published(row: &sqlx::postgres::PgRow) -> Result<Published, DbError> {
         content_hash: row.try_get("content_hash").map_err(DbError::Query)?,
         valid_from: row.try_get("valid_from").map_err(DbError::Query)?,
         visibility: row.try_get("visibility").map_err(DbError::Query)?,
+        media: row.try_get("media").map_err(DbError::Query)?,
     })
 }
 
@@ -1115,7 +1116,7 @@ mod tests {
         let (from, _) = stmt.text.split_once(" FROM ").expect("the projection");
         assert_eq!(
             from.trim_end(),
-            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,\n         p.content_hash, p.valid_from, p.visibility"
+            "SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,\n         p.content_hash, p.valid_from, p.visibility, p.media::text AS media"
         );
         assert!(
             stmt.text.contains(

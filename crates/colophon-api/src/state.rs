@@ -69,6 +69,9 @@ pub struct Services {
     /// The bounds on magic-link requests (D-153, D-161): `COLOPHON_MAGIC_LINKS_PER_ADDRESS`
     /// and `COLOPHON_MAGIC_LINKS_PER_PROJECT`.
     pub magic_links: colophon_db::audience::MagicLinkLimits,
+    /// The origin delivery's media URLs start with (`COLOPHON_MEDIA_URL`, default the public
+    /// origin; D-171): `{media_origin}/media/v1/…`.
+    pub media_origin: String,
 }
 
 /// The router's state. Cloning is two reference-count increments and a copy.

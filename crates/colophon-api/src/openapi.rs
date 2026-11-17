@@ -3115,11 +3115,33 @@ pub(crate) static TABLE: &[Route] = &[
                 |f| on(f, assets::list),
                 OpDoc {
                     id: "listAssets",
-                    summary: "The environment's assets, newest first",
+                    summary: "A page of the environment's assets, newest first, searchable",
                     tag: "assets",
                     security: Security::Any,
-                    ok: ok(200, Shape::List("AssetView"), ""),
-                    extra: &[NOT_FOUND],
+                    query: &[
+                        query("limit", Kind::Int, "1–100 assets per page (default 100)"),
+                        query("cursor", Kind::Str, "the previous page's `next_cursor`"),
+                        query(
+                            "q",
+                            Kind::Str,
+                            "≤ 100 characters, matched in the file name, title and alt text",
+                        ),
+                        query(
+                            "state",
+                            Kind::Str,
+                            "quarantined, usable, rejected, deleting or deleted",
+                        ),
+                        query("tag", Kind::Str, "assets carrying this tag"),
+                    ],
+                    ok: page("AssetView"),
+                    extra: &[
+                        NOT_FOUND,
+                        refusal(
+                            422,
+                            "invalid_limit, invalid_query, invalid_state, invalid_tag, invalid_cursor",
+                            "a parameter refused",
+                        ),
+                    ],
                     ..MIN
                 },
             ),
@@ -3177,11 +3199,41 @@ pub(crate) static TABLE: &[Route] = &[
                     ok: Res {
                         status: 200,
                         shape: Shape::It("AssetDetailView"),
-                        headers: &[],
+                        headers: &["ETag"],
                         media: "",
                         note: "`data` is the asset; `versions` its byte history (D-136)",
                     },
                     extra: &[NOT_FOUND],
+                    ..MIN
+                },
+            ),
+            op(
+                Verb::Patch,
+                |f| on(f, assets::update),
+                OpDoc {
+                    id: "updateAsset",
+                    summary: "Change an asset's alt text, title, credit or tags",
+                    tag: "assets",
+                    security: Security::Any,
+                    headers: &[IF_MATCH, IDEMPOTENCY],
+                    body: Some(json("AssetMetadata")),
+                    ok: etagd(data("AssetView")),
+                    extra: &[
+                        NOT_FOUND,
+                        refusal(
+                            409,
+                            "stale_version",
+                            "someone changed its details; the `ETag` names them now",
+                        ),
+                        refusal(
+                            422,
+                            "wrong_type, unknown_field, invalid_value, invalid_tag, duplicate_tag, too_many_tags",
+                            "the change refused",
+                        ),
+                        P428,
+                        BAD_MATCH,
+                        REUSED_KEY,
+                    ],
                     ..MIN
                 },
             ),
@@ -4456,6 +4508,7 @@ fn schemas() -> Value {
         collaboration_parts(),
         publishing_parts(),
         delivery_parts(),
+        media_parts(),
         mcp_parts(),
     ] {
         if let Value::Object(map) = part {
@@ -5901,6 +5954,33 @@ fn publishing_parts() -> Value {
     })
 }
 
+/// The library's metadata and the media a release recorded (D-171, D-172).
+fn media_parts() -> Value {
+    json!({
+        "AssetMetadata": {
+            "type": "object",
+            "properties": {
+                "alt": { "type": ["string", "null"], "maxLength": 300, "description": "absent leaves it; `null` or blank clears it" },
+                "title": { "type": ["string", "null"], "maxLength": 200 },
+                "credit": { "type": ["string", "null"], "maxLength": 200 },
+                "tags": { "type": "array", "maxItems": 10, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$" }, "description": "replaces the whole list" },
+            },
+        },
+        "PublishedMedia": {
+            "type": "object",
+            "required": ["url", "current_url", "type", "width", "height", "renditions"],
+            "properties": {
+                "url": { "type": "string", "description": "the exact bytes the release published: immutable, cached a year" },
+                "current_url": { "type": "string", "description": "follows replacements, without publishing again" },
+                "type": { "type": "string" },
+                "width": { "type": "integer" },
+                "height": { "type": "integer" },
+                "renditions": { "type": "object", "additionalProperties": { "type": "string" }, "description": "`wN`: N pixels wide, present only when the original is wider" },
+            },
+        },
+    })
+}
+
 /// Assets and the public delivery surface.
 fn delivery_parts() -> Value {
     json!({
@@ -5908,7 +5988,7 @@ fn delivery_parts() -> Value {
             "type": "object",
             "properties": {
                 "id": { "type": "string", "format": "uuid" },
-                "state": { "type": "string", "enum": ["quarantined", "live", "rejected", "deleted"] },
+                "state": { "type": "string", "enum": ["quarantined", "usable", "rejected", "deleting", "deleted"] },
                 "file_name": { "type": "string" },
                 "declared_type": { "type": "string" },
                 "detected_type": { "type": ["string", "null"] },
@@ -5917,8 +5997,13 @@ fn delivery_parts() -> Value {
                 "width": { "type": ["integer", "null"] },
                 "height": { "type": ["integer", "null"] },
                 "rejected_reason": { "type": ["string", "null"] },
-                "derivatives": { "type": "array", "items": { "type": "object" }, "description": "the renditions the worker wrote" },
+                "derivatives": { "type": "array", "items": { "type": "string" }, "description": "the renditions the worker wrote" },
                 "created_at": { "type": "string", "format": "date-time" },
+                "alt": { "type": ["string", "null"], "description": "the library's default alt text (D-172)" },
+                "title": { "type": ["string", "null"] },
+                "credit": { "type": ["string", "null"] },
+                "tags": { "type": "array", "items": { "type": "string" } },
+                "metadata_version": { "type": "integer", "description": "a PATCH's `If-Match` names it as the `ETag` `\"v<n>\"`" },
             },
         },
         "AssetVersionView": {
@@ -5968,6 +6053,11 @@ fn delivery_parts() -> Value {
                 "content": { "$ref": "#/components/schemas/EntryDocument" },
                 "content_hash": { "type": "string" },
                 "published_in": { "type": "integer", "description": "the generation this revision went live in" },
+                "media": {
+                    "type": "object",
+                    "description": "the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-171)",
+                    "additionalProperties": { "$ref": "#/components/schemas/PublishedMedia" },
+                },
             },
         },
         "DeliveryQueryPage": {

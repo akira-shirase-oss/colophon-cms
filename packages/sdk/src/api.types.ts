@@ -238,7 +238,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The environment's assets, newest first */
+        /** A page of the environment's assets, newest first, searchable */
         get: operations["listAssets"];
         put?: never;
         /** Upload an image; the verify job decides what it becomes */
@@ -264,7 +264,8 @@ export interface paths {
         delete: operations["deleteAsset"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Change an asset's alt text, title, credit or tags */
+        patch: operations["updateAsset"];
         trace?: never;
     };
     "/api/v1/projects/{project}/environments/{environment}/assets/{asset}/references": {
@@ -1831,6 +1832,14 @@ export interface components {
             data?: components["schemas"]["AssetView"];
             versions?: components["schemas"]["AssetVersionView"][];
         };
+        AssetMetadata: {
+            /** @description absent leaves it; `null` or blank clears it */
+            alt?: string | null;
+            credit?: string | null;
+            /** @description replaces the whole list */
+            tags?: string[];
+            title?: string | null;
+        };
         AssetUploadView: {
             declared_type?: string;
             file_name?: string;
@@ -1854,22 +1863,29 @@ export interface components {
             width?: number;
         };
         AssetView: {
+            /** @description the library's default alt text (D-172) */
+            alt?: string | null;
             /** Format: date-time */
             created_at?: string;
+            credit?: string | null;
             declared_type?: string;
             /** @description the renditions the worker wrote */
-            derivatives?: Record<string, unknown>[];
+            derivatives?: string[];
             detected_type?: string | null;
             file_name?: string;
             height?: number | null;
             /** Format: uuid */
             id?: string;
+            /** @description a PATCH's `If-Match` names it as the `ETag` `"v<n>"` */
+            metadata_version?: number;
             rejected_reason?: string | null;
             /** @description the current version's digest; `/media/v1/…/{asset}/{sha256}` pins it (D-136) */
             sha256?: string | null;
             size_bytes?: number;
             /** @enum {string} */
-            state?: "quarantined" | "live" | "rejected" | "deleted";
+            state?: "quarantined" | "usable" | "rejected" | "deleting" | "deleted";
+            tags?: string[];
+            title?: string | null;
             width?: number | null;
         };
         AudienceOrigins: {
@@ -2712,12 +2728,29 @@ export interface components {
             content_hash?: string;
             /** Format: uuid */
             id?: string;
+            /** @description the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-171) */
+            media?: {
+                [key: string]: components["schemas"]["PublishedMedia"];
+            };
             /** @description the generation this revision went live in */
             published_in?: number;
             /** Format: uuid */
             revision_id?: string;
             slug?: string;
             title?: string;
+        };
+        PublishedMedia: {
+            /** @description follows replacements, without publishing again */
+            current_url: string;
+            height: number;
+            /** @description `wN`: N pixels wide, present only when the original is wider */
+            renditions: {
+                [key: string]: string;
+            };
+            type: string;
+            /** @description the exact bytes the release published: immutable, cached a year */
+            url: string;
+            width: number;
         };
         PublishedView: {
             changeset_hash?: string;
@@ -4503,7 +4536,18 @@ export interface operations {
     };
     listAssets: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 1–100 assets per page (default 100) */
+                limit?: number;
+                /** @description the previous page's `next_cursor` */
+                cursor?: string;
+                /** @description ≤ 100 characters, matched in the file name, title and alt text */
+                q?: string;
+                /** @description quarantined, usable, rejected, deleting or deleted */
+                state?: string;
+                /** @description assets carrying this tag */
+                tag?: string;
+            };
             header?: never;
             path: {
                 /** @description the project's id */
@@ -4523,6 +4567,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["AssetView"][];
+                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        next_cursor: string | null;
                     };
                 };
             };
@@ -4537,6 +4583,15 @@ export interface operations {
             };
             /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_limit, invalid_query, invalid_state, invalid_tag, invalid_cursor` — a parameter refused */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4703,6 +4758,7 @@ export interface operations {
             /** @description `data` is the asset; `versions` its byte history (D-136) */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -4806,6 +4862,117 @@ export interface operations {
             };
             /** @description `already_deleted, asset_quarantined` — on its way out already, or still being verified; `still_referenced` — content still names it; `details.referenced_by` names them; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `precondition_required` — a required `If-Match` or `Idempotency-Key` is missing */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateAsset: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description the resource's `ETag`, exactly as a response carried it */
+                "if-match": string;
+                /** @description 16–128 of `A-Z a-z 0-9 - _`, scoped to the actor, operation and environment */
+                "idempotency-key": string;
+            };
+            path: {
+                /** @description the project's id */
+                project: string;
+                /** @description the environment's slug, such as `production` */
+                environment: string;
+                /** @description the asset's id */
+                asset: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetMetadata"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AssetView"];
+                    };
+                };
+            };
+            /** @description `bad_request` — a malformed `If-Match` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `stale_version` — someone changed its details; the `ETag` names them now; `idempotency_key_reused` — this `Idempotency-Key` was used before for a different request */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `wrong_type, unknown_field, invalid_value, invalid_tag, duplicate_tag, too_many_tags` — the change refused */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

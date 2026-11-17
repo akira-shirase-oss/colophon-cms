@@ -20,8 +20,18 @@
 use sha2::{Digest, Sha256};
 
 /// Changes whenever the shape of a delivery answer does, so an entry cached for the old shape is
-/// never served as the new one.
-pub const RENDER_VERSION: u32 = 1;
+/// never served as the new one. 2: rows carry the `media` their release recorded (D-171).
+pub const RENDER_VERSION: u32 = 2;
+
+/// The first 8 bytes of SHA-256 of `origin`, as a number: what [`Scope::media`] names, so an
+/// answer cached while media URLs pointed at one origin is never served after they move
+/// (`COLOPHON_MEDIA_URL`, D-171).
+pub fn media_digest(origin: &str) -> u64 {
+    let digest = Sha256::digest(origin.as_bytes());
+    let mut first = [0_u8; 8];
+    first.copy_from_slice(&digest[..8]);
+    u64::from_be_bytes(first)
+}
 
 /// The most tags one purge names. A run of releases that changed more purges the whole
 /// environment instead: coarser, and still bounded.
@@ -39,6 +49,7 @@ pub fn purge_tags(project: u128, environment: u128, entries: &[(String, u128)]) 
         epoch: 0,
         generation: 0,
         unpublished: 0,
+        media: 0,
     };
     let mut tags: Vec<String> = Vec::new();
     for (collection, entry) in entries {
@@ -72,13 +83,20 @@ pub struct Scope {
     /// The generation of the environment's latest release that unpublished something (0 if none
     /// has).
     pub unpublished: i64,
+    /// The media origin's [`media_digest`]: delivery answers carry absolute media URLs (D-171).
+    pub media: u64,
 }
 
 impl Scope {
     fn prefix(&self) -> String {
         format!(
-            "colophon:delivery:r{RENDER_VERSION}:p{:032x}:e{:032x}:x{}:g{}:u{}",
-            self.project, self.environment, self.epoch, self.generation, self.unpublished
+            "colophon:delivery:r{RENDER_VERSION}:m{:016x}:p{:032x}:e{:032x}:x{}:g{}:u{}",
+            self.media,
+            self.project,
+            self.environment,
+            self.epoch,
+            self.generation,
+            self.unpublished
         )
     }
 
@@ -169,6 +187,7 @@ mod tests {
             epoch: 1,
             generation,
             unpublished: 0,
+            media: 0x0a,
         }
     }
 
@@ -179,8 +198,8 @@ mod tests {
         assert_eq!(
             first,
             format!(
-                "colophon:delivery:r1:p{:032x}:e{:032x}:x1:g3:u0:list:20:-:articles",
-                1, 14
+                "colophon:delivery:r2:m{:016x}:p{:032x}:e{:032x}:x1:g3:u0:list:20:-:articles",
+                10, 1, 14
             )
         );
         assert_ne!(
@@ -206,6 +225,19 @@ mod tests {
         assert_ne!(first, at_3.list_key("articles", 21, None));
         assert_ne!(first, at_3.list_key("articles", 20, Some(7)));
         assert_ne!(first, at_3.list_key("events", 20, None));
+        assert_ne!(
+            first,
+            Scope {
+                media: 0x0b,
+                ..at_3
+            }
+            .list_key("articles", 20, None),
+            "the same answer with media URLs on another origin"
+        );
+        assert_ne!(
+            media_digest("https://a.example"),
+            media_digest("https://b.example")
+        );
         let other_project = Scope { project: 2, ..at_3 };
         assert_ne!(
             first,

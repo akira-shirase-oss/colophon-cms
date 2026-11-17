@@ -203,6 +203,7 @@ fn api_services(
         mcp: colophon_api::mcp::Shared::new(config.mcp),
         passwords: colophon_db::passwords::PasswordGate::new(config.password_concurrency),
         magic_links: config.magic_links,
+        media_origin: config.media_origin.clone(),
     })
 }
 

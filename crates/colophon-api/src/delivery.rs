@@ -30,7 +30,10 @@
 //! it out and a read of it is 410 `gone`, uncached. Cache keys name the environment's latest
 //! unpublish, so answers cached before it are never served again.
 
-use std::{collections::BTreeSet, future::Future};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+};
 
 use axum::{
     Json,
@@ -122,10 +125,88 @@ pub(crate) struct PublishedView {
     /// Who may read it (D-137): a site that caches pages needs to know which answers are
     /// member-only even before it signs anyone in.
     visibility: String,
+    /// The uploads it names — asset fields and rich-text images — at the versions its release
+    /// recorded (D-171), by asset id. Left out when it names none.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    media: BTreeMap<String, MediaView>,
+}
+
+/// What a release recorded of one upload, as `publications.media` holds it (D-171).
+#[derive(Deserialize)]
+struct Stamp {
+    sha: String,
+    #[serde(rename = "type")]
+    kind: String,
+    width: u32,
+    height: u32,
+    renditions: Vec<String>,
+}
+
+/// One upload as a site sees it (D-171): `url` and the renditions name the exact bytes the
+/// release published and never change (cached a year, D-157); `current_url` follows
+/// replacements, for a site that wants the newest bytes without publishing again.
+#[derive(Serialize)]
+pub(crate) struct MediaView {
+    url: String,
+    current_url: String,
+    #[serde(rename = "type")]
+    kind: String,
+    width: u32,
+    height: u32,
+    renditions: BTreeMap<String, String>,
+}
+
+/// Where an answer's media URLs start: `{origin}/media/v1/{project}/{environment}`.
+pub(crate) struct MediaBase(String);
+
+impl MediaBase {
+    pub(crate) fn new(origin: &str, project: Uuid, environment: &str) -> Self {
+        Self(format!("{origin}/media/v1/{project}/{environment}"))
+    }
+
+    /// The views of a publication's recorded `media`. Only what the server itself wrote is
+    /// stored there, but it still goes into URLs: an id that isn't a UUID, a digest that isn't
+    /// 64 hex characters or a rendition name that isn't lowercase letters and digits is left
+    /// out rather than written into a link.
+    fn views(&self, media: &str) -> Result<BTreeMap<String, MediaView>, ApiError> {
+        let stamps: BTreeMap<String, Stamp> =
+            serde_json::from_str(media).map_err(ApiError::internal)?;
+        let base = &self.0;
+        Ok(stamps
+            .into_iter()
+            .filter(|(asset, stamp)| {
+                Uuid::try_parse(asset).is_ok() && colophon_media::is_version_sha(&stamp.sha)
+            })
+            .map(|(asset, stamp)| {
+                let url = format!("{base}/{asset}/{}", stamp.sha);
+                let renditions = stamp
+                    .renditions
+                    .iter()
+                    .filter(|name| {
+                        !name.is_empty()
+                            && name.len() <= 16
+                            && name
+                                .bytes()
+                                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                    })
+                    .map(|name| (name.clone(), format!("{url}/{name}")))
+                    .collect();
+                let view = MediaView {
+                    current_url: format!("{base}/{asset}"),
+                    url,
+                    kind: stamp.kind,
+                    width: stamp.width,
+                    height: stamp.height,
+                    renditions,
+                };
+                (asset, view)
+            })
+            .collect())
+    }
 }
 
 impl PublishedView {
-    fn new(row: Published) -> Result<Self, ApiError> {
+    fn new(row: Published, media: &MediaBase) -> Result<Self, ApiError> {
         Ok(Self {
             id: row.entry_id,
             revision_id: row.revision_id,
@@ -136,6 +217,7 @@ impl PublishedView {
             content_hash: crate::entries::content_hash(&row.content_hash),
             published_in: row.valid_from,
             visibility: row.visibility,
+            media: media.views(&row.media)?,
         })
     }
 }
@@ -382,6 +464,7 @@ pub(crate) async fn list(
     let services = services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let environment = resolve(services, project, &path.environment).await?;
+    let media = MediaBase::new(&services.media_origin, project, &path.environment);
     // A cursor's page is pinned to the generation of the first page, like `?generation=`.
     let (generation, before, pinned) = match query.cursor.as_deref() {
         Some(text) => {
@@ -407,6 +490,7 @@ pub(crate) async fn list(
         epoch: environment.epoch,
         generation,
         unpublished: environment.last_unpublish,
+        media: colophon_domain::cache::media_digest(&services.media_origin),
     };
     let key = scope.list_key(&path.collection, limit, before.as_ref().map(Uuid::as_u128));
     let tags = scope.list_tags(&path.collection);
@@ -443,7 +527,7 @@ pub(crate) async fn list(
                 .flatten();
             let data = rows
                 .into_iter()
-                .map(PublishedView::new)
+                .map(|row| PublishedView::new(row, &media))
                 .collect::<Result<Vec<_>, ApiError>>()?;
             let empty = data.is_empty();
             let body =
@@ -468,6 +552,7 @@ pub(crate) async fn get(
     let services = services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let environment = resolve(services, project, &path.environment).await?;
+    let media = MediaBase::new(&services.media_origin, project, &path.environment);
     let generation = at(query.generation, environment.generation)?;
     if generation == 0 {
         return Err(ApiError::NotFound);
@@ -480,6 +565,7 @@ pub(crate) async fn get(
         epoch: environment.epoch,
         generation,
         unpublished: environment.last_unpublish,
+        media: colophon_domain::cache::media_digest(&services.media_origin),
     };
     let key = scope.entry_key(&path.collection, entry.as_u128());
     let tags = scope.entry_tags(&path.collection, entry.as_u128());
@@ -506,7 +592,7 @@ pub(crate) async fn get(
                 return Ok(if gone { Read::Gone } else { Read::Missing });
             };
             let body = serde_json::to_string(&Data {
-                data: PublishedView::new(row)?,
+                data: PublishedView::new(row, &media)?,
             })
             .map_err(ApiError::internal)?;
             Ok(Read::Found(Answer { body, empty: false }))
@@ -558,6 +644,7 @@ pub(crate) async fn query(
     let services = services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let environment = resolve(services, project, &path.environment).await?;
+    let media = MediaBase::new(&services.media_origin, project, &path.environment);
     // A cursor's page is pinned to the generation of its first page, like `?generation=`.
     let (generation, inner) = match parameters.cursor.as_deref() {
         Some(text) => {
@@ -610,6 +697,7 @@ pub(crate) async fn query(
         epoch: environment.epoch,
         generation,
         unpublished: environment.last_unpublish,
+        media: colophon_domain::cache::media_digest(&services.media_origin),
     };
     let key = scope.query_key(&path.collection, &language.query_hash(), cursor.as_deref());
     let tags = scope.list_tags(&path.collection);
@@ -676,7 +764,7 @@ pub(crate) async fn query(
                 .map(|mut row| {
                     row.content =
                         crate::populate::expand_document(&content_type, &row.content, &resolved)?;
-                    PublishedView::new(row)
+                    PublishedView::new(row, &media)
                 })
                 .collect::<Result<Vec<_>, ApiError>>()?;
             let empty = data.is_empty();
@@ -699,6 +787,43 @@ pub(crate) async fn query(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn media_views_name_the_recorded_version_and_follow_the_current_one() {
+        let base = super::MediaBase::new("https://media.example", uuid::Uuid::nil(), "production");
+        let asset = "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d";
+        let sha = "ab".repeat(32);
+        let stored = serde_json::json!({
+            asset: {"sha": sha, "type": "image/png", "width": 2400, "height": 1600,
+                    "renditions": ["w320", "w1280", "../x", "W9"]},
+            "not-a-uuid": {"sha": sha, "type": "image/png", "width": 1, "height": 1, "renditions": []},
+            "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4e": {"sha": "../../x", "type": "image/png",
+                    "width": 1, "height": 1, "renditions": []}
+        })
+        .to_string();
+        let views = base.views(&stored).expect("parses");
+        let view = serde_json::to_value(&views).expect("serializes");
+        let prefix = format!(
+            "https://media.example/media/v1/{}/production/{asset}",
+            uuid::Uuid::nil()
+        );
+        assert_eq!(
+            view,
+            serde_json::json!({asset: {
+                "url": format!("{prefix}/{sha}"),
+                "current_url": prefix,
+                "type": "image/png",
+                "width": 2400,
+                "height": 1600,
+                "renditions": {
+                    "w1280": format!("{prefix}/{sha}/w1280"),
+                    "w320": format!("{prefix}/{sha}/w320"),
+                }
+            }}),
+            "only what could be a URL segment the server wrote is linked"
+        );
+        assert!(base.views("{}").expect("empty").is_empty());
+    }
+
     use super::*;
 
     #[test]
