@@ -26,6 +26,7 @@ serial dependency-failure matrix, then the 24-hour mixed soak.
 | Schema ops | `migrations`, `roles`, `members`, `stages` | plan/dry-run/apply under load, role edits, invitations, stage-gated publishes | committed (full runs pending on the newest per ROADMAP notes) |
 | Publishing pipeline | `changesets`, `publishing`, `schedules`, `deletion` | hash-bound reviews, release commits, outbox leases, scheduled publishes, tombstones | committed |
 | Delivery reads | `delivery`, `cold-cache`, `stampede`, `cdn-warm` | anonymous latest/pinned reads, Postgres fallback, coalesced stampedes, per-region TTFB | committed (L03/L04/L10 evidence in results) |
+| Localized delivery | `delivery-locales` | `?locale=`/`?fallback=` reads against 20 listed languages: exact, fallback, `not_in_locale` 404s, pinned, alternates, a query; `LARGE=1 GROUPS=N` cold fallback queries over a big collection | committed; short smokes passed every check, but its latency and cache gates were met only on a calm machine (a slug-free copy); full runs and the `check.sh` smoke owed |
 | Automation surface | `cli`, `tokens`, `quotas`, `noisy-agent`, `bulk`, `graphql` | bearer auth, token scoping, rate limits, agent throttling (L08), bounded bulk, GraphQL reads | committed (L08 stored) |
 | Media | `media-load`, `assets` | L14: uploads + fake/oversized rejection while editorial p95 holds | committed |
 | Import/export | `import-scale`, `transfer` | L09: 10k-record import, per-item outcomes, resumable | committed |

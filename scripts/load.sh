@@ -19,7 +19,8 @@
 # a Strapi entity, in one transaction; D-086), graphql (entries reads through the
 # per-collection schema — filters, a sort, a page and one expanded reference per node —
 # and one entry read in ten; D-115), locales (a French sibling's save carrying its
-# locale, the source's group read, and a locale-filtered list; D-087), deletion (articles created and deleted
+# locale, the source's group read, a locale-filtered list, and one in twenty saving the
+# environment's languages again under If-Match, 409 stale_locales expected; D-087), deletion (articles created and deleted
 # with If-Match, replayed deletions, 404 reads of what was deleted, and deletions refused because
 # the article is published, in a changeset or stale; D-080),
 # cli (requests authenticated by a bearer token, as the CLI sends them), members (member lists,
@@ -44,7 +45,9 @@
 # comment etags, and task creates and updates on task etags; D-102), live ({P}/events streams
 # held open to their clean end while other virtual users save entries steadily — the server
 # gets a short COLOPHON_EVENTS_LIFETIME_MS so a hold is seconds, not 30 minutes; D-108),
-# delivery (anonymous /content/v1 reads, latest and pinned), audience-sites (the demo sites'
+# delivery (anonymous /content/v1 reads, latest and pinned), delivery-locales (the same reads in a
+# language: exact, fallback, not_in_locale misses, pinned, alternates and a query, against 20
+# listed languages; LARGE=1 GROUPS=N adds cold fallback queries over a big collection), audience-sites (the demo sites'
 # real read shapes against the seeded demo-sites project: media thumbs and originals,
 # collection lists with cursor paging, entries latest and pinned, and If-None-Match
 # revalidations; needs scripts/seed-demo-sites.sh's record or DEMO_PROJECT), publishing (whole publishes, five
@@ -108,7 +111,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|delivery-locales|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -130,7 +133,7 @@ case "$endpoint" in
   # ~455 KB from an in-memory cache: no database, but bandwidth-bound — measured knee
   # ~3.5k/s, so the steady promise is 2,000/s at a 100 ms p99 (D-110).
   openapi) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
-  session | projects | setup | delivery | site) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
+  session | projects | setup | delivery | delivery-locales | site) RATE="${RATE:-2000}" P99_MS="${P99_MS:-100}" ;;
   # The demo sites' mix: over half the requests are media, each an environment lookup plus an
   # object-store read, so its steady promise is far under delivery's cache-hit path.
   audience-sites) RATE="${RATE:-500}" P99_MS="${P99_MS:-250}" ;;
