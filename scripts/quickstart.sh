@@ -14,7 +14,8 @@
 #   --record   write the timings and sizes to perf/results/<stamp>-quickstart-<machine>.json
 #   --keep     leave the containers and volumes running afterwards
 #
-# Times reported: `up --wait` from nothing to ready (images already present), the same after
+# Times reported: `up --wait` from nothing to ready (the Colophon image present; it includes
+# pulling any dependency image that isn't), the same after
 # `down` (a restart with data), and the Colophon container alone from start to healthy (its
 # cold start). Sizes: the image as stored, and as pulled (gzip of `docker save`).
 # Needs Docker with Compose 2.24 or newer, curl and jq.
@@ -187,7 +188,7 @@ if [[ $record == true ]]; then
       image: {ref: $image, bytes: $size, compressed_bytes: $pulled},
       seconds: {first_up_wait: $first, second_up_wait: $second, colophon_cold_start: $cold},
       colophon_idle_memory: $colophon_memory, failures: $failures,
-      note: "images already present: pull time is not included"}' >"$repo/$file"
+      note: "the Colophon image was present (built or pulled before); first_up_wait includes pulling any dependency image that was not"}' >"$repo/$file"
   echo "    recorded $file"
 fi
 
