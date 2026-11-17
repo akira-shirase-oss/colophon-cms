@@ -1,5 +1,5 @@
 ---
-import { site, entries, entryPath, mediaUrl, type Entry, type Site } from '@colophon/site-kit';
+import { site, entries, entryPath, picture, type Entry, type Site } from '@colophon/site-kit';
 import Base from '../../layouts/Base.astro';
 
 interface Props {
@@ -30,7 +30,7 @@ const facts = [
 	<article class="photo-page">
 		{asset !== '' && (
 			<img
-				src={mediaUrl(cms, asset, 'w1280')}
+				{...picture(cms, photo, asset, { rendition: 'w1280', sizes: '(max-width: 64rem) 100vw, 64rem' })}
 				alt={typeof photo.content['caption'] === 'string' ? photo.content['caption'] : photo.title}
 				decoding="async"
 			/>

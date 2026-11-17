@@ -1,4 +1,4 @@
-//! Change hints on the `colophon_events` channel (D-108, migrations 0044 and 0066), against
+//! Change hints on the `colophon_events` channel (D-108, migrations 0044 and 0068), against
 //! real PostgreSQL: a committed write queues its hint and the pump sends it once, a writer
 //! never notifies by itself, a rolled-back write sends nothing, identical hints fold into one
 //! notification however many rows or statements queued them, and the wire format decodes into
@@ -70,7 +70,7 @@ async fn enter(pool: &PgPool, identity: Uuid, project: Uuid) -> ProjectTransacti
         .expect("a member, in an environment that exists")
 }
 
-/// Runs one pump pass, as a server's pump does every 100 ms (D-177): what writers queued is
+/// Runs one pump pass, as a server's pump does every 100 ms (D-180): what writers queued is
 /// sent now.
 async fn pump(pool: &PgPool) -> u64 {
     events::pump(pool).await.expect("the pump runs")
@@ -121,7 +121,7 @@ async fn a_commit_notifies_and_a_rollback_does_not() {
         .await
         .expect("entry");
     tx.commit().await.expect("commit");
-    // The writer queued its hint and notified nothing itself (D-177): the commit never took
+    // The writer queued its hint and notified nothing itself (D-180): the commit never took
     // PostgreSQL's notify lock. The pump sends it.
     quiet(&mut listener).await;
     assert!(pump(&db.app).await >= 1);

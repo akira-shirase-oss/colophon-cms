@@ -134,7 +134,7 @@ async fn stop_setup_code(cancel: &CancellationToken, task: Option<tokio::task::J
     }
 }
 
-/// Starts the change hints' two tasks: the pump in every role (D-177) — writers queue their
+/// Starts the change hints' two tasks: the pump in every role (D-180) — writers queue their
 /// hints in `change_hints` and some running Colophon process must send them, whichever pump
 /// gets there first — and, for the api and all roles, the listener (D-108): one `LISTEN`
 /// connection feeding the bus the `{P}/events` streams subscribe to. The worker role alone has
@@ -209,6 +209,7 @@ fn api_services(
         mcp: colophon_api::mcp::Shared::new(config.mcp),
         passwords: colophon_db::passwords::PasswordGate::new(config.password_concurrency),
         magic_links: config.magic_links,
+        media_origin: config.media_origin.clone(),
         install_kind: config.install_kind,
     })
 }

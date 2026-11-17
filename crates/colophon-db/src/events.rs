@@ -21,14 +21,14 @@ use crate::DbError;
 /// The `LISTEN` channel every API server holds (migration 0044).
 pub const CHANNEL: &str = "colophon_events";
 
-/// The most queued hints one pump pass drains (D-177); a pass that fills it runs again at once.
+/// The most queued hints one pump pass drains (D-180); a pass that fills it runs again at once.
 pub const PUMP_BATCH: i64 = 5_000;
 
-/// Sends the change hints writers have committed since the last pass (D-177): takes up to
+/// Sends the change hints writers have committed since the last pass (D-180): takes up to
 /// [`PUMP_BATCH`] rows of `change_hints` — committed ones only, skipping rows another
 /// process's pump holds — deletes them, and notifies each distinct payload once on
 /// [`CHANNEL`], all in one short transaction. Writers never notify themselves (migration
-/// 0066): PostgreSQL serialises every committing transaction that issued a NOTIFY on one
+/// 0068): PostgreSQL serialises every committing transaction that issued a NOTIFY on one
 /// lock until its WAL flush, so only this pass takes it, a few times a second. Returns how
 /// many rows it drained.
 pub async fn pump(pool: &PgPool) -> Result<u64, DbError> {

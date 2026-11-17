@@ -1,4 +1,4 @@
-//! The change-hint pump (D-177) and listener (D-108). The pump sends what writers queued in
+//! The change-hint pump (D-180) and listener (D-108). The pump sends what writers queued in
 //! `change_hints`; the listener is one `PgListener` per API process on the `colophon_events`
 //! channel, decoding each committed payload into a [`Hint`] and publishing it on the bus the
 //! `{P}/events` streams subscribe to.
@@ -16,10 +16,10 @@ use colophon_api::events::EventBus;
 use colophon_db::events::{CHANNEL, Hint};
 use tokio_util::sync::CancellationToken;
 
-/// How often the pump sends queued hints (D-177): the most a live list's hint waits.
+/// How often the pump sends queued hints (D-180): the most a live list's hint waits.
 const PUMP_EVERY: Duration = Duration::from_millis(100);
 
-/// Sends queued change hints until `cancel` fires (D-177): one pass every 100 ms, and
+/// Sends queued change hints until `cancel` fires (D-180): one pass every 100 ms, and
 /// at once again while a pass comes back full. A failed pass waits for the next tick — the
 /// hints stay queued, so a database blip delays them and loses none that committed.
 pub async fn pump(pool: colophon_db::PgPool, cancel: CancellationToken) {

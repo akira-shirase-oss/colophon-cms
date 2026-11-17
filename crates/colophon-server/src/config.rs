@@ -148,6 +148,9 @@ pub struct Config {
     /// The origin browsers reach this server at (`COLOPHON_PUBLIC_URL`, default
     /// `http://localhost:58000`): the sign-in redirect URI and the first trusted origin.
     pub public_origin: String,
+    /// The origin delivery's media URLs name (`COLOPHON_MEDIA_URL`, default the public origin;
+    /// D-178): a CDN or a separate asset host in front of `/media/v1`.
+    pub media_origin: String,
     /// Sign-in; `None` when the three `COLOPHON_OIDC_*` settings are absent.
     pub oidc: Option<OidcSettings>,
     /// The object store uploads are quarantined in and served from (07-media); `None` when the
@@ -727,6 +730,15 @@ impl Config {
         let (probe_interval, probe_timeout) = env.probe();
         let (drain_delay, shutdown_grace) = env.drain();
         let (public_origin, extra_trusted_origins, oidc) = env.sign_in(listen_addr);
+        let media_origin = match env.raw("COLOPHON_MEDIA_URL") {
+            None => public_origin.clone(),
+            Some(url) => parse_origin(&url).unwrap_or_else(|| {
+                env.problems.push(format!(
+                    "COLOPHON_MEDIA_URL: {url:?} is not an http(s) origin like https://media.example.com"
+                ));
+                String::new()
+            }),
+        };
         let s3 = env.s3();
         let studio_dir = env.raw("COLOPHON_STUDIO_DIR").map(std::path::PathBuf::from);
         let worker_poll = env.millis("COLOPHON_WORKER_POLL_MS", 500, 10..=60_000);
@@ -826,6 +838,7 @@ impl Config {
                 drain_delay,
                 shutdown_grace,
                 public_origin,
+                media_origin,
                 oidc,
                 s3,
                 extra_trusted_origins,
@@ -1195,8 +1208,26 @@ mod tests {
         .expect("valid");
         assert_eq!(config.public_origin, "https://cms.example.com");
         assert_eq!(
+            config.media_origin, "https://cms.example.com",
+            "media URLs default to the public origin"
+        );
+        assert_eq!(
             config.extra_trusted_origins,
             ["http://localhost:58101", "https://preview.example.com"]
+        );
+        let media = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_MEDIA_URL", "https://media.example.com/"),
+        ])
+        .expect("valid");
+        assert_eq!(media.media_origin, "https://media.example.com");
+        assert!(
+            load(&[
+                ("COLOPHON_DATABASE_URL", DB),
+                ("COLOPHON_MEDIA_URL", "ftp://media.example.com")
+            ])
+            .is_err(),
+            "a media origin is http(s)"
         );
         for bad in [
             "https://cms.example.com/path",

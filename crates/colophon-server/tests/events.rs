@@ -12,7 +12,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-/// Long enough for a server's pump (every 100 ms, D-177) to send what the setup queued.
+/// Long enough for a server's pump (every 100 ms, D-180) to send what the setup queued.
 const SETTLE: Duration = Duration::from_millis(400);
 
 use common::{
@@ -84,7 +84,7 @@ impl Sse {
 
     /// A signed-in stream on the test origin.
     async fn subscribe(session: &Session, project: &str) -> Self {
-        // Writes queue their hints and a server's pump sends them within 100 ms (D-177):
+        // Writes queue their hints and a server's pump sends them within 100 ms (D-180):
         // let the setup's own hints (the project's creation) go out before listening, so the
         // stream hears only what the test does next.
         tokio::time::sleep(SETTLE).await;

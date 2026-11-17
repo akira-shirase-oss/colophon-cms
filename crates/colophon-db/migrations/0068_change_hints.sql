@@ -1,4 +1,4 @@
--- D-177: change hints leave the writer's commit.
+-- D-180: change hints leave the writer's commit.
 --
 -- Migration 0044's row triggers called `pg_notify` inside every watched write. PostgreSQL
 -- serialises every committing transaction that issued a NOTIFY on one cluster-wide lock, held
@@ -45,7 +45,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION colophon_hint() IS
-    'D-177: queue one change hint per distinct changed row of a statement; the pump notifies.';
+    'D-180: queue one change hint per distinct changed row of a statement; the pump notifies.';
 
 -- 0044's watched tables, their kinds, the collection column ('' when none), and whether they
 -- see updates and deletes or only inserts.

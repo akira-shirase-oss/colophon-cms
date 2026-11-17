@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility\n             FROM publications\n             WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n               AND environment_id = $1 AND collection = $2\n               AND valid_from <= $3 AND (valid_to IS NULL OR valid_to > $3) AND revoked_in IS NULL\n               AND ($4::uuid IS NULL OR entry_id < $4)\n             ORDER BY entry_id DESC\n             LIMIT $5",
+  "query": "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from,\n                    visibility, media::text AS \"media!\"\n             FROM publications\n             WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid\n               AND environment_id = $1 AND collection = $2\n               AND valid_from <= $3 AND (valid_to IS NULL OR valid_to > $3) AND revoked_in IS NULL\n               AND ($4::uuid IS NULL OR entry_id < $4)\n             ORDER BY entry_id DESC\n             LIMIT $5",
   "describe": {
     "columns": [
       {
@@ -101,6 +101,12 @@
             "name": "visibility"
           }
         }
+      },
+      {
+        "ordinal": 9,
+        "name": "media!",
+        "type_info": "Text",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -121,8 +127,9 @@
       false,
       false,
       false,
-      false
+      false,
+      null
     ]
   },
-  "hash": "84fa341f38571e985c58618780321efcb4d0db252e865557729c7e3d2c4c8b15"
+  "hash": "4ed76a5c61ddead980b187439419f61a9caece5319c1090bcb0dc54841461bd2"
 }
