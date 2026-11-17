@@ -204,6 +204,7 @@ fn api_services(
         passwords: colophon_db::passwords::PasswordGate::new(config.password_concurrency),
         magic_links: config.magic_links,
         media_origin: config.media_origin.clone(),
+        install_kind: config.install_kind,
     })
 }
 

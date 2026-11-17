@@ -50,6 +50,11 @@ detail: `docs/ROADMAP.md` and the build log):
   (D-141, D-146). Five Astro demo sites (D-133) rebuild themselves on publish with live
   delivery updates (D-138, D-139).
 
+Running it as a user would (D-174, D-175): `docker build -f deploy/image/Dockerfile -t colophon:local .`, then
+`docker compose up -d --wait` in `deploy/quickstart/` with `COLOPHON_IMAGE=colophon:local`; `scripts/quickstart.sh`
+does that in a scratch directory and checks it (`--port` moves it off 8080). Operator guide:
+`deploy/runbooks/install.md`.
+
 Running locally: `scripts/migrate.sh` migrates the shared `colophon` dev database, then
 `COLOPHON_STUDIO_DIR=apps/studio/build target/release/colophon-server` — Studio at
 `http://localhost:58000/studio/`, sign in as `dev-owner`. Rebuild the Studio bundle with

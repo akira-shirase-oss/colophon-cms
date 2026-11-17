@@ -1516,6 +1516,13 @@
         "properties": {
           "has_administrator": {
             "type": "boolean"
+          },
+          "install_kind": {
+            "description": "How the server was installed, when its installer said (`GET /api/v1/installation` only): `container` means the setup code is in `docker compose logs colophon`.",
+            "enum": [
+              "container"
+            ],
+            "type": "string"
           }
         },
         "required": [

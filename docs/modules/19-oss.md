@@ -107,9 +107,23 @@ evidence".
   SHA-256.
 - **sbom:** `cargo-cyclonedx` 0.5.9 (installed `--locked`) writes a CycloneDX 1.5 SBOM of each binary's dependencies
   for each target: `colophon-cli-<version>-<target>.cdx.json` and the server's.
+- **studio:** builds the Studio (Node 24, its workspace only) and packs `colophon-studio-<version>.tar.gz`
+  reproducibly (sorted, owner 0, the commit's time), for a binary install's `COLOPHON_STUDIO_DIR`.
+- **image** (D-174): unpacks the two Linux archives after checking their checksums, runs hadolint, and builds
+  `deploy/image/Dockerfile` with `BINS=prebuilt` for `linux/amd64` and `linux/arm64` on a pinned BuildKit, with an
+  SBOM and `mode=max` provenance (no emulation: the final stage only copies). A tag run pushes
+  `ghcr.io/akira-shirase-oss/colophon:<version>` and `:next` (pre-release) or `:latest`, then signs the digest with
+  `actions/attest-build-provenance` (pushed to the registry); GHCR keeps a new package private until the maintainer
+  makes it public. A dry run writes an OCI archive instead. Both load the amd64 image, check `--version` reports this
+  release and commit, record its compressed size, and fail on a critical CVE that has a fix (Trivy, pinned). Last,
+  `scripts/quickstart-render.sh` writes the quick start's `compose.yaml` with every Colophon service pinned to
+  `<image>:<version>@<digest>`.
+- **allocator** (D-176): the release's static musl server against a glibc build of the same commit on one runner,
+  interleaved over three rounds (`scripts/allocator-bench.sh`, `perf/k6/allocator.js`); informs, doesn't gate.
 - **assemble:** rechecks every file against the checksum its job recorded, adds `install.sh` and the Homebrew
-  formula `colophon.rb` (rendered from the archives' checksums), writes one `SHA256SUMS` (22 files: two archives and
-  two SBOMs per target, the script and the formula) and checks it. Then it serves the release directory over HTTP
+  formula `colophon.rb` (rendered from the archives' checksums), writes one `SHA256SUMS` (24 files: two archives and
+  two SBOMs per target, the script, the formula, the Studio archive and the quick start's `compose.yaml`) and checks
+  it. Then it serves the release directory over HTTP
   on `127.0.0.1`, runs `install.sh` against it and checks the installed `colophon --version` reports this release
   and commit, and checks the formula (`scripts/test-homebrew-formula.sh`, `ruby -c`).
 - **release** (tag runs only): `actions/attest-build-provenance` signs SLSA build provenance for every file in
@@ -124,10 +138,16 @@ evidence".
   environment's secrets it publishes the five platform packages and then the launcher, each with `--provenance` and
   `--access public`, under the dist-tag `next` for a pre-release (`latest` otherwise); a package version already on
   npm is skipped, so a rerun after a partial failure finishes the job. Nothing is ever published from a laptop.
-- Every third-party action is pinned to a full commit SHA, as in `ci.yml`. Known gaps: the Studio's static files are
-  not in the server archive yet (the container images, still to build, will carry them); the Linux server is a musl
-  build, whose allocator is often reported slower than glibc's for threaded servers, and its throughput has not been
-  measured.
+- Every third-party action is pinned to a full commit SHA, as in `ci.yml`. The Studio ships beside the binaries
+  (`colophon-studio-<version>.tar.gz`) and inside the container image (D-174). The Linux server is a musl build with
+  mimalloc as its allocator, since musl's own ran allocation-heavy requests five times slower (D-176); the allocator
+  job measures it against glibc on every release run.
+- **Container image (D-174) and quick start (D-175):** `deploy/image/Dockerfile` builds one image with both binaries
+  and the Studio on distroless static (non-root, pinned by digest, `colophon doctor` as its health check), from source
+  by default or from the release's checked binaries (`BINS=prebuilt`). `deploy/quickstart/compose.yaml` runs it with
+  PostgreSQL, Valkey and Garage in one shared network namespace, secrets generated on first start;
+  `scripts/quickstart.sh` is the documented install, checked on every push by the `quickstart` CI job;
+  `deploy/runbooks/install.md` is the operator guide.
 
 ### Releases (spec §35)
 - Semantic versioning.
