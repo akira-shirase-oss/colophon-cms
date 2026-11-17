@@ -14,7 +14,7 @@
 //! - `POST /audience/v1/{project}/signin`: `{"email", "password"}` starts a session. A wrong
 //!   password, a missing account, an unknown project and an (account, address) paused after
 //!   eight misses answer alike (`sign_in_failed`, D-154); a disabled one is
-//!   `account_disabled`.
+//!   `account_disabled` — to the right password only (D-169).
 //! - `POST /audience/v1/{project}/signout`: ends the session — a cookie-carried one asks the
 //!   `X-CSRF-Token` header to match its CSRF cookie, as a staff session's writes do; a bearer
 //!   credential needs nothing, never being ambient.

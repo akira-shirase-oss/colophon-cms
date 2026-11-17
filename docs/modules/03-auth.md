@@ -347,7 +347,8 @@ Built in step 1.7 (D-042), for people:
   a missing account and an unverifiable one answer alike with `sign_in_failed`, eight misses pause that (account,
   client address) for fifteen minutes and answer the same `sign_in_failed` while paused (D-154), as does the
   account's ceiling for addresses it never let in (D-162), a disabled one is
-  403 `account_disabled`), `POST …/signout` (204 whether
+  403 `account_disabled` — to the right password only, after the verify; a wrong one is `sign_in_failed` like any
+  other (D-169)), `POST …/signout` (204 whether
   the session was live or not) and `GET …/me` (200 or 401). Signup and sign-in answer the user plus the session:
   the token and its CSRF sibling in the body and as the `colophon_audience` / `colophon_audience_csrf` cookie
   pair (session cookie `HttpOnly` + `SameSite=Lax`, CSRF sibling readable + `SameSite=Strict`).

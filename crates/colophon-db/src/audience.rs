@@ -439,12 +439,14 @@ pub async fn sign_in(
         let _ = slot.verify(password, None).await;
         return Ok(SignIn::Refused);
     };
-    if row.disabled_at.is_some() {
-        return Ok(SignIn::Disabled);
-    }
-    // Argon2 with no transaction open and no connection held.
+    // Argon2 with no transaction open and no connection held — and before anything about the
+    // account is answered: only the right password learns it is disabled, so a guess can't
+    // tell a disabled account from any other, by answer or by time.
     if !slot.verify(password, Some(&row.password_hash)).await {
         return Ok(SignIn::Refused);
+    }
+    if row.disabled_at.is_some() {
+        return Ok(SignIn::Disabled);
     }
     let mut tx = project_tx(pool, project).await?;
     throttle::clear(&mut tx, Realm::Audience(project), email, address).await?;

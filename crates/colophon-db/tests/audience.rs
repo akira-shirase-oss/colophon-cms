@@ -388,6 +388,52 @@ async fn sessions_live_and_die_by_expiry_idle_revocation_and_disable() {
     db.drop().await;
 }
 
+/// Only the right password learns an account is disabled (D-169): a wrong one gets the
+/// wrong-password answer after the same verify, so guessing can't tell a disabled account from
+/// any other, by answer or by time.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_wrong_password_never_learns_an_account_is_disabled() {
+    let db = TestDb::new().await;
+    let (owner_id, project) = project(&db).await;
+    let phc = passwords::hashed("correct horse battery")
+        .await
+        .expect("hash");
+    let audience::SignedUp::Made(user) =
+        audience::sign_up(&db.app, project, "a@b.c", &phc, None, None)
+            .await
+            .expect("sign_up")
+    else {
+        panic!("signed up");
+    };
+    let mut tx = staff(&db.app, owner_id, project).await;
+    audience::update_user(&mut tx, user.id, None, Some(true))
+        .await
+        .expect("disable");
+    tx.commit().await.expect("commit");
+    let attempt = |password: &'static str| {
+        let pool = db.app.clone();
+        async move {
+            audience::sign_in(
+                &pool,
+                &common::gate(),
+                project,
+                "a@b.c",
+                "203.0.113.2",
+                password,
+            )
+            .await
+            .expect("sign_in")
+        }
+    };
+    assert_eq!(attempt("a guess").await, audience::SignIn::Refused);
+    assert_eq!(
+        attempt("correct horse battery").await,
+        audience::SignIn::Disabled
+    );
+    db.drop().await;
+}
+
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn signin_refuses_wrong_passwords_and_locks_after_enough() {
