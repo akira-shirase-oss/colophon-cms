@@ -43,7 +43,8 @@ COPY crates ./crates
 # The version stamp (D-062): the commit and the build date can't come from git in here.
 ARG COLOPHON_COMMIT=unknown
 ARG SOURCE_DATE_EPOCH
-ARG CARGO_BUILD_JOBS
+# Cargo's own default (one job a core) unless a busy machine asks for fewer.
+ARG CARGO_BUILD_JOBS=default
 ENV COLOPHON_COMMIT=$COLOPHON_COMMIT \
     SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH \
     CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS \
