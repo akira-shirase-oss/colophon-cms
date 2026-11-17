@@ -224,3 +224,77 @@ async fn a_loopback_server_refuses_private_destinations_unless_told_otherwise() 
         "nothing reached the private receiver"
     );
 }
+
+/// A proxy named in the environment never carries a delivery (D-149): the worker's address
+/// checks run in its own resolver, and a proxy resolves the destination's name itself, so a
+/// request sent through one would go wherever the proxy chose. With `HTTP_PROXY` and friends
+/// pointing at a listener, the delivery still reaches the receiver directly, and no request
+/// the listener sees names the receiver. (Other clients — a configured identity provider's,
+/// say — may use an operator's proxy; only destinations must not.)
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_proxy_in_the_environment_never_carries_a_delivery() {
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a proxy port");
+    let proxy = format!("http://{}", listener.local_addr().expect("an address"));
+    let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = Arc::clone(&requests);
+    let task = tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let mut head = vec![0_u8; 2048];
+            let read = stream.read(&mut head).await.unwrap_or(0);
+            let line = String::from_utf8_lossy(&head[..read])
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_owned();
+            seen.lock().expect("not poisoned").push(line);
+            let _ = stream
+                .write_all(b"HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n")
+                .await;
+        }
+    });
+    let mut settings: Vec<(&str, &str)> = FAST.to_vec();
+    for name in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
+        settings.push((name, proxy.as_str()));
+    }
+    settings.extend([("NO_PROXY", ""), ("no_proxy", "")]);
+    let _server = Server::start_with(&settings).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let receiver = Receiver::start(&[]).await;
+    destination(&owner, &project, &receiver.url).await;
+
+    let generation = publish_article(&owner, &project, "Not through a proxy").await;
+    let job = finished_job(&owner, &project, generation, 15).await;
+    assert_eq!(job["status"].as_str(), Some("succeeded"), "{job}");
+    assert_eq!(receiver.seen().len(), 1);
+    let address = receiver
+        .url
+        .trim_start_matches("http://")
+        .trim_end_matches("/hook")
+        .to_owned();
+    let through: Vec<String> = requests
+        .lock()
+        .expect("not poisoned")
+        .iter()
+        .filter(|line| line.contains(&address))
+        .cloned()
+        .collect();
+    assert!(
+        through.is_empty(),
+        "deliveries went through the proxy: {through:?}"
+    );
+    task.abort();
+}

@@ -184,6 +184,10 @@ impl Worker {
             .connect_timeout(Duration::from_secs(5))
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("colophon/", env!("CARGO_PKG_VERSION")))
+            // Never through a proxy from the environment (`HTTP_PROXY` and friends): a proxy
+            // resolves the destination's name itself, past the resolver below, so the address
+            // checks would no longer say where the request goes.
+            .no_proxy()
             .dns_resolver(Arc::new(guard::PublicOnly {
                 allow_private: settings.allow_private,
             }))

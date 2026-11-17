@@ -104,7 +104,8 @@ on clean infrastructure and an independent install, so operations are a module w
   seconds (at most 32 waiters a slot); past that sign-ins and sign-ups answer `503` with `Retry-After`, while
   delivery shares the cores and, since a verify never holds a database connection, keeps its pool.
 - Destinations (D-149): webhooks, CDN purges and probes reach only https and public addresses, checked when a
-  destination is saved and again before every attempt, with a resolver that drops private answers.
+  destination is saved and again before every attempt, with a resolver that drops private answers. Deliveries
+  ignore `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`, so a host whose egress must go through a proxy can't send them.
   `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` lifts that for development (local receivers, the demo-site hook) and
   says so in the start-up log; it is off by default and never inferred from the listen address, because a production
   server behind a local reverse proxy binds loopback too. `deploy/local.env` sets it; a production environment
