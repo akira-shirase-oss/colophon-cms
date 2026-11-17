@@ -14,6 +14,7 @@
 //     details (refusal reason + JSON pointer), never a bare `TypeError` from fetch.
 
 import { ApiError, errorOf } from './error.js';
+import { judge, readReport, type Compatibility } from './compat.js';
 import type { components, operations } from './api.types.js';
 
 /* ------------------------------------------------------------------ types */
@@ -106,6 +107,12 @@ export interface ClientOptions {
 	/** The most a response body may run to, in bytes — declared or measured; the read stops past
 	 *  it with `response_too_large`. Default 16 MiB. */
 	maxBodyBytes?: number;
+	/** The server-version check (`client.compatibility()`), run once, lazily, before the first
+	 *  API call: `'warn'` (the default) logs the plain-words reason through `console.warn` and
+	 *  never delays or fails a call; `'throw'` waits for the check and fails every call with
+	 *  `incompatible_server` while the server doesn't fit; `'off'` never asks. A check that gets
+	 *  no answer decides nothing and is tried again on the next call. */
+	compat?: 'off' | 'warn' | 'throw';
 }
 
 /* ------------------------------------------------------------- the transport */
@@ -205,6 +212,13 @@ async function readBounded(response: Response, cap: number, meta: ReplyMeta): Pr
  */
 export class Client {
 	readonly #send: Send;
+	/** The transport without the compatibility gate: health, version, the check itself. */
+	readonly #raw: Send;
+	readonly #base: string;
+	/** The settled check, once one got an answer. */
+	#checked: Compatibility | null = null;
+	/** The check in flight; `null` again after one that got no answer. */
+	#checking: Promise<Compatibility | null> | null = null;
 
 	constructor(options: ClientOptions) {
 		const base = options.baseUrl.replace(/\/+$/, '');
@@ -222,8 +236,13 @@ export class Client {
 		const token = options.token;
 		const session = options.session;
 		const fixed = options.headers ?? {};
+		const compat = options.compat ?? 'warn';
+		if (compat !== 'off' && compat !== 'warn' && compat !== 'throw') {
+			throw new TypeError(`compat must be 'off', 'warn' or 'throw', not ${JSON.stringify(compat)}`);
+		}
+		this.#base = base;
 
-		this.#send = async <B>(call: Call): Promise<Reply<B>> => {
+		const raw = async <B>(call: Call): Promise<Reply<B>> => {
 			const url = new URL(base + call.path);
 			for (const [key, value] of Object.entries(call.query ?? {})) {
 				if (value !== undefined) url.searchParams.set(key, String(value));
@@ -284,24 +303,77 @@ export class Client {
 				retryAfterMs: retryAfterMs(response.headers.get('retry-after'))
 			});
 		};
+		this.#raw = raw;
+		this.#send = async <B>(call: Call): Promise<Reply<B>> => {
+			if (compat === 'throw') {
+				const result = this.#checked ?? (await this.#check());
+				if (result !== null && !result.compatible) {
+					throw new ApiError(0, 'incompatible_server', result.reason ?? 'the server does not fit this SDK');
+				}
+			} else if (compat === 'warn' && this.#checked === null) {
+				// Never in the way of the call: the answer arrives beside it.
+				void this.#check(true);
+			}
+			return raw<B>(call);
+		};
+	}
+
+	/** One check at a time; an unanswered one is forgotten so the next call asks again. With
+	 *  `warn`, a misfit is said once, when the answer settles. */
+	#check(warn = false): Promise<Compatibility | null> {
+		this.#checking ??= this.compatibility().then(
+			(result) => {
+				this.#checked = result;
+				if (warn && !result.compatible) console.warn(`colophon: ${result.reason}`);
+				return result;
+			},
+			() => {
+				this.#checking = null;
+				return null;
+			}
+		);
+		return this.#checking;
+	}
+
+	/**
+	 * `GET /version`, judged by the CLI's rule (D-062): the server must serve API `v1`, share this
+	 * SDK's minor line before 1.0, and be at least the oldest server this SDK supports. Answers
+	 * `{ compatible, sdk, server, api }`, plus `misfit` (a stable code) and `reason` (plain words:
+	 * which side should move, and to what) when it doesn't fit. A server without `/version`
+	 * predates every supported one. Fails as `ApiError` only when the server can't be asked
+	 * (`no_answer`) or answers something that isn't a version report (`invalid_response`).
+	 */
+	async compatibility(options: ReadOptions = {}): Promise<Compatibility> {
+		let body: unknown;
+		try {
+			body = await this.#raw({ method: 'GET', path: '/version', ...(options.signal !== undefined ? { signal: options.signal } : {}) });
+		} catch (error) {
+			if (error instanceof ApiError && error.status === 404) return judge(this.#base, null);
+			throw error;
+		}
+		const report = readReport(body);
+		if (report === null) {
+			throw new ApiError(200, 'invalid_response', `${this.#base}/version answered something other than a version report`);
+		}
+		return judge(this.#base, report);
 	}
 
 	/* ------------------------------------------------------- the whole server */
 
 	/** `GET /livez` — the process answers at all. Unauthenticated. */
 	livez(options: ReadOptions = {}): Promise<Reply<ReplyJson<'liveness'>>> {
-		return this.#send({ method: 'GET', path: '/livez', ...(options.signal !== undefined ? { signal: options.signal } : {}) });
+		return this.#raw({ method: 'GET', path: '/livez', ...(options.signal !== undefined ? { signal: options.signal } : {}) });
 	}
 
 	/** `GET /readyz` — every dependency's check, honest about `degraded`/`not_ready`. */
 	readyz(options: ReadOptions = {}): Promise<Reply<ReplyJson<'readiness'>>> {
-		return this.#send({ method: 'GET', path: '/readyz', ...(options.signal !== undefined ? { signal: options.signal } : {}) });
+		return this.#raw({ method: 'GET', path: '/readyz', ...(options.signal !== undefined ? { signal: options.signal } : {}) });
 	}
 
 	/** `GET /version` — release, commit and the API versions served. Unauthenticated; the shape
 	 *  only ever grows fields. */
 	version(options: ReadOptions = {}): Promise<Reply<ReplyJson<'serverVersion'>>> {
-		return this.#send({ method: 'GET', path: '/version', ...(options.signal !== undefined ? { signal: options.signal } : {}) });
+		return this.#raw({ method: 'GET', path: '/version', ...(options.signal !== undefined ? { signal: options.signal } : {}) });
 	}
 
 	/** `GET /me` — who the credential names, the projects it may see and whether it's an
