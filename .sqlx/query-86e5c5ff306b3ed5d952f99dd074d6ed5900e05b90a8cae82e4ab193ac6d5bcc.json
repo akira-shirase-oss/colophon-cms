@@ -1,0 +1,227 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT a.id, a.state, a.file_name, a.declared_type, a.detected_type, a.sha256,\n                      a.size_bytes, a.width, a.height, a.rejected_reason, a.derivatives,\n                      a.created_at, a.alt, a.title, a.credit, a.tags, a.metadata_version\n               FROM colophon_asset_search($2, $3, $4, $5, $6, $7, $8) f\n               JOIN assets a\n                 ON a.project_id = $1 AND a.environment_id = $2 AND a.id = f.asset_id\n               ORDER BY a.created_at DESC, a.id DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "file_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "declared_type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "declared_type"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "detected_type",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "detected_type"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "sha256",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "sha256"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "size_bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "size_bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "width",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "width"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "height",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "height"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "rejected_reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "rejected_reason"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "derivatives",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "derivatives"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "alt",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "alt"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "credit",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "credit"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "tags",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "tags"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "metadata_version",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "assets",
+            "name": "metadata_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "86e5c5ff306b3ed5d952f99dd074d6ed5900e05b90a8cae82e4ab193ac6d5bcc"
+}

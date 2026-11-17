@@ -6,7 +6,7 @@ import { isAllowedHref } from '@colophon/editor/schema';
 const ELEMENTS = new Set(['P', 'H2', 'H3', 'H4', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'HR', 'FIGURE', 'IMG', 'ASIDE', 'STRONG', 'EM', 'S', 'A', 'BR']);
 const ATTRIBUTES: Record<string, Set<string>> = {
 	A: new Set(['href', 'rel']),
-	IMG: new Set(['src', 'alt', 'loading', 'decoding']),
+	IMG: new Set(['src', 'srcset', 'sizes', 'width', 'height', 'alt', 'loading', 'decoding']),
 	OL: new Set(['start']),
 	CODE: new Set(['class']),
 	ASIDE: new Set(['class', 'role'])
@@ -28,6 +28,15 @@ export function unsafeParts(html: string, assetOrigin: string): string[] {
 		if (href !== null && !isAllowedHref(href)) problems.push(`href ${href}`);
 		const src = element.getAttribute('src');
 		if (src !== null && !src.startsWith(assetOrigin)) problems.push(`src ${src}`);
+		const srcset = element.getAttribute('srcset');
+		for (const candidate of srcset === null ? [] : srcset.split(/,\s+/)) {
+			const url = candidate.trim().split(/\s+/)[0] ?? '';
+			if (!url.startsWith(assetOrigin)) problems.push(`srcset candidate ${url}`);
+		}
+		for (const name of ['width', 'height']) {
+			const value = element.getAttribute(name);
+			if (value !== null && !/^[1-9][0-9]*$/.test(value)) problems.push(`${name} ${value}`);
+		}
 	}
 	return problems;
 }
