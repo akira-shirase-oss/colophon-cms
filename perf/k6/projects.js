@@ -1,8 +1,8 @@
 // Load scenario for who may create projects (step 1.8, D-043). setup() signs in the bootstrapped
-// administrator (dev-owner) and someone who isn't (dev-editor). Nine requests in twenty are
-// dev-editor trying to create a project, each of which must be refused with 403 (the gate's
-// lookup and nothing written); nine are dev-editor's /me, which must say "not an administrator";
-// two are dev-owner's /me, which must say "administrator". teardown() checks that dev-editor
+// administrator (dev-owner) and makes someone who isn't (a fresh account). Nine requests in twenty are
+// a fresh account trying to create a project, each of which must be refused with 403 (the gate's
+// lookup and nothing written); nine are its /me, which must say "not an administrator";
+// two are dev-owner's /me, which must say "administrator". teardown() checks that the account
 // owns no more projects than at the start. Same settings as health.js; scripts/load.sh gives
 // this endpoint RATE 2000 and P99_MS 100.
 
@@ -60,11 +60,28 @@ function signIn(username) {
 
 const owned = (headers) => http.get(`${BASE_URL}/api/v1/projects`, { headers }).json('data').length;
 
+/** A password account made for this run: not an administrator, in no project, so what its /me
+ *  reads never depends on what earlier runs or test suites left on the development accounts. */
+function freshPerson() {
+  const jar = new http.CookieJar();
+  const run = Date.now().toString(36);
+  const made = http.post(`${PUBLIC_URL}/auth/signup`, JSON.stringify({ email: `k6-projects-${run}@load.test`, password: 'a password for this run' }), { jar, headers: { 'Content-Type': 'application/json' } });
+  if (made.status !== 201) fail(`signup: HTTP ${made.status} ${made.body}`);
+  const cookies = jar.cookiesForURL(PUBLIC_URL);
+  return {
+    Cookie: `colophon_session=${cookies.colophon_session[0]}`, 'X-CSRF-Token': cookies.colophon_csrf[0], Origin: PUBLIC_URL,
+    'Content-Type': 'application/json',
+  };
+}
+
 export function setup() {
+  // The administrator is the bootstrapped dev-owner — the one account that can be. Its /me is a
+  // tenth of the requests, and lists the projects every earlier run made; the person who isn't
+  // an administrator is made fresh.
   const admin = signIn('dev-owner');
-  const other = signIn('dev-editor');
+  const other = freshPerson();
   const me = http.get(`${BASE_URL}/me`, { headers: other });
-  if (me.json('data.administrator') !== false) fail('dev-editor must not be an administrator');
+  if (me.json('data.administrator') !== false) fail('a fresh account must not be an administrator');
   return { admin, other, before: owned(other) };
 }
 
@@ -89,5 +106,5 @@ export default function (data) {
 
 export function teardown(data) {
   const after = owned(data.other);
-  if (after !== data.before) fail(`dev-editor's projects went from ${data.before} to ${after}: a refusal created something`);
+  if (after !== data.before) fail(`the fresh account's projects went from ${data.before} to ${after}: a refusal created something`);
 }

@@ -1,7 +1,8 @@
 // Load scenario for the signed-in path (step 1.1): every request is authenticated by session
 // cookie, so each one looks the session up in Postgres and reads through row-level security.
-// setup() signs in once on the built-in password card (D-146). Requests alternate between
-// GET /me and GET /api/v1/projects. Same settings as health.js, with the defaults
+// setup() makes a person of its own, the member of one project of its own, so the measured state
+// is the same whatever earlier runs left behind. Requests alternate between GET /me and
+// GET /api/v1/projects. Same settings as health.js, with the defaults
 // scripts/load.sh gives this endpoint: RATE 2000 and P99_MS 100.
 
 import http from 'k6/http';
@@ -41,12 +42,43 @@ export const options = {
   setupTimeout: '60s',
 };
 
+/** The headers a browser tab of the session in `jar` would send. */
+function browserOf(jar) {
+  const cookies = jar.cookiesForURL(PUBLIC_URL);
+  return {
+    Cookie: `colophon_session=${cookies.colophon_session[0]}`, 'X-CSRF-Token': cookies.colophon_csrf[0], Origin: PUBLIC_URL,
+    'Content-Type': 'application/json',
+  };
+}
+
+/** A person made for this run, so what is measured never depends on what earlier runs or test
+ *  suites left on the shared development accounts (dev-owner's project list grows with every
+ *  project a test makes): a fresh password account, the member of exactly one fresh project,
+ *  which the administrator `owner` creates and invites them to. Their browser headers and the
+ *  project's id. */
+function freshMember(owner, label, role) {
+  const run = Date.now().toString(36);
+  const project = http.post(`${BASE_URL}/api/v1/projects`, JSON.stringify({ slug: `k6-${label}-${run}`, name: `k6 ${label}` }), { headers: owner });
+  if (project.status !== 201) fail(`project: HTTP ${project.status} ${project.body}`);
+  const id = project.json('data.id');
+  const invited = http.post(`${BASE_URL}/api/v1/projects/${id}/invitations`, JSON.stringify({ role, label: `k6 ${label}` }), { headers: owner });
+  if (invited.status !== 201) fail(`invitation: HTTP ${invited.status} ${invited.body}`);
+  const jar = new http.CookieJar();
+  const made = http.post(`${PUBLIC_URL}/auth/signup`, JSON.stringify({ email: `k6-${label}-${run}@load.test`, password: 'a password for this run', display_name: `k6 ${label}` }), { jar, headers: { 'Content-Type': 'application/json' } });
+  if (made.status !== 201) fail(`signup: HTTP ${made.status} ${made.body}`);
+  const person = browserOf(jar);
+  const joined = http.post(`${BASE_URL}/api/v1/invitations/accept`, JSON.stringify({ token: invited.json('data.link').split('#')[1] }), { headers: person });
+  if (joined.status !== 200) fail(`accept: HTTP ${joined.status} ${joined.body}`);
+  return { person, project: id };
+}
+
 export function setup() {
-  // The built-in password card (D-146): one POST, the session cookie lands in the jar.
-  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { headers: { 'Content-Type': 'application/json' } });
+  // The built-in password card (D-146) for the administrator, who makes the project.
+  const jar = new http.CookieJar();
+  const signedIn = http.post(`${PUBLIC_URL}/auth/signin`, JSON.stringify({ email: 'dev-owner@colophon.test', password: 'colophon-dev' }), { jar, headers: { 'Content-Type': 'application/json' } });
   if (signedIn.status !== 204) fail(`sign-in failed: HTTP ${signedIn.status}`);
-  const jar = http.cookieJar().cookiesForURL(PUBLIC_URL);
-  return { cookie: `colophon_session=${jar.colophon_session[0]}` };
+  const { person } = freshMember(browserOf(jar), 'session', 'editor');
+  return { cookie: person.Cookie };
 }
 
 export default function (data) {
@@ -55,13 +87,14 @@ export default function (data) {
     const res = http.get(`${BASE_URL}/me`, Object.assign({ tags: { endpoint: 'me' } }, params));
     check(res, {
       'me 200': (r) => r.status === 200,
-      'me names the person': (r) => r.body.indexOf('"display_name":"Dev Owner"') !== -1,
+      'me names the person': (r) => r.body.indexOf('"display_name":"k6 session"') !== -1,
     });
   } else {
     const res = http.get(`${BASE_URL}/api/v1/projects`, Object.assign({ tags: { endpoint: 'projects' } }, params));
     check(res, {
       'projects 200': (r) => r.status === 200,
       'projects listed': (r) => r.body.indexOf('{"data":[') === 0,
+      'just the one project': (r) => r.json('data').length === 1,
     });
   }
 }
