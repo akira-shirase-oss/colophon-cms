@@ -1,4 +1,4 @@
-//! `colophon admin init-roles` against real PostgreSQL (D-171): on a cluster that already has
+//! `colophon admin init-roles` against real PostgreSQL (D-173): on a cluster that already has
 //! the roles it changes nothing — the development login still signs in with its own password —
 //! and a role created with one of its SCRAM verifiers signs in with the password, and not with
 //! another. Needs the local stack. Roles are cluster-wide, so the test never alters the shared

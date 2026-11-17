@@ -519,7 +519,7 @@ export async function signOut(): Promise<string | null> {
 /** Whether anyone is this installation's administrator yet (`GET /api/v1/installation`, D-147):
  *  answered without signing in, so the signed-out front door can say a new Colophon is new. */
 /** What anyone may know about the installation before signing in. `install_kind` is `container`
- *  when the server runs from Colophon's image (D-172): its setup code is in `docker compose logs`. */
+ *  when the server runs from Colophon's image (D-174): its setup code is in `docker compose logs`. */
 export interface Installation {
 	has_administrator: boolean;
 	install_kind?: 'container';

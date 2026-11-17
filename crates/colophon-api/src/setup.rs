@@ -147,7 +147,7 @@ struct InstallationView {
     /// Whether anyone is an administrator yet. Until someone is, the Studio's front door says this
     /// Colophon is new and leads to creating the first account (D-147).
     has_administrator: bool,
-    /// How the server was installed, when its installer said (`container`, D-172): the Studio
+    /// How the server was installed, when its installer said (`container`, D-174): the Studio
     /// then shows where that kind of install prints the setup code. Absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     install_kind: Option<&'static str>,

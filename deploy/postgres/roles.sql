@@ -1,6 +1,6 @@
 -- Local-stack database roles (development only; the password is public). Run by
 -- scripts/stack.sh after Postgres is up, and safe to run again. Everywhere else the same
--- roles and grants come from `colophon admin init-roles` (D-171), with generated passwords;
+-- roles and grants come from `colophon admin init-roles` (D-173), with generated passwords;
 -- a unit test in crates/colophon-db/src/login_roles.rs keeps the two lists identical.
 --
 --   colophon      the stack's superuser; owns the tables and runs migrations (the migrator)

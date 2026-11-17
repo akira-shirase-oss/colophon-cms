@@ -70,7 +70,7 @@ pub struct Services {
     /// and `COLOPHON_MAGIC_LINKS_PER_PROJECT`.
     pub magic_links: colophon_db::audience::MagicLinkLimits,
     /// How the server was installed (`COLOPHON_INSTALL_KIND`; `container` from the image,
-    /// D-172), for the Studio's first-run hint; `None` when the installer didn't say.
+    /// D-174), for the Studio's first-run hint; `None` when the installer didn't say.
     pub install_kind: Option<&'static str>,
 }
 

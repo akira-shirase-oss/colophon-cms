@@ -1,8 +1,8 @@
 # Installing Colophon
 
 How to run Colophon on one machine with Docker alone, start it for the first time, keep it up
-to date, back it up and fix it when it won't start. The design is D-172 (the image) and D-173
-(the quick start); the secret settings are D-171. `scripts/quickstart.sh` runs every command in
+to date, back it up and fix it when it won't start. The design is D-174 (the image) and D-175
+(the quick start); the secret settings are D-173. `scripts/quickstart.sh` runs every command in
 "Install" and "First run" below on each CI push, so this page and the files can't drift apart.
 
 ## What you need

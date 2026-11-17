@@ -125,10 +125,10 @@ evidence".
   `--access public`, under the dist-tag `next` for a pre-release (`latest` otherwise); a package version already on
   npm is skipped, so a rerun after a partial failure finishes the job. Nothing is ever published from a laptop.
 - Every third-party action is pinned to a full commit SHA, as in `ci.yml`. Known gaps: the Studio's static files are
-  not in the server archive yet (the container image carries them, D-172); the Linux server is a musl
+  not in the server archive yet (the container image carries them, D-174); the Linux server is a musl
   build, whose allocator is often reported slower than glibc's for threaded servers, and its throughput has not been
   measured.
-- **Container image (D-172) and quick start (D-173):** `deploy/image/Dockerfile` builds one image with both binaries
+- **Container image (D-174) and quick start (D-175):** `deploy/image/Dockerfile` builds one image with both binaries
   and the Studio on distroless static (non-root, pinned by digest, `colophon doctor` as its health check), from source
   by default or from the release's checked binaries (`BINS=prebuilt`). `deploy/quickstart/compose.yaml` runs it with
   PostgreSQL, Valkey and Garage in one shared network namespace, secrets generated on first start;

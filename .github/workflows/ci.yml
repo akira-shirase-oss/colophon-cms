@@ -292,7 +292,7 @@ jobs:
         if: always()
         run: scripts/stack.sh reset
 
-  # The quick start on a clean runner, exactly as documented (D-172, D-173): the image built
+  # The quick start on a clean runner, exactly as documented (D-174, D-175): the image built
   # from source, deploy/quickstart/compose.yaml in an empty directory, `docker compose up -d
   # --wait`, the Studio and the API answering, the setup code from the logs, a newcomer's
   # journey in Chromium, and the data kept across `down` and `up`. Node is only for the

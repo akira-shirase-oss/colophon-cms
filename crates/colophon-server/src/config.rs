@@ -113,7 +113,7 @@ pub struct Config {
     /// Address to listen on. `COLOPHON_LISTEN_ADDR`, default `127.0.0.1:58000`.
     pub listen_addr: SocketAddr,
     /// PostgreSQL URL (holds a password). `COLOPHON_DATABASE_URL`, or the file
-    /// `COLOPHON_DATABASE_URL_FILE` names; required. Every secret below takes `_FILE` too (D-171).
+    /// `COLOPHON_DATABASE_URL_FILE` names; required. Every secret below takes `_FILE` too (D-173).
     pub database_url: Secret,
     /// Redis-protocol cache URL. `COLOPHON_CACHE_URL`, optional: without it, readiness reports
     /// the cache as `not_configured`.
@@ -225,7 +225,7 @@ pub struct Config {
     /// `COLOPHON_DEV_MAIL=1` (D-140). A development affordance, off by default.
     pub dev_mail: bool,
     /// How this server was installed, when the installer says so: `COLOPHON_INSTALL_KIND`,
-    /// only `container` today (the image sets it, D-172). The Studio's first-run screen uses it
+    /// only `container` today (the image sets it, D-174). The Studio's first-run screen uses it
     /// to show where the setup code is — `docker compose logs`, not a terminal.
     pub install_kind: Option<&'static str>,
     /// Transactional mail for sign-in links (D-145): `COLOPHON_MAIL_PROVIDER=resend` with
@@ -627,7 +627,7 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
 
     /// A secret: the value is never echoed, not even in problems. It comes from `KEY`, or from
     /// the file `KEY_FILE` names — a mounted secret, so the value is never in the environment
-    /// (D-171). Setting both is a problem, not a precedence rule: one of them is a mistake.
+    /// (D-173). Setting both is a problem, not a precedence rule: one of them is a mistake.
     fn secret(&mut self, key: &str, required: bool) -> Option<Secret> {
         let file_key = format!("{key}_FILE");
         let in_env = (self.lookup)(key).is_some();

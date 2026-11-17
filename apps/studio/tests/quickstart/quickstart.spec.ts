@@ -1,4 +1,4 @@
-// A newcomer's first minutes on the quick start (D-172, D-173), against the real containers: the
+// A newcomer's first minutes on the quick start (D-174, D-175), against the real containers: the
 // Studio says the installation is new and where a container's setup code is (the compose logs,
 // not a terminal); the first account becomes the administrator with the code read from those
 // logs; and they create a project. scripts/quickstart.sh reads the code from

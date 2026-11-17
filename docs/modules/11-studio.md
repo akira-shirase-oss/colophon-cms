@@ -366,7 +366,7 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   drawer first.
 - **Where Strapi was easier, fixed** (D-147, 2026-10-28; [research/strapi-vs-colophon-hands-on.md](../research/strapi-vs-colophon-hands-on.md)).
   Both products were used for the same seven first-day tasks; each change removes a place where Strapi was easier.
-  - **First run in a container** (D-173): when `GET /api/v1/installation` says `install_kind: container`, both
+  - **First run in a container** (D-175): when `GET /api/v1/installation` says `install_kind: container`, both
     first-run screens say the code is in the server's log and show `docker compose logs colophon | grep "Setup
     code"` (`setup-code-from-logs`); `apps/studio/tests/quickstart/` checks it against the real containers.
   - **First run from the setup link**: the server prints `<studio>#setup=<code>`. Opened signed out, the front door

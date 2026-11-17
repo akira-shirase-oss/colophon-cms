@@ -1,4 +1,4 @@
-// Load scenario for the quick start (D-172, D-173): the container image behind its compose
+// Load scenario for the quick start (D-174, D-175): the container image behind its compose
 // file, as a newcomer runs it, with the install's own defaults — rate limits included. Run by
 // scripts/quickstart.sh --load (a smoke on every CI push); BASE_URL points at the container.
 //

@@ -1,4 +1,4 @@
-# Colophon quick start (D-172, D-173): Colophon with PostgreSQL, Valkey and Garage on one
+# Colophon quick start (D-174, D-175): Colophon with PostgreSQL, Valkey and Garage on one
 # machine, from Docker alone. Separate from the development stack (deploy/compose.yaml), whose
 # rules and public credentials stay as they are.
 #
@@ -141,7 +141,7 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # The database roles, with the generated passwords (`colophon admin init-roles`, D-171).
+  # The database roles, with the generated passwords (`colophon admin init-roles`, D-173).
   roles:
     image: ${COLOPHON_IMAGE:-ghcr.io/akira-shirase-oss/colophon:0.1.0-alpha.1}
     network_mode: service:pod
