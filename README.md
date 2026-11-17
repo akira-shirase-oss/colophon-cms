@@ -83,7 +83,8 @@ model, flows, consistency guarantees, capacity model and failure handling.
 ## Who it's for
 
 - **Editors** write, preview, review and publish in the Studio, without a terminal and without needing to know what a
-  cache is.
+  cache is — and see a saved draft on the project's own site, side by side, through a private link that ends in 15
+  minutes ([the site's part](docs/guides/preview.md)).
 - **Developers** define schemas, run migrations and operate the install from the CLI and a typed REST API.
 - **Scripts and agents** get scoped, budgeted tokens, stable JSON contracts and an MCP adapter.
 
