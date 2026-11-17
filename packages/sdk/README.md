@@ -99,8 +99,11 @@ typed call, not a new convention.
 ## Reading in a language
 
 ```ts
-import { availableLocales } from '@colophon-cms/sdk';
+import { availableLocales, Client } from '@colophon-cms/sdk';
 
+const client = new Client({ baseUrl: 'https://cms.example.com' });
+const generation = 42; // a release to pin to; leave `.atGeneration()` out for the latest
+const id = '0192f0c4-0000-7000-8000-000000000001'; // an entry's id, in any of its languages
 const site = client.delivery(projectId).inLocale('pt-BR').atGeneration(generation);
 const { data: rows } = await site.list('articles');
 // One row per translation group: its best published member for pt-BR and the chain.
