@@ -27,6 +27,12 @@ through `--version` and `GET /version`.
   read answered from, so a page can pin the rest of its reads to it (`atGeneration`). A
   public-API report per package makes export changes visible in review, and
   `perf/node/sdk-delivery.mjs` measures the client's overhead and heap beside bare `fetch`.
+- Draft preview on your own site, the backend (D-171, D-172): a person opens a preview of an
+  entry (with its translations) or a publish request; the site exchanges the address's
+  one-time code for a 15-minute bearer token and reads `/preview/v1`, which answers
+  `/content/v1`'s shapes with the drafts laid over the latest release. Never cached, never
+  indexed, re-checked against the issuer on every read, revocable. Set the address with
+  `PUT {P}/preview-target`; the Studio pane and the SDK's site helpers follow.
 
 ### Security
 
@@ -59,6 +65,17 @@ closes and carries a test that failed without it.
   its trigger (D-168); only the right password learns an audience account is disabled
   (D-169); a token on an unmatched path is redacted from logs (D-152); a magic link's token
   goes before a `return_to` fragment.
+
+### Fixed
+
+- The releases list pages: `GET {P}/releases` takes `?limit=` (1–100, default 100, what it
+  answered before) and `?cursor=`, and its `next_cursor` is real. It used to stop at the
+  newest 100 while the OpenAPI document advertised a cursor. The MCP `list_releases` tool
+  takes the cursor too.
+- The OpenAPI document says only what the routes do: lists that answer in one page say how
+  much it holds and that `next_cursor` is always `null`; the receipt schema lists every
+  release field itself instead of through `allOf`, and the release, delivery and observation
+  fields are marked required. `@colophon-cms/sdk`'s generated types follow.
 
 ### Changed — read before upgrading
 

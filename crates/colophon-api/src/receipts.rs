@@ -110,7 +110,7 @@ pub(crate) async fn get(
         colophon_db::scope::Isolation::Snapshot,
     )
     .await?;
-    let release = releases::list(&mut tx, Some(path.generation))
+    let release = releases::list(&mut tx, releases::Window::At(path.generation))
         .await
         .map_err(ApiError::from_db)?
         .into_iter()

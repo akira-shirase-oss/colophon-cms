@@ -1,0 +1,62 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO preview_grants\n             (project_id, environment_id, id, issuer_id, scope_kind, entry_id, changeset_id,\n              changeset_hash, ttl_seconds, code_hash, code_expires_at, expires_at)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,\n                 now() + make_interval(secs => $11), now() + make_interval(secs => $9::integer))\n         RETURNING created_at, code_expires_at AS \"code_expires_at!\", expires_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "code_expires_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "code_expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "expires_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Bytea",
+        "Int4",
+        "Bytea",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "63e32ca15536843bb599afc678d5109ea9e8cdf871755fde78f40d60c3248c01"
+}

@@ -27,6 +27,7 @@ pub mod ledger;
 pub mod members;
 pub mod migrations;
 pub mod passwords;
+pub mod previews;
 pub mod projects;
 pub mod publish;
 pub mod query;

@@ -16,7 +16,9 @@
 # two writers: every move is a save plus two mirror revisions in one transaction, with mirror
 # reads checked against where the link says it is; D-085), transfer (a collection's drafts
 # exported as JSONL, nine requests in ten; the tenth imports a three-line file, entries and
-# a Strapi entity, in one transaction; D-086), graphql (entries reads through the
+# a Strapi entity, in one transaction; D-086), preview (draft preview reads through bearer
+# tokens: entry and publish-request scopes, a query, invalid and revoked tokens, and an
+# exchange arm; D-172), graphql (entries reads through the
 # per-collection schema — filters, a sort, a page and one expanded reference per node —
 # and one entry read in ten; D-115), locales (a French sibling's save carrying its
 # locale, the source's group read, and a locale-filtered list; D-087), deletion (articles created and deleted
@@ -34,7 +36,8 @@
 # the baseline it just measured),
 # schedules (schedule lists, and scheduling and cancelling a day ahead), projects (who may create
 # projects: refused creations and /me), setup (setup codes refused on a set-up installation, and
-# /me), changesets (reading, listing, reviewing and creating changesets), stages (the
+# /me), changesets (reading, listing, reviewing and creating changesets, and the releases list
+# whole and a page at a time), stages (the
 # environment's ordered review stages: stage-state reads, stage-named reviews and publishes
 # refused while a stage waits — the guarded list replace is a config write, proven by tests
 # rather than looped; D-104),
@@ -108,7 +111,7 @@ cd "$(dirname "$0")/.."
 endpoint="${1:-}"
 scenario="${2:-}"
 if [[ ! -f "perf/k6/$endpoint.js" ]] || [[ "$scenario" != throughput && "$scenario" != steady && "$scenario" != stress ]]; then
-  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site throughput|steady|stress [--baseline]" >&2
+  echo "usage: scripts/load.sh health|rich-text|openapi|session|accounts|cli|members|roles|tokens|quotas|noisy-agent|schedules|projects|setup|changesets|stages|collaboration|live|migrations|delivery|audience|audience-sites|publishing|cache-down|postgres-trouble|purge-trouble|smoke|warm-baseline|cold-cache|stampede|mixed|spike|import-scale|cdn-warm|media-load|entries|content-types|modelling|inverses|transfer|graphql|locales|deletion|collection-delete|site-starter|assets|bulk|studio|site|preview throughput|steady|stress [--baseline]" >&2
   exit 2
 fi
 save_baseline=0
@@ -185,6 +188,10 @@ case "$endpoint" in
   # manifest insert plus its two reservations): migrations' rate and p99.
   bulk) RATE="${RATE:-250}" P99_MS="${P99_MS:-250}" ;;
   studio) RATE="${RATE:-5000}" P99_MS="${P99_MS:-25}" ;;
+  # Preview reads (D-172): each re-checks the grant and opens as the issuer in one snapshot,
+  # never cached — the spec's budget is 200/s at a 150 ms p99. The server holds 32 preview
+  # reads in flight, so its throughput VUs stay under that bound (stress is where it sheds).
+  preview) RATE="${RATE:-200}" P99_MS="${P99_MS:-150}"; [[ "$scenario" == throughput ]] && VUS="${VUS_PREVIEW:-24}" ;;
   # RATE counts publishes here, five requests each, and every request writes and commits: on the
   # reference laptop that tops out around 500 to 700 requests a second, so the steady rate is 40
   # publishes (200 requests) a second; a run at 100 fell behind (the result is kept). The p99

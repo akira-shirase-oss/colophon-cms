@@ -417,7 +417,15 @@ async fn unpublishing_takes_an_entry_out_of_every_earlier_release_until_it_is_pu
             unpublished: 0
         }
     );
-    let listed = releases::list(&mut tx, None).await.expect("releases");
+    let listed = releases::list(
+        &mut tx,
+        releases::Window::Page {
+            before: None,
+            limit: releases::MAX_PAGE,
+        },
+    )
+    .await
+    .expect("releases");
     assert_eq!(
         listed
             .iter()
@@ -425,6 +433,38 @@ async fn unpublishing_takes_an_entry_out_of_every_earlier_release_until_it_is_pu
             .collect::<Vec<_>>(),
         [(3, 1, 0), (2, 0, 1), (1, 1, 0)]
     );
+    // Pages walk down from a cursor without skipping or repeating; one generation is a receipt,
+    // and one that doesn't exist is nothing.
+    let page = |before, limit| releases::Window::Page { before, limit };
+    let mut walked = Vec::new();
+    let mut before = None;
+    loop {
+        let rows = releases::list(&mut tx, page(before, 2))
+            .await
+            .expect("page");
+        walked.extend(rows.iter().map(|release| release.generation));
+        match rows.last() {
+            Some(last) if rows.len() == 2 => before = Some(last.generation),
+            _ => break,
+        }
+    }
+    assert_eq!(walked, [3, 2, 1]);
+    for (window, wanted) in [
+        (releases::Window::At(2), vec![2]),
+        (releases::Window::At(4), vec![]),
+        (releases::Window::At(i64::MAX), vec![]),
+        (page(Some(1), 5), vec![]),
+        (page(None, 0), vec![3]),
+    ] {
+        let rows = releases::list(&mut tx, window).await.expect("window");
+        assert_eq!(
+            rows.iter()
+                .map(|release| release.generation)
+                .collect::<Vec<_>>(),
+            wanted,
+            "{window:?}"
+        );
+    }
     tx.commit().await.expect("commit");
     assert_eq!(
         delivered_at(&db, project, entry, 3).await,
