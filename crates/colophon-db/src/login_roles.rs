@@ -171,13 +171,13 @@ pub async fn init(
         })?;
     }
     let random = aws_lc_rs::rand::SystemRandom::new();
-    let mut verifier = |password: &str| {
+    let verifier = |password: &str| {
         let mut salt = [0_u8; 16];
         random.fill(&mut salt).map_err(|_| InitError::Random)?;
         Ok::<_, InitError>(scram_verifier(password, &salt))
     };
     let app_verifier = verifier(app_password)?;
-    let backup_verifier = backup_password.map(&mut verifier).transpose()?;
+    let backup_verifier = backup_password.map(verifier).transpose()?;
 
     let mut tx = pool.begin().await.map_err(DbError::from_query)?;
     // Two installers at once queue here instead of racing on CREATE ROLE ("RO" — roles).
@@ -262,8 +262,8 @@ mod tests {
         assert!(!message.contains("colophon-dev"), "{message}");
     }
 
-    /// RFC 7677's worked exchange (user `user`, password `pencil`): the verifier's StoredKey and
-    /// ServerKey must reproduce the client's proof and the server's signature it shows.
+    /// RFC 7677's worked exchange (user `user`, password `pencil`): the verifier's `StoredKey` and
+    /// `ServerKey` must reproduce the client's proof and the server's signature it shows.
     #[test]
     fn the_verifier_matches_the_rfc_7677_exchange() {
         let b64 = base64::engine::general_purpose::STANDARD;

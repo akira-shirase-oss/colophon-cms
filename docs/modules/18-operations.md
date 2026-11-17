@@ -92,6 +92,11 @@ on clean infrastructure and an independent install, so operations are a module w
   counts alone, so a cluster of N admits up to N times the rate until it is back. `scripts/load.sh` and
   `scripts/cluster.sh` raise the limits so far that they never refuse (one machine sends everything), and still
   pay for every check.
+- Secrets from files (D-170): `COLOPHON_DATABASE_URL`, `COLOPHON_CACHE_URL`, `COLOPHON_S3_SECRET_KEY`,
+  `COLOPHON_OIDC_CLIENT_SECRET` and `COLOPHON_RESEND_API_KEY` each also take `<KEY>_FILE`, a path to a mounted secret
+  (trimmed, at most 16 KiB, never quoted in a problem); setting both stops the server at start-up. Outside the local
+  stack the database roles come from `colophon admin init-roles` (module 08), not `deploy/postgres/roles.sql`, whose
+  password is public; a unit test keeps the two lists identical.
 - Database TLS (D-156): `COLOPHON_DATABASE_URL` and `COLOPHON_MIGRATION_DATABASE_URL` take libpq's `sslmode`
   (`require`, `verify-ca`, `verify-full`, plus `sslrootcert` for a private CA); the driver speaks TLS through rustls
   with the Mozilla roots built in. The local stack's Postgres has no TLS and its URLs say nothing, so they stay

@@ -8,6 +8,13 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Added
+
+- **Secrets from files:** every secret setting also takes `<KEY>_FILE`, a path to a mounted
+  secret; the admin commands take `COLOPHON_MIGRATION_DATABASE_URL_FILE` (D-170).
+- **`colophon admin init-roles`:** creates the server's database roles with passwords from
+  files, sent as SCRAM verifiers; refuses the development password; safe to rerun (D-170).
+
 ### Security
 
 The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-169). Each names the attack it
