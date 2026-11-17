@@ -97,16 +97,29 @@ test('an edit saved while the session is over its limit waits as asked, is kept 
 	});
 
 	await page.getByLabel('Title', { exact: true }).fill('Saved after the limit');
-	// Keep the session over its limit until the save has been turned away. One burst isn't
-	// enough: the limit gives back a request a second and the autosave fires a second after the
-	// edit, so on a slow runner the save could find room again before it was sent.
+	// Keep the session over its limit until the save has been answered, and not a moment longer.
+	// One burst isn't enough: the limit gives back a request a second and the autosave fires a
+	// second after the edit, so on a slow runner the save could find room again before it was
+	// sent. Nor is "until the editor says retrying": the page's own reads would be refused for
+	// that long too.
 	await page.evaluate(() => {
 		const flood = window as unknown as { flooding: boolean; refused: number };
 		flood.flooding = true;
 		flood.refused = 0;
+		const send = window.fetch.bind(window);
+		window.fetch = async (input, init) => {
+			const answer = send(input, init);
+			if ((init?.method ?? 'GET') === 'PUT') {
+				void answer.finally(() => {
+					flood.flooding = false;
+					window.fetch = send;
+				});
+			}
+			return answer;
+		};
 		const lane = async () => {
 			while (flood.flooding) {
-				const response = await fetch('/api/v1/me', { cache: 'no-store' });
+				const response = await send('/api/v1/me', { cache: 'no-store' });
 				if (response.status === 429) flood.refused += 1;
 			}
 		};
