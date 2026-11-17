@@ -19,7 +19,7 @@ import type {
 } from '../src/index.ts';
 
 const ok = (async () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
-const client = new Client({ baseUrl: 'http://server.test', fetch: ok });
+const client = new Client({ baseUrl: 'http://server.test', fetch: ok, compat: 'off' });
 const env = client.environment('p');
 
 describe('generated operation types reach the caller', () => {

@@ -44,14 +44,39 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
   asking for a different generation on it throws.
 - **Bounds:** `timeoutMs` (15 s default, joined with the caller's `signal`) and `maxBodyBytes`
   (16 MiB default) on every call.
+- **Server-version check (D-170):** `client.compatibility()` reads `/version` and applies the CLI's
+  rule (`crates/colophon-cli/src/compat.rs`, D-062) — the API version, then before 1.0 the minor
+  line, then `OLDEST_SERVER` — answering `{compatible, sdk, server, api, misfit?, reason?}`, where
+  `reason` says which side to upgrade and to what. The client runs it once, lazily, before its
+  first API call: `compat: 'warn'` (default) logs the reason beside the call and never delays or
+  fails it; `'throw'` fails every call with `incompatible_server` (not retryable) and sends
+  nothing; `'off'` never asks. A check with no answer decides nothing and is asked again on the
+  next call; `livez`, `readyz` and `version` never wait on it. `SDK_VERSION` is the workspace
+  version, tested against `package.json` and `Cargo.toml`.
+- **Packaging (D-170):** ESM only, no runtime dependencies, `types` and `exports["./package.json"]`,
+  `publishConfig.provenance`. `scripts/pack-check.mjs` (run by `scripts/frontend.sh`, so by CI's
+  frontend job) packs this package and `@colophon-cms/rich-text` and checks the tarballs, not the
+  tree: a file allowlist (`dist/` `.js`/`.d.ts`, README, LICENSE, CHANGELOG, `package.json`) and
+  size budget (150 KB packed; rich-text 20 KB), the workspace version, no dependencies (so never a
+  private `@colophon/*` name), `publint --strict`, Are the Types Wrong (`esm-only`), then a scratch
+  project with only the tarballs installed: a Node ESM script against a stub server (livez, the
+  compatibility check, a delivery read rendered), every rich-text fixture against its reviewed
+  HTML, a type-check of a consumer file and of every `ts` block in both READMEs under `nodenext`
+  and `bundler` resolution with TypeScript 5.9 and 6.0, and a browser bundle of `Client` and
+  `Delivery` held to 12 KB min+gzip (4.5 KB at 0.1.0-alpha.1).
+- **Rich text outside the monorepo (D-170):** `@colophon-cms/rich-text` (`packages/rich-text`) is
+  the content renderer as a zero-dependency package: its build assembles
+  `packages/content-renderer/src/render.ts` and `packages/editor/src/schema.ts` (plus the stored
+  format's types from `stored.ts`) and compiles them, so it can't drift from the Studio's preview;
+  its tests and the pack check render every fixture from the built and the packed code.
 - **Images:** `mediaFor(row[, { current, sizes }])` turns a delivery row's `media` sidecar — every
   asset its published revision names, at the version its release recorded
   ([06](06-delivery.md), [07](07-media.md)) — into the rich-text renderer's `media` option
   (renderer v2, [12](12-content-renderer.md)): the immutable versioned source, `width`/`height`,
   and the `wN` renditions as `srcset` width candidates with a default `sizes`. `{ current: true }`
   follows replacements through `current_url` instead. An id the sidecar doesn't hold answers
-  `undefined`, so the renderer falls back to its bare address. The sidecar's types are
-  hand-written in `src/media.ts`, compatible with the generated row type.
+  `undefined`, so the renderer falls back to its bare address. The sidecar's type is the
+  generated `PublishedMedia`.
 
 Still to come from the end goal: adoption by the blog/Studio, and the epoch half of the pin — the
 delivery API reads `?generation=` today; pinning `(epoch, generation)` waits on the wire naming
@@ -103,6 +128,9 @@ epochs. Spec §10's deprecation window for contract changes applies when the SDK
   `PublishedMedia`/`MediaSidecar`/`ImageSource` types.
 - `ApiError` with `status`, `code`, `details`, `reason`, `pointer`, `etag`, `retryAfterMs`,
   `retryable`.
+- `client.compatibility()`, `ClientOptions.compat` (`'off' | 'warn' | 'throw'`), `SDK_VERSION`.
+- `@colophon-cms/rich-text`: `renderToHtml(value, { assetUrl })`, `UnrenderableContent`,
+  `RENDERER_VERSION`, `RICH_TEXT_SCHEMA`, `RICH_TEXT_VERSION`, the stored-format types.
 
 ## Failure modes
 
@@ -112,6 +140,8 @@ epochs. Spec §10's deprecation window for contract changes applies when the SDK
 | Transient failure on a mutation | Retry with the same key, within the caller's deadline — the client never retries silently |
 | Answer over the byte cap or not JSON | `response_too_large` / `invalid_response` `ApiError`, status kept |
 | No answer | `no_answer` `ApiError`, status 0, retryable |
+| Server too old or too new for this SDK | `warn`: one `console.warn` naming which side to upgrade; `throw`: `incompatible_server`, nothing sent |
+| Server without `/version` | Treated as older than every supported server (`no_version_report`) |
 
 ## Tests and evidence
 
@@ -122,8 +152,10 @@ epochs. Spec §10's deprecation window for contract changes applies when the SDK
   narrow uploads without a `srcset`, unknown and inherited ids falling back.
 - A real-server suite gated on `COLOPHON_TEST_ORIGIN` (the `#[ignore]` equivalent): version,
   livez, a typed 401, the served document.
+- The compatibility table from `compat.rs`, SemVer precedence, and the client's lazy check in each
+  mode (`test/compat.test.ts`).
+- The packaging gate above, on every push; README examples compile in CI from the packed tarballs.
 - A pinned-read test with a publish landing mid-sequence — pending, with the adoption milestone.
-- Doc examples compiled in CI — pending; the README's example type-checks as part of the package.
 
 ## Build order
 

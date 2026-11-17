@@ -70,6 +70,10 @@ elif docker compose -f deploy/compose.yaml ps --quiet 2>/dev/null | grep -q .; t
     psql_admin "CREATE DATABASE $COLOPHON_TEST_DATABASE" >/dev/null
   fi
   scripts/migrate.sh
+  # The database TLS rule (D-156) against a TLS-only postgres of its own with a private CA:
+  # verify-full connects, a wrong name or an unknown issuer fails, require to another machine
+  # is refused before connecting. Its container is its own; the stack is untouched.
+  scripts/db-tls-check.sh
   # These stop and restart stack services, so one at a time.
   cargo test --workspace --locked -- --ignored --test-threads=1
   # The P5 evaluation suite (D-117): adversarial cases against the same stack, gated on

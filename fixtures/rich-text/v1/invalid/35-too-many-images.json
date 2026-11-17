@@ -1,5 +1,5 @@
 {
-  "description": "201 distinct images: one document names at most 200 uploads (D-170).",
+  "description": "201 distinct images: one document names at most 200 uploads (D-171).",
   "reject": {
     "code": "too_many_images",
     "path": "/doc/content/200/attrs/assetId"

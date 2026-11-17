@@ -190,7 +190,7 @@ struct Validator {
     out: String,
     nodes: usize,
     depth: usize,
-    /// The distinct assets named so far, in first-named order (D-170).
+    /// The distinct assets named so far, in first-named order (D-171).
     images: Vec<Image>,
     /// Their ids, for the distinct check: at most [`MAX_IMAGES`] entries.
     named: HashSet<String>,
@@ -368,7 +368,7 @@ impl Validator {
                     return Err(self.reject_at(RejectCode::InvalidAttribute, "alt"));
                 }
                 // A repeat of an image already named adds nothing to keep; a new one past the
-                // bound is refused where it is named (D-170).
+                // bound is refused where it is named (D-171).
                 if !self.named.contains(asset_id) {
                     if self.images.len() >= MAX_IMAGES {
                         return Err(self.reject_at(RejectCode::TooManyImages, "assetId"));

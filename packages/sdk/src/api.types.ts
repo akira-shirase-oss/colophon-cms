@@ -1863,7 +1863,7 @@ export interface components {
             width?: number;
         };
         AssetView: {
-            /** @description the library's default alt text (D-172) */
+            /** @description the library's default alt text (D-173) */
             alt?: string | null;
             /** Format: date-time */
             created_at?: string;
@@ -2728,7 +2728,7 @@ export interface components {
             content_hash?: string;
             /** Format: uuid */
             id?: string;
-            /** @description the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-171) */
+            /** @description the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-172) */
             media?: {
                 [key: string]: components["schemas"]["PublishedMedia"];
             };

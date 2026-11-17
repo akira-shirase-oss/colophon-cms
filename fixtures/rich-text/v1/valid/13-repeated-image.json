@@ -1,5 +1,5 @@
 {
-  "description": "The same image twice and a second image: each distinct upload is one asset reference, at its first place (D-170).",
+  "description": "The same image twice and a second image: each distinct upload is one asset reference, at its first place (D-171).",
   "value": {
     "schema": "colophon/rich-text",
     "version": 1,

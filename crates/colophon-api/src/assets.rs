@@ -334,7 +334,7 @@ async fn queue_replace(
     }
 }
 
-/// A library list's parameters (D-172).
+/// A library list's parameters (D-173).
 #[derive(Deserialize)]
 pub(crate) struct ListQuery {
     limit: Option<i64>,
@@ -350,7 +350,7 @@ const MAX_QUERY_CHARS: usize = 100;
 const STATES: [&str; 5] = ["quarantined", "usable", "rejected", "deleting", "deleted"];
 
 /// `GET {P}/assets?limit=&cursor=&q=&state=&tag=`: a page of the environment's assets, newest
-/// first, with the cursor for the next (D-172). Keyset paging on `(created_at, id)`: an upload
+/// first, with the cursor for the next (D-173). Keyset paging on `(created_at, id)`: an upload
 /// landing between two reads never shifts what the next page holds.
 pub(crate) async fn list(
     State(state): State<AppState>,
@@ -450,7 +450,7 @@ fn read_cursor(text: &str) -> Result<(time::OffsetDateTime, Uuid), ApiError> {
     Ok((at, Uuid::try_parse(id).map_err(|_| bad())?))
 }
 
-/// The tag rule (D-172), worded for a refusal.
+/// The tag rule (D-173), worded for a refusal.
 const TAG_RULE: &str =
     "a tag is 1 to 40 lowercase letters, digits and hyphens, starting with a letter or digit";
 /// The most tags one asset carries.
@@ -468,11 +468,11 @@ fn is_tag(tag: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
 }
 
-/// Metadata changes are claimed under this operation (D-172).
+/// Metadata changes are claimed under this operation (D-173).
 const UPDATE: &str = "asset.update";
 
 /// `PATCH {P}/assets/{asset}`: the library's own words for an upload — alt text, title, credit,
-/// tags (D-172). `If-Match` names the `metadata_version` the editor saw (`"v3"`, or `"3"`), so
+/// tags (D-173). `If-Match` names the `metadata_version` the editor saw (`"v3"`, or `"3"`), so
 /// two people editing one upload can't silently overwrite each other: the second gets
 /// `409 stale_version` with the current `ETag`. A field left out stays; `null` clears it.
 pub(crate) async fn update(
@@ -895,7 +895,7 @@ pub(crate) async fn get(
         .await
         .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
-    // The ETag names the metadata version a PATCH's If-Match quotes back (D-172).
+    // The ETag names the metadata version a PATCH's If-Match quotes back (D-173).
     Ok(crate::content_types::respond(
         StatusCode::OK,
         serde_json::to_string(&json!({

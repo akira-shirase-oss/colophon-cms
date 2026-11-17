@@ -582,7 +582,7 @@ impl ApiError {
             DbError::WorkFull { open, limit } => Self::WorkFull { open, limit },
             DbError::PayloadFull { pending, limit } => Self::PayloadFull { pending, limit },
             // 422, at the very place in the content (media M1): an asset field's value, or the
-            // `assetId` of the rich-text image naming it (D-170).
+            // `assetId` of the rich-text image naming it (D-171).
             DbError::MissingAsset { pointer } => Self::Invalid(colophon_domain::schema::Refusal {
                 code: "asset_not_found",
                 pointer,

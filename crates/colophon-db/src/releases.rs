@@ -175,7 +175,7 @@ pub async fn commit(
     // An entry whose open publication already has the pinned revision stays open — unless the
     // uploads it names have moved on since (a replace landed): then it closes and reopens with
     // the versions current now, so publishing again is what carries a replaced image to sites
-    // that use the recorded URLs (D-171).
+    // that use the recorded URLs (D-172).
     sqlx::query!(
         "UPDATE publications p SET valid_to = $4
          FROM changeset_items i
@@ -195,7 +195,7 @@ pub async fn commit(
     .map_err(DbError::from_query)?;
     // A slug another entry still publishes fails `publications_live_slug`: `SlugTaken`, and the
     // whole release rolls back (D-054). Each new publication records the upload versions it
-    // releases (D-171).
+    // releases (D-172).
     let opened = sqlx::query!(
         "INSERT INTO publications (project_id, environment_id, entry_id, revision_id, collection, title, content, content_hash, slug, valid_from, visibility, media)
          SELECT i.project_id, i.environment_id, i.entry_id, r.id, r.collection, r.title, r.content, r.content_hash, r.slug, $4, r.visibility,

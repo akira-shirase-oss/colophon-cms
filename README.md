@@ -178,6 +178,7 @@ packages/
   site-template/     the website starter bundle: section library, navigation and theme types, seed entries
   ui/                Colophon's design system: OKLCH tokens and owned shadcn-svelte components
   sdk/               @colophon-cms/sdk: types from the served OpenAPI, a small client, generation-pinned reads
+  rich-text/         @colophon-cms/rich-text: the content renderer, packaged with no dependencies for any site
   cli-npm/           @colophon-cms/cli: the npm launcher for the prebuilt `colophon` binaries
 packaging/           the Homebrew formula template (scripts/homebrew-formula.sh fills it in per release)
 fixtures/            the shared rich-text contract: 12 valid documents with their reviewed HTML, 34 that must be refused

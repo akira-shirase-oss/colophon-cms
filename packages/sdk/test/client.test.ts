@@ -52,7 +52,7 @@ describe('reads and replies', () => {
 		const { calls, fetch } = stubFetch(() =>
 			json({ data: [{ id: 'e1' }], next_cursor: 'd1:abc' }, 200, { etag: '"v7"', 'x-request-id': REQUEST_ID })
 		);
-		const env = new Client({ baseUrl: 'http://server.test/', fetch }).environment('proj');
+		const env = new Client({ baseUrl: 'http://server.test/', fetch, compat: 'off' }).environment('proj');
 		const page = await env.listEntries('articles', { limit: 10 });
 		expect(calls).toHaveLength(1);
 		expect(calls[0]!.method).toBe('GET');
@@ -64,13 +64,13 @@ describe('reads and replies', () => {
 
 	it('keeps the wire field names (next_cursor), nothing renamed', async () => {
 		const { fetch } = stubFetch(() => json({ data: [], next_cursor: null }));
-		const page = await new Client({ baseUrl: 'http://server.test', fetch }).environment('p').listChangesets();
+		const page = await new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' }).environment('p').listChangesets();
 		expect('next_cursor' in page ? page.next_cursor : null).toBeNull();
 	});
 
 	it('sends the bearer token, and only it', async () => {
 		const { calls, fetch } = stubFetch(() => json({ data: null }));
-		await new Client({ baseUrl: 'http://server.test', token: 'colophon_pat_x', fetch }).me();
+		await new Client({ baseUrl: 'http://server.test', token: 'colophon_pat_x', fetch, compat: 'off' }).me();
 		const headers = calls[0]!.init.headers as Record<string, string>;
 		expect(headers['authorization']).toBe('Bearer colophon_pat_x');
 		expect(headers['cookie']).toBeUndefined();
@@ -83,7 +83,8 @@ describe('reads and replies', () => {
 		const env = new Client({
 			baseUrl: 'http://server.test',
 			session: { csrf: 'csrf-value', cookie: 'session-value' },
-			fetch
+			fetch,
+			compat: 'off'
 		}).environment('p');
 		await env.createEntry('articles', { title: 'Hi' }, { idempotencyKey: 'k-abcdefghijklmnop' });
 		const write = calls[0]!.init.headers as Record<string, string>;
@@ -99,7 +100,7 @@ describe('reads and replies', () => {
 
 	it('serializes query params and URL-encodes path segments', async () => {
 		const { calls, fetch } = stubFetch(() => json({ data: [], next_cursor: null }));
-		const env = new Client({ baseUrl: 'http://server.test', fetch }).environment('p', 'staging');
+		const env = new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' }).environment('p', 'staging');
 		await env.listEntries('my collection', { q: 'a&b', created_by: 'me', locale: 'fr' });
 		expect(calls[0]!.url).toBe(
 			'http://server.test/api/v1/projects/p/environments/staging/collections/my%20collection/entries?q=a%26b&created_by=me&locale=fr'
@@ -108,7 +109,7 @@ describe('reads and replies', () => {
 
 	it('marks a replayed idempotent result', async () => {
 		const { fetch } = stubFetch(() => json({ data: { id: 'e1' } }, 201, { 'idempotent-replayed': 'true' }));
-		const reply = await new Client({ baseUrl: 'http://server.test', fetch })
+		const reply = await new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' })
 			.environment('p')
 			.createEntry('articles', {}, { idempotencyKey: 'k-abcdefghijklmnop' });
 		expect(reply.response.replayed).toBe(true);
@@ -117,7 +118,7 @@ describe('reads and replies', () => {
 	it('passes the caller signal through, joined with the client timeout', async () => {
 		const { calls, fetch } = stubFetch(() => json({ data: [] }));
 		const controller = new AbortController();
-		await new Client({ baseUrl: 'http://server.test', fetch }).livez({ signal: controller.signal });
+		await new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' }).livez({ signal: controller.signal });
 		expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
 	});
 
@@ -132,7 +133,7 @@ describe('reads and replies', () => {
 describe('writes: If-Match and Idempotency-Key', () => {
 	it('saveEntry sends If-Match, Idempotency-Key, the JSON body and the locale query', async () => {
 		const { calls, fetch } = stubFetch(() => json({ data: { id: 'e1' } }, 200, { etag: '"rev2"' }));
-		await new Client({ baseUrl: 'http://server.test', fetch })
+		await new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' })
 			.environment('p')
 			.saveEntry('articles', 'e1', { title: 'T' }, { ifMatch: '"rev1"', idempotencyKey: 'key-0000000000000001', locale: '' });
 		const call = calls[0]!;
@@ -146,7 +147,7 @@ describe('writes: If-Match and Idempotency-Key', () => {
 
 	it('reviewChangeset and submitChangeset take If-Match but no key', async () => {
 		const { calls, fetch } = stubFetch(() => json({ data: { id: 'c1' } }));
-		const env = new Client({ baseUrl: 'http://server.test', fetch }).environment('p');
+		const env = new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' }).environment('p');
 		await env.reviewChangeset('c1', { decision: 'approve' }, { ifMatch: '"hash1"' });
 		expect(calls[0]!.url).toBe('http://server.test/api/v1/projects/p/environments/production/changesets/c1/reviews');
 		let headers = calls[0]!.init.headers as Record<string, string>;
@@ -161,7 +162,7 @@ describe('writes: If-Match and Idempotency-Key', () => {
 
 	it('publishChangeset sends both guards and the release body', async () => {
 		const { calls, fetch } = stubFetch(() => json({ data: { generation: 7 } }, 201));
-		await new Client({ baseUrl: 'http://server.test', fetch })
+		await new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' })
 			.environment('p')
 			.publishChangeset('c1', { base_generation: 6 }, { ifMatch: '"h"', idempotencyKey: 'k-abcdefghijklmnop' });
 		expect(calls[0]!.url).toBe('http://server.test/api/v1/projects/p/environments/production/changesets/c1/publish');
@@ -178,7 +179,7 @@ describe('the error envelope, parsed into ApiError', () => {
 			json(envelope('validation_failed', 'the document does not fit the type', { reason: 'slug_taken', pointer: '/slug' }), 422)
 		);
 		const error = await failure(
-			new Client({ baseUrl: 'http://server.test', fetch }).environment('p').getEntry('articles', 'e1')
+			new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' }).environment('p').getEntry('articles', 'e1')
 		);
 		expect(error.status).toBe(422);
 		expect(error.code).toBe('validation_failed');
@@ -193,7 +194,7 @@ describe('the error envelope, parsed into ApiError', () => {
 		const { fetch } = stubFetch(({ url }) =>
 			url.endsWith('/me') ? json(envelope('unauthorized', 'not signed in'), 401) : json(envelope('not_found', 'no such entry'), 404)
 		);
-		const c = new Client({ baseUrl: 'http://server.test', fetch });
+		const c = new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' });
 		const signed = await failure(c.me());
 		expect(signed).toMatchObject({ status: 401, code: 'unauthorized', retryable: false });
 		const missing = await failure(c.environment('p').getEntry('articles', 'e1'));
@@ -205,7 +206,7 @@ describe('the error envelope, parsed into ApiError', () => {
 			json(envelope('conflict', 'the draft moved on', { reason: 'stale_revision' }), 409, { etag: '"rev-current"' })
 		);
 		const error = await failure(
-			new Client({ baseUrl: 'http://server.test', fetch })
+			new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' })
 				.environment('p')
 				.saveEntry('articles', 'e1', {}, { ifMatch: '"rev-old"', idempotencyKey: 'k-abcdefghijklmnop' })
 		);
@@ -216,26 +217,26 @@ describe('the error envelope, parsed into ApiError', () => {
 
 	it('a 429 names its Retry-After and is retryable', async () => {
 		const { fetch } = stubFetch(() => json(envelope('rate_limited', 'slow down', { reason: 'rate_limited' }), 429, { 'retry-after': '3' }));
-		const error = await failure(new Client({ baseUrl: 'http://server.test', fetch }).version());
+		const error = await failure(new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' }).version());
 		expect(error).toMatchObject({ status: 429, code: 'rate_limited', retryAfterMs: 3000, retryable: true });
 	});
 
 	it('a non-envelope failure is invalid_response but keeps its status', async () => {
 		const { fetch } = stubFetch(() => new Response('<html>bad gateway</html>', { status: 502 }));
-		const error = await failure(new Client({ baseUrl: 'http://server.test', fetch }).readyz());
+		const error = await failure(new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' }).readyz());
 		expect(error).toMatchObject({ status: 502, code: 'invalid_response', retryable: true });
 	});
 
 	it('no answer at all is no_answer, status 0, retryable', async () => {
 		const { fetch } = stubFetch(() => Promise.reject(new TypeError('connect ECONNREFUSED')));
-		const error = await failure(new Client({ baseUrl: 'http://server.test', fetch }).livez());
+		const error = await failure(new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' }).livez());
 		expect(error).toMatchObject({ status: 0, code: 'no_answer', retryable: true });
 	});
 
 	it('a body over the cap is response_too_large, declared or measured', async () => {
 		const big = 'x'.repeat(64);
 		const declared = stubFetch(() => json({ data: big }, 200, { 'content-length': String(big.length + 20) }));
-		const small = new Client({ baseUrl: 'http://server.test', fetch: declared.fetch, maxBodyBytes: 10 });
+		const small = new Client({ baseUrl: 'http://server.test', fetch: declared.fetch, maxBodyBytes: 10, compat: 'off' });
 		expect((await failure(small.livez())).code).toBe('response_too_large');
 		// No Content-Length: the overflow is measured as the stream arrives.
 		const stream = new ReadableStream<Uint8Array>({
@@ -245,7 +246,7 @@ describe('the error envelope, parsed into ApiError', () => {
 			}
 		});
 		const measured = stubFetch(() => new Response(stream, { status: 200, headers: { 'content-type': 'application/json' } }));
-		const smallTwo = new Client({ baseUrl: 'http://server.test', fetch: measured.fetch, maxBodyBytes: 10 });
+		const smallTwo = new Client({ baseUrl: 'http://server.test', fetch: measured.fetch, maxBodyBytes: 10, compat: 'off' });
 		expect((await failure(smallTwo.livez())).code).toBe('response_too_large');
 	});
 });
@@ -253,7 +254,7 @@ describe('the error envelope, parsed into ApiError', () => {
 describe('delivery: published reads and the pinned scope', () => {
 	it('lists, gets and queries /content/v1 with an optional generation', async () => {
 		const { calls, fetch } = stubFetch(() => json({ data: [], next_cursor: null, applied: { query: {}, query_hash: 'sha256:0' } }));
-		const delivery = new Client({ baseUrl: 'http://server.test', fetch }).delivery('p', 'staging');
+		const delivery = new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' }).delivery('p', 'staging');
 		await delivery.list('articles', { limit: 5, generation: 9 });
 		expect(calls[0]!.url).toBe('http://server.test/content/v1/p/staging/articles?limit=5&generation=9');
 		await delivery.get('articles', 'e1');
@@ -266,7 +267,7 @@ describe('delivery: published reads and the pinned scope', () => {
 
 	it('a pinned scope names its generation on every read and refuses a different one', async () => {
 		const { calls, fetch } = stubFetch(() => json({ data: [] }));
-		const pinned = new Client({ baseUrl: 'http://server.test', fetch }).delivery('p').atGeneration(42);
+		const pinned = new Client({ baseUrl: 'http://server.test', fetch, compat: 'off' }).delivery('p').atGeneration(42);
 		await pinned.list('articles');
 		expect(calls[0]!.url).toContain('generation=42');
 		await pinned.get('articles', 'e1', { generation: 42 });

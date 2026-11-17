@@ -5954,7 +5954,7 @@ fn publishing_parts() -> Value {
     })
 }
 
-/// The library's metadata and the media a release recorded (D-171, D-172).
+/// The library's metadata and the media a release recorded (D-172, D-173).
 fn media_parts() -> Value {
     json!({
         "AssetMetadata": {
@@ -5999,7 +5999,7 @@ fn delivery_parts() -> Value {
                 "rejected_reason": { "type": ["string", "null"] },
                 "derivatives": { "type": "array", "items": { "type": "string" }, "description": "the renditions the worker wrote" },
                 "created_at": { "type": "string", "format": "date-time" },
-                "alt": { "type": ["string", "null"], "description": "the library's default alt text (D-172)" },
+                "alt": { "type": ["string", "null"], "description": "the library's default alt text (D-173)" },
                 "title": { "type": ["string", "null"] },
                 "credit": { "type": ["string", "null"] },
                 "tags": { "type": "array", "items": { "type": "string" } },
@@ -6055,7 +6055,7 @@ fn delivery_parts() -> Value {
                 "published_in": { "type": "integer", "description": "the generation this revision went live in" },
                 "media": {
                     "type": "object",
-                    "description": "the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-171)",
+                    "description": "the uploads it names (asset fields and rich-text images) at the versions its release recorded, by asset id; absent when it names none (D-172)",
                     "additionalProperties": { "$ref": "#/components/schemas/PublishedMedia" },
                 },
             },

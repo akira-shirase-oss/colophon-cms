@@ -148,7 +148,7 @@ pub struct Config {
     /// `http://localhost:58000`): the sign-in redirect URI and the first trusted origin.
     pub public_origin: String,
     /// The origin delivery's media URLs name (`COLOPHON_MEDIA_URL`, default the public origin;
-    /// D-171): a CDN or a separate asset host in front of `/media/v1`.
+    /// D-172): a CDN or a separate asset host in front of `/media/v1`.
     pub media_origin: String,
     /// Sign-in; `None` when the three `COLOPHON_OIDC_*` settings are absent.
     pub oidc: Option<OidcSettings>,
@@ -661,6 +661,12 @@ impl Config {
             SocketAddr::from(([127, 0, 0, 1], 58000)),
         );
         let database_url = env.secret("COLOPHON_DATABASE_URL", true);
+        // The TLS rule (D-156), at start-up: a database elsewhere must prove who it is.
+        if let Some(url) = &database_url
+            && let Err(error) = colophon_db::check_url(url.expose())
+        {
+            env.problems.push(format!("COLOPHON_DATABASE_URL: {error}"));
+        }
         let cache_url = env.secret("COLOPHON_CACHE_URL", false);
         let (cache_ttl, cache_jitter) = env.cache_lifetimes();
         let log_format = env.parse("COLOPHON_LOG_FORMAT", LogFormat::Json);
@@ -1054,17 +1060,42 @@ mod tests {
 
     #[tokio::test]
     async fn a_tls_database_url_is_taken_as_given() {
-        // Neon's URLs carry `sslmode=require` (D-156): the configuration keeps the URL whole —
-        // the driver, built with rustls, does the TLS — and never prints it.
-        let url =
-            "postgres://app:s3cret@ep-quiet-1.eu-central-1.aws.neon.tech/colophon?sslmode=require";
+        // Neon's URLs, with `sslmode=verify-full` (D-156): the configuration keeps the URL
+        // whole — the driver, built with rustls and the Mozilla roots, does the TLS and checks
+        // the certificate names the host — and never prints it.
+        let url = "postgres://app:s3cret@ep-quiet-1.eu-central-1.aws.neon.tech/colophon?sslmode=verify-full";
         let config = load(&[("COLOPHON_DATABASE_URL", url)]).expect("valid");
         assert_eq!(config.database_url.expose(), url);
         assert!(!format!("{config:?}").contains("s3cret"));
         assert!(
             colophon_db::connect_lazy(url, colophon_db::PoolSettings::default()).is_ok(),
-            "the driver accepts the require URL"
+            "the driver accepts the verify-full URL"
         );
+    }
+
+    #[test]
+    fn an_unverified_remote_database_url_stops_the_server_at_start() {
+        // `require` takes any certificate, `verify-ca` any publicly trusted one, and the driver
+        // ignores `channel_binding` (D-156): the server refuses to start on any of them — Neon's
+        // copied URL carries the first and the last — naming the variable and the fix, never
+        // the URL.
+        let neon = "postgres://app:s3cret@ep-quiet-1.eu-central-1.aws.neon.tech/colophon";
+        for query in [
+            "?sslmode=require",
+            "?sslmode=require&channel_binding=require",
+            "?sslmode=verify-ca&sslrootcert=/etc/colophon/db-ca.pem",
+            "?sslmode=verify-full&channel_binding=require",
+        ] {
+            let url = format!("{neon}{query}");
+            let error = load(&[("COLOPHON_DATABASE_URL", url.as_str())]).expect_err("refused");
+            let text = error.to_string();
+            assert!(text.contains("COLOPHON_DATABASE_URL"), "{query}: {text}");
+            assert!(text.contains("database URL refused"), "{query}: {text}");
+            assert!(
+                text.contains("sslmode=verify-full") && !text.contains("s3cret"),
+                "{query}: {text}"
+            );
+        }
     }
 
     #[test]
