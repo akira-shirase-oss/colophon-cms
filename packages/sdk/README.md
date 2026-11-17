@@ -93,6 +93,30 @@ the `/auth` flows, media bytes, the SSE event stream) is reachable the same way 
 the generated `paths`/`operations`/`components` types are exported, so extending the client is a
 typed call, not a new convention.
 
+## Draft preview on your own site
+
+An editor's **Preview** in the Studio opens your site with a one-time code; your site trades it
+for a short-lived token and renders the draft. The helpers work on the Web `Request` and
+`Response` types, in any framework (the full guide, with SvelteKit, Astro and Next.js:
+`docs/guides/preview.md` in the repository).
+
+```ts
+import { createPreviewHandler, previewClient, previewHeaders, previewTokenFromRequest } from '@colophon-cms/sdk';
+
+const cms = { baseUrl: 'https://cms.example.com', project: '01933b5e-0000-7000-8000-000000000000' };
+
+// Your preview route, the address the Studio opens: `/api/preview?code=…&path=/blog/…`.
+export const enterPreview = createPreviewHandler({ ...cms, isAllowedPath: (path) => path.startsWith('/blog/') });
+
+// In a page: the draft when this visitor is previewing, with headers no cache may keep.
+export async function draftFor(request: Request, id: string) {
+	const token = previewTokenFromRequest(request);
+	if (token === null) return null;
+	const { data } = await previewClient(cms).reader(token).get('articles', id);
+	return { data, headers: previewHeaders({ studioOrigin: 'https://cms.example.com' }) };
+}
+```
+
 ## Errors
 
 Every failure is an `ApiError`: the HTTP `status` (0 when no answer arrived), the envelope's

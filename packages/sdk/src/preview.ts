@@ -85,7 +85,7 @@ export type PreviewReply<B> = B & { response: PreviewMeta };
 export interface PreviewClientOptions {
 	/** Colophon's origin, such as `https://cms.example.com`. */
 	baseUrl: string;
-	/** The project's id or slug — the one the Studio issues previews for. */
+	/** The project's id (a UUID, as `/content/v1` and `/preview/v1` name it) — the one the Studio issues previews for. */
 	project: string;
 	/** The environment; `production` by default. */
 	environment?: string;

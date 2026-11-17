@@ -21,12 +21,15 @@ all three on the Web `Request`/`Response` types, so they work in any framework.
    Every read checks the token again: expired or revoked tokens, issuers who lost access, and
    changesets that changed or went live are all refused, with a `reason` you can show.
 
+In the examples, `PROJECT_ID` is your project's id (the UUID in the Studio's address and in
+`/content/v1/{project}/…`), and `https://cms.example.com` is where Colophon runs.
+
 ## SvelteKit
 
 ```ts
 // src/lib/server/preview.ts
 import { createPreviewHandler, exitPreviewHandler, previewClient } from '@colophon-cms/sdk';
-const cms = { baseUrl: 'https://cms.example.com', project: 'blog' };
+const cms = { baseUrl: 'https://cms.example.com', project: PROJECT_ID };
 export const STUDIO = 'https://cms.example.com';
 export const preview = previewClient(cms);
 export const enter = createPreviewHandler({ ...cms, isAllowedPath: (path) => path.startsWith('/blog/') });
@@ -71,7 +74,7 @@ have ended, is the testbed's site: `apps/testbed/src/routes/preview/`. Its Playw
 ```ts
 // src/pages/api/preview.ts
 import { createPreviewHandler } from '@colophon-cms/sdk';
-const enter = createPreviewHandler({ baseUrl: import.meta.env.CMS_URL, project: 'blog' });
+const enter = createPreviewHandler({ baseUrl: import.meta.env.CMS_URL, project: PROJECT_ID });
 export const GET = ({ request }) => enter(request);
 ```
 
@@ -85,7 +88,7 @@ if (token) {
     Astro.response.headers.set(name, value);
 }
 const entry = token
-  ? (await previewClient({ baseUrl: import.meta.env.CMS_URL, project: 'blog' }).reader(token).get('articles', Astro.params.id)).data
+  ? (await previewClient({ baseUrl: import.meta.env.CMS_URL, project: PROJECT_ID }).reader(token).get('articles', Astro.params.id)).data
   : await getPublished(Astro.params.id); // your usual /content/v1 read
 ---
 ```
@@ -98,7 +101,7 @@ or render preview pages with an adapter.
 
 ```ts
 // app/api/preview/route.ts
-export const GET = createPreviewHandler({ baseUrl: process.env.CMS_URL!, project: 'blog' });
+export const GET = createPreviewHandler({ baseUrl: process.env.CMS_URL!, project: PROJECT_ID });
 // app/blog/[id]/page.tsx: read the cookie with cookies().get('colophon_preview'), read through
 // previewClient(...).reader(token), and send previewHeaders(...) from middleware for that path
 // (or use the token's presence to opt the route into dynamic rendering).
