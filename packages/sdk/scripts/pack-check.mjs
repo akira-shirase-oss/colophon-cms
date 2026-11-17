@@ -10,7 +10,8 @@
 //   2. publint --strict and Are the Types Wrong (`--profile esm-only`) on each tarball.
 //   3. In a scratch project with only the two tarballs installed: a Node ESM script that calls
 //      the SDK against a stub server (livez, the compatibility check, a delivery read) and
-//      renders every rich-text fixture to its reviewed HTML; a TypeScript type-check of a
+//      renders every rich-text fixture to its reviewed HTML; the SDK README's read-and-render
+//      example, run as written against the stub; a TypeScript type-check of a
 //      consumer file and of every `ts` code block in both READMEs, under `nodenext` and
 //      `bundler` resolution with each TypeScript the workspace uses; the packed declarations'
 //      public API against each package's committed api-report.txt; and a browser bundle of
@@ -134,6 +135,18 @@ run(npm, ['install', '--no-audit', '--no-fund', '--ignore-scripts', '--no-packag
 step('Node ESM: the SDK against a stub server, the renderer against every fixture');
 const fixtures = path.join(repository, 'fixtures/rich-text/v1');
 const sampleBody = JSON.parse(readFileSync(path.join(fixtures, 'valid', readdirSync(path.join(fixtures, 'valid')).sort()[1]), 'utf8')).value;
+/** The query of every delivery list the stub answered, in order. */
+const delivered = [];
+/** Runs `node <args>` in the consumer project without blocking this process's stub server. */
+function nodeIn(args) {
+	return new Promise((resolve, reject) => {
+		import('node:child_process').then(({ execFile }) =>
+			execFile(process.execPath, args, { cwd: consumer, encoding: 'utf8' }, (error, stdout, stderr) =>
+				error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve(stdout)
+			)
+		);
+	});
+}
 const server = createServer((request, response) => {
 	const url = new URL(request.url ?? '/', 'http://stub');
 	const json = (status, body) => {
@@ -142,8 +155,12 @@ const server = createServer((request, response) => {
 	};
 	if (url.pathname === '/livez') return json(200, { status: 'live' });
 	if (url.pathname === '/version') return json(200, { version, commit: 'stub', build_date: '2026-11-17', api: ['v1'] });
-	if (url.pathname === '/content/v1/site/production/articles') {
-		return json(200, { data: [{ id: '0190a4b0-0000-7000-8000-0000000000aa', title: 'Hello', content: { body: sampleBody } }], next_cursor: null });
+	if (/^\/content\/v1\/[^/]+\/production\/articles$/.test(url.pathname)) {
+		delivered.push(url.search);
+		response.setHeader('colophon-generation', '7');
+		// A first page that has a second, so the README's pinned follow-up read runs too.
+		const first = !url.searchParams.has('cursor');
+		return json(200, { data: first ? [{ id: '0190a4b0-0000-7000-8000-0000000000aa', title: 'Hello', content: { body: sampleBody } }] : [], next_cursor: first ? 'c1' : null });
 	}
 	return json(404, { error: { code: 'route_not_found', message: 'no such route', request_id: 'stub' } });
 });
@@ -192,19 +209,29 @@ console.log(JSON.stringify({
 );
 let smoke = null;
 try {
-	const output = await new Promise((resolve, reject) => {
-		import('node:child_process').then(({ execFile }) =>
-			execFile(process.execPath, ['smoke.mjs', origin, fixtures], { cwd: consumer, encoding: 'utf8' }, (error, stdout, stderr) =>
-				error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve(stdout)
-			)
-		);
-	});
-	smoke = JSON.parse(output.trim().split('\n').pop());
+	smoke = JSON.parse((await nodeIn(['smoke.mjs', origin, fixtures])).trim().split('\n').pop());
 } catch (error) {
 	check(false, `the Node ESM smoke script failed: ${error.message}`);
-} finally {
-	server.close();
 }
+// The README's five-minute path, run as written (Node strips its types) with the stub's origin
+// in place of the example one.
+step('the SDK README\'s "read published content and render it" example, run as written');
+const sdkReadme = readFileSync(path.join(repository, 'packages/sdk/README.md'), 'utf8');
+const quickStart = [...sdkReadme.matchAll(/^```ts\n([\s\S]*?)^```$/gm)].map((match) => match[1]).find((code) => code.includes('renderToHtml') && code.includes('.delivery('));
+check(quickStart?.includes("'https://cms.example.com'"), 'the SDK README has no runnable read-and-render example');
+if (quickStart !== undefined) {
+	writeFileSync(path.join(consumer, 'readme-run.ts'), quickStart.replace("'https://cms.example.com'", JSON.stringify(origin)));
+	try {
+		delivered.length = 0;
+		const output = await nodeIn(['readme-run.ts']);
+		console.log(`  printed: ${output.trim().split('\n').join(' | ')}`);
+		check(/^Hello \d+$/m.test(output), 'the README example did not print the delivered entry');
+		check(delivered.length === 2 && delivered[1].includes('cursor=c1') && delivered[1].includes('generation=7'), `the README example's second read was not pinned to the first's generation (${delivered.join(', ')})`);
+	} catch (error) {
+		check(false, `the README example failed: ${error.message}`);
+	}
+}
+server.close();
 if (smoke !== null) {
 	console.log(`  ${JSON.stringify(smoke)}`);
 	check(smoke.live === 200, 'livez through the packed SDK did not answer 200');

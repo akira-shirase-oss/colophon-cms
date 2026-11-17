@@ -62,8 +62,9 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
   size budget (150 KB packed; rich-text 20 KB), the workspace version, no dependencies (so never a
   private `@colophon/*` name), `publint --strict`, Are the Types Wrong (`esm-only`), then a scratch
   project with only the tarballs installed: a Node ESM script against a stub server (livez, the
-  compatibility check, a delivery read rendered), every rich-text fixture against its reviewed
-  HTML, a type-check of a consumer file and of every `ts` block in both READMEs under `nodenext`
+  compatibility check, a delivery read rendered), the README's read-and-render example run as
+  written against the stub (its second read must carry the first's generation), every rich-text
+  fixture against its reviewed HTML, a type-check of a consumer file and of every `ts` block in both READMEs under `nodenext`
   and `bundler` resolution with TypeScript 5.9 and 6.0, and a browser bundle of `Client` and
   `Delivery` held to 12 KB min+gzip (4.5 KB at 0.1.0-alpha.1). Last, each package's public API —
   every export of the packed `dist/index.d.ts`, declarations as written, generated wire types by
