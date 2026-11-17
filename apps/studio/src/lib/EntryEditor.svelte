@@ -36,6 +36,7 @@
 		getRevision,
 		listRevisions,
 		type Loaded,
+		may,
 		mayOn,
 		type Referrer,
 		signInUrl,
@@ -61,6 +62,9 @@
 	import { kept } from './drafts.ts';
 	import FieldInputs from './FieldInputs.svelte';
 	import { Saver } from './saver.svelte.ts';
+	import PreviewMenu from './PreviewMenu.svelte';
+	import PreviewPane from './PreviewPane.svelte';
+	import PreviewSplit from './PreviewSplit.svelte';
 
 	let {
 		project,
@@ -137,9 +141,14 @@
 	$effect(() => {
 		latest = initial.draft;
 	});
+	// Preview on the editor's own site (D-173): the pane, and the last save the server
+	// acknowledged, which the pane tells the site about — never a keystroke.
+	let previewOpen = $state(false);
+	let acknowledged = $state.raw<{ revision: string; at: number } | null>(null);
 	// svelte-ignore state_referenced_locally
 	const saver = new Saver(project, collection, entry, definition, initial, (loaded) => {
 		latest = loaded.draft;
+		acknowledged = { revision: loaded.draft.revision.id, at: Date.now() };
 		queryClient.setQueryData(['draft', project, collection, entry], loaded);
 		void queryClient.invalidateQueries({ queryKey: ['entries', project, collection] });
 		void queryClient.invalidateQueries({ queryKey: ['history', project, collection, entry] });
@@ -456,7 +465,10 @@
 	{/each}
 {/snippet}
 
-<div class="grid gap-8 xl:grid-cols-[minmax(0,1fr)_17rem]">
+<!-- Beside the site preview, the save card moves under the fields, so they keep their width; the
+     pane says whether what it shows is saved. -->
+<PreviewSplit open={previewOpen} id="entry-{entry}">
+<div class="grid gap-8 {previewOpen ? '' : 'xl:grid-cols-[minmax(0,1fr)_17rem]'}">
 	<div class="min-w-0">
 		{#if unopenable}
 			<p role="alert" class="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -488,7 +500,8 @@
 			</section>
 		{/if}
 
-		<div role="tablist" aria-label="Entry" class="mb-6 inline-flex rounded-lg bg-muted p-1">
+		<div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+		<div role="tablist" aria-label="Entry" class="inline-flex rounded-lg bg-muted p-1">
 			{#each tabs as [value, name] (value)}
 				<button
 					role="tab"
@@ -512,6 +525,8 @@
 					{name}{#if value === 'history' && revisions.data}<span class="ml-1.5 text-xs text-muted-foreground tabular">{revisions.data.length}</span>{/if}{#if value === 'comments' && commentCount > 0}<span class="ml-1.5 text-xs text-muted-foreground tabular">{commentCount}</span>{/if}
 				</button>
 			{/each}
+		</div>
+		<PreviewMenu {project} {entry} bind:open={previewOpen} manages={may(mine.data, 'destinations.manage')} />
 		</div>
 
 		{#if restoreNote}
@@ -853,3 +868,15 @@
 		<ReaderView bind:open={readerView} {project} {collection} {entry} changed={standing === 'changed'} titleLabel={titleLabel(definition)} />
 	{/if}
 </div>
+	{#snippet pane()}
+		<PreviewPane
+			{project}
+			{entry}
+			title={latest.revision.title}
+			status={saver.status}
+			saved={acknowledged}
+			manages={may(mine.data, 'destinations.manage')}
+			onclose={() => (previewOpen = false)}
+		/>
+	{/snippet}
+</PreviewSplit>

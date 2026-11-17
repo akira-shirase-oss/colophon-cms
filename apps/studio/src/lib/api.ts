@@ -426,7 +426,9 @@ export function retryAfterMs(header: string | null, now = Date.now()): number {
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function send(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
+/** One request, with the CSRF token on writes, a deadline, and every failure typed (`ApiError`).
+ *  Exported for the modules beside this one that keep their own calls (preview.ts). */
+export async function send(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
 	const write = method !== 'GET';
 	// Every attempt is the same request: a write sent again keeps its Idempotency-Key.
 	const attempt = async (): Promise<Response> => {
@@ -488,7 +490,7 @@ async function loaded(response: Response): Promise<Loaded> {
 	};
 }
 
-const base = (project: string) => `/api/v1/projects/${project}/environments/production`;
+export const base = (project: string) => `/api/v1/projects/${project}/environments/production`;
 const entries = (project: string, collection: string) => `${base(project)}/collections/${collection}/entries`;
 
 /** Who is signed in, or `null` if nobody is. */
