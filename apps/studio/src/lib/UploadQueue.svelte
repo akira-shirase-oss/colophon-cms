@@ -17,9 +17,9 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import { Progress } from '@colophon/ui/ui/progress';
 	import { Spinner } from '@colophon/ui/ui/spinner';
-	import { type Asset, getAsset, listAssetPage, uploadAsset } from './api.ts';
+	import { ApiError, type Asset, getAsset, listAssetPage, uploadAsset } from './api.ts';
 	import { plainError } from './errors.ts';
-	import { CONCURRENCY, MAX_QUEUE, size } from './library.ts';
+	import { CONCURRENCY, MAX_QUEUE, sentence, size, unsendable } from './library.ts';
 
 	let { project }: { project: string } = $props();
 
@@ -34,6 +34,8 @@
 		asset: string | null;
 		/** When the server accepted it, for "slow". */
 		since: number;
+		/** Whether sending it again can help (no answer, or the server was busy). */
+		retryable: boolean;
 	}
 
 	/** After this long unchecked, a file is said to be slow (not failed). */
@@ -77,7 +79,11 @@
 		const taken = list.slice(0, room);
 		const left = list.length - taken.length;
 		note = left > 0 ? `Only ${MAX_QUEUE} files can wait at once, so ${left === 1 ? '1 file was' : `${left} files were`} left out. Add ${left === 1 ? 'it' : 'them'} again when these finish.` : '';
-		for (const file of taken) items.push({ key: (next += 1), file, status: 'waiting', reason: '', asset: null, since: 0 });
+		for (const file of taken) {
+			// What the server would refuse anyway is said at once, and never sent.
+			const refused = unsendable(file);
+			items.push({ key: (next += 1), file, status: refused === null ? 'waiting' : 'failed', reason: refused ?? '', asset: null, since: 0, retryable: false });
+		}
 		pump();
 	}
 
@@ -104,6 +110,7 @@
 			refresh();
 		} catch (error) {
 			item.status = 'failed';
+			item.retryable = !(error instanceof ApiError) || error.failure === 'retry';
 			item.reason = plainError(error, `upload “${item.file.name}”`);
 		}
 	}
@@ -116,7 +123,7 @@
 				break;
 			case 'rejected':
 				item.status = 'rejected';
-				item.reason = asset.rejected_reason ?? "Colophon couldn't read this file as an image.";
+				item.reason = sentence(asset.rejected_reason ?? "Colophon couldn't read this file as an image.");
 				break;
 			case 'quarantined':
 				item.status = Date.now() - item.since > SLOW_MS ? 'slow' : 'checking';
@@ -239,7 +246,7 @@
 							{words[item.status]}{#if item.reason !== ''}: {item.reason}{/if}
 						</p>
 					</div>
-					{#if item.status === 'failed'}
+					{#if item.status === 'failed' && item.retryable}
 						<Button variant="outline" size="sm" class="shrink-0" onclick={() => retry(item)} aria-label="Try uploading {item.file.name} again"
 							><RotateCcwIcon data-icon="inline-start" />Try again</Button
 						>

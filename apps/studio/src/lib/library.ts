@@ -5,6 +5,20 @@
 
 import { type Asset, assetUrl } from './api.ts';
 
+/** The types an upload may claim (the server's v0.1 list, D-093) and its size bound. */
+export const UPLOAD_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+/** Why `file` can't be uploaded at all, in plain words — the server's own intent rules, said
+ *  before a byte is sent (the server still decides). `null` when it may go. */
+export function unsendable(file: Pick<File, 'name' | 'type' | 'size'>): string | null {
+	if (!UPLOAD_TYPES.includes(file.type)) return 'Only PNG, JPEG and WebP images can be uploaded.';
+	if (file.size === 0) return 'The file is empty.';
+	if (file.size > MAX_UPLOAD_BYTES) return 'A file can be at most 20 MB.';
+	if (file.name.trim() === '' || [...file.name.trim()].length > 200) return 'The file name must be 1 to 200 characters long.';
+	return null;
+}
+
 /** Uploads one drop or pick may queue; more are left out with a note, never silently. */
 export const MAX_QUEUE = 50;
 /** Uploads sent at once: the rest wait their turn. */

@@ -201,19 +201,46 @@ test('files go up three at a time by the button and by a drop, and each says how
 	test.setTimeout(120_000);
 	await signIn(page);
 	const project = await newProject(page, 'Media uploads');
+	// A library that can't be read says so, and Try again reads it once the server answers.
+	const listing = (url: URL) => url.pathname.endsWith(`/projects/${project}/environments/production/assets`) && url.searchParams.has('limit');
+	await page.route(listing, (route) =>
+		route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { message: 'unavailable', details: { reason: 'unavailable' } } }) })
+	);
 	await page.goto(`/studio/projects/${project}/media`);
+	await expect(page.getByTestId('problem')).toContainText("Couldn't load the media library", { timeout: 30_000 });
+	await page.unroute(listing);
+	await page.getByTestId('problem').getByRole('button', { name: 'Try again' }).click();
 	await expect(page.getByTestId('media-empty')).toBeVisible();
 
+	// Each upload held a moment on its way, to count how many are in flight at once.
+	let flying = 0;
+	let most = 0;
+	await page.route('**/environments/production/assets', async (route) => {
+		if (route.request().method() !== 'POST') return route.fallback();
+		flying += 1;
+		most = Math.max(most, flying);
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		const response = await route.fetch();
+		flying -= 1;
+		await route.fulfill({ response });
+	});
 	await page.getByTestId('asset-file').setInputFiles([
 		{ name: 'one.png', mimeType: 'image/png', buffer: SMALL },
 		{ name: 'two.png', mimeType: 'image/png', buffer: png(5, 5, [10, 200, 10]) },
 		{ name: 'three.png', mimeType: 'image/png', buffer: png(6, 5, [10, 10, 200]) },
-		{ name: 'four.png', mimeType: 'image/png', buffer: NOT_AN_IMAGE }
+		{ name: 'four.png', mimeType: 'image/png', buffer: NOT_AN_IMAGE },
+		{ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('a text file') }
 	]);
 	const items = page.getByTestId('upload-item');
-	await expect(items).toHaveCount(4);
-	await expect(page.getByTestId('upload-summary')).toHaveText('Uploads finished: 3 ready, 1 rejected', { timeout: 60_000 });
+	await expect(items).toHaveCount(5);
+	await expect(page.getByTestId('upload-summary')).toHaveText("Uploads finished: 3 ready, 1 rejected, 1 couldn't upload", { timeout: 60_000 });
+	// The checker's verdict, in its words; a file that was never an image type is never sent.
 	await expect(items.filter({ hasText: 'four.png' }).getByTestId('upload-status')).toContainText('Rejected: ');
+	await expect(items.filter({ hasText: 'notes.txt' }).getByTestId('upload-status')).toHaveText("Couldn't upload: Only PNG, JPEG and WebP images can be uploaded.");
+	await expect(items.filter({ hasText: 'notes.txt' }).getByRole('button')).toHaveCount(0);
+	// Four files to send, three at a time.
+	expect(most).toBe(3);
+	await page.unroute('**/environments/production/assets');
 	await expect(items.filter({ hasText: 'one.png' })).toHaveAttribute('data-status', 'ready');
 	await expect(page.getByTestId('media-card')).toHaveCount(4);
 	await screen(page, 'uploads');
