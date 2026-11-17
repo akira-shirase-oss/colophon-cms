@@ -178,9 +178,18 @@ impl MediaBase {
         Ok(stamps
             .into_iter()
             .filter_map(|(asset, stamp)| {
-                let sha = stamp.sha.filter(|sha| colophon_media::is_version_sha(sha))?;
+                let sha = stamp
+                    .sha
+                    .filter(|sha| colophon_media::is_version_sha(sha))?;
                 Uuid::try_parse(&asset).ok()?;
-                Some((asset, sha, stamp.kind?, stamp.width?, stamp.height?, stamp.renditions))
+                Some((
+                    asset,
+                    sha,
+                    stamp.kind?,
+                    stamp.width?,
+                    stamp.height?,
+                    stamp.renditions,
+                ))
             })
             .map(|(asset, sha, kind, width, height, renditions)| {
                 let url = format!("{base}/{asset}/{sha}");
