@@ -99,8 +99,10 @@ ALTER TABLE assets FORCE ROW LEVEL SECURITY;
 
 -- 3. The library's own words for an upload (D-172): a default alt text the editor's image
 --    dialog starts from, a title, a credit and up to ten slug-shaped tags, changed through
---    PATCH under If-Match on metadata_version. `search` is what `?q=` matches, served by a
---    trigram index (pg_trgm, migration 0015).
+--    PATCH under If-Match on metadata_version. `search` is what `?q=` matches. Its trigram
+--    index (pg_trgm, migration 0015) serves the table owner; under colophon_api's row security
+--    ILIKE isn't leakproof, so the API's search scans the environment's rows until a search
+--    function that binds the project itself uses it (module 07).
 ALTER TABLE assets
     ADD COLUMN alt text CHECK (char_length(alt) BETWEEN 1 AND 300),
     ADD COLUMN title text CHECK (char_length(title) BETWEEN 1 AND 200),

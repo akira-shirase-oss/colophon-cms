@@ -13,7 +13,8 @@ through `--version` and `GET /version`.
 - **Images inside rich text must name real uploads** (D-170). A rich-text `image` whose
   `assetId` isn't an upload of the environment is refused `422 asset_not_found` at that
   image's pointer. Drafts made with the old Studio dialog hold random placeholder ids, so they
-  are refused at their next save until each image is replaced or removed. Revisions saved before migration 0065 record no rich-text references until saved again.
+  are refused at their next save until each image is replaced or removed; the Studio marks the
+  image in place and offers Replace and Remove. Revisions saved before migration 0065 record no rich-text references until saved again.
 - **A replaced image reaches published pages at the next publish** (D-171). Delivery rows now
   carry `media`: the versioned, immutable URL of each upload the release recorded, with its
   size and renditions. A site using `url` keeps showing the released bytes after a replace
@@ -24,6 +25,16 @@ through `--version` and `GET /version`.
 
 - Images inside rich text are tracked like every upload: publish-checked, kept from deletion,
   listed under "Used in"; at most 200 distinct images per document (D-170).
+- The Studio inserts images into rich text from the media library (pick, search or upload,
+  then alt text, required), shows each image as itself with its state, and edits its alt text,
+  replaces or removes it from the keyboard; a pasted or dropped image is uploaded and inserted.
+- The Studio's Media page shows the whole library (paged, searchable, filtered by state and
+  tag), uploads many files at once through a bounded queue, and opens each upload's details:
+  its alt text, title, credit and tags (saved under If-Match, with a conflict state), versions,
+  where it's used, replace with the republish warning, both addresses to copy, and delete.
+- Renderer v2 (`@colophon-cms/rich-text`) gives images `width`, `height`, `srcset` and
+  `sizes` from the delivery row's `media`; the SDK's `mediaFor(row)` builds that for a site,
+  and the reference and demo sites use it.
 - `COLOPHON_MEDIA_URL`: the origin delivery's media URLs name (default the public origin).
 - The media library pages past 100 uploads (`cursor`, `next_cursor`), searches (`q`), filters
   by `state` and `tag`, and keeps alt text, title, credit and tags via

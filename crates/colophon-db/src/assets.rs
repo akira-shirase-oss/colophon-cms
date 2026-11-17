@@ -90,8 +90,9 @@ fn contains_pattern(text: &str) -> String {
 /// A page of the environment's assets, newest first: at most `limit` (clamped to
 /// 1..=[`MAX_PAGE`] + 1, so a caller can ask for one more to learn whether a next page exists),
 /// keyset-paged on `(created_at, id)` so an upload landing between two pages never shifts what
-/// the next one holds. The `assets_library` index serves the order; a search adds the
-/// `assets_search_trgm` trigram index (migration 0065).
+/// the next one holds. The `assets_library` index serves the order. A search can't use the
+/// `assets_search_trgm` trigram index under row security (`ILIKE` isn't leakproof), so it
+/// scans the environment's rows: tens of milliseconds at 50,000 (module 07).
 pub async fn page(
     tx: &mut ProjectTransaction,
     filter: &Filter<'_>,

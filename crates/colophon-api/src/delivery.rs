@@ -132,13 +132,16 @@ pub(crate) struct PublishedView {
 }
 
 /// What a release recorded of one upload, as `publications.media` holds it (D-171).
+/// Every field is optional on the way in: a stamp missing one is left out of the answer rather
+/// than failing the whole row.
 #[derive(Deserialize)]
 struct Stamp {
-    sha: String,
+    sha: Option<String>,
     #[serde(rename = "type")]
-    kind: String,
-    width: u32,
-    height: u32,
+    kind: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    #[serde(default)]
     renditions: Vec<String>,
 }
 
@@ -174,13 +177,14 @@ impl MediaBase {
         let base = &self.0;
         Ok(stamps
             .into_iter()
-            .filter(|(asset, stamp)| {
-                Uuid::try_parse(asset).is_ok() && colophon_media::is_version_sha(&stamp.sha)
+            .filter_map(|(asset, stamp)| {
+                let sha = stamp.sha.filter(|sha| colophon_media::is_version_sha(sha))?;
+                Uuid::try_parse(&asset).ok()?;
+                Some((asset, sha, stamp.kind?, stamp.width?, stamp.height?, stamp.renditions))
             })
-            .map(|(asset, stamp)| {
-                let url = format!("{base}/{asset}/{}", stamp.sha);
-                let renditions = stamp
-                    .renditions
+            .map(|(asset, sha, kind, width, height, renditions)| {
+                let url = format!("{base}/{asset}/{sha}");
+                let renditions = renditions
                     .iter()
                     .filter(|name| {
                         !name.is_empty()
@@ -194,9 +198,9 @@ impl MediaBase {
                 let view = MediaView {
                     current_url: format!("{base}/{asset}"),
                     url,
-                    kind: stamp.kind,
-                    width: stamp.width,
-                    height: stamp.height,
+                    kind,
+                    width,
+                    height,
                     renditions,
                 };
                 (asset, view)
@@ -797,7 +801,8 @@ mod tests {
                     "renditions": ["w320", "w1280", "../x", "W9"]},
             "not-a-uuid": {"sha": sha, "type": "image/png", "width": 1, "height": 1, "renditions": []},
             "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4e": {"sha": "../../x", "type": "image/png",
-                    "width": 1, "height": 1, "renditions": []}
+                    "width": 1, "height": 1, "renditions": []},
+            "0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4f": {"sha": sha, "type": "image/png", "width": null}
         })
         .to_string();
         let views = base.views(&stored).expect("parses");
