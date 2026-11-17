@@ -137,7 +137,10 @@ jobs:
   integration:
     name: integration (stack, outage tests, testbed in Chromium, load smoke)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Measured on main at 94e63c0 (run 44005647998): about 25 minutes to the load smoke runs,
+    # which take about 7 more; 30 cancelled the job mid-smoke. Room for the suite to grow, not
+    # for a hang: every step below has deadlines of its own.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
