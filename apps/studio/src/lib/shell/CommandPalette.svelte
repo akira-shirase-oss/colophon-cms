@@ -7,6 +7,7 @@
 	import GlobeIcon from '@lucide/svelte/icons/globe';
 	import HistoryIcon from '@lucide/svelte/icons/history';
 	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
+	import LanguagesIcon from '@lucide/svelte/icons/languages';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 	import ListChecksIcon from '@lucide/svelte/icons/list-checks';
@@ -34,6 +35,7 @@
 		tokens = false,
 		activity = false,
 		stages = false,
+		languages = false,
 		open = $bindable(false)
 	}: {
 		project: string;
@@ -48,6 +50,8 @@
 		activity?: boolean;
 		/** Whether the role changes the review workflow (E2, D-104). */
 		stages?: boolean;
+		/** Whether the role changes the environment's languages (gap/locales). */
+		languages?: boolean;
 		open?: boolean;
 	} = $props();
 
@@ -96,6 +100,7 @@
 		...(builds ? [{ label: 'Content types', icon: ShapesIcon, href: resolve('/projects/[project]/settings/types', { project }) }] : []),
 		...(settings ? [{ label: 'Settings', icon: Settings2Icon, href: resolve('/projects/[project]/settings', { project }) }] : []),
 		...(settings ? [{ label: 'Roles', icon: ShieldCheckIcon, href: resolve('/projects/[project]/settings/roles', { project }) }] : []),
+		...(languages ? [{ label: 'Languages', icon: LanguagesIcon, href: resolve('/projects/[project]/settings/languages', { project }) }] : []),
 		...(stages ? [{ label: 'Review stages', icon: ListChecksIcon, href: resolve('/projects/[project]/settings/stages', { project }) }] : []),
 		...(connections ? [{ label: 'Website connections', icon: GlobeIcon, href: resolve('/projects/[project]/settings/connections', { project }) }] : []),
 		...(tokens ? [{ label: 'API tokens', icon: KeyRoundIcon, href: resolve('/projects/[project]/settings/tokens', { project }) }] : []),

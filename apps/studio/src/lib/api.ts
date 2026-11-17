@@ -470,7 +470,7 @@ async function send(method: string, path: string, body?: unknown, headers: Recor
 			throw new ApiError('signed-out', message, 401);
 		case response.status === 404:
 			throw new ApiError('not-found', message, 404);
-		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version' || reason === 'stale_role' || reason === 'stale_stages'):
+		case response.status === 409 && (reason === 'stale_revision' || reason === 'stale_version' || reason === 'stale_role' || reason === 'stale_stages' || reason === 'stale_locales'):
 			throw new ApiError('conflict', message, 409, reason, response.headers.get('etag'), details);
 		case response.status >= 500 || response.status === 429:
 			throw new ApiError('retry', message, response.status, reason);
@@ -1216,6 +1216,53 @@ export async function replaceReviewStages(
 	const response = await send('PUT', `${base(project)}/review-stages`, { stages }, { 'If-Match': etag, 'Idempotency-Key': key });
 	const { data } = (await response.json()) as { data: { stages: ReviewStage[] } };
 	return { stages: data.stages, etag: response.headers.get('etag') ?? '' };
+}
+
+/** One of the environment's languages (gap/locales): its BCP-47 tag, what people call it,
+ *  whether it is the default, and the languages readers get instead, in order, when an entry
+ *  isn't written in it (at most four, never itself). */
+export interface Locale {
+	tag: string;
+	label: string;
+	default: boolean;
+	fallback: string[];
+}
+
+/** The environment's languages in display order, the version the next change names, and the
+ *  ETag (`"locales-<version>"`) as the header sent it. An empty list (version 0) is one language
+ *  with free tags, the way it worked before. */
+export interface Locales {
+	version: number;
+	locales: Locale[];
+	etag: string;
+}
+
+/** The most languages an environment lists, and the longest fallback chain one has. */
+export const MAX_LOCALES = 50;
+export const MAX_FALLBACKS = 4;
+
+/** The server's shape rule for a language tag (`check_locale`): two or three letters, then
+ *  hyphen-separated parts of one to eight letters or digits, at most 35 characters. */
+export function isLocaleTag(tag: string): boolean {
+	return tag.length <= 35 && /^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$/.test(tag);
+}
+
+async function loadedLocales(response: Response): Promise<Locales> {
+	const { data } = (await response.json()) as { data: { version: number; locales: Locale[] } };
+	return { version: data.version, locales: data.locales, etag: response.headers.get('etag') ?? `"locales-${data.version}"` };
+}
+
+/** The environment's languages: any member may look. */
+export async function listLocales(project: string): Promise<Locales> {
+	return loadedLocales(await send('GET', `${base(project)}/locales`));
+}
+
+/** Replaces the environment's whole language list, in the order given, under `schema.change`:
+ *  `If-Match` names the list read — a changed one is refused `stale_locales` — and the
+ *  idempotency key makes sending again safe. Removing a language entries are still written in
+ *  is refused `locale_in_use`, naming up to 20 of them. */
+export async function replaceLocales(project: string, locales: Locale[], etag: string, key: string): Promise<Locales> {
+	return loadedLocales(await send('PUT', `${base(project)}/locales`, { locales }, { 'If-Match': etag, 'Idempotency-Key': key }));
 }
 
 /** A scheduled publish (D-060): what its author chose, the instant that resolves to, and how it

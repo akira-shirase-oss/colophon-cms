@@ -6,6 +6,7 @@ import {
 	listChangesets,
 	listComments,
 	listComponents,
+	listLocales,
 	listContentTypes,
 	listDestinations,
 	listMembers,
@@ -51,6 +52,8 @@ export const tasksQuery = (
 ) => ({ queryKey: ['tasks', project, filter], queryFn: () => listTasks(project, filter) });
 /** The environment's review stages and the etag their next change names (E2, D-104). */
 export const stagesQuery = (project: string) => ({ queryKey: ['stages', project], queryFn: () => listReviewStages(project) });
+/** The environment's languages and the etag their next change names (gap/locales). */
+export const localesQuery = (project: string) => ({ queryKey: ['locales', project], queryFn: () => listLocales(project) });
 
 /** "12" or, when there are more than a page, "100+". */
 export const count = (page: { data: unknown[]; next_cursor: string | null }) =>

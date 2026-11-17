@@ -1,6 +1,7 @@
 <!--
   Settings' frame (D-081), laid out like the content-type builder's (D-079): a left panel with one
-  page each for General, Roles, Website connections, API tokens and Activity, beside the one open.
+  page each for General, Roles, Languages, Review stages, Website connections, API tokens and
+  Activity, beside the one open.
   A page shows in the panel only to roles that can use it, as the server asks; opened by address,
   each page says why it's empty instead. On a phone the panel is a row of links above the page.
 -->
@@ -8,6 +9,7 @@
 	import GlobeIcon from '@lucide/svelte/icons/globe';
 	import HistoryIcon from '@lucide/svelte/icons/history';
 	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
+	import LanguagesIcon from '@lucide/svelte/icons/languages';
 	import ListChecksIcon from '@lucide/svelte/icons/list-checks';
 	import ShieldCheckIcon from '@lucide/svelte/icons/shield-check';
 	import SlidersHorizontalIcon from '@lucide/svelte/icons/sliders-horizontal';
@@ -17,7 +19,7 @@
 	import { may } from './api.ts';
 	import { projectQuery } from './queries.ts';
 
-	type Place = 'general' | 'roles' | 'stages' | 'connections' | 'tokens' | 'activity';
+	type Place = 'general' | 'roles' | 'languages' | 'stages' | 'connections' | 'tokens' | 'activity';
 
 	let { project, current, children }: { project: string; current: Place; children: Snippet } = $props();
 
@@ -29,6 +31,14 @@
 				{ place: 'general', label: 'General', href: resolve('/projects/[project]/settings', { project }), icon: SlidersHorizontalIcon, testid: 'settings-general-link', shown: true },
 				// Every member may read the roles, so anyone in Settings sees them.
 				{ place: 'roles', label: 'Roles', href: resolve('/projects/[project]/settings/roles', { project }), icon: ShieldCheckIcon, testid: 'roles-link', shown: true },
+				{
+					place: 'languages',
+					label: 'Languages',
+					href: resolve('/projects/[project]/settings/languages', { project }),
+					icon: LanguagesIcon,
+					testid: 'languages-link',
+					shown: may(mine.data, 'schema.change')
+				},
 				{
 					place: 'stages',
 					label: 'Review stages',

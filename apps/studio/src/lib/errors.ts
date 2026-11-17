@@ -111,6 +111,19 @@ const BY_REASON: Record<string, string> = {
 	duplicate_stage: 'No two stages share a short name.',
 	stage_required: 'Each review decides one stage: pick which one you’re deciding.',
 	unknown_stage: 'That stage isn’t part of this project’s review workflow. Load the page again and try once more.',
+	// 409s and 422s for the environment's languages (gap/locales). A stale list behaves like a
+	// stale save; `locale_in_use` names the entries on the Languages page; the 422s are said
+	// beside the language or the field the pointer names.
+	stale_locales: 'Someone changed the languages while you were editing them. Review the latest list and save again.',
+	locale_in_use: 'Entries are still written in a language you removed. Move or delete them first.',
+	invalid_locale: 'A language code looks like en, fr or pt-BR: two or three letters, then parts of letters or digits after hyphens.',
+	invalid_locale_label: 'A language’s name is 1 to 80 characters.',
+	duplicate_locale: 'That language is in the list already.',
+	too_many_locales: 'A project lists at most 50 languages.',
+	locale_default_required: 'Choose one language as the default.',
+	fallback_not_listed: 'A language can only fall back to another language in the list.',
+	invalid_fallback: 'A language falls back to at most four others, each once, and never to itself.',
+	locale_not_configured: 'That language isn’t one of this project’s languages. Choose one from the list, or add it in Settings → Languages.',
 	// 403s that aren't about what the role may do.
 	cannot_grant: "That would give powers your own role doesn't have.",
 	api_token_not_allowed: 'An API token can’t do this; a person has to.',
