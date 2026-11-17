@@ -223,6 +223,12 @@ route to its own host.
   and `Content-Type` allowed, `GET` and `POST`, never `Allow-Credentials` — preview reads are bearer, never cookie;
   `Vary: Origin`). Any other origin gets no CORS headers, so the browser keeps the answer from its page. Preflights
   are answered before the router; a request without `Origin` (a site's server) costs nothing extra.
+- **Load.** `perf/k6/preview.js` (entry and publish-request scopes, a query, invalid and revoked tokens, an
+  exchange arm), smoke-run in CI at 200/s for 20 s: on a GitHub runner (2026-11-17, branch CI) 225/s, p99 62 ms,
+  no failures — inside the spec's 150 ms budget, but about ten times delivery's cached p99 on the same runner, since
+  every preview read checks its grant and opens as the issuer in two transactions. A runner observation, not a
+  capacity claim. Owed: the full 1M run, the stress run (knee; the failure mode must be the bound's 503) and the
+  mixed run beside `delivery.js`, on a quiet machine.
 - **Not yet.** `depth` over the overlay, locale selection (arrives with gap 2's `?locale=`).
 
 ### Site metadata (spec §06)
