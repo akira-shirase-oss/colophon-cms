@@ -57,8 +57,9 @@ closes and carries a test that failed without it.
   per-account ceiling the owner's own addresses bypass; IPv6 clients are keyed by their /64
   (D-154, D-162). Sign-in keys are row-level secured by realm (D-166).
 - The owner-protecting triggers yield to roles, not to settings (D-155).
-- PostgreSQL over TLS (D-156); media at a bare address revalidates, versioned media is
-  immutable (D-157); anonymous live-list streams have their own budget (D-159).
+- PostgreSQL over TLS, and a database on another machine only with `sslmode=verify-full`
+  (D-156); media at a bare address revalidates, versioned media is immutable (D-157);
+  anonymous live-list streams have their own budget (D-159).
 - Development mail and the public development OIDC client need a localhost public origin
   as well as a loopback listener (D-163).
 - The public sign-in forms read at most 16 KiB of body (D-164); the retention sweep keeps
@@ -69,10 +70,27 @@ closes and carries a test that failed without it.
   (D-169); a token on an unmatched path is redacted from logs (D-152); a magic link's token
   goes before a `return_to` fragment.
 
+### Fixed
+
+- The releases list pages: `GET {P}/releases` takes `?limit=` (1–100, default 100, what it
+  answered before) and `?cursor=`, and its `next_cursor` is real. It used to stop at the
+  newest 100 while the OpenAPI document advertised a cursor. The MCP `list_releases` tool
+  takes the cursor too.
+- The OpenAPI document says only what the routes do: lists that answer in one page say how
+  much it holds and that `next_cursor` is always `null`; the receipt schema lists every
+  release field itself instead of through `allOf`, and the release, delivery and observation
+  fields are marked required. `@colophon-cms/sdk`'s generated types follow.
+
 ### Changed — read before upgrading
 
 - **Magic links stop until origins are listed:** `PUT {P}/audience/origins` must name each
   site a link may land on; until then a request is `422 return_to_not_allowed` (D-148).
+- **A database on another machine needs `sslmode=verify-full`:** the server and the admin
+  commands refuse to start on a non-loopback `COLOPHON_DATABASE_URL` or
+  `COLOPHON_MIGRATION_DATABASE_URL` with any other mode — `require` (what Neon's copied URL
+  says) takes any certificate, and `verify-ca` takes any publicly trusted one — and on
+  `channel_binding=require`, which the driver would ignore. Name a private CA with
+  `sslrootcert`. A loopback host or a Unix socket is unchanged (D-156).
 - **Private destinations need a flag:** a server reaches loopback, private or link-local
   addresses only with `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` — development only (D-149).
 - **Flags are strict:** a boolean setting is `1`/`true`/`0`/`false`; anything else stops the

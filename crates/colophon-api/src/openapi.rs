@@ -163,8 +163,12 @@ enum Shape {
     Empty,
     /// `{"data": <schema>}`.
     Data(&'static str),
-    /// `{"data": [<schema>], "next_cursor": <opaque|string|null>}`.
+    /// `{"data": [<schema>], "next_cursor": <opaque|string|null>}`: the operation declares the
+    /// [`Kind::Cursor`] query parameter `next_cursor` goes back in.
     Page(&'static str),
+    /// `{"data": [<schema>], "next_cursor": null}` — the page envelope, but one answer and no
+    /// further pages; the response's note says how many it holds at most.
+    Capped(&'static str),
     /// `{"data": [<schema>]}` — a whole list without a cursor.
     List(&'static str),
     /// The schema itself, unwrapped.
@@ -269,6 +273,8 @@ const CURSOR: Param = query(
     "the `next_cursor` a previous page answered",
 );
 const LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 20");
+/// The releases list's page size: by default the whole of what it answered before it paged.
+const RELEASES_LIMIT: Param = query("limit", Kind::Int, "page size: 1–100, default 100");
 const GENERATION: Param = query(
     "generation",
     Kind::Int,
@@ -386,6 +392,11 @@ const P428: Refusal = refusal(
     "a required `If-Match` or `Idempotency-Key` is missing",
 );
 const BAD_MATCH: Refusal = refusal(400, "bad_request", "a malformed `If-Match`");
+const BAD_PAGE: Refusal = refusal(
+    400,
+    "bad_request",
+    "`limit` out of range, or a cursor that isn't this list's",
+);
 const REUSED_KEY: Refusal = refusal(
     409,
     "idempotency_key_reused",
@@ -427,6 +438,18 @@ const fn page(schema: &'static str) -> Res {
         headers: &[],
         media: "",
         note: "",
+    }
+}
+
+/// A list in the page envelope that never pages; `note` says what it holds (D-110: the
+/// document says only what the route does).
+const fn capped(schema: &'static str, note: &'static str) -> Res {
+    Res {
+        status: 200,
+        shape: Shape::Capped(schema),
+        headers: &[],
+        media: "",
+        note,
     }
 }
 
@@ -926,7 +949,10 @@ pub(crate) static TABLE: &[Route] = &[
                 id: "listMembers",
                 summary: "The project's members",
                 tag: "members",
-                ok: page("MemberView"),
+                ok: capped(
+                    "MemberView",
+                    "up to 1,000 members, owners first; no further pages (`next_cursor` is always `null`)",
+                ),
                 extra: &[NOT_FOUND],
                 ..MIN
             },
@@ -981,7 +1007,10 @@ pub(crate) static TABLE: &[Route] = &[
                     id: "listInvitations",
                     summary: "The project's pending invitations",
                     tag: "members",
-                    ok: page("InvitationView"),
+                    ok: capped(
+                        "InvitationView",
+                        "the newest 1,000 invitations; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -1074,7 +1103,10 @@ pub(crate) static TABLE: &[Route] = &[
                     id: "listRoles",
                     summary: "The project's roles, built-in and custom",
                     tag: "roles",
-                    ok: page("RoleView"),
+                    ok: capped(
+                        "RoleView",
+                        "up to 100 roles, the built-in ones first; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -1172,7 +1204,10 @@ pub(crate) static TABLE: &[Route] = &[
                     id: "listTokens",
                     summary: "The project's API tokens",
                     tag: "tokens",
-                    ok: page("TokenView"),
+                    ok: capped(
+                        "TokenView",
+                        "the newest 200 tokens; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -1486,7 +1521,10 @@ pub(crate) static TABLE: &[Route] = &[
                     summary: "The environment's content types, each at its current version",
                     tag: "schema",
                     security: Security::Any,
-                    ok: page("TypeVersionView"),
+                    ok: capped(
+                        "TypeVersionView",
+                        "every content type; one answer (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -1606,7 +1644,10 @@ pub(crate) static TABLE: &[Route] = &[
                     summary: "The environment's shared components",
                     tag: "schema",
                     security: Security::Any,
-                    ok: page("ComponentView"),
+                    ok: capped(
+                        "ComponentView",
+                        "every shared component; one answer (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -1705,7 +1746,10 @@ pub(crate) static TABLE: &[Route] = &[
                             "`proposed`, `approved`, `running`, `done`, `blocked`, `superseded`, `cancelled`",
                         ),
                     ],
-                    ok: page("MigrationSummaryView"),
+                    ok: capped(
+                        "MigrationSummaryView",
+                        "the newest 100 plans; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -2697,7 +2741,10 @@ pub(crate) static TABLE: &[Route] = &[
                     summary: "The environment's changesets",
                     tag: "publishing",
                     security: Security::Any,
-                    ok: page("ChangesetSummaryView"),
+                    ok: capped(
+                        "ChangesetSummaryView",
+                        "the latest 100 changesets; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -2930,7 +2977,10 @@ pub(crate) static TABLE: &[Route] = &[
                     Kind::Uuid,
                     "keep one changeset's schedules",
                 )],
-                ok: page("ScheduleView"),
+                ok: capped(
+                    "ScheduleView",
+                    "up to 100 pending schedules in time order, then the 20 most recently finished; no further pages (`next_cursor` is always `null`)",
+                ),
                 extra: &[NOT_FOUND],
                 ..MIN
             },
@@ -3014,14 +3064,16 @@ pub(crate) static TABLE: &[Route] = &[
                 summary: "The environment's releases, newest first",
                 tag: "publishing",
                 security: Security::Any,
+                query: &[RELEASES_LIMIT, CURSOR],
                 ok: Res {
                     status: 200,
                     shape: Shape::Page("ReleaseView"),
                     headers: &["Colophon-Generation"],
                     media: "",
-                    note: "the current generation is in `Colophon-Generation`",
+                    note: "a page of releases, newest first; the current generation is in \
+                           `Colophon-Generation`",
                 },
-                extra: &[NOT_FOUND],
+                extra: &[BAD_PAGE, NOT_FOUND],
                 ..MIN
             },
         )],
@@ -3081,7 +3133,10 @@ pub(crate) static TABLE: &[Route] = &[
                     summary: "The environment's delivery destinations",
                     tag: "publishing",
                     security: Security::Any,
-                    ok: page("DestinationView"),
+                    ok: capped(
+                        "DestinationView",
+                        "the first 100 destinations; no further pages (`next_cursor` is always `null`)",
+                    ),
                     extra: &[NOT_FOUND],
                     ..MIN
                 },
@@ -3138,7 +3193,10 @@ pub(crate) static TABLE: &[Route] = &[
                 tag: "publishing",
                 security: Security::Any,
                 query: &[query("generation", Kind::Int, "keep one release's jobs")],
-                ok: page("JobView"),
+                ok: capped(
+                    "JobView",
+                    "the newest 100 jobs; no further pages (`next_cursor` is always `null`)",
+                ),
                 extra: &[NOT_FOUND],
                 ..MIN
             },
@@ -4651,7 +4709,21 @@ fn content(res: &Res) -> Option<Value> {
                 },
                 "next_cursor": {
                     "type": ["string", "null"],
-                    "description": "pass back as `?cursor=`; `null` on the last page",
+                    "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
+                },
+            },
+        }),
+        Shape::Capped(schema) => json!({
+            "type": "object",
+            "required": ["data", "next_cursor"],
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": { "$ref": format!("#/components/schemas/{schema}") },
+                },
+                "next_cursor": {
+                    "type": "null",
+                    "description": "always `null`: this list answers in one page",
                 },
             },
         }),
@@ -4750,6 +4822,31 @@ fn hex(bytes: &[u8; 32]) -> String {
 /// The `components.schemas` object, assembled from family parts: one `json!` per family keeps
 /// the macro below the recursion limit and keeps each schema near its kin.
 fn schemas() -> Value {
+    let mut schemas = schema_table();
+    // A receipt is a release with two more lists, flattened (`#[serde(flatten)]`): it lists
+    // every release field itself rather than through `allOf`, which readers and generators
+    // too often show as the two lists alone.
+    let release = schemas["ReleaseView"].clone();
+    let receipt = &mut schemas["ReceiptView"];
+    if let (Some(fields), Some(own)) = (
+        release["properties"].as_object(),
+        receipt["properties"].as_object_mut(),
+    ) {
+        for (name, field) in fields {
+            own.entry(name.clone()).or_insert_with(|| field.clone());
+        }
+    }
+    if let (Some(fields), Some(own)) = (
+        release["required"].as_array(),
+        receipt["required"].as_array_mut(),
+    ) {
+        own.extend(fields.iter().cloned());
+    }
+    schemas
+}
+
+/// The component schemas, as written; [`schemas`] completes the ones built from others.
+fn schema_table() -> Value {
     let mut schemas = Map::new();
     for part in [
         shared(),
@@ -6086,26 +6183,31 @@ fn publishing_parts() -> Value {
         },
         "ReleaseView": {
             "type": "object",
+            "required": [
+                "generation", "epoch", "changeset_id", "title", "changeset_hash", "published_by",
+                "published_by_name", "published_at", "entries", "unpublished", "purge", "label",
+                "locations",
+            ],
             "properties": {
-                "generation": { "type": "integer" },
-                "epoch": { "type": "integer" },
+                "generation": { "type": "integer", "description": "its number in the environment: 1 for the first, up by exactly one each release" },
+                "epoch": { "type": "integer", "description": "the environment's epoch when it committed" },
                 "changeset_id": { "type": "string", "format": "uuid" },
-                "title": { "type": "string" },
-                "changeset_hash": { "type": "string" },
+                "title": { "type": "string", "description": "the changeset's title" },
+                "changeset_hash": { "type": "string", "description": "the approved hash it published" },
                 "published_by": { "type": "string", "format": "uuid" },
                 "published_by_name": { "type": ["string", "null"] },
                 "published_at": { "type": "string", "format": "date-time" },
-                "entries": { "type": "integer" },
-                "unpublished": { "type": "integer" },
-                "purge": { "type": "string", "description": "the purge job's state for this release" },
-                "label": { "type": "string" },
-                "locations": { "type": "integer" },
+                "entries": { "type": "integer", "description": "entries whose published revision changed" },
+                "unpublished": { "type": "integer", "description": "entries it took down" },
+                "purge": { "type": "string", "enum": ["none", "pending", "accepted", "failed"], "description": "whether the environment's CDNs accepted a purge covering it (D-050)" },
+                "label": { "type": "string", "enum": ["published", "pending", "verified", "needs_attention"], "description": "the release's one label (D-051); `verified` is at `locations` locations" },
+                "locations": { "type": "integer", "description": "distinct locations a probe saw this release, or a later one, from" },
             },
         },
         "ReceiptView": {
             "type": "object",
-            "description": "a release plus its deliveries and observations — the publish receipt",
-            "allOf": [{ "$ref": "#/components/schemas/ReleaseView" }],
+            "description": "a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt",
+            "required": ["deliveries", "observations"],
             "properties": {
                 "deliveries": { "type": "array", "items": { "$ref": "#/components/schemas/DeliveryView" } },
                 "observations": { "type": "array", "items": { "$ref": "#/components/schemas/SeenView" } },
@@ -6113,14 +6215,18 @@ fn publishing_parts() -> Value {
         },
         "DeliveryView": {
             "type": "object",
+            "required": [
+                "destination_id", "name", "kind", "location", "state", "covered_by", "status",
+                "attempts", "last_error", "finished_at",
+            ],
             "properties": {
                 "destination_id": { "type": "string", "format": "uuid" },
                 "name": { "type": "string" },
-                "kind": { "type": "string" },
-                "location": { "type": ["string", "null"] },
-                "state": { "type": "string" },
+                "kind": { "type": "string", "enum": ["webhook", "cdn", "probe"] },
+                "location": { "type": ["string", "null"], "description": "a probe's pinned location" },
+                "state": { "type": "string", "enum": ["done", "covered", "pending", "failed"], "description": "`covered`: a later release's job succeeded, which covers this one (`covered_by`)" },
                 "covered_by": { "type": ["integer", "null"] },
-                "status": { "type": ["string", "null"] },
+                "status": { "type": ["string", "null"], "description": "its job for this very release, if it had one" },
                 "attempts": { "type": ["integer", "null"] },
                 "last_error": { "type": ["string", "null"] },
                 "finished_at": { "type": ["string", "null"], "format": "date-time" },
@@ -6128,10 +6234,14 @@ fn publishing_parts() -> Value {
         },
         "SeenView": {
             "type": "object",
+            "required": [
+                "destination_id", "location", "observed_generation", "http_status", "body_hash",
+                "error", "observed_at",
+            ],
             "properties": {
                 "destination_id": { "type": "string", "format": "uuid" },
                 "location": { "type": "string" },
-                "observed_generation": { "type": ["integer", "null"] },
+                "observed_generation": { "type": ["integer", "null"], "description": "the release the answer said it was built from, if it said" },
                 "http_status": { "type": ["integer", "null"] },
                 "body_hash": { "type": ["string", "null"] },
                 "error": { "type": ["string", "null"] },
@@ -6541,6 +6651,74 @@ mod tests {
                 route.path()
             );
         }
+    }
+
+    /// The document and the routes agree on paging. The releases list answered a page whose
+    /// `next_cursor` the document said to pass back as `?cursor=`, while the route took no
+    /// cursor and returned the newest 100. An operation answering a `Page` now declares the one
+    /// cursor parameter its `next_cursor` goes back in; one that answers in a single page is
+    /// `Capped`, says what that page holds, and declares no cursor.
+    #[test]
+    fn a_page_declares_where_its_cursor_goes_back() {
+        let schemas = schemas();
+        // A schema of its own that carries `next_cursor` (the query language's pages) is a page.
+        let pages = |schema: &str| schemas[schema]["properties"].get("next_cursor").is_some();
+        let mut wrong = Vec::new();
+        for route in TABLE {
+            for op in route.ops {
+                let cursors = op
+                    .doc
+                    .query
+                    .iter()
+                    .filter(|param| matches!(param.kind, Kind::Cursor))
+                    .count();
+                let id = op.doc.id;
+                match op.doc.ok.shape {
+                    Shape::Page(_) if cursors != 1 => {
+                        wrong.push(format!(
+                            "{id} answers a page but declares {cursors} cursors"
+                        ));
+                    }
+                    Shape::Capped(_) if cursors != 0 || op.doc.ok.note.is_empty() => {
+                        wrong.push(format!("{id} answers one page: no cursor, and a note"));
+                    }
+                    Shape::Data(schema) | Shape::It(schema) if pages(schema) => {
+                        if cursors != 1 {
+                            wrong.push(format!(
+                                "{id} answers a page but declares {cursors} cursors"
+                            ));
+                        }
+                    }
+                    Shape::Empty | Shape::Data(_) | Shape::List(_) | Shape::It(_)
+                        if cursors != 0 =>
+                    {
+                        wrong.push(format!("{id} takes a cursor but answers no page"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A receipt lists every release field itself, as the flattened view writes them.
+    #[test]
+    fn a_receipt_lists_the_release_it_is() {
+        let schemas = schemas();
+        let release = schemas["ReleaseView"]["properties"]
+            .as_object()
+            .expect("release fields");
+        let receipt = &schemas["ReceiptView"];
+        for (name, _) in release {
+            assert!(receipt["properties"].get(name).is_some(), "{name}");
+            assert!(
+                receipt["required"]
+                    .as_array()
+                    .is_some_and(|required| required.iter().any(|field| field == name)),
+                "{name} is required"
+            );
+        }
+        assert!(receipt.get("allOf").is_none());
     }
 
     /// The document is a well-formed `OpenAPI` 3.1 value and covers every table route.

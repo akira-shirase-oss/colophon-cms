@@ -27,10 +27,11 @@ use std::collections::{HashMap, HashSet};
 
 use axum::{
     Json,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{Path, Query, State, rejection::JsonRejection},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::Response,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use colophon_db::{
     DbError, audit,
     changesets::{self, Head, Pin},
@@ -1240,29 +1241,80 @@ impl ReleaseView {
     }
 }
 
-/// `GET {P}/releases`: the newest 100, with the environment's current generation.
+/// `?limit=` and `?cursor=` on the releases list.
+#[derive(Deserialize)]
+pub(crate) struct ReleasesQuery {
+    limit: Option<i64>,
+    cursor: Option<String>,
+}
+
+/// A releases cursor names the environment and the generation the page ended at; the next page
+/// starts below it. Generations never change or get reused, so pages neither skip nor repeat a
+/// release however many are published in between: those land above the first page.
+fn release_cursor(environment: Uuid, generation: i64) -> String {
+    URL_SAFE_NO_PAD.encode(format!("releases:v1:{environment}:{generation}"))
+}
+
+fn before_release(environment: Uuid, cursor: &str) -> Result<i64, ApiError> {
+    let prefix = format!("releases:v1:{environment}:");
+    URL_SAFE_NO_PAD
+        .decode(cursor)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|text| text.strip_prefix(&prefix)?.parse::<i64>().ok())
+        .ok_or(ApiError::InvalidHeader(
+            "this cursor is not valid for this list",
+        ))
+}
+
+/// `GET {P}/releases`: newest first, a page at a time (`?limit=`, 1–100, default 100 — the
+/// whole answer before the list paged — and `?cursor=`), with the environment's current
+/// generation.
 pub(crate) async fn releases(
     State(state): State<AppState>,
     caller: SignedIn,
     Path(path): Path<ListPath>,
+    Query(query): Query<ReleasesQuery>,
 ) -> Result<Response, ApiError> {
+    let limit = query.limit.unwrap_or(releases::MAX_PAGE);
+    if !(1..=releases::MAX_PAGE).contains(&limit) {
+        return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
+    }
     let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    let environment = tx.environment;
+    let before = query
+        .cursor
+        .as_deref()
+        .map(|cursor| before_release(environment, cursor))
+        .transpose()?;
     let (_, generation) = releases::generation(&mut tx)
         .await
         .map_err(ApiError::from_db)?;
-    let rows = releases::list(&mut tx, None)
-        .await
-        .map_err(ApiError::from_db)?;
+    // One more than the page: whether it came back says whether another page follows.
+    let mut rows = releases::list(
+        &mut tx,
+        releases::Window::Page {
+            before,
+            limit: limit + 1,
+        },
+    )
+    .await
+    .map_err(ApiError::from_db)?;
     tx.commit().await.map_err(ApiError::from_db)?;
+    let page = usize::try_from(limit).unwrap_or(usize::MAX);
+    let more = rows.len() > page;
+    rows.truncate(page);
+    let next_cursor = more
+        .then(|| {
+            rows.last()
+                .map(|last| release_cursor(environment, last.generation))
+        })
+        .flatten();
     let data = rows
         .into_iter()
         .map(ReleaseView::new)
         .collect::<Result<Vec<_>, ApiError>>()?;
-    let body = serde_json::to_string(&Page {
-        data,
-        next_cursor: None,
-    })
-    .map_err(ApiError::internal)?;
+    let body = serde_json::to_string(&Page { data, next_cursor }).map_err(ApiError::internal)?;
     let mut response = json(StatusCode::OK, body, None, false);
     response
         .headers_mut()
