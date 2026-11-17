@@ -264,9 +264,16 @@ fn explain(failure: Failure, body: &Value) -> Failure {
             } else {
                 String::new()
             };
+            // The API's first sentence names the count and the tag ("12 entries are written in
+            // pt-BR"); its own advice, if any follows, is said again below in the CLI's terms.
+            let what = api_message
+                .split(". ")
+                .next()
+                .unwrap_or(api_message)
+                .trim_end_matches('.');
             format!(
-                "{api_message}, so that language can't be removed: {}{more}. Move or delete \
-                 those entries first, or keep the language in the file",
+                "{what}, so that language can't be removed: {}{more}. Move or delete those \
+                 entries first, or keep the language in the file",
                 named.join(", ")
             )
         }
@@ -475,7 +482,8 @@ mod tests {
     #[test]
     fn a_language_in_use_names_the_entries_in_the_way() {
         let error = json!({
-            "code": "conflict", "message": "12 entries are written in pt-BR",
+            "code": "conflict",
+            "message": "12 entries are written in pt-BR. Move or delete them first, then remove the language",
             "details": {
                 "reason": "locale_in_use", "pointer": "/locales", "total": 12,
                 "entries": [
