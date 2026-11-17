@@ -124,6 +124,27 @@ async fn rows(owner: &PgPool) -> Vec<(i64, String, Option<Uuid>, serde_json::Val
         .collect()
 }
 
+/// Deletes `project` the way an operator does (D-167): `colophon_delete_project` isn't the
+/// application's to call, so it runs on the owner's login, in the deleting person's context.
+async fn delete_project(owner: &PgPool, actor: Uuid, project: Uuid) -> String {
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query(
+        "SELECT set_config('app.identity_id', $1, true), set_config('app.project_id', $2, true)",
+    )
+    .bind(actor.to_string())
+    .bind(project.to_string())
+    .execute(&mut *tx)
+    .await
+    .expect("the deleting context");
+    let outcome: String = sqlx::query_scalar("SELECT outcome FROM colophon_delete_project($1)")
+        .bind(project)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("colophon_delete_project");
+    tx.commit().await.expect("commit");
+    outcome
+}
+
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn every_governed_deletion_lands_its_row_in_the_deleting_transaction() {
@@ -215,14 +236,7 @@ async fn every_governed_deletion_lands_its_row_in_the_deleting_transaction() {
     }
 
     // A project deleted: its row is written first and survives the project, by not being its.
-    let mut tx = as_member(&db.app, alice, project).await;
-    let outcome: String = sqlx::query_scalar("SELECT outcome FROM colophon_delete_project($1)")
-        .bind(project)
-        .fetch_one(&mut *tx.transaction)
-        .await
-        .expect("colophon_delete_project");
-    assert_eq!(outcome, "deleted");
-    tx.commit().await.expect("commit");
+    assert_eq!(delete_project(&owner, alice, project).await, "deleted");
     let (projects_left,): (i64,) = sqlx::query_as("SELECT count(*) FROM projects WHERE id = $1")
         .bind(project)
         .fetch_one(&owner)
@@ -366,16 +380,9 @@ async fn the_export_replayed_removes_what_the_backup_still_holds() {
         content_types::Removed::Removed
     );
     tx.commit().await.expect("commit");
-    let mut tx = as_member(&app, alice, doomed).await;
-    assert_eq!(
-        sqlx::query_scalar::<_, String>("SELECT outcome FROM colophon_delete_project($1)")
-            .bind(doomed)
-            .fetch_one(&mut *tx.transaction)
-            .await
-            .expect("colophon_delete_project"),
-        "deleted"
-    );
-    tx.commit().await.expect("commit");
+    let live_owner = db.owner().await;
+    assert_eq!(delete_project(&live_owner, alice, doomed).await, "deleted");
+    live_owner.close().await;
 
     // The export: a header's watermark over the interval's rows, all of them.
     let owner = db.owner().await;
@@ -550,14 +557,7 @@ async fn deleting_a_project_leaves_no_row_in_any_project_table() {
             .unwrap_or_else(|error| panic!("{statement}: {error}"));
     }
 
-    let mut tx = as_member(&db.app, alice, project).await;
-    let outcome: String = sqlx::query_scalar("SELECT outcome FROM colophon_delete_project($1)")
-        .bind(project)
-        .fetch_one(&mut *tx.transaction)
-        .await
-        .expect("colophon_delete_project");
-    assert_eq!(outcome, "deleted");
-    tx.commit().await.expect("commit");
+    assert_eq!(delete_project(&owner, alice, project).await, "deleted");
 
     // Every table with a project_id, from the catalogue: none holds a row for the project.
     let scoped: Vec<String> = sqlx::query_scalar(
@@ -610,6 +610,45 @@ async fn deleting_a_project_leaves_no_row_in_any_project_table() {
         "colophon_delete_project neither deletes nor cascades to: {unnamed:?}"
     );
 
+    owner.close().await;
+    db.drop().await;
+}
+
+/// The application can't delete a project (D-167): `colophon_delete_project` checks only the
+/// context settings, which any session can set (D-155's own argument), and no route calls it —
+/// so `colophon_api` may not execute it, even as an owner in the project's context.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_application_login_cannot_delete_a_project() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "kept", "Kept")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = as_member(&db.app, alice, project).await;
+    let refused =
+        sqlx::query_scalar::<_, String>("SELECT outcome FROM colophon_delete_project($1)")
+            .bind(project)
+            .fetch_one(&mut *tx.transaction)
+            .await
+            .expect_err("the application executed colophon_delete_project");
+    assert_eq!(
+        refused
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref(),
+        Some("42501"),
+        "{refused}"
+    );
+    drop(tx);
+    let owner = db.owner().await;
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM projects WHERE id = $1")
+        .bind(project)
+        .fetch_one(&owner)
+        .await
+        .expect("count");
+    assert_eq!(left, 1);
     owner.close().await;
     db.drop().await;
 }
