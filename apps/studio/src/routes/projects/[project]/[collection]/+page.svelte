@@ -10,6 +10,7 @@
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SearchIcon from '@lucide/svelte/icons/search';
+	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import UserIcon from '@lucide/svelte/icons/user';
 	import { goto } from '$app/navigation';
@@ -21,6 +22,7 @@
 	import { Button } from '@colophon/ui/ui/button';
 	import * as Dialog from '@colophon/ui/ui/dialog';
 	import * as InputGroup from '@colophon/ui/ui/input-group';
+	import * as NativeSelect from '@colophon/ui/ui/native-select';
 	import { Skeleton } from '@colophon/ui/ui/skeleton';
 	import * as Table from '@colophon/ui/ui/table';
 	import * as Tabs from '@colophon/ui/ui/tabs';
@@ -31,7 +33,7 @@
 	import FieldInputs from '#lib/FieldInputs.svelte';
 	import { oneOf } from '#lib/firstRun.ts';
 	import { newKeys, type Outcome, publishesInOneClick, publishInOneClick } from '#lib/publishing.ts';
-	import { ago, meQuery, projectQuery, releasesQuery } from '#lib/queries.ts';
+	import { ago, localesQuery, meQuery, projectQuery, releasesQuery } from '#lib/queries.ts';
 	import EmptyState from '#lib/shell/EmptyState.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -60,6 +62,17 @@
 	let onlyMine = $state(false);
 	const readsOthers = $derived(mayOn(mine.data, 'content.read', collection, false));
 	const creator = $derived(onlyMine && readsOthers ? (who.data?.id ?? null) : null);
+	// The project's languages (gap/locales): each entry's badge names its language, and once
+	// languages are listed the list filters to one of them on the server (`?locale=`, an exact
+	// tag, so entries with no language set are only under All). `?locale=` in the address starts
+	// it filtered — Settings → Languages links here that way.
+	const languages = createQuery(() => localesQuery(project));
+	const listed = $derived(languages.data?.locales ?? []);
+	const defaultLanguage = $derived(listed.find((language) => language.default));
+	// svelte-ignore state_referenced_locally
+	let language = $state(page.url.searchParams.get('locale') ?? '');
+	/** A tag's language name, matched case-insensitively as the server matches tags. */
+	const languageLabel = (tag: string) => listed.find((one) => one.tag.toLowerCase() === tag.toLowerCase())?.label;
 	// Transfer (D-086): the file has to come back whole, so export asks for a role that reads
 	// every field (of anyone's entries or of its own — the server scopes it the same way).
 	const exportable = $derived(
@@ -89,8 +102,8 @@
 	// Pages of 100, newest first, followed with the server's cursor when someone asks for more. Keyed
 	// under the collection's entries, so saving and publishing refresh it.
 	const entries = createInfiniteQuery(() => ({
-		queryKey: ['entries', project, collection, q, creator ?? 'anyone', 'pages'],
-		queryFn: ({ pageParam }: { pageParam: string | null }) => searchEntries(project, collection, q, pageParam, creator),
+		queryKey: ['entries', project, collection, q, creator ?? 'anyone', language === '' ? 'any' : `in:${language}`, 'pages'],
+		queryFn: ({ pageParam }: { pageParam: string | null }) => searchEntries(project, collection, q, pageParam, creator, language === '' ? null : language),
 		initialPageParam: null as string | null,
 		getNextPageParam: (last: { next_cursor: string | null }) => last.next_cursor,
 		placeholderData: keepPreviousData
@@ -98,7 +111,7 @@
 	const loaded = $derived((entries.data?.pages ?? []).flatMap((one) => one.data));
 	// A single type (D-067) holds one entry: this page opens it, or offers to create it.
 	const single = $derived(type.data?.definition.single === true);
-	const only = $derived(single && q === '' ? loaded[0] : undefined);
+	const only = $derived(single && q === '' && language === '' ? loaded[0] : undefined);
 	$effect(() => {
 		if (only !== undefined && !creating) {
 			void goto(resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: only.id }), { replaceState: true });
@@ -354,7 +367,7 @@
 	{#if !single}
 	<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 		<div class="flex flex-wrap items-center gap-2">
-			<Tabs.Root bind:value={filter as string}>
+			<Tabs.Root class="max-w-full overflow-x-auto" bind:value={filter as string}>
 				<Tabs.List aria-label="Show">
 					<Tabs.Trigger value="all">All</Tabs.Trigger>
 					<Tabs.Trigger value="draft">Drafts <span class="tabular text-muted-foreground">{tally.draft}</span></Tabs.Trigger>
@@ -367,12 +380,28 @@
 					><UserIcon data-icon="inline-start" />Only mine</Toggle
 				>
 			{/if}
+			{#if listed.length > 0 || language !== ''}
+				<NativeSelect.Root size="sm" class="max-w-full" bind:value={language} aria-label="Language" data-testid="language-filter">
+					<NativeSelect.Option value="">All languages</NativeSelect.Option>
+					{#each listed as one (one.tag)}
+						<NativeSelect.Option value={one.tag}>{one.label}</NativeSelect.Option>
+					{/each}
+					{#if language !== '' && !listed.some((one) => one.tag === language)}
+						<NativeSelect.Option value={language}>{languageLabel(language) ?? language}</NativeSelect.Option>
+					{/if}
+				</NativeSelect.Root>
+			{/if}
 		</div>
 		<InputGroup.Root class="sm:w-72">
 			<InputGroup.Addon><SearchIcon /></InputGroup.Addon>
 			<InputGroup.Input type="search" placeholder="Search {plural(named)}" aria-label="Search {plural(named)}" maxlength={100} bind:value={typed} data-testid="entry-search" />
 		</InputGroup.Root>
 	</div>
+	{#if defaultLanguage !== undefined && language === defaultLanguage.tag}
+		<p class="-mt-1 mb-4 text-sm text-muted-foreground" data-testid="language-filter-note">
+			Showing entries set to {defaultLanguage.label}. Entries with no language set count as {defaultLanguage.label} too; they're under All languages.
+		</p>
+	{/if}
 	{/if}
 
 	{#if entries.isPending}
@@ -392,7 +421,7 @@
 		</EmptyState>
 	{:else if single}
 		<p class="text-sm text-muted-foreground" role="status" data-testid="single-opening">Opening it…</p>
-	{:else if loaded.length === 0 && q === '' && creator === null}
+	{:else if loaded.length === 0 && q === '' && creator === null && language === ''}
 		<EmptyState icon={FileTextIcon} title="No {type.data.definition.name.toLowerCase()} yet" testid="entries-empty">
 			Write the first {oneOf(type.data.definition.name)}. Nobody outside the project sees it until it is published.
 			{#snippet action()}
@@ -459,7 +488,7 @@
 						<Table.Head class={bulk ? '' : 'pl-4'} data-testid="title-column">{named}</Table.Head>
 						<Table.Head>Status</Table.Head>
 						<Table.Head class="hidden md:table-cell">Live in</Table.Head>
-						<Table.Head class="text-right {writes ? '' : 'pr-4'}">Updated</Table.Head>
+						<Table.Head class="hidden text-right sm:table-cell {writes ? '' : 'pr-4'}">Updated</Table.Head>
 						{#if writes}<Table.Head class="w-12 pr-4"><span class="sr-only">Actions</span></Table.Head>{/if}
 					</Table.Row>
 				</Table.Header>
@@ -477,19 +506,37 @@
 									/>
 								</Table.Cell>
 							{/if}
-							<Table.Cell class="max-w-0 sm:max-w-md {bulk ? '' : 'pl-4'}">
-								<a
-									class="block truncate font-medium after:absolute after:inset-0 focus-visible:underline focus-visible:outline-none"
-									href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}
-									class:text-muted-foreground={entry.revision.title.trim() === ''}>{shownTitle(entry.revision.title)}</a
-								>
-								{#if entry.locale !== null}<Badge variant="outline" class="ml-1.5 font-mono">{entry.locale}</Badge>{/if}
+							<Table.Cell class="w-full max-w-0 sm:w-auto sm:max-w-md {bulk ? '' : 'pl-4'}">
+								<div class="flex min-w-0 flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
+									<a
+										class="block max-w-full min-w-0 truncate font-medium after:absolute after:inset-0 focus-visible:underline focus-visible:outline-none"
+										href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: entry.id })}
+										class:text-muted-foreground={entry.revision.title.trim() === ''}>{shownTitle(entry.revision.title)}</a
+									>
+									<!-- Its language (D-087): the tag alone without a list; with one, the language's
+										name, "Default language" for no tag, and a mark on a tag the list lacks. -->
+									{#if listed.length === 0}
+										{#if entry.locale !== null}<Badge variant="outline" class="max-w-full shrink justify-start font-mono" data-testid="entry-language"><span class="sr-only">{'Language: '}</span><span class="truncate">{entry.locale}</span></Badge>{/if}
+									{:else if entry.locale === null}
+										<Badge variant="outline" class="max-w-full shrink justify-start" data-testid="entry-language"><span class="sr-only">{'Language: '}</span><span class="truncate">Default language</span></Badge>
+									{:else if languageLabel(entry.locale) !== undefined}
+										<Badge variant="secondary" class="max-w-full shrink justify-start" data-testid="entry-language"
+											><span class="sr-only">{'Language: '}</span><span class="truncate">{languageLabel(entry.locale)}</span></Badge
+										>
+									{:else}
+										<Badge variant="pending" class="max-w-full shrink justify-start" data-testid="entry-language-unlisted"
+											><TriangleAlertIcon aria-hidden="true" /><span class="sr-only">{'Language: '}</span><span class="truncate"
+												><span class="font-mono">{entry.locale}</span>, not in your languages</span
+											></Badge
+										>
+									{/if}
+								</div>
 							</Table.Cell>
 							<Table.Cell><StatusBadge state={entryState(entry)} generation={entry.published?.generation ?? null} /></Table.Cell>
 							<Table.Cell class="hidden text-sm text-muted-foreground tabular md:table-cell">
 								{entry.published ? `No. ${entry.published.generation}` : '—'}
 							</Table.Cell>
-							<Table.Cell class="text-right text-sm text-muted-foreground {writes ? '' : 'pr-4'}" title={new Date(entry.updated_at).toLocaleString()}>{ago(entry.updated_at)}</Table.Cell>
+							<Table.Cell class="hidden text-right text-sm text-muted-foreground sm:table-cell {writes ? '' : 'pr-4'}" title={new Date(entry.updated_at).toLocaleString()}>{ago(entry.updated_at)}</Table.Cell>
 							{#if writes}
 								<Table.Cell class="w-12 pr-4 text-right">
 									<Button
@@ -510,6 +557,9 @@
 							<Table.Cell colspan={4 + (bulk ? 1 : 0) + (writes ? 1 : 0)} class="py-10 text-center text-muted-foreground">
 								{#if creator !== null && q === '' && loaded.length === 0}
 									You haven't started any here yet. <Button variant="link" size="xs" class="px-1" onclick={() => (onlyMine = false)}>Show everyone's</Button>
+								{:else if q === '' && language !== ''}
+									No entries here are set to {languageLabel(language) ?? language}.
+									<Button variant="link" size="xs" class="px-1" onclick={() => (language = '')}>Show all languages</Button>
 								{:else if q === ''}
 									No entries in this view.
 								{:else}
