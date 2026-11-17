@@ -35,6 +35,12 @@ through `--version` and `GET /version`.
   PostgreSQL, Valkey and Garage, secrets generated on first start, only `127.0.0.1:8080`
   published (D-174, D-175). The Studio's first-run screens say where a container's setup code
   is. Operator guide: `deploy/runbooks/install.md`.
+- **Releases carry the image and the Studio:** the release workflow builds the image for amd64
+  and arm64 from the release's own checked binaries, scans it (Trivy: no fixable critical CVE),
+  and on a tag pushes it to `ghcr.io/akira-shirase-oss/colophon` with signed provenance; it
+  attaches `colophon-studio-<version>.tar.gz` and the quick start's `compose.yaml`, pinned to the
+  image's digest (`SHA256SUMS` now lists 24 files). An allocator job measures the musl server
+  against a glibc build of the same commit (D-174, D-176).
 
 ### Security
 
