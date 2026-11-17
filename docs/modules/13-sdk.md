@@ -41,7 +41,9 @@ Built in DX.8 (D-112): `@colophon-cms/sdk`, versioned `0.1.0-alpha.1` with the s
 - **No second auth surface:** the client attaches a bearer token or a session descriptor
   (`{csrf, cookie?}`); it never signs in, refreshes or stores a credential.
 - **Pinned reads:** `client.delivery(p).atGeneration(g)` returns a scope whose reads all name `g`;
-  asking for a different generation on it throws.
+  asking for a different generation on it throws. Every reply's `response.generation` is the
+  `Colophon-Generation` it answered from (`null` where a route sends none), so a page pins the
+  generation of its first read.
 - **Bounds:** `timeoutMs` (15 s default, joined with the caller's `signal`) and `maxBodyBytes`
   (16 MiB default) on every call.
 - **Server-version check (D-170):** `client.compatibility()` reads `/version` and applies the CLI's
@@ -155,7 +157,11 @@ epochs. Spec §10's deprecation window for contract changes applies when the SDK
   laptop (other builds running) had 0 failures and no heap growth (−0.6 MB) while its overhead swung
   from −0.9 to +11.5 ms between runs: noise, not evidence. The full 1,000,000-call run on a quiet
   machine is owed.
-- A pinned-read test with a publish landing mid-sequence — pending, with the adoption milestone.
+- The packed packages against the real server (`apps/testbed/tests/sdk.spec.ts`, D-170): a person
+  publishes in the browser; the SDK and rich-text tarballs, installed in a scratch project, check
+  the server's version (`compat: 'throw'`), read the release anonymously, render its body, and pin
+  a page to generation 1 while generation 2 lands between its reads — the pinned list and get stay
+  at 1 (K1), the latest moves to 2.
 
 ## Build order
 

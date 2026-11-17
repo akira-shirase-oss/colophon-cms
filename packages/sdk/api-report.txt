@@ -81,6 +81,7 @@ interface ReplyMeta
   readonly etag: string | null;
   readonly replayed: boolean;
   readonly requestId: string | null;
+  readonly generation: number | null;
 type RequestJson<O extends keyof operations> = operations[O] extends { requestBody: { content: { 'application/json': infer B; }; }; } ? B : never;
 type ReplyJson<O extends keyof operations> = operations[O]['responses'] extends { 200: { content: { 'application/json': infer B; }; }; } ? B : operations[O]['responses'] extends { 201: { content: { 'application/json': infer B; }; }; } ? B : never;
 type QueryOf<O extends keyof operations> = operations[O]['parameters'] extends { query?: infer Q; } ? NonNullable<Q> : Record<string, never>;
