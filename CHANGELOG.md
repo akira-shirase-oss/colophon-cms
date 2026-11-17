@@ -24,7 +24,10 @@ through `--version` and `GET /version`.
   one-time code for a 15-minute bearer token and reads `/preview/v1`, which answers
   `/content/v1`'s shapes with the drafts laid over the latest release. Never cached, never
   indexed, re-checked against the issuer on every read, revocable. Set the address with
-  `PUT {P}/preview-target`; the Studio pane and the SDK's site helpers follow.
+  `PUT {P}/preview-target`.
+- Preview in the Studio (D-173): Settings → Website connections → "Preview on your site", and
+  a Preview menu in the entry editor that shows the saved draft on your site side by side or
+  in a new tab, refreshed after each save.
 
 ### Security
 

@@ -265,9 +265,12 @@ expired-approval scheduling).
   its translations, or a publish request bound to its hash), a 60-second one-time code exchanged for a bearer token,
   and `/preview/v1` answering `/content/v1`'s shapes with the scope's drafts laid over the latest release — never
   cached, re-checked against the issuer's membership and field policy on every read, revocable. Proved by a caching
-  proxy that never keeps a preview answer and a scope property test against a pure model. Still to come: the Studio's
-  side-by-side pane and settings, the SDK's site helpers with a testbed site, the k6 runs, CORS for browser-side
-  fetching, `depth` over the overlay, and click-to-edit.
+  proxy that never keeps a preview answer and a scope property test against a pure model. The Studio's side
+  of it is built too (D-173): Settings → Website connections sets the preview address, and the entry editor's
+  Preview menu shows the saved draft on the site side by side or in a new tab, refreshed after each acknowledged
+  save, with every state designed. Still to come: the SDK's site helpers with a testbed site, the full k6 runs,
+  per-collection addresses and a publish-request preview button, CORS for browser-side fetching, `depth` over the
+  overlay, and click-to-edit.
 
 **Proof gate:** two editors editing at once never lose an acknowledged edit; a schedule missed during downtime is
 reported as delayed, never on time; locale variants publish independently; comments and tasks follow permissions.
