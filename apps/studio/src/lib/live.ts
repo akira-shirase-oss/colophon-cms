@@ -3,8 +3,9 @@
 // as PostgreSQL commits — a hint names what changed and never carries content, so what follows
 // is a refetch through the API the role was already authorized for.
 //
-// - `resync` (the receiver lagged, or the server's listener reconnected) and any reconnect
-//   invalidate every project-scoped key: the stream is a disposable accelerator and Postgres
+// - `resync` (the receiver lagged, or the server's listener reconnected) and every open, the
+//   first included (a commit between the page's loads and the open went unheard), invalidate
+//   every project-scoped key: the stream is a disposable accelerator and Postgres
 //   stays the authority, so a missed hint costs one refetch, never a wrong row.
 // - The stream ends cleanly at its server-side lifetime; EventSource re-opens it on its own,
 //   and an open after a gap may have missed hints, so it resyncs rather than trust the state.
@@ -93,8 +94,18 @@ export function watchProject(project: string, env: string, queryClient: QueryCli
 			predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[1] === project
 		});
 
-	let source: EventSource | null = null;
+	/** The first open's resync: every project key but the builders' version-keyed reads, which
+	 *  no hint ever moves either (see `KIND_KEYS`) — the page just loaded them, and refetching
+	 *  one as the person starts editing would remount the builder under them. */
+	const BUILDERS = new Set(['type', 'component']);
+	const catchUp = () =>
+		void queryClient.invalidateQueries({
+			predicate: (query) =>
+				Array.isArray(query.queryKey) && query.queryKey[1] === project && !BUILDERS.has(String(query.queryKey[0]))
+		});
 	let opened = false;
+
+	let source: EventSource | null = null;
 
 	function onChange(event: MessageEvent<string>) {
 		let hint: Hint;
@@ -114,8 +125,11 @@ export function watchProject(project: string, env: string, queryClient: QueryCli
 		stream.addEventListener('change', onChange);
 		stream.addEventListener('resync', resync);
 		stream.addEventListener('open', () => {
-			// The first open trusts the page's own loads; a later one may have missed hints.
+			// Every open resyncs, the first too: the page's own loads ran before the stream was
+			// listening, and a commit landing in between sent its hint to nobody — a delivery that
+			// settled then showed "pending" until a reload. One refetch of what loaded is the cost.
 			if (opened) resync();
+			else catchUp();
 			opened = true;
 		});
 		// `error` needs no handler: EventSource retries on its own, and the next `open` resyncs.

@@ -6,7 +6,7 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test } from '@playwright/test';
-import { internalTerms, newEntry, newProject, publishThroughApi, shot, signIn, violations } from './helpers.ts';
+import { api, env, internalTerms, newEntry, newProject, publishThroughApi, shot, signIn, violations } from './helpers.ts';
 
 interface Seen {
 	key: string;
@@ -204,10 +204,10 @@ test('a probe added in Settings verifies a release, and its receipt shows what i
 });
 
 /** A webhook receiver on 127.0.0.1 that answers 404 to everything: a site that refuses. */
-async function refuser(): Promise<{ url: string; close: () => void }> {
+async function refuser(delayMs = 0): Promise<{ url: string; close: () => void }> {
 	const server = createServer((request, response) => {
 		request.resume();
-		request.on('end', () => response.writeHead(404).end());
+		request.on('end', () => setTimeout(() => response.writeHead(404).end(), delayMs));
 	});
 	await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
 	const { port } = server.address() as AddressInfo;
@@ -246,6 +246,42 @@ test('a website connection that refuses makes the release “Needs attention”,
 		await attention.getByTestId('fix-connections').click();
 		await expect(page).toHaveURL(/\/settings\/connections$/);
 		await expect(page.getByTestId('destinations')).toContainText('Site rebuild');
+	} finally {
+		hook.close();
+	}
+});
+
+// A page loads its lists, then opens its live stream: a delivery that settles in between sends
+// its hint to nobody. The stream's first open refetches what the page loaded, so the release
+// still shows how it settled instead of "pending" until a reload.
+test('a delivery that settles before the live stream opens still shows how it settled', async ({ page }) => {
+	const hook = await refuser(1_500);
+	try {
+		await signIn(page);
+		const project = await newProject(page);
+		await page.goto(`/studio/projects/${project}/settings/connections`);
+		await page.getByRole('button', { name: 'Add a connection' }).click();
+		await page.getByLabel('Connection name').fill('Site rebuild');
+		await page.getByLabel('Webhook URL (https)').fill(hook.url);
+		await page.getByRole('button', { name: 'Add website connection' }).click();
+		await expect(page.getByTestId('destinations')).toContainText('Site rebuild');
+
+		// Hold the live stream back until the delivery has given up.
+		let open = () => {};
+		const held = new Promise<void>((done) => (open = done));
+		await page.route('**/events', async (route) => {
+			await held;
+			await route.continue();
+		});
+		await publishThroughApi(page, project, 'Settled early', [await newEntry(page, project, 'Settled early')]);
+		await page.goto(`/studio/projects/${project}/releases`);
+		const label = page.locator('[data-generation="1"]').getByTestId('label');
+		await expect(label).toHaveAttribute('data-label', 'pending');
+		await expect
+			.poll(async () => (await api(page, 'GET', `${env(project)}/jobs`)).body?.['data']?.[0]?.status, { timeout: 15_000 })
+			.toBe('failed');
+		open();
+		await expect(label).toHaveAttribute('data-label', 'needs_attention', { timeout: 10_000 });
 	} finally {
 		hook.close();
 	}
