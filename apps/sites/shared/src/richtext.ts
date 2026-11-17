@@ -6,13 +6,19 @@
 
 import { renderToHtml } from '@colophon/content-renderer';
 
-import { mediaUrl } from './delivery.ts';
+import { mediaUrl, picture, type Entry } from './delivery.ts';
 import type { Site } from './config.ts';
 
-/** The HTML of a `colophon/rich-text` v1 field, or `''` when the content has none. */
-export function richText(site: Site, value: unknown): string {
+/**
+ * The HTML of a `colophon/rich-text` v1 field, or `''` when the content has none. Given the
+ * `entry` it came from, images show the version its release published, with their size and
+ * renditions (renderer v2, the row's `media` sidecar); without it, or for an image the sidecar
+ * doesn't hold, the bare current address.
+ */
+export function richText(site: Site, value: unknown, entry?: Entry): string {
 	if (value === undefined || value === null) return '';
 	return renderToHtml(value as Parameters<typeof renderToHtml>[0], {
-		assetUrl: (assetId) => mediaUrl(site, assetId)
+		assetUrl: (assetId) => mediaUrl(site, assetId),
+		media: (assetId) => (entry?.media !== undefined && Object.hasOwn(entry.media, assetId) ? picture(site, entry, assetId) : undefined)
 	});
 }
