@@ -13221,7 +13221,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `rate_limited` — over the per-address delivery limit; `Retry-After` */
+            /** @description `rate_limited` — this client address already holds its public streams (D-159); `Retry-After` says when; over the per-address delivery limit; `Retry-After` */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -13230,7 +13230,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `unavailable` — this server is carrying as many live streams as it can */
+            /** @description `unavailable` — the project's or the server's public stream budget is full */
             503: {
                 headers: {
                     [name: string]: unknown;

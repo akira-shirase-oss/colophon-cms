@@ -395,3 +395,53 @@ async fn a_removed_members_stream_ends_at_the_next_check() {
         }
     }
 }
+
+/// The public delivery stream has a budget of its own (D-159): one client address holds at
+/// most `COLOPHON_EVENTS_PUBLIC_PER_ADDRESS` streams (`429` past that) and a project's
+/// anonymous streams stop at `COLOPHON_EVENTS_PUBLIC_PER_PROJECT` (`503`), while the project's
+/// editors still open theirs — anonymous listeners can't lock staff out.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn anonymous_streams_have_their_own_budget_and_a_per_address_cap() {
+    let _server = Server::start_with(&[
+        ("COLOPHON_TRUSTED_PROXIES", "127.0.0.1"),
+        ("COLOPHON_EVENTS_PUBLIC_PER_ADDRESS", "2"),
+        ("COLOPHON_EVENTS_PUBLIC_PER_PROJECT", "3"),
+        ("COLOPHON_EVENTS_PER_PROJECT", "3"),
+    ])
+    .await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let public = format!("{}/content/v1/{project}/production/events", common::ORIGIN);
+    let open = |address: &'static str| {
+        let url = public.clone();
+        async move {
+            app()
+                .get(url)
+                .header("x-forwarded-for", address)
+                .send()
+                .await
+                .expect("request")
+        }
+    };
+
+    // Two from one address, then that address is refused; another address gets the third.
+    let mut held = vec![open("198.51.100.1").await, open("198.51.100.1").await];
+    assert!(held.iter().all(|r| r.status() == StatusCode::OK));
+    let refused = open("198.51.100.1").await;
+    assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(refused.headers().contains_key(header::RETRY_AFTER));
+    held.push(open("198.51.100.2").await);
+    assert_eq!(held[2].status(), StatusCode::OK);
+    // The project's anonymous budget is full now…
+    assert_eq!(
+        open("198.51.100.3").await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    // …and its editors still get theirs, up to their own budget.
+    let mut editors = Vec::new();
+    for _ in 0..3 {
+        editors.push(Sse::subscribe(&owner, &project).await);
+    }
+    drop((held, editors));
+}

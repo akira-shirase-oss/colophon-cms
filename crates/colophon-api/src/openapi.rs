@@ -3755,9 +3755,14 @@ pub(crate) static TABLE: &[Route] = &[
                 extra: &[
                     NOT_FOUND,
                     refusal(
+                        429,
+                        "rate_limited",
+                        "this client address already holds its public streams (D-159); `Retry-After` says when",
+                    ),
+                    refusal(
                         503,
                         "unavailable",
-                        "this server is carrying as many live streams as it can",
+                        "the project's or the server's public stream budget is full",
                     ),
                 ],
                 ..MIN

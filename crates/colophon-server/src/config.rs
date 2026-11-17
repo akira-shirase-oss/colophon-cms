@@ -199,6 +199,9 @@ pub struct Config {
     /// `COLOPHON_EVENTS_KEEPALIVE_MS` (15 s) warms idle connections;
     /// `COLOPHON_EVENTS_LIFETIME_MS` (30 min) ends a stream; and
     /// `COLOPHON_EVENTS_REVALIDATE_MS` (5 min; `0` disables) re-runs the membership check.
+    /// The public delivery streams have their own budget (D-159):
+    /// `COLOPHON_EVENTS_PUBLIC_PER_PROJECT` (256), `COLOPHON_EVENTS_PUBLIC_MAX_STREAMS` (2048)
+    /// and `COLOPHON_EVENTS_PUBLIC_PER_ADDRESS` (8).
     pub events: colophon_api::events::EventLimits,
     /// Remote-MCP session bounds (D-121): `COLOPHON_MCP_PER_TOKEN` (8),
     /// `COLOPHON_MCP_PER_PROJECT` (256) and `COLOPHON_MCP_MAX_SESSIONS` (2048) cap the
@@ -571,6 +574,13 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
             keep_alive: self.millis("COLOPHON_EVENTS_KEEPALIVE_MS", 15_000, 1_000..=120_000),
             lifetime: self.millis("COLOPHON_EVENTS_LIFETIME_MS", 1_800_000, 1_000..=86_400_000),
             revalidate: (revalidate > 0).then(|| Duration::from_millis(revalidate)),
+            public_per_project: self.ranged("COLOPHON_EVENTS_PUBLIC_PER_PROJECT", 256, 1..=16_384),
+            public_max_streams: self.ranged(
+                "COLOPHON_EVENTS_PUBLIC_MAX_STREAMS",
+                2_048,
+                1..=65_536,
+            ),
+            public_per_address: self.ranged("COLOPHON_EVENTS_PUBLIC_PER_ADDRESS", 8, 1..=1_024),
         }
     }
 
