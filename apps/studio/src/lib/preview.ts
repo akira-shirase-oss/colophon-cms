@@ -85,6 +85,14 @@ export async function issuePreview(project: string, entry: string, ttlSeconds?: 
 	return data(await send('POST', previewsPath(project), { entry, ...(ttlSeconds === undefined ? {} : { ttl_seconds: ttlSeconds }) }));
 }
 
+/** Issues a grant for one publish request: the site reads exactly its versions, bound to its
+ *  hash (a read answers 409 `preview_stale` once the request changes, 410 `preview_published`
+ *  once it is live). Refused with 409 `already_published` for a request that is live already,
+ *  and like `issuePreview` otherwise. */
+export async function issueChangesetPreview(project: string, changeset: string, ttlSeconds?: number): Promise<PreviewGrant> {
+	return data(await send('POST', previewsPath(project), { changeset, ...(ttlSeconds === undefined ? {} : { ttl_seconds: ttlSeconds }) }));
+}
+
 /** The caller's own live grants for one entry. */
 export async function listPreviews(project: string, entry: string): Promise<LivePreview[]> {
 	return data(await send('GET', `${previewsPath(project)}?entry=${encodeURIComponent(entry)}`));
@@ -363,6 +371,20 @@ export function previewProblem(error: unknown): Said {
 		};
 	}
 	return { ...said, title: said.title === 'Not accepted' ? 'The preview didn’t open' : said.title };
+}
+
+/** Why a publish request's preview didn't open: as `previewProblem`, with the request's own words
+ *  for the refusals that are about it. */
+export function changesetPreviewProblem(error: unknown): Said {
+	const said = previewProblem(error);
+	if (!(error instanceof ApiError)) return said;
+	if (error.reason === 'already_published') {
+		return { title: 'This publish request is already live', text: 'Readers see it now, so there is nothing to preview: open your site itself.', technical: said.technical };
+	}
+	if (error.failure === 'not-found') {
+		return { title: 'This publish request can’t be previewed', text: 'It isn’t there any more, or your role no longer lets you see what it holds. Reload the page.', technical: said.technical };
+	}
+	return said;
 }
 
 /**

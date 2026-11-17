@@ -7,7 +7,7 @@
 // are tests/site-preview.spec.ts; this one proves the contract end to end.
 
 import { expect, type Page, test } from '@playwright/test';
-import { api, env, internalTerms, newEntry, newProject, signIn } from './helpers.ts';
+import { api, env, internalTerms, key, newEntry, newProject, signIn } from './helpers.ts';
 
 const SITE = 'https://site.preview.test';
 
@@ -123,4 +123,44 @@ test('set the address, preview a draft on the site, a save reaches it, closing r
 	const after = await fetch(`${base}/preview/v1/${project}/production/articles/${entry}`, { headers: { Authorization: `Bearer ${seen.tokens[0]}` } });
 	expect(((await after.json()) as { error: { details: { reason: string } } }).error.details.reason).toBe('preview_revoked');
 	expect((await api(studio, 'GET', `${env(project)}/previews?entry=${entry}`)).body?.['data']).toHaveLength(0);
+});
+
+test('a publish request: Preview on your site opens exactly it, with a one-time code for its versions', async ({ page: studio, baseURL }) => {
+	const base = baseURL ?? '';
+	await signIn(studio);
+	const project = await newProject(studio, 'Preview a publish request');
+	const entry = await newEntry(studio, project, 'In the spring issue');
+	expect((await api(studio, 'PUT', `${env(project)}/preview-target`, { url_template: `${SITE}/api/preview?code={code}` })).status).toBe(200);
+	const made = await api(studio, 'POST', `${env(project)}/changesets`, { title: 'Spring issue', entries: [entry], unpublish: [] }, { 'Idempotency-Key': key() });
+	expect(made.status, JSON.stringify(made.body)).toBe(201);
+	const changeset = made.body?.['data'].id as string;
+	// The site: a plain page; its preview route's exchange is done below, as its server would.
+	await studio
+		.context()
+		.route(`${SITE}/**`, (route) =>
+			route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Example site</title></head><body><main><h1>Example site</h1></main></body></html>' })
+		);
+
+	await studio.goto(`/studio/projects/${project}/changesets/${changeset}`);
+	const button = studio.getByTestId('changeset-preview-button');
+	await expect(button).toBeEnabled();
+	await expect(studio.getByTestId('changeset-preview')).toContainText('Shows exactly what this request will publish, for 15 minutes.');
+	const [tab] = await Promise.all([studio.waitForEvent('popup'), button.click()]);
+	await tab.waitForURL(`${SITE}/**`);
+	const code = new URL(tab.url()).searchParams.get('code') ?? '';
+	expect(code).toMatch(/^cpc_/);
+	await expect(studio.getByTestId('changeset-preview-problem')).toHaveCount(0);
+
+	// The code is for exactly this request: its exchange names it, and reads come from its versions.
+	const exchanged = await fetch(`${base}/preview/v1/${project}/production/exchange`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ code })
+	});
+	expect(exchanged.status).toBe(200);
+	const grant = (await exchanged.json()) as { data: { token: string; scope: Record<string, unknown> } };
+	expect(grant.data.scope).toMatchObject({ kind: 'changeset', changeset });
+	const read = await fetch(`${base}/preview/v1/${project}/production/articles/${entry}`, { headers: { Authorization: `Bearer ${grant.data.token}` } });
+	expect(read.status).toBe(200);
+	expect(((await read.json()) as { data: { title: string; preview: { source: string } } }).data).toMatchObject({ title: 'In the spring issue', preview: { source: 'changeset' } });
 });

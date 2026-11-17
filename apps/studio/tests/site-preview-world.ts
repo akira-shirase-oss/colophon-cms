@@ -14,6 +14,8 @@ export const TEMPLATE = `${SITE}/api/preview?code={code}&path=/blog/{slug}`;
 const P = `/api/v1/projects/${PROJECT}/environments/production`;
 export const EDITOR_URL = `/studio/projects/${PROJECT}/articles/${ENTRY}`;
 export const SETTINGS_URL = `/studio/projects/${PROJECT}/settings/connections`;
+export const CHANGESET = '7a1d9e40-2c3b-4f5a-8e6d-1b2c3d4e5f60';
+export const CHANGESET_URL = `/studio/projects/${PROJECT}/changesets/${CHANGESET}`;
 
 /** How the site behaves when the preview opens in it. */
 export type SiteMode =
@@ -31,7 +33,11 @@ export interface World {
 	role: 'owner' | 'editor';
 	template: string | null;
 	/** What issuing a grant answers: a grant, or a refusal. */
-	issue: 'grant' | 'not-configured' | 'unavailable' | 'limit' | 'invalid';
+	issue: 'grant' | 'not-configured' | 'unavailable' | 'limit' | 'invalid' | 'already-live' | 'offline';
+	/** Where the publish request stands. */
+	request: 'awaiting_review' | 'published';
+	/** What each `POST {P}/previews` asked for, as its body. */
+	issued: Record<string, unknown>[];
 	/** Milliseconds before an issued grant ends. */
 	lasts: number;
 	renew: 'ok' | 'gone';
@@ -59,6 +65,8 @@ export function world(overrides: Partial<World> = {}): World {
 		role: 'owner',
 		template: TEMPLATE,
 		issue: 'grant',
+		request: 'awaiting_review',
+		issued: [],
 		lasts: 12.5 * 60_000,
 		renew: 'ok',
 		code: 'ok',
@@ -126,6 +134,39 @@ function draft(w: World, extra: Record<string, unknown> = {}) {
 		locale: null,
 		localizations: [],
 		...extra
+	};
+}
+
+function changeset(w: World) {
+	const published = w.request === 'published';
+	return {
+		id: CHANGESET,
+		title: 'Spring issue',
+		hash: 'sha256:request-hash-1',
+		status: { state: w.request, generation: published ? 3 : null, by: null, self_review: false, edited_items: 0 },
+		created_by: 'person-1',
+		created_at: AT,
+		submitted_by: 'person-1',
+		submitted_at: AT,
+		updated_at: AT,
+		rollback_generation: null,
+		items: [
+			{
+				kind: 'publish',
+				entry_id: ENTRY,
+				collection: 'articles',
+				revision_id: `rev-${w.revision}`,
+				title: w.title,
+				content_hash: 'sha256:content-hash-1',
+				schema_version: 1,
+				current_revision_id: `rev-${w.revision}`,
+				edited: false,
+				published_revision_id: null,
+				created_by: 'person-1'
+			}
+		],
+		reviews: [],
+		stages: []
 	};
 }
 
@@ -202,7 +243,11 @@ async function answer(w: World, request: Request): Promise<{ status: number; bod
 	}
 	if (rest === '/previews' && method === 'POST') {
 		w.calls.push('POST /previews');
+		const asked = request.postDataJSON() as Record<string, unknown>;
+		w.issued.push(asked);
 		if (w.hold !== null) await w.hold;
+		if (w.issue === 'offline') return { status: -1 };
+		if (w.issue === 'already-live') return refusal(409, 'already_published', 'this publish request is already live; open the site itself');
 		if (w.issue === 'not-configured' || w.template === null) return refusal(422, 'preview_not_configured', 'preview is not configured for this environment');
 		if (w.issue === 'unavailable') return refusal(503, 'unavailable', 'the database is unavailable');
 		if (w.issue === 'limit') return refusal(429, 'preview_limit', 'too many live previews in this project');
@@ -219,7 +264,7 @@ async function answer(w: World, request: Request): Promise<{ status: number; bod
 					expires_at: new Date(Date.now() + w.lasts).toISOString(),
 					url: fill(w.template, code),
 					origin: originOf(w.template),
-					scope: { kind: 'entry', entry: ENTRY, collection: 'articles' }
+					scope: typeof asked['changeset'] === 'string' ? { kind: 'changeset', changeset: asked['changeset'] } : { kind: 'entry', entry: ENTRY, collection: 'articles' }
 				}
 			}
 		};
@@ -244,6 +289,11 @@ async function answer(w: World, request: Request): Promise<{ status: number; bod
 	if (rest === '/content-types') return ok({ data: [TYPE] });
 	if (rest === '/content-types/articles') return ok({ data: TYPE });
 	if (rest === '/changesets') return ok({ data: [] });
+	if (rest === `/changesets/${CHANGESET}`) return ok({ data: changeset(w) });
+	if (rest === '/schedules') return ok({ data: [] });
+	if (rest.startsWith(`/collections/articles/entries/${ENTRY}/revisions/`)) {
+		return ok({ data: { revision: revision(w), content: w.content } });
+	}
 	if (rest === '/releases') return ok({ data: [] }, { 'colophon-generation': '0' });
 	if (rest === '/events') return { status: 204 };
 	if (rest === '/stages') return ok({ data: [] }, { etag: '"stages-1"' });
@@ -331,6 +381,10 @@ export async function serve(page: Page, w: World, studio: string): Promise<void>
 		(url) => url.pathname === '/me' || url.pathname.startsWith('/api/'),
 		async (route: Route) => {
 			const found = await answer(w, route.request());
+			if (found !== null && found.status === -1) {
+				await route.abort('internetdisconnected');
+				return;
+			}
 			if (found === null) {
 				w.unanswered.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
 				await route.fulfill({ status: 404, json: { error: { code: 'not_found', message: 'not found', details: { reason: 'not_found' } } } });

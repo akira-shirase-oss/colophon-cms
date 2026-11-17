@@ -6,12 +6,14 @@
 import { expect, test } from '@playwright/test';
 import { ApiError } from '../src/lib/api.ts';
 import {
+	changesetPreviewProblem,
 	draftSaved,
 	endsIn,
 	expired,
 	getPreviewTarget,
 	grantOf,
 	hostOf,
+	issueChangesetPreview,
 	issuePreview,
 	listPreviews,
 	type PaneState,
@@ -102,6 +104,23 @@ test.describe('the management calls', () => {
 		]);
 		expect(calls[0]?.body).toEqual({ entry: 'e1' });
 		for (const call of calls.filter((each) => each.method !== 'GET')) expect(call.headers['X-CSRF-Token']).toBe('tok-1');
+	});
+
+	test('a publish request’s preview names the request, and its refusals have their own words', async () => {
+		const calls = serve([json(201, { data: { ...GRANT, scope: { kind: 'changeset', changeset: 'c1' } } }), refusal(409, 'already_published')]);
+		expect((await issueChangesetPreview('p1', 'c1')).scope.kind).toBe('changeset');
+		expect(calls[0]).toMatchObject({ method: 'POST', url: `${P}/previews`, body: { changeset: 'c1' } });
+		expect(calls[0]?.headers['X-CSRF-Token']).toBe('tok-1');
+		const live = await issueChangesetPreview('p1', 'c1').catch((error: unknown) => error);
+		expect(live).toMatchObject({ status: 409, reason: 'already_published', failure: 'refused' });
+		expect(changesetPreviewProblem(live)).toMatchObject({ title: 'This publish request is already live' });
+		expect(changesetPreviewProblem(live).technical).toContain('already_published');
+		expect(changesetPreviewProblem(new ApiError('not-found', 'not found', 404, null)).title).toBe('This publish request can’t be previewed');
+		expect(changesetPreviewProblem(new ApiError('retry', 'too many', 429, 'preview_limit')).title).toBe('Too many previews open');
+		for (const error of [live, new ApiError('retry', 'no answer from the server')]) {
+			const said = changesetPreviewProblem(error);
+			expect(INTERNAL_TERMS.test(`${said.title} ${said.text}`), said.text).toBe(false);
+		}
 	});
 
 	test('refusals arrive as typed errors with their reasons', async () => {
