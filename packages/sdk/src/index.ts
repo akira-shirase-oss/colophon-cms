@@ -27,6 +27,8 @@ export type {
 	ReplyJson,
 	QueryOf
 } from './client.js';
+export { mediaFor, imageSource, DEFAULT_SIZES } from './media.js';
+export type { PublishedMedia, MediaSidecar, ImageSource, MediaOptions } from './media.js';
 export { ApiError, errorOf } from './error.js';
 export type { ErrorEnvelope, ErrorCode, ErrorDetails, ClientCode } from './error.js';
 
