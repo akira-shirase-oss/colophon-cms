@@ -467,3 +467,53 @@ async fn unpublishing_takes_an_entry_out_of_every_earlier_release_until_it_is_pu
     }
     db.drop().await;
 }
+
+/// A read made of several statements can ask for one snapshot (`scope::Isolation::Snapshot`):
+/// a release receipt reads its deliveries and the locations that saw them in separate
+/// statements, and with Postgres's default a probe finishing between the two showed a delivery
+/// done with no location that saw it. Here a commit lands between two reads: the default
+/// transaction sees it in the second, the snapshot one doesn't.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_snapshot_transaction_reads_one_moment() {
+    let db = TestDb::new().await;
+    let owner = db.owner().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "moment", "Moment")
+        .await
+        .expect("created")
+        .id;
+    for (n, isolation, seen_after) in [
+        (1, scope::Isolation::PerStatement, 1_i64),
+        (2, scope::Isolation::Snapshot, 0),
+    ] {
+        let mut tx =
+            scope::begin_in_project_isolated(&db.app, alice, project, "production", isolation)
+                .await
+                .expect("begin")
+                .expect("a member");
+        let count = "SELECT count(*) FROM audience_origins WHERE origin = $1";
+        let origin = format!("https://site{n}.test");
+        let before: i64 = sqlx::query_scalar(count)
+            .bind(&origin)
+            .fetch_one(&mut *tx.transaction)
+            .await
+            .expect("read");
+        assert_eq!(before, 0);
+        sqlx::query("INSERT INTO audience_origins (project_id, origin) VALUES ($1, $2)")
+            .bind(project)
+            .bind(&origin)
+            .execute(&owner)
+            .await
+            .expect("a commit between the reads");
+        let after: i64 = sqlx::query_scalar(count)
+            .bind(&origin)
+            .fetch_one(&mut *tx.transaction)
+            .await
+            .expect("read");
+        assert_eq!(after, seen_after, "{isolation:?}");
+        tx.commit().await.expect("commit");
+    }
+    owner.close().await;
+    db.drop().await;
+}

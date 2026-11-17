@@ -21,9 +21,37 @@ pub struct Scope {
     pub project: Option<Uuid>,
 }
 
+/// How a transaction's reads see the database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Isolation {
+    /// Postgres's default: each statement sees what was committed when it began.
+    #[default]
+    PerStatement,
+    /// One snapshot for the whole transaction (`REPEATABLE READ`): for a read made of several
+    /// statements that must agree — a release receipt's deliveries and the locations that saw
+    /// them, say — so a commit landing between two of them can't show half of itself.
+    Snapshot,
+}
+
 /// Begins a transaction with `scope` as its row-level-security context.
 pub async fn begin(pool: &PgPool, scope: Scope) -> Result<Transaction<'static, Postgres>, DbError> {
-    let mut transaction = pool.begin().await.map_err(DbError::from_query)?;
+    begin_isolated(pool, scope, Isolation::PerStatement).await
+}
+
+/// [`begin`], with the reads seeing the database as `isolation` says.
+pub async fn begin_isolated(
+    pool: &PgPool,
+    scope: Scope,
+    isolation: Isolation,
+) -> Result<Transaction<'static, Postgres>, DbError> {
+    let mut transaction = match isolation {
+        Isolation::PerStatement => pool.begin().await,
+        Isolation::Snapshot => {
+            pool.begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
+                .await
+        }
+    }
+    .map_err(DbError::from_query)?;
     let identity = scope.identity.map(|id| id.to_string()).unwrap_or_default();
     let project = scope.project.map(|id| id.to_string()).unwrap_or_default();
     sqlx::query!(
@@ -137,12 +165,23 @@ pub async fn begin_as_member(
     identity: Uuid,
     project: Uuid,
 ) -> Result<Option<MemberTransaction>, DbError> {
-    let mut transaction = begin(
+    begin_as_member_isolated(pool, identity, project, Isolation::PerStatement).await
+}
+
+/// [`begin_as_member`], with the reads seeing the database as `isolation` says.
+pub async fn begin_as_member_isolated(
+    pool: &PgPool,
+    identity: Uuid,
+    project: Uuid,
+    isolation: Isolation,
+) -> Result<Option<MemberTransaction>, DbError> {
+    let mut transaction = begin_isolated(
         pool,
         Scope {
             identity: Some(identity),
             project: None,
         },
+        isolation,
     )
     .await?;
     // The role and its permissions in one statement and one pass over them, as parallel arrays
@@ -209,12 +248,23 @@ pub async fn begin_as_token(
     identity: Uuid,
     project: Uuid,
 ) -> Result<Option<MemberTransaction>, DbError> {
-    let mut transaction = begin(
+    begin_as_token_isolated(pool, identity, project, Isolation::PerStatement).await
+}
+
+/// [`begin_as_token`], with the reads seeing the database as `isolation` says.
+pub async fn begin_as_token_isolated(
+    pool: &PgPool,
+    identity: Uuid,
+    project: Uuid,
+    isolation: Isolation,
+) -> Result<Option<MemberTransaction>, DbError> {
+    let mut transaction = begin_isolated(
         pool,
         Scope {
             identity: Some(identity),
             project: Some(project),
         },
+        isolation,
     )
     .await?;
     let token = sqlx::query!(
@@ -281,7 +331,25 @@ pub async fn begin_in_project_as_token(
     project: Uuid,
     environment: &str,
 ) -> Result<Option<ProjectTransaction>, DbError> {
-    let Some(token) = begin_as_token(pool, identity, project).await? else {
+    begin_in_project_as_token_isolated(
+        pool,
+        identity,
+        project,
+        environment,
+        Isolation::PerStatement,
+    )
+    .await
+}
+
+/// [`begin_in_project_as_token`], with the reads seeing the database as `isolation` says.
+pub async fn begin_in_project_as_token_isolated(
+    pool: &PgPool,
+    identity: Uuid,
+    project: Uuid,
+    environment: &str,
+    isolation: Isolation,
+) -> Result<Option<ProjectTransaction>, DbError> {
+    let Some(token) = begin_as_token_isolated(pool, identity, project, isolation).await? else {
         return Ok(None);
     };
     in_environment(token, environment).await
@@ -349,7 +417,25 @@ pub async fn begin_in_project(
     project: Uuid,
     environment: &str,
 ) -> Result<Option<ProjectTransaction>, DbError> {
-    let Some(member) = begin_as_member(pool, identity, project).await? else {
+    begin_in_project_isolated(
+        pool,
+        identity,
+        project,
+        environment,
+        Isolation::PerStatement,
+    )
+    .await
+}
+
+/// [`begin_in_project`], with the reads seeing the database as `isolation` says.
+pub async fn begin_in_project_isolated(
+    pool: &PgPool,
+    identity: Uuid,
+    project: Uuid,
+    environment: &str,
+    isolation: Isolation,
+) -> Result<Option<ProjectTransaction>, DbError> {
+    let Some(member) = begin_as_member_isolated(pool, identity, project, isolation).await? else {
         return Ok(None);
     };
     in_environment(member, environment).await

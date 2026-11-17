@@ -183,7 +183,9 @@ These are policies to test, not a global 30-second consistency guarantee.
   observation for every look (location, generation seen, status, body hash, error). Workers have a location
   (`COLOPHON_WORKER_LOCATION`), and a probe may be pinned to one. Each release has one label from
   `colophon_domain::receipt::label`, and `GET …/releases/{generation}` is its receipt
-  (`crates/colophon-server/tests/receipts.rs`, against a fake site; verified at 2 locations with a second worker).
+  (`crates/colophon-server/tests/receipts.rs`, against a fake site; verified at 2 locations with a second worker),
+  read in one snapshot (`scope::Isolation::Snapshot`, REPEATABLE READ) so the deliveries and the locations that saw
+  them always describe the same moment.
 
 ### Preview origin (spec §06)
 - A separate, sandboxed origin validates the 15-minute capability ([auth](03-auth.md)) on every protected fetch.
