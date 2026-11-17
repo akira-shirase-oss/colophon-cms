@@ -95,6 +95,7 @@ impl Sweeper {
                         setup_codes = swept.setup_codes,
                         magic_links = swept.magic_links,
                         sign_in_throttle = swept.sign_in_throttle,
+                        preview_grants = swept.preview_grants,
                         "table retention pass"
                     );
                 }

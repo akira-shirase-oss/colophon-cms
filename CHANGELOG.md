@@ -19,6 +19,12 @@ through `--version` and `GET /version`.
 - **`@colophon-cms/rich-text` (D-170):** the content renderer as its own zero-dependency
   package, built from the one renderer the Studio uses, so a site reading the delivery API
   renders rich text exactly as the Studio previews it.
+- Draft preview on your own site, the backend (D-171, D-172): a person opens a preview of an
+  entry (with its translations) or a publish request; the site exchanges the address's
+  one-time code for a 15-minute bearer token and reads `/preview/v1`, which answers
+  `/content/v1`'s shapes with the drafts laid over the latest release. Never cached, never
+  indexed, re-checked against the issuer on every read, revocable. Set the address with
+  `PUT {P}/preview-target`; the Studio pane and the SDK's site helpers follow.
 
 ### Security
 

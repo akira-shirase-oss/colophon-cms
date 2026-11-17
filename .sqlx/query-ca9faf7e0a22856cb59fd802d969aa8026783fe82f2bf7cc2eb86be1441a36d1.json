@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.id, e.draft_revision_id AS \"revision?\"\n               FROM entries e\n               WHERE e.project_id = $1 AND e.environment_id = $2\n                 AND (e.id = $3 OR e.localization_id = (\n                         SELECT g.localization_id FROM entries g\n                         WHERE g.project_id = $1 AND g.environment_id = $2 AND g.id = $3))\n               ORDER BY e.id\n               LIMIT $4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "revision?",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "draft_revision_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "ca9faf7e0a22856cb59fd802d969aa8026783fe82f2bf7cc2eb86be1441a36d1"
+}

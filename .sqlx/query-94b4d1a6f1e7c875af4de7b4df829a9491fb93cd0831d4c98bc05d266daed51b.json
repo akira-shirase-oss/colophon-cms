@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM preview_targets WHERE project_id = $1 AND environment_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "94b4d1a6f1e7c875af4de7b4df829a9491fb93cd0831d4c98bc05d266daed51b"
+}

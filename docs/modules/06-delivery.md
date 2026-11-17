@@ -33,7 +33,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
 - CDN headers and tag purge.
 - Unpublish and revocation.
 - Evidence probes.
-- The preview origin.
+- Preview reads, `/preview/v1` (D-172).
 - Sitemaps, feeds and redirects.
 - Locale fallback.
 
@@ -187,10 +187,39 @@ These are policies to test, not a global 30-second consistency guarantee.
   read in one snapshot (`scope::Isolation::Snapshot`, REPEATABLE READ) so the deliveries and the locations that saw
   them always describe the same moment.
 
-### Preview origin (spec §06)
-- A separate, sandboxed origin validates the 15-minute capability ([auth](03-auth.md)) on every protected fetch.
-- Responses are `no-store` and `noindex`, with a restrictive referrer policy.
-- Preview artifacts never enter public CDN routes, sitemaps or search indexes.
+### Preview reads (D-172; built 2026-11-17, gap 1)
+`/preview/v1` answers exactly what `/content/v1` answers, with a grant's scope ([auth](03-auth.md), D-171) laid over
+the latest release. It deviates from spec §06's separate preview origin: Colophon serves JSON, not pages — the page
+sandbox is the customer's own site — so preview is a path family on the content origin, which an operator may still
+route to its own host.
+
+- `POST /preview/v1/{project}/{environment}/exchange {code}` → the bearer token;
+  `GET …/session` → scope and end, for the site's banner;
+  `GET …/{collection}?limit=&cursor=`, `GET …/{collection}/{entry}`, `POST …/{collection}/query?cursor=`.
+- **The overlay.** For the latest generation G: every publication open at G, not revoked, whose entry the scope
+  doesn't name — plus each scope row that shows a revision of a live entry of the collection (the entry's current
+  draft, or the request's pinned revision); a scope row without one (an unpublish item) takes the entry out, and a
+  deleted entry is invisible to the API role so it can't be in scope. One statement head,
+  `colophon_db::query::OVERLAY`, serves list, get and the query language (its third source, `overlay_page`), so the
+  three can't disagree; it runs as `colophon_api` in the issuer's transaction, never as `colophon_delivery`.
+  `colophon_domain::preview::overlay` is the same rule as a pure function, the model the scope property test checks
+  the SQL against.
+- **The shape.** Each row is delivery's own `PublishedView` (one serializer for both) plus
+  `preview: {source: "published" | "draft" | "changeset", hidden_fields?}`; for a scope row `published_in` is G, the
+  release the preview is laid over. A published row reads byte for byte as `/content/v1` reads it (`tests/preview.rs`).
+  When the locale (gap 2) and media (gap 3) shapes land in `PublishedView`, preview carries them unchanged.
+- **Never cached.** Every answer — refusals included — is `Cache-Control: private, no-store`,
+  `X-Robots-Tag: noindex, nofollow, noarchive`, `Referrer-Policy: no-referrer`, `Vary: Authorization`, with
+  `Colophon-Preview: entry | changeset` and `Colophon-Generation: G`; never `ETag`, never `Cache-Tag`, never the
+  delivery cache. Operators bypass `/preview/*` at the CDN.
+- **Refusals.** 401 `preview_invalid | preview_expired | preview_revoked` with `WWW-Authenticate: Bearer
+  error="invalid_token"`; 404 for another environment or an unknown entry; 409 `preview_stale`; 410
+  `preview_published`; 422 `preview_reads_latest` (`?generation=`) and `preview_depth` (`depth` population isn't
+  served in preview yet); 503 with `Retry-After` past the per-server bound of 32 concurrent preview reads.
+- **Bounds.** `/preview/` counts in admission per client address and per bearer (D-076's management rates); the
+  semaphore keeps a burst of previews from taking the connections delivery needs; the exchange reads at most 1 KiB.
+- **Not yet.** CORS for browser-side preview fetching (sites fetch server-side today), `depth` over the overlay,
+  locale selection (arrives with gap 2's `?locale=`).
 
 ### Site metadata (spec §06)
 - Sitemaps, feeds and language alternates are generated from a single published generation.
@@ -213,7 +242,7 @@ These are policies to test, not a global 30-second consistency guarantee.
 
 ## Interfaces
 
-- HTTP: `/content/v1/{project}/{env}/…` and the preview origin.
+- HTTP: `/content/v1/{project}/{env}/…` and `/preview/v1/{project}/{env}/…` (D-172).
 - Purge and probe adapters used by [worker](05-worker.md) jobs.
 - Cache-key and tag builders shared with the site build adapter.
 
