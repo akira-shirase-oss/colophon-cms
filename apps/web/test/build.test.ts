@@ -71,6 +71,52 @@ describe('a build', () => {
 		await expect(build({ ...settings, root, fetch: articles(new Map([[1, [strange]]])).fetch })).rejects.toThrow();
 	});
 
+	// Images (renderer v2): drawn at the version the release published, from each row's `media`
+	// sidecar, with their size and renditions; an image an older answer's sidecar doesn't hold
+	// gets the media origin's bare address.
+	test('draws images at the version their release published, sized, and falls back to the bare address', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'site-'));
+		const RECORDED = '0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4d';
+		const UNRECORDED = '0199f0a2-6c1e-7b3a-9d42-5e8f1a2b3c4e';
+		const sha = 'c'.repeat(64);
+		const at = `https://cms.colophon.test/media/v1/p1/production/${RECORDED}`;
+		const media = {
+			[RECORDED]: { url: `${at}/${sha}`, current_url: at, type: 'image/png', width: 1600, height: 900, renditions: { w320: `${at}/${sha}/w320`, w1280: `${at}/${sha}/w1280` } }
+		};
+		const pictured = item('a1', 'Pictured');
+		pictured.content.body = {
+			schema: 'colophon/rich-text',
+			version: 1,
+			doc: {
+				type: 'doc',
+				content: [
+					{ type: 'image', attrs: { assetId: RECORDED, alt: 'The press' } },
+					{ type: 'image', attrs: { assetId: UNRECORDED, alt: 'The type case' } }
+				]
+			}
+		};
+		pictured.media = media;
+		const withHero = page('p1', 'home', [{ ...hero, image: RECORDED, alt: 'The press' }, { ...hero, image: UNRECORDED, alt: 'Type' }]);
+		withHero.media = media;
+		const colophon = api(
+			new Map<string, Map<number, unknown[]>>([
+				['articles', new Map([[2, [pictured]]])],
+				['pages', new Map([[2, [withHero]]])]
+			])
+		);
+		const built = await build({ ...settings, root, fetch: colophon.fetch });
+
+		const body = await readFile(join(built.dir, 'articles/a1/index.html'), 'utf8');
+		expect(body).toContain(
+			`<img src="${at}/${sha}" srcset="${at}/${sha}/w320 320w, ${at}/${sha}/w1280 1280w, ${at}/${sha} 1600w" sizes="(max-width: 40rem) 100vw, 40rem" width="1600" height="900" alt="The press"`
+		);
+		expect(body).toContain(`<img src="/media/v1/p1/production/${UNRECORDED}" alt="The type case"`);
+
+		const home = await readFile(join(built.dir, 'home/index.html'), 'utf8');
+		expect(home).toContain(`src="${at}/${sha}"`);
+		expect(home).toContain(`src="/media/v1/p1/production/${UNRECORDED}"`);
+	});
+
 	// The website starter (W.3): published pages become the site — one file each at its slug, the
 	// menu's resolved links, the theme as the linked stylesheet — beside any articles.
 	const hero = { _block: 'hero', heading: 'Your site, your way', tagline: 'It is' };

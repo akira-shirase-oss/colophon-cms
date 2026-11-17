@@ -52,6 +52,18 @@ package's signal that output changed.
 - **Shared fixtures:** one JSON fixture set is used by the Rust validator and by this renderer. Valid fixtures must
   render; invalid ones must be rejected by Rust.
 - **Security headers:** rendered output is compatible with a restrictive Content Security Policy (spec §26).
+- **Images (renderer v2, `RENDERER_VERSION` 2):** `RenderOptions.media(assetId)` may describe an
+  image — `{ src, width?, height?, srcset?, sizes? }`, which the SDK's `mediaFor(row)` builds from
+  a delivery row's `media` sidecar ([06](06-delivery.md)) — and the `img` then carries the
+  versioned source, its intrinsic `width`/`height` (both or neither, positive whole pixels, so the
+  page reserves the box and doesn't shift) and `srcset`/`sizes` (`sizes` only with a `srcset`).
+  Without `media`, or for an asset it doesn't know (an answer cached before the sidecar), the
+  image is `assetUrl`'s bare address exactly as in v1. What `media` hands back is checked like
+  content: a `src` or `srcset` candidate that isn't an absolute http(s) URL or a root-relative
+  path (no `javascript:`, `data:`, protocol-relative or whitespace-split values) throws
+  `UnrenderableContent`, and every value is escaped (R2). The allowlist's `img` gains `srcset`,
+  `sizes`, `width` and `height`; the DOM check also holds every `srcset` candidate to the asset
+  origin and the dimensions to whole numbers.
 
 ## Invariants
 
@@ -63,8 +75,9 @@ package's signal that output changed.
 
 ## Interfaces
 
-- `render(document, options) → output`, available both as Svelte components and as a string renderer.
-- `RENDERER_VERSION`.
+- `render(document, options) → output`, available both as Svelte components and as a string renderer;
+  `options` is `{ assetUrl, media? }` (`RichText.svelte` takes `assetUrl` and `media` props).
+- `RENDERER_VERSION` (2).
 
 ## Failure modes
 
@@ -75,7 +88,11 @@ package's signal that output changed.
 
 ## Tests and evidence
 
-- Snapshot tests over the shared fixtures.
+- Snapshot tests over the shared fixtures: `fixtures/rich-text/v1/rendered/` (bare addresses) and
+  `fixtures/rich-text/v1/rendered-media/` (every fixture with images, rendered with a `media`
+  description).
+- `media` hostility tests: quotes breaking out of `srcset`/`sizes` escaped; `javascript:`,
+  `data:`, protocol-relative and space-split sources refused; bad dimensions left out.
 - XSS payload fixtures: hostile links, stored markup attempts.
 - A Rust/TypeScript agreement test: the same fixtures are accepted or rejected identically.
 
@@ -85,6 +102,9 @@ package's signal that output changed.
    Svelte wrapper around it), reviewed expected output in `fixtures/rich-text/v1/rendered/`, and an allowlist check that
    parses every rendered page back into a DOM (D-023).
 2. **P1–P3:** full v0.1 block set, used in the Studio and the blog.
+3. **Gap 3 (images in rich text):** renderer v2 — sized, responsive images from the delivery
+   `media` sidecar; the reference site (`apps/web`) and the demo sites (`apps/sites`) draw images
+   at the version their release published.
 
 ## Open decisions
 

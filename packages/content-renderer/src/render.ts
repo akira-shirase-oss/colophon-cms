@@ -19,16 +19,37 @@ import {
 } from '@colophon/editor/schema';
 import type { RichTextValue, StoredMark, StoredNode } from '@colophon/editor/stored';
 
-/** Recorded with every release, so a change to the output is a visible version change. */
-export const RENDERER_VERSION = 1;
+/** Recorded with every release, so a change to the output is a visible version change.
+ *  2: images carry `width`, `height`, `srcset` and `sizes` when `media` describes them. */
+export const RENDERER_VERSION = 2;
 
 export class UnrenderableContent extends Error {
 	override name = 'UnrenderableContent';
 }
 
+/** What a site knows about one image: where its bytes are and how big they are. A delivery
+ *  row's `media` sidecar describes every image its revision names (`mediaFor` in the SDK
+ *  builds this from it), so a page reserves the image's box before it loads and lets the
+ *  browser pick a rendition. */
+export interface ImageSource {
+	/** The original's URL: an absolute http(s) URL or a root-relative path. */
+	src: string;
+	/** The original's intrinsic size, in pixels; both or neither are emitted. */
+	width?: number | undefined;
+	height?: number | undefined;
+	/** Candidates as `<url> <N>w` (or `<url> <N>x`), comma-separated; every URL obeys `src`'s rule. */
+	srcset?: string | undefined;
+	/** The slot size the browser picks a candidate for, e.g. `(max-width: 1280px) 100vw, 1280px`. */
+	sizes?: string | undefined;
+}
+
 export interface RenderOptions {
-	/** The public URL of a media-library asset. Images are served from the asset origin. */
+	/** The public URL of a media-library asset. Images are served from the asset origin. Used
+	 *  when `media` is absent or doesn't know the asset (an answer cached before it existed). */
 	assetUrl: (assetId: string) => string;
+	/** Renderer v2: an image's source, size and responsive candidates, or `undefined` to fall back
+	 *  to `assetUrl`. */
+	media?: ((assetId: string) => ImageSource | undefined) | undefined;
 }
 
 function escapeText(text: string): string {
@@ -53,6 +74,48 @@ function children(nodes: unknown): StoredNode[] {
 		}
 	}
 	return nodes as StoredNode[];
+}
+
+/** An image URL the page may load: an absolute http(s) URL or a root-relative path — never a
+ *  `javascript:`, `data:` or protocol-relative one, whatever the caller's `media` hands back. */
+const IMAGE_URL = /^(?:https?:\/\/[^\s]+|\/(?!\/)[^\s]*)$/i;
+
+/** A `srcset` whose every candidate is `<image URL> <N>w` or `<image URL> <N>x`. */
+function isSafeSrcset(srcset: string): boolean {
+	const candidates = srcset.split(/,\s+/);
+	return candidates.every((candidate) => {
+		const [url, descriptor, ...rest] = candidate.trim().split(/\s+/);
+		return rest.length === 0 && url !== undefined && IMAGE_URL.test(url) && descriptor !== undefined && /^(?:[1-9][0-9]{0,5}w|[1-9](?:\.[0-9]{1,2})?x)$/.test(descriptor);
+	});
+}
+
+/** An intrinsic dimension worth emitting: a positive whole number of pixels. */
+function isDimension(value: unknown): value is number {
+	return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 1_000_000;
+}
+
+/** The `<img>` for an image node: `media`'s description when it knows the asset, else
+ *  `assetUrl`'s bare address. Every value is checked and escaped (R2): a source that isn't an
+ *  image URL is a bug in the caller, refused like content outside the format (R3). */
+function image(assetId: string, alt: string, options: RenderOptions): string {
+	const described = options.media?.(assetId);
+	if (described === undefined) {
+		const src = options.assetUrl(assetId);
+		return `<figure><img src="${escapeAttribute(src)}" alt="${escapeAttribute(alt)}" loading="lazy" decoding="async"></figure>`;
+	}
+	if (typeof described.src !== 'string' || !IMAGE_URL.test(described.src)) refuse('an image source that is not an http(s) URL or a path');
+	let attributes = `src="${escapeAttribute(described.src)}"`;
+	if (described.srcset !== undefined && described.srcset !== '') {
+		if (typeof described.srcset !== 'string' || !isSafeSrcset(described.srcset)) refuse('an image srcset that is not a list of image URLs with widths');
+		attributes += ` srcset="${escapeAttribute(described.srcset)}"`;
+		if (typeof described.sizes === 'string' && described.sizes !== '') {
+			attributes += ` sizes="${escapeAttribute(described.sizes)}"`;
+		}
+	}
+	if (isDimension(described.width) && isDimension(described.height)) {
+		attributes += ` width="${String(described.width)}" height="${String(described.height)}"`;
+	}
+	return `<figure><img ${attributes} alt="${escapeAttribute(alt)}" loading="lazy" decoding="async"></figure>`;
 }
 
 function stringAttr(node: StoredNode, name: string): string {
@@ -149,8 +212,7 @@ function block(node: StoredNode, options: RenderOptions): string {
 			const assetId = stringAttr(node, 'assetId');
 			const alt = stringAttr(node, 'alt');
 			if (!ASSET_ID.test(assetId) || !isValidAlt(alt)) refuse('an image');
-			const src = options.assetUrl(assetId);
-			return `<figure><img src="${escapeAttribute(src)}" alt="${escapeAttribute(alt)}" loading="lazy" decoding="async"></figure>`;
+			return image(assetId, alt, options);
 		}
 		case 'callout': {
 			const tone = stringAttr(node, 'tone');

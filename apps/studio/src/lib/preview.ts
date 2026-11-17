@@ -1,4 +1,4 @@
-// Preview on the editor's own site (D-178): an editor sees a draft on the real site
+// Preview on the editor's own site (D-181): an editor sees a draft on the real site
 // before it goes live. The Studio issues a short-lived grant for one entry; the site's preview
 // route exchanges its one-time code for a token and reads the draft with it. Colophon never
 // relies on a cookie inside the frame: the site keeps its own (partitioned) cookie, and says

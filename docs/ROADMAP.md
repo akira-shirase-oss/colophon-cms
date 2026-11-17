@@ -217,7 +217,10 @@ M.1 to M.3, single types and patterns (branch `studio/dashboard`).
 - `studio`: release slider, history and compare, restore as a new revision, media picker.
 - `media`: upload intents, quarantine, signature and decoder checks, derivatives, reference tracking, cleanup —
   built through staged deletion with tombstones and the retention sweep (D-098, D-099); the CDN purge path for
-  deleted bytes is the remaining gap.
+  deleted bytes is the remaining gap. Gap 3 (2026-11-17): images inside rich text are tracked asset references
+  (D-177), releases record the upload versions they publish and delivery hands sites versioned URLs with sizes and
+  renditions (D-178), and the library pages, searches and keeps alt text, titles, credits and tags (D-179). Still
+  open there: media `Cache-Tag` and CDN purge, the full 1M load runs.
 - Preview capabilities on a separate origin; sitemaps and feeds from one generation; scheduled publishing with time
   zones and daylight-saving handling.
 
@@ -266,7 +269,7 @@ expired-approval scheduling).
   and `/preview/v1` answering `/content/v1`'s shapes with the scope's drafts laid over the latest release — never
   cached, re-checked against the issuer's membership and field policy on every read, revocable. Proved by a caching
   proxy that never keeps a preview answer and a scope property test against a pure model. The Studio's side
-  of it is built too (D-178): Settings → Website connections sets the preview address, and the entry editor's
+  of it is built too (D-181): Settings → Website connections sets the preview address, and the entry editor's
   Preview menu shows the saved draft on the site side by side or in a new tab, refreshed after each acknowledged
   save, with every state designed; a publish request previews on the site too, bound to its hash. The SDK's site
   helpers are built, with a SvelteKit example site in the testbed and a guide (`docs/guides/preview.md`), and

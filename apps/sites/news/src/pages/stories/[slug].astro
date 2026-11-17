@@ -19,7 +19,7 @@ export async function getStaticPaths() {
 }
 
 const { story, generation, cms } = Astro.props;
-const body = richText(cms, story.content['body']);
+const body = richText(cms, story.content['body'], story);
 ---
 
 <Base title={`${story.title} · The Meridian Post`} generation={generation}>

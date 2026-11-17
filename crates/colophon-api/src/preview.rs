@@ -51,7 +51,7 @@ use uuid::Uuid;
 
 use crate::{
     ApiError, AppState,
-    delivery::{GENERATION, PublishedView},
+    delivery::{GENERATION, MediaBase, PublishedView, media_named},
     entries::{AppliedQuery, content_type, field_ids, json, may_read, narrow, open, rfc3339},
     members::require,
     session::{SignedIn, services},
@@ -846,6 +846,7 @@ fn shown(
     content_type: &ContentType,
     fields: &[String],
     keep: Option<&[String]>,
+    media: &MediaBase,
     found: OverlayRow,
 ) -> Result<Option<PreviewRow>, ApiError> {
     let OverlayRow {
@@ -870,8 +871,12 @@ fn shown(
     if !read.includes(content_type.title_field()) {
         row.title = String::new();
     }
+    // The uploads the shown content still names: a field the role hides, or `fields` leaves
+    // out, takes its images' versions with it (D-178). A draft row's are the current
+    // versions, as drafts show them.
+    row.media = media_named(&row.media, &serde_json::Map::new(), &row.content)?;
     Ok(Some(PreviewRow {
-        view: PublishedView::new(row)?,
+        view: PublishedView::new(row, media)?,
         preview: PreviewMeta {
             source,
             hidden_fields,
@@ -988,6 +993,11 @@ pub(crate) async fn list(
                 return Err(ApiError::InvalidHeader("limit must be between 1 and 100"));
             }
             let mut reading = reading(&state, &path.project, &path.environment, &headers).await?;
+            let media = MediaBase::new(
+                &services(&state)?.media_origin,
+                reading.tx.project,
+                &path.environment,
+            );
             let project = reading.tx.project;
             let before = params
                 .cursor
@@ -1024,7 +1034,7 @@ pub(crate) async fn list(
                 .flatten();
             let mut data = Vec::with_capacity(rows.len());
             for row in rows {
-                if let Some(row) = shown(&reading.tx, &content_type, &fields, None, row)? {
+                if let Some(row) = shown(&reading.tx, &content_type, &fields, None, &media, row)? {
                     data.push(row);
                 }
             }
@@ -1053,6 +1063,11 @@ pub(crate) async fn get(
             latest_only(params.generation)?;
             let entry = Uuid::try_parse(&path.entry).map_err(|_| ApiError::NotFound)?;
             let mut reading = reading(&state, &path.project, &path.environment, &headers).await?;
+            let media = MediaBase::new(
+                &services(&state)?.media_origin,
+                reading.tx.project,
+                &path.environment,
+            );
             may_read(&reading.tx, &path.collection).map_err(|_| ApiError::NotFound)?;
             let (content_type, _) = content_type(&state, &mut reading.tx, &path.collection).await?;
             let fields = field_ids(&content_type);
@@ -1067,7 +1082,7 @@ pub(crate) async fn get(
                 .await
                 .map_err(ApiError::from_db)?
                 .ok_or(ApiError::NotFound)?;
-            let row = shown(&reading.tx, &content_type, &fields, None, found)?
+            let row = shown(&reading.tx, &content_type, &fields, None, &media, found)?
                 .ok_or(ApiError::NotFound)?;
             let body = serde_json::to_string(&Data { data: row }).map_err(ApiError::internal)?;
             let (kind, generation) = (reading.kind(), reading.generation);
@@ -1104,6 +1119,11 @@ pub(crate) async fn query(
             latest_only(params.generation)?;
             let Json(document) = body?;
             let mut reading = reading(&state, &path.project, &path.environment, &headers).await?;
+            let media = MediaBase::new(
+                &services(&state)?.media_origin,
+                reading.tx.project,
+                &path.environment,
+            );
             may_read(&reading.tx, &path.collection).map_err(|_| ApiError::NotFound)?;
             let (content_type, _) = content_type(&state, &mut reading.tx, &path.collection).await?;
             let language =
@@ -1153,7 +1173,7 @@ pub(crate) async fn query(
             let keep = language.fields();
             let mut data = Vec::with_capacity(found.rows.len());
             for row in found.rows {
-                if let Some(row) = shown(&reading.tx, &content_type, &fields, keep, row)? {
+                if let Some(row) = shown(&reading.tx, &content_type, &fields, keep, &media, row)? {
                     data.push(row);
                 }
             }
@@ -1281,11 +1301,14 @@ mod tests {
             content_hash: vec![0; 32],
             valid_from: 3,
             visibility: "public".to_owned(),
+            media: "{}".to_owned(),
         };
-        let delivered = serde_json::to_value(PublishedView::new(row.clone()).expect("view"))
-            .expect("delivery json");
+        let media = MediaBase::new("http://localhost", Uuid::nil(), "production");
+        let delivered =
+            serde_json::to_value(PublishedView::new(row.clone(), &media).expect("view"))
+                .expect("delivery json");
         let previewed = serde_json::to_value(PreviewRow {
-            view: PublishedView::new(row).expect("view"),
+            view: PublishedView::new(row, &media).expect("view"),
             preview: PreviewMeta {
                 source: "draft".to_owned(),
                 hidden_fields: Vec::new(),

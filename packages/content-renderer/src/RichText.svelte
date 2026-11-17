@@ -6,6 +6,9 @@
   Without `fallback`, a document outside the format throws, as it should on the public site:
   validation should have stopped it (R3). The Studio previews drafts the server hasn't judged
   yet, so it passes a `fallback` that explains why a document can't be shown.
+
+  `media` (renderer v2) describes images — size and responsive candidates — from a
+  delivery row's sidecar; without it every image is `assetUrl`'s bare address.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -15,12 +18,13 @@
 	let {
 		value,
 		assetUrl,
+		media,
 		fallback
-	}: { value: RichTextValue; assetUrl: RenderOptions['assetUrl']; fallback?: Snippet<[string]> } = $props();
+	}: { value: RichTextValue; assetUrl: RenderOptions['assetUrl']; media?: RenderOptions['media']; fallback?: Snippet<[string]> } = $props();
 
 	let result = $derived.by((): { html: string } | { problem: string } => {
 		try {
-			return { html: renderToHtml(value, { assetUrl }) };
+			return { html: renderToHtml(value, { assetUrl, media }) };
 		} catch (error) {
 			if (fallback !== undefined && error instanceof UnrenderableContent) return { problem: error.message };
 			throw error;

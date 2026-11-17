@@ -55,6 +55,9 @@ pub struct Published {
     /// Who may read it: `public`, `authenticated` or `role:<name>` — what the transaction's
     /// audience already proved it may see (D-137).
     pub visibility: String,
+    /// The upload versions its release recorded (D-178), as JSON: `{asset id: {sha, type,
+    /// width, height, renditions}}` — `{}` when it names none.
+    pub media: String,
 }
 
 /// The environment `slug` of `project` with its latest generation, in one statement: the delivery
@@ -196,14 +199,15 @@ impl DeliveryTransaction {
     ) -> Result<Vec<Published>, DbError> {
         sqlx::query_as!(
             Published,
-            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility
+            r#"SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from,
+                    visibility, media::text AS "media!"
              FROM publications
              WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND environment_id = $1 AND collection = $2
                AND valid_from <= $3 AND (valid_to IS NULL OR valid_to > $3) AND revoked_in IS NULL
                AND ($4::uuid IS NULL OR entry_id < $4)
              ORDER BY entry_id DESC
-             LIMIT $5",
+             LIMIT $5"#,
             environment,
             collection,
             generation,
@@ -225,11 +229,12 @@ impl DeliveryTransaction {
     ) -> Result<Option<Published>, DbError> {
         sqlx::query_as!(
             Published,
-            "SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from, visibility
+            r#"SELECT entry_id, revision_id, collection, title, slug, content, content_hash, valid_from,
+                    visibility, media::text AS "media!"
              FROM publications
              WHERE project_id = nullif(current_setting('app.project_id', true), '')::uuid
                AND environment_id = $1 AND collection = $2 AND entry_id = $3
-               AND valid_from <= $4 AND (valid_to IS NULL OR valid_to > $4) AND revoked_in IS NULL",
+               AND valid_from <= $4 AND (valid_to IS NULL OR valid_to > $4) AND revoked_in IS NULL"#,
             environment,
             collection,
             entry,

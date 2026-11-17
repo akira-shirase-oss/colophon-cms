@@ -69,6 +69,9 @@ pub struct Services {
     /// The bounds on magic-link requests (D-153, D-161): `COLOPHON_MAGIC_LINKS_PER_ADDRESS`
     /// and `COLOPHON_MAGIC_LINKS_PER_PROJECT`.
     pub magic_links: colophon_db::audience::MagicLinkLimits,
+    /// The origin delivery's media URLs start with (`COLOPHON_MEDIA_URL`, default the public
+    /// origin; D-178): `{media_origin}/media/v1/…`.
+    pub media_origin: String,
     /// How the server was installed (`COLOPHON_INSTALL_KIND`; `container` from the image,
     /// D-174), for the Studio's first-run hint; `None` when the installer didn't say.
     pub install_kind: Option<&'static str>,

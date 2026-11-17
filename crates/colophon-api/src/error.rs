@@ -596,19 +596,12 @@ impl ApiError {
             // installation's payload bound answers the same way (D-135).
             DbError::WorkFull { open, limit } => Self::WorkFull { open, limit },
             DbError::PayloadFull { pending, limit } => Self::PayloadFull { pending, limit },
-            // 422, at the very place in the content (media M1).
-            DbError::MissingAsset {
-                field,
-                position,
-                many,
-            } => Self::Invalid(colophon_domain::schema::Refusal {
+            // 422, at the very place in the content (media M1): an asset field's value, or the
+            // `assetId` of the rich-text image naming it (D-177).
+            DbError::MissingAsset { pointer } => Self::Invalid(colophon_domain::schema::Refusal {
                 code: "asset_not_found",
-                pointer: if many {
-                    format!("/{field}/{position}")
-                } else {
-                    format!("/{field}")
-                },
-                message: "this names no asset of the environment".to_owned(),
+                pointer,
+                message: "this names no upload in this environment's media library".to_owned(),
             }),
             other => Self::internal(other),
         }

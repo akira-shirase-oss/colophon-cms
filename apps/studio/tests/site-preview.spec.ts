@@ -1,4 +1,4 @@
-// Preview on the editor's own site (D-178), in the browser, without a colophon-server: the
+// Preview on the editor's own site (D-181), in the browser, without a colophon-server: the
 // management routes are answered by site-preview-world.ts as the contract says, and the editor's
 // site is a stub page that talks to the Studio the way the SDK's preview helper does. Covered:
 // the Settings card (checks as you type, save, the server's refusal said plainly, read-only for

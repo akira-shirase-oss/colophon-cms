@@ -8,6 +8,19 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Changed — read before upgrading
+
+- **Images inside rich text must name real uploads** (D-177). A rich-text `image` whose
+  `assetId` isn't an upload of the environment is refused `422 asset_not_found` at that
+  image's pointer. Drafts made with the old Studio dialog hold random placeholder ids, so they
+  are refused at their next save until each image is replaced or removed; the Studio marks the
+  image in place and offers Replace and Remove. Revisions saved before migration 0066 record no rich-text references until saved again.
+- **A replaced image reaches published pages at the next publish** (D-178). Delivery rows now
+  carry `media`: the versioned, immutable URL of each upload the release recorded, with its
+  size and renditions. A site using `url` keeps showing the released bytes after a replace
+  until the entries using it are published again; `current_url` follows the newest bytes.
+  `RENDER_VERSION` is 2, so cached delivery answers are refetched once.
+
 ### Added
 
 - **The TypeScript SDK is ready for npm (D-170):** `@colophon-cms/sdk` gains
@@ -25,7 +38,7 @@ through `--version` and `GET /version`.
   `/content/v1`'s shapes with the drafts laid over the latest release. Never cached, never
   indexed, re-checked against the issuer on every read, revocable. Set the address with
   `PUT {P}/preview-target`.
-- Preview in the Studio (D-178): Settings → Website connections → "Preview on your site", and
+- Preview in the Studio (D-181): Settings → Website connections → "Preview on your site", and
   a Preview menu in the entry editor that shows the saved draft on your site side by side or
   in a new tab, refreshed after each save; a publish request's page previews exactly what it
   will publish.
@@ -33,7 +46,7 @@ through `--version` and `GET /version`.
   previews from the browser (never with credentials).
 - `colophon preview ENTRY` (or `--changeset ID`) prints a one-time preview address for your
   site.
-- `@colophon-cms/sdk` preview helpers for your site (D-178): `previewClient`,
+- `@colophon-cms/sdk` preview helpers for your site (D-181): `previewClient`,
   `createPreviewHandler`, `previewTokenFromRequest`, `previewHeaders`, `exitPreviewHandler` and
   `listenForDraftUpdates`, with a guide for SvelteKit, Astro and Next.js
   (`docs/guides/preview.md`).
@@ -53,6 +66,22 @@ through `--version` and `GET /version`.
   attaches `colophon-studio-<version>.tar.gz` and the quick start's `compose.yaml`, pinned to the
   image's digest (`SHA256SUMS` now lists 24 files). An allocator job measures the musl server
   against a glibc build of the same commit (D-174, D-176).
+- Images inside rich text are tracked like every upload: publish-checked, kept from deletion,
+  listed under "Used in"; at most 200 distinct images per document (D-177).
+- The Studio inserts images into rich text from the media library (pick, search or upload,
+  then alt text, required), shows each image as itself with its state, and edits its alt text,
+  replaces or removes it from the keyboard; a pasted or dropped image is uploaded and inserted.
+- The Studio's Media page shows the whole library (paged, searchable, filtered by state and
+  tag), uploads many files at once through a bounded queue, and opens each upload's details:
+  its alt text, title, credit and tags (saved under If-Match, with a conflict state), versions,
+  where it's used, replace with the republish warning, both addresses to copy, and delete.
+- Renderer v2 (`@colophon-cms/rich-text`) gives images `width`, `height`, `srcset` and
+  `sizes` from the delivery row's `media`; the SDK's `mediaFor(row)` builds that for a site,
+  and the reference and demo sites use it.
+- `COLOPHON_MEDIA_URL`: the origin delivery's media URLs name (default the public origin).
+- The media library pages past 100 uploads (`cursor`, `next_cursor`), searches (`q`), filters
+  by `state` and `tag`, and keeps alt text, title, credit and tags via
+  `PATCH …/assets/{asset}` under `If-Match` (D-179).
 
 ### Security
 
