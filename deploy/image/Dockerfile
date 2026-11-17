@@ -30,6 +30,10 @@ RUN --mount=type=cache,target=/root/.npm \
 # Static musl binaries, as the release builds them (aws-lc's C code is compiled against musl
 # too). Alpine's native target is musl, so no cross toolchain is needed.
 FROM rust:1.99.1-alpine@sha256:44819b27be4c97b0e4d7203bd2e02c4820f97700211b6a37fb4c246a2de59383 AS compile
+SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
+# The packages come from the pinned Alpine release's own repository; a version pin there breaks
+# on every repository update without making the build any more reproducible than the digest.
+# hadolint ignore=DL3018
 RUN apk add --no-cache cmake make perl
 WORKDIR /src
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
@@ -45,9 +49,10 @@ ENV COLOPHON_COMMIT=$COLOPHON_COMMIT \
     CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS \
     CARGO_TERM_COLOR=never
 # The image's compiler is the pinned one (D-013): refuse to build with anything else.
-RUN channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml) \
-    && rustc --version | grep -q "^rustc $channel " \
-    || { echo "rust-toolchain.toml pins $channel but the image has $(rustc --version)" >&2; exit 1; }
+RUN channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml); \
+    if ! rustc --version | grep -q "^rustc $channel "; then \
+      echo "rust-toolchain.toml pins $channel but the image has $(rustc --version)" >&2; exit 1; \
+    fi
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" \
@@ -55,7 +60,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && mkdir /out \
     && cp target/release/colophon target/release/colophon-server /out/ \
     && for bin in /out/*; do \
-         if readelf -l "$bin" | grep -q 'program interpreter'; then echo "$bin is not static" >&2; exit 1; fi; \
+         interpreters=$(readelf -l "$bin" | grep -c 'program interpreter' || true); \
+         if [ "$interpreters" != 0 ]; then echo "$bin is not static" >&2; exit 1; fi; \
        done
 
 FROM scratch AS bins-source
@@ -63,8 +69,12 @@ COPY --from=compile /out/ /
 
 FROM scratch AS bins-prebuilt
 ARG TARGETARCH
+# `prebuilt` is a build context the release passes (--build-context), not a stage.
+# hadolint ignore=DL3022
 COPY --from=prebuilt linux-${TARGETARCH}/colophon linux-${TARGETARCH}/colophon-server /
 
+# One of the two stages above, by name; nothing is pulled.
+# hadolint ignore=DL3006
 FROM bins-${BINS} AS bins
 
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
