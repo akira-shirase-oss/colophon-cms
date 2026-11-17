@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 /// How often the pump sends queued hints (D-177): the most a live list's hint waits.
 const PUMP_EVERY: Duration = Duration::from_millis(100);
 
-/// Sends queued change hints until `cancel` fires (D-177): one pass every [`PUMP_EVERY`], and
+/// Sends queued change hints until `cancel` fires (D-177): one pass every 100 ms, and
 /// at once again while a pass comes back full. A failed pass waits for the next tick — the
 /// hints stay queued, so a database blip delays them and loses none that committed.
 pub async fn pump(pool: colophon_db::PgPool, cancel: CancellationToken) {
