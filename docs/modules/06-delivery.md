@@ -185,6 +185,8 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   time and table size.
 - **Not yet:** references populated by `depth` resolve to the published entry they name, not to its translation
   in the reader's language, and GraphQL doesn't take a locale yet (the MCP adapter has no delivery reads).
+  `/preview/v1` rows carry `locale` (the row's own tag) but don't take `?locale=`, map an untagged row to the
+  default language, or list `alternates` on entry reads yet.
 
 ### Cache keys (spec §15)
 - A key includes:
