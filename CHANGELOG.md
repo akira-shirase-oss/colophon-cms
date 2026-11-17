@@ -8,6 +8,15 @@ through `--version` and `GET /version`.
 
 ## [Unreleased]
 
+### Added
+
+- Draft preview on your own site, the backend (D-170, D-171): a person opens a preview of an
+  entry (with its translations) or a publish request; the site exchanges the address's
+  one-time code for a 15-minute bearer token and reads `/preview/v1`, which answers
+  `/content/v1`'s shapes with the drafts laid over the latest release. Never cached, never
+  indexed, re-checked against the issuer on every read, revocable. Set the address with
+  `PUT {P}/preview-target`; the Studio pane and the SDK's site helpers follow.
+
 ### Security
 
 The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-169). Each names the attack it
