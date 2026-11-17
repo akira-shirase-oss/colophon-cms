@@ -38,6 +38,10 @@ through `--version` and `GET /version`.
 The 2026-11-16 security fixes (D-148 to D-157, D-159 to D-169). Each names the attack it
 closes and carries a test that failed without it.
 
+- A content-migration run no longer un-gates an entry: the revision it wrote took the default
+  `public` visibility, so publishing a migrated member-only entry served it to anonymous
+  readers. The run's revision now keeps the gate of the draft it replaces, and revisions and
+  publications runs already wrote are corrected (D-175, migration 0067).
 - Magic links land only on an origin the project lists, and spending one retires its
   siblings (D-148); requests are bounded per client address first, then per recipient with
   an escalating cooldown, then per project (D-153, D-161).
