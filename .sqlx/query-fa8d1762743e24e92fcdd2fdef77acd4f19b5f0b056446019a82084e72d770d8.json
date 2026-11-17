@@ -1,0 +1,144 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.id, g.environment_id, e.slug AS environment, g.issuer_id, g.scope_kind,\n                  g.entry_id, g.changeset_id, g.changeset_hash, g.expires_at, g.revoked_at,\n                  g.expires_at <= now() AS \"expired!\"\n           FROM preview_grants g\n           JOIN environments e ON e.project_id = g.project_id AND e.id = g.environment_id\n           WHERE g.project_id = $1 AND g.token_hash = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "environment_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "environment_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "environment",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "environments",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "issuer_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "issuer_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "scope_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "scope_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "entry_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "changeset_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "changeset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "changeset_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "changeset_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "revoked_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "revoked_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "expired!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "fa8d1762743e24e92fcdd2fdef77acd4f19b5f0b056446019a82084e72d770d8"
+}

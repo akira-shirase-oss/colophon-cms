@@ -1,0 +1,103 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE preview_grants g\n         SET code_hash = NULL, code_expires_at = NULL, token_hash = $3, exchanged_at = now()\n         FROM environments e\n         WHERE g.project_id = $1 AND e.project_id = g.project_id AND e.id = g.environment_id\n           AND e.slug = $2 AND g.code_hash = $4 AND g.code_expires_at > now()\n           AND g.revoked_at IS NULL AND g.expires_at > now()\n         RETURNING g.id, g.issuer_id, g.scope_kind, g.entry_id, g.changeset_id,\n                   g.changeset_hash, g.expires_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "issuer_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "issuer_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "scope_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "scope_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "entry_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "changeset_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "changeset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "changeset_hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "changeset_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "preview_grants",
+            "name": "expires_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bytea",
+        "Bytea"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "b8cb730d89de891150965f02108cb63ec5e1f0d809e543f4d38f1d9dacc8c7d6"
+}

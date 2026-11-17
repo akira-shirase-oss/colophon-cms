@@ -178,6 +178,140 @@ pub async fn published_page(
     })
 }
 
+/// A preview's scope laid over a release (D-171): the query language's third source.
+/// `entries[i]` shows `revisions[i]` instead of its publication — or, when that is `None`,
+/// nothing at all (an unpublish item takes the entry out). Every other entry reads as
+/// published at `generation`, exactly as delivery pins it.
+#[derive(Debug, Clone, Copy)]
+pub struct Overlay<'a> {
+    /// The latest generation the preview lays its rows over (0 before the first release).
+    pub generation: i64,
+    /// The entries the scope names.
+    pub entries: &'a [Uuid],
+    /// What each of them shows, in the same order.
+    pub revisions: &'a [Option<Uuid>],
+    /// What a scope row says it is: `draft` or `changeset`.
+    pub source: &'a str,
+}
+
+/// The overlay's statement head (D-171): `$1` environment, `$2` collection, `$3`
+/// generation, `$4` the scope's entries, `$5` their revisions, `$6` the scope rows' source.
+/// The published half is delivery's own pin; the scope half reads each named revision of a
+/// live entry of the collection. It runs as `colophon_api` in the issuer's project
+/// transaction — never as `colophon_delivery`, which can't read drafts by design. Every
+/// preview read ([`crate::previews::list`], [`crate::previews::get`], [`overlay_page`]) is
+/// this head plus a tail, so the three can't disagree about what the preview shows.
+pub const OVERLAY: &str = "WITH scoped AS (
+     SELECT s.entry_id, s.revision_id
+     FROM unnest($4::uuid[], $5::uuid[]) AS s(entry_id, revision_id)
+ ), overlay AS (
+     SELECT p.entry_id, p.revision_id, p.collection, p.title, p.slug, p.content,
+            p.content_hash, p.valid_from, p.visibility, 'published'::text AS source
+     FROM publications p
+     WHERE p.project_id = nullif(current_setting('app.project_id', true), '')::uuid
+       AND p.environment_id = $1 AND p.collection = $2
+       AND p.valid_from <= $3 AND (p.valid_to IS NULL OR p.valid_to > $3)
+       AND p.revoked_in IS NULL
+       AND NOT EXISTS (SELECT 1 FROM scoped s WHERE s.entry_id = p.entry_id)
+     UNION ALL
+     SELECT r.entry_id, r.id, e.collection, r.title, r.slug, r.content, r.content_hash,
+            $3::bigint, r.visibility, $6::text
+     FROM scoped s
+     JOIN entries e
+       ON e.project_id = nullif(current_setting('app.project_id', true), '')::uuid
+      AND e.environment_id = $1 AND e.id = s.entry_id
+     JOIN revisions r
+       ON r.project_id = e.project_id AND r.environment_id = e.environment_id
+      AND r.entry_id = e.id AND r.id = s.revision_id
+     WHERE e.collection = $2
+ )";
+
+/// The overlay's select list, over `overlay p`: delivery's columns, the row's source, and
+/// the entry's creator for the issuer's `own` condition.
+pub const OVERLAY_ROWS: &str = " SELECT p.entry_id, p.revision_id, p.collection, p.title,
+     p.slug, p.content, p.content_hash, p.valid_from, p.visibility, p.source,
+     (SELECT c.created_by FROM entries c
+      WHERE c.project_id = nullif(current_setting('app.project_id', true), '')::uuid
+        AND c.environment_id = $1 AND c.id = p.entry_id) AS created_by
+ FROM overlay p";
+
+/// One page a query answered with over a preview's overlay (D-171).
+#[derive(Debug)]
+pub struct OverlayPage {
+    /// The page's rows in the query's order.
+    pub rows: Vec<crate::previews::OverlayRow>,
+    /// The sealed cursor for the page after this one, or `None` when this page is last.
+    pub next_cursor: Option<String>,
+}
+
+/// Runs `query` against `collection` as a preview sees it: [`OVERLAY`] with the query's
+/// filters, keyset and order over the combined rows — so locale, filter, sort and limit
+/// treat a draft exactly as they would treat it published.
+pub async fn overlay_page(
+    tx: &mut ProjectTransaction,
+    collection: &str,
+    definition: &ContentType,
+    query: &Query,
+    after: Option<&Position>,
+    overlay: &Overlay<'_>,
+) -> Result<OverlayPage, Error> {
+    let mut text = String::with_capacity(2048);
+    let mut args: Vec<Arg> = Vec::new();
+    let mut fields: HashMap<&str, usize> = HashMap::new();
+    args.extend([
+        Arg::Id(tx.environment),
+        Arg::Text(collection.to_owned()),
+        Arg::Generation(overlay.generation),
+        Arg::Ids(overlay.entries.to_vec()),
+        Arg::OptIds(overlay.revisions.to_vec()),
+        Arg::Text(overlay.source.to_owned()),
+    ]);
+    let order = query.order();
+    if let Some(position) = &after {
+        literals_fit(definition, &order, position)?;
+    }
+    text.push_str(OVERLAY);
+    text.push_str(OVERLAY_ROWS);
+    text.push_str(" CROSS JOIN LATERAL (SELECT p.content::jsonb AS body) d WHERE true");
+    tail(
+        &mut text,
+        &mut args,
+        &mut fields,
+        definition,
+        query,
+        after,
+        &order,
+        "p.entry_id",
+    )?;
+    let rows = bound(Statement { text, args })
+        .fetch_all(&mut *tx.transaction)
+        .await
+        .map_err(DbError::Query)?;
+    let limit = usize::from(query.limit());
+    let more = rows.len() > limit;
+    let mut page_rows = Vec::with_capacity(limit);
+    for row in rows.iter().take(limit) {
+        page_rows.push(crate::previews::overlay_row(row)?);
+    }
+    let next_cursor = if more {
+        let last = page_rows.last().ok_or(DbError::Corrupt(
+            "a page says more without a row to continue from",
+        ))?;
+        let position =
+            position_of(last.row.entry_id, &last.row.content, query).map_err(DbError::Corrupt)?;
+        let token = query
+            .cursor(&position)
+            .map_err(|_| DbError::Corrupt("a page's own position doesn't fit the query"))?;
+        Some(token)
+    } else {
+        None
+    };
+    Ok(OverlayPage {
+        rows: page_rows,
+        next_cursor,
+    })
+}
+
 /// The most ids one `ANY` expansion read carries (DX.5): one level's targets are
 /// fetched in chunks of it, so a page with very many named references stays a bounded
 /// statement — and never one read per row or per field.
@@ -285,6 +419,8 @@ fn bound(
             Arg::Text(value) => run.bind(value),
             Arg::OptText(value) => run.bind(value),
             Arg::Generation(value) | Arg::Rows(value) => run.bind(value),
+            Arg::Ids(value) => run.bind(value),
+            Arg::OptIds(value) => run.bind(value),
         };
     }
     run
@@ -305,6 +441,10 @@ enum Arg {
     Generation(i64),
     /// The row cap.
     Rows(i64),
+    /// A preview overlay's scope entries (D-171).
+    Ids(Vec<Uuid>),
+    /// What each scope entry shows; `NULL` takes it out.
+    OptIds(Vec<Option<Uuid>>),
 }
 
 /// The statement a [`Query`] translates to: its SQL text and the values to bind, kept

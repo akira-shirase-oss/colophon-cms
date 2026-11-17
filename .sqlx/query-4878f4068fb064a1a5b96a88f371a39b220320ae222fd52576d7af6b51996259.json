@@ -1,0 +1,61 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT c.hash,\n                  (SELECT r.generation FROM releases r\n                   WHERE r.project_id = c.project_id AND r.environment_id = c.environment_id\n                     AND r.changeset_id = c.id) AS released_in,\n                  first.entry_id AS \"first_entry?\", first.collection AS \"first_collection?\"\n           FROM changesets c\n           LEFT JOIN LATERAL (\n               SELECT i.entry_id, e.collection\n               FROM changeset_items i\n               JOIN entries e\n                 ON e.project_id = i.project_id AND e.environment_id = i.environment_id\n                AND e.id = i.entry_id\n               WHERE i.project_id = c.project_id AND i.environment_id = c.environment_id\n                 AND i.changeset_id = c.id\n               ORDER BY i.entry_id\n               LIMIT 1\n           ) first ON true\n           WHERE c.project_id = $1 AND c.environment_id = $2 AND c.id = $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "hash",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "changesets",
+            "name": "hash"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "released_in",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "first_entry?",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "changeset_items",
+            "name": "entry_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "first_collection?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "entries",
+            "name": "collection"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      true,
+      true
+    ]
+  },
+  "hash": "4878f4068fb064a1a5b96a88f371a39b220320ae222fd52576d7af6b51996259"
+}
