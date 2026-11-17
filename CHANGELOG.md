@@ -10,6 +10,15 @@ through `--version` and `GET /version`.
 
 ### Added
 
+- **The TypeScript SDK is ready for npm (D-170):** `@colophon-cms/sdk` gains
+  `client.compatibility()` and a `compat` option (`warn` by default, `throw`, `off`) that say
+  plainly when the server is too old or too new, by the CLI's rule (D-062). A packaging gate
+  checks what npm would ship on every push — file allowlist, size budget, publint, Are the
+  Types Wrong, and a scratch project that installs the tarballs, calls a stub server, compiles
+  the README's examples and bundles the client for a browser (4.5 KB min+gzip).
+- **`@colophon-cms/rich-text` (D-170):** the content renderer as its own zero-dependency
+  package, built from the one renderer the Studio uses, so a site reading the delivery API
+  renders rich text exactly as the Studio previews it.
 - **Secrets from files:** every secret setting also takes `<KEY>_FILE`, a path to a mounted
   secret; the admin commands take `COLOPHON_MIGRATION_DATABASE_URL_FILE` (D-171).
 - **`colophon admin init-roles`:** creates the server's database roles with passwords from
@@ -40,8 +49,9 @@ closes and carries a test that failed without it.
   per-account ceiling the owner's own addresses bypass; IPv6 clients are keyed by their /64
   (D-154, D-162). Sign-in keys are row-level secured by realm (D-166).
 - The owner-protecting triggers yield to roles, not to settings (D-155).
-- PostgreSQL over TLS (D-156); media at a bare address revalidates, versioned media is
-  immutable (D-157); anonymous live-list streams have their own budget (D-159).
+- PostgreSQL over TLS, and a database on another machine only with `sslmode=verify-full`
+  (D-156); media at a bare address revalidates, versioned media is immutable (D-157);
+  anonymous live-list streams have their own budget (D-159).
 - Development mail and the public development OIDC client need a localhost public origin
   as well as a loopback listener (D-163).
 - The public sign-in forms read at most 16 KiB of body (D-164); the retention sweep keeps
@@ -56,6 +66,12 @@ closes and carries a test that failed without it.
 
 - **Magic links stop until origins are listed:** `PUT {P}/audience/origins` must name each
   site a link may land on; until then a request is `422 return_to_not_allowed` (D-148).
+- **A database on another machine needs `sslmode=verify-full`:** the server and the admin
+  commands refuse to start on a non-loopback `COLOPHON_DATABASE_URL` or
+  `COLOPHON_MIGRATION_DATABASE_URL` with any other mode — `require` (what Neon's copied URL
+  says) takes any certificate, and `verify-ca` takes any publicly trusted one — and on
+  `channel_binding=require`, which the driver would ignore. Name a private CA with
+  `sslrootcert`. A loopback host or a Unix socket is unchanged (D-156).
 - **Private destinations need a flag:** a server reaches loopback, private or link-local
   addresses only with `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` — development only (D-149).
 - **Flags are strict:** a boolean setting is `1`/`true`/`0`/`false`; anything else stops the

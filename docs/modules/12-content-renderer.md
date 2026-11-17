@@ -7,7 +7,7 @@
 | Milestones | P0 (shared fixtures), P1–P3 (renderer used by the Studio and the blog) |
 | Proposed owner | Claude |
 | Depends on | Tiptap JSON produced by the Studio and validated by [domain](01-domain.md) |
-| Used by | studio (preview), web/blog template, release validation (renderer version) |
+| Used by | studio (preview), web/blog template, release validation (renderer version), outside sites through `@colophon-cms/rich-text` (D-170) |
 | Spec | §05, §19, §26 |
 
 ## Why it exists
@@ -19,6 +19,16 @@ renderer accepts raw HTML, stored XSS follows. A single, versioned renderer with
 
 Validated Tiptap JSON renders to identical, safe output in the Studio preview and on the public site. This is proven by
 fixtures shared with the Rust validator and by XSS payload tests.
+
+## Outside the monorepo
+
+`@colophon-cms/rich-text` (`packages/rich-text`, D-170) publishes this renderer for any site that
+reads the delivery API. It is not a second implementation: its build copies `src/render.ts` and the
+editor's `schema.ts` (and the stored format's types) and compiles them with no dependencies, failing
+if either source changes shape in a way the copy can't follow or would import a package. Its tests
+render every fixture from the built code, and the SDK's pack check does it again from the packed
+tarball. A change to `render.ts` reaches the package on the next build; `RENDERER_VERSION` is the
+package's signal that output changed.
 
 ## Responsibilities
 

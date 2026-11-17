@@ -46,7 +46,7 @@ use std::{str::FromStr, time::Duration};
 
 use sqlx::{
     Executor as _,
-    postgres::{PgConnectOptions, PgPoolOptions},
+    postgres::{PgConnectOptions, PgPoolOptions, PgSslMode},
 };
 
 pub use sqlx::postgres::{PgConnection, PgListener, PgPool};
@@ -89,6 +89,13 @@ pub enum DbError {
     #[error("invalid database URL: {reason}")]
     InvalidUrl {
         /// What was wrong, without the URL.
+        reason: String,
+    },
+    /// The URL would reach a database on another machine without proving it is the database
+    /// (D-156; [`check_url`]). The URL itself is never included.
+    #[error("database URL refused: {reason}")]
+    Unverified {
+        /// What is unsafe and how to fix the URL, without the URL.
         reason: String,
     },
     /// The query failed.
@@ -255,13 +262,169 @@ pub(crate) fn deleted_asset(error: &sqlx::Error) -> Option<uuid::Uuid> {
         .and_then(|detail| uuid::Uuid::try_parse(detail).ok())
 }
 
+/// Parses `url` and holds it to the TLS rule (D-156): a database on another machine is reached
+/// only with `sslmode=verify-full`, which checks both that a trusted authority signed the
+/// server's certificate and that the certificate names the host. Every other mode lets someone
+/// on the path answer as the database: `disable`, `allow` and `prefer` may talk in plain text,
+/// `require` encrypts but takes any certificate, and `verify-ca` skips the name check while
+/// this driver trusts the public (Mozilla) roots as well as any `sslrootcert` — so any publicly
+/// trusted certificate, for any name, passes it. `channel_binding=require` is refused
+/// everywhere: the driver doesn't do channel binding and would silently ignore it. This
+/// machine's own database (a loopback host or a Unix socket) needs no certificate.
+///
+/// The refusal names every problem and how to fix the URL, and never contains the URL.
+pub fn check_url(url: &str) -> Result<PgConnectOptions, DbError> {
+    let options = parse_url(url)?;
+    let mut problems = Vec::new();
+    if let Some(binding) = query_value(url, "channel_binding")
+        && !matches!(binding.as_str(), "disable" | "prefer")
+    {
+        problems.push(format!(
+            "channel_binding={binding} can't be honoured: this driver doesn't do channel \
+             binding and would ignore it. Remove channel_binding from the URL; \
+             sslmode=verify-full is what proves the server is the database"
+        ));
+    }
+    let host = options
+        .get_host()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    let local = options.get_socket().is_some()
+        || host.starts_with('/')
+        || host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback());
+    let mode = options.get_ssl_mode();
+    if !local && !matches!(mode, PgSslMode::VerifyFull) {
+        problems.push(format!(
+            "the database at {host} isn't checked to be who it says it is: sslmode={} {}. \
+             Use sslmode=verify-full, with sslrootcert=<CA file> if a private authority signs \
+             its certificate; only a loopback host or a Unix socket may go without",
+            ssl_mode_name(mode),
+            ssl_mode_weakness(mode),
+        ));
+    }
+    if problems.is_empty() {
+        Ok(options)
+    } else {
+        Err(DbError::Unverified {
+            reason: problems.join("; and "),
+        })
+    }
+}
+
+/// Stands in for an empty host. `postgres://app:x@/colophon?host=/var/run/postgresql` is
+/// libpq's way to name a Unix socket with credentials, but the URL parser refuses an empty
+/// host after a user name. `.invalid` never resolves (RFC 2606), so it can't reach anything.
+const NO_HOST: &str = "no-host.invalid";
+
+/// [`PgConnectOptions::from_str`], plus libpq's empty host after credentials: the host is then
+/// the query's `host=`, else the default sqlx picks for a URL with no host at all (`PGHOST`,
+/// a Unix socket it finds, or `localhost`).
+fn parse_url(url: &str) -> Result<PgConnectOptions, DbError> {
+    let invalid = |error: sqlx::Error| DbError::InvalidUrl {
+        reason: redact_url_error(&error),
+    };
+    let Some(filled) = fill_empty_host(url) else {
+        return PgConnectOptions::from_str(url).map_err(invalid);
+    };
+    let options = PgConnectOptions::from_str(&filled).map_err(invalid)?;
+    if options.get_socket().is_none() && options.get_host() == NO_HOST {
+        let default = PgConnectOptions::new_without_pgpass();
+        return Ok(options.host(default.get_host()));
+    }
+    Ok(options)
+}
+
+/// The URL with [`NO_HOST`] where its host is missing after credentials
+/// (`scheme://user@/…`, `scheme://user@:5433/…`); `None` for any other URL.
+fn fill_empty_host(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (userinfo, host_and_port) = rest[..end].rsplit_once('@')?;
+    (host_and_port.is_empty() || host_and_port.starts_with(':')).then(|| {
+        format!(
+            "{scheme}://{userinfo}@{NO_HOST}{host_and_port}{}",
+            &rest[end..]
+        )
+    })
+}
+
+/// The last value of `key` in the URL's query, percent-decoded as the driver decodes it.
+fn query_value(url: &str, key: &str) -> Option<String> {
+    let query = url.split_once('?')?.1;
+    let query = query.split_once('#').map_or(query, |(query, _)| query);
+    query
+        .rsplit('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(name, _)| decode_component(name) == key)
+        .map(|(_, value)| decode_component(value))
+}
+
+/// `application/x-www-form-urlencoded` decoding: `+` is a space and `%XX` a byte.
+fn decode_component(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        let escaped = (byte == b'%')
+            .then(|| bytes.get(index + 1..index + 3))
+            .flatten()
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match (byte, escaped) {
+            (_, Some(value)) => {
+                decoded.push(value);
+                index += 3;
+            }
+            (b'+', None) => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            (other, None) => {
+                decoded.push(other);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+/// libpq's name for a mode, as a URL spells it.
+fn ssl_mode_name(mode: PgSslMode) -> &'static str {
+    match mode {
+        PgSslMode::Disable => "disable",
+        PgSslMode::Allow => "allow",
+        PgSslMode::Prefer => "prefer",
+        PgSslMode::Require => "require",
+        PgSslMode::VerifyCa => "verify-ca",
+        PgSslMode::VerifyFull => "verify-full",
+    }
+}
+
+/// What a mode leaves open, for the refusal.
+fn ssl_mode_weakness(mode: PgSslMode) -> &'static str {
+    match mode {
+        PgSslMode::Disable | PgSslMode::Allow => "sends passwords and content in plain text",
+        PgSslMode::Prefer => {
+            "falls back to plain text and takes any certificate (it is the default when the \
+             URL names no sslmode)"
+        }
+        PgSslMode::Require => "encrypts but takes any certificate",
+        PgSslMode::VerifyCa => {
+            "doesn't check that the certificate names the host, and this driver trusts the \
+             public roots as well as sslrootcert, so any publicly trusted certificate passes"
+        }
+        PgSslMode::VerifyFull => "checks the certificate and the name",
+    }
+}
+
 /// Builds the pool without connecting. Connections open on first use, so the server starts
-/// (and reports "not ready") while the database is down, instead of failing to start.
+/// (and reports "not ready") while the database is down, instead of failing to start. The URL
+/// is held to [`check_url`]'s TLS rule first.
 pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError> {
-    let options = PgConnectOptions::from_str(url)
-        .map_err(|error| DbError::InvalidUrl {
-            reason: redact_url_error(&error),
-        })?
+    let options = check_url(url)?
         .application_name("colophon-server")
         .options([(
             "statement_timeout",
@@ -276,6 +439,24 @@ pub fn connect_lazy(url: &str, settings: PoolSettings) -> Result<PgPool, DbError
         .acquire_timeout(settings.acquire_timeout)
         .test_before_acquire(false)
         .connect_lazy_with(options))
+}
+
+/// Opens the change-hint listener's connection (D-108): its own, not one of the pool's, since
+/// `LISTEN` holds it for the process's life — built as sqlx's `PgListener::connect` builds it,
+/// but from [`check_url`]'s options, so the listener takes exactly the URLs the pool takes and
+/// is held to the same TLS rule.
+pub async fn listener(url: &str) -> Result<PgListener, DbError> {
+    let options = check_url(url)?.application_name("colophon-server");
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .max_lifetime(None)
+        .idle_timeout(None)
+        .connect_with(options)
+        .await
+        .map_err(DbError::Query)?;
+    PgListener::connect_with(&pool)
+        .await
+        .map_err(DbError::Query)
 }
 
 /// sqlx's URL errors describe the problem, but keep only the first line and drop anything
@@ -317,6 +498,151 @@ mod tests {
             !text.contains("hunter2"),
             "the password must never appear: {text}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_database_elsewhere_must_prove_who_it_is() {
+        // Off this machine only `verify-full` may connect (D-156): `prefer` (the default) and
+        // `require` take any certificate, and `verify-ca` — even with a root named — skips the
+        // name check while the driver trusts the public roots too, so any publicly trusted
+        // certificate passes. The refusal says how to fix the URL and never echoes it.
+        let remote = "postgres://app:s3cret@db.example.com/colophon";
+        for query in [
+            "",
+            "?sslmode=disable",
+            "?sslmode=allow",
+            "?sslmode=prefer",
+            "?sslmode=require",
+            "?sslmode=verify-ca",
+            "?sslmode=verify-ca&sslrootcert=/etc/colophon/db-ca.pem",
+        ] {
+            let error = connect_lazy(&format!("{remote}{query}"), PoolSettings::default())
+                .expect_err("an unverified remote database");
+            assert!(
+                matches!(error, DbError::Unverified { .. }),
+                "{query}: {error}"
+            );
+            let text = error.to_string();
+            assert!(text.contains("sslmode=verify-full"), "{query}: {text}");
+            assert!(text.contains("db.example.com"), "{query}: {text}");
+            assert!(!text.contains("s3cret"), "{query}: {text}");
+        }
+        for query in [
+            "?sslmode=verify-full",
+            "?sslmode=verify-full&sslrootcert=/etc/colophon/db-ca.pem",
+            "?sslmode=verify-full&channel_binding=prefer",
+            "?sslmode=verify-full&channel_binding=disable",
+        ] {
+            let result = connect_lazy(&format!("{remote}{query}"), PoolSettings::default());
+            assert!(result.is_ok(), "{query}: {result:?}");
+        }
+        // This machine's own database needs no certificate: loopback, by name or address, or
+        // a Unix socket — including libpq's empty host after credentials, which the URL parser
+        // alone refuses.
+        for url in [
+            "postgres://app:x@localhost/colophon",
+            "postgres://app:x@LocalHost:55432/colophon?sslmode=disable",
+            "postgres://app:x@127.0.0.1:55432/colophon?sslmode=require",
+            "postgres://app:x@[::1]/colophon?sslmode=disable",
+            "postgres:///colophon?host=/var/run/postgresql",
+            "postgres://app:x@/colophon?host=/var/run/postgresql",
+            "postgres://app:x@%2Fvar%2Frun%2Fpostgresql/colophon",
+            "postgres://app:x@db.example.com/colophon?host=/var/run/postgresql",
+        ] {
+            let result = connect_lazy(url, PoolSettings::default());
+            assert!(result.is_ok(), "{url}: {result:?}");
+        }
+        // A name that only looks local is still another machine.
+        for host in [
+            "localhost.example.com",
+            "127.0.0.1.nip.io",
+            "[::ffff:127.0.0.1]",
+        ] {
+            let result = connect_lazy(
+                &format!("postgres://app:x@{host}/colophon?sslmode=require"),
+                PoolSettings::default(),
+            );
+            assert!(
+                matches!(result, Err(DbError::Unverified { .. })),
+                "{host}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_binding_the_driver_would_ignore_is_refused() {
+        // Neon's URLs ask for `channel_binding=require`; sqlx doesn't implement channel binding
+        // and drops the parameter with a warning, so the URL would promise what the connection
+        // doesn't do. Refused on every host, with both problems named when sslmode is weak too.
+        for url in [
+            "postgres://app:s3cret@db.example.com/colophon?sslmode=verify-full&channel_binding=require",
+            "postgres://app:s3cret@127.0.0.1/colophon?channel_binding=require",
+            "postgres://app:s3cret@db.example.com/colophon?sslmode=verify-full&channel%5Fbinding=require",
+            "postgres://app:s3cret@db.example.com/colophon?sslmode=verify-full&channel_binding=requir",
+        ] {
+            let error = check_url(url).expect_err("channel binding refused");
+            let text = error.to_string();
+            assert!(text.contains("channel_binding="), "{url}: {text}");
+            assert!(text.contains("Remove channel_binding"), "{url}: {text}");
+            assert!(!text.contains("s3cret"), "{url}: {text}");
+        }
+        let neon = "postgres://app:s3cret@ep-quiet-1.eu-central-1.aws.neon.tech/colophon\
+                    ?sslmode=require&channel_binding=require";
+        let text = check_url(neon).expect_err("refused").to_string();
+        assert!(text.contains("channel_binding=require"), "{text}");
+        assert!(text.contains("sslmode=require"), "{text}");
+        assert!(text.contains("sslmode=verify-full"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn the_listener_takes_the_urls_the_pool_takes() {
+        // The change-hint listener used sqlx's own URL parser, which refuses libpq's empty host
+        // after credentials: the server started on such a URL and its live lists never did.
+        let url = "postgres://app:x@/colophon?host=/nonexistent/colophon-socket";
+        assert!(
+            PgListener::connect(url).await.is_err(),
+            "sqlx alone refuses it"
+        );
+        let error = listener(url).await.expect_err("there is no socket there");
+        assert!(
+            matches!(error, DbError::Query(_)),
+            "got as far as connecting: {error:?}"
+        );
+        let refused = listener("postgres://app:x@db.example.com/colophon?sslmode=require").await;
+        assert!(
+            matches!(refused, Err(DbError::Unverified { .. })),
+            "held to the TLS rule: {refused:?}"
+        );
+    }
+
+    #[test]
+    fn an_empty_host_after_credentials_is_the_query_host_or_the_default() {
+        // libpq reads `postgres://app:x@/colophon?host=/run/postgresql` as a Unix socket with
+        // credentials; the URL parser alone refuses it (an empty host after a user name).
+        let socket = check_url("postgres://app:p%2Bw@/colophon?host=/var/run/postgresql")
+            .expect("a Unix socket URL");
+        assert_eq!(
+            socket
+                .get_socket()
+                .map(|path| path.to_string_lossy().into_owned()),
+            Some("/var/run/postgresql".to_owned())
+        );
+        assert_eq!(socket.get_username(), "app");
+        assert_eq!(socket.get_database(), Some("colophon"));
+        // A port, and a TCP host in the query, both still apply.
+        let tcp =
+            check_url("postgres://app:x@:5433/colophon?host=db.example.com&sslmode=verify-full")
+                .expect("verify-full");
+        assert_eq!(tcp.get_host(), "db.example.com");
+        assert_eq!(tcp.get_port(), 5433);
+        assert!(
+            check_url("postgres://app:x@:5433/colophon?host=db.example.com&sslmode=require")
+                .is_err(),
+            "the host from the query is held to the rule"
+        );
+        // No host anywhere: the driver's default, never the stand-in.
+        let default = check_url("postgres://app:x@/colophon").expect("this machine");
+        assert_ne!(default.get_host(), NO_HOST);
     }
 
     #[tokio::test]
