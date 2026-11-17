@@ -119,7 +119,12 @@ export class Saver {
 			this.#latest = sent.content;
 			this.#newest = content;
 			this.#key = sent.key;
-			if (sent.locale !== undefined) this.locale = sent.locale;
+			if (sent.locale !== undefined) {
+				this.locale = sent.locale;
+				// Unknown until the answer, like the base's content: the resend carries the tag it
+				// carried the first time, so the server can replay it.
+				this.#savedLocale = '\u0000';
+			}
 			this.#keyFor = `${sent.base}\n${canonical(this.definition, sent.content)}\n${this.locale}`;
 			// The base's content is unknown here; nothing compares equal to it until the answer.
 			this.#saved = { '\u0000': true };
@@ -263,9 +268,11 @@ export class Saver {
 		}
 		this.#inFlight = true;
 		if (this.status !== 'retrying') this.status = 'saving';
-		// `?locale=` only rides a save that means it: a tag to set, or an explicit clear of a
-		// tag that was set — never-localized entries send none, so their URLs don't change.
-		const locale = this.locale === '' && this.#savedLocale === '' ? undefined : this.locale;
+		// `?locale=` only rides a save that changes it: a tag to set, or an explicit clear of a
+		// tag that was set. A save that leaves it alone sends none — the server keeps the tag —
+		// so an entry whose tag the project's languages no longer list still saves its fields
+		// (once a list exists, a write naming an unlisted tag is refused `locale_not_configured`).
+		const locale = this.locale === this.#savedLocale ? undefined : this.locale;
 		// Kept before it leaves, so a reload can send this exact request again.
 		this.#sent = { base: this.etag, key: this.#key, content, locale };
 		this.#keep(this.etag, this.#newest ?? this.#latest);
@@ -322,8 +329,9 @@ export class Saver {
 					if (this.#same(theirs.draft.content, mine) || (sent !== null && this.#same(theirs.draft.content, sent.content))) {
 						this.etag = theirs.etag;
 						this.#saved = theirs.draft.content;
+						this.#savedLocale = theirs.draft.locale ?? '';
 						this.onSaved(theirs);
-						if (this.#same(mine, this.#saved)) {
+						if (this.#same(mine, this.#saved) && this.locale === this.#savedLocale) {
 							this.status = 'saved';
 							forget(this.project, this.entry);
 						} else {

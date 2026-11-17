@@ -21,6 +21,7 @@
 	import CloudAlertIcon from '@lucide/svelte/icons/cloud-alert';
 	import CloudCheckIcon from '@lucide/svelte/icons/cloud-check';
 	import LoaderIcon from '@lucide/svelte/icons/loader-circle';
+	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 	import { Badge } from '@colophon/ui/ui/badge';
 	import { Button } from '@colophon/ui/ui/button';
 	import { Input } from '@colophon/ui/ui/input';
@@ -52,7 +53,7 @@
 	import ReaderView from './ReaderView.svelte';
 	import SiteCanvas from './SiteCanvas.svelte';
 	import ThemeLook from './ThemeLook.svelte';
-	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from './queries.ts';
+	import { ago, localesQuery, meQuery, projectQuery, releasesQuery, typesQuery } from './queries.ts';
 	import RichTextToolbar from './RichTextToolbar.svelte';
 	import StatusBadge from './shell/StatusBadge.svelte';
 	import TechnicalDetails from './shell/TechnicalDetails.svelte';
@@ -166,6 +167,39 @@
 	let versionLocale = $state('');
 	let addingVersion = $state(false);
 	let versionProblem = $state('');
+	// The project's languages (gap/locales): once listed, the entry's language and a new version's
+	// are chosen among them, and a tag the list doesn't have is marked. Without a list (or while
+	// it can't be read) any tag is typed, as before.
+	const languages = createQuery(() => localesQuery(project));
+	const listed = $derived(languages.data?.locales ?? []);
+	const defaultLanguage = $derived(listed.find((language) => language.default));
+	/** The listed language a tag names: the server matches tags case-insensitively. */
+	const listedAs = (tag: string) => listed.find((language) => language.tag.toLowerCase() === tag.toLowerCase());
+	/** What people call a language: its name in the list, else its tag. */
+	const languageName = (tag: string) => listedAs(tag)?.label ?? tag;
+	const unlisted = $derived(listed.length > 0 && saver.locale !== '' && listedAs(saver.locale) === undefined);
+	/** Tags the select must still show although no option has them as spelled: the saved one and
+	 *  the chosen one — named as their language when the list has it in another case. */
+	const strays = $derived(
+		listed.length === 0
+			? []
+			: [...new Set([latest.locale ?? '', saver.locale])]
+					.filter((tag) => tag !== '' && !listed.some((language) => language.tag === tag))
+					.map((tag) => ({ tag, shown: listedAs(tag) === undefined ? `${tag} — not in your languages` : `${listedAs(tag)?.label} — ${tag}` }))
+	);
+	/** A save the server refused for the language itself, said beside it. */
+	const localeRefused = $derived(
+		saver.status === 'refused' &&
+			(saver.pointer === '/locale' || ['locale_not_configured', 'invalid_locale', 'locale_taken', 'locale_required'].includes(saver.reason ?? ''))
+	);
+	/** The languages a new version may be in: listed, and not yet in this entry's group. */
+	const versionChoices = $derived(
+		listed.filter(
+			(language) =>
+				language.tag.toLowerCase() !== saver.locale.toLowerCase() &&
+				!latest.localizations.some((sibling) => sibling.locale?.toLowerCase() === language.tag.toLowerCase())
+		)
+	);
 
 	async function addVersion() {
 		const tag = versionLocale.trim();
@@ -174,7 +208,7 @@
 		versionProblem = '';
 		try {
 			const loaded = await createLocalization(project, collection, entry, tag);
-			toast.success(`Added the ${tag} version.`);
+			toast.success(`Added the ${languageName(tag)} version.`);
 			// The source's group changed under it: its cached draft (and the collection's
 			// lists) refetch rather than show a Versions card a sibling short.
 			void queryClient.invalidateQueries({ queryKey: ['draft', project, collection] });
@@ -770,22 +804,61 @@
 				</p>
 			{/if}
 
-			<!-- The entry's locale (D-087): saved with the next save like any change; empty is the
-				project's default. A grouped entry's own tag is shown in Versions below. -->
+			<!-- The entry's language (D-087, gap/locales): saved with the next save like any change.
+				With the project's languages listed, a choice among them, "Default language" being no
+				tag; without, any tag, empty for the default. A tag the list lacks is marked, and a
+				refusal of the language is said here, beside it. -->
 			<div class="mt-3 space-y-1.5" data-testid="entry-locale">
-				<label class="block font-medium text-foreground" for="entry-locale-input">Locale</label>
-				<Input
-					id="entry-locale-input"
-					class="h-8 text-xs"
-					placeholder="default (e.g. en, pt-BR)"
-					bind:value={saver.locale}
-					onchange={() => saver.edit(current())}
-				/>
-				<p class="text-muted-foreground">Which language this entry is written in, like <span class="font-mono">en</span> or <span class="font-mono">pt-BR</span>. Empty is the project's default.</p>
+				<div class="flex flex-wrap items-center gap-2">
+					<label class="block font-medium text-foreground" for="entry-locale-input">Language</label>
+					{#if unlisted}<Badge variant="pending" data-testid="locale-unlisted"><TriangleAlertIcon aria-hidden="true" />Not in your languages</Badge>{/if}
+				</div>
+				{#if listed.length > 0}
+					<select
+						id="entry-locale-input"
+						class="h-8 w-full rounded-md border border-input bg-card px-2 text-xs text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 aria-invalid:border-destructive"
+						bind:value={saver.locale}
+						onchange={() => saver.edit(current())}
+						aria-invalid={localeRefused || undefined}
+						aria-describedby={localeRefused ? 'entry-locale-hint entry-locale-problem' : 'entry-locale-hint'}
+						data-testid="entry-locale-select"
+					>
+						<option value="" disabled={latest.localizations.length > 0}>Default language{defaultLanguage === undefined ? '' : ` (${defaultLanguage.tag})`}</option>
+						{#each listed as language (language.tag)}
+							<option value={language.tag}>{language.label} — {language.tag}</option>
+						{/each}
+						{#each strays as stray (stray.tag)}
+							<option value={stray.tag}>{stray.shown}</option>
+						{/each}
+					</select>
+					<p id="entry-locale-hint" class="text-muted-foreground">
+						{#if unlisted}
+							This entry's language isn't one of the project's languages. Choose one of them; its other changes save as they are meanwhile.
+						{:else}
+							{`Which of the project's languages this entry is written in.${defaultLanguage === undefined ? '' : ` Default language counts as ${defaultLanguage.label}.`}`}
+						{/if}
+					</p>
+				{:else}
+					<Input
+						id="entry-locale-input"
+						class="h-8 text-xs"
+						placeholder="default (e.g. en, pt-BR)"
+						bind:value={saver.locale}
+						onchange={() => saver.edit(current())}
+						disabled={languages.isPending}
+						aria-invalid={localeRefused || undefined}
+						aria-describedby={localeRefused ? 'entry-locale-hint entry-locale-problem' : 'entry-locale-hint'}
+					/>
+					<p id="entry-locale-hint" class="text-muted-foreground">Which language this entry is written in, like <span class="font-mono">en</span> or <span class="font-mono">pt-BR</span>. Empty is the project's default.</p>
+				{/if}
+				{#if localeRefused}
+					<p id="entry-locale-problem" class="text-destructive" role="alert" data-testid="locale-problem">{saver.message}</p>
+				{/if}
 			</div>
 
 			<!-- Its localization group (D-087): this entry in bold, siblings as links that open
-				their own editors, and the "add a version" row. -->
+				their own editors, and the "add a version" row — a choice among the project's
+				languages once they are listed. -->
 			<section class="mt-3 space-y-1.5" aria-labelledby="versions-heading" data-testid="versions">
 				<h2 id="versions-heading" class="font-medium text-foreground">Versions</h2>
 				{#if latest.localizations.length === 0}
@@ -797,26 +870,47 @@
 								{#if sibling.id === entry}
 									<strong>This entry</strong>
 								{:else}
-									<a class="text-foreground underline underline-offset-2" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: sibling.id })}>{sibling.locale ?? 'default'}</a>
+									<a class="text-foreground underline underline-offset-2" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection, entry: sibling.id })}
+										>{sibling.locale === null ? 'default' : languageName(sibling.locale)}</a
+									>
 								{/if}
 								<Badge variant="secondary" class="font-mono">{sibling.id === entry ? (sibling.locale ?? 'default') : sibling.id.slice(0, 8)}</Badge>
 							</li>
 						{/each}
 					</ul>
 				{/if}
-				<div class="flex items-center gap-1.5">
-					<Input
-						class="h-8 w-24 text-xs"
-						placeholder="fr"
-						aria-label="Locale of the new version"
-						bind:value={versionLocale}
-						disabled={addingVersion}
-						data-testid="version-locale"
-					/>
-					<Button variant="outline" size="xs" onclick={addVersion} disabled={addingVersion || versionLocale.trim() === ''} data-testid="add-version">
-						{addingVersion ? 'Adding…' : 'Add version'}
-					</Button>
-				</div>
+				{#if listed.length > 0 && versionChoices.length === 0}
+					<p data-testid="versions-complete">Every one of the project's languages has a version.</p>
+				{:else}
+					<div class="flex flex-wrap items-center gap-1.5">
+						{#if listed.length > 0}
+							<select
+								class="h-8 w-full min-w-0 rounded-md border border-input bg-card px-2 text-xs text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40"
+								aria-label="Language of the new version"
+								bind:value={versionLocale}
+								disabled={addingVersion}
+								data-testid="version-locale"
+							>
+								<option value="" disabled>Choose a language</option>
+								{#each versionChoices as language (language.tag)}
+									<option value={language.tag}>{language.label} — {language.tag}</option>
+								{/each}
+							</select>
+						{:else}
+							<Input
+								class="h-8 w-24 text-xs"
+								placeholder="fr"
+								aria-label="Language of the new version"
+								bind:value={versionLocale}
+								disabled={addingVersion}
+								data-testid="version-locale"
+							/>
+						{/if}
+						<Button variant="outline" size="xs" onclick={addVersion} disabled={addingVersion || versionLocale.trim() === ''} data-testid="add-version">
+							{addingVersion ? 'Adding…' : 'Add version'}
+						</Button>
+					</div>
+				{/if}
 				{#if versionProblem !== ''}<p class="text-destructive" role="alert" data-testid="version-problem">{versionProblem}</p>{/if}
 			</section>
 
