@@ -238,7 +238,8 @@ expired-approval scheduling).
   and keys the cache by the chain and the policy version. Without `?locale=` every language comes back as before.
   Still open: the Studio's language settings and locale select (C2, on the same branch until its journey is
   green), `depth` population and GraphQL reads in a language, and the committed 1M-request
-  `delivery-locales` run and its large-collection cold-path run (only a smoke ran on the laptop).
+  `delivery-locales` run and its large-collection cold-path run (a 20,109-request smoke passed on the
+  laptop: 2,923 a second, p99 16 ms, nothing failed — laptop numbers, not capacity).
 - Scheduled publishing and unpublishing, with time zones and missed schedules shown as delayed (spec §06, §14). Built
   first, on the maintainer's request (D-060, branch `e/schedules`): publish requests scheduled in an IANA zone, DST
   edges chosen explicitly, run as their author by the worker with every publish check, published once or blocked
