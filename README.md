@@ -28,7 +28,8 @@
 > record where a release was actually seen. Roles are data, down to a field, with project API tokens and an append-only
 > audit log. Content modelling covers the Strapi and Sanity shapes — references the database refuses to let dangle,
 > objects, lists, page-builder blocks, locales — with schema migrations that dry-run every stored entry and resume
-> after a crash. The developer surface is whole: a bounded query API, GraphQL, a typed SDK, OpenAPI, Strapi/Sanity
+> after a crash. Delivery answers in one language with `?locale=` and per-environment fallbacks, labelling what it
+> served. The developer surface is whole: a bounded query API, GraphQL, a typed SDK, OpenAPI, Strapi/Sanity
 > import, and an MCP server where agents can draft and propose but never approve — enforced by an evaluation suite
 > gated on zero unauthorized actions. Operators get encrypted backups, a rehearsed six-stage restore, bounded-table
 > retention and a multi-instance stack that survives failover; sites get five Astro demos that rebuild themselves on

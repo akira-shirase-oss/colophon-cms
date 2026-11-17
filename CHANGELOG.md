@@ -39,7 +39,28 @@ closes and carries a test that failed without it.
   (D-169); a token on an unmatched path is redacted from logs (D-152); a magic link's token
   goes before a `return_to` fragment.
 
+### Added
+
+- Languages in delivery (D-170, D-171): each environment may list its languages with a
+  default and ordered fallbacks (`GET`/`PUT {P}/locales`), and `/content/v1` lists, entry
+  reads and queries take `?locale=` and `?fallback=`, answering one row per translation
+  group with what was served labelled, `alternates` on entry reads, and the cache keyed by
+  the chain and the policy version.
+
+### Fixed
+
+- Adding a translation of a page with a slug into a tag with capitals (`pt-BR`, `zh-Hant`)
+  was refused `invalid_slug`: the derived slug kept the tag's capitals. It is lowercased now
+  (`home-pt-br`).
+
 ### Changed — read before upgrading
+
+- Delivery rows gain `locale` (the row's tag, or the default language's for an untagged
+  entry) and entry reads gain `alternates`; the render version is now 2, so answers cached
+  under the old shape are not served. Without `?locale=` every language still comes back.
+  Once an environment lists languages, entry writes with an unlisted tag are refused
+  (`locale_not_configured`). The database function `delivery_environment` takes a third
+  argument (migration 0065).
 
 - **Magic links stop until origins are listed:** `PUT {P}/audience/origins` must name each
   site a link may land on; until then a request is `422 return_to_not_allowed` (D-148).

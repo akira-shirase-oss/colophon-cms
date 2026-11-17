@@ -56,7 +56,7 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   `…/{collection}/{entry}`, with no sign-in, from `publications` as `colophon_delivery` (`colophon_db::delivery`,
   which switches role for each transaction). Answers carry `Colophon-Generation`; a list's cursor keeps the
   generation of its first page; a generation that hasn't committed is 422 `invalid_generation`. Projects are
-  addressed by id; locales come later.
+  addressed by id; languages are chosen with `?locale=` (E, D-171, below).
 - Step 3.1 (D-048) adds a strong `ETag` (304 for a matching `If-None-Match`), the cache policies below,
   `Cache-Tag`, and `Colophon-Cache: hit | miss | coalesced | bypass`.
 - Step 3.2 (D-049): revoked publications are never delivered; an unpublished entry is 410 `gone`.
@@ -82,8 +82,8 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   inside the fill's transaction — so a populated reference reads exactly the release its row does, and a
   publication revoked or taken down since resolves to nothing, staying the stored id at any generation.
   `applied` echoes the canonical
-  document and its `query_hash`, and publications carry no locale, so every answer is in the stored one until
-  locale lands on the projection.
+  document and its `query_hash`. With `?locale=` the rows are resolved to one per translation group first, and
+  the document's filters, order and keyset run over what readers of that language get (D-171, below).
 
 ### Gated content (P7, D-137)
 - Every draft, revision and publication carries a `visibility`: `public` (the default), `authenticated` (any
@@ -104,6 +104,88 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   simply anonymous — delivery never 401s a public collection, it answers the public rows, and the member
   answer's `Vary: Authorization, Cookie` keeps any shared cache between the two honest.
 
+### Locales (E, D-170, D-171)
+- **What a publication says.** A revision pins the tag its entry had when it was written (`revisions.locale`,
+  set by a trigger on every insert, so saves, creates, translations, bulk items and the content-migration run all
+  pin alike; a save that changes the tag moves the entry first). A release copies it into the projection
+  (`publications.locale`) beside the translation group (`publications.group_key`: the entry's `localization_id`,
+  or its own id when it has none — a new group takes its source's id, so a page published before it was
+  translated stays in its group). Delivery reads the locale from there, never from the moving draft. Migration
+  0065 backfilled revisions from their entry's tag at the time, which is exact for every revision written since
+  and an approximation for older ones whose entry changed its tag later.
+- **The policy.** Each environment may list its languages (`environment_locales`, `GET|PUT {P}/locales`, D-170):
+  at most 50 tags, one default (the language of entries with no tag), each with up to four ordered fallbacks
+  drawn from the list, and a non-empty list must cover every tag live entries carry (`locale_in_use`). Every
+  replace bumps `environments.locale_policy_version`. Once a list exists, entry
+  writes refuse unlisted tags (`locale_not_configured`) and store listed ones in the list's spelling, and a
+  request's tag is respelled the same way: the list matches without case, delivery then compares spellings
+  exactly. Without a list, tags are matched as written.
+- **The read.** `?locale=<tag>` answers in one language; `?fallback=policy` (the default: the tag's own chain),
+  `none`, or up to four tags names what to try next. The chain is `[tag, ...fallbacks]`; an untagged entry counts
+  as the default language. With a list, a tag (or fallback) outside it is 422 `unknown_locale` — the list bounds
+  the keys a cache can hold; without one any well-formed tag is accepted and a miss is an empty page, which is
+  never stored — and named fallbacks are refused (`invalid_fallback`), since they would give every made-up tag a
+  real answer worth storing. With a list, explicit chains are drawn from it, so the keys stay finite. A malformed tag is `invalid_locale`, a bad fallback `invalid_fallback`.
+  - Lists and queries give **one row per translation group**: the group's earliest tag in the chain that it
+    publishes at the generation. Groups with nothing in the chain are left out. A list pages by group, newest
+    first, with a `d2:` cursor that names the generation, the chain's digest and the last group; a cursor
+    from another language's page is refused. A query resolves first and then filters, sorts and pages, so a
+    filter matches what a reader of that language gets.
+  - An entry read answers the entry's best translation: `id` is the translation's, `requested_id` the one in
+    the URL. Nothing in the chain is 404 `not_in_locale` with `details.available`, the group's published tags.
+    The id must be one that has been published at some generation (its group is found from its publications).
+  - Every row names `locale` — its tag, or the default's for an untagged entry, `null` with no default — with
+    or without `?locale=`; on a locale read it also carries `localization: {requested, resolved, fallback}`.
+    Every entry read carries `alternates: [{id, locale, slug}]`, the other translations published at the same
+    generation, for `hreflang`.
+  - Answers carry `Colophon-Locale-Policy: <version>`, and `Content-Language: <requested tag>` on locale reads.
+  - Without `?locale=` every language comes back, as before: the default stays compatible until a later
+    decision changes it.
+- **Pinned reads** (`?generation=`) return the content exactly as it was, but resolve with the **current**
+  policy unless `?fallback=` names the chain itself; `Colophon-Locale-Policy` says which policy answered.
+  Versioning policies per generation would make every settings change a release.
+- **Gated content.** Resolution runs inside the reader's own row-level security, so a member-only translation
+  is never an anonymous reader's answer or fallback: the anonymous reader falls through to the next public
+  member of the chain, and never sees the gated one in `alternates` or `available`
+  (`crates/colophon-db/tests/delivery_locales.rs`).
+- **Cache.** Keys name the policy version (every key: an untagged row's `locale` is the policy's default) and,
+  on a locale read, the chain's digest (`Scope::locale`), so `fr` and `fr` falling back to `en` are different
+  answers and a policy change never serves an old resolution. `RENDER_VERSION` is 2, since every row gained
+  `locale`. Tags are unchanged — collection and entry — so a purge of a translation's collection reaches every
+  language's pages.
+- **Plans.** A page in one language reads each tag of its chain straight off its own range of
+  `publications_by_locale (project_id, environment_id, collection, locale, group_key DESC)` — at most
+  `limit + 1` rows a tag, plus the untagged range when the default is in the chain — then keeps each group's
+  best member (`DeliveryTransaction::list_in_locale`). The first `limit` groups overall are among the first
+  `limit` of each tag they publish, so those per-tag pages hold every group the page needs and every member they
+  have in the chain: a page costs about `chain length × (limit + 1)` index rows however large the collection is
+  and however rare the tags. Tags compare exactly: under `colophon_delivery`'s row security only leakproof
+  comparisons become index conditions (`lower()` isn't one — an earlier draft keyed `lower(locale)` and every
+  read became a filtered scan), so writes store the list's spelling and requests are respelled to it. An
+  entry's translations are its group's rows (`publications_by_group`). A 404 `not_in_locale`, like any 404, is
+  never cached: each one is a Postgres read.
+- **Locale read plans** (`EXPLAIN (ANALYZE, BUFFERS)` as `colophon_delivery`, anonymous, generic plans; a
+  laptop under heavy load from other work, so read the shapes, not the milliseconds): one collection seeded with
+  50,000 groups — `en` and `pt` in every group, `pt-BR` in one in ten, 105,007 publications.
+
+  | Read | Plan | Rows read | Time |
+  |---|---|---|---|
+  | `pt-BR` → `pt` → `en`, first page of 21 | three `publications_by_locale` ranges (`locale = t.tag`) and the untagged range, Unique | 64 | 0.9 ms |
+  | `pt-BR` alone, a page from the middle | one range, `group_key < $6` in the index condition | 21 | 0.1 ms |
+  | `fr` alone, published in no group | one empty range | 0 | 4 ms (cold) |
+  | `fr` → `de`, neither published | two empty ranges | 0 | 0.2 ms |
+  | the first design, a walk of `publications_by_group` in group order, for `fr` alone | the whole collection, filtered | 105,006 | 2.4 s cold, 265 ms warm |
+
+  The last row is why the read walks tags, not groups. A **query** (`POST …/query?locale=`) can't bound its
+  read the same way — its filters and order apply to what each group resolves to, so every group is resolved
+  first: a sequential scan and a sort of the collection's rows (about 0.9 s for this collection on this machine,
+  the sort spilling to disk). That is over the 250 ms cold-fill budget; cached answers aren't affected. The
+  documented next step, if real collections need it, is resolving per language at release time into an
+  interval table (`publication_locales`) that queries can filter directly; deferred, since it costs publish
+  time and table size.
+- **Not yet:** references populated by `depth` resolve to the published entry they name, not to its translation
+  in the reader's language, and GraphQL doesn't take a locale yet (the MCP adapter has no delivery reads).
+
 ### Cache keys (spec §15)
 - A key includes:
   - project, environment, recovery epoch, release generation and locale;
@@ -114,7 +196,8 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   reintroduce an older publication.
 - Generations from different epochs are never interchangeable.
 - Built in step 3.1 (D-048): `colophon_domain::cache::Scope` (render version, project, environment, epoch,
-  generation; then limit, cursor position and the collection, last). Ids are fixed-width hex, so the collection name
+  generation, latest unpublish, locale policy version and — on a `?locale=` read — the chain's digest; then
+  limit, cursor position and the collection, last). Ids are fixed-width hex, so the collection name
   is the only free text in a key. Unknown query parameters don't change an answer and aren't in its key. Each request
   resolves its generation from Postgres in one statement, before and apart from the cache: `delivery_environment`
   (migration 0011) runs as `colophon_delivery` in the project's context and returns only the environment's id, epoch
@@ -196,8 +279,8 @@ These are policies to test, not a global 30-second consistency guarantee.
 - Sitemaps, feeds and language alternates are generated from a single published generation.
 - Canonical URLs are normalized against the verified site configuration.
 - A slug change proposes a reviewed redirect, with cycles and collisions rejected.
-- Locale fallback follows an explicit project policy: none by default; it resolves only to published revisions and
-  labels the resolved locale.
+- Locale fallback follows an explicit environment policy (D-170): none until a list names fallbacks; it resolves
+  only to published revisions and labels the resolved locale (built in E, above). Sitemaps and feeds aren't built.
 
 ## Invariants
 

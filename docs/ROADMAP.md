@@ -230,7 +230,15 @@ expired-approval scheduling).
 **Goal:** everything an editorial team does in Strapi or Sanity, with nothing lost and every change attributed.
 
 - Localization: locale variants with their own slugs, drafts and publication history (spec §06), the locale switcher,
-  fallbacks as explicit policy.
+  fallbacks as explicit policy. Variants and groups are built (D-087, migration 0034). Delivery in one language is
+  built (D-170, D-171, branch `gap/locales`, migration 0065): revisions pin their tag and releases copy it with the
+  translation group; each environment may list its languages with a default and ordered fallbacks
+  (`GET`/`PUT {P}/locales`); `/content/v1` takes `?locale=` and `?fallback=` on lists, entry reads and queries,
+  resolves one row per group inside the reader's own row security, labels what it served, lists `alternates`,
+  and keys the cache by the chain and the policy version. Without `?locale=` every language comes back as before.
+  Still open: the Studio's language settings and locale select (C2, on the same branch until its journey is
+  green), `depth` population and GraphQL reads in a language, and the committed 1M-request
+  `delivery-locales` run and its large-collection cold-path run (only a smoke ran on the laptop).
 - Scheduled publishing and unpublishing, with time zones and missed schedules shown as delayed (spec §06, §14). Built
   first, on the maintainer's request (D-060, branch `e/schedules`): publish requests scheduled in an IANA zone, DST
   edges chosen explicitly, run as their author by the worker with every publish check, published once or blocked
