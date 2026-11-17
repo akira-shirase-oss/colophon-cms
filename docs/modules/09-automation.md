@@ -102,7 +102,7 @@ answers `initialize` with 2025-11-25, the one version it speaks.
   | `get_publish_request` (id) | `GET {P}/changesets/{id}` | |
   | `list_releases` (cursor) | `GET {P}/releases` | |
   | `get_release` (generation) | `GET {P}/releases/{generation}` | |
-  | `list_migrations` (collection, state, cursor) | `GET {P}/migrations` | |
+  | `list_migrations` (collection, state) | `GET {P}/migrations` (the newest 100) | |
   | `get_migration` (id) | `GET {P}/migrations/{id}` | |
   | `list_migration_items` (id, outcome, cursor) | `GET {P}/migrations/{id}/items` | |
   | `list_comments` (collection, entry, revision, state, cursor) | `GET {P}/collections/{c}/entries/{id}/comments` | |

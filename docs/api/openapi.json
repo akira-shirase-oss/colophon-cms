@@ -839,6 +839,11 @@
             ]
           },
           "kind": {
+            "enum": [
+              "webhook",
+              "cdn",
+              "probe"
+            ],
             "type": "string"
           },
           "last_error": {
@@ -848,6 +853,7 @@
             ]
           },
           "location": {
+            "description": "a probe's pinned location",
             "type": [
               "string",
               "null"
@@ -857,15 +863,35 @@
             "type": "string"
           },
           "state": {
+            "description": "`covered`: a later release's job succeeded, which covers this one (`covered_by`)",
+            "enum": [
+              "done",
+              "covered",
+              "pending",
+              "failed"
+            ],
             "type": "string"
           },
           "status": {
+            "description": "its job for this very release, if it had one",
             "type": [
               "string",
               "null"
             ]
           }
         },
+        "required": [
+          "destination_id",
+          "name",
+          "kind",
+          "location",
+          "state",
+          "covered_by",
+          "status",
+          "attempts",
+          "last_error",
+          "finished_at"
+        ],
         "type": "object"
       },
       "DestinationEnabled": {
@@ -2921,26 +2947,104 @@
         "type": "object"
       },
       "ReceiptView": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ReleaseView"
-          }
-        ],
-        "description": "a release plus its deliveries and observations — the publish receipt",
+        "description": "a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt",
         "properties": {
+          "changeset_hash": {
+            "description": "the approved hash it published",
+            "type": "string"
+          },
+          "changeset_id": {
+            "format": "uuid",
+            "type": "string"
+          },
           "deliveries": {
             "items": {
               "$ref": "#/components/schemas/DeliveryView"
             },
             "type": "array"
           },
+          "entries": {
+            "description": "entries whose published revision changed",
+            "type": "integer"
+          },
+          "epoch": {
+            "description": "the environment's epoch when it committed",
+            "type": "integer"
+          },
+          "generation": {
+            "description": "its number in the environment: 1 for the first, up by exactly one each release",
+            "type": "integer"
+          },
+          "label": {
+            "description": "the release's one label (D-051); `verified` is at `locations` locations",
+            "enum": [
+              "published",
+              "pending",
+              "verified",
+              "needs_attention"
+            ],
+            "type": "string"
+          },
+          "locations": {
+            "description": "distinct locations a probe saw this release, or a later one, from",
+            "type": "integer"
+          },
           "observations": {
             "items": {
               "$ref": "#/components/schemas/SeenView"
             },
             "type": "array"
+          },
+          "published_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "published_by": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "published_by_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purge": {
+            "description": "whether the environment's CDNs accepted a purge covering it (D-050)",
+            "enum": [
+              "none",
+              "pending",
+              "accepted",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "description": "the changeset's title",
+            "type": "string"
+          },
+          "unpublished": {
+            "description": "entries it took down",
+            "type": "integer"
           }
         },
+        "required": [
+          "deliveries",
+          "observations",
+          "generation",
+          "epoch",
+          "changeset_id",
+          "title",
+          "changeset_hash",
+          "published_by",
+          "published_by_name",
+          "published_at",
+          "entries",
+          "unpublished",
+          "purge",
+          "label",
+          "locations"
+        ],
         "type": "object"
       },
       "ReferrerView": {
@@ -2967,6 +3071,7 @@
       "ReleaseView": {
         "properties": {
           "changeset_hash": {
+            "description": "the approved hash it published",
             "type": "string"
           },
           "changeset_id": {
@@ -2974,18 +3079,29 @@
             "type": "string"
           },
           "entries": {
+            "description": "entries whose published revision changed",
             "type": "integer"
           },
           "epoch": {
+            "description": "the environment's epoch when it committed",
             "type": "integer"
           },
           "generation": {
+            "description": "its number in the environment: 1 for the first, up by exactly one each release",
             "type": "integer"
           },
           "label": {
+            "description": "the release's one label (D-051); `verified` is at `locations` locations",
+            "enum": [
+              "published",
+              "pending",
+              "verified",
+              "needs_attention"
+            ],
             "type": "string"
           },
           "locations": {
+            "description": "distinct locations a probe saw this release, or a later one, from",
             "type": "integer"
           },
           "published_at": {
@@ -3003,16 +3119,39 @@
             ]
           },
           "purge": {
-            "description": "the purge job's state for this release",
+            "description": "whether the environment's CDNs accepted a purge covering it (D-050)",
+            "enum": [
+              "none",
+              "pending",
+              "accepted",
+              "failed"
+            ],
             "type": "string"
           },
           "title": {
+            "description": "the changeset's title",
             "type": "string"
           },
           "unpublished": {
+            "description": "entries it took down",
             "type": "integer"
           }
         },
+        "required": [
+          "generation",
+          "epoch",
+          "changeset_id",
+          "title",
+          "changeset_hash",
+          "published_by",
+          "published_by_name",
+          "published_at",
+          "entries",
+          "unpublished",
+          "purge",
+          "label",
+          "locations"
+        ],
         "type": "object"
       },
       "RemovedView": {
@@ -3323,12 +3462,22 @@
             "type": "string"
           },
           "observed_generation": {
+            "description": "the release the answer said it was built from, if it said",
             "type": [
               "integer",
               "null"
             ]
           }
         },
+        "required": [
+          "destination_id",
+          "location",
+          "observed_generation",
+          "http_status",
+          "body_hash",
+          "error",
+          "observed_at"
+        ],
         "type": "object"
       },
       "SetUp": {
@@ -4215,7 +4364,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -5276,7 +5425,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -5899,7 +6048,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -6891,7 +7040,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -7458,7 +7607,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -7763,11 +7912,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -7778,7 +7924,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the latest 100 changesets; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -9070,7 +9216,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -10116,7 +10262,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -11868,11 +12014,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -11883,7 +12026,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "every shared component; one answer (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -12418,11 +12561,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -12433,7 +12573,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "every content type; one answer (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -13124,11 +13264,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -13139,7 +13276,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the first 100 destinations; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -13594,11 +13731,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -13609,7 +13743,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the newest 100 jobs; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -14006,11 +14140,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -14021,7 +14152,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the newest 100 plans; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -14888,7 +15019,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -15282,6 +15413,25 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "page size: 1–100, default 100",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "the `next_cursor` a previous page answered",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -15297,7 +15447,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -15312,7 +15462,7 @@
                 }
               }
             },
-            "description": "the current generation is in `Colophon-Generation`",
+            "description": "a page of releases, newest first; the current generation is in `Colophon-Generation`",
             "headers": {
               "Colophon-Generation": {
                 "schema": {
@@ -15320,6 +15470,16 @@
                 }
               }
             }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`bad_request` — `limit` out of range, or a cursor that isn't this list's"
           },
           "401": {
             "content": {
@@ -15996,11 +16156,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -16011,7 +16168,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "up to 100 pending schedules in time order, then the 20 most recently finished; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -16295,7 +16452,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
@@ -16865,11 +17022,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -16880,7 +17034,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the newest 1,000 invitations; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -17186,11 +17340,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -17201,7 +17352,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "up to 1,000 members, owners first; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -17512,11 +17663,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -17527,7 +17675,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "up to 100 roles, the built-in ones first; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -18106,11 +18254,8 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
-                      "type": [
-                        "string",
-                        "null"
-                      ]
+                      "description": "always `null`: this list answers in one page",
+                      "type": "null"
                     }
                   },
                   "required": [
@@ -18121,7 +18266,7 @@
                 }
               }
             },
-            "description": "ok"
+            "description": "the newest 200 tokens; no further pages (`next_cursor` is always `null`)"
           },
           "401": {
             "content": {
@@ -20231,7 +20376,7 @@
                       "type": "array"
                     },
                     "next_cursor": {
-                      "description": "pass back as `?cursor=`; `null` on the last page",
+                      "description": "pass back in the operation's cursor parameter for the next page; `null` on the last page",
                       "type": [
                         "string",
                         "null"
