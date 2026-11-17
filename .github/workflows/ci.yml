@@ -323,8 +323,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx -w @colophon/studio playwright install --with-deps chromium
+      - name: Install k6 (pinned)
+        run: |
+          scripts/install-k6.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
       - name: The quick start, as documented (scripts/quickstart.sh)
-        run: scripts/quickstart.sh --image colophon:local --browser --record
+        run: scripts/quickstart.sh --image colophon:local --browser --load --record
       - name: Timings and sizes
         if: always()
         run: |
