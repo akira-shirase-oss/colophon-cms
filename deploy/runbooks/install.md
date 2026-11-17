@@ -132,7 +132,9 @@ docker run --rm -v colophon-quickstart_garage:/data:ro -v "$PWD":/backup alpine:
 docker compose start garage
 ```
 
-Restore into a fresh install: start it once (`up -d --wait`), stop `colophon` and `garage`, load
+Not yet drilled end to end on the quick start (the production backup and restore are, in
+`deploy/runbooks/backup.md` and `restore.md`); treat these steps as the plan until a drill
+records them. Restore into a fresh install: start it once (`up -d --wait`), stop `colophon` and `garage`, load
 the dump with the same `sh -c` wrapper around `pg_restore --clean --if-exists -h 127.0.0.1 -U
 colophon -d colophon <colophon.dump`, untar the uploads into the `garage` volume, and
 `docker compose up -d --wait` again. The volume names start with the compose project's name,
