@@ -23,7 +23,7 @@
       "name": "clone",
       "source": "isolation",
       "readme": "git clone <the repository>; the overlay adds this checkout's uncommitted changes",
-      "command": "git clone /Users/vinaysandhu/Desktop/Learning/akira-shirase-oss/projects/colophon-cli /var/folders/sb/mn20kb4x125493sdz6s5bbpr0000gn/T//colophon-clean-install.mkgqXS/repo (+ 8 working-tree files)",
+      "command": "git clone ~/Desktop/Learning/akira-shirase-oss/projects/colophon-cli /var/folders/sb/mn20kb4x125493sdz6s5bbpr0000gn/T//colophon-clean-install.mkgqXS/repo (+ 8 working-tree files)",
       "seconds": 1,
       "exit_code": 0,
       "status": "ok"
