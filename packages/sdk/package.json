@@ -19,6 +19,7 @@
   },
   "type": "module",
   "sideEffects": false,
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -27,10 +28,12 @@
     "./api.types": {
       "types": "./dist/api.types.d.ts",
       "default": "./dist/api.types.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22.17"
@@ -40,15 +43,19 @@
     "check": "tsc --noEmit && node scripts/gen-types.mjs --check",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "pack-check": "node scripts/pack-check.mjs"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
     "@types/node": "24.19.2",
     "openapi-typescript": "7.13.0",
+    "publint": "0.3.25",
     "typescript": "5.9.3",
     "vitest": "5.0.5"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   }
 }
