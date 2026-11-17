@@ -141,3 +141,93 @@ test('an article is taken down through a reviewed changeset, and delivery says i
 	);
 	expect(after).toEqual({ listed: 0, statuses: [410, 410] });
 });
+
+/** `count` releases, one new article each, published in order through the API — as fast as the
+ *  rate limit allows (a turned-away request waits as asked and goes again, with the same key). */
+async function manyReleases(page: Page, project: string, count: number): Promise<void> {
+	await page.evaluate(
+		async ([project, count]) => {
+			const csrf = document.cookie.split('; ').find((pair) => pair.startsWith('colophon_csrf='))?.slice('colophon_csrf='.length) ?? '';
+			const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
+			const key = () => crypto.randomUUID().replaceAll('-', '');
+			const base = `/api/v1/projects/${project}/environments/production`;
+			async function ok(send: () => Promise<Response>, what: string): Promise<Response> {
+				for (;;) {
+					const answer = await send();
+					if (answer.status === 429) {
+						await new Promise((done) => setTimeout(done, 1000 * Number(answer.headers.get('retry-after') ?? '1')));
+						continue;
+					}
+					if (!answer.ok) throw new Error(`setup: ${what}: HTTP ${answer.status} ${await answer.text()}`);
+					return answer;
+				}
+			}
+			for (let generation = 1; generation <= count; generation++) {
+				const title = `Release ${generation}`;
+				const body = { title, body: { schema: 'colophon/rich-text', version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] } } };
+				const entryKey = key();
+				const entry = await ok(
+					() => fetch(`${base}/collections/articles/entries`, { method: 'POST', headers: { ...headers, 'Idempotency-Key': entryKey }, body: JSON.stringify(body) }),
+					`${title}: entry`
+				);
+				const entryId = ((await entry.json()) as { data: { id: string } }).data.id;
+				const setKey = key();
+				const made = await ok(
+					() => fetch(`${base}/changesets`, { method: 'POST', headers: { ...headers, 'Idempotency-Key': setKey }, body: JSON.stringify({ title, entries: [entryId] }) }),
+					`${title}: changeset`
+				);
+				const set = ((await made.json()) as { data: { id: string; hash: string } }).data;
+				const ifMatch = { ...headers, 'If-Match': `"${set.hash}"` };
+				await ok(() => fetch(`${base}/changesets/${set.id}/submit`, { method: 'POST', headers: ifMatch }), `${title}: submit`);
+				await ok(
+					() => fetch(`${base}/changesets/${set.id}/reviews`, { method: 'POST', headers: ifMatch, body: JSON.stringify({ decision: 'approve' }) }),
+					`${title}: approve`
+				);
+				const publishKey = key();
+				await ok(
+					() =>
+						fetch(`${base}/changesets/${set.id}/publish`, {
+							method: 'POST',
+							headers: { ...ifMatch, 'Idempotency-Key': publishKey },
+							body: JSON.stringify({ base_generation: generation - 1 })
+						}),
+					`${title}: publish`
+				);
+			}
+		},
+		[project, count] as const
+	);
+}
+
+test('the Releases page shows the newest 100, and older releases a page at a time', async ({ page }) => {
+	test.setTimeout(240_000);
+	await signIn(page);
+	const project = await newProject(page);
+	await manyReleases(page, project, 101);
+
+	await page.goto(`/studio/projects/${project}/releases`);
+	await expect(page.getByTestId('current-generation')).toContainText('Live: release 101');
+	const rows = page.getByTestId('releases').locator(':scope > li');
+	await expect(rows).toHaveCount(100);
+	await expect(rows.first()).toHaveAttribute('data-generation', '101');
+	await expect(rows.last()).toHaveAttribute('data-generation', '2');
+	await expect(page.getByTestId('releases-all')).toHaveCount(0);
+
+	// The older page fails once (a cursor the server turns away): the list stays as it was, an
+	// alert says so, and the button tries again.
+	const older = /\/releases\?cursor=/;
+	await page.route(older, (route) =>
+		route.fulfill({ status: 400, json: { error: { code: 'bad_request', message: 'this cursor is not valid for this list' } } })
+	);
+	await page.getByTestId('releases-older').click();
+	await expect(page.getByTestId('releases-older-failed')).toBeVisible();
+	await expect(rows).toHaveCount(100);
+	await page.unroute(older);
+	await page.getByTestId('releases-older').click();
+	await expect(rows).toHaveCount(101);
+	await expect(rows.last()).toHaveAttribute('data-generation', '1');
+	await expect(page.getByTestId('releases-older')).toHaveCount(0);
+	await expect(page.getByTestId('releases-older-failed')).toHaveCount(0);
+	await expect(page.getByTestId('releases-all')).toHaveText("That's every release, back to release 1.");
+	expect(await violations(page)).toEqual([]);
+});
