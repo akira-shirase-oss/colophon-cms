@@ -52,6 +52,17 @@ closes and carries a test that failed without it.
   (D-169); a token on an unmatched path is redacted from logs (D-152); a magic link's token
   goes before a `return_to` fragment.
 
+### Fixed
+
+- The releases list pages: `GET {P}/releases` takes `?limit=` (1–100, default 100, what it
+  answered before) and `?cursor=`, and its `next_cursor` is real. It used to stop at the
+  newest 100 while the OpenAPI document advertised a cursor. The MCP `list_releases` tool
+  takes the cursor too.
+- The OpenAPI document says only what the routes do: lists that answer in one page say how
+  much it holds and that `next_cursor` is always `null`; the receipt schema lists every
+  release field itself instead of through `allOf`, and the release, delivery and observation
+  fields are marked required. `@colophon-cms/sdk`'s generated types follow.
+
 ### Changed — read before upgrading
 
 - **Magic links stop until origins are listed:** `PUT {P}/audience/origins` must name each

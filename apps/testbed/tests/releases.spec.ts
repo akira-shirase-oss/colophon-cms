@@ -61,6 +61,21 @@ test('release on a base, refuse a stale base, and read releases with no cookie',
 	await page.getByLabel('Read at generation').fill('1');
 	await page.getByRole('button', { name: 'Read published articles' }).click();
 	await expect(page.getByTestId('delivered')).toHaveText('HTTP 200, generation 1: First story');
+
+	// The list a page at a time: newest first, a cursor to the next page, none after the last;
+	// a page size out of range is refused.
+	await page.getByLabel('Releases per page').fill('1');
+	await page.getByRole('button', { name: 'Read the first page' }).click();
+	await expect(page.getByTestId('release-page')).toHaveText('generations 2; more');
+	await page.getByRole('button', { name: 'Next page' }).click();
+	await expect(page.getByTestId('release-page')).toHaveText('generations 1; last page');
+	await expect(page.getByRole('button', { name: 'Next page' })).toHaveCount(0);
+	await page.getByLabel('Releases per page').fill('');
+	await page.getByRole('button', { name: 'Read the first page' }).click();
+	await expect(page.getByTestId('release-page')).toHaveText('generations 2, 1; last page');
+	await page.getByLabel('Releases per page').fill('101');
+	await page.getByRole('button', { name: 'Read the first page' }).click();
+	await expect(page.getByTestId('release-page')).toHaveText('400 bad_request');
 });
 
 /** A project with "Time traveller" approved as "First release"; the project and article ids. */

@@ -2086,18 +2086,25 @@ export interface components {
             next_cursor: string | null;
         };
         DeliveryView: {
-            attempts?: number | null;
-            covered_by?: number | null;
+            attempts: number | null;
+            covered_by: number | null;
             /** Format: uuid */
-            destination_id?: string;
+            destination_id: string;
             /** Format: date-time */
-            finished_at?: string | null;
-            kind?: string;
-            last_error?: string | null;
-            location?: string | null;
-            name?: string;
-            state?: string;
-            status?: string | null;
+            finished_at: string | null;
+            /** @enum {string} */
+            kind: "webhook" | "cdn" | "probe";
+            last_error: string | null;
+            /** @description a probe's pinned location */
+            location: string | null;
+            name: string;
+            /**
+             * @description `covered`: a later release's job succeeded, which covers this one (`covered_by`)
+             * @enum {string}
+             */
+            state: "done" | "covered" | "pending" | "failed";
+            /** @description its job for this very release, if it had one */
+            status: string | null;
         };
         DestinationEnabled: {
             enabled: boolean;
@@ -2768,11 +2775,42 @@ export interface components {
             /** @enum {string} */
             status: "starting" | "ready" | "degraded" | "not_ready" | "draining";
         };
-        /** @description a release plus its deliveries and observations — the publish receipt */
+        /** @description a release — every `ReleaseView` field, at the top level — plus its deliveries and observations: the publish receipt */
         ReceiptView: {
-            deliveries?: components["schemas"]["DeliveryView"][];
-            observations?: components["schemas"]["SeenView"][];
-        } & components["schemas"]["ReleaseView"];
+            /** @description the approved hash it published */
+            changeset_hash: string;
+            /** Format: uuid */
+            changeset_id: string;
+            deliveries: components["schemas"]["DeliveryView"][];
+            /** @description entries whose published revision changed */
+            entries: number;
+            /** @description the environment's epoch when it committed */
+            epoch: number;
+            /** @description its number in the environment: 1 for the first, up by exactly one each release */
+            generation: number;
+            /**
+             * @description the release's one label (D-051); `verified` is at `locations` locations
+             * @enum {string}
+             */
+            label: "published" | "pending" | "verified" | "needs_attention";
+            /** @description distinct locations a probe saw this release, or a later one, from */
+            locations: number;
+            observations: components["schemas"]["SeenView"][];
+            /** Format: date-time */
+            published_at: string;
+            /** Format: uuid */
+            published_by: string;
+            published_by_name: string | null;
+            /**
+             * @description whether the environment's CDNs accepted a purge covering it (D-050)
+             * @enum {string}
+             */
+            purge: "none" | "pending" | "accepted" | "failed";
+            /** @description the changeset's title */
+            title: string;
+            /** @description entries it took down */
+            unpublished: number;
+        };
         ReferrerView: {
             collection?: string;
             /** Format: uuid */
@@ -2782,23 +2820,37 @@ export interface components {
             published?: boolean;
         };
         ReleaseView: {
-            changeset_hash?: string;
+            /** @description the approved hash it published */
+            changeset_hash: string;
             /** Format: uuid */
-            changeset_id?: string;
-            entries?: number;
-            epoch?: number;
-            generation?: number;
-            label?: string;
-            locations?: number;
+            changeset_id: string;
+            /** @description entries whose published revision changed */
+            entries: number;
+            /** @description the environment's epoch when it committed */
+            epoch: number;
+            /** @description its number in the environment: 1 for the first, up by exactly one each release */
+            generation: number;
+            /**
+             * @description the release's one label (D-051); `verified` is at `locations` locations
+             * @enum {string}
+             */
+            label: "published" | "pending" | "verified" | "needs_attention";
+            /** @description distinct locations a probe saw this release, or a later one, from */
+            locations: number;
             /** Format: date-time */
-            published_at?: string;
+            published_at: string;
             /** Format: uuid */
-            published_by?: string;
-            published_by_name?: string | null;
-            /** @description the purge job's state for this release */
-            purge?: string;
-            title?: string;
-            unpublished?: number;
+            published_by: string;
+            published_by_name: string | null;
+            /**
+             * @description whether the environment's CDNs accepted a purge covering it (D-050)
+             * @enum {string}
+             */
+            purge: "none" | "pending" | "accepted" | "failed";
+            /** @description the changeset's title */
+            title: string;
+            /** @description entries it took down */
+            unpublished: number;
         };
         RemovedView: {
             removed?: boolean;
@@ -2898,15 +2950,16 @@ export interface components {
             title?: string;
         };
         SeenView: {
-            body_hash?: string | null;
+            body_hash: string | null;
             /** Format: uuid */
-            destination_id?: string;
-            error?: string | null;
-            http_status?: number | null;
-            location?: string;
+            destination_id: string;
+            error: string | null;
+            http_status: number | null;
+            location: string;
             /** Format: date-time */
-            observed_at?: string;
-            observed_generation?: number | null;
+            observed_at: string;
+            /** @description the release the answer said it was built from, if it said */
+            observed_generation: number | null;
         };
         SetUp: {
             administrator?: boolean;
@@ -3311,7 +3364,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["ProjectView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -4047,7 +4100,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["SiteUser"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -4449,7 +4502,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["EventView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -5056,7 +5109,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["BulkJobView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -5381,7 +5434,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["BulkItemView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -5558,7 +5611,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the latest 100 changesets; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -5566,8 +5619,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["ChangesetSummaryView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -6354,7 +6407,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["EntrySummaryView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -6955,7 +7008,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["CommentView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -7965,7 +8018,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description every shared component; one answer (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7973,8 +8026,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["ComponentView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -8295,7 +8348,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description every content type; one answer (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8303,8 +8356,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["TypeVersionView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -8722,7 +8775,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the first 100 destinations; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8730,8 +8783,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["DestinationView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -9019,7 +9072,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the newest 100 jobs; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9027,8 +9080,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["JobView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -9278,7 +9331,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the newest 100 plans; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9286,8 +9339,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["MigrationSummaryView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -9789,7 +9842,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["MigrationItemView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -10010,7 +10063,12 @@ export interface operations {
     };
     listReleases: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description page size: 1–100, default 100 */
+                limit?: number;
+                /** @description the `next_cursor` a previous page answered */
+                cursor?: string;
+            };
             header?: never;
             path: {
                 /** @description the project's id */
@@ -10022,7 +10080,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description the current generation is in `Colophon-Generation` */
+            /** @description a page of releases, newest first; the current generation is in `Colophon-Generation` */
             200: {
                 headers: {
                     "Colophon-Generation"?: string;
@@ -10031,9 +10089,18 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["ReleaseView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
+                };
+            };
+            /** @description `bad_request` — `limit` out of range, or a cursor that isn't this list's */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
                 };
             };
             /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
@@ -10438,7 +10505,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description up to 100 pending schedules in time order, then the 20 most recently finished; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -10446,8 +10513,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["ScheduleView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -10607,7 +10674,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["TaskView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };
@@ -10946,7 +11013,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the newest 1,000 invitations; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -10954,8 +11021,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["InvitationView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -11169,7 +11236,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description up to 1,000 members, owners first; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -11177,8 +11244,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["MemberView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -11399,7 +11466,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description up to 100 roles, the built-in ones first; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -11407,8 +11474,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["RoleView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -11796,7 +11863,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description ok */
+            /** @description the newest 200 tokens; no further pages (`next_cursor` is always `null`) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -11804,8 +11871,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["TokenView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
-                        next_cursor: string | null;
+                        /** @description always `null`: this list answers in one page */
+                        next_cursor: null;
                     };
                 };
             };
@@ -13286,7 +13353,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         data: components["schemas"]["PublishedEntryView"][];
-                        /** @description pass back as `?cursor=`; `null` on the last page */
+                        /** @description pass back in the operation's cursor parameter for the next page; `null` on the last page */
                         next_cursor: string | null;
                     };
                 };

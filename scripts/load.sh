@@ -34,7 +34,8 @@
 # the baseline it just measured),
 # schedules (schedule lists, and scheduling and cancelling a day ahead), projects (who may create
 # projects: refused creations and /me), setup (setup codes refused on a set-up installation, and
-# /me), changesets (reading, listing, reviewing and creating changesets), stages (the
+# /me), changesets (reading, listing, reviewing and creating changesets, and the releases list
+# whole and a page at a time), stages (the
 # environment's ordered review stages: stage-state reads, stage-named reviews and publishes
 # refused while a stage waits — the guarded list replace is a config write, proven by tests
 # rather than looped; D-104),
