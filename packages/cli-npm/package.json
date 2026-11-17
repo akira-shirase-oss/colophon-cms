@@ -1,6 +1,7 @@
 {
   "name": "@colophon-cms/cli",
   "version": "0.1.0-alpha.1",
+  "license": "MIT",
   "description": "colophon, the command line for Colophon CMS, prebuilt for macOS, Linux and Windows: no Rust needed.",
   "keywords": [
     "colophon",

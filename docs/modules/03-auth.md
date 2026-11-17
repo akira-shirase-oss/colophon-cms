@@ -73,9 +73,29 @@ operation, and the cross-project and identity test families from spec §27 pass.
 - `POST /auth/signin`: 204 with the same cookies. A wrong password and a missing account get the same 400
   `sign_in_failed` after the same verify work — a parseable dummy hash stands in for a missing account's. The
   email is normalized the same way before the lookup.
-- Bounded guessing: eight consecutive misses pause the account for fifteen minutes (409 `too_many_attempts`).
-  The row's lock, the verify and the counter all run under `SELECT … FOR UPDATE`, so concurrent guesses serialize;
-  a success resets the counter and the pause. `last_sign_in_at` updates only on a success.
+- Bounded guessing, per (account, client address) (D-154, migration 0057): every attempt is counted in
+  `sign_in_throttle` against its key — the realm (`staff` or `audience:<project>`), the normalized email and the
+  client address admission believes (IPv6 by its /64) — *before* the verify, under the account's advisory lock and
+  the key's row lock (so concurrent first attempts can't race past a pause one of them sets), in a transaction that
+  commits at once; Argon2 then runs with nothing held (D-150). The eighth attempt pauses that key
+  for fifteen minutes; while paused, an attempt — even with the right password — is refused unverified with the
+  same `400 sign_in_failed` a wrong password gets, and since the key doesn't depend on whether the account exists,
+  a pause tells a guesser nothing. A guesser pauses only their own address: the owner elsewhere signs in, and a
+  pause that runs out starts the count over (at most eight guesses a key a quarter hour, never an indefinite
+  lock). A success clears the key and marks the address *trusted* for the account (D-162, migration 0060).
+  Across addresses, the account has a ceiling: fifty misses within an hour from addresses that never signed in to
+  it pause every such address for it, answered the same `sign_in_failed`, while trusted addresses keep working —
+  so rotating through /64s buys a guesser about fifty guesses an hour, and the ceiling can't lock the owner out of
+  a device they already used. While it holds, a new device waits for the hour to pass (an audience user can sign
+  in by magic link instead, which this throttle doesn't count). Untrusted keys idle an hour are swept (D-165); trusted ones
+  after 90 days unused. `last_sign_in_at` updates only on a success; the
+  accounts' old `failed_sign_ins`/`locked_until` columns are no longer written.
+- Bounded password work (D-150): every sign-up, sign-in, staff-made account and magic-link account hashes or
+  verifies through one `PasswordGate` — `COLOPHON_PASSWORD_CONCURRENCY` Argon2id jobs at once (one a core by
+  default), up to 32 waiters a slot for at most two seconds, and `503` with `Retry-After` past that, decided before
+  any database work so a shed request costs nothing and counts no attempt. The dummy verify a missing account gets
+  goes through the same gate. A sign-in password longer than 512 bytes — longer than any account can hold — is
+  `422 password_too_long` before any work.
 - Migration 0032 adds `email` (normalized form enforced by CHECK, one partial unique index), `password_hash`
   (≤255), `failed_sign_ins` and `locked_until`, and grants the application role UPDATE on them. A hash is
   selected only to verify against — never returned; `/me` doesn't read it.
@@ -324,8 +344,11 @@ Built in step 1.7 (D-042), for people:
 - The public routes are unauthenticated and rate-limited per address: `POST /audience/v1/{project}/signup` (201;
   `email`, `password`, optional `display_name` and `role` — only a `self_assign` role may be chosen, and with
   none given the project must have exactly one open role to default to), `POST …/signin` (200; a wrong password,
-  a missing account and an unverifiable one answer alike with 401 `sign_in_failed`, eight misses pause it fifteen
-  minutes with 409 `too_many_attempts`, a disabled one is 403 `account_disabled`), `POST …/signout` (204 whether
+  a missing account and an unverifiable one answer alike with `sign_in_failed`, eight misses pause that (account,
+  client address) for fifteen minutes and answer the same `sign_in_failed` while paused (D-154), as does the
+  account's ceiling for addresses it never let in (D-162), a disabled one is
+  403 `account_disabled` — to the right password only, after the verify; a wrong one is `sign_in_failed` like any
+  other (D-169)), `POST …/signout` (204 whether
   the session was live or not) and `GET …/me` (200 or 401). Signup and sign-in answer the user plus the session:
   the token and its CSRF sibling in the body and as the `colophon_audience` / `colophon_audience_csrf` cookie
   pair (session cookie `HttpOnly` + `SameSite=Lax`, CSRF sibling readable + `SameSite=Strict`).
@@ -345,18 +368,34 @@ Built in step 1.7 (D-042), for people:
   change writes its audit event in the same transaction (`audience.role_created`/`_updated`/`_deleted`,
   `audience.user_created`/`_updated`, `audience.session_revoked`), like every other governed change.
 - Passwordless sign-in (D-140, migration 0053): `POST /audience/v1/{project}/magic-link` records a link in
-  `audience_magic_links` — only its token's SHA-256, a 15-minute life, superseded by the next request for the
-  same email — and answers `202 {"sent": true}` whether or not the email has an account; `return_to` is the
-  site's own absolute http(s) URL the link lands on. `POST …/magic-link/{token}` spends it once: an existing,
-  enabled account signs in; an unknown email is created in the project's open `self_assign` role with a
-  password nobody knows (a later password sign-in must set one deliberately); used, expired, superseded and
-  unknown tokens all answer one `403 magic_link_invalid`. Delivery is a provider seam (D-145):
+  `audience_magic_links` — only its token's SHA-256, a 15-minute life — and answers `202 {"sent": true}`
+  whether or not the email has an account. `return_to` is the absolute http(s) page the link lands on, and
+  **its origin must be one the project lists** (D-148, migration 0055): `GET|PUT {P}/audience/origins`
+  (`audience.manage`, the whole list replaced at once, at most 32, each `scheme://host[:port]` normalized the
+  way browsers serialize it, audited as `audience.origins_updated`). Anything else — another host, scheme or
+  port — is `422 return_to_not_allowed` before a token exists, and a project that lists nothing sends no links:
+  the token is a credential, so a link asked for someone else can never be pointed at the asker. A request
+  never retires a link already out — a request proves nothing, so it must not cancel the one a visitor holds —
+  and spending any one link retires every other outstanding link for the address. Requests are bounded
+  (D-153, migration 0056; D-161, migration 0059): the asking client's own share comes first — five links a client
+  address (IPv6 by its /64) per project per ten minutes, `COLOPHON_MAGIC_LINKS_PER_ADDRESS` — so one client can
+  never spend the ceiling everyone shares; a recipient's wait escalates, a minute after their first unused link and
+  doubling with each further one in the last day up to an hour (spending a link starts it over); and a project
+  records at most 300 links a minute (`COLOPHON_MAGIC_LINKS_PER_PROJECT`). Each refusal is `429 rate_limited` with
+  `Retry-After`, keyed by the address whether or not it has an account (so nothing is enumerated), counted under the
+  client's and the recipient's advisory locks so concurrent requests can't both find room, and recording nothing. Dead links are swept by the table-retention
+  pass 15 minutes past `expires_at`, through `colophon_sweep_magic_links` (the worker deletes, never reads). `POST …/magic-link/{token}`
+  spends it once: an existing, enabled account signs in; an unknown email is created in the project's open
+  `self_assign` role with a password nobody knows (a later password sign-in must set one deliberately); used,
+  expired, retired and unknown tokens all answer one `403 magic_link_invalid`. Delivery is a provider seam (D-145):
   `COLOPHON_MAIL_PROVIDER=resend` with `COLOPHON_MAIL_FROM` and `COLOPHON_RESEND_API_KEY` sends the link
   through `colophon-server::mail::Resend` (one `POST`, bearer key, ten-second deadline, failure logged but
   never changing the 202), and `COLOPHON_RESEND_ENDPOINT` moves the provider's address. With no provider the
   link is recorded but nothing carries it; the loopback-only `COLOPHON_DEV_MAIL` hands it back as `dev_link`,
-  refused off loopback like the development client's secret, which is how the demo sites and the testbed run
-  the whole flow.
+  refused — like the development client's secret — unless the server both listens on loopback and serves a
+  localhost `COLOPHON_PUBLIC_URL` (`localhost`, `*.localhost`, a loopback address; D-163), since a production
+  server behind a reverse proxy listens on loopback too. That is how the demo sites and the testbed run the
+  whole flow.
 - What the session buys is on the delivery side: [delivery](06-delivery.md). Billing, subscriptions and
   entitlements are explicitly out of scope — a role is a label, not a plan.
 
@@ -405,7 +444,7 @@ Built in step 1.7 (D-042), for people:
 | A5 | Agents are draft-only unless a scoped, revocable, opt-in permission says otherwise; nobody approves their own permission escalation. |
 | A6 | Hidden and missing resources are indistinguishable to unauthorized callers. |
 | A7 | Bootstrap runs once and is then disabled, whether by the command or a setup code (D-061); the development identity never runs on a public bind. |
-| A8 | Tokens and session secrets are stored hashed, compared in constant time, and never logged. |
+| A8 | Tokens and session secrets are stored hashed, compared in constant time, and never logged — a credential carried in a path (a magic link's `{token}`, a device `{code}`) is written into the request span as its template name (D-152). |
 | A9 | Every change to roles, memberships, invitations and API tokens is recorded in the transaction that makes it, and no recorded change is ever altered or removed (step R.4). |
 
 ## Interfaces

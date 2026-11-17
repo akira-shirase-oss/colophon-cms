@@ -70,12 +70,20 @@ test('the launcher carries the workspace version and depends on every platform p
   assert.equal(launcher.name, '@colophon-cms/cli', 'the @colophon scope belongs to someone else (D-062)');
 });
 
-test('npm pack --dry-run lists the launcher, its lookup and the readme, nothing else', { skip: !posix }, () => {
+test('npm pack --dry-run lists the launcher, its lookup, the readme and the licence, nothing else', { skip: !posix }, () => {
   assert.deepEqual(packed(source), {
     name: '@colophon-cms/cli',
     version,
-    files: ['README.md', 'bin/colophon.js', 'lib/platform.js', 'package.json'],
+    files: ['LICENSE', 'README.md', 'bin/colophon.js', 'lib/platform.js', 'package.json'],
   });
+});
+
+test('every published package carries the repository licence word for word (MIT, D-158)', () => {
+  const root = readFileSync(path.join(repository, 'LICENSE'), 'utf8');
+  assert.match(root, /^MIT License\n\nCopyright \(c\) 2026 akira-shirase-oss\n/);
+  for (const copy of ['packages/cli-npm/LICENSE', 'packages/sdk/LICENSE']) {
+    assert.equal(readFileSync(path.join(repository, copy), 'utf8'), root, `${copy} is the root LICENSE`);
+  }
 });
 
 test('SHA256SUMS lines are read as sha256sum writes them', () => {
@@ -103,14 +111,14 @@ test('every platform package is assembled from its archive, with os, cpu and one
     const file = path.join(dir, 'bin', binary);
     assert.equal(readFileSync(file, 'utf8'), `#!/bin/sh\necho "colophon ${version} for ${target}"\n`, 'the CLI, not the server');
     assert.equal(statSync(file).mode & 0o111, 0o111, 'executable');
-    assert.deepEqual(packed(dir), { name, version, files: ['README.md', `bin/${binary}`, 'package.json'] });
+    assert.deepEqual(packed(dir), { name, version, files: ['LICENSE', 'README.md', `bin/${binary}`, 'package.json'] });
   }
 
   const cli = path.join(out, 'cli');
   const manifest = JSON.parse(readFileSync(path.join(cli, 'package.json'), 'utf8'));
   assert.equal(manifest.scripts, undefined, 'no development scripts in the published launcher');
   assert.deepEqual(manifest.optionalDependencies, launcher.optionalDependencies);
-  assert.deepEqual(packed(cli).files, ['README.md', 'bin/colophon.js', 'lib/platform.js', 'package.json']);
+  assert.deepEqual(packed(cli).files, ['LICENSE', 'README.md', 'bin/colophon.js', 'lib/platform.js', 'package.json']);
 
   // The assembled launcher runs the assembled binary for this machine, when it is one we build.
   const own = PLATFORMS[`${process.platform}-${process.arch}`];

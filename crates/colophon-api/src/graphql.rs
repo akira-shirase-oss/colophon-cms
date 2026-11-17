@@ -34,7 +34,10 @@
 //! stay REST, and delivery — pinned generations, its own population — is out of scope.
 //!
 //! Bounds beyond the document's own (the schema bounds what a selection can name):
-//! the document is at most [`MAX_QUERY_CHARS`], the root takes at most
+//! the document is at most [`MAX_QUERY_CHARS`]; with every fragment expanded it nests at
+//! most [`MAX_DEPTH`] deep and selects at most [`MAX_COMPLEXITY`] fields, and its
+//! fragments never spread one another in a cycle — all checked on the parsed document
+//! before the request opens a transaction (D-151); the root takes at most
 //! [`MAX_ROOT_READS`] `entries`/`entry` calls — aliased ones included — and a `nodes`
 //! or `entry` subtree may name at most [`MAX_NODE_SELECTIONS`] fields, the alias bound.
 
@@ -52,6 +55,7 @@ use async_graphql::{
         Enum, Field, FieldFuture, FieldValue, InputObject, InputValue, Object, ResolverContext,
         Scalar, Schema, TypeRef,
     },
+    parser::types::{FragmentDefinition, SelectionSet},
 };
 use axum::{
     Json,
@@ -85,6 +89,226 @@ const MAX_ROOT_READS: usize = 8;
 /// Selections — each occurrence, aliases counted — inside one `nodes` or `entry`
 /// subtree: the response-shape bound, beside the document's own.
 const MAX_NODE_SELECTIONS: usize = 128;
+
+/// How deep a selection may nest once every fragment is expanded (D-151): the shape a
+/// two-level reference read needs is 6 (`entries { nodes { author { mentor { name } } } }`),
+/// a full introspection query about 13; 16 leaves room for both and nothing pathological.
+const MAX_DEPTH: usize = 16;
+/// Fields a document may select once every fragment is expanded — the executor's own
+/// complexity, each field costing one (D-151). A full introspection query is about 220.
+const MAX_COMPLEXITY: usize = 512;
+
+/// The deepest the raw document may nest brackets of any kind — `{`, `[`, `(` — counted on
+/// the text before anything parses it (D-160). The parser recurses once per level of a
+/// nested list or object value with no limit of its own, so a few thousand `[` (well inside
+/// [`MAX_QUERY_CHARS`]) overflow a 2 MiB worker stack and abort the process; 64 levels is far
+/// more than any read needs (a selection is at most [`MAX_DEPTH`] deep) and far below that.
+const MAX_NESTING: usize = 64;
+
+/// The most frames [`measure`] may stack — selection levels and fragment spreads together —
+/// so the walk itself is bounded however the document's fragments chain.
+const MAX_MEASURE_FRAMES: usize = 512;
+
+/// Refuses a document that nests brackets deeper than [`MAX_NESTING`], in one pass over its
+/// bytes and before any parser sees it. Brackets inside strings (`"…"`, block strings
+/// `"""…"""`) and comments (`#` to the end of the line) don't count; an unbalanced document
+/// passes through for the parser to refuse.
+fn check_nesting(query: &str) -> Result<(), ApiError> {
+    let bytes = query.as_bytes();
+    let mut depth = 0_usize;
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        match byte {
+            b'#' => {
+                while bytes
+                    .get(at)
+                    .is_some_and(|byte| !matches!(byte, b'\n' | b'\r'))
+                {
+                    at += 1;
+                }
+            }
+            b'"' if bytes.get(at..at + 3) == Some(b"\"\"\"".as_slice()) => {
+                at += 3;
+                while at < bytes.len() {
+                    if bytes.get(at..at + 4) == Some(b"\\\"\"\"".as_slice()) {
+                        at += 4;
+                    } else if bytes.get(at..at + 3) == Some(b"\"\"\"".as_slice()) {
+                        at += 2;
+                        break;
+                    } else {
+                        at += 1;
+                    }
+                }
+            }
+            b'"' => {
+                at += 1;
+                while let Some(&inner) = bytes.get(at) {
+                    match inner {
+                        b'\\' => at += 2,
+                        b'"' | b'\n' | b'\r' => break,
+                        _ => at += 1,
+                    }
+                }
+            }
+            b'{' | b'[' | b'(' => {
+                depth += 1;
+                if depth > MAX_NESTING {
+                    return Err(ApiError::Invalid(Refusal {
+                        code: "too_deep",
+                        pointer: "/query".to_owned(),
+                        message: format!(
+                            "a document nests brackets at most {MAX_NESTING} levels deep"
+                        ),
+                    }));
+                }
+            }
+            b'}' | b']' | b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        at += 1;
+    }
+    Ok(())
+}
+
+/// What one selection set costs once expanded: fields selected, and how deep they nest.
+#[derive(Clone, Copy, Default)]
+struct Cost {
+    fields: usize,
+    depth: usize,
+}
+
+/// Why a document was refused before it ran.
+enum Shape {
+    Cycle,
+    TooDeep,
+}
+
+/// Refuses a document that nests deeper than [`MAX_DEPTH`] or selects more than
+/// [`MAX_COMPLEXITY`] fields once its fragments are expanded, or whose fragments spread one
+/// another in a cycle — before the request takes a pooled connection, and before the
+/// executor's validation, which expands fragments inline (a fan-out of spreads costs it time
+/// exponential in their nesting; a cycle, unbounded recursion). The walk itself is linear:
+/// each fragment is measured once and remembered, and costs saturate. A document that
+/// doesn't parse passes through — the executor answers its syntax error as GraphQL does.
+fn check_shape(query: &str) -> Result<(), ApiError> {
+    // Before any parser: the parser recurses per nesting level (D-160).
+    check_nesting(query)?;
+    let Ok(document) = async_graphql::parser::parse_query(query) else {
+        return Ok(());
+    };
+    let mut memo = HashMap::new();
+    let mut visiting = BTreeSet::new();
+    let mut worst = Cost::default();
+    for (_, operation) in document.operations.iter() {
+        let cost = measure(
+            &operation.node.selection_set.node,
+            &document.fragments,
+            &mut memo,
+            &mut visiting,
+            0,
+        )
+        .map_err(|shape| match shape {
+            Shape::Cycle => ApiError::Invalid(Refusal {
+                code: "fragment_cycle",
+                pointer: "/query".to_owned(),
+                message: "the document's fragments spread one another in a cycle".to_owned(),
+            }),
+            Shape::TooDeep => ApiError::Invalid(Refusal {
+                code: "too_deep",
+                pointer: "/query".to_owned(),
+                message: format!(
+                    "a selection nests at most {MAX_DEPTH} levels, fragments expanded"
+                ),
+            }),
+        })?;
+        worst.fields = worst.fields.max(cost.fields);
+        worst.depth = worst.depth.max(cost.depth);
+    }
+    if worst.depth > MAX_DEPTH {
+        return Err(ApiError::Invalid(Refusal {
+            code: "too_deep",
+            pointer: "/query".to_owned(),
+            message: format!("a selection nests at most {MAX_DEPTH} levels, fragments expanded"),
+        }));
+    }
+    if worst.fields > MAX_COMPLEXITY {
+        return Err(ApiError::Invalid(Refusal {
+            code: "too_complex",
+            pointer: "/query".to_owned(),
+            message: format!(
+                "a document selects at most {MAX_COMPLEXITY} fields, fragments expanded"
+            ),
+        }));
+    }
+    Ok(())
+}
+
+/// [`check_shape`]'s walk: a selection set's expanded cost, each named fragment measured
+/// once into `memo`; `visiting` holds the fragments on the current path, so a spread of one
+/// of them is a cycle. A spread of a fragment the document doesn't define costs nothing —
+/// the executor refuses it by name.
+fn measure<'a>(
+    set: &'a SelectionSet,
+    fragments: &'a HashMap<Name, async_graphql::Positioned<FragmentDefinition>>,
+    memo: &mut HashMap<&'a str, Cost>,
+    visiting: &mut BTreeSet<&'a str>,
+    frames: usize,
+) -> Result<Cost, Shape> {
+    use async_graphql::parser::types::Selection;
+    if frames > MAX_MEASURE_FRAMES {
+        return Err(Shape::TooDeep);
+    }
+    let mut total = Cost::default();
+    for item in &set.items {
+        let cost = match &item.node {
+            Selection::Field(field) => {
+                let inner = measure(
+                    &field.node.selection_set.node,
+                    fragments,
+                    memo,
+                    visiting,
+                    frames + 1,
+                )?;
+                Cost {
+                    fields: inner.fields.saturating_add(1),
+                    depth: inner.depth.saturating_add(1),
+                }
+            }
+            Selection::InlineFragment(inline) => measure(
+                &inline.node.selection_set.node,
+                fragments,
+                memo,
+                visiting,
+                frames + 1,
+            )?,
+            Selection::FragmentSpread(spread) => {
+                let name = spread.node.fragment_name.node.as_str();
+                if let Some(cost) = memo.get(name) {
+                    *cost
+                } else if let Some((key, fragment)) = fragments.get_key_value(name) {
+                    if !visiting.insert(key.as_str()) {
+                        return Err(Shape::Cycle);
+                    }
+                    let cost = measure(
+                        &fragment.node.selection_set.node,
+                        fragments,
+                        memo,
+                        visiting,
+                        frames + 1,
+                    )?;
+                    visiting.remove(key.as_str());
+                    memo.insert(key.as_str(), cost);
+                    cost
+                } else {
+                    Cost::default()
+                }
+            }
+        };
+        total.fields = total.fields.saturating_add(cost.fields);
+        total.depth = total.depth.max(cost.depth);
+    }
+    Ok(total)
+}
 
 /// The fields a node type answers that aren't content fields. A content field whose id
 /// names one is renamed `field_<id>` so both stay selectable.
@@ -174,6 +398,9 @@ pub(crate) async fn graphql(
             message: format!("a GraphQL document is at most {MAX_QUERY_CHARS} characters"),
         }));
     }
+    // The document's shape, before anything costs a connection or the executor expands a
+    // fragment (D-151).
+    check_shape(&body.query)?;
     // `variables` is a JSON object when present; `Variables` says the same of what it holds.
     let variables = match body.variables {
         None => Variables::default(),
@@ -1113,7 +1340,11 @@ fn build_schema(context: Context) -> Result<Schema, ApiError> {
         .argument(InputValue::new("id", TypeRef::named_nn(TypeRef::ID))),
     );
     let defs = context.defs.clone();
+    // The executor's own limits, the same numbers `check_shape` already held the document
+    // to: a backstop, never the first line.
     let mut builder = Schema::build("Query", None, None)
+        .limit_depth(MAX_DEPTH)
+        .limit_complexity(MAX_COMPLEXITY)
         .data(context)
         .register(Scalar::new("JSON"))
         .register(query)
@@ -1371,6 +1602,8 @@ fn internal(error: impl std::fmt::Debug) -> Error {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
 
     fn posts_definition() -> Value {
@@ -1437,6 +1670,147 @@ mod tests {
     fn language_of(shape: &CollectionShape, document: &Value) -> colophon_domain::query::Query {
         colophon_domain::query::Query::validate(shape.definition.as_ref(), document)
             .expect("the compiled document validates")
+    }
+
+    /// The query `GraphiQL` and most clients send on connect.
+    const INTROSPECTION: &str = r"
+        query IntrospectionQuery {
+          __schema {
+            queryType { name } mutationType { name } subscriptionType { name }
+            types { ...FullType }
+            directives { name description locations args { ...InputValue } }
+          }
+        }
+        fragment FullType on __Type {
+          kind name description
+          fields(includeDeprecated: true) {
+            name description args { ...InputValue } type { ...TypeRef }
+            isDeprecated deprecationReason
+          }
+          inputFields { ...InputValue }
+          interfaces { ...TypeRef }
+          enumValues(includeDeprecated: true) { name description isDeprecated deprecationReason }
+          possibleTypes { ...TypeRef }
+        }
+        fragment InputValue on __InputValue { name description type { ...TypeRef } defaultValue }
+        fragment TypeRef on __Type {
+          kind name
+          ofType { kind name ofType { kind name ofType { kind name ofType { kind name
+            ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } } } }
+        }";
+
+    fn refusal(query: &str) -> Option<&'static str> {
+        match check_shape(query) {
+            Ok(()) => None,
+            Err(ApiError::Invalid(refusal)) => Some(refusal.code),
+            Err(other) => panic!("not a document refusal: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_shape_bound_admits_real_reads_and_full_introspection() {
+        assert_eq!(refusal(INTROSPECTION), None);
+        assert_eq!(
+            refusal("{ entries(first: 2) { nodes { author { mentor { name } } } } }"),
+            None
+        );
+        // Not a document at all: the executor reports the syntax error itself.
+        assert_eq!(refusal("{ entries {"), None);
+    }
+
+    #[test]
+    fn the_shape_bound_counts_fragments_expanded_and_refuses_cycles() {
+        let mut deep = String::from("{ a");
+        for _ in 0..MAX_DEPTH {
+            deep.push_str(" { a");
+        }
+        deep.push_str(&" }".repeat(MAX_DEPTH + 1));
+        assert_eq!(refusal(&deep), Some("too_deep"));
+
+        // Depth through fragments counts too.
+        let through = "{ a { ...F } } fragment F on T { b { c { d { e { f { g { h { i { j { k \
+                       { l { m { n { o { p { q } } } } } } } } } } } } } } } }";
+        assert_eq!(refusal(through), Some("too_deep"));
+
+        // Thirty fragments, each spreading the one before twice: 2^30 fields from a few
+        // hundred characters, measured in thirty steps.
+        let mut bomb = String::from("{ ...F30 } fragment F0 on T { a }");
+        for level in 1..=30 {
+            let below = level - 1;
+            write!(
+                bomb,
+                " fragment F{level} on T {{ ...F{below} ...F{below} }}"
+            )
+            .expect("writing to a String");
+        }
+        let started = std::time::Instant::now();
+        assert_eq!(refusal(&bomb), Some("too_complex"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+
+        // Exactly at the bound is fine; one more field is not.
+        let at = format!("{{ {} }}", "a ".repeat(MAX_COMPLEXITY));
+        assert_eq!(refusal(&at), None);
+        let over = format!("{{ {} }}", "a ".repeat(MAX_COMPLEXITY + 1));
+        assert_eq!(refusal(&over), Some("too_complex"));
+
+        for cycle in [
+            "{ ...A } fragment A on T { a ...B } fragment B on T { b ...A }",
+            "{ ...A } fragment A on T { ... on T { ...A } }",
+            "{ x { ...A } } fragment A on T { y { ...A } }",
+        ] {
+            assert_eq!(refusal(cycle), Some("fragment_cycle"), "{cycle}");
+        }
+        // A fragment spread twice side by side is not a cycle.
+        assert_eq!(
+            refusal("{ ...A ...A } fragment A on T { ...B ...B } fragment B on T { b }"),
+            None
+        );
+    }
+
+    /// Runs `check_shape` on a thread with a Tokio worker's 2 MiB stack, so a parser that
+    /// recurses per nesting level shows what it does to a real worker: on the unfixed code the
+    /// 1,500-deep list below overflowed it in a release build and aborted the whole process
+    /// (debug builds, with larger frames, overflow sooner) (D-160).
+    fn shape_on_a_worker_stack(query: String) -> Option<&'static str> {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || refusal(&query))
+            .expect("a thread")
+            .join()
+            .expect("the check returned instead of overflowing")
+    }
+
+    #[test]
+    fn nested_values_and_long_fragment_chains_are_refused_before_they_recurse() {
+        // A list argument 1,500 deep is 3,000 characters, well inside the 8 KiB bound, and the
+        // parser recurses once a level. Refused by the byte scan before it runs.
+        let nested = format!("{{ a(b: {}1{}) }}", "[".repeat(1_500), "]".repeat(1_500));
+        assert!(nested.len() < MAX_QUERY_CHARS);
+        assert_eq!(shape_on_a_worker_stack(nested), Some("too_deep"));
+        // Objects count the same; brackets in strings and comments don't.
+        let objects = format!("{{ a(b: {}1{}) }}", "{c: ".repeat(200), "}".repeat(200));
+        assert_eq!(shape_on_a_worker_stack(objects), Some("too_deep"));
+        let quoted = format!(
+            "{{ a(b: \"{}\", c: \"\"\"{}\"\"\") }} # {}",
+            "[".repeat(500),
+            "{".repeat(500),
+            "(".repeat(500)
+        );
+        assert_eq!(shape_on_a_worker_stack(quoted), None);
+        // Exactly at the bound is fine.
+        let at = format!("{}{}", "[".repeat(MAX_NESTING), "]".repeat(MAX_NESTING));
+        assert_eq!(check_nesting(&at).ok(), Some(()));
+        let over = format!("[{at}]");
+        assert!(check_nesting(&over).is_err());
+        // Exactly at the bound is fine.
+
+        // A chain of 700 fragments, each spreading the next: the walk stops at its frame bound.
+        let mut chain = String::from("{ ...F0 }");
+        for n in 0..700 {
+            write!(chain, " fragment F{n} on T {{ ...F{} }}", n + 1).expect("writing to a String");
+        }
+        chain.push_str(" fragment F700 on T { a }");
+        assert_eq!(shape_on_a_worker_stack(chain), Some("too_deep"));
     }
 
     #[test]

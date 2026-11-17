@@ -9,6 +9,11 @@ use colophon_db::{PgPool, identity};
 use sqlx::{AssertSqlSafe, postgres::PgPoolOptions};
 use uuid::Uuid;
 
+/// The password bound the tests sign in through (D-150): a few slots, as a server has.
+pub(crate) fn gate() -> colophon_db::passwords::PasswordGate {
+    colophon_db::passwords::PasswordGate::new(4)
+}
+
 pub(crate) fn host() -> String {
     std::env::var("COLOPHON_TEST_PG_HOST").unwrap_or_else(|_| "127.0.0.1:55432".to_owned())
 }

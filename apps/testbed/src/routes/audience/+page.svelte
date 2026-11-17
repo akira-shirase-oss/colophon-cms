@@ -54,6 +54,11 @@
 	// The passwordless arm (D-140): request a magic link, then spend the token it carries.
 	let linkEmail = $state('');
 	let devLink = $state('');
+	// Where a link may land (D-148): the origins staff list, and the page a request names —
+	// this testbed's own `/magic` unless the field says otherwise.
+	let origins = $state<string[]>([]);
+	let originsText = $state('');
+	let returnTo = $state('');
 
 	const staff = $derived(`/api/v1/projects/${projectId}/audience`);
 	const audience = $derived(`/audience/v1/${projectId}`);
@@ -77,12 +82,15 @@
 	}
 
 	async function load() {
-		const [listedRoles, listedUsers] = await Promise.all([
+		const [listedRoles, listedUsers, listedOrigins] = await Promise.all([
 			call('GET', `${staff}/roles`),
-			call('GET', `${staff}/users`)
+			call('GET', `${staff}/users`),
+			call('GET', `${staff}/origins`)
 		]);
 		roles = listedRoles.status === 200 ? (listedRoles.body as { data: SiteRole[] }).data : [];
 		users = listedUsers.status === 200 ? (listedUsers.body as { data: SiteUser[] }).data : [];
+		origins =
+			listedOrigins.status === 200 ? (listedOrigins.body as { data: { origins: string[] } }).data.origins : [];
 		sessions = [];
 		sessionsFor = '';
 	}
@@ -205,11 +213,25 @@
 		me = null;
 	}
 
+	async function saveOrigins() {
+		const listed = originsText
+			.split(/[\s,]+/)
+			.map((origin) => origin.trim())
+			.filter((origin) => origin !== '');
+		const reply = await call('PUT', `${staff}/origins`, {
+			headers: headers(),
+			body: JSON.stringify({ origins: listed })
+		});
+		message = reply.status === 200 ? `listed ${listed.length} origin(s)` : describe(reply);
+		await load();
+	}
+
 	async function requestLink() {
 		devLink = '';
+		const landing = returnTo.trim() === '' ? `${window.location.origin}/magic` : returnTo.trim();
 		const reply = await call('POST', `${audience}/magic-link`, {
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ email: linkEmail, return_to: `${window.location.origin}/magic` })
+			body: JSON.stringify({ email: linkEmail, return_to: landing })
 		});
 		if (reply.status === 202) {
 			const data = (reply.body as { data: { dev_link?: string } }).data;
@@ -365,8 +387,18 @@
 				has an account. Development mail hands the link back in the answer; a production
 				server emails it.
 			</p>
+			<p>
+				A link lands only on an origin the project lists (D-148): the token is a credential, so
+				a request naming any other site is refused before one exists.
+			</p>
+			<form onsubmit={(event) => event.preventDefault()} class="row">
+				<label class="field">Origins <input bind:value={originsText} name="origins" placeholder="https://site.example" /></label>
+				<button type="button" onclick={saveOrigins}>Save origins</button>
+			</form>
+			<p data-testid="origins">{origins.length === 0 ? 'no origins listed' : origins.join(' ')}</p>
 			<form onsubmit={(event) => event.preventDefault()} class="row">
 				<label class="field">Email <input bind:value={linkEmail} name="link-email" type="email" /></label>
+				<label class="field">Return to <input bind:value={returnTo} name="return-to" placeholder="this testbed's /magic" /></label>
 				<button type="button" onclick={requestLink}>Send the link</button>
 				{#if devLink !== ''}<button type="button" onclick={useLink}>Use the link</button>{/if}
 			</form>

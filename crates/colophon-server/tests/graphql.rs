@@ -11,6 +11,8 @@
 
 mod common;
 
+use std::fmt::Write as _;
+
 use common::{Reply, Server, Session, call, join, key, project, sign_in};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
@@ -559,4 +561,85 @@ async fn the_route_wants_a_signed_in_caller() {
         .await
         .expect("request");
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Bounded before it runs (D-151): a document's depth and its field count are measured with
+/// every fragment expanded — linearly, each fragment once — and refused before the request
+/// opens a transaction or the executor's own validation expands anything; spreads that cycle
+/// are refused the same way. Each refusal is the envelope with the document's codes, and
+/// comes back at once however much the document would have expanded to.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn deep_fragment_heavy_and_cyclic_documents_are_refused_before_they_run() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let (project, _, _) = seed(&owner).await;
+    let refused = |reply: &Reply, code: &str| {
+        assert_eq!(
+            reply.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            reply.body
+        );
+        assert_eq!(
+            reply.body["error"]["details"]["reason"].as_str(),
+            Some(code),
+            "{}",
+            reply.body
+        );
+    };
+
+    // Twenty-one levels of introspection — a valid document, just deeper than any read needs.
+    let mut deep = String::from("{ __schema { types { fields { type {");
+    for _ in 0..16 {
+        deep.push_str(" ofType {");
+    }
+    deep.push_str(" name");
+    deep.push_str(&" }".repeat(21));
+    refused(
+        &gql(&owner, &project, "posts", &deep, None).await,
+        "too_deep",
+    );
+
+    // Eleven fragments, each spreading the one before four times: 4^10 fields expanded from a
+    // document of a few hundred characters. Refused, and quickly.
+    let mut bomb = String::from("{ __schema { types { ...F10 } } } fragment F0 on __Type { name }");
+    for level in 1..=10 {
+        let below = level - 1;
+        write!(
+            bomb,
+            " fragment F{level} on __Type {{ ...F{below} ...F{below} ...F{below} ...F{below} }}"
+        )
+        .expect("writing to a String");
+    }
+    let started = std::time::Instant::now();
+    refused(
+        &gql(&owner, &project, "posts", &bomb, None).await,
+        "too_complex",
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "refused before anything expanded: {:?}",
+        started.elapsed()
+    );
+
+    // Fragments that spread one another never terminate: refused by name.
+    let cycle = "{ __schema { types { ...A } } } \
+                 fragment A on __Type { name ...B } fragment B on __Type { kind ...A }";
+    refused(
+        &gql(&owner, &project, "posts", cycle, None).await,
+        "fragment_cycle",
+    );
+
+    // An ordinary read still runs, fragments and all.
+    let fine = gql(
+        &owner,
+        &project,
+        "posts",
+        "{ entries(first: 2) { nodes { ...Card } } } fragment Card on posts { id headline }",
+        None,
+    )
+    .await;
+    assert_eq!(fine.status, StatusCode::OK, "{}", fine.body);
+    assert!(fine.body["errors"].is_null(), "{}", fine.body);
 }

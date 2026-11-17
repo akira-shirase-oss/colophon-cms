@@ -201,7 +201,7 @@ colophon export --env production --out export-directory
   builds from source (Rust 1.99 or newer, the workspace's `rust-version`). Query macros use the committed `.sqlx`
   data when `DATABASE_URL` is unset; set `SQLX_OFFLINE=true` if your shell has a `DATABASE_URL`. The binary stamps
   the commit Cargo checked out. `cargo install colophon-cli` from crates.io waits: the crates are `publish = false`
-  until the licence is confirmed (O-014), and `cargo package -p colophon-cli` stops because its path dependencies
+  (the licence is settled — MIT, D-158), and `cargo package -p colophon-cli` stops because its path dependencies
   (`colophon-db`, which needs `colophon-domain`, and `colophon-version`) would have to be published first.
 
 ### Output (spec §09, §11; D-119)

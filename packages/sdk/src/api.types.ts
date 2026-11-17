@@ -90,6 +90,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/audience/origins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The origins the project's magic links may land on */
+        get: operations["audienceOrigins"];
+        /** Replace the origins the project's magic links may land on */
+        put: operations["audienceOriginsSet"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/audience/roles": {
         parameters: {
             query?: never;
@@ -1693,7 +1711,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The asset's verified origin bytes, publicly and immutable */
+        /** The asset's current version's verified bytes, publicly */
         get: operations["serveAsset"];
         put?: never;
         post?: never;
@@ -1853,6 +1871,10 @@ export interface components {
             /** @enum {string} */
             state?: "quarantined" | "live" | "rejected" | "deleted";
             width?: number | null;
+        };
+        AudienceOrigins: {
+            /** @description scheme://host[:port] over http(s), no path; the only origins a magic link's `return_to` may name — none listed means no links */
+            origins: string[];
         };
         AudienceRole: {
             /** Format: date-time */
@@ -2338,7 +2360,7 @@ export interface components {
         };
         MagicLinkRequest: {
             email: string;
-            /** @description the site's absolute http(s) landing page; the token is appended to it */
+            /** @description the site's absolute http(s) landing page, on an origin the project lists; the token is appended to it */
             return_to: string;
         };
         /** @description one JSON-RPC 2.0 message under MCP protocol 2025-11-25: a request, a notification or a response — never a batch */
@@ -3437,6 +3459,159 @@ export interface operations {
             };
             /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceOrigins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AudienceOrigins"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description any other failure, in the one error envelope */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    audienceOriginsSet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description the project's id */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AudienceOrigins"];
+            };
+        };
+        responses: {
+            /** @description ok */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AudienceOrigins"];
+                    };
+                };
+            };
+            /** @description `unauthorized` — not signed in, the credential is invalid, or the token was revoked */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `missing_permission and friends` — signed in, but the role does not allow this */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found` — no such resource — or one the caller may not see, which looks the same */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_origin` — not scheme://host[:port] over http(s); `too_many_origins` — more than the project may list */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7612,7 +7787,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `too_large, wrong_type` — the `query` string over 8 KiB, or `variables` not an object */
+            /** @description `too_large, wrong_type` — the `query` string over 8 KiB, or `variables` not an object; `too_deep, too_complex, fragment_cycle` — with fragments expanded: deeper than 16, more than 512 fields, or spreads that cycle — refused before the read opens */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -12138,7 +12313,16 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
+            /** @description `invalid_return_to` — not an absolute http(s) URL; `return_to_not_allowed` — its origin isn't one the project lists (`PUT {P}/audience/origins`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` — this address's last link is under a minute old and unused, or the project is at its per-minute ceiling; `Retry-After` says when; over the per-credential or per-address limit; `Retry-After` */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -12293,7 +12477,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description `sign_in_failed` — a wrong password and a missing account alike */
+            /** @description `sign_in_failed` — a wrong password, a missing account and an (account, address) paused after eight misses, alike */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -12311,8 +12495,8 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `too_many_attempts` — the account is paused */
-            409: {
+            /** @description `password_too_long` — longer than any account's (512 bytes) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12322,6 +12506,15 @@ export interface operations {
             };
             /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — password work at its bound; `Retry-After` says when */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12890,7 +13083,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `sign_in_failed` — a wrong password and a missing account alike */
+            /** @description `sign_in_failed` — a wrong password, a missing account and an (account, address) paused after eight misses, alike */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -12899,8 +13092,8 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `too_many_attempts` — the account is paused */
-            409: {
+            /** @description `password_too_long` — longer than any account's (512 bytes) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -12910,6 +13103,15 @@ export interface operations {
             };
             /** @description `rate_limited` — over the per-credential or per-address limit; `Retry-After` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `unavailable` — password work at its bound; `Retry-After` says when */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -13019,7 +13221,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `rate_limited` — over the per-address delivery limit; `Retry-After` */
+            /** @description `rate_limited` — this client address already holds its public streams (D-159); `Retry-After` says when; over the per-address delivery limit; `Retry-After` */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -13028,7 +13230,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `unavailable` — this server is carrying as many live streams as it can */
+            /** @description `unavailable` — the project's or the server's public stream budget is full */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -13364,7 +13566,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description the stored `Content-Type`; caches forever — bytes under an id never change */
+            /** @description the stored `Content-Type`; `max-age=60, must-revalidate` with the version's `ETag` (a replace or delete moves this address, D-157) — a matching `If-None-Match` answers 304; a version's sha address is `immutable` */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -13418,7 +13620,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description the stored `Content-Type`; caches forever */
+            /** @description the stored `Content-Type`; a sha (a pinned version) is `immutable`, a rendition name of the current version revalidates after 60 s (D-157) */
             200: {
                 headers: {
                     [name: string]: unknown;

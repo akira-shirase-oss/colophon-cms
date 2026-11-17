@@ -45,5 +45,15 @@ advisory unless they ask not to be.
   leak follows the credential-leak runbook in module 18: revoke the scoped principal,
   rotate related secrets, pause its new actions, preserve the audit evidence, and do
   not claim revocation undid external effects already executed.
+- Development affordances are refused in production shapes, but never set them there:
+  `COLOPHON_DEV_MAIL=1` hands sign-in links back in responses (it needs a loopback listener
+  and a localhost `COLOPHON_PUBLIC_URL`, D-163), and `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1`
+  lets webhooks, purges and probes reach private and loopback addresses (D-149). Both are in
+  `deploy/local.env`; don't copy that file into a production environment.
+- Behind a reverse proxy, set `COLOPHON_TRUSTED_PROXIES` to the proxy's address or network:
+  only then is the client's address believed from `X-Forwarded-For`, and every per-address
+  bound (rate limits, sign-in pauses, magic-link shares) counts clients rather than the proxy.
+- Deliveries never use `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` (D-149): a host whose egress
+  must go through a proxy can't send webhooks yet.
 - Vulnerabilities in dependencies are watched by daily RustSec/OSV checks and
   `cargo deny` (module 19), triaged by severity.

@@ -124,6 +124,27 @@ async fn rows(owner: &PgPool) -> Vec<(i64, String, Option<Uuid>, serde_json::Val
         .collect()
 }
 
+/// Deletes `project` the way an operator does (D-167): `colophon_delete_project` isn't the
+/// application's to call, so it runs on the owner's login, in the deleting person's context.
+async fn delete_project(owner: &PgPool, actor: Uuid, project: Uuid) -> String {
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query(
+        "SELECT set_config('app.identity_id', $1, true), set_config('app.project_id', $2, true)",
+    )
+    .bind(actor.to_string())
+    .bind(project.to_string())
+    .execute(&mut *tx)
+    .await
+    .expect("the deleting context");
+    let outcome: String = sqlx::query_scalar("SELECT outcome FROM colophon_delete_project($1)")
+        .bind(project)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("colophon_delete_project");
+    tx.commit().await.expect("commit");
+    outcome
+}
+
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 async fn every_governed_deletion_lands_its_row_in_the_deleting_transaction() {
@@ -215,14 +236,7 @@ async fn every_governed_deletion_lands_its_row_in_the_deleting_transaction() {
     }
 
     // A project deleted: its row is written first and survives the project, by not being its.
-    let mut tx = as_member(&db.app, alice, project).await;
-    let outcome: String = sqlx::query_scalar("SELECT outcome FROM colophon_delete_project($1)")
-        .bind(project)
-        .fetch_one(&mut *tx.transaction)
-        .await
-        .expect("colophon_delete_project");
-    assert_eq!(outcome, "deleted");
-    tx.commit().await.expect("commit");
+    assert_eq!(delete_project(&owner, alice, project).await, "deleted");
     let (projects_left,): (i64,) = sqlx::query_as("SELECT count(*) FROM projects WHERE id = $1")
         .bind(project)
         .fetch_one(&owner)
@@ -366,16 +380,9 @@ async fn the_export_replayed_removes_what_the_backup_still_holds() {
         content_types::Removed::Removed
     );
     tx.commit().await.expect("commit");
-    let mut tx = as_member(&app, alice, doomed).await;
-    assert_eq!(
-        sqlx::query_scalar::<_, String>("SELECT outcome FROM colophon_delete_project($1)")
-            .bind(doomed)
-            .fetch_one(&mut *tx.transaction)
-            .await
-            .expect("colophon_delete_project"),
-        "deleted"
-    );
-    tx.commit().await.expect("commit");
+    let live_owner = db.owner().await;
+    assert_eq!(delete_project(&live_owner, alice, doomed).await, "deleted");
+    live_owner.close().await;
 
     // The export: a header's watermark over the interval's rows, all of them.
     let owner = db.owner().await;
@@ -492,6 +499,156 @@ async fn the_table_is_append_only_and_invisible_through_the_application_login() 
         "a row outside the transaction's project context is refused"
     );
 
+    owner.close().await;
+    db.drop().await;
+}
+
+/// Deleting a project removes every row any project-scoped table holds for it (migration
+/// 0061): the catalogue, not a hand-kept list, says which tables those are. A project
+/// with an audience (a site role, a visitor, their session, a magic link, a listed origin) and
+/// a versioned asset is deleted outright, and every table with a `project_id` column — read
+/// from `pg_attribute` — then holds nothing for it, the ledger excepted. The function's own
+/// text must name every such table, or reach it through an `ON DELETE CASCADE` key, so a
+/// table a later migration adds fails here before any project holds a row in it.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn deleting_a_project_leaves_no_row_in_any_project_table() {
+    let db = TestDb::new().await;
+    let owner = db.owner().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "doomed", "Doomed")
+        .await
+        .expect("created")
+        .id;
+    let environment = environment(&owner, project).await;
+    let asset = Uuid::now_v7();
+    let visitor = Uuid::now_v7();
+    for statement in [
+        "INSERT INTO site_roles (project_id, name) VALUES ($1, 'member')",
+        "INSERT INTO site_users (project_id, id, email, password_hash, role)
+         VALUES ($1, $3, 'visitor@example.test', 'not-a-hash', 'member')",
+        "INSERT INTO site_sessions (project_id, id, site_user_id, token_hash, csrf_hash, expires_at)
+         VALUES ($1, gen_random_uuid(), $3, '\\x0101010101010101010101010101010101010101010101010101010101010101',
+                 '\\x0202020202020202020202020202020202020202020202020202020202020202',
+                 now() + interval '1 hour')",
+        "INSERT INTO audience_magic_links (project_id, id, email, token_hash, return_to, expires_at)
+         VALUES ($1, gen_random_uuid(), 'visitor@example.test',
+                 '\\x0303030303030303030303030303030303030303030303030303030303030303',
+                 'https://site.test/in',
+                 now() + interval '15 minutes')",
+        "INSERT INTO audience_origins (project_id, origin) VALUES ($1, 'https://site.test')",
+        "INSERT INTO assets (project_id, environment_id, id, file_name, declared_type, size_bytes,
+                             quarantine_key, created_by)
+         VALUES ($1, $2, $4, 'photo.png', 'image/png', 10, 'quarantine/' || $4::text, $5)",
+        "INSERT INTO asset_versions (project_id, environment_id, asset_id, seq, declared_type,
+                                     size_bytes, detected_type, sha256, width, height, public_key)
+         VALUES ($1, $2, $4, 1, 'image/png', 10, 'image/png',
+                 '\\x0404040404040404040404040404040404040404040404040404040404040404', 1, 1,
+                 'public/' || $4::text)",
+    ] {
+        sqlx::query(statement)
+            .bind(project)
+            .bind(environment)
+            .bind(visitor)
+            .bind(asset)
+            .bind(alice)
+            .execute(&owner)
+            .await
+            .unwrap_or_else(|error| panic!("{statement}: {error}"));
+    }
+
+    assert_eq!(delete_project(&owner, alice, project).await, "deleted");
+
+    // Every table with a project_id, from the catalogue: none holds a row for the project.
+    let scoped: Vec<String> = sqlx::query_scalar(
+        "SELECT c.relname::text FROM pg_class c
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'project_id' AND NOT a.attisdropped
+         WHERE c.relkind IN ('r', 'p') AND c.relnamespace = 'public'::regnamespace
+           AND c.relname <> 'deletion_ledger'
+         ORDER BY 1",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("the catalogue");
+    assert!(
+        scoped.len() > 40,
+        "the catalogue lists the project tables: {scoped:?}"
+    );
+    for table in &scoped {
+        let left: i64 = sqlx::query_scalar(AssertSqlSafe(format!(
+            "SELECT count(*) FROM public.{table} WHERE project_id = $1"
+        )))
+        .bind(project)
+        .fetch_one(&owner)
+        .await
+        .expect("count");
+        assert_eq!(left, 0, "{table} still holds rows for the deleted project");
+    }
+
+    // And the function names every one of them, or reaches it by a cascading key.
+    let unnamed: Vec<String> = sqlx::query_scalar(
+        "WITH scoped AS (
+             SELECT c.oid, c.relname::text AS name FROM pg_class c
+             JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'project_id'
+                                AND NOT a.attisdropped
+             WHERE c.relkind IN ('r', 'p') AND c.relnamespace = 'public'::regnamespace
+               AND c.relname <> 'deletion_ledger'),
+         body AS (SELECT pg_get_functiondef('colophon_delete_project(uuid)'::regprocedure) AS def)
+         SELECT s.name FROM scoped s, body b
+         WHERE position('DELETE FROM public.' || s.name || ' ' IN b.def) = 0
+           AND NOT EXISTS (
+               SELECT 1 FROM pg_constraint k JOIN pg_class r ON r.oid = k.confrelid
+               WHERE k.conrelid = s.oid AND k.contype = 'f' AND k.confdeltype = 'c'
+                 AND position('DELETE FROM public.' || r.relname::text || ' ' IN b.def) > 0)
+         ORDER BY 1",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("the function's text");
+    assert!(
+        unnamed.is_empty(),
+        "colophon_delete_project neither deletes nor cascades to: {unnamed:?}"
+    );
+
+    owner.close().await;
+    db.drop().await;
+}
+
+/// The application can't delete a project (D-167): `colophon_delete_project` checks only the
+/// context settings, which any session can set (D-155's own argument), and no route calls it —
+/// so `colophon_api` may not execute it, even as an owner in the project's context.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn the_application_login_cannot_delete_a_project() {
+    let db = TestDb::new().await;
+    let alice = db.administrator("alice").await;
+    let project = projects::create(&db.app, alice, "kept", "Kept")
+        .await
+        .expect("created")
+        .id;
+    let mut tx = as_member(&db.app, alice, project).await;
+    let refused =
+        sqlx::query_scalar::<_, String>("SELECT outcome FROM colophon_delete_project($1)")
+            .bind(project)
+            .fetch_one(&mut *tx.transaction)
+            .await
+            .expect_err("the application executed colophon_delete_project");
+    assert_eq!(
+        refused
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref(),
+        Some("42501"),
+        "{refused}"
+    );
+    drop(tx);
+    let owner = db.owner().await;
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM projects WHERE id = $1")
+        .bind(project)
+        .fetch_one(&owner)
+        .await
+        .expect("count");
+    assert_eq!(left, 1);
     owner.close().await;
     db.drop().await;
 }

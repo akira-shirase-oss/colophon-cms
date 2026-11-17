@@ -92,6 +92,24 @@ on clean infrastructure and an independent install, so operations are a module w
   counts alone, so a cluster of N admits up to N times the rate until it is back. `scripts/load.sh` and
   `scripts/cluster.sh` raise the limits so far that they never refuse (one machine sends everything), and still
   pay for every check.
+- Database TLS (D-156): `COLOPHON_DATABASE_URL` and `COLOPHON_MIGRATION_DATABASE_URL` take libpq's `sslmode`
+  (`require`, `verify-ca`, `verify-full`, plus `sslrootcert` for a private CA); the driver speaks TLS through rustls
+  with the Mozilla roots built in. The local stack's Postgres has no TLS and its URLs say nothing, so they stay
+  plaintext on loopback. A managed database (Neon) needs `verify-full`.
+- Magic-link bounds (D-161): `COLOPHON_MAGIC_LINKS_PER_ADDRESS` (default 5 per client address per project per ten
+  minutes) and `COLOPHON_MAGIC_LINKS_PER_PROJECT` (default 300 per project per minute). Behind a proxy that isn't in
+  `COLOPHON_TRUSTED_PROXIES` every client is the proxy, so the per-address share would become one bucket again.
+- Password work (D-150): `COLOPHON_PASSWORD_CONCURRENCY` (default one a core, 1–256) bounds the Argon2id
+  jobs that run at once — 19 MiB and tens of milliseconds each, and anyone can ask for one. A burst waits up to two
+  seconds (at most 32 waiters a slot); past that sign-ins and sign-ups answer `503` with `Retry-After`, while
+  delivery shares the cores and, since a verify never holds a database connection, keeps its pool.
+- Destinations (D-149): webhooks, CDN purges and probes reach only https and public addresses, checked when a
+  destination is saved and again before every attempt, with a resolver that drops private answers. Deliveries
+  ignore `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`, so a host whose egress must go through a proxy can't send them.
+  `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` lifts that for development (local receivers, the demo-site hook) and
+  says so in the start-up log; it is off by default and never inferred from the listen address, because a production
+  server behind a local reverse proxy binds loopback too. `deploy/local.env` sets it; a production environment
+  must not.
 - `colophon doctor [--json]` reports what `/readyz` reports, with the CLI exit codes (0 ready, 5 otherwise).
   - A cache failure can be *degraded* rather than unready when the bounded fallback is available.
   - A database failure makes writes unavailable.
@@ -103,7 +121,9 @@ on clean infrastructure and an independent install, so operations are a module w
   signals below are exposed on the log lines, and the runbook states which.
 - **Correlation fields (built):** request id (UUIDv7 minted, or a sanitised client
   `x-request-id`, echoed on the response header and the error envelope), `method`, `route`
-  (low-cardinality template), `path` without the query string, `latency`, `status`, and the
+  (low-cardinality template), `path` without the query string and with credential segments
+  (`{token}`, `{code}`) written as their template names — and, on a path no route matched, any segment after
+  `magic-link` or `device` likewise (D-152), `latency`, `status`, and the
   deployment's `version`/`commit` on every request-attributed line. Work events carry their
   own ids (`job`, `generation`, `attempts`, `project`, `identity`, `changeset`) where the
   event has one — the bare request span does not resolve a project, by design.
@@ -119,8 +139,9 @@ on clean infrastructure and an independent install, so operations are a module w
   the in-app counter and cap are not built — the synchronous writer means pressure shows as
   latency, not silent loss, which is honest but not the spec's shape.
 - **Never logged:** draft text, model prompts, customer addresses or credentials (spec §27) —
-  by rule and review: `path` drops the query string, client ids are sanitised, the envelope
-  names `code` never internals.
+  by rule and review: `path` drops the query string and writes a magic link's token or a device
+  code as `{token}`/`{code}` (D-152, proved at TRACE by `colophon-api/tests/redaction.rs`), client
+  ids are sanitised, the envelope names `code` never internals.
 
 ### Backups (spec §32; capture and archiving built in P6, D-125)
 - WAL archiving is live on the local stack: `archive_mode=on`, `wal_level=replica`, `archive_timeout=60s` (an idle

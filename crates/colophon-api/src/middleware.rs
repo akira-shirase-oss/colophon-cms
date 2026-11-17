@@ -2,7 +2,7 @@
 //! shape"). `ServiceBuilder` lists layers outermost first: a request travels down the list,
 //! its response travels back up.
 
-use std::{any::Any, time::Duration};
+use std::{any::Any, borrow::Cow, time::Duration};
 
 use axum::{
     Router,
@@ -90,26 +90,78 @@ async fn sanitize_request_id(mut request: Request) -> Request {
     request
 }
 
+/// Path parameters whose values are credentials (D-152): a magic link's `{token}` and a
+/// device sign-in's `{code}`. The request span writes their segments as these names, so no
+/// line logged while handling such a request — at any level — carries the secret.
+const SECRET_PARAMS: &[&str] = &["{token}", "{code}"];
+
+/// For a path no route matched — a trailing slash after a token, a wrong prefix — the
+/// segment after one of these is written as the credential it would have been (D-152):
+/// `magic-link/{token}`, `device/{code}`.
+const SECRET_AFTER: &[(&str, &str)] = &[("magic-link", "{token}"), ("device", "{code}")];
+
+/// The path as the request span records it: as sent, except that each segment the matched
+/// route's template names as a credential is written as that name
+/// (`/audience/v1/{uuid}/magic-link/{token}`). An unmatched path has no template, so any
+/// segment after `magic-link` or `device` is written as its name instead ([`SECRET_AFTER`]).
+fn loggable_path<'a>(path: &'a str, route: Option<&str>) -> Cow<'a, str> {
+    let Some(route) = route else {
+        return unmatched_path(path);
+    };
+    if !SECRET_PARAMS.iter().any(|name| route.contains(name)) {
+        return Cow::Borrowed(path);
+    }
+    let mut template = route.split('/');
+    let segments: Vec<&str> = path
+        .split('/')
+        .map(|segment| match template.next() {
+            Some(name) if SECRET_PARAMS.contains(&name) => name,
+            _ => segment,
+        })
+        .collect();
+    Cow::Owned(segments.join("/"))
+}
+
+/// [`loggable_path`] for a path no route matched.
+fn unmatched_path(path: &str) -> Cow<'_, str> {
+    if !SECRET_AFTER.iter().any(|(after, _)| path.contains(after)) {
+        return Cow::Borrowed(path);
+    }
+    let mut previous = "";
+    let segments: Vec<&str> = path
+        .split('/')
+        .map(|segment| {
+            let written = SECRET_AFTER
+                .iter()
+                .find(|(after, _)| *after == previous && !segment.is_empty())
+                .map_or(segment, |(_, name)| name);
+            previous = segment;
+            written
+        })
+        .collect();
+    Cow::Owned(segments.join("/"))
+}
+
 /// The root span of every request. Everything logged while handling the request inherits
 /// these fields. `route` is the matched template (low cardinality); `path` omits the query
-/// string, which can carry tokens. `version` and `commit` are the deployment identity the
-/// correlation fields call for (module 18, spec §32): every request-attributed line names
-/// the exact build that served it.
+/// string, which can carry tokens, and writes credential segments as their names
+/// ([`loggable_path`]). `version` and `commit` are the deployment identity the correlation
+/// fields call for (module 18, spec §32): every request-attributed line names the exact
+/// build that served it.
 fn make_span(request: &Request<Body>, build: BuildInfo) -> Span {
     let request_id = request
         .headers()
         .get(REQUEST_ID_HEADER)
         .and_then(|value| value.to_str().ok())
         .unwrap_or("-");
-    let route = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map_or("<unmatched>", MatchedPath::as_str);
+    let matched = request.extensions().get::<MatchedPath>();
+    let route = matched.map_or("<unmatched>", MatchedPath::as_str);
+    let path = loggable_path(request.uri().path(), matched.map(MatchedPath::as_str));
     tracing::info_span!(
         "request",
         method = %request.method(),
         route,
-        path = %request.uri().path(),
+        path = %path,
         request_id = %request_id,
         version = build.version,
         commit = build.commit,
@@ -223,6 +275,43 @@ pub fn apply(router: Router, limits: HttpLimits, build: BuildInfo) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credential_segments_are_written_as_their_names() {
+        let route = Some("/audience/v1/{project}/magic-link/{token}");
+        assert_eq!(
+            loggable_path("/audience/v1/01a1/magic-link/s3cret", route),
+            "/audience/v1/01a1/magic-link/{token}"
+        );
+        assert_eq!(
+            loggable_path("/auth/device/WXYZ-1234", Some("/auth/device/{code}")),
+            "/auth/device/{code}"
+        );
+        // Routes without a credential keep their ids; unmatched paths have no template.
+        let plain = "/api/v1/projects/01a1/environments/production";
+        assert_eq!(
+            loggable_path(
+                plain,
+                Some("/api/v1/projects/{project}/environments/{environment}")
+            ),
+            plain
+        );
+        assert_eq!(loggable_path("/nowhere/s3cret", None), "/nowhere/s3cret");
+        // Unmatched, a credential's segment is still known by what precedes it: a trailing
+        // slash or a wrong prefix never logs a live token.
+        assert_eq!(
+            loggable_path("/audience/v1/01a1/magic-link/s3cret/", None),
+            "/audience/v1/01a1/magic-link/{token}/"
+        );
+        assert_eq!(
+            loggable_path("/v1/magic-link/s3cret", None),
+            "/v1/magic-link/{token}"
+        );
+        assert_eq!(
+            loggable_path("/auth/device/WXYZ-1234/", None),
+            "/auth/device/{code}/"
+        );
+    }
 
     #[test]
     fn request_id_policy() {

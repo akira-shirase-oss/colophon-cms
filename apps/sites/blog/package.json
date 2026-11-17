@@ -11,9 +11,9 @@
     "check": "astro check"
   },
   "dependencies": {
-    "@astrojs/node": "11.1.5",
+    "@astrojs/node": "11.1.12",
     "@colophon/site-kit": "0.0.0",
-    "astro": "7.4.5"
+    "astro": "7.4.7"
   },
   "devDependencies": {
     "@astrojs/check": "0.9.12",

@@ -40,8 +40,9 @@ pub struct Services {
     /// Exact origins (`scheme://host[:port]`) whose pages may send cookie-authenticated writes.
     /// The first is this server's public origin.
     pub trusted_origins: Vec<String>,
-    /// Whether delivery destinations may be private addresses: only for a development server
-    /// bound to loopback (D-046).
+    /// Whether delivery destinations may be private addresses: only when the operator opts in
+    /// with `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` (D-046, D-149) — never inferred from the
+    /// listen address.
     pub allow_private_destinations: bool,
     /// Whether a magic-link request also hands the link back in `dev_link` instead of emailing
     /// it: `COLOPHON_DEV_MAIL=1`, a development affordance (D-140).
@@ -62,6 +63,12 @@ pub struct Services {
     pub events: Arc<EventBus>,
     /// The remote-MCP session registry `{P}/mcp` serves (D-121).
     pub mcp: mcp::Shared,
+    /// The bound on Argon2 work every sign-up and sign-in shares (D-150):
+    /// `COLOPHON_PASSWORD_CONCURRENCY` jobs at once, a short wait, then `503 Busy`.
+    pub passwords: colophon_db::passwords::PasswordGate,
+    /// The bounds on magic-link requests (D-153, D-161): `COLOPHON_MAGIC_LINKS_PER_ADDRESS`
+    /// and `COLOPHON_MAGIC_LINKS_PER_PROJECT`.
+    pub magic_links: colophon_db::audience::MagicLinkLimits,
 }
 
 /// The router's state. Cloning is two reference-count increments and a copy.

@@ -9,7 +9,7 @@
 // `colophon_delivery` gated by `app.audience_role`, answered `private` and never touching the
 // anonymous cache — some are anonymous lists served by the generation cache, some are `me`,
 // one in eight signs in (Argon2id on the blocking pool), a fiftieth requests a magic link
-// (D-140; the consume arm runs only when the server hands the link back, the development
+// (D-140, cooling down per address under D-153; the consume arm runs only when the server hands the link back, the development
 // mailer's COLOPHON_DEV_MAIL), and a hundredth signs up. Signups mint a new
 // account each time; sign-ins refresh the VU's own token, so a member read always carries a
 // live one (MAX_SESSIONS evicts only the oldest).
@@ -111,6 +111,10 @@ export function setup() {
   const published = http.post(`${path}/publish`, JSON.stringify({ base_generation: 0 }), { headers: Object.assign({ 'Idempotency-Key': key() }, ifMatch) });
   if (published.status !== 201) fail(`publish: HTTP ${published.status} ${published.body}`);
 
+  // Magic links land only on an origin the project lists (D-148): the scenario's site.
+  const origins = http.put(`${base}/audience/origins`, JSON.stringify({ origins: ['http://site.test'] }), { headers });
+  if (origins.status !== 200) fail(`origins: HTTP ${origins.status} ${origins.body}`);
+
   // The audience itself: public signups, batched — each returns its first session token.
   const users = [];
   const audience = `${BASE_URL}/audience/v1/${projectId}`;
@@ -163,10 +167,18 @@ export default function (data) {
     check(res, { 'signin 200': (r) => r.status === 200 && typeof r.json('data.session') === 'string' });
     if (res.status === 200) mine.token = res.json('data.session');
   } else if (slot < 99) {
-    // A magic-link request always answers the same 202; spending it is possible only where
-    // the server mails development links back (COLOPHON_DEV_MAIL, loopback-only).
-    res = http.post(`${data.audience}/magic-link`, JSON.stringify({ email: mine.email, return_to: 'http://site.test/magic' }), params('magic_request', { 'Content-Type': 'application/json' }));
-    check(res, { 'magic request 202 sent': (r) => r.status === 202 && r.json('data.sent') === true });
+    // A magic-link request answers the same 202 whether or not the email has an account —
+    // or 429 with Retry-After when this client is past its share (five links per ten minutes;
+    // every virtual user here is 127.0.0.1, so most requests get it), the email's escalating
+    // cooldown hasn't passed, or the project is at its ceiling (D-153, D-161): both are the designed answers,
+    // so both count as expected. Spending it is possible only where the server mails
+    // development links back (COLOPHON_DEV_MAIL, loopback-only).
+    const magic = Object.assign(params('magic_request', { 'Content-Type': 'application/json' }), { responseCallback: http.expectedStatuses(202, 429) });
+    res = http.post(`${data.audience}/magic-link`, JSON.stringify({ email: mine.email, return_to: 'http://site.test/magic' }), magic);
+    check(res, {
+      'magic request 202 sent, or 429 with Retry-After': (r) =>
+        (r.status === 202 && r.json('data.sent') === true) || (r.status === 429 && r.headers['Retry-After'] !== undefined),
+    });
     const link = res.status === 202 ? res.json('data.dev_link') : undefined;
     if (typeof link === 'string') {
       const consumed = http.post(`${data.audience}/magic-link/${link.split('token=').pop()}`, null, params('magic_consume', { 'Content-Type': 'application/json' }));

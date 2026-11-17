@@ -65,8 +65,10 @@ L10, L11, L13, the spec §27 cache-isolation tests and the mixed-release checker
   only *that* published content changed — no ids, kinds or collections, so a gated entry's existence
   cannot leak through it. Only `releases` hints are forwarded (a publish inserts a release row; draft
   saves and delivery-job churn stay off the stream), a burst coalesces into one `change` frame, and the
-  stream is bounded by the same per-project and per-server caps as the staff bus (D-108), ending at its
-  lifetime. A site reacts by re-reading through the delivery API at the new generation: The Draft renders
+  stream is bounded by a budget of its own (D-159), apart from the staff bus's (D-108): 256 public streams a
+  project and 2048 in all on one server (`503` past either), 8 per client address (`429` with `Retry-After`;
+  `COLOPHON_EVENTS_PUBLIC_PER_PROJECT`, `_PUBLIC_MAX_STREAMS`, `_PUBLIC_PER_ADDRESS`) — so anonymous
+  listeners can never lock a project's editors out of their streams — ending at its lifetime. A site reacts by re-reading through the delivery API at the new generation: The Draft renders
   its public pages per request and fans one upstream connection out to every open tab, so a publish
   reaches a browser with no rebuild.
 - DX.4 (D-103, D-105) adds `POST /content/v1/{project}/{environment}/{collection}/query?generation=&cursor=`:
@@ -181,7 +183,9 @@ These are policies to test, not a global 30-second consistency guarantee.
   observation for every look (location, generation seen, status, body hash, error). Workers have a location
   (`COLOPHON_WORKER_LOCATION`), and a probe may be pinned to one. Each release has one label from
   `colophon_domain::receipt::label`, and `GET …/releases/{generation}` is its receipt
-  (`crates/colophon-server/tests/receipts.rs`, against a fake site; verified at 2 locations with a second worker).
+  (`crates/colophon-server/tests/receipts.rs`, against a fake site; verified at 2 locations with a second worker),
+  read in one snapshot (`scope::Isolation::Snapshot`, REPEATABLE READ) so the deliveries and the locations that saw
+  them always describe the same moment.
 
 ### Preview origin (spec §06)
 - A separate, sandboxed origin validates the 15-minute capability ([auth](03-auth.md)) on every protected fetch.

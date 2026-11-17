@@ -10,6 +10,9 @@
 
 mod common;
 
+/// The address the tests' own sign-ins come from.
+const HERE: &str = "203.0.113.1";
+
 use colophon_db::{
     PgPool,
     identity::{self, LOCK_AFTER, PasswordSignIn, SignedUp},
@@ -48,7 +51,7 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
 
     // The right password signs in; the same email can't sign up twice.
     assert_eq!(
-        identity::password_sign_in(&db.app, "bob@example.com", password)
+        identity::password_sign_in(&db.app, &common::gate(), "bob@example.com", HERE, password)
             .await
             .expect("sign-in"),
         PasswordSignIn::SignedIn(bob)
@@ -64,7 +67,7 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
     // A wrong password and an email with no account answer alike.
     for email in ["bob@example.com", "carol@example.com"] {
         assert_eq!(
-            identity::password_sign_in(&db.app, email, "wrong password")
+            identity::password_sign_in(&db.app, &common::gate(), email, HERE, "wrong password")
                 .await
                 .expect("sign-in"),
             PasswordSignIn::Refused,
@@ -72,9 +75,9 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
         );
     }
 
-    // The stored row holds the PHC string, never the password; the miss above counted once.
+    // The stored row holds the PHC string, never the password.
     let row = sqlx::query!(
-        "SELECT email, password_hash, failed_sign_ins FROM identities WHERE id = $1",
+        "SELECT email, password_hash FROM identities WHERE id = $1",
         bob
     )
     .fetch_one(&db.app)
@@ -86,38 +89,62 @@ async fn an_account_signs_up_once_signs_in_and_never_shows_its_password() {
             .as_deref()
             .is_some_and(|phc| phc.starts_with("$argon2id$") && !phc.contains(password))
     );
-    assert_eq!(row.failed_sign_ins, 1);
     db.drop().await;
 }
 
 #[tokio::test]
 #[ignore = "needs the local stack: scripts/stack.sh up"]
-async fn enough_misses_pause_the_account_even_for_the_right_password() {
+async fn enough_misses_pause_the_guessing_address_and_never_the_account() {
     let db = TestDb::new().await;
     let password = "the real password";
     made(&db.app, "dave@example.com", password).await;
+    let guesser = "198.51.100.9";
 
-    for miss in 1..LOCK_AFTER {
+    // Every miss refuses alike, the LOCK_AFTER-th included.
+    for miss in 1..=LOCK_AFTER {
         assert_eq!(
-            identity::password_sign_in(&db.app, "dave@example.com", "a guess")
-                .await
-                .expect("sign-in"),
+            identity::password_sign_in(
+                &db.app,
+                &common::gate(),
+                "dave@example.com",
+                guesser,
+                "a guess"
+            )
+            .await
+            .expect("sign-in"),
             PasswordSignIn::Refused,
-            "miss {miss} should refuse, not lock"
+            "miss {miss}"
         );
     }
-    let locked = identity::password_sign_in(&db.app, "dave@example.com", "a guess")
+    // Paused for the guesser: the right password from there answers like a wrong one.
+    assert_eq!(
+        identity::password_sign_in(
+            &db.app,
+            &common::gate(),
+            "dave@example.com",
+            guesser,
+            password
+        )
         .await
-        .expect("sign-in");
-    assert!(
-        matches!(locked, PasswordSignIn::Locked(until) if until > OffsetDateTime::now_utc()),
-        "miss {LOCK_AFTER} should lock: {locked:?}"
+        .expect("sign-in"),
+        PasswordSignIn::Refused
     );
-    // While paused, the right password gets the same answer — no way to try more.
-    let still = identity::password_sign_in(&db.app, "dave@example.com", password)
-        .await
-        .expect("sign-in");
-    assert!(matches!(still, PasswordSignIn::Locked(_)), "{still:?}");
+    // The owner, elsewhere, signs in — and the guesser's pause is untouched by it.
+    assert!(matches!(
+        identity::password_sign_in(&db.app, &common::gate(), "dave@example.com", HERE, password)
+            .await
+            .expect("sign-in"),
+        PasswordSignIn::SignedIn(_)
+    ));
+    let paused = sqlx::query_scalar!(
+        r#"SELECT locked_until > now() AS "paused!" FROM sign_in_throttle
+           WHERE realm = 'staff' AND email = 'dave@example.com' AND address = $1"#,
+        guesser
+    )
+    .fetch_one(&db.app)
+    .await
+    .expect("the guesser's key");
+    assert!(paused, "only the owner's own key was forgotten");
     db.drop().await;
 }
 
@@ -153,5 +180,145 @@ async fn an_invited_person_creates_their_account_and_joins() {
             role: "editor".to_owned(),
         }
     );
+    db.drop().await;
+}
+
+/// Concurrent first attempts can't clear the pause one of them set (D-162):
+/// with no row yet for the key, every attempt used to pass the pause check at once, and the
+/// one counted after the [`LOCK_AFTER`]th took the pause for "a pause that ran out" and reset
+/// it. Here the table is held so that every attempt has checked before any has counted.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn concurrent_first_misses_keep_the_pause_they_reach() {
+    let db = TestDb::new().await;
+    let password = "the real password";
+    made(&db.app, "erin@example.com", password).await;
+    let guesser = "198.51.100.10";
+    let attempts = usize::try_from(LOCK_AFTER).expect("small") + 4;
+    let pool = db.app_pool(u32::try_from(attempts).expect("small")).await;
+    let gate = colophon_db::passwords::PasswordGate::new(attempts);
+
+    // Counting writes wait behind this SHARE lock; the pause checks (row locks) don't.
+    let owner = db.owner().await;
+    let mut hold = owner.begin().await.expect("begin");
+    sqlx::query("LOCK TABLE sign_in_throttle IN SHARE MODE")
+        .execute(&mut *hold)
+        .await
+        .expect("lock");
+    let misses: Vec<_> = (0..attempts)
+        .map(|_| {
+            let (pool, gate) = (pool.clone(), gate.clone());
+            tokio::spawn(async move {
+                identity::password_sign_in(&pool, &gate, "erin@example.com", guesser, "a guess")
+                    .await
+                    .expect("sign-in")
+            })
+        })
+        .collect();
+    // Every attempt is waiting on a lock: past its check, or (fixed) behind the account's.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let waiting: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_locks WHERE NOT granted")
+            .fetch_one(&owner)
+            .await
+            .expect("locks");
+        if waiting >= i64::try_from(attempts).expect("small") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "only {waiting} attempts waiting"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    hold.commit().await.expect("release");
+    for miss in misses {
+        assert_eq!(miss.await.expect("joined"), PasswordSignIn::Refused);
+    }
+
+    // More misses than LOCK_AFTER, so the guesser is paused — the right password included.
+    assert_eq!(
+        identity::password_sign_in(
+            &db.app,
+            &common::gate(),
+            "erin@example.com",
+            guesser,
+            password
+        )
+        .await
+        .expect("sign-in"),
+        PasswordSignIn::Refused,
+        "the pause the eighth miss set was cleared by the misses after it"
+    );
+    pool.close().await;
+    owner.close().await;
+    db.drop().await;
+}
+
+/// Sign-in keys hold emails and client addresses, so each realm's keys are visible only where
+/// that realm signs in (D-166): staff keys outside any project, a project's audience keys in
+/// that project's context, nobody else's anywhere.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn sign_in_keys_are_visible_only_in_their_own_realm() {
+    let db = TestDb::new().await;
+    let owner = db.owner().await;
+    let (mine, theirs) = (Uuid::now_v7(), Uuid::now_v7());
+    for realm in [
+        "staff".to_owned(),
+        format!("audience:{mine}"),
+        format!("audience:{theirs}"),
+    ] {
+        sqlx::query(
+            "INSERT INTO sign_in_throttle (realm, email, address, failures)
+             VALUES ($1, 'a@b.c', '198.51.100.1', 1)",
+        )
+        .bind(realm)
+        .execute(&owner)
+        .await
+        .expect("a key");
+    }
+    let visible = |project: Option<Uuid>| {
+        let pool = db.app.clone();
+        async move {
+            let mut tx = scope::begin(
+                &pool,
+                scope::Scope {
+                    identity: None,
+                    project,
+                },
+            )
+            .await
+            .expect("begin");
+            let realms: Vec<String> =
+                sqlx::query_scalar("SELECT realm FROM sign_in_throttle ORDER BY realm")
+                    .fetch_all(&mut *tx)
+                    .await
+                    .expect("read");
+            tx.commit().await.expect("commit");
+            realms
+        }
+    };
+    assert_eq!(visible(None).await, ["staff"]);
+    assert_eq!(visible(Some(mine)).await, [format!("audience:{mine}")]);
+    // Nor can a project's context write another realm's key.
+    let mut tx = scope::begin(
+        &db.app,
+        scope::Scope {
+            identity: None,
+            project: Some(mine),
+        },
+    )
+    .await
+    .expect("begin");
+    let written = sqlx::query(
+        "INSERT INTO sign_in_throttle (realm, email, address, failures)
+         VALUES ('staff', 'b@b.c', '198.51.100.2', 1)",
+    )
+    .execute(&mut *tx)
+    .await;
+    assert!(written.is_err(), "a project context wrote a staff key");
+    drop(tx);
+    owner.close().await;
     db.drop().await;
 }

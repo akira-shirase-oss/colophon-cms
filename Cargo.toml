@@ -9,7 +9,9 @@ version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.99"
 repository = "https://github.com/akira-shirase-oss/colophon-cms"
-# Nothing is published until the licence is confirmed (DECISIONS.md, O-014).
+# MIT, the maintainer's decision (D-158); the text is the root LICENSE.
+license = "MIT"
+# Crates stay off crates.io: the binaries ship through releases and npm (module 19).
 publish = false
 
 [workspace.dependencies]
@@ -25,7 +27,7 @@ colophon-version = { path = "crates/colophon-version" }
 colophon-mcp = { path = "crates/colophon-mcp" }
 
 # External crates: versions live here only (rust-mastery chapter 15). Minimal features;
-# one async runtime (Tokio); no TLS stack until a feature needs one.
+# one async runtime (Tokio); one TLS stack (rustls on aws-lc-rs) for every client that needs one.
 anyhow = "1.0.104"
 argon2 = "0.5.3"
 # The GraphQL executor for the per-collection endpoint (DX.10, D-115): the schema is built
@@ -56,7 +58,10 @@ semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11"
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "uuid", "time"] }
+# TLS for Postgres (D-156): rustls on aws-lc-rs, the provider reqwest's rustls already uses — one
+# TLS stack — with the Mozilla roots built in, so `sslmode=require`/`verify-full` URLs (Neon's)
+# connect without the host's certificate store.
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "uuid", "time", "tls-rustls-aws-lc-rs"] }
 thiserror = "2.0.21"
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
 tokio-util = { version = "0.7.20", features = ["rt"] }

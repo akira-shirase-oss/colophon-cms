@@ -55,6 +55,8 @@ async fn a_request_that_cannot_get_a_connection_is_told_to_retry() {
                 colophon_api::events::EventLimits::default(),
             ),
             mcp: colophon_api::mcp::Shared::new(colophon_api::mcp::Limits::default()),
+            passwords: colophon_db::passwords::PasswordGate::new(1),
+            magic_links: colophon_db::audience::MagicLinkLimits::DEFAULT,
         })),
         build: colophon_api::BuildInfo::unstamped("0.0.0-test"),
         admission: None,

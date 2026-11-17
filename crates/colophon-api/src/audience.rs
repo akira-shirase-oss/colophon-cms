@@ -12,9 +12,9 @@
 //!   makes the account and starts its session. `role` names a role open to signup
 //!   (`self_assign`); left out, the project's single open role is taken.
 //! - `POST /audience/v1/{project}/signin`: `{"email", "password"}` starts a session. A wrong
-//!   password, a missing account and an unknown project answer alike
-//!   (`sign_in_failed`); a paused account is `too_many_attempts`, a disabled one
-//!   `account_disabled`.
+//!   password, a missing account, an unknown project and an (account, address) paused after
+//!   eight misses answer alike (`sign_in_failed`, D-154); a disabled one is
+//!   `account_disabled` — to the right password only (D-169).
 //! - `POST /audience/v1/{project}/signout`: ends the session — a cookie-carried one asks the
 //!   `X-CSRF-Token` header to match its CSRF cookie, as a staff session's writes do; a bearer
 //!   credential needs nothing, never being ambient.
@@ -31,6 +31,8 @@
 //!
 //! - `GET    {P}/audience/roles`, `POST` (`{"name", "self_assign"?}`),
 //!   `PATCH {P}/audience/roles/{name}` (`{"self_assign"}`), `DELETE` it;
+//! - `GET    {P}/audience/origins`, `PUT` (`{"origins": [...]}`): the origins magic links
+//!   may land on (D-148);
 //! - `GET    {P}/audience/users`, `POST` (`{"email", "password", "display_name"?, "role"}`),
 //!   `GET | PATCH {P}/audience/users/{user}` (`{"role"?, "disabled"?}`),
 //!   `GET    {P}/audience/users/{user}/sessions`, `DELETE {P}/audience/sessions/{session}`.
@@ -55,7 +57,7 @@ use uuid::Uuid;
 
 use crate::{
     ApiError, AppState, Services,
-    auth::{check_password, clean_email},
+    auth::{check_password, check_sign_in_password, clean_email},
     entries::rfc3339,
     members,
     session::{self, Credential, SignedIn, cookie, set_cookie},
@@ -340,12 +342,14 @@ pub(crate) async fn sign_up(
     Path(path): Path<AudiencePath>,
     body: Result<Json<AudienceSignUp>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let services = session::services(&state)?;
     let Json(body) = body?;
+    let services = session::services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let email = clean_email(&body.email)?;
     check_password(&body.password)?;
-    let phc = colophon_db::passwords::hashed(&body.password)
+    let phc = services
+        .passwords
+        .hash(&body.password)
         .await
         .map_err(ApiError::from_db)?;
     let name = body
@@ -436,22 +440,28 @@ async fn audited(
 pub(crate) async fn sign_in(
     State(state): State<AppState>,
     Path(path): Path<AudiencePath>,
+    crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     body: Result<Json<AudienceSignIn>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let services = session::services(&state)?;
     let Json(body) = body?;
+    let services = session::services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let email = clean_email(&body.email)?;
-    let user = match audience::sign_in(&services.pool, project, &email, &body.password).await {
+    check_sign_in_password(&body.password)?;
+    let user = match audience::sign_in(
+        &services.pool,
+        &services.passwords,
+        project,
+        &email,
+        &address,
+        &body.password,
+    )
+    .await
+    {
         Ok(SignIn::SignedIn(user)) => user,
-        // A wrong password and a missing account answer alike, after the same Argon2 work.
+        // A wrong password, a missing account and a paused (account, address) answer alike
+        // (D-154).
         Ok(SignIn::Refused) => return Err(ApiError::SignInFailed),
-        Ok(SignIn::Locked(_)) => {
-            return Err(ApiError::conflict(
-                "too_many_attempts",
-                "too many tries; wait a while and try again",
-            ));
-        }
         Ok(SignIn::Disabled) => {
             return Err(ApiError::forbidden(
                 "account_disabled",
@@ -560,6 +570,80 @@ async fn require_manage(tx: &mut MemberTransaction) -> Result<(), ApiError> {
         None,
         "only people whose role manages the audience can do this",
     )
+}
+
+/// What `PUT {P}/audience/origins` asks for: the whole list, replacing the old one.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OriginList {
+    origins: Vec<String>,
+}
+
+/// The origins a project's magic links may land on, as answers show them.
+#[derive(Serialize)]
+pub(crate) struct OriginsView {
+    origins: Vec<String>,
+}
+
+/// `GET {P}/audience/origins`: where the project's magic links may land (D-148).
+pub(crate) async fn list_origins(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<AudiencePath>,
+) -> Result<Json<Data<OriginsView>>, ApiError> {
+    let mut tx = open_staff(&state, caller, &path.project).await?;
+    require_manage(&mut tx).await?;
+    let origins = audience::origins(&mut tx)
+        .await
+        .map_err(ApiError::from_db)?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(Json(Data {
+        data: OriginsView { origins },
+    }))
+}
+
+/// `PUT {P}/audience/origins`: replaces the list. Each entry is an origin —
+/// `scheme://host[:port]`, http or https, no path — normalized the way browsers serialize it,
+/// so `https://Site.Example/` is stored as `https://site.example`.
+pub(crate) async fn set_origins(
+    State(state): State<AppState>,
+    caller: SignedIn,
+    Path(path): Path<AudiencePath>,
+    body: Result<Json<OriginList>, JsonRejection>,
+) -> Result<Json<Data<OriginsView>>, ApiError> {
+    let Json(body) = body?;
+    if body.origins.len() > audience::MAX_ORIGINS {
+        return Err(ApiError::InvalidField {
+            reason: "too_many_origins",
+            pointer: "/origins",
+            message: format!("a project lists at most {} origins", audience::MAX_ORIGINS),
+        });
+    }
+    let mut origins = body
+        .origins
+        .iter()
+        .map(|origin| {
+            clean_origin(origin).ok_or_else(|| ApiError::InvalidField {
+                reason: "invalid_origin",
+                pointer: "/origins",
+                message: "an origin is scheme://host[:port] over http or https, with no path"
+                    .to_owned(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    origins.sort();
+    origins.dedup();
+    let mut tx = open_staff(&state, caller, &path.project).await?;
+    require_manage(&mut tx).await?;
+    audience::set_origins(&mut tx, &origins)
+        .await
+        .map_err(ApiError::from_db)?;
+    let detail = serde_json::json!({ "origins": origins });
+    crate::audit::record(&mut tx, "audience.origins_updated", &path.project, &detail).await?;
+    tx.commit().await.map_err(ApiError::from_db)?;
+    Ok(Json(Data {
+        data: OriginsView { origins },
+    }))
 }
 
 /// `GET {P}/audience/roles`.
@@ -735,7 +819,9 @@ pub(crate) async fn create_user(
             message: "an audience role is one of the project's audience roles, by name".to_owned(),
         });
     }
-    let phc = colophon_db::passwords::hashed(&body.password)
+    let phc = session::services(&state)?
+        .passwords
+        .hash(&body.password)
         .await
         .map_err(ApiError::from_db)?;
     let name = body
@@ -948,8 +1034,9 @@ fn sign_in_html(link: &str) -> String {
     )
 }
 
-/// The `return_to` a magic link may carry: an absolute http(s) URL, nothing else.
-fn check_return_to(value: &str) -> Result<String, ApiError> {
+/// The `return_to` a magic link may carry: an absolute http(s) URL, nothing else — and its
+/// origin, which the project must list before a token is appended to it (D-148).
+fn check_return_to(value: &str) -> Result<(String, String), ApiError> {
     let trimmed = value.trim();
     if trimmed.len() > 2048 {
         return Err(ApiError::InvalidField {
@@ -960,7 +1047,7 @@ fn check_return_to(value: &str) -> Result<String, ApiError> {
     }
     match url::Url::parse(trimmed) {
         Ok(url) if matches!(url.scheme(), "http" | "https") && url.host().is_some() => {
-            Ok(trimmed.to_owned())
+            Ok((trimmed.to_owned(), url.origin().ascii_serialization()))
         }
         _ => Err(ApiError::InvalidField {
             reason: "invalid_return_to",
@@ -970,32 +1057,84 @@ fn check_return_to(value: &str) -> Result<String, ApiError> {
     }
 }
 
+/// The link a visitor follows: `return_to` with `token` added to its query — before any
+/// `#fragment`, which a server never sees. `return_to` is an absolute URL [`check_return_to`]
+/// accepted; a base64url token needs no escaping.
+fn link_for(return_to: &str, token: &str) -> String {
+    if let Ok(mut url) = url::Url::parse(return_to) {
+        url.query_pairs_mut().append_pair("token", token);
+        url.into()
+    } else {
+        let separator = if return_to.contains('?') { '&' } else { '?' };
+        format!("{return_to}{separator}token={token}")
+    }
+}
+
+/// An origin staff list for magic links, normalized: `scheme://host[:port]` as browsers
+/// serialize it (lowercase, default port dropped), with nothing after it but an optional `/`.
+fn clean_origin(value: &str) -> Option<String> {
+    let url = url::Url::parse(value.trim()).ok()?;
+    let bare = matches!(url.path(), "" | "/")
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.username().is_empty()
+        && url.password().is_none();
+    let web = matches!(url.scheme(), "http" | "https") && url.host().is_some();
+    let origin = url.origin().ascii_serialization();
+    (bare && web && origin.len() <= 255).then_some(origin)
+}
+
 /// `POST /audience/v1/{project}/magic-link`: records a single-use link and answers `202`
 /// whether or not the email has an account — the same answer either way, so nothing here can
-/// be used to enumerate visitors. The link itself is emailed by a sender this server does not
+/// be used to enumerate visitors. `return_to` must land on an origin the project lists
+/// (`PUT {P}/audience/origins`, D-148); anything else is `422 return_to_not_allowed`, before
+/// a token exists. The link itself is emailed by a sender this server does not
 /// have yet; with `COLOPHON_DEV_MAIL=1` it is also handed back in `dev_link`, which is how the
 /// development stack and the demo sites test the flow without a mail server.
 pub(crate) async fn request_magic_link(
     State(state): State<AppState>,
     Path(path): Path<AudiencePath>,
+    crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     body: Result<Json<MagicLinkRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let services = session::services(&state)?;
     let Json(body) = body?;
+    let services = session::services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
     let email = clean_email(&body.email)?;
-    let return_to = check_return_to(&body.return_to)?;
+    let (return_to, origin) = check_return_to(&body.return_to)?;
     let token = tokens::random_token()
         .map_err(|_| ApiError::internal(std::io::Error::other("no secure random source")))?;
-    audience::request_magic_link(
+    match audience::request_magic_link(
         &services.pool,
+        &services.magic_links,
         project,
         &email,
+        &address,
         &tokens::hash(&token),
         &return_to,
+        &origin,
     )
     .await
-    .map_err(ApiError::from_db)?;
+    .map_err(ApiError::from_db)?
+    {
+        audience::LinkRequest::Recorded => {}
+        // The token is a credential: it is only ever appended to an origin the project
+        // listed, so a link asked for someone else can't be pointed at the asker (D-148).
+        audience::LinkRequest::OriginNotAllowed => {
+            return Err(ApiError::InvalidField {
+                reason: "return_to_not_allowed",
+                pointer: "/return_to",
+                message: "this project doesn't list that site's origin for sign-in links"
+                    .to_owned(),
+            });
+        }
+        // Too soon for this address, or the project's ceiling (D-153). Keyed by the address
+        // whether or not it has an account, so the 429 enumerates nothing; nothing was
+        // recorded or sent.
+        audience::LinkRequest::Wait(retry_after) => {
+            return Err(ApiError::RateLimited { retry_after });
+        }
+    }
     audited(
         services,
         project,
@@ -1004,8 +1143,7 @@ pub(crate) async fn request_magic_link(
         serde_json::json!({ "return_to": return_to }),
     )
     .await;
-    let separator = if return_to.contains('?') { '&' } else { '?' };
-    let link = format!("{return_to}{separator}token={token}");
+    let link = link_for(&return_to, &token);
     let mut data = serde_json::json!({ "sent": true });
     if services.dev_mail {
         data["dev_link"] = serde_json::json!(link);
@@ -1065,7 +1203,9 @@ pub(crate) async fn magic_link_sign_in(
             let unusable = tokens::random_token().map_err(|_| {
                 ApiError::internal(std::io::Error::other("no secure random source"))
             })?;
-            let phc = colophon_db::passwords::hashed(&unusable)
+            let phc = services
+                .passwords
+                .hash(&unusable)
                 .await
                 .map_err(ApiError::from_db)?;
             match audience::sign_up(&services.pool, project, &email, &phc, None, None).await {
@@ -1111,4 +1251,26 @@ pub(crate) async fn magic_link_sign_in(
     let mut response = crate::entries::json(StatusCode::OK, body, None, false);
     session_cookies(&mut response, &made.session, &made.csrf);
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::link_for;
+
+    #[test]
+    fn the_token_goes_in_the_query_even_when_return_to_has_a_fragment() {
+        assert_eq!(
+            link_for("https://site.test/in", "abc"),
+            "https://site.test/in?token=abc"
+        );
+        assert_eq!(
+            link_for("https://site.test/in?next=%2Fmembers", "abc"),
+            "https://site.test/in?next=%2Fmembers&token=abc"
+        );
+        // Before the fragment, where a server can read it — not after, where it is the page's.
+        assert_eq!(
+            link_for("https://site.test/in#welcome", "abc"),
+            "https://site.test/in?token=abc#welcome"
+        );
+    }
 }

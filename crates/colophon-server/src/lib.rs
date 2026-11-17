@@ -30,7 +30,7 @@ const CLEANUP_DEADLINE: Duration = Duration::from_secs(5);
 /// Starts the worker for the worker and all roles (D-046): it claims delivery jobs from the same
 /// database, runs schedules as they fall due (D-060), and, with an object store, sweeps expired
 /// assets and orphaned quarantine objects (D-099), until `cancel` fires. Private destinations
-/// are only reachable from a development server bound to loopback.
+/// are reachable only when `COLOPHON_ALLOW_PRIVATE_DESTINATIONS` opts in (D-149).
 fn start_worker(
     config: &Config,
     cancel: &CancellationToken,
@@ -49,7 +49,7 @@ fn start_worker(
         lease: config.worker_lease,
         attempt: config.worker_attempt,
         slots: config.worker_slots,
-        allow_private: config.listen_addr.ip().is_loopback(),
+        allow_private: config.allow_private_destinations,
         location: config.worker_location.clone(),
         assets: assets.clone(),
     };
@@ -187,7 +187,7 @@ fn api_services(
         oidc: oidc_client(config)?,
         sessions: colophon_api::SessionSettings::default(),
         trusted_origins,
-        allow_private_destinations: config.listen_addr.ip().is_loopback(),
+        allow_private_destinations: config.allow_private_destinations,
         dev_mail: config.dev_mail,
         mail: config.mail.as_ref().map(|settings| {
             Arc::new(mail::Resend::new(
@@ -201,6 +201,8 @@ fn api_services(
         assets: asset_store(config)?,
         events,
         mcp: colophon_api::mcp::Shared::new(config.mcp),
+        passwords: colophon_db::passwords::PasswordGate::new(config.password_concurrency),
+        magic_links: config.magic_links,
     })
 }
 
@@ -276,6 +278,14 @@ pub async fn run(
         supervisor.spawn(Dependency::Cache, probe, config.probe_interval);
     }
 
+    // Said once at start, at INFO: the load runs treat any WARN as a defect, and the setting is
+    // the development stack's own (deploy/local.env).
+    if config.allow_private_destinations {
+        tracing::info!(
+            "COLOPHON_ALLOW_PRIVATE_DESTINATIONS is on: destinations may reach private, \
+             loopback and link-local addresses — a development setting, never for production"
+        );
+    }
     let local_addr = listener.local_addr().context("reading the bound address")?;
     let build = colophon_version::build_info!();
     tracing::info!(

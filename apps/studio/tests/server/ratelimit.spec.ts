@@ -97,9 +97,35 @@ test('an edit saved while the session is over its limit waits as asked, is kept 
 	});
 
 	await page.getByLabel('Title', { exact: true }).fill('Saved after the limit');
-	// Use up the session's limit, then save at once: the save is turned away.
-	const answers = await page.evaluate(() => Promise.all(Array.from({ length: 60 }, () => fetch('/api/v1/me', { cache: 'no-store' }).then((response) => response.status))));
-	expect(answers).toContain(429);
+	// Keep the session over its limit until the save has been answered, and not a moment longer.
+	// One burst isn't enough: the limit gives back a request a second and the autosave fires a
+	// second after the edit, so on a slow runner the save could find room again before it was
+	// sent. Nor is "until the editor says retrying": the page's own reads would be refused for
+	// that long too.
+	await page.evaluate(() => {
+		const flood = window as unknown as { flooding: boolean; refused: number };
+		flood.flooding = true;
+		flood.refused = 0;
+		const send = window.fetch.bind(window);
+		window.fetch = async (input, init) => {
+			const answer = send(input, init);
+			if ((init?.method ?? 'GET') === 'PUT') {
+				void answer.finally(() => {
+					flood.flooding = false;
+					window.fetch = send;
+				});
+			}
+			return answer;
+		};
+		const lane = async () => {
+			while (flood.flooding) {
+				const response = await send('/api/v1/me', { cache: 'no-store' });
+				if (response.status === 429) flood.refused += 1;
+			}
+		};
+		for (let n = 0; n < 4; n += 1) void lane();
+	});
+	await page.waitForFunction(() => (window as unknown as { refused: number }).refused > 0);
 	await page.keyboard.press('ControlOrMeta+s');
 
 	// The wait is a second or two: what the editor shows and keeps is read the moment it starts.
@@ -107,6 +133,9 @@ test('an edit saved while the session is over its limit waits as asked, is kept 
 		const shown = document.querySelector('[data-testid="save-status"]');
 		return shown?.getAttribute('data-status') === 'retrying' ? { words: shown.textContent?.trim() ?? '', kept: localStorage.getItem(key) } : null;
 	}, `colophon:unsaved:${project}:${entry}`);
+	await page.evaluate(() => {
+		(window as unknown as { flooding: boolean }).flooding = false;
+	});
 	const { words, kept } = (await during.jsonValue()) as { words: string; kept: string | null };
 	expect(words).toMatch(/^Colophon is busy for a moment; trying again in \d+ seconds?\. Your changes are kept on this device\.$/);
 	expect(INTERNAL_TERMS.test(words)).toBe(false);

@@ -4,8 +4,9 @@
 //! never meet: a member manages the project; a visitor only reads what it delivers.
 //!
 //! Account functions here take the project explicitly and run inside
-//! [`scope::begin`] with no identity: RLS confines them, and `site_users`' lockout state is
-//! written under a row lock like [`crate::identity::password_sign_in`]'s. Session lookups go
+//! [`scope::begin`] with no identity: RLS confines them; sign-in attempts are counted per
+//! (account, client address) in `sign_in_throttle` like [`crate::identity::password_sign_in`]'s,
+//! before the verify that runs with nothing held (D-150, D-154). Session lookups go
 //! through `colophon_audience_session` (migration 0052), the SECURITY DEFINER function that
 //! finds a session by its token's hash before the project's context exists and stamps its use
 //! — at most once a minute, and only inside the idle window, so an idle session's staleness is
@@ -39,10 +40,9 @@ pub const MAX_SESSIONS: i64 = 16;
 /// flood grow the table without end.
 pub const MAX_SITE_USERS: i64 = 100_000;
 
-/// Consecutive misses before the account pauses — bounded, so guessing costs time and shows.
-pub const LOCK_AFTER: i16 = 8;
-/// How long a locked account stays locked.
-pub const LOCK_FOR: Duration = Duration::minutes(15);
+/// Attempts a (account, client address) key gets before it pauses, and for how long
+/// (D-154): the counts live in `sign_in_throttle`, see [`crate::throttle`].
+pub use crate::throttle::{LOCK_AFTER, LOCK_FOR};
 
 /// A project-scoped transaction with no person in it: what the public audience endpoints
 /// open. Row-level security still confines every statement to the project.
@@ -393,94 +393,86 @@ async fn insert_user(
 /// The answer to a site user's sign-in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignIn {
-    /// Right password; the counter resets and the session may start.
+    /// Right password; the attempt count for this address resets and the session may start.
     SignedIn(SiteUser),
-    /// Wrong password, or no such account — the same answer, after the same work.
+    /// Wrong password, no such account, or this (account, address) paused after too many
+    /// misses (D-154) — one answer for all three.
     Refused,
-    /// Too many misses; the account pauses until this time.
-    Locked(OffsetDateTime),
     /// Staff disabled the account; its sessions are already revoked.
     Disabled,
 }
 
-/// Signs a site user in with an email and a password: the lock, disabled and counter checks
-/// all run under one row lock, as [`crate::identity::password_sign_in`] does for members.
+/// Signs a site user in, as a client at `address`, the way
+/// [`crate::identity::password_sign_in`] signs in members (D-150, D-154): the slot first; one
+/// short transaction that counts the attempt against the (project audience, email, address)
+/// key — refusing unverified while it is paused — and reads the account; the verify with
+/// nothing held; on a match the key forgotten and the sign-in stamped, re-checking
+/// `disabled_at` so a disable during the verify still wins.
 pub async fn sign_in(
     pool: &PgPool,
+    gate: &crate::passwords::PasswordGate,
     project: Uuid,
     email: &str,
+    address: &str,
     password: &str,
 ) -> Result<SignIn, DbError> {
+    use crate::throttle::{self, Counted, Realm};
+    let slot = gate.slot().await?;
     let mut tx = project_tx(pool, project).await?;
+    if throttle::count(&mut tx, Realm::Audience(project), email, address).await? == Counted::Paused
+    {
+        return Ok(SignIn::Refused);
+    }
     let row = sqlx::query!(
-        "SELECT id, email, display_name, role, created_at, last_sign_in_at, disabled_at,
-                password_hash, locked_until
+        "SELECT id, email, display_name, role, created_at, disabled_at, password_hash
          FROM site_users
-         WHERE project_id = $1 AND email = $2
-         FOR UPDATE",
+         WHERE project_id = $1 AND email = $2",
         project,
         email
     )
     .fetch_optional(&mut *tx)
     .await
     .map_err(DbError::from_query)?;
+    tx.commit().await.map_err(DbError::from_query)?;
     let Some(row) = row else {
         // No such account: the same verify work runs anyway, so the answer can't be told apart.
-        let _ = crate::passwords::verify_in(password, None).await;
+        let _ = slot.verify(password, None).await;
         return Ok(SignIn::Refused);
     };
+    // Argon2 with no transaction open and no connection held — and before anything about the
+    // account is answered: only the right password learns it is disabled, so a guess can't
+    // tell a disabled account from any other, by answer or by time.
+    if !slot.verify(password, Some(&row.password_hash)).await {
+        return Ok(SignIn::Refused);
+    }
     if row.disabled_at.is_some() {
         return Ok(SignIn::Disabled);
     }
-    if row
-        .locked_until
-        .is_some_and(|until| until > OffsetDateTime::now_utc())
-    {
-        return Ok(SignIn::Locked(
-            row.locked_until.unwrap_or_else(OffsetDateTime::now_utc),
-        ));
-    }
-    let right = crate::passwords::verify_in(password, Some(&row.password_hash)).await;
-    if right {
-        sqlx::query!(
-            "UPDATE site_users SET failed_sign_ins = 0, locked_until = NULL, last_sign_in_at = now()
-             WHERE project_id = $1 AND id = $2",
-            project,
-            row.id
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(DbError::from_query)?;
-        tx.commit().await.map_err(DbError::from_query)?;
-        return Ok(SignIn::SignedIn(SiteUser {
-            id: row.id,
-            email: row.email,
-            display_name: row.display_name,
-            role: row.role,
-            created_at: row.created_at,
-            last_sign_in_at: Some(OffsetDateTime::now_utc()),
-            disabled_at: None,
-        }));
-    }
-    let outcome = sqlx::query_scalar!(
-        "UPDATE site_users
-         SET failed_sign_ins = least(failed_sign_ins + 1, 32767),
-             locked_until = CASE WHEN failed_sign_ins + 1 >= $3 THEN now() + make_interval(secs => $4) END
-         WHERE project_id = $1 AND id = $2
-         RETURNING locked_until",
+    let mut tx = project_tx(pool, project).await?;
+    throttle::clear(&mut tx, Realm::Audience(project), email, address).await?;
+    let enabled = sqlx::query_scalar!(
+        "UPDATE site_users SET last_sign_in_at = now()
+         WHERE project_id = $1 AND id = $2 AND disabled_at IS NULL
+         RETURNING id",
         project,
-        row.id,
-        i32::from(LOCK_AFTER),
-        f64::from(u32::try_from(LOCK_FOR.whole_seconds()).unwrap_or(u32::MAX))
+        row.id
     )
-    .fetch_one(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(DbError::from_query)?;
     tx.commit().await.map_err(DbError::from_query)?;
-    Ok(match outcome {
-        Some(until) => SignIn::Locked(until),
-        None => SignIn::Refused,
-    })
+    if enabled.is_none() {
+        return Ok(SignIn::Disabled);
+    }
+    Ok(SignIn::SignedIn(SiteUser {
+        id: row.id,
+        email: row.email,
+        display_name: row.display_name,
+        role: row.role,
+        created_at: row.created_at,
+        last_sign_in_at: Some(OffsetDateTime::now_utc()),
+        disabled_at: None,
+    }))
 }
 
 /// A site session as the lookup finds it — the session joined to its user, live or not; the
@@ -788,40 +780,263 @@ pub async fn update_user(
 /// inbox copy is worthless by the time anyone finds it (D-140).
 pub const MAGIC_LIFETIME: Duration = Duration::minutes(15);
 
-/// Records a magic link for `email`, retiring any earlier one for the same address first so
-/// only the newest link works. `token_hash` is the SHA-256 of the token the caller handed out;
-/// the token itself is never stored.
-pub async fn request_magic_link(
-    pool: &PgPool,
+/// The most origins one project may list for its magic links (D-148): a site and its
+/// preview hosts, not a directory of the web.
+pub const MAX_ORIGINS: usize = 32;
+
+/// The origins the project's magic links may land on (D-148), sorted.
+pub async fn origins(tx: &mut MemberTransaction) -> Result<Vec<String>, DbError> {
+    sqlx::query_scalar!(
+        "SELECT origin FROM audience_origins WHERE project_id = $1 ORDER BY origin",
+        tx.project
+    )
+    .fetch_all(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_query)
+}
+
+/// Replaces the project's origin list with `origins` — each already normalized by the
+/// caller (`scheme://host[:port]`, lowercase), at most [`MAX_ORIGINS`] of them.
+pub async fn set_origins(tx: &mut MemberTransaction, origins: &[String]) -> Result<(), DbError> {
+    sqlx::query!(
+        "DELETE FROM audience_origins WHERE project_id = $1",
+        tx.project
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    sqlx::query!(
+        "INSERT INTO audience_origins (project_id, origin)
+         SELECT $1, origin FROM unnest($2::text[]) AS listed (origin)
+         ON CONFLICT DO NOTHING",
+        tx.project,
+        origins
+    )
+    .execute(&mut *tx.transaction)
+    .await
+    .map_err(DbError::from_write)?;
+    Ok(())
+}
+
+/// The bounds on magic-link requests (D-153, D-161), configurable per deployment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MagicLinkLimits {
+    /// Links one client address may ask for in one project per [`Self::address_window`]:
+    /// checked first, so one client can never spend the project's shared ceiling.
+    pub per_address: i64,
+    /// The window [`Self::per_address`] counts over.
+    pub address_window: Duration,
+    /// Links one project may record per [`Self::project_window`], every address together.
+    pub per_project: i64,
+    /// The window [`Self::per_project`] counts over.
+    pub project_window: Duration,
+    /// The wait after a recipient's first unused link; each further unused link in the last
+    /// day doubles it, up to [`Self::cooldown_cap`].
+    pub cooldown: Duration,
+    /// The longest a recipient waits between links.
+    pub cooldown_cap: Duration,
+}
+
+impl MagicLinkLimits {
+    /// Five links an address per ten minutes, three hundred a project per minute, and a
+    /// recipient's wait doubling from a minute to an hour.
+    pub const DEFAULT: Self = Self {
+        per_address: 5,
+        address_window: Duration::minutes(10),
+        per_project: 300,
+        project_window: Duration::MINUTE,
+        cooldown: Duration::MINUTE,
+        cooldown_cap: Duration::HOUR,
+    };
+}
+
+impl Default for MagicLinkLimits {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// A duration as the float seconds `make_interval` takes.
+fn seconds_of(duration: Duration) -> f64 {
+    f64::from(u32::try_from(duration.whole_seconds()).unwrap_or(u32::MAX))
+}
+
+/// What a magic-link request came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkRequest {
+    /// The link is recorded; the caller may send it.
+    Recorded,
+    /// `return_to`'s origin isn't one the project lists (D-148): nothing was recorded, so no
+    /// token exists for anyone to receive.
+    OriginNotAllowed,
+    /// Too soon (D-153, D-161): the asking client is over its own share, the recipient's
+    /// newest unused link is younger than its (escalating) cooldown, or the project is at its
+    /// ceiling. Nothing was recorded; ask again after this many seconds.
+    Wait(u32),
+}
+
+/// Whole seconds until `remaining` has passed, at least one: what `Retry-After` says.
+fn seconds_until(remaining: f64) -> u32 {
+    if remaining.is_finite() && remaining > 1.0 {
+        // Saturating float-to-int: a remaining time is at most a window or the cooldown cap.
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "positive, finite and at most the window by construction"
+        )]
+        let whole = remaining.ceil().min(f64::from(u32::MAX)) as u32;
+        whole
+    } else {
+        1
+    }
+}
+
+/// Whether a link request must wait, and how many seconds (D-153, D-161), counted inside the
+/// request's transaction: the asking client's share, then the recipient's escalating
+/// cooldown, then the project's ceiling.
+async fn too_soon(
+    tx: &mut Transaction<'static, Postgres>,
+    limits: &MagicLinkLimits,
     project: Uuid,
     email: &str,
-    token_hash: &[u8; 32],
-    return_to: &str,
-) -> Result<(), DbError> {
-    let mut tx = project_tx(pool, project).await?;
+    address: &str,
+) -> Result<Option<u32>, DbError> {
+    // One request per asking client and per recipient at a time (D-153, D-161): the counts
+    // below and the insert run under both advisory locks — the client's first, always, so two
+    // requests can never wait on each other's — and concurrent requests can't both find room.
     sqlx::query!(
-        "UPDATE audience_magic_links SET used_at = now()
-         WHERE project_id = $1 AND email = $2 AND used_at IS NULL",
+        "SELECT 1 AS \"locked!\" FROM pg_advisory_xact_lock(22354, hashtext($1::uuid::text || '/' || $2))",
         project,
-        email
+        address
     )
-    .execute(&mut *tx)
+    .fetch_one(&mut **tx)
     .await
     .map_err(DbError::from_query)?;
     sqlx::query!(
-        "INSERT INTO audience_magic_links (project_id, id, email, token_hash, return_to, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
+        "SELECT 1 AS \"locked!\" FROM pg_advisory_xact_lock(22353, hashtext($1::uuid::text || '/' || $2))",
+        project,
+        email
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
+    // The asking client's own share first (D-161): one client over it is refused before it
+    // can touch the ceiling everyone shares.
+    let address_window = seconds_of(limits.address_window);
+    let asked = sqlx::query!(
+        r#"SELECT count(*) AS "links!",
+                  EXTRACT(EPOCH FROM min(created_at) + make_interval(secs => $3) - now())::float8
+                      AS "remaining"
+           FROM audience_magic_links
+           WHERE project_id = $1 AND requested_from = $2
+             AND created_at > now() - make_interval(secs => $3)"#,
+        project,
+        address,
+        address_window
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
+    if asked.links >= limits.per_address {
+        return Ok(Some(seconds_until(
+            asked.remaining.unwrap_or(address_window),
+        )));
+    }
+    // The recipient's cooldown escalates (D-161): with k links unused in the last day, the
+    // newest must be `cooldown × 2^(k−1)` old (at most `cooldown_cap`) before another goes —
+    // a visitor who never asked is mailed a handful of times, not every minute. Spending a link
+    // retires its siblings, so a visitor who signs in starts again at zero.
+    let waiting = sqlx::query_scalar!(
+        "SELECT EXTRACT(EPOCH FROM max(created_at)
+                    + make_interval(secs => least($3 * power(2::float8, (count(*) - 1)::float8), $4))
+                    - now())::float8
+         FROM audience_magic_links
+         WHERE project_id = $1 AND email = $2 AND used_at IS NULL
+           AND created_at > now() - interval '1 day'",
+        project,
+        email,
+        seconds_of(limits.cooldown),
+        seconds_of(limits.cooldown_cap)
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
+    if let Some(remaining) = waiting
+        && remaining > 0.0
+    {
+        return Ok(Some(seconds_until(remaining)));
+    }
+    let window = seconds_of(limits.project_window);
+    let recent = sqlx::query!(
+        r#"SELECT count(*) AS "links!",
+                  EXTRACT(EPOCH FROM min(created_at) + make_interval(secs => $2) - now())::float8
+                      AS "remaining"
+           FROM audience_magic_links
+           WHERE project_id = $1 AND created_at > now() - make_interval(secs => $2)"#,
+        project,
+        window
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(DbError::from_query)?;
+    if recent.links >= limits.per_project {
+        return Ok(Some(seconds_until(recent.remaining.unwrap_or(window))));
+    }
+    Ok(None)
+}
+
+/// Records a magic link for `email` whose `return_to` lands on `origin` — only when the
+/// project lists that origin (D-148). Earlier links for the address stay live: a request is
+/// not proof of anything, so it must not be able to cancel the link a visitor already holds;
+/// spending any one link retires the rest ([`consume_magic_link`]). `token_hash` is the
+/// SHA-256 of the token the caller handed out; the token itself is never stored.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one request's facts: who asked, for whom, where it lands, under which bounds"
+)]
+pub async fn request_magic_link(
+    pool: &PgPool,
+    limits: &MagicLinkLimits,
+    project: Uuid,
+    email: &str,
+    address: &str,
+    token_hash: &[u8; 32],
+    return_to: &str,
+    origin: &str,
+) -> Result<LinkRequest, DbError> {
+    let mut tx = project_tx(pool, project).await?;
+    let listed = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM audience_origins WHERE project_id = $1 AND origin = $2)
+             AS \"listed!\"",
+        project,
+        origin
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(DbError::from_query)?;
+    if !listed {
+        return Ok(LinkRequest::OriginNotAllowed);
+    }
+    if let Some(wait) = too_soon(&mut tx, limits, project, email, address).await? {
+        return Ok(LinkRequest::Wait(wait));
+    }
+    sqlx::query!(
+        "INSERT INTO audience_magic_links
+             (project_id, id, email, token_hash, return_to, expires_at, requested_from)
+         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6), $7)",
         project,
         Uuid::now_v7(),
         email,
         &token_hash[..],
         return_to,
-        f64::from(u32::try_from(MAGIC_LIFETIME.whole_seconds()).unwrap_or(u32::MAX))
+        seconds_of(MAGIC_LIFETIME),
+        address
     )
     .execute(&mut *tx)
     .await
     .map_err(DbError::from_query)?;
-    tx.commit().await.map_err(DbError::from_query)
+    tx.commit().await.map_err(DbError::from_query)?;
+    Ok(LinkRequest::Recorded)
 }
 
 /// What a magic link's token turned out to be.
@@ -832,7 +1047,7 @@ pub enum MagicLink {
     /// A live link naming an email with no account here: the caller may create one in the
     /// project's open self-assign role, then sign in.
     NewUser(String),
-    /// Unknown, used, expired or superseded — one answer for all of them.
+    /// Unknown, used, expired or retired by a sibling's use — one answer for all of them.
     Invalid,
 }
 
@@ -858,10 +1073,13 @@ pub async fn consume_magic_link(
     let Some(link) = link else {
         return Ok(MagicLink::Invalid);
     };
+    // Spending one link retires every other one outstanding for the address (D-148): the
+    // locks this takes make a concurrent spend of a sibling re-check `used_at` and refuse.
     sqlx::query!(
-        "UPDATE audience_magic_links SET used_at = now() WHERE project_id = $1 AND id = $2",
+        "UPDATE audience_magic_links SET used_at = now()
+         WHERE project_id = $1 AND email = $2 AND used_at IS NULL",
         project,
-        link.id
+        link.email
     )
     .execute(&mut *tx)
     .await

@@ -463,17 +463,49 @@ pub(crate) async fn open(
     project: &str,
     environment: &str,
 ) -> Result<ProjectTransaction, ApiError> {
+    open_isolated(
+        state,
+        caller,
+        project,
+        environment,
+        scope::Isolation::PerStatement,
+    )
+    .await
+}
+
+/// [`open`], with the reads seeing the database as `isolation` says: one snapshot for a read
+/// whose statements must agree.
+pub(crate) async fn open_isolated(
+    state: &AppState,
+    caller: SignedIn,
+    project: &str,
+    environment: &str,
+    isolation: scope::Isolation,
+) -> Result<ProjectTransaction, ApiError> {
     let services = services(state)?;
     let project = Uuid::try_parse(project).map_err(|_| ApiError::NotFound)?;
     let opened = match caller.project {
         // An API token: only in its own project, with its own permissions (D-063).
         Some(own) if own == project => {
-            scope::begin_in_project_as_token(&services.pool, caller.identity, project, environment)
-                .await
+            scope::begin_in_project_as_token_isolated(
+                &services.pool,
+                caller.identity,
+                project,
+                environment,
+                isolation,
+            )
+            .await
         }
         Some(_) => return Err(ApiError::NotFound),
         None => {
-            scope::begin_in_project(&services.pool, caller.identity, project, environment).await
+            scope::begin_in_project_isolated(
+                &services.pool,
+                caller.identity,
+                project,
+                environment,
+                isolation,
+            )
+            .await
         }
     };
     let tx = opened

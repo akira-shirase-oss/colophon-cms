@@ -285,11 +285,25 @@ pub(crate) fn check_password(password: &str) -> Result<(), ApiError> {
             message: "pick at least eight characters".to_owned(),
         });
     }
-    if password.len() > 512 {
+    if password.len() > colophon_db::passwords::MAX_PASSWORD_BYTES {
         return Err(ApiError::InvalidField {
             reason: "weak_password",
             pointer: "/password",
             message: "keep it under 512 bytes".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Refuses a sign-in password longer than any account can hold (D-150) before any work: no
+/// sign-up, staff seat or CLI account takes more than 512 bytes, so a longer one can never
+/// match, and Argon2 never sees a body-sized input. Shared with the audience routes.
+pub(crate) fn check_sign_in_password(password: &str) -> Result<(), ApiError> {
+    if password.len() > colophon_db::passwords::MAX_PASSWORD_BYTES {
+        return Err(ApiError::InvalidField {
+            reason: "password_too_long",
+            pointer: "/password",
+            message: "no password here is longer than 512 bytes".to_owned(),
         });
     }
     Ok(())
@@ -304,7 +318,9 @@ pub(crate) async fn sign_up(
     let services = services(&state)?;
     let email = clean_email(&body.email)?;
     check_password(&body.password)?;
-    let phc = colophon_db::passwords::hashed(&body.password)
+    let phc = services
+        .passwords
+        .hash(&body.password)
         .await
         .map_err(ApiError::from_db)?;
     let name = body
@@ -334,15 +350,25 @@ pub(crate) async fn sign_up(
 }
 
 /// `POST /auth/signin`: trades an email and password for a session. A wrong password, a
-/// missing account and a locked account are refused the same way, and a locked account says
-/// how long it pauses for.
+/// missing account and an (account, address) paused after eight misses are refused the same
+/// way, `400 sign_in_failed` (D-154).
 pub(crate) async fn sign_in(
     State(state): State<AppState>,
+    crate::admission::ClientAddress(address): crate::admission::ClientAddress,
     Json(body): Json<PasswordSignIn>,
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
     let email = clean_email(&body.email)?;
-    match identity::password_sign_in(&services.pool, &email, &body.password).await {
+    check_sign_in_password(&body.password)?;
+    match identity::password_sign_in(
+        &services.pool,
+        &services.passwords,
+        &email,
+        &address,
+        &body.password,
+    )
+    .await
+    {
         Ok(identity::PasswordSignIn::SignedIn(id)) => {
             let (session_token, csrf_token) = issue_session(services, id).await?;
             let mut response = StatusCode::NO_CONTENT.into_response();
@@ -354,11 +380,11 @@ pub(crate) async fn sign_in(
             );
             Ok(response)
         }
+        // A wrong password, a missing account and a paused (account, address) are one
+        // answer (D-154). Not one kind of work: a paused attempt runs no Argon2, so its
+        // timing can tell a guesser they are paused — never whether the account exists, since
+        // a missing account verifies against the dummy hash like a real one.
         Ok(identity::PasswordSignIn::Refused) => Err(ApiError::SignInFailed),
-        Ok(identity::PasswordSignIn::Locked(_)) => Err(ApiError::Conflict {
-            reason: "too_many_attempts",
-            message: "too many tries; wait a while and try again",
-        }),
         Err(error) => Err(ApiError::from_db(error)),
     }
 }

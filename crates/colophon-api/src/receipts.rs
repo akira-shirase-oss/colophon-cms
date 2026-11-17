@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::{
     ApiError, AppState,
     changesets::ReleaseView,
-    entries::{content_hash, open, rfc3339},
+    entries::{content_hash, open_isolated, rfc3339},
     session::SignedIn,
     shape::Data,
 };
@@ -99,7 +99,17 @@ pub(crate) async fn get(
     caller: SignedIn,
     Path(path): Path<OnePath>,
 ) -> Result<Json<Data<ReceiptView>>, ApiError> {
-    let mut tx = open(&state, caller, &path.project, &path.environment).await?;
+    // One snapshot: the release row (which counts the locations that saw it) and the
+    // deliveries are separate statements, and a probe finishing between them would show a
+    // delivery done with no location that saw it.
+    let mut tx = open_isolated(
+        &state,
+        caller,
+        &path.project,
+        &path.environment,
+        colophon_db::scope::Isolation::Snapshot,
+    )
+    .await?;
     let release = releases::list(&mut tx, Some(path.generation))
         .await
         .map_err(ApiError::from_db)?

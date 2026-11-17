@@ -39,8 +39,9 @@ keep.
 ## Breakdown
 
 ### Licence (spec §35)
-- Apache-2.0 is proposed for the core, CLI and SDK, subject to the maintainer's approval before the first public
-  release (O-014).
+- The licence is **MIT** (the maintainer's decision, D-158; closes O-014): the root `LICENSE`, `Copyright (c) 2026
+  akira-shirase-oss`, declared as `license = "MIT"` in the workspace and `"license": "MIT"` in the published npm
+  packages (`@colophon-cms/sdk`, `@colophon-cms/cli`).
 - Contributed code, templates, fonts, media and dependencies are reviewed separately.
 - A licence inventory is kept.
 - Redis 8 is offered under AGPLv3, RSALv2 and SSPLv1, not the old BSD licence. Redistribution and hosting arrangements
@@ -89,7 +90,7 @@ evidence".
   signs nothing (an attestation from a public repository goes to Sigstore's public transparency log, so only tag
   runs make one).
 - **plan:** the version from `scripts/release-version.sh`, which fails a tag that isn't `v` plus the workspace
-  version. A tag run also stops without a `LICENSE` file (OSS2, O-014) or a `## <version>` section in `CHANGELOG.md`
+  version. A tag run also stops without a `LICENSE` file (OSS2; MIT since D-158) or a `## <version>` section in `CHANGELOG.md`
   (OSS1); a dry run reports both as warnings. `SOURCE_DATE_EPOCH` is the commit's time, so build stamps are
   reproducible.
 - **build**, one job per target, without caches: `aarch64-apple-darwin` (macOS 15), `x86_64-apple-darwin`
@@ -163,7 +164,7 @@ Roughly one working day in five is reserved for maintenance once users depend on
 | ID | Invariant |
 |---|---|
 | OSS1 | No release without a changelog, SBOM, checksums and signed provenance. |
-| OSS2 | No public release before the licence is confirmed. |
+| OSS2 | No public release before the licence is confirmed — confirmed: MIT (D-158). |
 | OSS3 | Untrusted pull-request code never runs with access to secrets. |
 | OSS4 | Support promises never exceed what the maintainers can keep. |
 
@@ -208,17 +209,17 @@ Roughly one working day in five is reserved for maintenance once users depend on
 1. **P0:** licence decision path, README, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, CI security basics.
 2. **V (D-062):** one version, the release workflow with checksums, SBOMs and signed provenance, and the install
    paths (written; the workflow has not run in CI yet). Before the first tag the maintainer creates the npm
-   organization `colophon-cms` and the `npm` environment (required reviewers, `NPM_TOKEN`), adds `LICENSE` (O-014)
-   and `CHANGELOG.md`, runs the workflow once by hand as a dry run, then pushes `v0.1.0-alpha.1`, checks and publishes
+   organization `colophon-cms` and the `npm` environment (required reviewers, `NPM_TOKEN`) — `LICENSE` (MIT, D-158)
+   and `CHANGELOG.md` are in place — runs the workflow once by hand as a dry run, then pushes `v0.1.0-alpha.1`, checks and publishes
    the draft release, and approves the npm job. The Homebrew tap `akira-shirase-oss/homebrew-colophon` is theirs to
    create too.
 3. **P6:** GOVERNANCE, CODEOWNERS, support matrix, container images, upgrade and rollback guide. Built so far:
    `SECURITY.md` (the private reporting path through GitHub Security Advisories and the honest support scope),
    `CHANGELOG.md` seeded with `## 0.1.0-alpha.1`, `deploy/runbooks/upgrade.md` rehearsed by
    `scripts/upgrade-rehearsal.sh`, and the release workflow audited (the `LICENSE`/`CHANGELOG` tag gates are
-   intentional; O-014 still blocks a real tag).
+   intentional; the `LICENSE` one is now satisfied, D-158).
 
 ## Open decisions
 
-- **O-014:** licence confirmation.
+- ~~O-014: licence confirmation~~ — closed by D-158: MIT.
 - Cache licensing is settled: Valkey (D-015).

@@ -55,6 +55,37 @@ fn dev_token(link: &str) -> &str {
         .expect("a ?token= on the development link")
 }
 
+/// Lists `origins` as where the project's magic links may land (D-148): what a site's
+/// staff do once before the site asks for links.
+async fn list_origins(owner: &common::Session, project: &str, origins: &[&str]) {
+    let listed = call(
+        owner,
+        Method::PUT,
+        &format!("/api/v1/projects/{project}/audience/origins"),
+        Some(&json!({ "origins": origins })),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+}
+
+/// Ages every link for `email` by `seconds`, as the table owner: what waiting out the
+/// per-address cooldown (D-153) looks like without a test that sleeps a minute.
+async fn age_links(email: &str, seconds: i32) {
+    let owner = common::owner_database().await;
+    sqlx::query(
+        "UPDATE audience_magic_links SET created_at = created_at - make_interval(secs => $2)
+         WHERE email = $1",
+    )
+    .bind(email)
+    .bind(f64::from(seconds))
+    .execute(&owner)
+    .await
+    .expect("aged");
+    owner.close().await;
+}
+
 /// `GET /audience/v1/{project}/me` with whatever headers the caller carries.
 async fn me(project: &str, extra: &[(&str, &str)]) -> (StatusCode, Value) {
     let mut request = app().get(format!("{ORIGIN}/audience/v1/{project}/me"));
@@ -719,6 +750,7 @@ async fn magic_links_sign_in_existing_visitors_and_create_new_ones() {
     .await
     .expect("request");
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    list_origins(&owner, &project, &["http://site.test"]).await;
     let email = format!("linked-{}@example.test", unique_slug());
     let production = audience_post(
         &project,
@@ -733,6 +765,8 @@ async fn magic_links_sign_in_existing_visitors_and_create_new_ones() {
         body["data"]["dev_link"].is_null(),
         "no link without COLOPHON_DEV_MAIL: {body}"
     );
+    // That link is still out, unused: the address's next one waits a minute (D-153).
+    age_links(&email, 61).await;
 
     // The development stack has no mail server: with the loopback-only COLOPHON_DEV_MAIL the
     // request also hands the link back, so the whole flow can run end to end.
@@ -829,23 +863,12 @@ async fn magic_links_sign_in_existing_visitors_and_create_new_ones() {
         "{body}"
     );
 
-    // Requesting again retires the old link: the first token is invalid, the newest signs
-    // the same account back in (an existing email takes the sign-in branch, never a
-    // duplicate user).
+    // Requesting again doesn't retire the link already out (D-148); spending one does. The
+    // newer link signs the same account back in (an existing email takes the sign-in branch,
+    // never a duplicate user), and the older one is dead after it.
     let (stale, _) = request(&email).await;
+    age_links(&email, 61).await;
     let (live, _) = request(&email).await;
-    let superseded = audience_post_at(
-        &dev,
-        &project,
-        &format!("magic-link/{}", dev_token(&stale)),
-        &json!({}),
-    )
-    .await;
-    assert_eq!(
-        superseded.status(),
-        StatusCode::FORBIDDEN,
-        "the older link died"
-    );
     let consumed = audience_post_at(
         &dev,
         &project,
@@ -859,6 +882,18 @@ async fn magic_links_sign_in_existing_visitors_and_create_new_ones() {
         body["data"]["user"]["id"].as_str(),
         Some(user),
         "the account the first link made, not a second"
+    );
+    let retired = audience_post_at(
+        &dev,
+        &project,
+        &format!("magic-link/{}", dev_token(&stale)),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(
+        retired.status(),
+        StatusCode::FORBIDDEN,
+        "the sibling died when one was spent"
     );
 
     // A project whose only role is staff-assigned answers the request exactly the same —
@@ -874,6 +909,7 @@ async fn magic_links_sign_in_existing_visitors_and_create_new_ones() {
     .await
     .expect("request");
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    list_origins(&owner, &closed, &["http://site.test"]).await;
     let nobody = format!("nobody-{}@example.test", unique_slug());
     let asked = audience_post_at(
         &dev,
@@ -968,6 +1004,7 @@ async fn resend_delivers_the_link_and_a_failed_send_still_answers_sent() {
     .await
     .expect("request");
     assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    list_origins(&owner, &project, &["http://site.test"]).await;
 
     let email = format!("mailed-{}@example.test", unique_slug());
     let asked = audience_post_at(
@@ -1052,4 +1089,415 @@ async fn resend_delivers_the_link_and_a_failed_send_still_answers_sent() {
     let body: Value = again.json().await.expect("json");
     assert_eq!(body["data"]["sent"].as_bool(), Some(true));
     assert_eq!(down.seen().len(), 1, "the refusal was attempted once");
+}
+
+/// `POST /audience/v1/{project}/magic-link` with whatever `return_to` a caller chooses: the
+/// status and the body, `dev_link` included when the server is in development mail.
+async fn ask_link(project: &str, email: &str, return_to: &str) -> (StatusCode, Value) {
+    let response = audience_post(
+        project,
+        "magic-link",
+        &json!({"email": email, "return_to": return_to}),
+    )
+    .await;
+    (
+        response.status(),
+        response.json().await.unwrap_or(Value::Null),
+    )
+}
+
+/// Account takeover through `return_to` (D-148): a magic link is a credential, so its token
+/// may only ever be appended to an origin the project lists. An attacker who asks for a link
+/// to the victim's address with their own site as `return_to` is refused before any token
+/// exists; and someone else asking for a link never retires the one the victim already
+/// holds — using any one link is what retires the rest.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one journey: nothing listed, listing, foreign origins, two live links, unlisting"
+)]
+async fn a_magic_link_lands_only_on_an_origin_the_project_lists() {
+    let _server = Server::start_with(&[("COLOPHON_DEV_MAIL", "1")]).await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let staff = format!("/api/v1/projects/{project}/audience");
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("{staff}/roles"),
+        Some(&json!({"name": "member", "self_assign": true})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let victim = format!("victim-{}@example.test", unique_slug());
+
+    // Nothing listed yet: no origin may receive a token, the attacker's least of all — and
+    // the refusal carries no link either.
+    let (status, body) = ask_link(&project, &victim, "https://attacker.example/steal").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(
+        body["error"]["details"]["reason"].as_str(),
+        Some("return_to_not_allowed"),
+        "{body}"
+    );
+    assert!(body["data"].is_null(), "no link on a refusal: {body}");
+
+    // Staff list the site's origins; the list reads back normalized and sorted.
+    let listed = call(
+        &owner,
+        Method::PUT,
+        &format!("{staff}/origins"),
+        Some(&json!({"origins": ["https://Site.Example", "http://localhost:58110/"]})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+    assert_eq!(
+        listed.body["data"]["origins"],
+        json!(["http://localhost:58110", "https://site.example"])
+    );
+    let read = call(&owner, Method::GET, &format!("{staff}/origins"), None, &[])
+        .await
+        .expect("request");
+    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+    assert_eq!(read.body["data"], listed.body["data"]);
+    for bad in [
+        "https://site.example/path",
+        "ftp://site.example",
+        "not an origin",
+    ] {
+        let refused = call(
+            &owner,
+            Method::PUT,
+            &format!("{staff}/origins"),
+            Some(&json!({"origins": [bad]})),
+            &[],
+        )
+        .await
+        .expect("request");
+        assert_eq!(
+            refused.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{bad}: {}",
+            refused.body
+        );
+        assert_eq!(
+            refused.body["error"]["details"]["reason"].as_str(),
+            Some("invalid_origin"),
+            "{bad}: {}",
+            refused.body
+        );
+    }
+
+    // Anything that isn't exactly a listed origin is refused: another host, a scheme or a
+    // port that differs, a host that only starts or ends with the listed one.
+    for foreign in [
+        "https://attacker.example/magic",
+        "http://site.example/magic",
+        "https://site.example:8443/magic",
+        "https://site.example.attacker.example/magic",
+        "https://attackersite.example/magic",
+        "http://127.0.0.1:58110/magic",
+    ] {
+        let (status, body) = ask_link(&project, &victim, foreign).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{foreign}: {body}"
+        );
+        assert_eq!(
+            body["error"]["details"]["reason"].as_str(),
+            Some("return_to_not_allowed"),
+            "{foreign}: {body}"
+        );
+    }
+
+    // A listed origin takes any page on it; the token is appended to that page.
+    let (status, body) = ask_link(
+        &project,
+        &victim,
+        "https://site.example/magic?next=%2Fmembers",
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let victims = body["data"]["dev_link"]
+        .as_str()
+        .expect("a development link")
+        .to_owned();
+    assert!(
+        victims.starts_with("https://site.example/magic?next=%2Fmembers&token="),
+        "{victims}"
+    );
+
+    // Someone else asking for a link to the same address doesn't retire the victim's: the
+    // victim's link still signs in. (Asked at once it waits out the address's cooldown,
+    // D-153; a minute later it is recorded beside the victim's.)
+    let (status, body) = ask_link(&project, &victim, "http://localhost:58110/magic").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    age_links(&victim, 61).await;
+    let (status, body) = ask_link(&project, &victim, "http://localhost:58110/magic").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let other = body["data"]["dev_link"]
+        .as_str()
+        .expect("a development link")
+        .to_owned();
+    let spent = audience_post(
+        &project,
+        &format!("magic-link/{}", dev_token(&victims)),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(spent.status(), StatusCode::OK, "the victim's link survived");
+    // Using one link retires every other one outstanding for the address.
+    let retired = audience_post(
+        &project,
+        &format!("magic-link/{}", dev_token(&other)),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(
+        retired.status(),
+        StatusCode::FORBIDDEN,
+        "spending one retires the rest"
+    );
+
+    // Unlisting closes the origin again, and the change is in the audit log.
+    let cleared = call(
+        &owner,
+        Method::PUT,
+        &format!("{staff}/origins"),
+        Some(&json!({"origins": []})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(cleared.status, StatusCode::OK, "{}", cleared.body);
+    let (status, body) = ask_link(&project, &victim, "https://site.example/magic").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let log = call(
+        &owner,
+        Method::GET,
+        &format!("/api/v1/projects/{project}/audit"),
+        None,
+        &[],
+    )
+    .await
+    .expect("request");
+    let updates = log.body["data"]
+        .as_array()
+        .expect("events")
+        .iter()
+        .filter(|event| event["action"].as_str() == Some("audience.origins_updated"))
+        .count();
+    assert_eq!(updates, 2, "{}", log.body);
+}
+
+/// Magic-link abuse is bounded (D-153): a second link for an address waits a minute while
+/// its newest is unused — `429` with `Retry-After`, the same whether or not the address has
+/// an account, and nothing recorded or sent — another address is unaffected, a spent link
+/// lifts the wait, and a project that recorded its ceiling of links in the last minute
+/// takes no more until the window moves on.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn magic_link_requests_cool_down_per_address_and_cap_per_project() {
+    let _server = Server::start_with(&[
+        ("COLOPHON_DEV_MAIL", "1"),
+        ("COLOPHON_MAGIC_LINKS_PER_PROJECT", "100"),
+    ])
+    .await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/audience/roles"),
+        Some(&json!({"name": "member", "self_assign": true})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    list_origins(&owner, &project, &["http://site.test"]).await;
+    let ask = |email: String| {
+        let project = project.clone();
+        async move {
+            let response = audience_post(
+                &project,
+                "magic-link",
+                &json!({"email": email, "return_to": "http://site.test/magic"}),
+            )
+            .await;
+            let retry = response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u32>().ok());
+            let status = response.status();
+            let body: Value = response.json().await.unwrap_or(Value::Null);
+            (status, retry, body)
+        }
+    };
+
+    let first = format!("first-{}@example.test", unique_slug());
+    let (status, _, body) = ask(first.clone()).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let link = body["data"]["dev_link"]
+        .as_str()
+        .expect("a link")
+        .to_owned();
+
+    // Asked again at once: refused, saying when — and recording nothing.
+    let (status, retry, body) = ask(first.clone()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        body["error"]["code"].as_str(),
+        Some("rate_limited"),
+        "{body}"
+    );
+    assert!(
+        retry.is_some_and(|seconds| (1..=60).contains(&seconds)),
+        "Retry-After within the minute: {retry:?}"
+    );
+    assert!(body["data"].is_null(), "no link while waiting: {body}");
+
+    // Another address is its own: no wait.
+    let second = format!("second-{}@example.test", unique_slug());
+    let (status, _, body) = ask(second).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    // Spending the link lifts the wait for its address: the cooldown is for unused links.
+    let spent = audience_post(
+        &project,
+        &format!("magic-link/{}", dev_token(&link)),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(spent.status(), StatusCode::OK);
+    let (status, _, body) = ask(first).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    // The project's ceiling: with a minute's worth of links on record, the next request —
+    // for an address never seen — waits too.
+    let owner_db = common::owner_database().await;
+    let limit = 100;
+    sqlx::query(
+        "INSERT INTO audience_magic_links (project_id, id, email, token_hash, return_to, expires_at)
+         SELECT $1::uuid, gen_random_uuid(), 'filler-' || n || '@example.test',
+                sha256(convert_to($1::text || n::text, 'UTF8')), 'http://site.test/magic',
+                now() + interval '15 minutes'
+         FROM generate_series(1, $2) AS n",
+    )
+    .bind(&project)
+    .bind(limit)
+    .execute(&owner_db)
+    .await
+    .expect("a minute's worth of links");
+    owner_db.close().await;
+    let (status, retry, body) = ask(format!("third-{}@example.test", unique_slug())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert!(retry.is_some(), "the ceiling says when too");
+}
+
+/// `POST …/magic-link` as the client at `address` (the test server trusts loopback as a proxy):
+/// the status, `Retry-After` and the body.
+async fn ask_link_from(
+    project: &str,
+    address: &str,
+    email: &str,
+) -> (StatusCode, Option<u64>, Value) {
+    let response = app()
+        .post(format!("{ORIGIN}/audience/v1/{project}/magic-link"))
+        .header("x-forwarded-for", address)
+        .json(&json!({"email": email, "return_to": "http://site.test/magic"}))
+        .send()
+        .await
+        .expect("request");
+    let retry = response
+        .headers()
+        .get(header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse().ok());
+    let status = response.status();
+    (status, retry, response.json().await.unwrap_or(Value::Null))
+}
+
+/// One client can't spend a project's magic-link budget, and one recipient can't be mailed
+/// every minute (D-161): an address over its own share is refused while another address is
+/// served at once, and a recipient's wait doubles with each link left unused.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn one_client_cannot_spend_the_link_budget_and_a_recipients_wait_escalates() {
+    let _server = Server::start_with(&[
+        ("COLOPHON_DEV_MAIL", "1"),
+        ("COLOPHON_TRUSTED_PROXIES", "127.0.0.1"),
+        ("COLOPHON_MAGIC_LINKS_PER_ADDRESS", "3"),
+    ])
+    .await;
+    let owner = sign_in("dev-owner").await;
+    let project = project(&owner).await;
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/audience/roles"),
+        Some(&json!({"name": "member", "self_assign": true})),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    list_origins(&owner, &project, &["http://site.test"]).await;
+
+    // Three links from one client, each for someone new; the fourth is refused — and a
+    // different client is served at once, so one client never locks the site out.
+    let flooder = "198.51.100.40";
+    for n in 0..3 {
+        let (status, _, body) = ask_link_from(
+            &project,
+            flooder,
+            &format!("v{n}-{}@example.test", unique_slug()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "link {n}: {body}");
+    }
+    let (status, retry, body) = ask_link_from(
+        &project,
+        flooder,
+        &format!("v4-{}@example.test", unique_slug()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert!(retry.is_some(), "a refusal says when");
+    let (status, _, body) = ask_link_from(
+        &project,
+        "203.0.113.41",
+        &format!("ok-{}@example.test", unique_slug()),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "another client is served: {body}"
+    );
+
+    // A recipient who never uses a link waits longer each time: a minute after the first,
+    // two after the second.
+    let victim = format!("victim-{}@example.test", unique_slug());
+    let (status, _, body) = ask_link_from(&project, "203.0.113.42", &victim).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let (status, retry, _) = ask_link_from(&project, "203.0.113.43", &victim).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(retry.is_some_and(|seconds| seconds <= 60), "{retry:?}");
+    age_links(&victim, 61).await;
+    let (status, _, body) = ask_link_from(&project, "203.0.113.44", &victim).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let (status, retry, _) = ask_link_from(&project, "203.0.113.45", &victim).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        retry.is_some_and(|seconds| (61..=120).contains(&seconds)),
+        "the second unused link doubles the wait: {retry:?}"
+    );
 }

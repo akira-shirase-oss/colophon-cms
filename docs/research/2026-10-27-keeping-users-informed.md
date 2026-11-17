@@ -38,7 +38,7 @@ and feature previews are produced, which is rare. Linear was checked only as a r
 
 ### Top 10 recommendations for Colophon (Part 5 has the detail and the templates)
 
-1. **Merge the changelog that already exists** (`CHANGELOG.md` on the `site/website` branch, rendered by `apps/site`)
+1. **Merge the changelog that already exists** (`CHANGELOG.md` on the `site/website` branch (now the tag `archive/site/website`), rendered by `apps/site`)
    and keep writing one entry per step in the same branch as the work. Give the `/changelog` page an RSS/Atom feed
    (the blog has one; the changelog doesn't yet). At v0.1, switch to version sections with Keep a Changelog types.
 2. **Publish a one-page "Versioning and stability" policy now:** nothing is stable before v0.1; from v0.1,
@@ -960,7 +960,7 @@ If adopted, these are design changes to record in `DECISIONS.md` and the module 
 **Colophon (local, read only)**
 - `projects/colophon-3.5/`: `AGENTS.md`, `Cargo.toml`, `docs/END_GOAL.md`, `docs/ROADMAP.md`, `docs/DECISIONS.md`,
   `docs/modules/04-api.md`, `08-cli.md`, `16-docs-site.md`, `18-operations.md`, `19-oss.md`
-- `projects/colophon-site/` (branch `site/website`): `CHANGELOG.md`, `apps/site/src/lib/server/changelog.ts`,
+- `projects/colophon-site/` (branch `site/website`, now the tag `archive/site/website`): `CHANGELOG.md`, `apps/site/src/lib/server/changelog.ts`,
   `apps/site/src/routes/{changelog,roadmap,blog}`
 - `projects/colophon-3.6/` (branch `p3/3.6-modelling`): `docs/DECISIONS.md` (D-057 to D-059), `docs/COMPARISON.md`
 - `minimal-portfolio/content/colophon/` (build log front matter); `x-growth/README.md` (posting routine and guardrails)

@@ -58,7 +58,8 @@ pub struct Settings {
     pub attempt: Duration,
     /// The most attempts in flight at once.
     pub slots: usize,
-    /// Whether destinations may be private addresses (a development server on loopback only).
+    /// Whether destinations may be private addresses: `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1`
+    /// only (D-149), never inferred from the listen address.
     pub allow_private: bool,
     /// Where it runs, as probes report it (`COLOPHON_WORKER_LOCATION`); it only runs probes pinned
     /// to this location, or to none.
@@ -183,6 +184,10 @@ impl Worker {
             .connect_timeout(Duration::from_secs(5))
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("colophon/", env!("CARGO_PKG_VERSION")))
+            // Never through a proxy from the environment (`HTTP_PROXY` and friends): a proxy
+            // resolves the destination's name itself, past the resolver below, so the address
+            // checks would no longer say where the request goes.
+            .no_proxy()
             .dns_resolver(Arc::new(guard::PublicOnly {
                 allow_private: settings.allow_private,
             }))

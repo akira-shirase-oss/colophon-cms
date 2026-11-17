@@ -77,9 +77,14 @@ test('a task is made on an entry, assigned, finished, and unassigned', async ({ 
 	await detail.getByTestId('task-reopen').click();
 	await expect(detail.getByTestId('detail-status')).toHaveText('open');
 
-	// Unassigned is an explicit choice: it sends assignee null, never an omitted field.
+	// Unassigned is an explicit choice: it sends assignee null, never an omitted field. The
+	// select shows it at once; the read waits for the write it checks, not just the select.
+	const unassigned = page.waitForResponse((response) => response.request().method() === 'PATCH' && response.url().includes('/tasks/'));
 	await detail.getByTestId('edit-assignee').selectOption('');
 	await expect(detail.getByTestId('edit-assignee')).toHaveValue('');
+	const sent = await unassigned;
+	expect(sent.ok()).toBe(true);
+	expect(sent.request().postDataJSON()).toMatchObject({ assignee: null });
 	const tasks = await api(page, 'GET', `${env(project)}/tasks?entry=${entry}`);
 	expect(tasks.status).toBe(200);
 	expect(tasks.body?.['data'][0].assignee_id).toBeNull();

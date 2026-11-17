@@ -27,7 +27,10 @@
 //!   `setup_codes` past expiry — used or not; the administrator a used code made is the
 //!   record that outlives it.
 //! - `attempt` (15 minutes): `setup_attempts`, matching the throttle's own window in
-//!   `colophon_setup_attempt`. `sign_in_attempts` and `device_logins` go at `expires_at`:
+//!   `colophon_setup_attempt`; and `audience_magic_links` that far past `expires_at`
+//!   (D-153) — a link is dead when it expires, and its audit events are the record.
+//! - `throttle` (1 day): `sign_in_throttle` keys untouched that long and not paused (D-154)
+//!   — the count of misses from one address at one account starts over. `sign_in_attempts` and `device_logins` go at `expires_at`:
 //!   dead rows their writers already prune on a busy day, swept here so a quiet one
 //!   doesn't keep them forever either.
 //!
@@ -73,6 +76,14 @@ pub struct Retention {
     pub flow: time::Duration,
     /// `setup_attempts`: the throttle's own 15-minute window.
     pub attempt: time::Duration,
+    /// `sign_in_throttle` keys untouched this long, not paused and not trusted (D-154, D-165):
+    /// their count starts over. An hour is the account ceiling's whole window (D-162), so an
+    /// older miss counts for nothing anyway; a trusted key stays 90 days unused (migration
+    /// 0060's sweep).
+    pub throttle: time::Duration,
+    /// `audience_magic_links` past `expires_at`: as long as a recipient's escalating cooldown
+    /// counts their unused links (D-161).
+    pub magic_link: time::Duration,
 }
 
 impl Retention {
@@ -85,6 +96,8 @@ impl Retention {
         session: time::Duration::days(90),
         flow: time::Duration::days(90),
         attempt: time::Duration::minutes(15),
+        throttle: time::Duration::hours(1),
+        magic_link: time::Duration::days(1),
     };
 }
 
@@ -93,6 +106,13 @@ impl Default for Retention {
         Self::DEFAULT
     }
 }
+
+/// How many batches a pass sweeps from the tables strangers grow without signing in —
+/// `audience_magic_links` and `sign_in_throttle` (D-165). A pass removes up to
+/// `batch × HOT_BATCHES` of each, so at the production batch and the worker's passes a tick the
+/// sweep outruns their request bounds: one project's magic-link ceiling (300 a minute, D-161)
+/// records 18,000 links an hour.
+pub const HOT_BATCHES: i64 = 10;
 
 /// The most rows one statement — so one sweep — touches per table. Small enough that a
 /// pass over a busy install never holds a worker's connection long; a backlog drains at
@@ -138,6 +158,10 @@ pub struct Swept {
     pub setup_attempts: u64,
     /// `setup_codes` past `expires_at` plus the flow age.
     pub setup_codes: u64,
+    /// `audience_magic_links` past `expires_at` plus the attempt age (D-153).
+    pub magic_links: u64,
+    /// `sign_in_throttle` keys idle past the throttle age (D-154).
+    pub sign_in_throttle: u64,
 }
 
 impl Swept {
@@ -161,6 +185,8 @@ impl Swept {
             + self.sign_in_attempts
             + self.setup_attempts
             + self.setup_codes
+            + self.magic_links
+            + self.sign_in_throttle
     }
 }
 
@@ -457,6 +483,21 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
     let setup_attempts =
         retained(&mut tx, "colophon_sweep_setup_attempts", attempt_cut, batch).await?;
     let setup_codes = retained(&mut tx, "colophon_sweep_setup_codes", flow_cut, batch).await?;
+    // Magic links are dead at `expires_at`; their `audience.magic_link_*` events are the
+    // record. Kept a day past it, as long as the cooldown and the ceilings read them.
+    let magic_cut = OffsetDateTime::now_utc() - ages.magic_link;
+    let hot = batch.saturating_mul(HOT_BATCHES);
+    let magic_links = retained(&mut tx, "colophon_sweep_magic_links", magic_cut, hot).await?;
+    // A sign-in key idle an hour starts its count over; a paused one stays until its pause
+    // is that old too, and a trusted one 90 days.
+    let throttle_cut = OffsetDateTime::now_utc() - ages.throttle;
+    let sign_in_throttle = retained(
+        &mut tx,
+        "colophon_sweep_sign_in_throttle",
+        throttle_cut,
+        hot,
+    )
+    .await?;
 
     tx.commit().await.map_err(DbError::from_query)?;
     Ok(Swept {
@@ -478,5 +519,7 @@ pub async fn sweep(pool: &PgPool, ages: &Retention, batch: i64) -> Result<Swept,
         sign_in_attempts,
         setup_attempts,
         setup_codes,
+        magic_links,
+        sign_in_throttle,
     })
 }

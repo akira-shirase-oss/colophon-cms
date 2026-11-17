@@ -199,11 +199,27 @@ pub struct Config {
     /// `COLOPHON_EVENTS_KEEPALIVE_MS` (15 s) warms idle connections;
     /// `COLOPHON_EVENTS_LIFETIME_MS` (30 min) ends a stream; and
     /// `COLOPHON_EVENTS_REVALIDATE_MS` (5 min; `0` disables) re-runs the membership check.
+    /// The public delivery streams have their own budget (D-159):
+    /// `COLOPHON_EVENTS_PUBLIC_PER_PROJECT` (256), `COLOPHON_EVENTS_PUBLIC_MAX_STREAMS` (2048)
+    /// and `COLOPHON_EVENTS_PUBLIC_PER_ADDRESS` (8).
     pub events: colophon_api::events::EventLimits,
     /// Remote-MCP session bounds (D-121): `COLOPHON_MCP_PER_TOKEN` (8),
     /// `COLOPHON_MCP_PER_PROJECT` (256) and `COLOPHON_MCP_MAX_SESSIONS` (2048) cap the
     /// sessions; `COLOPHON_MCP_IDLE_MS` (30 min) forgets one untouched for that long.
     pub mcp: colophon_api::mcp::Limits,
+    /// Argon2id jobs that may run at once (D-150): `COLOPHON_PASSWORD_CONCURRENCY`, one a
+    /// core by default (1–256). Past it a password job waits briefly, then the request is
+    /// shed with `503` and `Retry-After`.
+    pub password_concurrency: usize,
+    /// Magic-link request bounds (D-161): `COLOPHON_MAGIC_LINKS_PER_ADDRESS` links one client
+    /// address may ask for in one project per ten minutes (5), and
+    /// `COLOPHON_MAGIC_LINKS_PER_PROJECT` a project may record per minute (300).
+    pub magic_links: colophon_db::audience::MagicLinkLimits,
+    /// Whether destinations may name private, loopback and link-local addresses and plain
+    /// http: `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` (D-149). Off by default and never
+    /// inferred from the listen address — a production server behind a local reverse proxy
+    /// binds loopback too. The development stack opts in (`deploy/local.env`).
+    pub allow_private_destinations: bool,
     /// Whether a magic-link request hands the link back in `dev_link` instead of emailing it:
     /// `COLOPHON_DEV_MAIL=1` (D-140). A development affordance, off by default.
     pub dev_mail: bool,
@@ -252,6 +268,26 @@ fn parse_origin(text: &str) -> Option<String> {
     let bare = matches!(url.path(), "" | "/") && url.query().is_none() && url.fragment().is_none();
     let web = matches!(url.scheme(), "http" | "https");
     (bare && web && url.host().is_some()).then(|| url.origin().ascii_serialization())
+}
+
+/// Whether `origin` (as [`parse_origin`] wrote it) is one only this machine can use: `localhost`
+/// or a `*.localhost` name, or a loopback address. The development affordances need one (D-163):
+/// behind a reverse proxy a production server listens on loopback too, but serves a public
+/// origin.
+fn is_loopback_origin(origin: &str) -> bool {
+    match url::Url::parse(origin)
+        .ok()
+        .as_ref()
+        .and_then(url::Url::host)
+    {
+        Some(url::Host::Domain(name)) => {
+            name.eq_ignore_ascii_case("localhost")
+                || name.to_ascii_lowercase().ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
 }
 
 /// Every configuration problem found, in one error. Never contains secret values.
@@ -387,16 +423,34 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
                 None
             }
         };
-        // The development realm's secret is public: never on an address others can reach (O-008).
+        // The development realm's secret is public: never on an address others can reach
+        // (O-008), nor behind a public origin, which a loopback listener behind a reverse proxy
+        // serves too (D-163).
         if oidc
             .as_ref()
             .is_some_and(|oidc| oidc.client_secret.expose() == DEV_CLIENT_SECRET)
-            && !listen_addr.ip().is_loopback()
+            && !(listen_addr.ip().is_loopback() && is_loopback_origin(&public_origin))
         {
-            env.problems.push("the development sign-in client (its secret is public) may only run on a loopback COLOPHON_LISTEN_ADDR".to_owned());
+            env.problems.push("the development sign-in client (its secret is public) may only run on a loopback COLOPHON_LISTEN_ADDR with a localhost COLOPHON_PUBLIC_URL".to_owned());
         }
 
         (public_origin, extra_trusted_origins, oidc)
+    }
+
+    /// An opt-in switch: `1` or `true` (any case) turns it on; unset, `0` or `false` leave it
+    /// off, and anything else is a problem rather than a silent default.
+    fn flag(&mut self, key: &str) -> bool {
+        match self.raw(key) {
+            None => false,
+            Some(value) if value == "1" || value.eq_ignore_ascii_case("true") => true,
+            Some(value) if value == "0" || value.eq_ignore_ascii_case("false") => false,
+            Some(_) => {
+                self.problems.push(format!(
+                    "{key} is 1 or true to turn it on, 0 or false to leave it off"
+                ));
+                false
+            }
+        }
     }
 
     /// Transactional mail (D-145): `COLOPHON_MAIL_PROVIDER=resend` with its key and a `From`,
@@ -546,6 +600,13 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
             keep_alive: self.millis("COLOPHON_EVENTS_KEEPALIVE_MS", 15_000, 1_000..=120_000),
             lifetime: self.millis("COLOPHON_EVENTS_LIFETIME_MS", 1_800_000, 1_000..=86_400_000),
             revalidate: (revalidate > 0).then(|| Duration::from_millis(revalidate)),
+            public_per_project: self.ranged("COLOPHON_EVENTS_PUBLIC_PER_PROJECT", 256, 1..=16_384),
+            public_max_streams: self.ranged(
+                "COLOPHON_EVENTS_PUBLIC_MAX_STREAMS",
+                2_048,
+                1..=65_536,
+            ),
+            public_per_address: self.ranged("COLOPHON_EVENTS_PUBLIC_PER_ADDRESS", 8, 1..=1_024),
         }
     }
 
@@ -652,19 +713,29 @@ impl Config {
                     .to_owned(),
             );
         }
-        let dev_mail = env
-            .raw("COLOPHON_DEV_MAIL")
-            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
-        // Development mail answers a sign-in link in the response itself: on an address others
-        // can reach it is an account-takeover switch, so like the dev client's secret it is a
-        // loopback-only affordance (D-140).
-        if dev_mail && !listen_addr.ip().is_loopback() {
+        let dev_mail = env.flag("COLOPHON_DEV_MAIL");
+        // Development mail answers a sign-in link in the response itself: wherever others can
+        // reach it, it is an account-takeover switch, so like the dev client's secret it needs
+        // a loopback listener (D-140) and a localhost public origin — a production server
+        // behind a reverse proxy listens on loopback too (D-163).
+        if dev_mail && !(listen_addr.ip().is_loopback() && is_loopback_origin(&public_origin)) {
             env.problems.push(
                 "COLOPHON_DEV_MAIL hands sign-in links back in responses: it may only run on a \
-                 loopback COLOPHON_LISTEN_ADDR"
+                 loopback COLOPHON_LISTEN_ADDR with a localhost COLOPHON_PUBLIC_URL"
                     .to_owned(),
             );
         }
+        let allow_private_destinations = env.flag("COLOPHON_ALLOW_PRIVATE_DESTINATIONS");
+        let magic_links = colophon_db::audience::MagicLinkLimits {
+            per_address: env.ranged("COLOPHON_MAGIC_LINKS_PER_ADDRESS", 5, 1..=100_000),
+            per_project: env.ranged("COLOPHON_MAGIC_LINKS_PER_PROJECT", 300, 1..=1_000_000),
+            ..colophon_db::audience::MagicLinkLimits::DEFAULT
+        };
+        let password_concurrency = env.ranged(
+            "COLOPHON_PASSWORD_CONCURRENCY",
+            colophon_db::passwords::PasswordGate::default_slots(),
+            1..=256,
+        );
         let mail = env.mail();
         if let Some(database_url) = database_url
             && env.problems.is_empty()
@@ -702,6 +773,9 @@ impl Config {
                 admission,
                 events,
                 mcp,
+                password_concurrency,
+                magic_links,
+                allow_private_destinations,
                 dev_mail,
                 mail,
             })
@@ -922,6 +996,90 @@ mod tests {
         public.push(("COLOPHON_LISTEN_ADDR", "0.0.0.0:58000"));
         let error = load(&public).expect_err("refused on 0.0.0.0");
         assert!(error.to_string().contains("COLOPHON_DEV_MAIL"), "{error}");
+    }
+
+    #[test]
+    fn development_affordances_refuse_a_public_origin_even_on_loopback() {
+        // Behind a reverse proxy a production server listens on loopback too (D-163): what
+        // says "development" is a public origin nobody else can use, not the listen address.
+        let behind_a_proxy = [
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_LISTEN_ADDR", "127.0.0.1:58000"),
+            ("COLOPHON_PUBLIC_URL", "https://cms.example.com"),
+        ];
+        let mut mail = behind_a_proxy.to_vec();
+        mail.push(("COLOPHON_DEV_MAIL", "1"));
+        let error = load(&mail).expect_err("development mail behind a public origin");
+        assert!(error.to_string().contains("COLOPHON_DEV_MAIL"), "{error}");
+        let mut client = behind_a_proxy.to_vec();
+        client.extend([
+            (
+                "COLOPHON_OIDC_ISSUER",
+                "https://id.example.com/realms/colophon",
+            ),
+            ("COLOPHON_OIDC_CLIENT_ID", "colophon-server"),
+            ("COLOPHON_OIDC_CLIENT_SECRET", "colophon-dev-client-secret"),
+        ]);
+        let error = load(&client).expect_err("the public client secret behind a public origin");
+        assert!(
+            error.to_string().contains("development sign-in client"),
+            "{error}"
+        );
+        // A loopback origin — localhost, *.localhost, 127.0.0.0/8 or [::1] — is development.
+        for origin in [
+            "http://localhost:58000",
+            "http://colophon.localhost:58000",
+            "http://127.0.0.2:58000",
+            "http://[::1]:58000",
+        ] {
+            let mut local = mail.clone();
+            local.retain(|(name, _)| *name != "COLOPHON_PUBLIC_URL");
+            local.push(("COLOPHON_PUBLIC_URL", origin));
+            assert!(load(&local).is_ok_and(|config| config.dev_mail), "{origin}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tls_database_url_is_taken_as_given() {
+        // Neon's URLs carry `sslmode=require` (D-156): the configuration keeps the URL whole —
+        // the driver, built with rustls, does the TLS — and never prints it.
+        let url =
+            "postgres://app:s3cret@ep-quiet-1.eu-central-1.aws.neon.tech/colophon?sslmode=require";
+        let config = load(&[("COLOPHON_DATABASE_URL", url)]).expect("valid");
+        assert_eq!(config.database_url.expose(), url);
+        assert!(!format!("{config:?}").contains("s3cret"));
+        assert!(
+            colophon_db::connect_lazy(url, colophon_db::PoolSettings::default()).is_ok(),
+            "the driver accepts the require URL"
+        );
+    }
+
+    #[test]
+    fn private_destinations_are_an_explicit_opt_in_never_the_listen_address() {
+        // Loopback is the default listen address, and still no private destinations: a
+        // server behind a local reverse proxy binds loopback in production too.
+        let config = load(&[("COLOPHON_DATABASE_URL", DB)]).expect("valid");
+        assert!(config.listen_addr.ip().is_loopback());
+        assert!(!config.allow_private_destinations);
+        for (value, expected) in [("1", true), ("true", true), ("0", false), ("false", false)] {
+            let config = load(&[
+                ("COLOPHON_DATABASE_URL", DB),
+                ("COLOPHON_ALLOW_PRIVATE_DESTINATIONS", value),
+            ])
+            .expect("valid");
+            assert_eq!(config.allow_private_destinations, expected, "{value}");
+        }
+        let error = load(&[
+            ("COLOPHON_DATABASE_URL", DB),
+            ("COLOPHON_ALLOW_PRIVATE_DESTINATIONS", "yes"),
+        ])
+        .expect_err("not a flag");
+        assert!(
+            error
+                .to_string()
+                .contains("COLOPHON_ALLOW_PRIVATE_DESTINATIONS"),
+            "{error}"
+        );
     }
 
     #[test]

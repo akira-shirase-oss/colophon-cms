@@ -66,12 +66,20 @@ pub struct EventLimits {
     pub lifetime: Duration,
     /// How often a live stream re-runs the membership check; `None` never re-checks.
     pub revalidate: Option<Duration>,
+    /// Public delivery streams of one project this server carries (D-159): a budget of their
+    /// own, so anonymous listeners never use up `per_project`.
+    pub public_per_project: usize,
+    /// Public delivery streams this server carries in all, beside `max_streams`.
+    pub public_max_streams: usize,
+    /// Public delivery streams one client address may hold on this server.
+    pub public_per_address: usize,
 }
 
 impl Default for EventLimits {
     /// The documented bounds: 8 streams per credential, 256 per project on one server, 2048 on a
     /// server in all, a 256-frame channel buffer, a 15-second keep-alive, a 30-minute lifetime
-    /// and a 5-minute membership re-check.
+    /// and a 5-minute membership re-check — and, for the public delivery streams, their own 256
+    /// per project, 2048 in all and 8 per client address (D-159).
     fn default() -> Self {
         Self {
             per_credential: 8,
@@ -81,6 +89,9 @@ impl Default for EventLimits {
             keep_alive: Duration::from_secs(15),
             lifetime: Duration::from_mins(30),
             revalidate: Some(Duration::from_mins(5)),
+            public_per_project: 256,
+            public_max_streams: 2048,
+            public_per_address: 8,
         }
     }
 }
@@ -103,6 +114,17 @@ enum StreamRefused {
     Project,
     /// This server already carries `max_streams` streams in all: 503.
     Server,
+    /// The client address already holds `public_per_address` public streams: 429.
+    Address,
+}
+
+/// Whose budget a stream counts against (D-159).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Holder {
+    /// A signed-in staff stream, by its session or token.
+    Staff(Uuid),
+    /// An anonymous delivery stream, by the client address it came from.
+    Public(String),
 }
 
 /// The fan-out: one `tokio::broadcast` channel per watched project, fed by the server's
@@ -116,10 +138,28 @@ pub struct EventBus {
 struct Shared {
     /// Live channels by project.
     channels: HashMap<Uuid, broadcast::Sender<Frame>>,
-    /// Open streams per credential (a session or token id).
+    /// Open staff streams per credential (a session or token id).
     per_credential: HashMap<Uuid, usize>,
-    /// Open streams in all on this server.
-    total: usize,
+    /// Open staff streams per project.
+    staff_per_project: HashMap<Uuid, usize>,
+    /// Open staff streams in all on this server.
+    staff_total: usize,
+    /// Open public streams per project.
+    public_per_project: HashMap<Uuid, usize>,
+    /// Open public streams per client address.
+    public_per_address: HashMap<String, usize>,
+    /// Open public streams in all on this server.
+    public_total: usize,
+}
+
+/// One less in a count map, forgetting the key at zero so the map holds only live keys.
+fn release<K: std::hash::Hash + Eq>(counts: &mut HashMap<K, usize>, key: &K) {
+    if let Some(count) = counts.get_mut(key) {
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            counts.remove(key);
+        }
+    }
 }
 
 fn lock(shared: &Mutex<Shared>) -> MutexGuard<'_, Shared> {
@@ -168,54 +208,89 @@ impl EventBus {
         project: Uuid,
         credential: Uuid,
     ) -> Result<Subscription, StreamRefused> {
-        self.subscribe_as(project, Some(credential))
+        self.subscribe_as(project, Holder::Staff(credential))
     }
 
-    /// A public delivery stream (D-139): no credential to count, still bounded per project and
-    /// per server, so anonymous listeners can never crowd out a project's staff streams.
-    fn subscribe_public(self: &Arc<Self>, project: Uuid) -> Result<Subscription, StreamRefused> {
-        self.subscribe_as(project, None)
+    /// A public delivery stream (D-139), from the client at `address`: counted against a
+    /// budget of its own — per project, per server and per address (D-159) — so anonymous
+    /// listeners can never crowd a project's staff out of their streams, and one client can't
+    /// take the whole public budget.
+    fn subscribe_public(
+        self: &Arc<Self>,
+        project: Uuid,
+        address: &str,
+    ) -> Result<Subscription, StreamRefused> {
+        self.subscribe_as(project, Holder::Public(address.to_owned()))
     }
 
     fn subscribe_as(
         self: &Arc<Self>,
         project: Uuid,
-        credential: Option<Uuid>,
+        holder: Holder,
     ) -> Result<Subscription, StreamRefused> {
         let mut shared = lock(&self.shared);
-        if let Some(credential) = credential
-            && shared.per_credential.get(&credential).copied().unwrap_or(0)
-                >= self.limits.per_credential
-        {
-            return Err(StreamRefused::Credential);
+        let count = |counts: &HashMap<Uuid, usize>| counts.get(&project).copied().unwrap_or(0);
+        match &holder {
+            Holder::Staff(credential) => {
+                if shared.per_credential.get(credential).copied().unwrap_or(0)
+                    >= self.limits.per_credential
+                {
+                    return Err(StreamRefused::Credential);
+                }
+                if shared.staff_total >= self.limits.max_streams {
+                    return Err(StreamRefused::Server);
+                }
+                if count(&shared.staff_per_project) >= self.limits.per_project {
+                    return Err(StreamRefused::Project);
+                }
+            }
+            Holder::Public(address) => {
+                if shared.public_per_address.get(address).copied().unwrap_or(0)
+                    >= self.limits.public_per_address
+                {
+                    return Err(StreamRefused::Address);
+                }
+                if shared.public_total >= self.limits.public_max_streams {
+                    return Err(StreamRefused::Server);
+                }
+                if count(&shared.public_per_project) >= self.limits.public_per_project {
+                    return Err(StreamRefused::Project);
+                }
+            }
         }
-        if shared.total >= self.limits.max_streams {
-            return Err(StreamRefused::Server);
-        }
-        let sender = shared
+        let receiver = shared
             .channels
             .entry(project)
-            .or_insert_with(|| broadcast::channel(self.limits.channel_capacity).0);
-        if sender.receiver_count() >= self.limits.per_project {
-            return Err(StreamRefused::Project);
+            .or_insert_with(|| broadcast::channel(self.limits.channel_capacity).0)
+            .subscribe();
+        match &holder {
+            Holder::Staff(credential) => {
+                *shared.per_credential.entry(*credential).or_insert(0) += 1;
+                *shared.staff_per_project.entry(project).or_insert(0) += 1;
+                shared.staff_total += 1;
+            }
+            Holder::Public(address) => {
+                *shared
+                    .public_per_address
+                    .entry(address.clone())
+                    .or_insert(0) += 1;
+                *shared.public_per_project.entry(project).or_insert(0) += 1;
+                shared.public_total += 1;
+            }
         }
-        let receiver = sender.subscribe();
-        if let Some(credential) = credential {
-            *shared.per_credential.entry(credential).or_insert(0) += 1;
-        }
-        shared.total += 1;
         Ok(Subscription {
             receiver,
             bus: Arc::clone(self),
             project,
-            credential,
+            holder,
         })
     }
 
-    /// Open streams in all, for the tests.
+    /// Open streams in all, staff and public, for the tests.
     #[cfg(test)]
     fn streams(&self) -> usize {
-        lock(&self.shared).total
+        let shared = lock(&self.shared);
+        shared.staff_total + shared.public_total
     }
 }
 
@@ -225,8 +300,8 @@ struct Subscription {
     receiver: broadcast::Receiver<Frame>,
     bus: Arc<EventBus>,
     project: Uuid,
-    /// The credential the stream is counted against; `None` for a public delivery stream.
-    credential: Option<Uuid>,
+    /// The budget the stream is counted against.
+    holder: Holder,
 }
 
 impl Subscription {
@@ -260,15 +335,18 @@ impl Subscription {
 impl Drop for Subscription {
     fn drop(&mut self) {
         let mut shared = lock(&self.bus.shared);
-        if let Some(credential) = self.credential
-            && let Some(count) = shared.per_credential.get_mut(&credential)
-        {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                shared.per_credential.remove(&credential);
+        match &self.holder {
+            Holder::Staff(credential) => {
+                release(&mut shared.per_credential, credential);
+                release(&mut shared.staff_per_project, &self.project);
+                shared.staff_total = shared.staff_total.saturating_sub(1);
+            }
+            Holder::Public(address) => {
+                release(&mut shared.public_per_address, address);
+                release(&mut shared.public_per_project, &self.project);
+                shared.public_total = shared.public_total.saturating_sub(1);
             }
         }
-        shared.total = shared.total.saturating_sub(1);
         // This receiver is still alive while `drop` runs, so a count of 1 means it was the
         // channel's last: once the map forgets the sender nobody can subscribe to it again.
         if shared
@@ -297,11 +375,12 @@ pub(crate) struct EventsPath {
 /// Only `releases` hints are forwarded: a publish inserts a release row, while draft saves and
 /// job/probe churn are `entries`/`releases`-adjacent noise a reader must not be woken for.
 /// Bursts coalesce — a publish's several hints become one frame — and the stream is bounded by
-/// the same per-project and per-server caps as the staff bus, so anonymous listeners can never
-/// crowd out a project's editors.
+/// a budget of its own (D-159) — per project, per server and per client address — kept apart
+/// from the staff streams', so anonymous listeners can never crowd out a project's editors.
 pub(crate) async fn delivery_events(
     State(state): State<AppState>,
     Path(path): Path<EventsPath>,
+    crate::admission::ClientAddress(address): crate::admission::ClientAddress,
 ) -> Result<Response, ApiError> {
     let services = services(&state)?;
     let project = Uuid::try_parse(&path.project).map_err(|_| ApiError::NotFound)?;
@@ -312,9 +391,13 @@ pub(crate) async fn delivery_events(
             .await
             .map_err(ApiError::from_db)?
             .ok_or(ApiError::NotFound)?;
-    let subscription = services.events.subscribe_public(project).map_err(|_| {
-        ApiError::Unavailable("this server is carrying as many live streams as it can")
-    })?;
+    let subscription = services
+        .events
+        .subscribe_public(project, &address)
+        .map_err(|refused| match refused {
+            StreamRefused::Address => ApiError::TooManyRequests { retry_after: 30 },
+            _ => ApiError::Unavailable("this server is carrying as many live streams as it can"),
+        })?;
 
     let limits = services.events.limits();
     let frames = public_frames(subscription, environment.id, limits).map(Ok::<_, Infallible>);
@@ -577,6 +660,9 @@ mod tests {
             keep_alive: Duration::from_secs(15),
             lifetime: Duration::from_mins(30),
             revalidate: None,
+            public_per_project: 3,
+            public_max_streams: 4,
+            public_per_address: 2,
         }
     }
 
@@ -620,7 +706,7 @@ mod tests {
         let bus = EventBus::new(limits());
         let project = Uuid::now_v7();
         let environment = Uuid::now_v7();
-        let subscription = bus.subscribe_public(project).expect("room");
+        let subscription = bus.subscribe_public(project, "198.51.100.1").expect("room");
         let mut frames = Box::pin(public_frames(subscription, environment, limits()));
         assert!(frames.next().await.is_some(), "hello comes first");
 
@@ -650,7 +736,7 @@ mod tests {
         let bus = EventBus::new(limits());
         let project = Uuid::now_v7();
         let (here, elsewhere) = (Uuid::now_v7(), Uuid::now_v7());
-        let subscription = bus.subscribe_public(project).expect("room");
+        let subscription = bus.subscribe_public(project, "198.51.100.1").expect("room");
         let mut frames = Box::pin(public_frames(subscription, here, limits()));
         assert!(frames.next().await.is_some(), "hello comes first");
         bus.publish(hint(project, Some(elsewhere), Kind::Releases));
@@ -670,19 +756,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn public_streams_are_capped_per_project() {
+    async fn public_streams_are_capped_per_project_per_address_and_apart_from_staff() {
         let bus = EventBus::new(limits());
         let project = Uuid::now_v7();
-        let held: Vec<_> = (0..limits().per_project)
-            .map(|_| bus.subscribe_public(project).expect("room"))
+        // One address holds at most its share.
+        let mine: Vec<_> = (0..limits().public_per_address)
+            .map(|_| bus.subscribe_public(project, "198.51.100.1").expect("room"))
             .collect();
         assert_eq!(
-            bus.subscribe_public(project).err(),
-            Some(StreamRefused::Project),
-            "anonymous streams cannot exceed the project's cap"
+            bus.subscribe_public(project, "198.51.100.1").err(),
+            Some(StreamRefused::Address),
+            "one client can't take the public budget"
         );
-        drop(held);
+        // Other addresses fill the project's public budget, and no further.
+        let others: Vec<_> = (mine.len()..limits().public_per_project)
+            .map(|n| {
+                bus.subscribe_public(project, &format!("198.51.100.{}", n + 10))
+                    .expect("room")
+            })
+            .collect();
+        assert_eq!(
+            bus.subscribe_public(project, "198.51.100.99").err(),
+            Some(StreamRefused::Project),
+            "anonymous streams cannot exceed the project's public cap"
+        );
+        // The staff budget is untouched by all of it.
+        let editors: Vec<_> = (0..limits().per_project)
+            .map(|_| {
+                bus.subscribe(project, Uuid::now_v7())
+                    .expect("an editor's stream")
+            })
+            .collect();
+        drop((mine, others, editors));
         assert_eq!(bus.streams(), 0);
+        assert!(
+            lock(&bus.shared).public_per_address.is_empty(),
+            "no stale keys"
+        );
+    }
+
+    #[tokio::test]
+    async fn anonymous_streams_never_take_the_staff_budget() {
+        // D-159: a project's public delivery stream is open to anyone; its streams have their
+        // own budget, so filling it can't lock a project's editors out of theirs.
+        let bus = EventBus::new(limits());
+        let project = Uuid::now_v7();
+        let mut held = Vec::new();
+        while let Ok(stream) = bus.subscribe_public(project, &format!("198.51.100.{}", held.len()))
+        {
+            held.push(stream);
+            assert!(held.len() <= 64, "the public budget is bounded");
+        }
+        assert!(
+            bus.subscribe(project, Uuid::now_v7()).is_ok(),
+            "an editor still gets a stream with the public budget full"
+        );
     }
 
     #[tokio::test]

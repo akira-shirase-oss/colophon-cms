@@ -136,6 +136,16 @@ test('a magic link signs a visitor in without a password, once', async ({ page }
 	await expect(page.getByTestId('message')).toHaveText('created role member');
 	expect(await publishGated(page, projectId)).toBe(201);
 
+	// D-148: a link lands only on an origin the project lists. Nothing listed refuses even
+	// the testbed's own page; listing it lets the request through.
+	await page.getByLabel('Email', { exact: true }).nth(2).fill('carol@example.test');
+	await page.getByRole('button', { name: 'Send the link' }).click();
+	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (return_to_not_allowed)');
+	await page.getByLabel('Origins').fill(new URL(page.url()).origin);
+	await page.getByRole('button', { name: 'Save origins' }).click();
+	await expect(page.getByTestId('message')).toHaveText('listed 1 origin(s)');
+	await expect(page.getByTestId('origins')).toHaveText(new URL(page.url()).origin);
+
 	// An email with no account: the link is the signup — spending it makes a member.
 	await page.getByLabel('Email', { exact: true }).nth(2).fill('carol@example.test');
 	await page.getByRole('button', { name: 'Send the link' }).click();
@@ -161,4 +171,96 @@ test('a magic link signs a visitor in without a password, once', async ({ page }
 		[projectId, token]
 	);
 	expect(spent).toBe(403);
+});
+
+// D-148: a sign-in link is a credential. Someone asking for a link to a visitor's address
+// with their own site as `return_to` is refused — the token never exists — while a listed
+// origin works, and asking again doesn't retire the link the visitor already holds.
+test('a sign-in link lands only on an origin the project lists', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	await page.goto('/audience');
+	await page.getByLabel('Project').selectOption(projectId);
+	await page.getByLabel('Name', { exact: true }).fill('member');
+	await page.getByRole('button', { name: 'Create role' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created role member');
+	const own = new URL(page.url()).origin;
+	await page.getByLabel('Origins').fill(own);
+	await page.getByRole('button', { name: 'Save origins' }).click();
+	await expect(page.getByTestId('origins')).toHaveText(own);
+
+	await page.getByLabel('Email', { exact: true }).nth(2).fill('dana@example.test');
+	await page.getByLabel('Return to').fill('https://attacker.example/steal');
+	await page.getByRole('button', { name: 'Send the link' }).click();
+	await expect(page.getByTestId('message')).toHaveText('422 validation_failed (return_to_not_allowed)');
+	await expect(page.getByTestId('dev-link')).toHaveCount(0);
+
+	// The visitor's own link, then a second request for the same address at once: it waits
+	// out the address's cooldown (D-153), and the first link still signs in.
+	await page.getByLabel('Return to').fill('');
+	await page.getByRole('button', { name: 'Send the link' }).click();
+	await expect(page.getByTestId('dev-link')).toContainText(`${own}/magic?token=`);
+	const held = (await page.getByTestId('dev-link').textContent())?.split('token=').at(-1) ?? '';
+	const second = await page.evaluate(
+		async ([project, origin]) =>
+			(
+				await fetch(`/server/audience/v1/${project}/magic-link`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ email: 'dana@example.test', return_to: `${origin}/magic` })
+				})
+			).status,
+		[projectId, own]
+	);
+	expect(second).toBe(429);
+	const spent = await page.evaluate(
+		async ([project, token]) =>
+			(await fetch(`/server/audience/v1/${project}/magic-link/${token}`, { method: 'POST' })).status,
+		[projectId, held]
+	);
+	expect(spent).toBe(200);
+});
+
+// D-154: eight misses pause the guessing address at that account, and the pause answers with
+// the very refusal a wrong password gets — the same one an address with no account gets — so
+// guessing can't tell which visitors exist, and nobody can lock an account for its owner.
+test('a paused sign-in refuses exactly like a wrong password, account or not', async ({ page }) => {
+	await signIn(page, 'dev-owner');
+	const projectId = await newProject(page);
+	await page.goto('/audience');
+	await page.getByLabel('Project').selectOption(projectId);
+	await page.getByLabel('Name', { exact: true }).fill('member');
+	await page.getByRole('button', { name: 'Create role' }).click();
+	await expect(page.getByTestId('message')).toHaveText('created role member');
+
+	const email = page.getByLabel('Email', { exact: true }).nth(1);
+	const password = page.getByLabel('Password', { exact: true }).nth(1);
+	await email.fill('erin@example.test');
+	await password.fill('erin-real-password');
+	await page.getByRole('button', { name: 'Sign up' }).click();
+	await expect(page.getByTestId('message')).toHaveText('signed up as member');
+
+	for (const target of ['erin@example.test', 'nobody-here@example.test']) {
+		await email.fill(target);
+		await password.fill('a wrong guess');
+		for (let miss = 1; miss <= 8; miss += 1) {
+			// The same message twice in a row proves nothing about the second answer: wait for
+			// the response itself.
+			const [answer] = await Promise.all([
+				page.waitForResponse((response) => response.url().endsWith('/signin')),
+				page.getByRole('button', { name: 'Sign in' }).click()
+			]);
+			expect(answer.status()).toBe(400);
+			await expect(page.getByTestId('message')).toHaveText('400 sign_in_failed');
+		}
+	}
+	// Paused now — even the right password answers exactly as a wrong one.
+	await email.fill('erin@example.test');
+	await password.fill('erin-real-password');
+	const [paused] = await Promise.all([
+		page.waitForResponse((response) => response.url().endsWith('/signin')),
+		page.getByRole('button', { name: 'Sign in' }).click()
+	]);
+	expect(paused.status()).toBe(400);
+	await expect(page.getByTestId('message')).toHaveText('400 sign_in_failed');
 });

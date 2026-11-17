@@ -373,9 +373,62 @@ async fn sessions_live_and_die_by_expiry_idle_revocation_and_disable() {
         "disabled: the just-made session {live} is dead"
     );
     assert_eq!(
-        audience::sign_in(&db.app, project, "a@b.c", "correct horse battery")
+        audience::sign_in(
+            &db.app,
+            &common::gate(),
+            project,
+            "a@b.c",
+            "203.0.113.1",
+            "correct horse battery"
+        )
+        .await
+        .expect("sign_in"),
+        audience::SignIn::Disabled
+    );
+    db.drop().await;
+}
+
+/// Only the right password learns an account is disabled (D-169): a wrong one gets the
+/// wrong-password answer after the same verify, so guessing can't tell a disabled account from
+/// any other, by answer or by time.
+#[tokio::test]
+#[ignore = "needs the local stack: scripts/stack.sh up"]
+async fn a_wrong_password_never_learns_an_account_is_disabled() {
+    let db = TestDb::new().await;
+    let (owner_id, project) = project(&db).await;
+    let phc = passwords::hashed("correct horse battery")
+        .await
+        .expect("hash");
+    let audience::SignedUp::Made(user) =
+        audience::sign_up(&db.app, project, "a@b.c", &phc, None, None)
             .await
-            .expect("sign_in"),
+            .expect("sign_up")
+    else {
+        panic!("signed up");
+    };
+    let mut tx = staff(&db.app, owner_id, project).await;
+    audience::update_user(&mut tx, user.id, None, Some(true))
+        .await
+        .expect("disable");
+    tx.commit().await.expect("commit");
+    let attempt = |password: &'static str| {
+        let pool = db.app.clone();
+        async move {
+            audience::sign_in(
+                &pool,
+                &common::gate(),
+                project,
+                "a@b.c",
+                "203.0.113.2",
+                password,
+            )
+            .await
+            .expect("sign_in")
+        }
+    };
+    assert_eq!(attempt("a guess").await, audience::SignIn::Refused);
+    assert_eq!(
+        attempt("correct horse battery").await,
         audience::SignIn::Disabled
     );
     db.drop().await;
@@ -398,36 +451,74 @@ async fn signin_refuses_wrong_passwords_and_locks_after_enough() {
 
     // A wrong password and no account answer alike, and a few wrongs don't lock.
     assert_eq!(
-        audience::sign_in(&db.app, project, "a@b.c", "wrong password")
-            .await
-            .expect("sign_in"),
+        audience::sign_in(
+            &db.app,
+            &common::gate(),
+            project,
+            "a@b.c",
+            "203.0.113.1",
+            "wrong password"
+        )
+        .await
+        .expect("sign_in"),
         audience::SignIn::Refused
     );
     assert_eq!(
-        audience::sign_in(&db.app, project, "nobody@b.c", "wrong password")
-            .await
-            .expect("sign_in"),
+        audience::sign_in(
+            &db.app,
+            &common::gate(),
+            project,
+            "nobody@b.c",
+            "203.0.113.1",
+            "wrong password"
+        )
+        .await
+        .expect("sign_in"),
         audience::SignIn::Refused
     );
-    // LOCK_AFTER bad tries pause the account — even the right password is refused then.
-    let mut locked = None;
-    for _ in 0..audience::LOCK_AFTER {
-        match audience::sign_in(&db.app, project, "a@b.c", "wrong password")
+    // LOCK_AFTER bad tries pause that address's key — even the right password is refused
+    // there, exactly as a wrong one (D-154) — while another address signs in.
+    for _ in 1..audience::LOCK_AFTER {
+        assert_eq!(
+            audience::sign_in(
+                &db.app,
+                &common::gate(),
+                project,
+                "a@b.c",
+                "203.0.113.1",
+                "wrong password"
+            )
             .await
-            .expect("sign_in")
-        {
-            audience::SignIn::Locked(until) => locked = Some(until),
-            audience::SignIn::Refused => {}
-            other => panic!("unexpected {other:?}"),
-        }
+            .expect("sign_in"),
+            audience::SignIn::Refused
+        );
     }
-    assert!(locked.is_some(), "locked after {}", audience::LOCK_AFTER);
     assert_eq!(
-        audience::sign_in(&db.app, project, "a@b.c", "correct horse battery")
-            .await
-            .expect("sign_in"),
-        audience::SignIn::Locked(locked.expect("locked"))
+        audience::sign_in(
+            &db.app,
+            &common::gate(),
+            project,
+            "a@b.c",
+            "203.0.113.1",
+            "correct horse battery"
+        )
+        .await
+        .expect("sign_in"),
+        audience::SignIn::Refused
     );
+    assert!(matches!(
+        audience::sign_in(
+            &db.app,
+            &common::gate(),
+            project,
+            "a@b.c",
+            "203.0.113.2",
+            "correct horse battery"
+        )
+        .await
+        .expect("sign_in"),
+        audience::SignIn::SignedIn(_)
+    ));
     db.drop().await;
 }
 
@@ -435,7 +526,7 @@ async fn signin_refuses_wrong_passwords_and_locks_after_enough() {
 #[ignore = "needs the local stack: scripts/stack.sh up"]
 #[expect(
     clippy::too_many_lines,
-    reason = "the link's whole lifecycle in one test: live, spent, superseded, expired, scoped"
+    reason = "the link's whole lifecycle in one test: listed, live, spent, retired, expired, scoped"
 )]
 async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
     let db = TestDb::new().await;
@@ -451,12 +542,52 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
         panic!("signed up");
     };
     let return_to = "http://site.test/welcome";
+    let origin = "http://site.test";
+
+    // Nothing listed: no link is recorded for any origin (D-148).
+    assert_eq!(
+        audience::request_magic_link(
+            &db.app,
+            &audience::MagicLinkLimits::DEFAULT,
+            project,
+            "a@b.c",
+            "203.0.113.1",
+            &[9; 32],
+            return_to,
+            origin
+        )
+        .await
+        .expect("request"),
+        audience::LinkRequest::OriginNotAllowed
+    );
+    let mut tx = staff(&db.app, owner, project).await;
+    audience::set_origins(&mut tx, &[origin.to_owned()])
+        .await
+        .expect("listed");
+    assert_eq!(audience::origins(&mut tx).await.expect("origins"), [origin]);
+    tx.commit().await.expect("commit");
+    assert_eq!(
+        audience::consume_magic_link(&db.app, project, &[9; 32])
+            .await
+            .expect("consume"),
+        audience::MagicLink::Invalid,
+        "the refused request stored nothing"
+    );
 
     // A link for an existing account signs it in — the answer names the user.
     let first = [1; 32];
-    audience::request_magic_link(&db.app, project, "a@b.c", &first, return_to)
-        .await
-        .expect("request");
+    audience::request_magic_link(
+        &db.app,
+        &audience::MagicLinkLimits::DEFAULT,
+        project,
+        "a@b.c",
+        "203.0.113.1",
+        &first,
+        return_to,
+        origin,
+    )
+    .await
+    .expect("request");
     match audience::consume_magic_link(&db.app, project, &first)
         .await
         .expect("consume")
@@ -478,9 +609,18 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
 
     // An unknown email's link is the signup half: NewUser, still single-use.
     let second = [2; 32];
-    audience::request_magic_link(&db.app, project, "new@b.c", &second, return_to)
-        .await
-        .expect("request");
+    audience::request_magic_link(
+        &db.app,
+        &audience::MagicLinkLimits::DEFAULT,
+        project,
+        "new@b.c",
+        "203.0.113.1",
+        &second,
+        return_to,
+        origin,
+    )
+    .await
+    .expect("request");
     assert_eq!(
         audience::consume_magic_link(&db.app, project, &second)
             .await
@@ -494,35 +634,67 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
         audience::MagicLink::Invalid
     );
 
-    // Asking again retires the earlier link: only the newest works.
-    let (stale, live) = ([3; 32], [4; 32]);
-    audience::request_magic_link(&db.app, project, "a@b.c", &stale, return_to)
-        .await
-        .expect("request");
-    audience::request_magic_link(&db.app, project, "a@b.c", &live, return_to)
-        .await
-        .expect("request");
-    assert_eq!(
-        audience::consume_magic_link(&db.app, project, &stale)
+    // Asking again never retires a link someone holds (D-148): both stay live until one is
+    // spent, and spending either retires the other.
+    let (held, asked) = ([3; 32], [4; 32]);
+    let owner_pool = db.owner().await;
+    for token in [&held, &asked] {
+        assert_eq!(
+            audience::request_magic_link(
+                &db.app,
+                &audience::MagicLinkLimits::DEFAULT,
+                project,
+                "a@b.c",
+                "203.0.113.1",
+                token,
+                return_to,
+                origin
+            )
             .await
-            .expect("consume"),
-        audience::MagicLink::Invalid,
-        "a superseded link is dead"
-    );
+            .expect("request"),
+            audience::LinkRequest::Recorded
+        );
+        // Past the address's cooldown (D-153) before the next request.
+        sqlx::query(
+            "UPDATE audience_magic_links SET created_at = created_at - interval '2 minutes'
+             WHERE token_hash = $1",
+        )
+        .bind(&token[..])
+        .execute(&owner_pool)
+        .await
+        .expect("aged");
+    }
+    owner_pool.close().await;
     assert!(matches!(
-        audience::consume_magic_link(&db.app, project, &live)
+        audience::consume_magic_link(&db.app, project, &held)
             .await
             .expect("consume"),
         audience::MagicLink::SignedIn(_)
     ));
+    assert_eq!(
+        audience::consume_magic_link(&db.app, project, &asked)
+            .await
+            .expect("consume"),
+        audience::MagicLink::Invalid,
+        "spending one link retires its siblings"
+    );
 
     // An expired link is dead too: `expires_at > created_at` is a CHECK, so age both as the
     // owner (the application login can't write the table's timestamps — and RLS hides the
     // rows from it outside a project scope anyway).
     let expired = [5; 32];
-    audience::request_magic_link(&db.app, project, "a@b.c", &expired, return_to)
-        .await
-        .expect("request");
+    audience::request_magic_link(
+        &db.app,
+        &audience::MagicLinkLimits::DEFAULT,
+        project,
+        "a@b.c",
+        "203.0.113.1",
+        &expired,
+        return_to,
+        origin,
+    )
+    .await
+    .expect("request");
     let owner_pool = db.owner().await;
     sqlx::query(
         "UPDATE audience_magic_links
@@ -548,9 +720,18 @@ async fn magic_links_are_single_use_superseded_expiring_and_project_scoped() {
         .expect("created")
         .id;
     let sixth = [6; 32];
-    audience::request_magic_link(&db.app, project, "a@b.c", &sixth, return_to)
-        .await
-        .expect("request");
+    audience::request_magic_link(
+        &db.app,
+        &audience::MagicLinkLimits::DEFAULT,
+        project,
+        "a@b.c",
+        "203.0.113.1",
+        &sixth,
+        return_to,
+        origin,
+    )
+    .await
+    .expect("request");
     assert_eq!(
         audience::consume_magic_link(&db.app, other, &sixth)
             .await

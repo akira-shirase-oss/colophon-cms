@@ -281,5 +281,5 @@ including the mistakes, is written up in the [build log](https://404human.dev/co
 
 ## License
 
-Apache-2.0 is proposed for the core, CLI and SDK. The `LICENSE` file will be added once the maintainer confirms it,
-before any release; the release workflow refuses a tag without it.
+MIT — see [`LICENSE`](LICENSE). Copyright (c) 2026 akira-shirase-oss. It covers the server, CLI, SDK and every
+app in this repository; dependencies keep their own licences (`cargo deny check` and the npm lockfile record them).

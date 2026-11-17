@@ -20,7 +20,7 @@ confidence-threshold = 0.93
 unused-allowed-license = "allow"
 
 [licenses.private]
-# Our own crates are `publish = false` until the licence is confirmed.
+# Our own crates are MIT (D-158) and `publish = false`: they ship through releases and npm.
 ignore = true
 
 [bans]

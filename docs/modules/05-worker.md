@@ -25,7 +25,11 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   `colophon_domain::job` (2xx succeeds; 408, 425, 429, 500, 502, 503 and 504 retry with full-jitter backoff up to five
   attempts; the rest fail).
 - **Addresses:** https and public only (`colophon_domain::destination`), checked on save and before every attempt;
-  the worker's resolver keeps only public addresses. A development server on loopback may use private ones.
+  the worker's resolver keeps only public addresses. Only a server started with
+  `COLOPHON_ALLOW_PRIVATE_DESTINATIONS=1` may use private ones — an explicit, development-only opt-in that
+  `deploy/local.env` sets, never inferred from a loopback listen address (D-149). The worker's client never uses a
+  proxy from the environment (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`): a proxy resolves the destination itself,
+  past the resolver, so the checks would no longer say where the request goes.
 - **The loop:** it claims as soon as a slot is free (eight by default) and sleeps only when there's nothing to do;
   it fails jobs that ran out of time every 10 seconds; on shutdown it stops claiming and lets attempts finish within
   the cleanup deadline.
@@ -63,7 +67,8 @@ Step 2.3 (D-046): `crates/colophon-worker`, run by `colophon-server --role worke
   bound is never tipped by work nobody admitted.
 - **The table-retention sweep** (P6, D-135): `colophon_worker::tables::Sweeper` runs beside the
   delivery loop every `COLOPHON_TABLE_SWEEP_MS` (default hourly): `colophon_db::retention::sweep`
-  deletes dead state in 500-row batches, oldest first, up to 20 passes a tick — the ledger, receipts
+  deletes dead state in 500-row batches (5,000 for magic links and sign-in keys, D-165), oldest first, up to 200
+  passes a tick — 100,000 rows a table an hour, a million of each of those two — the ledger, receipts
   and terminal work at their ages, the audit log through `colophon_audit_sweep`, and the private
   session and flow tables through `colophon_retention`'s definer functions, which the worker may
   execute but never read. What it never removes — `deletion_ledger`, content history, `uncertain`

@@ -88,8 +88,9 @@ pub(crate) async fn start(
     State(state): State<AppState>,
     body: Result<Json<Start>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Data<Started>>), ApiError> {
-    let services = services(&state)?;
+    // The body first: an oversized one is a 413 whatever else is wrong (D-164).
     let Json(body) = body?;
+    let services = services(&state)?;
     let name = body.client_name.trim();
     if !(1..=100).contains(&name.chars().count()) || name.chars().any(char::is_control) {
         return Err(ApiError::InvalidField {
@@ -222,8 +223,9 @@ pub(crate) async fn token(
     State(state): State<AppState>,
     body: Result<Json<Poll>, JsonRejection>,
 ) -> Result<Json<Data<Polled>>, ApiError> {
-    let services = services(&state)?;
+    // The body first: an oversized one is a 413 whatever else is wrong (D-164).
     let Json(body) = body?;
+    let services = services(&state)?;
     if body.device_secret.len() != 43 {
         return Err(ApiError::NotFound);
     }

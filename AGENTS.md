@@ -1,9 +1,10 @@
 # Colophon CMS: agent instructions
 
-**Current state (2026-11-16).** `main` carries migrations through 0054 and decisions
-through D-147 (D-147, the Studio's first-run answers to Strapi, merged from `studio/dashboard`). The content-cards port era is finished — its unique work landed on this
-lineage as D-083 to D-087 (migrations 0031–0034); the archived branch stays at
-`origin/lineage/content-cards` for reference.
+**Current state (2026-11-16).** This tree carries migrations through 0064 and decisions
+through D-169 (D-148 to D-169, the 2026-11-16 security fixes and the MIT licence, made on
+`fix/security-2026-11-16`; D-147, the Studio's first-run answers to Strapi, from `studio/dashboard`). The content-cards port era is finished — its unique work landed on this
+lineage as D-083 to D-087 (migrations 0031–0034); the old branch is kept as the annotated tag
+`archive/lineage/content-cards` for reference (its branch was deleted from origin).
 
 Every roadmap milestone is built; what remains before v0.1 is the human-run proof-gate
 work: the rehearsed usability sessions and one independent install (P6's gate, D-132),
@@ -35,8 +36,8 @@ detail: `docs/ROADMAP.md` and the build log):
   `scripts/failover.sh`), Valkey-shared rate limits, `scripts/load.sh … stress`,
   `colophon-bench` micro-benchmarks.
 - **V built:** `0.1.0-alpha.1` across every binary, the `@colophon-cms/cli` npm launcher,
-  the install script and the Homebrew template; publishing waits on the maintainer
-  (npm org, `NPM_TOKEN`, licence, tag — module 19).
+  the install script and the Homebrew template; the licence is MIT (D-158, `LICENSE`), and
+  publishing waits on the maintainer (npm org, `NPM_TOKEN`, tag — module 19).
 - **P5 done:** the MCP adapter (stdio and Streamable HTTP) with no self-approval enforced,
   budget reservations in Postgres, bounded bulk manifests, the eval suite gated at
   `UNAUTHORIZED: 0`, the L08 noisy-agent run committed.

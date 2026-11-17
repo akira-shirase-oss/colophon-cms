@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT locked_until > now() AS \"paused!\" FROM sign_in_throttle\n           WHERE realm = 'staff' AND email = 'dave@example.com' AND address = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "paused!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "b3a200a824ec5f3384dad608d2ff618b4caed4c458cf467d919940dfc5113b47"
+}

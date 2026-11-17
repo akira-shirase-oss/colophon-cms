@@ -16,9 +16,11 @@ use colophon_db::PgPool;
 use tokio_util::sync::CancellationToken;
 
 /// Passes one tick may run back to back while rows are still going: a backlog drains at
-/// `BATCH` a table a pass, so a pass that removed nothing ends the tick early and a deep
-/// backlog drains `PASSES` batches at a time, never one giant transaction.
-const PASSES: u32 = 20;
+/// `BATCH` a table a pass (ten for the tables strangers grow, D-165), so a pass that removed
+/// nothing ends the tick early and a deep backlog drains `PASSES` batches at a time, never one
+/// giant transaction. At the hourly default that is 100,000 rows a table an hour, and a
+/// million of magic links and of sign-in keys, inside [`TICK_DEADLINE`].
+const PASSES: u32 = 200;
 
 /// The longest a tick may take: a stall inside is abandoned and retried whole next
 /// interval, every delete it made being committed per pass already.
@@ -91,6 +93,8 @@ impl Sweeper {
                         sign_in_attempts = swept.sign_in_attempts,
                         setup_attempts = swept.setup_attempts,
                         setup_codes = swept.setup_codes,
+                        magic_links = swept.magic_links,
+                        sign_in_throttle = swept.sign_in_throttle,
                         "table retention pass"
                     );
                 }

@@ -19,9 +19,17 @@ use common::{Reply, Server, Session, Stopped, app, call, entries, key, project, 
 use reqwest::{Method, StatusCode, header};
 use serde_json::{Value, json};
 
-/// The window these tests run: two seconds instead of the minute it names, so a reset is
+/// The window these tests run: six seconds instead of the minute it names, so a reset is
 /// seconds of sleep rather than a minute of them (`COLOPHON_QUOTA_WINDOW_MS`).
-const WINDOW: (&str, &str) = ("COLOPHON_QUOTA_WINDOW_MS", "2000");
+///
+/// Not shorter: at 3 requests a window the limiter admits one request every `window / 3`
+/// and lets a burst run `2 × window / 3` ahead, so after the episode's `Retry-After` sleep
+/// the second request is refused only while everything the test sent since the first
+/// admitted one — refusals, the people's reads, the token view, the audit read — took less
+/// than `window / 3` of wall time. At two seconds that budget was about a third of a second,
+/// which a loaded CI runner overran with no change to the limiter (the test failed on a
+/// commit that touched only configuration parsing); at six it is two seconds.
+const WINDOW: (&str, &str) = ("COLOPHON_QUOTA_WINDOW_MS", "6000");
 
 fn tokens(project: &str) -> String {
     format!("/api/v1/projects/{project}/tokens")

@@ -565,7 +565,7 @@ async fn a_release_waits_for_usable_assets_and_the_origin_serves_them() {
     assert_eq!(response.headers()["content-type"], "image/png");
     assert_eq!(
         response.headers()["cache-control"],
-        "public, max-age=31536000, immutable"
+        "public, max-age=60, must-revalidate"
     );
     assert_eq!(response.headers()["x-content-type-options"], "nosniff");
     let bytes = response.bytes().await.expect("bytes");
@@ -635,7 +635,7 @@ async fn renditions_are_served_under_their_names() {
         assert_eq!(response.headers()["content-type"], "image/png");
         assert_eq!(
             response.headers()["cache-control"],
-            "public, max-age=31536000, immutable"
+            "public, max-age=60, must-revalidate"
         );
     }
     for name in ["w1280", "nope", "W320", "../../quarantine"] {
@@ -1517,4 +1517,74 @@ async fn a_deleted_asset_collects_every_version_and_rendition() {
         assert_eq!(media_status(&path).await, StatusCode::NOT_FOUND, "{path}");
     }
     database.close().await;
+}
+
+/// Media caching follows what an address names (D-157): the bare address is the asset's
+/// current version, which a replace moves and a delete ends, so caches keep it a minute and
+/// then revalidate — `304` while the version stands, the new bytes once it moved — while a
+/// version's own sha address never changes and is `immutable` for a year.
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_bare_media_address_revalidates_and_a_versioned_one_is_immutable() {
+    let (_server, owner, project, asset, sha1, v1_bytes) = usable_asset().await;
+    let bare = format!("{}{}", common::ORIGIN, media(&project, &asset));
+    let first = app().get(&bare).send().await.expect("request");
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(
+        first.headers()["cache-control"],
+        "public, max-age=60, must-revalidate"
+    );
+    let etag = first.headers()["etag"]
+        .to_str()
+        .expect("an ETag")
+        .to_owned();
+
+    // Revalidating the version it holds: 304, no body.
+    let again = app()
+        .get(&bare)
+        .header("if-none-match", &etag)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(again.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(again.headers()["etag"], etag.as_str());
+    assert!(again.bytes().await.expect("body").is_empty());
+
+    // The version's own address is forever.
+    let pinned = app()
+        .get(format!("{bare}/{sha1}"))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(pinned.status(), StatusCode::OK);
+    assert_eq!(
+        pinned.headers()["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
+
+    // A replace moves the bare address: the same revalidation now gets the new bytes.
+    let asked = replace(
+        &owner,
+        &project,
+        &asset,
+        WIDE_PNG,
+        "wide.png",
+        "image/png",
+        &key(),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::ACCEPTED, "{}", asked.body);
+    swung(&owner, &project, &asset, &sha1, 15).await;
+    let moved = app()
+        .get(&bare)
+        .header("if-none-match", &etag)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(
+        moved.status(),
+        StatusCode::OK,
+        "a stale ETag gets the new version"
+    );
+    assert_ne!(moved.bytes().await.expect("body").to_vec(), v1_bytes);
 }

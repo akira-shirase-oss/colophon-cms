@@ -358,14 +358,16 @@ pub(crate) async fn list(
 /// serves: a usable asset's `public_key`, nothing for anything else — quarantined, rejected,
 /// deleting and deleted assets are 404s even while their objects still sit in the store, and
 /// so is everything that never was. The stored `Content-Type` (written at promote) is served
-/// back, and the object is immutable by construction — a version's bytes never change — so it
-/// caches forever.
+/// back. The address follows the current version, which a replace moves (D-136) and a delete
+/// ends, so it revalidates after a minute rather than caching forever (D-157).
 pub(crate) async fn serve(
     State(state): State<AppState>,
     Path(path): Path<OnePath>,
+    request: HeaderMap,
 ) -> Result<Response, ApiError> {
     stream(
         &state,
+        &request,
         path.project,
         path.environment,
         path.asset,
@@ -382,6 +384,7 @@ pub(crate) async fn serve(
 pub(crate) async fn serve_rendition(
     State(state): State<AppState>,
     Path(path): Path<RenditionPath>,
+    request: HeaderMap,
 ) -> Result<Response, ApiError> {
     let (sha, name) = if colophon_media::is_version_sha(&path.name) {
         (Some(path.name), None)
@@ -390,6 +393,7 @@ pub(crate) async fn serve_rendition(
     };
     stream(
         &state,
+        &request,
         path.project,
         path.environment,
         path.asset,
@@ -406,9 +410,11 @@ pub(crate) async fn serve_rendition(
 pub(crate) async fn serve_versioned(
     State(state): State<AppState>,
     Path(path): Path<VersionedPath>,
+    request: HeaderMap,
 ) -> Result<Response, ApiError> {
     stream(
         &state,
+        &request,
         path.project,
         path.environment,
         path.asset,
@@ -418,17 +424,43 @@ pub(crate) async fn serve_versioned(
     .await
 }
 
+/// How long a cache may reuse what an unversioned media address answered before asking again
+/// (D-157): the address follows the asset's current version, which a replace moves and a
+/// delete ends, so it is never `immutable` — a minute, then a conditional request that the
+/// version's `ETag` usually answers `304`.
+const UNVERSIONED_CACHE: &str = "public, max-age=60, must-revalidate";
+
+/// What a versioned address — one that names a version's content sha — answers: those bytes
+/// never change, so caches keep them for a year.
+const VERSIONED_CACHE: &str = "public, max-age=31536000, immutable";
+
+/// Whether `If-None-Match` names `etag`: a list, `*`, or weak tags all count (RFC 9110's weak
+/// comparison, which is what a `GET`'s revalidation uses).
+fn none_match(request: &HeaderMap, etag: &str) -> bool {
+    let bare = |tag: &str| tag.trim().trim_start_matches("W/").to_owned();
+    let want = bare(etag);
+    request
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|tag| tag.trim() == "*" || bare(tag) == want)
+}
+
 /// The origin's one read: `media_object` resolves the environment slug and picks the object
 /// key — the usable asset's current version, or the version `sha` pins — then the object
-/// streams back with its stored type and an immutable cache.
+/// streams back with its stored type. A pinned version caches forever; the current-version
+/// address revalidates (D-157), and a matching `If-None-Match` answers `304`.
 async fn stream(
     state: &AppState,
+    request: &HeaderMap,
     project: String,
     environment: String,
     asset: String,
     sha: Option<String>,
     name: Option<String>,
 ) -> Result<Response, ApiError> {
+    let pinned = sha.is_some();
     let services = services(state)?;
     let store = services.assets.clone().ok_or(ApiError::Unavailable(
         "uploads are not configured on this server",
@@ -490,11 +522,14 @@ async fn stream(
             .parse()
             .map_err(ApiError::internal)?,
     );
+    let cache = if pinned {
+        VERSIONED_CACHE
+    } else {
+        UNVERSIONED_CACHE
+    };
     headers.insert(
         header::CACHE_CONTROL,
-        "public, max-age=31536000, immutable"
-            .parse()
-            .map_err(ApiError::internal)?,
+        cache.parse().map_err(ApiError::internal)?,
     );
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
@@ -502,6 +537,18 @@ async fn stream(
     );
     if let Some(etag) = object.meta.e_tag.as_deref() {
         headers.insert(header::ETAG, etag.parse().map_err(ApiError::internal)?);
+        // The cache already holds these bytes: say so and send none (the stream is dropped
+        // unread).
+        if none_match(request, etag) {
+            headers.remove(header::CONTENT_LENGTH);
+            headers.remove(header::CONTENT_TYPE);
+            let mut response = Response::builder()
+                .status(StatusCode::NOT_MODIFIED)
+                .body(axum::body::Body::empty())
+                .map_err(ApiError::internal)?;
+            response.headers_mut().extend(headers);
+            return Ok(response);
+        }
     }
     let mut response = Response::builder()
         .status(StatusCode::OK)

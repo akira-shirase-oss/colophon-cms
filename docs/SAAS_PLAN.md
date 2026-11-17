@@ -48,6 +48,11 @@ Decisions already made (2026-11-13, by the maintainer):
 
 ## Neon
 
+- Neon requires TLS. Since D-156 the server's Postgres driver is built with rustls (on aws-lc-rs, the same stack
+  `reqwest` uses) and the Mozilla root certificates, so a `?sslmode=require` URL connects; prefer
+  `sslmode=verify-full` so the certificate's host is checked too. Proved locally only: a unit test shows a
+  `require` URL opens with the TLS request (`colophon-db`, `a_require_url_asks_the_server_for_tls_first`); a real
+  Neon connection is still S0's first check.
 - Use Neon's **direct (unpooled) endpoint** for the server: `LISTEN`/`pg_notify` and session advisory locks do not
   survive a transaction-mode pooler. Size the connection pool to Neon's compute limits.
 - Migrations run through `COLOPHON_MIGRATION_DATABASE_URL` with the owner role; the app runs with a lower role.
@@ -75,7 +80,7 @@ The landing pages for Colophon, Service Monitor and Durable Runner are content i
 Each page is rendered and exported to static hosting (Cloudflare Pages) on publish, so a Colophon outage stops
 editing, not the other products' landing pages. That keeps the products independent.
 
-Note: the older landing page (`apps/site` on `site/new-look`) is unmerged and breaks on main's data; rebuild it on
+Note: the older landing page (`apps/site`, kept as the tag `archive/site/new-look`) is unmerged and breaks on main's data; rebuild it on
 main rather than reviving the branch.
 
 ## Integrations (public API only)

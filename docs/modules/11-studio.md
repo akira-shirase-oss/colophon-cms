@@ -91,7 +91,10 @@ screen-reader journeys pass, and no screen ever shows a success the server has n
   never content — into the query invalidations a fresh visit would run: entries, drafts, history, changesets, stages,
   releases and their jobs and receipts, schedules, tasks, comments, migrations and their items, assets, members and
   invitations, roles, tokens, destinations and the audit trail all move as PostgreSQL commits, without a reload or a
-  poll. A `resync` event and every reconnect invalidates every key in the project; the stream closes on teardown,
+  poll. A `resync` event and every reconnect invalidates every key in the project, and so does the first open (all
+  but the builders' version-keyed `type`/`component` reads): a commit landing between a page's own loads and the
+  stream's open sent its hint to nobody, and a delivery that settled then read "pending" until a reload
+  (`tests/server/deliveries.spec.ts`, "settles before the live stream opens"). The stream closes on teardown,
   EventSource reopens it on its own, and a hidden tab that becomes visible resyncs (and reconnects if its stream
   died). The polling the hints replace — releases and their deliveries, a release's receipt, a running migration's
   plan and items, the schedule panel's due times, an upload waiting out quarantine — is gone; only a bounded fallback

@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*) AS \"links!\",\n                  EXTRACT(EPOCH FROM min(created_at) + make_interval(secs => $2) - now())::float8\n                      AS \"remaining\"\n           FROM audience_magic_links\n           WHERE project_id = $1 AND created_at > now() - make_interval(secs => $2)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "links!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "remaining",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "b3e71a0c606594bc40ce2a3f38d04ea70b733432a9702b2b72d78a458f4eb5d6"
+}
