@@ -876,3 +876,54 @@ async fn a_code_is_spent_once_even_when_two_sites_race_for_it_and_tokens_cant_is
     let body: Value = refused.json().await.unwrap_or(Value::Null);
     assert_eq!(reason(&body), "api_token_not_allowed");
 }
+
+#[tokio::test]
+#[ignore = "needs the stack and scripts/migrate.sh"]
+async fn a_preview_never_shows_a_field_its_issuer_cant_read() {
+    let _server = Server::start().await;
+    let owner = sign_in("dev-owner").await;
+    let reader = sign_in("dev-editor").await;
+    let id = project(&owner).await;
+    set_target(&owner, &id).await;
+    let made = call(
+        &owner,
+        Method::POST,
+        &format!("/api/v1/projects/{id}/roles"),
+        Some(&json!({
+            "key": "titles",
+            "name": "Titles only",
+            "permissions": [{"action": "content.read", "subject": "articles", "fields": ["title"]}]
+        })),
+        &[],
+    )
+    .await
+    .expect("request");
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    join(&owner, &reader, &id, "titles").await;
+    let entry = create_article(&owner, &id, "Owner's piece").await;
+    release(&owner, &id, &json!({"title": "One", "entries": [entry]})).await;
+    save(&owner, &id, &entry, "Owner's piece, edited").await;
+
+    // The reader may open a preview of what they can read some of — and it shows only that.
+    let token = token(&reader, &id, &json!({ "entry": entry })).await;
+    let list = format!("/preview/v1/{id}/production/articles");
+    let (status, _, body) = read(Some(&token), &format!("{list}/{entry}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["data"]["content"],
+        json!({"title": "Owner's piece, edited"})
+    );
+    assert_eq!(body["data"]["preview"]["hidden_fields"], json!(["body"]));
+    // The owner's own preview of the same entry shows everything.
+    let full = token_for_owner(&owner, &id, &entry).await;
+    let (_, _, body) = read(Some(&full), &format!("{list}/{entry}")).await;
+    assert!(body["data"]["content"]["body"].is_object(), "{body}");
+    assert!(
+        body["data"]["preview"].get("hidden_fields").is_none(),
+        "{body}"
+    );
+}
+
+async fn token_for_owner(owner: &Session, project: &str, entry: &str) -> String {
+    token(owner, project, &json!({ "entry": entry })).await
+}

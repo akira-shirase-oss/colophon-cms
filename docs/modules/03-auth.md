@@ -469,7 +469,7 @@ read, for a few minutes, and nothing else. Built as `colophon_db::previews`, `co
 | Token theft through a URL (Referer, history, logs) | Only the 60 s single-use code is ever in a URL; it travels to Colophon in a POST body; `Referrer-Policy: no-referrer`; the request span logs no query strings (D-152) | a spent code 404s; the race test |
 | Replay after access is removed | Every read re-checks the grant and opens as the issuer; revoke endpoint | member removed mid-run → 401 on the next read; revoke → 401 |
 | Scope escalation (A's token on B's drafts, another project) | The overlay uses only the grant's scope ids; the grant is found only in the URL's project; the environment must match | the scope property test: random grants and reads over two projects, checked against `colophon_domain::preview::overlay` |
-| Field leakage | Rows narrowed by the issuer's read fields; filters and sorts on unreadable fields refused (D-109) | (unit) `visibility::project`; a hidden-field stack test is owed |
+| Field leakage | Rows narrowed by the issuer's read fields; filters and sorts on unreadable fields refused (D-109) | a title-only role's preview shows the title alone and lists `body` in `hidden_fields` |
 | Stale approval confusion | Changeset scope is bound to the request's hash | refresh after preview → 409 `preview_stale`; publish → 410 |
 | Open redirect in the site handler | The SDK's handler accepts only same-site relative paths | SDK unit tests (slice 3) |
 | Clickjacking or framing | The site sends `frame-ancestors` for the Studio's origin; the Studio's iframe is sandboxed; messages use an exact `targetOrigin` and receivers check `origin` | Studio journey (slice 2) |
