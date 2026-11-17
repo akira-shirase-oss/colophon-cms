@@ -181,6 +181,10 @@ pub(crate) struct ItemView {
     /// changeset can still list it, as what it published.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     entry_deleted: bool,
+    /// The language the pinned revision is written in (D-171): what readers of which language
+    /// this item publishes to. Left out for the default language.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    locale: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -427,6 +431,7 @@ async fn view(tx: &mut ProjectTransaction, head: Head) -> Result<ChangesetView, 
                 schema_version: item.pin.schema_version,
                 current_revision_id: item.current_revision_id,
                 published_revision_id: item.published_revision_id,
+                locale: item.locale,
             })
             .collect(),
         reviews: reviews

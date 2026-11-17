@@ -77,6 +77,8 @@ pub struct Item {
     /// Who created the entry: for roles that may change only their own (D-058). `None` once the
     /// entry is deleted (D-080), which only a published changeset can still show.
     pub created_by: Option<Uuid>,
+    /// The language the pinned revision is written in (D-171), `None` for the default.
+    pub locale: Option<String>,
 }
 
 impl Item {
@@ -443,7 +445,7 @@ pub async fn collections(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<St
 pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, DbError> {
     let rows = sqlx::query!(
         r#"SELECT i.kind, i.entry_id, i.revision_id, r.collection, r.content_hash, r.schema_version,
-                  v.definition_hash, r.title,
+                  v.definition_hash, r.title, r.locale,
                   CASE WHEN i.kind = 'publish' AND c.rollback_generation IS NULL THEN e.draft_revision_id
                        WHEN i.kind = 'publish' THEN i.revision_id
                        ELSE (SELECT p.revision_id FROM publications p
@@ -458,7 +460,7 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
          JOIN changesets c ON c.project_id = i.project_id AND c.environment_id = i.environment_id
                           AND c.id = i.changeset_id
          CROSS JOIN LATERAL (
-             SELECT r.collection, r.content_hash, r.schema_version, r.title
+             SELECT r.collection, r.content_hash, r.schema_version, r.title, r.locale
              FROM revisions r
              WHERE r.project_id = i.project_id AND r.environment_id = i.environment_id AND r.id = i.revision_id
              LIMIT 1
@@ -498,6 +500,7 @@ pub async fn items(tx: &mut ProjectTransaction, id: Uuid) -> Result<Vec<Item>, D
             current_revision_id: row.current_revision_id,
             published_revision_id: row.published_revision_id,
             created_by: row.created_by,
+            locale: row.locale,
         })
         .collect())
 }

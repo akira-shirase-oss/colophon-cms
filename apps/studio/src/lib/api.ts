@@ -1004,6 +1004,8 @@ export interface ChangesetItem {
 	published_revision_id: string | null;
 	/** Who created the entry, for permissions limited to one's own entries. */
 	created_by: string;
+	/** The language the pinned revision is written in (D-171); absent for the default. */
+	locale?: string;
 }
 
 export interface ChangesetReview {

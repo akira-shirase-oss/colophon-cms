@@ -24,7 +24,7 @@
 	import { plainError } from '#lib/errors.ts';
 	import ItemDiff from '#lib/ItemDiff.svelte';
 	import SchedulePanel from '#lib/SchedulePanel.svelte';
-	import { ago, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
+	import { ago, localesQuery, meQuery, projectQuery, releasesQuery, typesQuery } from '#lib/queries.ts';
 	import ChangesetBadge from '#lib/shell/ChangesetBadge.svelte';
 	import PageHeader from '#lib/shell/PageHeader.svelte';
 	import Problem from '#lib/shell/Problem.svelte';
@@ -53,6 +53,10 @@
 	const releases = createQuery(() => releasesQuery(project));
 	const types = createQuery(() => typesQuery(project));
 	const typeName = (collection: string) => types.data?.find((type) => type.slug === collection)?.definition.name ?? collection;
+	// Which readers each item publishes to (D-171): its pinned language, by the name the
+	// project's list gives it.
+	const languages = createQuery(() => localesQuery(project));
+	const languageName = (tag: string) => languages.data?.locales.find((row) => row.tag === tag)?.label ?? tag;
 	// One key per publish attempt: pressing Publish again after a lost answer is safe.
 	let publishKey = newKey();
 	// Which items show their comparison; the first few open by default.
@@ -259,7 +263,9 @@
 								<a class="block truncate font-medium hover:underline" href={resolve('/projects/[project]/[collection]/[entry]', { project, collection: item.collection, entry: item.entry_id })}
 									>{item.title}</a
 								>
-								<span class="text-xs text-muted-foreground">{typeName(item.collection)}</span>
+								<span class="text-xs text-muted-foreground"
+									>{typeName(item.collection)}{#if item.locale}<span data-testid="item-language"> · {languageName(item.locale)}</span>{/if}</span
+								>
 							</span>
 							{#if item.kind === 'unpublish'}
 								<Badge variant="attention" data-testid="unpublish">unpublish</Badge>

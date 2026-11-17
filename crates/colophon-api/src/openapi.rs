@@ -5777,6 +5777,7 @@ fn publishing_parts() -> Value {
                 "published_revision_id": { "type": ["string", "null"], "format": "uuid" },
                 "created_by": { "type": ["string", "null"], "format": "uuid" },
                 "entry_deleted": { "type": "boolean" },
+                "locale": { "type": "string", "description": "the pinned revision's language (D-171); absent for the default" },
             },
         },
         "ReviewView": {
